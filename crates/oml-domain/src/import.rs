@@ -2,9 +2,10 @@
 //! the outcome names its counts use. Pure: the bundle's checks and the plan
 //! are `oml-bundle`'s, the app applies them, the store keeps the rows.
 
-/// An import's state. An import runs inline in the request that binds its
-/// upload, so `running` outlives a request only when the process stopped
-/// mid-import; the doctor counts those (d15).
+/// An import's state. An import runs after the request that binds its
+/// upload answers (ADR-0084 I10); one `running` longer than
+/// [`STOPPED_AFTER_MICROS`] that no process runs stopped mid-import, and
+/// the sweep ends it `failed` (I11).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImportState {
     Running,
@@ -29,6 +30,10 @@ impl ImportState {
         Self::ALL.into_iter().find(|state| state.as_str() == s)
     }
 }
+
+/// How long an import may stay `running` before the sweep ends it
+/// `failed`, unless this process runs it (ADR-0084 I11): one hour.
+pub const STOPPED_AFTER_MICROS: i64 = 3_600 * 1_000_000;
 
 /// What happened to one planned claim key, as the outcome counts it and
 /// `oml_import_versions_total{outcome}` labels it: the plan's six outcomes

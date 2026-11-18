@@ -1263,6 +1263,7 @@ async fn the_serving_role_sees_nothing_of_another_tenant_in_a_tenant_tables_pg_s
                 event_types::SUBMISSION_REMEMBER,
                 json!({ "artifact_id": memory.memory_id.to_string() }),
                 MetadataFold::MemoryHeld {
+                    imported: None,
                     memory,
                     enqueue: false,
                     findings: Box::default(),
@@ -2649,6 +2650,7 @@ async fn the_served_tip_index_refuses_a_second_tip() {
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": memory.memory_id.to_string() }),
             MetadataFold::MemoryHeld {
+                imported: None,
                 memory,
                 enqueue: false,
                 findings: Box::default(),
@@ -3889,6 +3891,7 @@ async fn hold(
         event_types::SUBMISSION_REMEMBER,
         json!({ "artifact_id": memory.to_string() }),
         MetadataFold::MemoryHeld {
+            imported: None,
             memory: held_memory(rig.tenant_id, workspace, memory, "wanda", author, "held"),
             enqueue,
             findings: Box::default(),
@@ -4649,6 +4652,7 @@ async fn the_widening_statement_names_its_tenant_and_touches_no_other_tenants_ro
                 event_types::SUBMISSION_REMEMBER,
                 json!({ "artifact_id": memory.memory_id.to_string() }),
                 MetadataFold::MemoryHeld {
+                    imported: None,
                     memory: memory.clone(),
                     enqueue: false,
                     findings: Box::default(),
@@ -10562,6 +10566,7 @@ async fn the_migration_marks_every_existing_version_scanned_under_oml_scan_1() {
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": id.to_string() }),
             MetadataFold::MemoryHeld {
+                imported: None,
                 memory: MemoryRecord {
                     scan_finding: (n == 0).then(|| {
                         "injection.override: ignore-instructions at /body line 1".to_owned()
@@ -10624,6 +10629,7 @@ async fn migration_0043_lists_each_finding_a_stored_scan_finding_names_as_an_adm
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": flagged.to_string() }),
             MetadataFold::MemoryHeld {
+                imported: None,
                 memory: MemoryRecord {
                     scan_finding: Some(stored.to_owned()),
                     scanned_under: Some("oml-scan/1.1".to_owned()),
@@ -10641,6 +10647,7 @@ async fn migration_0043_lists_each_finding_a_stored_scan_finding_names_as_an_adm
         event_types::SUBMISSION_REMEMBER,
         json!({ "artifact_id": clean.to_string() }),
         MetadataFold::MemoryHeld {
+            imported: None,
             memory: MemoryRecord {
                 claim_key: "clean".to_owned(),
                 scanned_under: Some("oml-scan/1.1".to_owned()),
@@ -10754,6 +10761,7 @@ async fn a_recording_rescan_after_migration_0043_lists_each_migrated_finding_onc
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": id.to_string() }),
             MetadataFold::MemoryHeld {
+                imported: None,
                 memory: MemoryRecord {
                     claim_key: format!("c-{}", id.simple()),
                     scan_finding: Some(text.to_owned()),
@@ -10978,6 +10986,7 @@ async fn migration_0043_places_every_finding_of_a_stored_text_and_a_recording_re
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": id.to_string() }),
             MetadataFold::MemoryHeld {
+                imported: None,
                 memory: MemoryRecord {
                     claim_key: format!("c-{}", id.simple()),
                     scan_finding: Some(text.to_owned()),
@@ -11296,6 +11305,7 @@ async fn migration_0045_fills_each_accounts_meters_from_the_rows_stored_before_i
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": memory.memory_id.to_string() }),
             MetadataFold::MemoryHeld {
+                imported: None,
                 memory: memory.clone(),
                 enqueue: true,
                 findings: Box::default(),
@@ -11415,6 +11425,7 @@ async fn migration_0045_fills_each_accounts_meters_from_the_rows_stored_before_i
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": more.memory_id.to_string() }),
             MetadataFold::MemoryHeld {
+                imported: None,
                 memory: more.clone(),
                 enqueue: true,
                 findings: Box::default(),
@@ -11438,6 +11449,7 @@ async fn migration_0045_fills_each_accounts_meters_from_the_rows_stored_before_i
         event_types::SUBMISSION_REMEMBER,
         json!({ "artifact_id": more.memory_id.to_string() }),
         MetadataFold::MemoryHeld {
+            imported: None,
             memory: more.clone(),
             enqueue: true,
             findings: Box::default(),
@@ -11594,6 +11606,7 @@ async fn a_tenant_keys_first_version_commits_without_touching_the_meters() {
     let write = |memory: MemoryRecord| {
         let payload = json!({ "artifact_id": memory.memory_id.to_string() });
         let fold = MetadataFold::MemoryHeld {
+            imported: None,
             memory,
             enqueue: true,
             findings: Box::default(),
@@ -11709,6 +11722,7 @@ async fn a_counter_never_goes_below_zero_and_a_fold_on_a_drifted_one_still_commi
         event_types::SUBMISSION_REMEMBER,
         json!({ "artifact_id": memory.memory_id.to_string() }),
         MetadataFold::MemoryHeld {
+            imported: None,
             memory: memory.clone(),
             enqueue: true,
             findings: Box::default(),
@@ -11825,6 +11839,7 @@ async fn writers_that_skip_the_pre_check_are_held_by_the_commits_own_ceiling() {
                             event_types::SUBMISSION_REMEMBER,
                             json!({ "artifact_id": memory.memory_id.to_string() }),
                             MetadataFold::MemoryHeld {
+                                imported: None,
                                 memory: memory.clone(),
                                 enqueue: true,
                                 findings: Box::default(),

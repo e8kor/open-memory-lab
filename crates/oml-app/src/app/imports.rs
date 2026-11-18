@@ -27,12 +27,13 @@ use oml_domain::signup::Quota;
 use oml_domain::upload::{self, UploadRefusal, UploadState};
 use oml_domain::{EventTime, MemoryKind, Role, UsedBy, WorkspaceStatus};
 
+use super::busy::BusyGuard;
 use super::{App, BULK_CHAIN_RETRIES, Caller, in_progress_root_in};
 use crate::ports::{Clock, IdGen, JournalStore, MetadataFold, Scanner, Signer, StoreError};
 use crate::types::{
-    AppError, Bearer, ImportEnded, ImportLedgerEntry, ImportRecord, ImportRefusal,
-    ImportTargetView, ImportedVersion, KindFields, OnSimilar, ProposeClaimEdge, SubmitRequest,
-    SubmitVerb, SupersedeRequest, UploadSession,
+    AppError, Bearer, ImportBegin, ImportEnded, ImportLedgerEntry, ImportRecord, ImportRefusal,
+    ImportTargetView, ImportedVersion, ImportedWrite, KindFields, OnSimilar, ProposeClaimEdge,
+    SubmitRequest, SubmitVerb, SupersedeRequest, UploadSession,
 };
 
 /// What `POST /v2/imports` asks (ADR-0084 d15, as the coordinator decided
@@ -83,6 +84,53 @@ enum Target {
     New(oml_domain::name::Name),
 }
 
+/// What `POST /v2/imports` starts (ADR-0084 I10): a dry run's plan, or an
+/// import whose upload is bound and whose row is `running`, to be run by
+/// [`App::import_finish`] after the request answers.
+#[derive(Debug)]
+pub enum ImportStart {
+    Planned(ImportPlan),
+    Started(ImportJob),
+}
+
+/// A begun import, owning what its run reads: the verified bundle, the
+/// plan, the target's view, the bound upload and its place in the busy
+/// gate (I13), which it holds until it is dropped.
+pub struct ImportJob {
+    api_key: String,
+    caller: Caller,
+    record: ImportRecord,
+    planned: ImportPlan,
+    verified: VerifiedBundle,
+    view: ImportTargetView,
+    session: UploadSession,
+    _busy: BusyGuard,
+}
+
+impl std::fmt::Debug for ImportJob {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ImportJob")
+            .field("record", &self.record)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ImportJob {
+    /// The import's row as it began, `running`.
+    #[must_use]
+    pub fn record(&self) -> &ImportRecord {
+        &self.record
+    }
+}
+
+/// How a run ended: the import's row, and the reason its upload's staging
+/// key could not be shredded, which the caller logs (I11).
+#[derive(Debug)]
+pub struct ImportFinished {
+    pub import: Result<ImportRecord, AppError>,
+    pub shred_failure: Option<String>,
+}
+
 impl<J, S, C, I, Sc> App<J, S, C, I, Sc>
 where
     J: JournalStore,
@@ -91,15 +139,35 @@ where
     I: IdGen,
     Sc: Scanner,
 {
-    /// `POST /v2/imports`. `code_of` names a refused version's code as the
-    /// transport answers it, so the outcome and `GET /v2/imports/{id}`
-    /// carry the same codes the routes do (d11).
+    /// `POST /v2/imports` run in one call: the plan of a dry run, or the
+    /// finished import. The route starts the run and answers before it
+    /// ends (I10); this is the same import for an in-process caller. A
+    /// staging key that could not be shredded is a store failure here.
     pub async fn import_bundle(
         &self,
         api_key: &str,
         req: &ImportRequest,
         code_of: &(dyn Fn(AppError) -> String + Send + Sync),
     ) -> Result<ImportAnswer, AppError> {
+        match self.import_start(api_key, req).await? {
+            ImportStart::Planned(plan) => Ok(ImportAnswer::Planned(plan)),
+            ImportStart::Started(job) => {
+                let finished = self.import_finish(job, code_of).await;
+                if let Some(reason) = finished.shred_failure {
+                    return Err(AppError::Store(StoreError::Backend(reason)));
+                }
+                finished.import.map(ImportAnswer::Imported)
+            }
+        }
+    }
+
+    /// Verifies, plans and, unless a dry run, binds the upload and begins
+    /// the import (ADR-0084 d6-d8, I4, I10, I12, I13).
+    pub async fn import_start(
+        &self,
+        api_key: &str,
+        req: &ImportRequest,
+    ) -> Result<ImportStart, AppError> {
         let caller = self.authenticate(api_key).await?;
         let key = &caller.key;
         // d11: a person's writer key, and no other, imports (I1's shape).
@@ -111,7 +179,7 @@ where
         }
         // I13: one import or dry run per tenant, and a bounded number in
         // the process, hold a bundle in memory at a time.
-        let _busy = self
+        let mut busy = self
             .imports_busy
             .try_enter(key.tenant_id)
             .ok_or(AppError::ImportBusy)?;
@@ -160,12 +228,12 @@ where
             false
         })
         .map_err(AppError::Bundle)?;
-        let tips = tips_by_source(&verified);
         let (edges_proposable, edges_reported) = edge_counts(&verified);
 
         // d7's pre-pass: the whole plan fits the target account's meters,
         // or nothing is written.
-        let (memories, bytes_planned, writes) = planned_charges(&plan, &tips, &verified);
+        let (memories, bytes_planned, writes) =
+            planned_charges(&plan, &tips_by_source(&verified), &verified);
         let ceiling = self.ceiling_for(key.tenant_id, key.user).await?;
         self.require_within(
             key.tenant_id,
@@ -195,12 +263,18 @@ where
             edges_reported,
         };
         if req.dry_run {
-            return Ok(ImportAnswer::Planned(planned));
+            return Ok(ImportStart::Planned(planned));
         }
 
         let target_id = match target {
             Target::Existing(id) => id,
-            Target::New(name) => self.create_import_target(&caller, &name).await?,
+            Target::New(name) => {
+                // I16: created and marked in progress in one commit.
+                self.create_workspace_as(&caller, &name, None, None, true)
+                    .await?
+                    .workspace
+                    .workspace_id
+            }
         };
         let now = self.clock.now();
         let import = ImportRecord {
@@ -222,35 +296,84 @@ where
             created_at: now.clone(),
             ended_at: None,
         };
-        // I4: the upload binds in the transaction that starts the import.
-        if !self.journal.import_begin(&import, &now).await? {
-            let state = self
-                .journal
-                .upload_session(key.tenant_id, session.upload_id)
-                .await?
-                .map_or(UploadState::Abandoned, |s| s.state);
-            return Err(AppError::Upload(match state {
-                UploadState::Expired => UploadRefusal::Expired,
-                state => UploadRefusal::SessionInvalid { state },
-            }));
+        // I4, I12: the upload binds and the source's key is pinned in the
+        // transaction that starts the import.
+        match self.journal.import_begin(&import, &now).await? {
+            ImportBegin::Begun => {}
+            ImportBegin::KeyPinned { pinned } => {
+                return Err(AppError::Bundle(BundleError::SourceKeyChanged {
+                    detail: format!(
+                        "signed by {}, the ledger pins {pinned}",
+                        import.signer_fingerprint
+                    ),
+                }));
+            }
+            ImportBegin::NotBindable => {
+                let state = self
+                    .journal
+                    .upload_session(key.tenant_id, session.upload_id)
+                    .await?
+                    .map_or(UploadState::Abandoned, |s| s.state);
+                let expired = state == UploadState::Expired
+                    || (state == UploadState::Completed
+                        && session
+                            .expires_at
+                            .as_ref()
+                            .is_some_and(|e| e.unix_micros() <= now.unix_micros()));
+                return Err(AppError::Upload(if expired {
+                    UploadRefusal::Expired
+                } else {
+                    UploadRefusal::SessionInvalid { state }
+                }));
+            }
         }
+        busy.running_import(import.import_id);
+        Ok(ImportStart::Started(ImportJob {
+            api_key: api_key.to_owned(),
+            caller,
+            record: import,
+            planned,
+            verified,
+            view,
+            session,
+            _busy: busy,
+        }))
+    }
 
+    /// Runs a begun import to its end: writes the plan, journals
+    /// `workspace.imported` or ends the row `failed`, and shreds the bound
+    /// upload's key, done or failed (d11, I4, I10).
+    pub async fn import_finish(
+        &self,
+        job: ImportJob,
+        code_of: &(dyn Fn(AppError) -> String + Send + Sync),
+    ) -> ImportFinished {
+        let tips = tips_by_source(&job.verified);
         let run = self
             .import_run(
-                api_key, &caller, &import, &planned, &verified, &view, &tips, code_of,
+                &job.api_key,
+                &job.caller,
+                &job.record,
+                &job.planned,
+                &job.verified,
+                &job.view,
+                &tips,
+                code_of,
             )
             .await;
-        // d11, I4: the upload's key is nulled when the import ends, done or
-        // failed, then its objects go.
-        self.shred_bound_upload(&session).await;
-        match run {
+        let shred_failure = self.shred_bound_upload(&job.session).await.err();
+        let import = match run {
             Ok(()) => self
                 .journal
-                .import_record(key.tenant_id, import.import_id)
-                .await?
-                .map(ImportAnswer::Imported)
-                .ok_or(AppError::NotFound),
+                .import_record(job.record.tenant_id, job.record.import_id)
+                .await
+                .map_err(AppError::from)
+                .and_then(|r| r.ok_or(AppError::NotFound)),
             Err(e) => Err(e),
+        };
+        ImportFinished {
+            import,
+            shred_failure,
         }
     }
 
@@ -274,7 +397,16 @@ where
         &self,
         tenant_id: Uuid,
     ) -> Result<crate::types::ImportStats, AppError> {
-        Ok(self.journal.import_stats(tenant_id).await?)
+        let now = self.clock.now();
+        let stopped_before = EventTime::from_unix_micros(
+            now.unix_micros()
+                .saturating_sub(oml_domain::import::STOPPED_AFTER_MICROS),
+        )
+        .unwrap_or(now);
+        Ok(self
+            .journal
+            .import_stats(tenant_id, &stopped_before)
+            .await?)
     }
 
     /// The caller's completed import upload; another key's, or none, is
@@ -323,32 +455,33 @@ where
         self.require_access(caller, id, Role::Writer, "import")
             .await?;
         let node = ancestry.first().ok_or(AppError::NotFound)?;
-        if node.status != WorkspaceStatus::Development || in_progress_root_in(&ancestry).is_none() {
-            return Err(AppError::ImportTargetNotInProgress { workspace_id: id });
+        if node.status == WorkspaceStatus::Development && in_progress_root_in(&ancestry).is_some() {
+            return Ok(Target::Existing(id));
         }
-        Ok(Target::Existing(id))
+        // I16: a standard, empty development workspace this key created is
+        // an earlier import's target whose mark never landed; the retry
+        // sets it.
+        if node.status == WorkspaceStatus::Development
+            && self
+                .journal
+                .workspace_creator_if_empty(key.tenant_id, id)
+                .await?
+                == Some(key.key_id)
+        {
+            self.mark_import_target(caller, id).await?;
+            return Ok(Target::Existing(id));
+        }
+        Err(AppError::ImportTargetNotInProgress { workspace_id: id })
     }
 
-    /// Creates `name` where the caller may create a workspace (ADR-0044
-    /// d6), and puts it in progress unless an ancestor already is (d6).
-    /// A taken name is `name.taken`.
-    async fn create_import_target(
+    /// Marks an import's own empty target `in_progress` under the importing
+    /// key (ADR-0030 d1, amended 2026-11-18).
+    async fn mark_import_target(
         &self,
         caller: &Caller,
-        name: &oml_domain::name::Name,
-    ) -> Result<Uuid, AppError> {
+        workspace_id: Uuid,
+    ) -> Result<(), AppError> {
         let key = &caller.key;
-        let created = self
-            .create_workspace(Bearer::Session(caller), name, None, None)
-            .await?;
-        let workspace_id = created.workspace.workspace_id;
-        if self
-            .in_progress_root(key.tenant_id, workspace_id)
-            .await?
-            .is_some()
-        {
-            return Ok(workspace_id);
-        }
         let mut attempt = 0;
         loop {
             let prev = self.head_event(key.tenant_id).await?;
@@ -378,16 +511,27 @@ where
             {
                 Err(e) if head_moved(&e) && attempt + 1 < BULK_CHAIN_RETRIES => attempt += 1,
                 Err(e) => return Err(e),
-                Ok(_) => return Ok(workspace_id),
+                Ok(_) => return Ok(()),
             }
         }
     }
 
     /// The upload's plaintext, in part order.
+    /// The digest is recomputed over what is read: bytes changed at rest
+    /// after completion are `upload.digest_mismatch` (ADR-0004 d3, readings
+    /// of 2026-11-18).
     async fn upload_bytes(&self, session: &UploadSession) -> Result<Vec<u8>, AppError> {
+        use sha2::{Digest, Sha256};
         let mut bytes = Vec::with_capacity(usize::try_from(session.size).unwrap_or(0));
+        let mut hash = Sha256::new();
         for n in 1..=upload::part_count(session.size) {
-            bytes.extend_from_slice(&self.upload_part(session, n).await?);
+            let part = self.upload_part(session, n).await?;
+            hash.update(&part);
+            bytes.extend_from_slice(&part);
+        }
+        let digest: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
+        if digest != session.sha256 {
+            return Err(AppError::Upload(UploadRefusal::DigestMismatch));
         }
         Ok(bytes)
     }
@@ -413,6 +557,9 @@ where
         let key = &caller.key;
         let mut counts: BTreeMap<String, u64> = BTreeMap::new();
         let mut refusals: Vec<ImportRefusal> = Vec::new();
+        // I14: every version this import wrote, journalled by
+        // `workspace.imported`.
+        let mut versions: Vec<Value> = Vec::new();
         // Source artifact id to the target version that carries it, for
         // edges: earlier imports' and this one's.
         let mut carried: BTreeMap<String, Uuid> = view.carried.iter().cloned().collect();
@@ -435,42 +582,61 @@ where
                 .source
                 .as_ref()
                 .and_then(|(id, v)| tips.get(&(id.clone(), *v)).copied());
-            let written = self
-                .write_planned(
-                    caller,
-                    import,
-                    planned,
-                    verified,
-                    planned_key,
-                    source,
-                    target_tips.get(planned_key.claim_key.as_str()).copied(),
-                )
-                .await;
             let (source_id, source_version) = planned_key
                 .source
                 .clone()
                 .unwrap_or_else(|| (String::new(), 0));
+            // I14: the write's own commit records it.
+            let record = ImportedWrite {
+                import_id: import.import_id,
+                source_artifact_id: source_id.clone(),
+                source_version,
+                outcome: outcome.as_str().to_owned(),
+                provenance: provenance(
+                    &planned.source,
+                    import.import_id,
+                    source,
+                    outcome == Outcome::Conflict,
+                ),
+            };
+            let written = self
+                .write_planned(
+                    caller,
+                    import,
+                    verified,
+                    planned_key,
+                    source,
+                    target_tips.get(planned_key.claim_key.as_str()).copied(),
+                    &record,
+                )
+                .await;
             match written {
-                Ok(memory_id) => {
-                    let version = ImportedVersion {
-                        memory_id,
-                        source_artifact_id: source_id.clone(),
-                        source_version,
-                        outcome: outcome.as_str().to_owned(),
-                        provenance: provenance(
-                            &planned.source,
-                            import.import_id,
-                            source,
-                            outcome == Outcome::Conflict,
-                        ),
-                    };
-                    if let Err(e) = self
-                        .journal
-                        .import_version_recorded(key.tenant_id, import.import_id, &version)
-                        .await
+                Ok((memory_id, replayed)) => {
+                    // A replay committed nothing: an earlier import's write,
+                    // which this import records as its own too.
+                    if replayed
+                        && let Err(e) = self
+                            .journal
+                            .import_version_recorded(
+                                key.tenant_id,
+                                import.import_id,
+                                &ImportedVersion {
+                                    memory_id,
+                                    source_artifact_id: record.source_artifact_id.clone(),
+                                    source_version,
+                                    outcome: record.outcome.clone(),
+                                    provenance: record.provenance.clone(),
+                                },
+                            )
+                            .await
                     {
                         return self.fail_import(import, &counts, &refusals, e.into()).await;
                     }
+                    versions.push(json!({
+                        "memory_id": memory_id.to_string(),
+                        "source": {"artifact_id": source_id, "version": source_version},
+                        "outcome": outcome.as_str(),
+                    }));
                     carried.insert(source_id, memory_id);
                     *counts.entry(outcome.as_str().to_owned()).or_default() += 1;
                 }
@@ -561,6 +727,7 @@ where
             "exported_at": manifest.exported_at,
             "counts": counts,
             "refused": refusals.len(),
+            "versions": versions,
             "authenticated": planned.plan.authenticated,
             "allow_older": planned.plan.allow_older_used,
             "signer_fingerprint": planned.plan.signer_fingerprint,
@@ -615,16 +782,16 @@ where
         &self,
         caller: &Caller,
         import: &ImportRecord,
-        planned: &ImportPlan,
         bundle: &VerifiedBundle,
         key: &PlannedKey,
         source: Option<&VersionLine>,
         target_tip: Option<(Uuid, u32)>,
-    ) -> Result<Uuid, AppError> {
+        record: &ImportedWrite,
+    ) -> Result<(Uuid, bool), AppError> {
         let (source_id, source_version) = key.source.clone().unwrap_or_default();
         let idempotency_key = import_idempotency_key(
             &import.target_workspace_id.to_string(),
-            &planned.source,
+            &bundle.contents.manifest.source,
             &source_id,
             source_version,
         );
@@ -652,12 +819,12 @@ where
                         title: v.title.clone(),
                         origin: fields.origin,
                     };
-                    self.submit_memory_as(Bearer::Session(caller), &req, true)
+                    self.submit_memory_as(Bearer::Session(caller), &req, Some(record))
                         .await
-                        .map(|o| o.receipt.memory_id)
+                        .map(|o| (o.receipt.memory_id, o.replayed))
                 }
                 (outcome, source, Some((tip_id, tip_version))) => {
-                    let retire = outcome == Outcome::Removed;
+                    let retire = writes_retirement(outcome, source);
                     let (body, fields) = match source {
                         Some(v) => {
                             let fields = VersionFields::of(v, &bundle_body(v, bundle)?)?;
@@ -691,9 +858,9 @@ where
                         origin: fields.as_ref().and_then(|f| f.origin),
                         expected_version: tip_version,
                     };
-                    self.supersede(Bearer::Session(caller), &req)
+                    self.supersede_as(Bearer::Session(caller), &req, Some(record))
                         .await
-                        .map(|o| o.receipt.memory_id)
+                        .map(|o| (o.receipt.memory_id, o.replayed))
                 }
                 // A new key with no source line, or a change with no target
                 // tip, cannot be planned (R10).
@@ -732,10 +899,12 @@ where
         Err(e)
     }
 
-    /// Nulls a bound upload's key, then removes its objects (I4).
-    async fn shred_bound_upload(&self, session: &UploadSession) {
+    /// Nulls a bound upload's key, then removes its objects (I4). A store
+    /// failure is returned for the caller to log; the sweep shreds the key
+    /// of a bound upload whose import ended (I11).
+    async fn shred_bound_upload(&self, session: &UploadSession) -> Result<(), String> {
         let now: EventTime = self.clock.now();
-        if let Ok(Some(shredded)) = self
+        match self
             .journal
             .upload_transition(
                 session.tenant_id,
@@ -748,8 +917,29 @@ where
             )
             .await
         {
-            self.remove_objects(&shredded).await;
+            Ok(Some(shredded)) => {
+                self.remove_objects(&shredded).await;
+                Ok(())
+            }
+            Ok(None) => Err(format!(
+                "upload {} is no longer bound, so its key was not shredded here",
+                session.upload_id
+            )),
+            Err(e) => Err(format!(
+                "upload {}: the staging key was not shredded: {e}",
+                session.upload_id
+            )),
         }
+    }
+}
+
+/// Whether a planned key's write is a retirement (d8, I15): a removal, or
+/// a conflict whose source removed the key, never a superseding text.
+fn writes_retirement(outcome: Outcome, source: Option<&VersionLine>) -> bool {
+    match outcome {
+        Outcome::Removed => true,
+        Outcome::Conflict => source.is_none_or(|v| v.retirement),
+        _ => false,
     }
 }
 
@@ -993,4 +1183,16 @@ fn provenance(
 
 fn state_name(v: &VersionLine) -> Value {
     serde_json::to_value(v.state).unwrap_or(Value::Null)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_conflict_whose_source_removed_the_key_writes_a_retirement() {
+        assert!(writes_retirement(Outcome::Conflict, None));
+        assert!(writes_retirement(Outcome::Removed, None));
+        assert!(!writes_retirement(Outcome::Changed, None));
+    }
 }

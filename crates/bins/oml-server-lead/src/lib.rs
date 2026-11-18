@@ -1965,6 +1965,7 @@ pub async fn sweep_uploads(
         .map_err(|e| format!("tenant enumeration: {e}"))?;
     let mut totals = oml_transport_http::traffic::metrics::UploadTotals::default();
     let (mut changed, mut failures, mut reasons) = (0, 0, Vec::new());
+    let mut stopped = 0;
     for tenant_id in &tenants {
         match app.sweep_uploads(*tenant_id).await {
             Ok(sweep) => {
@@ -1975,6 +1976,8 @@ pub async fn sweep_uploads(
                 }
                 totals.unbound_bytes += sweep.stats.unbound_bytes;
                 totals.unswept += sweep.stats.unswept;
+                totals.staging_stale += sweep.stats.staging_stale;
+                stopped += sweep.imports_stopped;
             }
             Err(e) => {
                 failures += 1;
@@ -1983,30 +1986,40 @@ pub async fn sweep_uploads(
         }
     }
     totals.stored_bytes = app.uploads_stored_bytes().await.unwrap_or(0);
-    Ok((totals, changed, failures, reasons))
+    if stopped > 0 {
+        tracing::warn!(
+            event = EVENT_IMPORTS_STOPPED,
+            stopped,
+            "imports running for more than an hour that this process does not run ended failed; their staging keys are shredded (ADR-0084 I11)"
+        );
+    }
+    Ok((totals, changed + stopped, failures, reasons))
 }
 
-/// The deployment's imports by state and how many used `allow_older`,
-/// for the `imports` doctor line (ADR-0084 d15). A tenant that fails to
-/// read is left out of the totals.
-pub async fn import_totals(
-    app: &LeadApp,
-    store: &PgStore,
-) -> (std::collections::BTreeMap<String, u64>, u64) {
-    let mut by_state = std::collections::BTreeMap::new();
-    let mut allow_older = 0;
+/// The `event` field of the log line a sweep that ended stopped imports
+/// writes (ADR-0084 I11).
+pub const EVENT_IMPORTS_STOPPED: &str = "imports_stopped";
+
+/// The deployment's imports by state, how many used `allow_older`, how
+/// many are stopped (I11) and the versions with an import's key and no
+/// provenance (I14), for the `imports` doctor line (ADR-0084 d15). A tenant
+/// that fails to read is left out of the totals.
+pub async fn import_totals(app: &LeadApp, store: &PgStore) -> oml_app::types::ImportStats {
+    let mut totals = oml_app::types::ImportStats::default();
     let Ok(tenants) = enumerate_tenants(store.pool()).await else {
-        return (by_state, allow_older);
+        return totals;
     };
     for tenant_id in tenants {
         if let Ok(stats) = app.import_stats(tenant_id).await {
             for (state, n) in stats.by_state {
-                *by_state.entry(state).or_default() += n;
+                *totals.by_state.entry(state).or_default() += n;
             }
-            allow_older += stats.allow_older;
+            totals.allow_older += stats.allow_older;
+            totals.stopped += stats.stopped;
+            totals.unprovenanced += stats.unprovenanced;
         }
     }
-    (by_state, allow_older)
+    totals
 }
 
 /// Runs [`sweep_uploads`] at the lead's start and every
@@ -2024,9 +2037,17 @@ pub fn spawn_upload_sweep(
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             ticks.tick().await;
-            let (imports, allow_older) = import_totals(&app, &store).await;
-            metrics.import_sweep(&imports, allow_older);
-            match sweep_uploads(&app, &store).await {
+            // The sweep first ends stopped imports (I11), so the gauges
+            // read after it.
+            let swept = sweep_uploads(&app, &store).await;
+            let imports = import_totals(&app, &store).await;
+            metrics.import_sweep(
+                &imports.by_state,
+                imports.allow_older,
+                imports.stopped,
+                imports.unprovenanced,
+            );
+            match swept {
                 Ok((totals, changed, failures, reasons)) => {
                     metrics.upload_sweep(&totals, failures);
                     if failures > 0 {

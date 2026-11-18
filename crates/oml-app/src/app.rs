@@ -25,7 +25,9 @@ mod widen;
 pub use auth::{Callback, CallbackRefusal, WEB_SESSION_TTL_SECS};
 pub use exports::{ExportCounts, ExportRequest, Exported};
 pub use federation::WideKey;
-pub use imports::{ImportAnswer, ImportPlan, ImportRequest};
+pub use imports::{
+    ImportAnswer, ImportFinished, ImportJob, ImportPlan, ImportRequest, ImportStart,
+};
 pub use metering::{AccountLimits, UsageDriftReport};
 pub use pages::{
     ActClaim, ActTicket, AdminMemory, AdminPage, AdminSearchRequest, Capacity, CapacityGranted,
@@ -3704,6 +3706,23 @@ where
         crew: Option<Reference>,
     ) -> Result<CreatedWorkspace, AppError> {
         let caller = self.authenticate_bearer(bearer.into()).await?;
+        self.create_workspace_as(&caller, name, parent, crew, false)
+            .await
+    }
+
+    /// [`Self::create_workspace`] for an authenticated caller. With
+    /// `in_progress`, a workspace no ancestor of which is in progress is
+    /// marked `in_progress` by the caller's key in the commit that creates
+    /// it: an import's new target (ADR-0030 d1, amended 2026-11-18;
+    /// ADR-0084 I16).
+    pub(crate) async fn create_workspace_as(
+        &self,
+        caller: &Caller,
+        name: &Name,
+        parent: Option<Reference>,
+        crew: Option<Reference>,
+        in_progress: bool,
+    ) -> Result<CreatedWorkspace, AppError> {
         let key = &caller.key;
         // A user key with the writer role creates inside its own root, by
         // its effective access on the parent; every other key by the admin
@@ -3721,7 +3740,7 @@ where
                     Some(parent) => self.resolve(key, NamedKind::Workspace, parent).await?,
                     None => root,
                 };
-                self.require_access(&caller, parent_id, Role::Writer, "create_workspace")
+                self.require_access(caller, parent_id, Role::Writer, "create_workspace")
                     .await?;
                 Some(parent_id)
             }
@@ -3809,12 +3828,38 @@ where
             Some(key.key_id),
             Self::workspace_create_payload(&workspace),
         )?;
-        self.commit(
-            event,
-            MetadataFold::WorkspaceCreated(workspace.clone()),
-            None,
-        )
-        .await?;
+        let mut links = Vec::with_capacity(2);
+        let mark = in_progress && in_progress_root_in(&ancestors).is_none();
+        let mode_event = if mark {
+            Some(self.seal(
+                Some(&event),
+                key.tenant_id,
+                event_types::WORKSPACE_MODE_SET,
+                &key.principal,
+                Some(key.key_id),
+                json!({
+                    "workspace_id": workspace.workspace_id.to_string(),
+                    "mode": "in_progress",
+                    "from": "standard",
+                }),
+            )?)
+        } else {
+            None
+        };
+        links.push((event, MetadataFold::WorkspaceCreated(workspace.clone())));
+        if let Some(mode_event) = mode_event {
+            links.push((
+                mode_event,
+                MetadataFold::WorkspaceModeSet {
+                    workspace_id: workspace.workspace_id,
+                    in_progress: true,
+                    held_free: Vec::new(),
+                },
+            ));
+        }
+        self.commit_chain(links).await?;
+        let mut workspace = workspace;
+        workspace.in_progress = mark;
         let ancestry: Vec<WorkspaceRecord> = std::iter::once(workspace.clone())
             .chain(ancestors)
             .collect();
@@ -5497,7 +5542,7 @@ where
         bearer: impl Into<Bearer<'_>>,
         req: &SubmitRequest,
     ) -> Result<SubmitOutcome, AppError> {
-        self.submit_memory_as(bearer.into(), req, false).await
+        self.submit_memory_as(bearer.into(), req, None).await
     }
 
     /// [`Self::submit_memory`], where `imported` says an import writes the
@@ -5507,7 +5552,7 @@ where
         &self,
         bearer: Bearer<'_>,
         req: &SubmitRequest,
-        imported: bool,
+        imported: Option<&crate::types::ImportedWrite>,
     ) -> Result<SubmitOutcome, AppError> {
         let caller = self.authenticate_bearer(bearer).await?;
         let key = &caller.key;
@@ -5544,7 +5589,7 @@ where
         // is the key's own id while rotation is unbuilt; once it is, d6 names
         // the root of the key's `rotated_from` chain, so a rotated key keeps
         // deriving the keys its predecessor did.
-        if !imported
+        if imported.is_none()
             && req
                 .claim_key
                 .as_deref()
@@ -5844,6 +5889,7 @@ where
         self.commit_written(
             event,
             MetadataFold::MemoryHeld {
+                imported: imported.cloned().map(Box::new),
                 memory,
                 enqueue: true,
                 findings: findings.into(),
@@ -8487,7 +8533,18 @@ where
         bearer: impl Into<Bearer<'_>>,
         req: &SupersedeRequest,
     ) -> Result<SupersedeOutcome, AppError> {
-        let caller = self.authenticate_bearer(bearer.into()).await?;
+        self.supersede_as(bearer.into(), req, None).await
+    }
+
+    /// [`Self::supersede`], with an import's record of the write stored in
+    /// its own commit (ADR-0084 I14).
+    pub(crate) async fn supersede_as(
+        &self,
+        bearer: Bearer<'_>,
+        req: &SupersedeRequest,
+        imported: Option<&crate::types::ImportedWrite>,
+    ) -> Result<SupersedeOutcome, AppError> {
+        let caller = self.authenticate_bearer(bearer).await?;
         let key = &caller.key;
         let admissible = admissible_grant_roles(key.role);
         let reviewer = admissible.contains(&Role::Reviewer);
@@ -8904,6 +8961,7 @@ where
             .commit_written(
                 event,
                 MetadataFold::MemoryHeld {
+                    imported: imported.cloned().map(Box::new),
                     memory: successor,
                     enqueue: true,
                     findings: findings.into(),

@@ -4361,6 +4361,7 @@ dependencies = [
 name = "oml-port-contracts"
 version = "0.7.3"
 dependencies = [
+ "chacha20poly1305",
  "ed25519-dalek",
  "oml-app",
  "oml-bundle",

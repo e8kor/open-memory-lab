@@ -116,7 +116,10 @@ mod tests {
         let first = gate.try_enter(a).expect("a's first run enters");
         assert!(gate.try_enter(a).is_none(), "a second run of a's waits");
         let second = gate.try_enter(b).expect("b enters beside a");
-        assert!(gate.try_enter(c).is_none(), "a third tenant is over the bound");
+        assert!(
+            gate.try_enter(c).is_none(),
+            "a third tenant is over the bound"
+        );
         drop(first);
         assert!(gate.try_enter(c).is_some(), "a freed place admits c");
         drop(second);

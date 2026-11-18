@@ -350,6 +350,9 @@ pub enum MetadataFold {
         memory: MemoryRecord,
         enqueue: bool,
         findings: Box<[VersionFinding]>,
+        /// An import's write: its `import_versions` row and the version's
+        /// `import_provenance`, stored in this commit (ADR-0084 I14).
+        imported: Option<Box<crate::types::ImportedWrite>>,
     },
     /// A verdict that does not yet satisfy the policy's `k`: journalled,
     /// status unchanged.
@@ -1001,11 +1004,13 @@ pub trait JournalStore: Retriever + Send + Sync {
         at: &EventTime,
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
 
-    /// The tenant's sessions counted by state, its unbound bytes and its
-    /// unswept sessions.
+    /// The tenant's sessions counted by state, its unbound bytes, its
+    /// unswept sessions, and its bound sessions whose key is still set and
+    /// that were bound before `stale_before`.
     fn upload_stats(
         &self,
         tenant_id: Uuid,
+        stale_before: &EventTime,
     ) -> impl Future<Output = Result<crate::types::UploadStats, StoreError>> + Send;
 
     /// The target workspace as an import from the source
@@ -1020,16 +1025,39 @@ pub trait JournalStore: Retriever + Send + Sync {
         source_tenant_id: &str,
     ) -> impl Future<Output = Result<crate::types::ImportTargetView, StoreError>> + Send;
 
-    /// Binds the import's upload and inserts its row `running`, in one
-    /// transaction: the session moves from `completed` to `bound` only when
-    /// the importing key opened it. `false`, writing nothing, when the
-    /// session is not that key's completed session (ADR-0004 d3; ADR-0084
-    /// I4).
+    /// Binds the import's upload, pins the source's key and inserts the
+    /// import's row `running`, in one transaction: the session moves from
+    /// `completed` to `bound` only when the importing key opened it and it
+    /// expires after `at`, and the target's ledger for the source is
+    /// inserted with the import's signer and an empty `exported_at` where
+    /// none exists. A session not bindable, or a ledger pinning another
+    /// key, writes nothing (ADR-0004 d3; ADR-0084 I4, I12).
     fn import_begin(
         &self,
         import: &crate::types::ImportRecord,
         at: &EventTime,
-    ) -> impl Future<Output = Result<bool, StoreError>> + Send;
+    ) -> impl Future<Output = Result<crate::types::ImportBegin, StoreError>> + Send;
+
+    /// Ends `failed` at `at` every import `running` since before
+    /// `started_before` and not named in `live`, and nulls its bound
+    /// upload's key in the same transaction, so the upload sweep removes
+    /// its objects; the count ended (ADR-0084 I11).
+    fn imports_end_stopped(
+        &self,
+        tenant_id: Uuid,
+        started_before: &EventTime,
+        at: &EventTime,
+        live: &[Uuid],
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send;
+
+    /// The key that created `workspace_id`, when the workspace holds no
+    /// version and no child; `None` otherwise (ADR-0030 d1, amended
+    /// 2026-11-18).
+    fn workspace_creator_if_empty(
+        &self,
+        tenant_id: Uuid,
+        workspace_id: Uuid,
+    ) -> impl Future<Output = Result<Option<Uuid>, StoreError>> + Send;
 
     /// Records one version the import wrote and sets the row's
     /// `import_provenance`; recording it again changes nothing (ADR-0084
@@ -1040,6 +1068,14 @@ pub trait JournalStore: Retriever + Send + Sync {
         import_id: Uuid,
         version: &crate::types::ImportedVersion,
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
+
+    /// The version's `import_provenance`, or `None` for a version no
+    /// import wrote (ADR-0084 d4).
+    fn import_provenance(
+        &self,
+        tenant_id: Uuid,
+        memory_id: Uuid,
+    ) -> impl Future<Output = Result<Option<Value>, StoreError>> + Send;
 
     /// Ends a `running` import `failed` with its counts and refusals so
     /// far; nothing is journalled for a failure (ADR-0084 d11).
@@ -1059,11 +1095,13 @@ pub trait JournalStore: Retriever + Send + Sync {
         import_id: Uuid,
     ) -> impl Future<Output = Result<Option<crate::types::ImportRecord>, StoreError>> + Send;
 
-    /// The tenant's imports by state and how many used `allow_older`
-    /// (ADR-0084 d15).
+    /// The tenant's imports by state, how many used `allow_older`, how many
+    /// are `running` since before `stopped_before`, and the versions with an
+    /// import's idempotency key and no provenance (ADR-0084 d15, I11, I14).
     fn import_stats(
         &self,
         tenant_id: Uuid,
+        stopped_before: &EventTime,
     ) -> impl Future<Output = Result<crate::types::ImportStats, StoreError>> + Send;
 
     /// The tenant's export policy (ADR-0084 d10): `own_root` until an admin

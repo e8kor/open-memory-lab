@@ -1512,6 +1512,7 @@ async fn each_r2_clause_alone_keeps_a_curator_off_a_row() {
             event_types::SUBMISSION_REMEMBER,
             json!({ "artifact_id": memory_id.to_string() }),
             MetadataFold::MemoryHeld {
+                imported: None,
                 memory,
                 enqueue: false,
                 findings: Box::default(),

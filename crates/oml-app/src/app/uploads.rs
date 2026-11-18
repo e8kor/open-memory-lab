@@ -57,6 +57,8 @@ pub struct UploadSweep {
     pub failures: u64,
     /// The tenant's sessions after the sweep.
     pub stats: UploadStats,
+    /// Imports the sweep ended `failed` as stopped (ADR-0084 I11).
+    pub imports_stopped: u64,
 }
 
 /// The object name of part `n` of a session, and the prefix of all of
@@ -347,8 +349,25 @@ where
     /// whose key is gone are removed, the key always before the objects.
     pub async fn sweep_uploads(&self, tenant_id: Uuid) -> Result<UploadSweep, AppError> {
         let now = self.clock.now();
+        // I11: an import running past its bound that this process does not
+        // run stopped; it ends failed and its staging key goes, so the
+        // removal below takes its objects.
+        let stopped_before = micros_time(
+            now.unix_micros()
+                .saturating_sub(oml_domain::import::STOPPED_AFTER_MICROS),
+        );
+        let stopped = self
+            .journal
+            .imports_end_stopped(
+                tenant_id,
+                &stopped_before,
+                &now,
+                &self.imports_busy.running_imports(),
+            )
+            .await?;
         let mut sweep = UploadSweep {
             expired: self.journal.uploads_expire(tenant_id, &now).await?,
+            imports_stopped: stopped,
             ..UploadSweep::default()
         };
         if let Some(objects) = &self.uploads.objects {
@@ -380,7 +399,11 @@ where
                 }
             }
         }
-        sweep.stats = self.journal.upload_stats(tenant_id).await?;
+        let stale_before = micros_time(
+            now.unix_micros()
+                .saturating_sub(upload::STAGING_STALE_MICROS),
+        );
+        sweep.stats = self.journal.upload_stats(tenant_id, &stale_before).await?;
         Ok(sweep)
     }
 

@@ -29,6 +29,10 @@ pub const CAP_MICROS: i64 = 72 * HOUR_MICROS;
 /// A completed session nobody bound expires this long after completion.
 pub const UNBOUND_MICROS: i64 = 24 * HOUR_MICROS;
 
+/// How long a bound upload's key may stay set before the doctor warns
+/// `upload_staging_stale` (ADR-0004 d3, readings of 2026-11-18): 24 hours.
+pub const STAGING_STALE_MICROS: i64 = 24 * HOUR_MICROS;
+
 /// What an upload is for. One purpose is built; attachments (ADR-0004 d2)
 /// add theirs when they are built.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

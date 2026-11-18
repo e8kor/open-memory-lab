@@ -165,6 +165,8 @@ pub struct UploadTotals {
     pub stored_bytes: u64,
     /// Sessions whose key is gone and whose objects remain.
     pub unswept: u64,
+    /// Bound sessions whose key is still set 24 hours after binding.
+    pub staging_stale: u64,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
@@ -222,11 +224,14 @@ pub struct Metrics {
     upload_unbound_bytes: Gauge,
     upload_stored_bytes: Gauge,
     upload_unswept: Gauge,
+    upload_staging_stale: Gauge,
     upload_sweep_failures: Counter,
     import_refusals: Family<CodeLabels, Counter>,
     import_versions: Family<OutcomeLabels, Counter>,
     imports: Family<StateLabels, Gauge>,
     imports_allow_older: Gauge,
+    imports_stopped: Gauge,
+    imports_unprovenanced: Gauge,
     exports: Counter,
     scan_findings: Family<ScanLabels, Counter>,
     scan_counts: std::sync::OnceLock<ScanCounts>,
@@ -386,11 +391,14 @@ impl Default for Metrics {
         let upload_unbound_bytes = Gauge::default();
         let upload_stored_bytes = Gauge::default();
         let upload_unswept = Gauge::default();
+        let upload_staging_stale = Gauge::default();
         let upload_sweep_failures = Counter::default();
         let import_refusals = Family::<CodeLabels, Counter>::default();
         let import_versions = Family::<OutcomeLabels, Counter>::default();
         let imports = Family::<StateLabels, Gauge>::default();
         let imports_allow_older = Gauge::default();
+        let imports_stopped = Gauge::default();
+        let imports_unprovenanced = Gauge::default();
         let exports = Counter::default();
         registry.register(
             "oml_http_request_duration_seconds",
@@ -550,6 +558,11 @@ impl Default for Metrics {
             upload_unswept.clone(),
         );
         registry.register(
+            "oml_upload_staging_stale",
+            "bound upload sessions whose key is still set 24 hours after binding, at the last sweep",
+            upload_staging_stale.clone(),
+        );
+        registry.register(
             "oml_upload_sweep_failures",
             "upload sweeps or object removals that failed since start; the next sweep retries",
             upload_sweep_failures.clone(),
@@ -576,6 +589,16 @@ impl Default for Metrics {
             "oml_imports_allow_older",
             "imports that used allow_older, at the last sweep",
             imports_allow_older.clone(),
+        );
+        registry.register(
+            "oml_imports_stopped",
+            "imports running for more than an hour that this process did not run, at the last sweep",
+            imports_stopped.clone(),
+        );
+        registry.register(
+            "oml_imports_unprovenanced",
+            "versions carrying an import's idempotency key and no import_provenance, at the last sweep",
+            imports_unprovenanced.clone(),
         );
         registry.register(
             "oml_exports",
@@ -626,10 +649,13 @@ impl Default for Metrics {
             import_versions,
             imports,
             imports_allow_older,
+            imports_stopped,
+            imports_unprovenanced,
             upload_sessions,
             upload_unbound_bytes,
             upload_stored_bytes,
             upload_unswept,
+            upload_staging_stale,
             upload_sweep_failures,
             exports,
             scan_findings,
@@ -720,6 +746,8 @@ impl Metrics {
         &self,
         by_state: &std::collections::BTreeMap<String, u64>,
         allow_older: u64,
+        stopped: u64,
+        unprovenanced: u64,
     ) {
         for state in oml_app::domain::import::ImportState::ALL {
             self.imports
@@ -733,6 +761,10 @@ impl Metrics {
         }
         self.imports_allow_older
             .set(i64::try_from(allow_older).unwrap_or(i64::MAX));
+        self.imports_stopped
+            .set(i64::try_from(stopped).unwrap_or(i64::MAX));
+        self.imports_unprovenanced
+            .set(i64::try_from(unprovenanced).unwrap_or(i64::MAX));
     }
 
     /// One item of a bulk verdict: `approved`, `rejected` or `skipped`
@@ -959,6 +991,7 @@ impl Metrics {
         self.upload_unbound_bytes.set(gauge(totals.unbound_bytes));
         self.upload_stored_bytes.set(gauge(totals.stored_bytes));
         self.upload_unswept.set(gauge(totals.unswept));
+        self.upload_staging_stale.set(gauge(totals.staging_stale));
         self.upload_sweep_failures.inc_by(failures);
     }
 

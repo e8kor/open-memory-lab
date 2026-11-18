@@ -3476,7 +3476,9 @@ pub enum AppError {
     ImportOverQuota(oml_domain::signup::QuotaReached),
     /// The tenant runs an import or dry run already, or the process runs
     /// its bound of them (`import.busy`, 409, retryable; ADR-0084 I13).
-    #[error("an import or dry run of this tenant's is running, or the server runs its bound of them (ADR-0084 I13, import.busy)")]
+    #[error(
+        "an import or dry run of this tenant's is running, or the server runs its bound of them (ADR-0084 I13, import.busy)"
+    )]
     ImportBusy,
     /// The tenant runs an export already (`export.busy`, 409, retryable;
     /// ADR-0084 I13).
@@ -4057,6 +4059,9 @@ pub struct UploadStats {
     pub unbound_bytes: u64,
     /// Sessions whose key is gone and whose objects remain.
     pub unswept: u64,
+    /// Bound sessions whose key is still set past the staging bound
+    /// (ADR-0004 d3, readings of 2026-11-18): `upload_staging_stale`.
+    pub staging_stale: u64,
 }
 
 /// One version an import skipped, named in its outcome (ADR-0084 d11): the
@@ -4166,4 +4171,36 @@ pub struct ImportEnded {
 pub struct ImportStats {
     pub by_state: std::collections::BTreeMap<String, u64>,
     pub allow_older: u64,
+    /// Imports `running` since before the stopped bound (ADR-0084 I11):
+    /// the `imports_stopped` warning, which a sweep ends next.
+    pub stopped: u64,
+    /// Versions carrying an import's idempotency key and no
+    /// `import_provenance` (ADR-0084 I14), which no import of this build
+    /// writes.
+    pub unprovenanced: u64,
+}
+
+/// What [`crate::ports::JournalStore::import_begin`] did (ADR-0084 I4,
+/// I12).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImportBegin {
+    /// The upload is bound, the row is `running`, and the source's key is
+    /// pinned to the import's signer.
+    Begun,
+    /// The session is not the importing key's completed, unexpired upload;
+    /// nothing is written.
+    NotBindable,
+    /// The target pins another key for the source; nothing is written.
+    KeyPinned { pinned: String },
+}
+
+/// An imported version as its own write's fold records it (ADR-0084 I14):
+/// the `import_versions` row and the version's `import_provenance`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportedWrite {
+    pub import_id: Uuid,
+    pub source_artifact_id: String,
+    pub source_version: u64,
+    pub outcome: String,
+    pub provenance: Value,
 }

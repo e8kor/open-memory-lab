@@ -11,7 +11,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use oml_app::app::{ImportAnswer, ImportPlan};
+use oml_app::app::{ImportPlan, ImportStart};
 use oml_app::domain::name::Reference;
 use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer, WebStore};
 use oml_app::types::ImportRecord;
@@ -19,6 +19,12 @@ use oml_app::types::ImportRecord;
 use crate::error::{ApiError, ErrorContext, map_app_error};
 use crate::traffic::Rid;
 use crate::{ApiState, bearer, finish, json_response, parse_json};
+
+/// The `event` field of the log line an import whose staging key its end
+/// could not shred writes (ADR-0084 I11).
+pub const EVENT_IMPORT_SHRED_FAILED: &str = "import_shred_failed";
+/// The `event` field of the log line an import that ended `failed` writes.
+pub const EVENT_IMPORT_FAILED: &str = "import_failed";
 
 /// openapi.yaml `ImportPlan`.
 pub(crate) fn plan_json(p: &ImportPlan) -> Value {
@@ -93,8 +99,9 @@ where
     Sc: Scanner + 'static,
 {
     /// `POST /v2/imports {upload_id, target, dry_run?, allow_older?,
-    /// expect_key?, expect_tenant?}`: `200 {plan}` for a dry run, `200
-    /// {import}` once the import ran inline.
+    /// expect_key?, expect_tenant?}`: `200 {plan}` for a dry run; otherwise
+    /// `202 {import}`, the row `running`, while the run goes on in its own
+    /// task (ADR-0084 I10).
     pub(crate) async fn import_route(
         State(st): State<Self>,
         rid: Rid,
@@ -145,19 +152,46 @@ where
                 expect_key: fingerprint("expect_key", req.expect_key)?,
                 expect_tenant: req.expect_tenant,
             };
-            let code_of = |e| map_app_error(e, ErrorContext::Write).code.to_owned();
-            let answer = st
+            let start = st
                 .app
-                .import_bundle(token.as_str(), &request, &code_of)
+                .import_start(token.as_str(), &request)
                 .await
                 .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-            Ok(match answer {
-                ImportAnswer::Planned(plan) => {
+            Ok(match start {
+                ImportStart::Planned(plan) => {
                     json_response(StatusCode::OK, &json!({ "plan": plan_json(&plan) }))
                 }
-                ImportAnswer::Imported(import) => {
-                    st.traffic.metrics().import_versions(&import.counts);
-                    json_response(StatusCode::OK, &json!({ "import": import_json(&import) }))
+                ImportStart::Started(job) => {
+                    // I10: the run is its own task; the request answers 202
+                    // with the row running, and a client gone changes
+                    // nothing.
+                    let body = json!({ "import": import_json(job.record()) });
+                    let app = std::sync::Arc::clone(&st.app);
+                    let traffic = st.traffic.clone();
+                    tokio::spawn(async move {
+                        let code_of =
+                            |e| map_app_error(e, ErrorContext::Write).code.to_owned();
+                        let import_id = job.record().import_id;
+                        let finished = app.import_finish(job, &code_of).await;
+                        if let Some(reason) = &finished.shred_failure {
+                            tracing::error!(
+                                event = EVENT_IMPORT_SHRED_FAILED,
+                                %import_id,
+                                %reason,
+                                "IMPORT STAGING KEY NOT SHREDDED — the next upload sweep nulls it (ADR-0084 I11)"
+                            );
+                        }
+                        match finished.import {
+                            Ok(import) => traffic.metrics().import_versions(&import.counts),
+                            Err(e) => tracing::warn!(
+                                event = EVENT_IMPORT_FAILED,
+                                %import_id,
+                                reason = %e,
+                                "import ended failed; GET /v2/imports/{{id}} names its position"
+                            ),
+                        }
+                    });
+                    json_response(StatusCode::ACCEPTED, &body)
                 }
             })
         }

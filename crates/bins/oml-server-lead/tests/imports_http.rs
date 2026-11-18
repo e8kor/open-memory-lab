@@ -73,6 +73,72 @@ async fn rig() -> Option<Rig> {
     })
 }
 
+/// Polls `GET /v2/imports/{id}` until the import is no longer running
+/// (ADR-0084 I10), and answers its row.
+async fn ended(r: &Router, key: &str, id: &str) -> Value {
+    for _ in 0..500 {
+        let (status, read) = call(
+            r,
+            "GET",
+            &format!("/v2/imports/{id}"),
+            Some(key),
+            None,
+            Vec::new(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{read}");
+        if read["import"]["state"] != "running" {
+            return read["import"].clone();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("import {id} still running after 10 s");
+}
+
+/// The scan runs on imported text: a version carrying an age identity is
+/// refused and named, and the others land held (ADR-0084 d6, d11).
+#[tokio::test]
+async fn an_imported_version_carrying_an_age_secret_key_is_refused_by_the_scan_and_named() {
+    let Some(rig) = rig().await else { return };
+    let r = &rig.router;
+    let (admin, _) = bootstrap(r).await;
+    let ada = ada_key(r, &admin, "ada-laptop", "person").await;
+    let fingerprint = oml_bundle::key_fingerprint(&source_key().verifying_key());
+    // Built at run time, so no identity sits in the source.
+    let identity = format!("AGE-SECRET-KEY-1{}", "Q".repeat(58));
+    let bytes = bundle_with(vec![
+        line("art-1", "deploy-day", "Deploys go out on Tuesdays."),
+        line("art-2", "the-key", &format!("The identity is {identity}.")),
+    ]);
+    let up = upload(r, &ada, &bytes).await;
+    let (status, body) = json_call(
+        r,
+        "POST",
+        "/v2/imports",
+        Some(&ada),
+        json!({ "upload_id": up, "target": "notes", "expect_key": fingerprint }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let id = body["import"]["import_id"]
+        .as_str()
+        .expect("an id")
+        .to_owned();
+    let import = ended(r, &ada, &id).await;
+    assert_eq!(import["state"], "done", "{import}");
+    assert_eq!(import["counts"]["new"], 1, "{import}");
+    assert_eq!(import["counts"]["refused"], 1, "{import}");
+    let refused = import["refusals"]
+        .as_array()
+        .expect("refusals")
+        .iter()
+        .find(|r| r["claim_key"] == "the-key")
+        .expect("the key is named")
+        .clone();
+    assert_eq!(refused["code"], "submission.scan_veto", "{import}");
+    finish(rig).await;
+}
+
 async fn finish(rig: Rig) {
     drop(rig.router);
     rig.store.pool().close().await;
@@ -229,6 +295,13 @@ fn line(artifact_id: &str, claim_key: &str, text: &str) -> oml_bundle::VersionLi
 }
 
 fn bundle() -> Vec<u8> {
+    bundle_with(vec![
+        line("art-1", "deploy-day", "Deploys go out on Tuesdays."),
+        line("art-2", "rollback", "A rollback is one command."),
+    ])
+}
+
+fn bundle_with(lines: Vec<oml_bundle::VersionLine>) -> Vec<u8> {
     let contents = oml_bundle::BundleContents {
         manifest: oml_bundle::Manifest {
             format: oml_bundle::FORMAT.to_owned(),
@@ -249,18 +322,10 @@ fn bundle() -> Vec<u8> {
             signature: None,
         },
         workspaces: Vec::new(),
-        versions: vec![
-            oml_bundle::VersionEntry::Version(Box::new(line(
-                "art-1",
-                "deploy-day",
-                "Deploys go out on Tuesdays.",
-            ))),
-            oml_bundle::VersionEntry::Version(Box::new(line(
-                "art-2",
-                "rollback",
-                "A rollback is one command.",
-            ))),
-        ],
+        versions: lines
+            .into_iter()
+            .map(|v| oml_bundle::VersionEntry::Version(Box::new(v)))
+            .collect(),
         verdicts: Vec::new(),
         events: Vec::new(),
         edges: Vec::new(),
@@ -357,6 +422,7 @@ async fn a_person_plans_then_imports_a_bundle_over_http_and_each_refusal_carries
     assert_eq!(body["plan"]["authenticated"], true);
     assert_eq!(body["plan"]["target_workspace_id"], Value::Null);
 
+    // I10: the import answers 202 with its row running, and runs on.
     let (status, body) = json_call(
         r,
         "POST",
@@ -365,12 +431,16 @@ async fn a_person_plans_then_imports_a_bundle_over_http_and_each_refusal_carries
         json!({ "upload_id": up, "target": "notes", "expect_key": fingerprint }),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let import = &body["import"];
-    assert_eq!(import["state"], "done", "{body}");
-    assert_eq!(import["counts"]["new"], 2, "{body}");
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    assert_eq!(body["import"]["state"], "running", "{body}");
+    let id = body["import"]["import_id"]
+        .as_str()
+        .expect("an id")
+        .to_owned();
+    let import = ended(r, &ada, &id).await;
+    assert_eq!(import["state"], "done", "{import}");
+    assert_eq!(import["counts"]["new"], 2, "{import}");
     assert_eq!(import["position"], 2);
-    let id = import["import_id"].as_str().expect("an id").to_owned();
 
     let (status, read) = call(
         r,
@@ -426,13 +496,14 @@ async fn a_person_plans_then_imports_a_bundle_over_http_and_each_refusal_carries
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     assert_eq!(code(&body), "bundle.digest_mismatch");
 
-    // A standard workspace is not an import target (d6).
+    // A standard workspace another key created is not an import target
+    // (d6; ADR-0030 d1 as amended 2026-11-18).
     let (status, body) = json_call(
         r,
         "POST",
         "/v2/workspaces",
-        Some(&ada),
-        json!({ "name": "plain" }),
+        Some(&admin),
+        json!({ "name": "plain", "parent": "ada" }),
     )
     .await;
     assert!(status.is_success(), "{body}");

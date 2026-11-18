@@ -1492,14 +1492,21 @@ fn apply_fold(
             import.ended_at = Some(at.clone());
             import.counts = ended.counts;
             import.refusals = ended.refusals;
-            state.import_ledger.insert(
-                (
+            // I12: the pin its begin wrote never moves; the export instant
+            // only advances.
+            let entry = state
+                .import_ledger
+                .entry((
                     ended.target_workspace_id,
                     ended.source_server_id,
                     ended.source_tenant_id,
-                ),
-                ended.ledger,
-            );
+                ))
+                .or_insert_with(|| ended.ledger.clone());
+            if ended.ledger.exported_at > entry.exported_at {
+                entry.exported_at = ended.ledger.exported_at;
+            }
+            entry.release_label = ended.ledger.release_label;
+            entry.release_manifest_digest = ended.ledger.release_manifest_digest;
         }
         MetadataFold::WorkspaceExported { user_root, bytes } => {
             if let Some(root) = user_root {
@@ -2007,8 +2014,38 @@ fn apply_fold(
             memory,
             enqueue,
             findings,
+            imported,
         } => {
             require_free_ordinal(state, &memory)?;
+            if let Some(imported) = imported {
+                // ADR-0084 I14: the import's row and the provenance in the
+                // write's own commit.
+                if !state.imports.contains_key(&imported.import_id) {
+                    return Err(StoreError::Backend(format!(
+                        "import {} is not held",
+                        imported.import_id
+                    )));
+                }
+                if !state
+                    .import_versions
+                    .iter()
+                    .any(|(id, v)| *id == imported.import_id && v.memory_id == memory.memory_id)
+                {
+                    state.import_versions.push((
+                        imported.import_id,
+                        crate::types::ImportedVersion {
+                            memory_id: memory.memory_id,
+                            source_artifact_id: imported.source_artifact_id.clone(),
+                            source_version: imported.source_version,
+                            outcome: imported.outcome.clone(),
+                            provenance: imported.provenance.clone(),
+                        },
+                    ));
+                }
+                state
+                    .import_provenance
+                    .insert(memory.memory_id, imported.provenance.clone());
+            }
             for mut f in findings.into_vec() {
                 f.event_seq = Some(seq);
                 state.findings.push((memory.memory_id, f));
@@ -3025,7 +3062,11 @@ impl JournalStore for MemStore {
         Ok(())
     }
 
-    async fn upload_stats(&self, tenant_id: Uuid) -> Result<crate::types::UploadStats, StoreError> {
+    async fn upload_stats(
+        &self,
+        tenant_id: Uuid,
+        stale_before: &EventTime,
+    ) -> Result<crate::types::UploadStats, StoreError> {
         let mut stats = crate::types::UploadStats::default();
         let Some(state) = self.tenant_existing(tenant_id) else {
             return Ok(stats);
@@ -3041,6 +3082,15 @@ impl JournalStore for MemStore {
             }
             if session.part_key.is_none() && !removed {
                 stats.unswept += 1;
+            }
+            if session.state == oml_domain::upload::UploadState::Bound
+                && session.part_key.is_some()
+                && session
+                    .bound_at
+                    .as_ref()
+                    .is_some_and(|b| b.unix_micros() < stale_before.unix_micros())
+            {
+                stats.staging_stale += 1;
             }
         }
         Ok(stats)
@@ -3128,21 +3178,130 @@ impl JournalStore for MemStore {
         &self,
         import: &crate::types::ImportRecord,
         at: &EventTime,
-    ) -> Result<bool, StoreError> {
+    ) -> Result<crate::types::ImportBegin, StoreError> {
+        use crate::types::ImportBegin;
         use oml_domain::upload::UploadState;
         let state = self.tenant(import.tenant_id);
         let mut state = state.lock().expect("tenant lock");
-        let Some((session, _)) = state.uploads.get_mut(&import.upload_id) else {
-            return Ok(false);
-        };
-        if session.state != UploadState::Completed || session.key_id != import.importer_key_id {
-            return Ok(false);
+        let bindable = state.uploads.get(&import.upload_id).is_some_and(|(s, _)| {
+            s.state == UploadState::Completed
+                && s.key_id == import.importer_key_id
+                && s.expires_at
+                    .as_ref()
+                    .is_some_and(|e| e.unix_micros() > at.unix_micros())
+        });
+        if !bindable {
+            return Ok(ImportBegin::NotBindable);
         }
+        // I12: the pin, inserted where none exists, then compared.
+        let ledger_key = (
+            import.target_workspace_id,
+            import.source_server_id.clone(),
+            import.source_tenant_id.clone(),
+        );
+        let pinned = state
+            .import_ledger
+            .get(&ledger_key)
+            .map(|l| l.signer_fingerprint.clone());
+        if let Some(pinned) = pinned {
+            if pinned != import.signer_fingerprint {
+                return Ok(ImportBegin::KeyPinned { pinned });
+            }
+        } else {
+            state.import_ledger.insert(
+                ledger_key,
+                crate::types::ImportLedgerEntry {
+                    exported_at: String::new(),
+                    release_label: None,
+                    release_manifest_digest: None,
+                    signer_fingerprint: import.signer_fingerprint.clone(),
+                },
+            );
+        }
+        let (session, _) = state
+            .uploads
+            .get_mut(&import.upload_id)
+            .expect("checked bindable above");
         session.state = UploadState::Bound;
         session.expires_at = None;
         session.bound_at = Some(at.clone());
         state.imports.insert(import.import_id, import.clone());
-        Ok(true)
+        Ok(ImportBegin::Begun)
+    }
+
+    async fn imports_end_stopped(
+        &self,
+        tenant_id: Uuid,
+        started_before: &EventTime,
+        at: &EventTime,
+        live: &[Uuid],
+    ) -> Result<u64, StoreError> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(0);
+        };
+        let mut state = state.lock().expect("tenant lock");
+        let mut uploads = Vec::new();
+        for import in state.imports.values_mut() {
+            if import.state == oml_domain::import::ImportState::Running
+                && import.created_at.unix_micros() < started_before.unix_micros()
+                && !live.contains(&import.import_id)
+            {
+                import.state = oml_domain::import::ImportState::Failed;
+                import.ended_at = Some(at.clone());
+                uploads.push(import.upload_id);
+            }
+        }
+        // Every bound upload whose import is not running loses its key: the
+        // stopped ones above, and any whose end could not shred it.
+        let ended: Vec<Uuid> = state
+            .imports
+            .values()
+            .filter(|i| i.state != oml_domain::import::ImportState::Running)
+            .map(|i| i.upload_id)
+            .collect();
+        for id in &ended {
+            if let Some((session, _)) = state.uploads.get_mut(id)
+                && session.state == oml_domain::upload::UploadState::Bound
+            {
+                session.part_key = None;
+            }
+        }
+        Ok(uploads.len() as u64)
+    }
+
+    async fn workspace_creator_if_empty(
+        &self,
+        tenant_id: Uuid,
+        workspace_id: Uuid,
+    ) -> Result<Option<Uuid>, StoreError> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(None);
+        };
+        let state = state.lock().expect("tenant lock");
+        let holds = state
+            .by_workspace
+            .get(&workspace_id)
+            .is_some_and(|ids| !ids.is_empty())
+            || state
+                .workspaces
+                .values()
+                .any(|w| w.parent_id == Some(workspace_id));
+        if holds {
+            return Ok(None);
+        }
+        let id = workspace_id.to_string();
+        Ok(state
+            .events
+            .iter()
+            .find(|e| {
+                e.envelope.event_type == oml_domain::envelope::event_types::WORKSPACE_CREATE
+                    && e.envelope
+                        .payload
+                        .get("workspace_id")
+                        .and_then(Value::as_str)
+                        == Some(id.as_str())
+            })
+            .and_then(|e| e.envelope.api_key_id))
     }
 
     async fn import_version_recorded(
@@ -3169,6 +3328,21 @@ impl JournalStore for MemStore {
             .import_provenance
             .insert(version.memory_id, version.provenance.clone());
         Ok(())
+    }
+
+    async fn import_provenance(
+        &self,
+        tenant_id: Uuid,
+        memory_id: Uuid,
+    ) -> Result<Option<Value>, StoreError> {
+        Ok(self.tenant_existing(tenant_id).and_then(|state| {
+            state
+                .lock()
+                .expect("tenant lock")
+                .import_provenance
+                .get(&memory_id)
+                .cloned()
+        }))
     }
 
     async fn import_failed(
@@ -3212,7 +3386,11 @@ impl JournalStore for MemStore {
         }))
     }
 
-    async fn import_stats(&self, tenant_id: Uuid) -> Result<crate::types::ImportStats, StoreError> {
+    async fn import_stats(
+        &self,
+        tenant_id: Uuid,
+        stopped_before: &EventTime,
+    ) -> Result<crate::types::ImportStats, StoreError> {
         let mut stats = crate::types::ImportStats::default();
         let Some(state) = self.tenant_existing(tenant_id) else {
             return Ok(stats);
@@ -3224,7 +3402,21 @@ impl JournalStore for MemStore {
                 .entry(import.state.as_str().to_owned())
                 .or_default() += 1;
             stats.allow_older += u64::from(import.allow_older);
+            if import.state == oml_domain::import::ImportState::Running
+                && import.created_at.unix_micros() < stopped_before.unix_micros()
+            {
+                stats.stopped += 1;
+            }
         }
+        // I14: an import's idempotency record naming a version with no
+        // provenance.
+        stats.unprovenanced = state
+            .idempotency
+            .iter()
+            .filter(|((_, _, idem), _)| idem.starts_with("import:"))
+            .filter_map(|(_, record)| record.response.get("memory_id")?.as_str()?.parse().ok())
+            .filter(|id: &Uuid| !state.import_provenance.contains_key(id))
+            .count() as u64;
         Ok(stats)
     }
 

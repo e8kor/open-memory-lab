@@ -2942,6 +2942,38 @@ fn signed_envelope_from_row(row: &PgRow) -> Result<SignedEnvelope, StoreError> {
 // The metadata fold inside the commit transaction
 // ---------------------------------------------------------------------------
 
+/// An import's write's `import_versions` row and the version's
+/// `import_provenance`, in the write's own transaction (ADR-0084 I14).
+async fn record_imported_version(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    memory_id: Uuid,
+    imported: &oml_app::types::ImportedWrite,
+) -> Result<(), StoreError> {
+    sqlx::query(
+        "INSERT INTO import_versions (tenant_id, import_id, memory_id, source_artifact_id, \
+                source_version, outcome) VALUES ($1, $2, $3, $4, $5, $6) \
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(tenant_id)
+    .bind(imported.import_id)
+    .bind(memory_id)
+    .bind(&imported.source_artifact_id)
+    .bind(i64::try_from(imported.source_version).map_err(backend)?)
+    .bind(&imported.outcome)
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    sqlx::query("UPDATE memories SET import_provenance = $3 WHERE tenant_id = $1 AND id = $2")
+        .bind(tenant_id)
+        .bind(memory_id)
+        .bind(&imported.provenance)
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+    Ok(())
+}
+
 /// The findings lists of `lists` under the commit's `seq`, each in its
 /// order (ADR-0074 d23). A finding the version's list already holds by
 /// class, rule and field is kept as first recorded (`scan_findings_one`).
@@ -3652,7 +3684,8 @@ async fn apply_fold(
         | MetadataFold::AdminRead => {}
         MetadataFold::WorkspaceImported(ended) => {
             // The row ends done in the event's transaction, and the ledger
-            // moves to the bundle's (ADR-0084 d8, d11, R11).
+            // moves to the bundle's; the pin its begin wrote never moves
+            // (ADR-0084 d8, d11, R11, I12).
             let done = sqlx::query(
                 "UPDATE imports SET state = 'done', ended_at = ($3)::timestamptz, counts = $4, \
                         refusals = $5 \
@@ -3679,10 +3712,9 @@ async fn apply_fold(
                         signer_fingerprint, updated_at) \
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, ($9)::timestamptz) \
                  ON CONFLICT (tenant_id, target_workspace_id, source_server_id, source_tenant_id) \
-                 DO UPDATE SET exported_at = EXCLUDED.exported_at, \
+                 DO UPDATE SET exported_at = GREATEST(import_ledger.exported_at, EXCLUDED.exported_at), \
                     release_label = EXCLUDED.release_label, \
                     release_manifest_digest = EXCLUDED.release_manifest_digest, \
-                    signer_fingerprint = EXCLUDED.signer_fingerprint, \
                     updated_at = EXCLUDED.updated_at",
             )
             .bind(tenant_id)
@@ -4381,8 +4413,14 @@ async fn apply_fold(
             memory,
             enqueue,
             findings,
+            imported,
         } => {
             insert_memory(tx, event_id, &memory).await?;
+            if let Some(imported) = imported {
+                // An import's write carries its provenance in its own
+                // commit (ADR-0084 I14).
+                record_imported_version(tx, tenant_id, memory.memory_id, &imported).await?;
+            }
             insert_findings(
                 tx,
                 tenant_id,
@@ -7220,6 +7258,7 @@ impl JournalStore for PgStore {
     async fn upload_stats(
         &self,
         tenant_id: Uuid,
+        stale_before: &EventTime,
     ) -> Result<oml_app::types::UploadStats, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
@@ -7228,10 +7267,13 @@ impl JournalStore for PgStore {
                     COALESCE(sum(size) FILTER (WHERE state IN ('open', 'completed')), 0)::bigint \
                         AS unbound_bytes, \
                     count(*) FILTER (WHERE part_key IS NULL AND objects_removed_at IS NULL) \
-                        AS unswept \
+                        AS unswept, \
+                    count(*) FILTER (WHERE state = 'bound' AND part_key IS NOT NULL \
+                                      AND bound_at < ($2)::timestamptz) AS staging_stale \
                FROM upload_sessions WHERE tenant_id = $1 GROUP BY state",
         )
         .bind(tenant_id)
+        .bind(stale_before.as_str())
         .fetch_all(&mut *tx)
         .await
         .map_err(backend)?;
@@ -7247,6 +7289,8 @@ impl JournalStore for PgStore {
                 .insert(state, u64::try_from(sessions).map_err(backend)?);
             stats.unbound_bytes += u64::try_from(bytes).map_err(backend)?;
             stats.unswept += u64::try_from(unswept).map_err(backend)?;
+            let stale: i64 = row.try_get("staging_stale").map_err(backend)?;
+            stats.staging_stale += u64::try_from(stale).map_err(backend)?;
         }
         Ok(stats)
     }
@@ -7351,14 +7395,16 @@ impl JournalStore for PgStore {
         &self,
         import: &oml_app::types::ImportRecord,
         at: &EventTime,
-    ) -> Result<bool, StoreError> {
+    ) -> Result<oml_app::types::ImportBegin, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, import.tenant_id).await?;
-        // The bind and the row are one transaction (ADR-0004 d3; I4).
+        // The bind, the pin and the row are one transaction (ADR-0004 d3;
+        // I4, I12): a session past its expiry at `at` binds nothing.
         let bound = sqlx::query(
             "UPDATE upload_sessions SET state = 'bound', expires_at = NULL, \
                     bound_at = COALESCE(bound_at, ($4)::timestamptz) \
-              WHERE tenant_id = $1 AND id = $2 AND key_id = $3 AND state = 'completed'",
+              WHERE tenant_id = $1 AND id = $2 AND key_id = $3 AND state = 'completed' \
+                AND expires_at > ($4)::timestamptz",
         )
         .bind(import.tenant_id)
         .bind(import.upload_id)
@@ -7369,7 +7415,41 @@ impl JournalStore for PgStore {
         .map_err(backend)?
         .rows_affected();
         if bound != 1 {
-            return Ok(false);
+            return Ok(oml_app::types::ImportBegin::NotBindable);
+        }
+        // R11, I12: the first import from a source pins its signer here;
+        // an empty exported_at bounds no later bundle's age.
+        sqlx::query(
+            "INSERT INTO import_ledger (tenant_id, target_workspace_id, source_server_id, \
+                    source_tenant_id, exported_at, signer_fingerprint, updated_at) \
+             VALUES ($1, $2, $3, $4, '', $5, ($6)::timestamptz) \
+             ON CONFLICT (tenant_id, target_workspace_id, source_server_id, source_tenant_id) \
+             DO NOTHING",
+        )
+        .bind(import.tenant_id)
+        .bind(import.target_workspace_id)
+        .bind(&import.source_server_id)
+        .bind(&import.source_tenant_id)
+        .bind(&import.signer_fingerprint)
+        .bind(at.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        let pinned: String = sqlx::query_scalar(
+            "SELECT signer_fingerprint FROM import_ledger \
+              WHERE tenant_id = $1 AND target_workspace_id = $2 AND source_server_id = $3 \
+                AND source_tenant_id = $4",
+        )
+        .bind(import.tenant_id)
+        .bind(import.target_workspace_id)
+        .bind(&import.source_server_id)
+        .bind(&import.source_tenant_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(backend)?;
+        if pinned != import.signer_fingerprint {
+            // Dropping the transaction rolls the bind back.
+            return Ok(oml_app::types::ImportBegin::KeyPinned { pinned });
         }
         sqlx::query(
             "INSERT INTO imports (tenant_id, id, target_workspace_id, importer_key_id, upload_id, \
@@ -7397,7 +7477,85 @@ impl JournalStore for PgStore {
         .await
         .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
-        Ok(true)
+        Ok(oml_app::types::ImportBegin::Begun)
+    }
+
+    async fn imports_end_stopped(
+        &self,
+        tenant_id: Uuid,
+        started_before: &EventTime,
+        at: &EventTime,
+        live: &[Uuid],
+    ) -> Result<u64, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        // I11: the import ends failed and its staging key goes in one
+        // transaction; the upload sweep removes the objects.
+        let uploads: Vec<Uuid> = sqlx::query_scalar(
+            "UPDATE imports SET state = 'failed', ended_at = ($3)::timestamptz \
+              WHERE tenant_id = $1 AND state = 'running' AND created_at < ($2)::timestamptz \
+                AND NOT (id = ANY($4)) \
+             RETURNING upload_id",
+        )
+        .bind(tenant_id)
+        .bind(started_before.as_str())
+        .bind(at.as_str())
+        .bind(live)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        if !uploads.is_empty() {
+            sqlx::query(
+                "UPDATE upload_sessions SET part_key = NULL \
+                  WHERE tenant_id = $1 AND id = ANY($2) AND state = 'bound'",
+            )
+            .bind(tenant_id)
+            .bind(&uploads)
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        }
+        // A bound upload whose import ended and whose key its end could not
+        // shred loses the key now.
+        sqlx::query(
+            "UPDATE upload_sessions u SET part_key = NULL FROM imports i \
+              WHERE u.tenant_id = $1 AND u.state = 'bound' AND u.part_key IS NOT NULL \
+                AND i.tenant_id = u.tenant_id AND i.upload_id = u.id AND i.state <> 'running'",
+        )
+        .bind(tenant_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(uploads.len() as u64)
+    }
+
+    async fn workspace_creator_if_empty(
+        &self,
+        tenant_id: Uuid,
+        workspace_id: Uuid,
+    ) -> Result<Option<Uuid>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        // The creating event is read only for an empty workspace, the
+        // import's retry (ADR-0030 d1, amended 2026-11-18).
+        let creator: Option<Option<Uuid>> = sqlx::query_scalar(
+            "SELECT j.api_key_id FROM journal j \
+              WHERE j.tenant_id = $1 AND j.event_type = 'workspace.create' \
+                AND j.payload->>'workspace_id' = $2::text \
+                AND NOT EXISTS (SELECT 1 FROM memories m \
+                                 WHERE m.tenant_id = $1 AND m.workspace_id = $2) \
+                AND NOT EXISTS (SELECT 1 FROM workspaces w \
+                                 WHERE w.tenant_id = $1 AND w.parent_id = $2) \
+              ORDER BY j.seq LIMIT 1",
+        )
+        .bind(tenant_id)
+        .bind(workspace_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(creator.flatten())
     }
 
     async fn import_version_recorded(
@@ -7431,6 +7589,25 @@ impl JournalStore for PgStore {
             .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
         Ok(())
+    }
+
+    async fn import_provenance(
+        &self,
+        tenant_id: Uuid,
+        memory_id: Uuid,
+    ) -> Result<Option<Value>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let provenance: Option<Option<Value>> = sqlx::query_scalar(
+            "SELECT import_provenance FROM memories WHERE tenant_id = $1 AND id = $2",
+        )
+        .bind(tenant_id)
+        .bind(memory_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(provenance.flatten())
     }
 
     async fn import_failed(
@@ -7519,15 +7696,32 @@ impl JournalStore for PgStore {
     async fn import_stats(
         &self,
         tenant_id: Uuid,
+        stopped_before: &EventTime,
     ) -> Result<oml_app::types::ImportStats, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
         let rows = sqlx::query(
-            "SELECT state, count(*) AS imports, count(*) FILTER (WHERE allow_older) AS older \
+            "SELECT state, count(*) AS imports, count(*) FILTER (WHERE allow_older) AS older, \
+                    count(*) FILTER (WHERE state = 'running' \
+                                      AND created_at < ($2)::timestamptz) AS stopped \
                FROM imports WHERE tenant_id = $1 GROUP BY state",
         )
         .bind(tenant_id)
+        .bind(stopped_before.as_str())
         .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        // I14: a version an import's idempotency key names that carries no
+        // provenance.
+        let unprovenanced: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM idempotency i \
+               JOIN memories m ON m.tenant_id = i.tenant_id \
+                AND m.id::text = i.response->>'memory_id' \
+              WHERE i.tenant_id = $1 AND split_part(i.key, ':', 3) = 'import' \
+                AND m.import_provenance IS NULL",
+        )
+        .bind(tenant_id)
+        .fetch_one(&mut *tx)
         .await
         .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
@@ -7540,7 +7734,10 @@ impl JournalStore for PgStore {
                 .by_state
                 .insert(state, u64::try_from(imports).map_err(backend)?);
             stats.allow_older += u64::try_from(older).map_err(backend)?;
+            let stopped: i64 = row.try_get("stopped").map_err(backend)?;
+            stats.stopped += u64::try_from(stopped).map_err(backend)?;
         }
+        stats.unprovenanced = u64::try_from(unprovenanced).map_err(backend)?;
         Ok(stats)
     }
 

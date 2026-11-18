@@ -205,8 +205,12 @@ impl<J: JournalStore> JournalStore for Timed<J> {
     fn upload_stats(
         &self,
         tenant_id: Uuid,
+        stale_before: &EventTime,
     ) -> impl Future<Output = Result<oml_app::types::UploadStats, StoreError>> + Send {
-        timed("upload_stats", self.inner.upload_stats(tenant_id))
+        timed(
+            "upload_stats",
+            self.inner.upload_stats(tenant_id, stale_before),
+        )
     }
 
     fn import_target_view(
@@ -231,8 +235,34 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         &self,
         import: &oml_app::types::ImportRecord,
         at: &EventTime,
-    ) -> impl Future<Output = Result<bool, StoreError>> + Send {
+    ) -> impl Future<Output = Result<oml_app::types::ImportBegin, StoreError>> + Send {
         timed("import_begin", self.inner.import_begin(import, at))
+    }
+
+    fn imports_end_stopped(
+        &self,
+        tenant_id: Uuid,
+        started_before: &EventTime,
+        at: &EventTime,
+        live: &[Uuid],
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send {
+        timed(
+            "imports_end_stopped",
+            self.inner
+                .imports_end_stopped(tenant_id, started_before, at, live),
+        )
+    }
+
+    fn workspace_creator_if_empty(
+        &self,
+        tenant_id: Uuid,
+        workspace_id: Uuid,
+    ) -> impl Future<Output = Result<Option<Uuid>, StoreError>> + Send {
+        timed(
+            "workspace_creator_if_empty",
+            self.inner
+                .workspace_creator_if_empty(tenant_id, workspace_id),
+        )
     }
 
     fn import_version_recorded(
@@ -245,6 +275,17 @@ impl<J: JournalStore> JournalStore for Timed<J> {
             "import_version_recorded",
             self.inner
                 .import_version_recorded(tenant_id, import_id, version),
+        )
+    }
+
+    fn import_provenance(
+        &self,
+        tenant_id: Uuid,
+        memory_id: Uuid,
+    ) -> impl Future<Output = Result<Option<serde_json::Value>, StoreError>> + Send {
+        timed(
+            "import_provenance",
+            self.inner.import_provenance(tenant_id, memory_id),
         )
     }
 
@@ -277,8 +318,12 @@ impl<J: JournalStore> JournalStore for Timed<J> {
     fn import_stats(
         &self,
         tenant_id: Uuid,
+        stopped_before: &EventTime,
     ) -> impl Future<Output = Result<oml_app::types::ImportStats, StoreError>> + Send {
-        timed("import_stats", self.inner.import_stats(tenant_id))
+        timed(
+            "import_stats",
+            self.inner.import_stats(tenant_id, stopped_before),
+        )
     }
 
     fn export_policy(
