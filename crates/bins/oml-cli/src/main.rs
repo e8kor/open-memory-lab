@@ -6058,7 +6058,10 @@ fn exports_doctor(scrape: Option<&Scrape>) -> Vec<String> {
                 scrape.sum("oml_exports_total", &[])
             ),
         ],
-        Some(_) => vec![policy, "off (this server serves no workspace export)".to_owned()],
+        Some(_) => vec![
+            policy,
+            "off (this server serves no workspace export)".to_owned(),
+        ],
         None => vec![
             policy,
             "bundles served: not read; set OML_METRICS_URL to the lead's metrics listener"

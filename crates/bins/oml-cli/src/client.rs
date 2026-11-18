@@ -188,7 +188,9 @@ impl Client {
             .send_json(body.clone());
         match result {
             Ok(response) => {
-                let digest = response.header("OML-Manifest-Digest").map(ToOwned::to_owned);
+                let digest = response
+                    .header("OML-Manifest-Digest")
+                    .map(ToOwned::to_owned);
                 let copied = std::io::copy(&mut response.into_reader(), out).map_err(|e| {
                     CliError::Unanswered(format!(
                         "the server answered, but its body could not be saved ({e}); the server \

@@ -55,7 +55,10 @@ fn fixture(runtime: &tokio::runtime::Runtime) -> (String, Arc<AtomicU64>) {
                 (
                     [
                         (header::CONTENT_TYPE, "application/octet-stream"),
-                        (header::HeaderName::from_static("oml-manifest-digest"), "sha256:abc"),
+                        (
+                            header::HeaderName::from_static("oml-manifest-digest"),
+                            "sha256:abc",
+                        ),
                     ],
                     FILE,
                 )
@@ -127,7 +130,10 @@ fn an_export_lands_in_a_new_owner_only_file_and_never_overwrites_one() {
     );
     assert!(stdout.contains("manifest sha256:abc"), "{stdout}");
     assert_eq!(std::fs::read(&out).expect("written"), FILE);
-    let mode = std::fs::metadata(&out).expect("exists").permissions().mode();
+    let mode = std::fs::metadata(&out)
+        .expect("exists")
+        .permissions()
+        .mode();
     assert_eq!(mode & 0o777, 0o600, "owner-only");
 
     let again = oml(&dir, &args);
@@ -135,7 +141,11 @@ fn an_export_lands_in_a_new_owner_only_file_and_never_overwrites_one() {
     let stderr = String::from_utf8_lossy(&again.stderr);
     assert_eq!(again.status.code(), Some(2), "{stderr}");
     assert!(stderr.contains("already exists"), "{stderr}");
-    assert_eq!(calls.load(Ordering::SeqCst), 1, "the second run sent nothing");
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "the second run sent nothing"
+    );
     assert_eq!(std::fs::read(&out).expect("kept"), FILE);
     std::fs::remove_dir_all(&dir).expect("cleaned up");
 }
