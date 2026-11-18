@@ -68,11 +68,14 @@ Histograms use bucket bounds that start at 1 ms and double sixteen times, to 32.
 | `oml_upload_unbound_bytes` | gauge | none | Declared bytes of the open and unbound upload sessions at the last sweep. |
 | `oml_upload_stored_bytes` | gauge | none | Bytes the object store held under `uploads/` at the last sweep. |
 | `oml_upload_unswept` | gauge | none | Upload sessions whose key is shredded and whose parts remain, at the last sweep. |
+| `oml_upload_staging_stale` | gauge | none | Bound upload sessions whose key is still set 24 hours after binding, at the last sweep. |
 | `oml_upload_sweep_failures_total` | counter | none | Upload sweep steps that failed since start; the next sweep, 5 minutes on, retries. |
 | `oml_import_refusals_total` | counter | `code` | `POST /v2/imports` refused, by code: a `bundle.*` or `import.*` code, or another the route answered. |
 | `oml_import_versions_total` | counter | `outcome` | Claim keys finished imports planned, by outcome: `new`, `changed`, `removed`, `unchanged`, `equivalent`, `conflict` or `refused`. |
 | `oml_imports` | gauge | `state` | Imports at the last sweep, by state (`running`, `done`, `failed`), across the deployment. A `running` one stopped with the server. |
 | `oml_imports_allow_older` | gauge | none | Imports that admitted an older bundle under `allow_older`, at the last sweep. |
+| `oml_imports_stopped` | gauge | none | Imports running for more than an hour that the server is not running, at the last sweep; the sweep ends each `failed`. |
+| `oml_imports_unprovenanced` | gauge | none | Versions carrying an import's idempotency key and no `import_provenance`, at the last sweep. |
 | `oml_exports_total` | counter | none | Workspace bundles served by `POST /v2/workspaces/{workspace}/exports`, each journalled as `workspace.exported` ([ADR-0084](../adr/ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) d15). |
 | `oml_memories_unrecalled` | gauge | `promoted_for` | Served memories no recall in the last 30 days returned, by time since approval (`7d`, `30d`, `90d`, `older`). Refreshed every 10 minutes. |
 

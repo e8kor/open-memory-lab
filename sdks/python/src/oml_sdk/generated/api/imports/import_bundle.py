@@ -7,6 +7,7 @@ from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
 from ...models.import_answer import ImportAnswer
 from ...models.import_request import ImportRequest
+from ...models.import_status import ImportStatus
 from ...types import UNSET, Response, Unset
 
 
@@ -42,11 +43,16 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ErrorEnvelope | ImportAnswer:
+) -> ErrorEnvelope | ImportAnswer | ImportStatus:
     if response.status_code == 200:
         response_200 = ImportAnswer.from_dict(response.json())
 
         return response_200
+
+    if response.status_code == 202:
+        response_202 = ImportStatus.from_dict(response.json())
+
+        return response_202
 
     if response.status_code == 400:
         response_400 = ErrorEnvelope.from_dict(response.json())
@@ -105,7 +111,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ErrorEnvelope | ImportAnswer]:
+) -> Response[ErrorEnvelope | ImportAnswer | ImportStatus]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -121,7 +127,7 @@ def sync_detailed(
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-) -> Response[ErrorEnvelope | ImportAnswer]:
+) -> Response[ErrorEnvelope | ImportAnswer | ImportStatus]:
     """Plan or run an import of a completed upload into an in-progress workspace; every version lands held.
 
      Requires: a writer key used by a person; any other key is access.verb_ceiling with details.reason
@@ -143,8 +149,13 @@ def sync_detailed(
     target's scan or rules refuse is skipped and named in refusals. A claim edge whose two ends the
     target carries is proposed by this key where its verb ceiling allows, which a writer key's does not;
     every edge not proposed is counted in edges_reported, and a refused proposal is named in refusals as
-    edge:<src>:<dst>. The import journals workspace.imported, and the upload's key is nulled when it
-    ends. No Idempotency-Key is taken: the upload binds once. Since v0.8.2.
+    edge:<src>:<dst>. One import or dry run per tenant runs at a time, and two in the server; another is
+    409 import.busy, retryable. A dry run answers 200 with the plan. Otherwise the upload binds, the
+    source key is pinned, and the answer is 202 with the import running; the run goes on after the
+    answer, and GET /v2/imports/{id} answers its state until it is done or failed. The import journals
+    workspace.imported, listing each version it wrote, and the upload's key is nulled when it ends; an
+    import running for more than an hour that the server is not running ends failed at the next sweep.
+    No Idempotency-Key is taken: the upload binds once. Since v0.8.2.
 
     Args:
         x_request_id (str | Unset):
@@ -157,7 +168,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope | ImportAnswer]
+        Response[ErrorEnvelope | ImportAnswer | ImportStatus]
     """
 
     kwargs = _get_kwargs(
@@ -181,7 +192,7 @@ def sync(
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-) -> ErrorEnvelope | ImportAnswer | None:
+) -> ErrorEnvelope | ImportAnswer | ImportStatus | None:
     """Plan or run an import of a completed upload into an in-progress workspace; every version lands held.
 
      Requires: a writer key used by a person; any other key is access.verb_ceiling with details.reason
@@ -203,8 +214,13 @@ def sync(
     target's scan or rules refuse is skipped and named in refusals. A claim edge whose two ends the
     target carries is proposed by this key where its verb ceiling allows, which a writer key's does not;
     every edge not proposed is counted in edges_reported, and a refused proposal is named in refusals as
-    edge:<src>:<dst>. The import journals workspace.imported, and the upload's key is nulled when it
-    ends. No Idempotency-Key is taken: the upload binds once. Since v0.8.2.
+    edge:<src>:<dst>. One import or dry run per tenant runs at a time, and two in the server; another is
+    409 import.busy, retryable. A dry run answers 200 with the plan. Otherwise the upload binds, the
+    source key is pinned, and the answer is 202 with the import running; the run goes on after the
+    answer, and GET /v2/imports/{id} answers its state until it is done or failed. The import journals
+    workspace.imported, listing each version it wrote, and the upload's key is nulled when it ends; an
+    import running for more than an hour that the server is not running ends failed at the next sweep.
+    No Idempotency-Key is taken: the upload binds once. Since v0.8.2.
 
     Args:
         x_request_id (str | Unset):
@@ -217,7 +233,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope | ImportAnswer
+        ErrorEnvelope | ImportAnswer | ImportStatus
     """
 
     return sync_detailed(
@@ -236,7 +252,7 @@ async def asyncio_detailed(
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-) -> Response[ErrorEnvelope | ImportAnswer]:
+) -> Response[ErrorEnvelope | ImportAnswer | ImportStatus]:
     """Plan or run an import of a completed upload into an in-progress workspace; every version lands held.
 
      Requires: a writer key used by a person; any other key is access.verb_ceiling with details.reason
@@ -258,8 +274,13 @@ async def asyncio_detailed(
     target's scan or rules refuse is skipped and named in refusals. A claim edge whose two ends the
     target carries is proposed by this key where its verb ceiling allows, which a writer key's does not;
     every edge not proposed is counted in edges_reported, and a refused proposal is named in refusals as
-    edge:<src>:<dst>. The import journals workspace.imported, and the upload's key is nulled when it
-    ends. No Idempotency-Key is taken: the upload binds once. Since v0.8.2.
+    edge:<src>:<dst>. One import or dry run per tenant runs at a time, and two in the server; another is
+    409 import.busy, retryable. A dry run answers 200 with the plan. Otherwise the upload binds, the
+    source key is pinned, and the answer is 202 with the import running; the run goes on after the
+    answer, and GET /v2/imports/{id} answers its state until it is done or failed. The import journals
+    workspace.imported, listing each version it wrote, and the upload's key is nulled when it ends; an
+    import running for more than an hour that the server is not running ends failed at the next sweep.
+    No Idempotency-Key is taken: the upload binds once. Since v0.8.2.
 
     Args:
         x_request_id (str | Unset):
@@ -272,7 +293,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope | ImportAnswer]
+        Response[ErrorEnvelope | ImportAnswer | ImportStatus]
     """
 
     kwargs = _get_kwargs(
@@ -294,7 +315,7 @@ async def asyncio(
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-) -> ErrorEnvelope | ImportAnswer | None:
+) -> ErrorEnvelope | ImportAnswer | ImportStatus | None:
     """Plan or run an import of a completed upload into an in-progress workspace; every version lands held.
 
      Requires: a writer key used by a person; any other key is access.verb_ceiling with details.reason
@@ -316,8 +337,13 @@ async def asyncio(
     target's scan or rules refuse is skipped and named in refusals. A claim edge whose two ends the
     target carries is proposed by this key where its verb ceiling allows, which a writer key's does not;
     every edge not proposed is counted in edges_reported, and a refused proposal is named in refusals as
-    edge:<src>:<dst>. The import journals workspace.imported, and the upload's key is nulled when it
-    ends. No Idempotency-Key is taken: the upload binds once. Since v0.8.2.
+    edge:<src>:<dst>. One import or dry run per tenant runs at a time, and two in the server; another is
+    409 import.busy, retryable. A dry run answers 200 with the plan. Otherwise the upload binds, the
+    source key is pinned, and the answer is 202 with the import running; the run goes on after the
+    answer, and GET /v2/imports/{id} answers its state until it is done or failed. The import journals
+    workspace.imported, listing each version it wrote, and the upload's key is nulled when it ends; an
+    import running for more than an hour that the server is not running ends failed at the next sweep.
+    No Idempotency-Key is taken: the upload binds once. Since v0.8.2.
 
     Args:
         x_request_id (str | Unset):
@@ -330,7 +356,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope | ImportAnswer
+        ErrorEnvelope | ImportAnswer | ImportStatus
     """
 
     return (
