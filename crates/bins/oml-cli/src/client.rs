@@ -101,6 +101,14 @@ impl Client {
         &self.server
     }
 
+    /// This client's server and key under another deadline: an upload's
+    /// parts, its completion and the import request each move up to
+    /// `uploads.max_bytes`, which the 30-second default does not cover.
+    #[must_use]
+    pub fn lasting(&self, timeout: Duration) -> Self {
+        Self::with_timeout(self.server.clone(), self.key.clone(), timeout)
+    }
+
     fn bearer(&self) -> Result<String, CliError> {
         self.key.as_deref().map(|k| format!("Bearer {k}")).ok_or_else(|| {
             CliError::local(
@@ -169,6 +177,19 @@ impl Client {
             .set("Authorization", &self.bearer()?)
             .set("Content-Type", "application/octet-stream");
         finish(request.send_bytes(bytes))
+    }
+
+    /// DELETE under the key; returns (status, parsed body).
+    ///
+    /// # Errors
+    ///
+    /// The server refused, or could not be reached.
+    pub fn delete(&self, path: &str) -> Result<(u16, Value), CliError> {
+        let request = self
+            .agent
+            .delete(&format!("{}{path}", self.server))
+            .set("Authorization", &self.bearer()?);
+        finish(request.call())
     }
 
     /// POST a JSON body; returns (status, parsed body).

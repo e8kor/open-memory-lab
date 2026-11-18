@@ -47,6 +47,27 @@ pub fn identity_of(file_text: &str) -> Result<String, CliError> {
         })
 }
 
+/// The warning `oml workspaces import` prints when the identity file's
+/// permission bits let its group or others read it (`mode & 0o044`), as
+/// `ssh` warns of a private key; `None` for an owner-only file. The import
+/// goes on: the file is the importer's, and refusing would not unread it.
+#[must_use]
+pub fn identity_mode_warning(mode: u32) -> Option<String> {
+    (mode & 0o044 != 0).then(|| {
+        format!(
+            "warning: the identity file is readable by its group or others (mode {:03o}); it holds an age secret key, so chmod 600 it",
+            mode & 0o777
+        )
+    })
+}
+
+/// How often `oml workspaces import` reads a running import's state.
+pub const POLL_EVERY: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The deadline of each request that moves the bundle: a part, the
+/// completion that reads every part back, and the import request.
+pub const LONG_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+
 /// A reader that hashes and counts what passes through it.
 struct Measured<R> {
     inner: R,
@@ -260,6 +281,16 @@ mod tests {
         let refused = verify_pass(sealed.as_slice(), &identity, &VerifyOptions::default())
             .expect_err("refused");
         assert_eq!(refused.code(), "bundle.path_unsafe");
+    }
+
+    #[test]
+    fn an_identity_file_readable_by_group_or_others_is_warned_of() {
+        assert!(identity_mode_warning(0o100_600).is_none());
+        assert!(identity_mode_warning(0o400).is_none());
+        for mode in [0o640, 0o604, 0o644] {
+            let warning = identity_mode_warning(mode).expect("a warning");
+            assert!(warning.contains(&format!("{mode:03o}")), "{warning}");
+        }
     }
 
     #[test]
