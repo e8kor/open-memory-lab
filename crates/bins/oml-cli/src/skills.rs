@@ -75,7 +75,7 @@ fn hidden(c: char) -> bool {
         )
 }
 
-/// `text` with every character [`hidden`] names written as `\u{XXXX}`, so a
+/// `text` with every character `hidden` names written as `\u{XXXX}`, so a
 /// field a server sent cannot move the cursor, reorder a line or hide text
 /// on the terminal.
 #[must_use]
@@ -290,6 +290,8 @@ mod tests {
 
     /// The probe stops a program that does not answer within its timeout,
     /// and says so (ADR-0080 d15; R13).
+    // `sleep` and `cat` are POSIX programs.
+    #[cfg(unix)]
     #[test]
     fn the_doctor_probe_stops_an_oml_that_does_not_answer_in_time() {
         let started = Instant::now();
@@ -306,6 +308,8 @@ mod tests {
     }
 
     /// No `oml` on `PATH` prints an info line instead of nothing.
+    // `sleep` and `cat` are POSIX programs.
+    #[cfg(unix)]
     #[test]
     fn the_doctor_says_so_when_no_oml_is_on_path() {
         let probed = probe("oml-no-such-program-on-path", &[], "", PROBE_TIMEOUT);
