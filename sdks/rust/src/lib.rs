@@ -43,7 +43,7 @@ pub const OPERATIONS: [&str; 42] = [
     "proposeTransition POST /v2/workspaces/{workspace}/transitions body:to resp:Transition",
     "ratifyTransition POST /v2/workspaces/{workspace}/transitions/{transition_id}/ratify resp:Transition",
     "setWorkspaceMode POST /v2/workspaces/{workspace}/mode body:mode resp:WorkspaceView",
-    "listMemories GET /v1/memories query:with_own,include_text,author,workspace,state,origin_kinds,limit,cursor resp:MemoryPage",
+    "listMemories GET /v1/memories query:with_own,mine,include_text,author,workspace,state,kind,promoted_since,origin_kinds,limit,cursor resp:MemoryPage",
     "recallMemories POST /v1/memories/recall body:query,k,workspace,kinds,include_text,include_unreviewed,origin_kinds resp:RecallResponse",
     "adminSearchMemories POST /v2/admin/memories/search body:query,workspace,state,origin_kind,author,limit,cursor resp:AdminMemoryPage",
     "getWorkspaceTree GET /v2/workspaces/{workspace}/tree query:counts,offers resp:WorkspaceCounts",
@@ -294,6 +294,11 @@ pub struct WorkspaceView {
     /// does not serve it.
     #[serde(default)]
     pub policy: Option<ReviewPolicy>,
+    /// The approved claims on the node alone by kind, only kinds with one or
+    /// more; `None` from an API that does not serve it, where the builder's
+    /// kind links carry no number (ADR-0082 d8 item 7, d10).
+    #[serde(default)]
+    pub approved_by_kind: Option<std::collections::BTreeMap<String, u64>>,
 }
 
 /// A workspace's review policy (openapi.yaml `ReviewPolicy`): how many
@@ -1207,11 +1212,19 @@ pub struct Workspace {
     pub path: String,
 }
 
-/// The Memories list's filters for `GET /v1/memories` with `with_own`.
+/// The Memories list's filters for `GET /v1/memories` with `with_own`, or
+/// with `mine` the caller's own key set alone (ADR-0083 d3).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MemoryQuery<'a> {
+    /// `mine=true`: the caller's own rows, with no scoped part.
+    pub mine: bool,
     pub workspace: Option<&'a str>,
+    /// A comma list of states.
     pub state: Option<&'a str>,
+    /// A comma list of kinds (ADR-0082 d8 item 3).
+    pub kind: Option<&'a str>,
+    /// Only the promoted rows approved at or after this RFC 3339 instant.
+    pub promoted_since: Option<&'a str>,
     pub origin: Option<&'a str>,
     pub author: Option<&'a str>,
     pub limit: u32,
@@ -1604,8 +1617,9 @@ impl<T: Transport> Client<T> {
         .await
     }
 
-    /// `GET /v1/memories` with `with_own=true` and `include_text=true`: the
-    /// caller's merged listing with each item's text.
+    /// `GET /v1/memories` with `with_own=true`, or `mine=true`, and
+    /// `include_text=true`: the caller's merged listing, or its own rows
+    /// alone, with each item's text.
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
@@ -1615,13 +1629,16 @@ impl<T: Transport> Client<T> {
         query: &MemoryQuery<'_>,
     ) -> Result<MemoryPage, Error> {
         let mut path = format!(
-            "/v1/memories?with_own=true&include_text=true&limit={}",
+            "/v1/memories?{}=true&include_text=true&limit={}",
+            if query.mine { "mine" } else { "with_own" },
             query.limit
         );
         for (name, value) in [
             ("author", query.author),
             ("workspace", query.workspace),
             ("state", query.state),
+            ("kind", query.kind),
+            ("promoted_since", query.promoted_since),
             ("origin_kinds", query.origin),
             ("cursor", query.cursor),
         ] {

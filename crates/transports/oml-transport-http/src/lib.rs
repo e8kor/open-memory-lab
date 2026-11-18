@@ -5563,6 +5563,15 @@ pub fn workspace_view_json(info: &WorkspaceInfo) -> Value {
         );
         obj.insert("permission_epoch".to_owned(), json!(info.permission_epoch));
         obj.insert("stale_versions".to_owned(), json!(info.stale_versions));
+        // Only kinds with an approved claim, keyed by kind (ADR-0082 d10).
+        obj.insert(
+            "approved_by_kind".to_owned(),
+            info.approved_by_kind
+                .iter()
+                .map(|(kind, n)| (kind.as_str().to_owned(), json!(n)))
+                .collect::<serde_json::Map<String, Value>>()
+                .into(),
+        );
         // The node's in-progress root, itself for a root, null outside
         // (ADR-0030 d13).
         obj.insert(

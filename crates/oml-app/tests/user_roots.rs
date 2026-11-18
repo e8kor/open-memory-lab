@@ -3550,3 +3550,83 @@ async fn a_session_reviewers_claim_is_judged_by_no_key_of_its_person_outside_the
         .expect("another person approves");
     assert!(!outcome.same_user);
 }
+
+// -- approved_by_kind (ADR-0082 d8 item 7, d10; #409) ------------------------
+
+/// The workspace read counts the approved claims on the node by kind, one
+/// per claim: a claim whose approved tip has a held successor counts once,
+/// a retired claim counts nothing, a held claim counts nothing, and a kind
+/// with no approved claim is absent (ADR-0082 d10).
+#[tokio::test]
+async fn approved_by_kind_counts_each_approved_claim_once_and_no_retired_or_held_one() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", false).await;
+    let agent = user_writer(&app, admin, "alice", "alice/laptop").await;
+    let review = app
+        .web_caller(&alice, Capacity::Review)
+        .await
+        .expect("alice-review");
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let approve_as_person = |id: Uuid| {
+        let review = &review;
+        let app = &app;
+        async move {
+            app.post_verdict(Bearer::Session(review), id, Verdict::Approve, None)
+                .await
+                .expect("approved");
+        }
+    };
+    let a = written(
+        &app,
+        &agent.value,
+        &submit("a", "Builds run on push.", None),
+    )
+    .await;
+    approve_as_person(a).await;
+    app.supersede(
+        Bearer::Session(&web),
+        &supersede_req("a2", a, "Builds run on every push."),
+    )
+    .await
+    .expect("a held successor");
+    let b = written(
+        &app,
+        &agent.value,
+        &SubmitRequest {
+            kind: MemoryKind::Steering,
+            ..submit("b", "Run the tests before a commit.", None)
+        },
+    )
+    .await;
+    approve_as_person(b).await;
+    let c = written(&app, &agent.value, &submit("c", "An old practice.", None)).await;
+    approve_as_person(c).await;
+    let retirement = app
+        .supersede(
+            agent.value.as_str(),
+            &SupersedeRequest {
+                retirement: true,
+                ..supersede_req("c2", c, "No longer done.")
+            },
+        )
+        .await
+        .expect("a retirement")
+        .receipt
+        .memory_id;
+    approve_as_person(retirement).await;
+    written(&app, &agent.value, &submit("d", "Still held.", None)).await;
+
+    let info = app
+        .workspace_info(agent.value.as_str(), Some(by_name("alice")))
+        .await
+        .expect("the workspace read");
+    assert_eq!(
+        info.approved_by_kind,
+        vec![(MemoryKind::Memory, 1), (MemoryKind::Steering, 1)]
+    );
+}

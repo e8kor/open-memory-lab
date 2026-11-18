@@ -6196,6 +6196,60 @@ pub async fn an_own_listing_holds_every_state_of_the_key_sets_rows_off_masked_no
     );
 }
 
+/// `approved_by_kind` counts, by kind, the claims on the node itself whose
+/// promoted tip is not a retirement, one per claim: a replaced version, a
+/// held successor, a retired claim, a held claim and a claim on a child
+/// count nothing, and a kind with none is absent (ADR-0082 d8 item 7, d10).
+pub async fn approved_by_kind_counts_each_claims_served_tip_once_on_the_node_alone<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(37);
+    rig.seed_chain(store, 0).await;
+    let (wa, child) = (Uuid::from_u128(0xB71), Uuid::from_u128(0xB72));
+    let author = Uuid::from_u128(0xD71);
+    let a = listed_row(37, 0xC71, wa, author, 1);
+    hold_and_promote(&mut rig, store, a.clone()).await;
+    let a2 = successor_of(&a, Uuid::from_u128(0xC72), "a, revised", false);
+    supersede(&mut rig, store, &a, a2.memory_id, "a, revised", false).await;
+    hold(
+        &mut rig,
+        store,
+        successor_of(&a2, Uuid::from_u128(0xC73), "a, again", false),
+    )
+    .await
+    .expect("a held successor");
+    let b = MemoryRecord {
+        kind: MemoryKind::Steering,
+        ..listed_row(37, 0xC74, wa, author, 2)
+    };
+    hold_and_promote(&mut rig, store, b).await;
+    let c = listed_row(37, 0xC75, wa, author, 3);
+    hold_and_promote(&mut rig, store, c.clone()).await;
+    supersede(&mut rig, store, &c, Uuid::from_u128(0xC76), "retired", true).await;
+    hold(&mut rig, store, listed_row(37, 0xC77, wa, author, 4))
+        .await
+        .expect("a held claim");
+    hold_and_promote(&mut rig, store, listed_row(37, 0xC78, child, author, 5)).await;
+
+    assert_eq!(
+        store
+            .approved_by_kind(rig_tenant(37), wa)
+            .await
+            .expect("counts"),
+        vec![(MemoryKind::Memory, 1), (MemoryKind::Steering, 1)],
+    );
+    assert_eq!(
+        store
+            .approved_by_kind(rig_tenant(37), Uuid::from_u128(0xB7F))
+            .await
+            .expect("counts"),
+        Vec::new(),
+        "a node with no claim names no kind"
+    );
+}
+
 /// The tips scope lists the promoted served tips on exactly its nodes:
 /// never a held, rejected or replaced version, never a row off the set, and
 /// nothing for an empty set (R3; ADR-0025 d1, d13).
@@ -9915,6 +9969,10 @@ where
     .await;
     Box::pin(
         an_own_listing_holds_every_state_of_the_key_sets_rows_off_masked_nodes(&new_store().await),
+    )
+    .await;
+    Box::pin(
+        approved_by_kind_counts_each_claims_served_tip_once_on_the_node_alone(&new_store().await),
     )
     .await;
     Box::pin(a_tips_listing_holds_only_the_promoted_tips_on_its_nodes(

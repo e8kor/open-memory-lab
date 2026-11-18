@@ -292,6 +292,7 @@ async fn user_cards(
             author: q.author.as_deref(),
             limit: q.limit,
             cursor: q.cursor.as_deref(),
+            ..MemoryQuery::default()
         };
         let page = web
             .api

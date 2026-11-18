@@ -3993,6 +3993,7 @@ where
         } else {
             self.journal.stale_count(tenant_id, node).await?
         };
+        let approved_by_kind = self.journal.approved_by_kind(tenant_id, node).await?;
         // The node's in-progress root, read off the ancestry (ADR-0030 d13).
         let in_progress_root = ancestry.iter().find(|w| w.in_progress).cloned();
         // The node's federation field, served beside the policy (ADR-0072
@@ -4007,6 +4008,7 @@ where
         Ok(WorkspaceInfo {
             in_progress_root,
             stale_versions,
+            approved_by_kind,
             path: derived_path(&ancestry),
             policy: review_policy(),
             federation,

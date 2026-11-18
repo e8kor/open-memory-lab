@@ -2585,6 +2585,10 @@ export interface components {
             in_progress_root?: components["schemas"]["WhoamiRef"] | null;
             /** @description The promoted served tips on this node whose latest source check found the source changed or removed (ADR-0057 d5, d17); 0 for an admin key, which reads no claim. oml doctor reports it for the key's default workspace. */
             stale_versions: number;
+            /** @description The approved claims on this node alone, not its subtree, by kind: a claim counts once when its tip is promoted and is not a retirement, so a replaced version or a held successor adds nothing. Only kinds with at least one approved claim are named (ADR-0082 d8 item 7, d10). Since v0.8.0. */
+            approved_by_kind: {
+                [key: string]: number;
+            };
             /** @description The readable immediate children, ordered by path_leaf ascending in byte order, then id; a child's path_leaf is its name. */
             children: {
                 id: string;

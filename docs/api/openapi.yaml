@@ -4925,7 +4925,7 @@ components:
       allOf:
         - { $ref: '#/components/schemas/Workspace' }
         - type: object
-          required: [children, edges, my_effective_verbs, permission_epoch, policy, pending_transitions, brief, stale_versions]
+          required: [children, edges, my_effective_verbs, permission_epoch, policy, pending_transitions, brief, stale_versions, approved_by_kind]
           properties:
             in_progress_root:
               description: "The in-progress workspace this node lies inside, itself for a root, by id and name; null outside every in-progress subtree (ADR-0030 d13)."
@@ -4933,6 +4933,10 @@ components:
                 - { $ref: '#/components/schemas/WhoamiRef' }
                 - { type: 'null' }
             stale_versions: { type: integer, minimum: 0, description: "The promoted served tips on this node whose latest source check found the source changed or removed (ADR-0057 d5, d17); 0 for an admin key, which reads no claim. oml doctor reports it for the key's default workspace." }
+            approved_by_kind:
+              type: object
+              description: "The approved claims on this node alone, not its subtree, by kind: a claim counts once when its tip is promoted and is not a retirement, so a replaced version or a held successor adds nothing. Only kinds with at least one approved claim are named (ADR-0082 d8 item 7, d10). Since v0.8.0."
+              additionalProperties: { type: integer, minimum: 1 }
             children:
               type: array
               description: The readable immediate children, ordered by path_leaf ascending in byte order, then id; a child's path_leaf is its name.

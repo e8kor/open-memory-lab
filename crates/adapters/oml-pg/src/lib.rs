@@ -9444,6 +9444,36 @@ impl JournalStore for PgStore {
         u64::try_from(n).map_err(backend)
     }
 
+    async fn approved_by_kind(
+        &self,
+        tenant_id: Uuid,
+        workspace_id: Uuid,
+    ) -> Result<Vec<(MemoryKind, u64)>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        // A claim has one served tip (ADR-0025 d10), so counting distinct
+        // claim keys counts the tips once each (ADR-0082 d10).
+        let rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT kind, count(DISTINCT claim_key) FROM memories \
+             WHERE tenant_id = $1 AND workspace_id = $2 AND status = 'promoted' AND is_tip \
+               AND NOT retirement \
+             GROUP BY kind ORDER BY kind",
+        )
+        .bind(tenant_id)
+        .bind(workspace_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.into_iter()
+            .map(|(kind, n)| {
+                let kind = MemoryKind::parse(&kind)
+                    .ok_or_else(|| StoreError::Backend(format!("unknown stored kind {kind:?}")))?;
+                Ok((kind, u64::try_from(n).map_err(backend)?))
+            })
+            .collect()
+    }
+
     async fn claim_latest_readable(
         &self,
         tenant_id: Uuid,

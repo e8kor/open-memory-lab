@@ -1088,6 +1088,11 @@ pub struct WorkspaceInfo {
     /// away since they were reviewed; 0 for an admin key, which reads no
     /// claim (ADR-0057 d17).
     pub stale_versions: u64,
+    /// The claims on the node itself whose promoted tip is not a
+    /// retirement, by kind, one per claim; a kind with none is absent
+    /// (ADR-0082 d8 item 7, d10). Counts name no content, so an admin key
+    /// is served them too.
+    pub approved_by_kind: Vec<(MemoryKind, u64)>,
 }
 
 /// One node of a workspace tree read, with its derived path and the crew

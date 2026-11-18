@@ -411,6 +411,7 @@ from .workspace_offers_transitions_item_op import WorkspaceOffersTransitionsItem
 from .workspace_page import WorkspacePage
 from .workspace_status import WorkspaceStatus
 from .workspace_view import WorkspaceView
+from .workspace_view_approved_by_kind import WorkspaceViewApprovedByKind
 from .workspace_view_children_item import WorkspaceViewChildrenItem
 from .workspace_view_children_item_status import WorkspaceViewChildrenItemStatus
 from .workspace_view_edges_item import WorkspaceViewEdgesItem
@@ -791,6 +792,7 @@ __all__ = (
     "WorkspacePage",
     "WorkspaceStatus",
     "WorkspaceView",
+    "WorkspaceViewApprovedByKind",
     "WorkspaceViewChildrenItem",
     "WorkspaceViewChildrenItemStatus",
     "WorkspaceViewEdgesItem",

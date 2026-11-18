@@ -4545,6 +4545,31 @@ impl JournalStore for MemStore {
             .count() as u64)
     }
 
+    async fn approved_by_kind(
+        &self,
+        tenant_id: Uuid,
+        workspace_id: Uuid,
+    ) -> Result<Vec<(MemoryKind, u64)>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        // One served tip per claim (ADR-0025 d10), so a tip is a claim.
+        let mut counts: Vec<(MemoryKind, u64)> = Vec::new();
+        for m in state
+            .memories
+            .values()
+            .filter(|m| m.workspace_id == workspace_id && served_tip(m))
+        {
+            match counts.iter_mut().find(|(k, _)| *k == m.kind) {
+                Some((_, n)) => *n += 1,
+                None => counts.push((m.kind, 1)),
+            }
+        }
+        counts.sort_by_key(|(k, _)| k.as_str());
+        Ok(counts)
+    }
+
     async fn claim_latest_readable(
         &self,
         tenant_id: Uuid,

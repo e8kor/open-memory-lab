@@ -10145,6 +10145,10 @@ async fn the_web_key_submits_a_memory_in_its_root() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{row}");
+    // A held claim counts in no kind (ADR-0082 d10).
+    let (status, _, view) = send(&rig.router, "GET", "/v2/workspaces/alice", web_call(&web)).await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    assert_eq!(view["approved_by_kind"], json!({}), "{view}");
     drop_db(&rig.db_name).await;
 }
 

@@ -1550,6 +1550,15 @@ pub trait JournalStore: Retriever + Send + Sync {
         workspace_id: Uuid,
     ) -> impl Future<Output = Result<u64, StoreError>> + Send;
 
+    /// How many claims on `workspace_id` itself have a promoted tip that is
+    /// not a retirement, by kind, one per claim; a kind with none is absent
+    /// (ADR-0082 d8 item 7, d10).
+    fn approved_by_kind(
+        &self,
+        tenant_id: Uuid,
+        workspace_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<(MemoryKind, u64)>, StoreError>> + Send;
+
     /// The greatest `version` of `claim_key` in the workspace that a key of
     /// `own_key_ids` may read as the claim's: its own held and promoted
     /// versions, and with `reads_promoted` (reader effective access on the
