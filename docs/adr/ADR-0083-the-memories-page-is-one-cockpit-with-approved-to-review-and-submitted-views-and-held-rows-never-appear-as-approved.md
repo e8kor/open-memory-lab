@@ -320,6 +320,24 @@ Decided, not built.
     console path to a mistaken agent write meanwhile; and a stub Submitted view, which #410 would
     replace whole.
 
+- **d14 — Three readings the build took, 2026-11-18** (proposed for the operator's batch; confirmed
+  by the operator's coordinator the same day, #409, #412).
+    - **Who may send `mine=true` (d3).** Any key: it lists the key's own set, every key of the
+      person for a person's session key and the key alone for any other, as the own part of
+      `with_own` does today. Rejected: refusing every key but the session web key, a refusal path
+      that protects nothing.
+    - **Groups whose feature is not built (d11).** `GET /v2/todo/counts` serves `review` and
+      `truncated` only, and each other member joins with its group's feature; To do draws only the
+      groups served. `GET /v2/admin/todo/counts` serves `{truncated: false}` until its groups land;
+      `/web/admin/todo` exists and says "Nothing waits for this account.", and both sides make the
+      one counts call per page, so the read counts do not move when a group lands. Rejected: zeros
+      or empty groups for lists that do not exist; leaving the admin To do and its badge out until
+      ADR-0089's acts land.
+    - **Next (d2, d11).** To do's Next is the console's own act: it reads `GET /v2/review/held`
+      oldest first, one row, under the To do filter's workspace, and answers `303` to that row's
+      Judge page, or to To do with its "Nothing waits" notice when nothing is held. It does not call
+      `POST /v2/review/next`, which d10 leaves undecided for a workspace filter.
+
 ## Consequences
 
 - API changes: `mine=true`, `promoted_since` and a comma-list `state` with `withdrawn` on

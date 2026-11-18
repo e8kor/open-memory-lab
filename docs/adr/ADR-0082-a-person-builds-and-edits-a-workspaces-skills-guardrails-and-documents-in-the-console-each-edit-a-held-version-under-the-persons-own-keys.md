@@ -260,6 +260,34 @@ Decided, not built.
   by the approved design system v18 mockups: d1's workspace page and forms, d5's preview on the
   form's own page, d6's diff on the form and on Judge. Nothing stays open.
 
+- **d10 — Three readings the build took, 2026-11-18** (proposed for the operator's batch; confirmed
+  by the operator's coordinator the same day, #409).
+    - **Which refusals preview answers inside its body (d5).** Refusals of authority answer as the
+      same HTTP error submit or supersede would: no or a bad key, the verb ceiling, every `access.*`
+      grant refusal, a target the key cannot read (`access.not_found`) and the request rate (`429`),
+      since preview "needs the same grant". Every refusal capture itself would make (validation,
+      size, the scan's veto, quota headroom, a name taken, `submission.version_conflict`,
+      `submission.tip_conflict`, `workspace.frozen`, a guardrail rule that does not parse) answers
+      `200` with `would_capture: false` and `refusal: {code, message, details}`, the shape of the
+      error body. Preview takes no idempotency record and never replays one. Rejected: every
+      refusal as an HTTP error (the form would lose the findings and budget beside it); grant
+      refusals inside the body (it would describe a workspace the key cannot write).
+    - **Which reviewer key starts a claim (d2, d8 item 5).** A key whose credential is a session
+      and whose role is reviewer submits a new claim where it holds reviewer and reader, the grants
+      supersede's step 4 asks; the version is held, and its lineage excludes the author key, so no
+      key of the author's person counts a verdict on it outside the person's root (d7). Every other
+      reviewer key keeps `access.verb_ceiling`. Rejected: reviewer alone, which would let a key
+      start a claim it cannot read back.
+    - **The shape of `approved_by_kind` (d8 item 7).** An object keyed by kind naming only kinds
+      with at least one approved claim: a claim counts when its tip is promoted and is not a
+      retirement, one per claim, on that workspace alone. The workspace page's Memories count is
+      the sum over the kinds the Memories cockpit lists, read from the one kind set the cockpit's
+      listing uses. The cockpit lists every kind (ADR-0083 d1 sets no kind filter), so steering,
+      like every kind, counts under Memories, and Skills, Guardrails and Documents count their own
+      kinds again beside it. Rejected: every kind with zeros, which ties the answer to the kind
+      list; Memories as "every kind but skill, guardrail and document", which a cockpit listing
+      every kind would contradict.
+
 ## Consequences
 
 - `oml-web` gains `workspace.rs` with d1's routes, the forms, the diff and the preview's
