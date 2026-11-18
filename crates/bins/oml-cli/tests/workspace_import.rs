@@ -160,7 +160,13 @@ fn serve(runtime: &tokio::runtime::Runtime, stub: Stub) -> (String, Shared) {
         .route(
             "/v2/uploads/{id}/parts/{n}",
             put(
-                |State(s): State<Shared>, UrlPath((id, n)): UrlPath<(String, u64)>| async move {
+                |State(s): State<Shared>,
+                 UrlPath((id, n)): UrlPath<(String, u64)>,
+                 body: axum::body::Body| async move {
+                    // The part is read whole before the answer: a stub that
+                    // answers first and closes breaks the CLI's pipe while
+                    // it still sends.
+                    let _ = axum::body::to_bytes(body, usize::MAX).await;
                     note(&s, format!("PUT /v2/uploads/{id}/parts/{n}"));
                     Json(json!({ "part": n }))
                 },
