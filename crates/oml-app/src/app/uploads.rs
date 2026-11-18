@@ -143,7 +143,12 @@ where
                 max_bytes: self.uploads.max_bytes,
             }));
         }
-        self.objects()?;
+        // A store that cannot be opened refuses the session before it is
+        // journalled (ADR-0004 d3, note of 2026-11-18).
+        self.objects()?
+            .ready()
+            .await
+            .map_err(|_| AppError::Upload(UploadRefusal::StorageFailed))?;
         let now = self.clock.now();
         let at = now.unix_micros();
         let session = UploadSession {

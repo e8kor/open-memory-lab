@@ -41,6 +41,12 @@ keyring:
   # Empty: the cluster's default StorageClass.
   storageClassName: ""
 
+# The emptyDir upload sessions keep their encrypted parts in (storage.url;
+# ADR-0004 d3). Empty: no size limit, so the kubelet never evicts the lead
+# for an upload's bytes.
+objects:
+  sizeLimit: ""
+
 # The web console, oml-web: its own process over the lead's HTTP API, a
 # second Deployment from the same image under the entrypoint
 # /usr/local/bin/oml-web (ADR-0070 d4). It reaches the lead at the lead's

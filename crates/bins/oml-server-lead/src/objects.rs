@@ -2,7 +2,9 @@
 //! 2026-11-17; ADR-0090 d16): `storage.url` names a directory, an object is
 //! a file under it named by the object's name, written to a temporary file
 //! and renamed into place, owner-only. Another scheme is refused at start
-//! until an object store adapter exists.
+//! until an object store adapter exists. The lead opens the directory on
+//! first use, so one it cannot create refuses uploads and never the start
+//! (ADR-0004 d3, note of 2026-11-18).
 
 use std::path::{Path, PathBuf};
 
@@ -50,14 +52,17 @@ impl LocalObjects {
     ///
     /// The directory cannot be created, or is not a directory.
     pub fn open(root: &Path) -> Result<Self, String> {
-        create_private_dir(root).map_err(|e| format!("storage.url {}: {e}", root.display()))?;
+        Self::open_io(root).map_err(|e| format!("storage.url {}: {e}", root.display()))
+    }
+
+    fn open_io(root: &Path) -> std::io::Result<Self> {
+        create_private_dir(root)?;
         // A root that existed before is tightened to owner-only too
         // (ADR-0004 d3, readings of 2026-11-18).
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700))
-                .map_err(|e| format!("storage.url {}: {e}", root.display()))?;
+            std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700))?;
         }
         Ok(Self {
             root: root.to_path_buf(),
@@ -75,6 +80,99 @@ impl LocalObjects {
             path.push(segment);
         }
         Ok(path)
+    }
+}
+
+/// [`LocalObjects`] opened on first use: a root that cannot be opened is
+/// tried again at each use, which fails with the reason, so the lead starts
+/// and serves every other route without it (ADR-0004 d3, note of
+/// 2026-11-18).
+#[derive(Debug)]
+pub struct LazyObjects {
+    root: PathBuf,
+    opened: std::sync::Mutex<Option<LocalObjects>>,
+}
+
+impl LazyObjects {
+    /// The store over `root`, not yet opened.
+    #[must_use]
+    pub fn new(root: &Path) -> Self {
+        Self {
+            root: root.to_path_buf(),
+            opened: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// The opened store, opening it where it is not yet.
+    ///
+    /// # Errors
+    ///
+    /// The directory cannot be created, or is not a directory: the closed
+    /// kind of the failure and the reason naming the path and the error.
+    pub fn probe(&self) -> Result<LocalObjects, StoreUnavailable> {
+        let mut opened = self
+            .opened
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(store) = opened.as_ref() {
+            return Ok(store.clone());
+        }
+        let store = LocalObjects::open_io(&self.root).map_err(|e| StoreUnavailable {
+            kind: failure_kind(&e),
+            reason: format!("storage.url {}: {e}", self.root.display()),
+        })?;
+        *opened = Some(store.clone());
+        Ok(store)
+    }
+
+    fn open(&self) -> Result<LocalObjects, String> {
+        self.probe().map_err(|e| e.reason)
+    }
+}
+
+/// Why the object store cannot be opened: `kind` is one of a closed set,
+/// served as a metric label; `reason` names the path and the error, for the
+/// log alone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoreUnavailable {
+    /// `permission_denied`, `read_only`, `not_a_directory`, `not_found`,
+    /// `full` or `other`.
+    pub kind: &'static str,
+    /// `storage.url <path>: <error>`.
+    pub reason: String,
+}
+
+fn failure_kind(e: &std::io::Error) -> &'static str {
+    use std::io::ErrorKind as K;
+    match e.kind() {
+        K::PermissionDenied => "permission_denied",
+        K::ReadOnlyFilesystem => "read_only",
+        K::NotADirectory | K::AlreadyExists => "not_a_directory",
+        K::NotFound => "not_found",
+        K::StorageFull | K::QuotaExceeded => "full",
+        _ => "other",
+    }
+}
+
+impl ObjectStore for LazyObjects {
+    fn put<'a>(&'a self, name: &'a str, bytes: Vec<u8>) -> ObjectFuture<'a, ()> {
+        Box::pin(async move { self.open()?.put(name, bytes).await })
+    }
+
+    fn get<'a>(&'a self, name: &'a str) -> ObjectFuture<'a, Option<Vec<u8>>> {
+        Box::pin(async move { self.open()?.get(name).await })
+    }
+
+    fn delete_prefix<'a>(&'a self, prefix: &'a str) -> ObjectFuture<'a, ()> {
+        Box::pin(async move { self.open()?.delete_prefix(prefix).await })
+    }
+
+    fn stored_bytes<'a>(&'a self, prefix: &'a str) -> ObjectFuture<'a, u64> {
+        Box::pin(async move { self.open()?.stored_bytes(prefix).await })
+    }
+
+    fn ready(&self) -> ObjectFuture<'_, ()> {
+        Box::pin(async move { self.open().map(drop) })
     }
 }
 
@@ -207,6 +305,33 @@ mod tests {
         let refused = storage_dir("s3://bucket/objects").expect_err("refused");
         assert!(refused.contains("\"s3\""), "{refused}");
         assert!(storage_dir("  ").is_err());
+    }
+
+    #[tokio::test]
+    async fn a_lazy_store_refuses_each_use_with_the_reason_until_its_directory_can_be_created() {
+        let blocker =
+            std::env::temp_dir().join(format!("oml-objects-blocker-{}", std::process::id()));
+        std::fs::write(&blocker, b"a file").expect("a file");
+        let store = LazyObjects::new(&blocker.join("objects"));
+        let reason = store.ready().await.expect_err("not a directory");
+        assert!(reason.starts_with("storage.url "), "{reason}");
+        assert_eq!(store.probe().expect_err("still").kind, "not_a_directory");
+        assert!(
+            store
+                .put("uploads/t/u/000001", b"x".to_vec())
+                .await
+                .is_err()
+        );
+        assert!(store.stored_bytes("uploads/").await.is_err());
+        // The operator fixes the path; the next use opens the store.
+        std::fs::remove_file(&blocker).expect("remove the file");
+        store.ready().await.expect("opens now");
+        store
+            .put("uploads/t/u/000001", b"x".to_vec())
+            .await
+            .expect("put");
+        assert_eq!(store.stored_bytes("uploads/").await.expect("bytes"), 1);
+        std::fs::remove_dir_all(&blocker).expect("clean up");
     }
 
     #[tokio::test]

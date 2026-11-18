@@ -226,6 +226,7 @@ pub struct Metrics {
     upload_unswept: Gauge,
     upload_staging_stale: Gauge,
     upload_sweep_failures: Counter,
+    upload_store_unavailable: Family<ReasonLabels, Gauge>,
     import_refusals: Family<CodeLabels, Counter>,
     export_refusals: Family<CodeLabels, Counter>,
     import_versions: Family<OutcomeLabels, Counter>,
@@ -394,6 +395,7 @@ impl Default for Metrics {
         let upload_unswept = Gauge::default();
         let upload_staging_stale = Gauge::default();
         let upload_sweep_failures = Counter::default();
+        let upload_store_unavailable = Family::<ReasonLabels, Gauge>::default();
         let import_refusals = Family::<CodeLabels, Counter>::default();
         let export_refusals = Family::<CodeLabels, Counter>::default();
         let import_versions = Family::<OutcomeLabels, Counter>::default();
@@ -569,6 +571,11 @@ impl Default for Metrics {
             "upload sweeps or object removals that failed since start; the next sweep retries",
             upload_sweep_failures.clone(),
         );
+        registry.register(
+            "oml_upload_store_unavailable",
+            "1 while the object store at storage.url cannot be opened, by the closed kind of its failure",
+            upload_store_unavailable.clone(),
+        );
         // Workspace imports (ADR-0084 d15): refusals by their closed code,
         // versions by the plan's outcome, and the imports by state at the
         // last sweep, with no tenant label.
@@ -665,6 +672,7 @@ impl Default for Metrics {
             upload_unswept,
             upload_staging_stale,
             upload_sweep_failures,
+            upload_store_unavailable,
             exports,
             scan_findings,
             scan_counts: std::sync::OnceLock::new(),
@@ -1010,6 +1018,20 @@ impl Metrics {
         self.upload_unswept.set(gauge(totals.unswept));
         self.upload_staging_stale.set(gauge(totals.staging_stale));
         self.upload_sweep_failures.inc_by(failures);
+    }
+
+    /// Whether the object store at `storage.url` can be opened: `None`
+    /// while it can, else the closed kind of its failure, served at 1
+    /// (ADR-0004 d3, note of 2026-11-18).
+    pub fn upload_store(&self, unavailable: Option<&str>) {
+        self.upload_store_unavailable.clear();
+        if let Some(reason) = unavailable {
+            self.upload_store_unavailable
+                .get_or_create(&ReasonLabels {
+                    reason: reason.to_owned(),
+                })
+                .set(1);
+        }
     }
 
     /// The entries waiting for the encoder (ADR-0052 d15).

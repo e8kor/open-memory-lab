@@ -40,6 +40,9 @@ Run by .github/workflows/ci.yml (job chart). Renders deploy/helm/oml with
   the directory of the Dockerfile's OML_KMS__KEYRING_PATH; with
   keyring.existingClaim no claim is rendered and the pod mounts the named one
   (d3);
+- an emptyDir is mounted at the Dockerfile's OML_STORAGE__URL, so the lead,
+  whose root filesystem is read-only, can keep upload sessions' parts there
+  (ADR-0004 d3);
 - OML_POSTGRES__URL comes from a secretKeyRef, and no env value is a
   postgres:// URL (d6);
 - OML_POSTGRES__OWNER_URL, the owner login the lead migrates under, comes
@@ -121,7 +124,7 @@ def main() -> int:
             errors.append(f"Chart.yaml {field} {chart.get(field)!r} != workspace version {workspace}")
     app_version = str(chart.get("appVersion"))
 
-    listen_port, keyring_dir = dockerfile_facts(errors)
+    listen_port, keyring_dir, storage_dir = dockerfile_facts(errors)
 
     values = yaml.safe_load((CHART / "values.yaml").read_text()) or {}
     if values.get("resources"):
@@ -141,7 +144,7 @@ def main() -> int:
     for label, docs in renders.items():
         if docs is None:
             continue
-        check_lead(errors, label, docs, listen_port, keyring_dir, args.image_user)
+        check_lead(errors, label, docs, listen_port, keyring_dir, storage_dir, args.image_user)
         check_web(errors, label, docs, args.image_user)
         image = lead_deployment(errors, label, docs)
         if image is not None and label == "default values":
@@ -188,20 +191,24 @@ def main() -> int:
     return report(errors)
 
 
-def dockerfile_facts(errors: list[str]) -> tuple[int | None, str | None]:
-    """The final stage's listen port and keyring directory, from its ENV lines."""
+def dockerfile_facts(errors: list[str]) -> tuple[int | None, str | None, str | None]:
+    """The final stage's listen port, keyring directory and object directory, from its ENV lines."""
     text = DOCKERFILE.read_text().replace("\\\n", " ")
     final = text.split("\nFROM ")[-1]
     env = " ".join(line[4:] for line in final.splitlines() if line.startswith("ENV "))
     listen = re.search(r"\bOML_SERVER__LISTEN=\S*:(\d+)\b", env)
     keyring = re.search(r"\bOML_KMS__KEYRING_PATH=(\S+)", env)
+    storage = re.search(r"\bOML_STORAGE__URL=(/\S+)", env)
     if not listen:
         errors.append("Dockerfile: the final stage sets no OML_SERVER__LISTEN with a port")
     if not keyring:
         errors.append("Dockerfile: the final stage sets no OML_KMS__KEYRING_PATH")
+    if not storage:
+        errors.append("Dockerfile: the final stage sets no OML_STORAGE__URL to an absolute directory (ADR-0004 d3)")
     return (
         int(listen.group(1)) if listen else None,
         posixpath.dirname(keyring.group(1)) if keyring else None,
+        storage.group(1) if storage else None,
     )
 
 
@@ -211,6 +218,7 @@ def check_lead(
     docs: list[dict],
     listen_port: int | None,
     keyring_dir: str | None,
+    storage_dir: str | None,
     image_user: str | None,
 ) -> None:
     deployment = lead_deployment(errors, label, docs)
@@ -308,6 +316,13 @@ def check_lead(
 
     mounts = {m.get("name"): m.get("mountPath") for m in lead.get("volumeMounts", [])}
     volumes = {v.get("name"): v for v in pod.get("volumes", [])}
+    if storage_dir is not None and not any(
+        path == storage_dir and "emptyDir" in volumes.get(name, {}) for name, path in mounts.items()
+    ):
+        errors.append(
+            f"{label}: no emptyDir is mounted at {storage_dir}, the image's OML_STORAGE__URL; "
+            "the lead's root filesystem is read-only, so every upload would answer upload.storage_failed (ADR-0004 d3)"
+        )
     keyring = [n for n, v in volumes.items() if "persistentVolumeClaim" in v]
     if len(keyring) != 1:
         errors.append(f"{label}: the pod mounts {len(keyring)} volume claims, not the one keyring claim (ADR-0033 d3)")

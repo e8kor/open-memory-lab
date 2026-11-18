@@ -49,9 +49,12 @@ services:
       OML_SERVER__LISTEN: 0.0.0.0:8080
       OML_KMS__KEYRING_PATH: /var/lib/oml/keyring/signing.key
       OML_WEB__CLIENT_SECRET: ${OML_WEB_CLIENT_SECRET:?run oml quickstart, which writes .env}
+      # Upload sessions' encrypted parts, on the volume below.
+      OML_STORAGE__URL: /var/lib/oml/objects
     volumes:
       # The signing keyring: the lead is the only service that mounts it.
       - oml-keyring:/var/lib/oml/keyring
+      - oml-objects:/var/lib/oml/objects
 
   # The web console, from the same image under its own entrypoint. It
   # reaches the lead on this stack's own network, so plain http to the
@@ -102,3 +105,4 @@ configs:
 volumes:
   oml-pgdata:
   oml-keyring:
+  oml-objects:

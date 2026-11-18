@@ -42,7 +42,8 @@ RUN apt-get update \
     && apt-get install --yes --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --create-home --home-dir /var/lib/oml oml \
-    && install --directory --owner oml --group oml --mode 0700 /var/lib/oml/keyring
+    && install --directory --owner oml --group oml --mode 0700 /var/lib/oml/keyring \
+        /var/lib/oml/objects
 
 COPY --from=builder /build/target/release/oml-server-lead /usr/local/bin/oml-server-lead
 # The administration CLI rides along so `docker compose exec oml-server oml …`
@@ -64,8 +65,12 @@ COPY --from=builder /build/LICENSES /usr/local/share/oml/licenses
 
 USER oml
 # OML_WEB__LISTEN is oml-web's; the lead reads no web.listen.
+# Upload sessions keep their encrypted parts under OML_STORAGE__URL, a
+# directory the oml user owns; a volume mounted there keeps them across
+# restarts (ADR-0004 d3).
 ENV OML_SERVER__LISTEN=0.0.0.0:8080 \
     OML_KMS__KEYRING_PATH=/var/lib/oml/keyring/signing.key \
+    OML_STORAGE__URL=/var/lib/oml/objects \
     OML_WEB__LISTEN=0.0.0.0:8091
 EXPOSE 8080 8091
 ENTRYPOINT ["/usr/local/bin/oml-server-lead"]

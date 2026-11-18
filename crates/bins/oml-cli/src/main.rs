@@ -3001,14 +3001,12 @@ fn run_workspaces_import(
     stored: &Credentials,
     args: &ImportArgs<'_>,
 ) -> Result<ExitCode, CliError> {
-    use oml_cli::import::{
-        LONG_TIMEOUT, POLL_EVERY, identity_mode_warning, identity_of, refusal_hint, verify_pass,
-    };
+    use oml_cli::import::{LONG_TIMEOUT, POLL_EVERY, identity_of, refusal_hint, verify_pass};
     use zeroize::Zeroizing;
     #[cfg(unix)]
     if let Ok(meta) = std::fs::metadata(args.identity) {
         use std::os::unix::fs::PermissionsExt as _;
-        if let Some(warning) = identity_mode_warning(meta.permissions().mode()) {
+        if let Some(warning) = oml_cli::import::identity_mode_warning(meta.permissions().mode()) {
             eprintln!("{warning}");
         }
     }
@@ -6458,6 +6456,17 @@ fn uploads_doctor(scrape: Option<&Scrape>) -> Vec<String> {
         scrape.sum("oml_upload_unbound_bytes", &[]),
         scrape.sum("oml_upload_stored_bytes", &[]),
     )];
+    for (set, n) in scrape.samples("oml_upload_store_unavailable", &[]) {
+        if let (1.., Some(kind)) = (
+            n,
+            set.strip_prefix("reason=\"")
+                .and_then(|r| r.strip_suffix('"')),
+        ) {
+            lines.push(format!(
+                "warn upload_store_unavailable: object store unavailable: {kind}; the lead serves every other route, every upload answers upload.storage_failed until storage.url names a directory the lead can write, and the next sweep tries it again; the lead's log names the path under event upload_store_unavailable (docs/operations/upgrades.md)"
+            ));
+        }
+    }
     if let n @ 1.. = scrape.sum("oml_upload_unswept", &[]) {
         lines.push(format!(
             "warn upload_unswept: {n} upload session(s) have their key shredded and their objects still at storage.url; the ciphertext opens under no key, and each sweep tries the removal again: check storage.url's directory is writable by the lead (event upload_sweep_failed names the reason)"
@@ -7988,6 +7997,27 @@ mod tests {
         assert!(
             exports_doctor(None)[1].starts_with("bundles served: not read"),
             "named when the listener is not read"
+        );
+    }
+
+    #[test]
+    fn the_uploads_doctor_warns_that_the_object_store_is_unavailable_and_names_the_reason() {
+        let down = Scrape(
+            "oml_upload_sessions{state=\"open\"} 0\n\
+             oml_upload_store_unavailable{reason=\"permission_denied\"} 1\n"
+                .to_owned(),
+        );
+        let lines = uploads_doctor(Some(&down));
+        assert_eq!(
+            lines[1],
+            "warn upload_store_unavailable: object store unavailable: permission_denied; the lead serves every other route, every upload answers upload.storage_failed until storage.url names a directory the lead can write, and the next sweep tries it again; the lead's log names the path under event upload_store_unavailable (docs/operations/upgrades.md)",
+            "{lines:?}"
+        );
+        let up = Scrape("oml_upload_sessions{state=\"open\"} 0\n".to_owned());
+        assert_eq!(
+            uploads_doctor(Some(&up)).len(),
+            1,
+            "no warn while the store opens"
         );
     }
 

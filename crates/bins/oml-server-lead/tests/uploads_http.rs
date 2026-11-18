@@ -18,10 +18,15 @@ use uuid::Uuid;
 use oml_app::domain::upload::PART_SIZE;
 use oml_app::ed25519_dalek::SigningKey;
 use oml_app::ports::{IdGen as _, JournalStore as _};
+use oml_fetch::PinnedFetcher;
 use oml_pg::PgStore;
 use oml_server_lead::objects::LocalObjects;
-use oml_server_lead::{OsIds, lead_app, lead_state_over, pg_ping};
+use oml_server_lead::{
+    OsIds, UploadSettings, lead_app, lead_state_over, pg_ping, start_lead_with_models,
+};
 use oml_test_pg::{drop_db, mint_database, owner_url, run_tag, serving_url};
+use oml_transport_http::session::WebClient;
+use oml_transport_http::traffic::Traffic;
 
 const ENROLLMENT: &str = "enr_upload_fixture_token";
 static DB_N: AtomicU64 = AtomicU64::new(0);
@@ -483,4 +488,107 @@ async fn upload_refusals_carry_their_codes_and_statuses_over_http() {
     );
     assert_eq!(body["error"]["details"]["limit"], 4);
     finish(rig).await;
+}
+
+/// A lead whose `storage.url` names a directory it cannot create still
+/// starts and is ready; an upload then answers `upload.storage_failed`
+/// (503, retryable), and the metrics listener names the reason the doctor
+/// line reads (ADR-0004 d3, note of 2026-11-18).
+#[tokio::test]
+async fn a_lead_whose_storage_url_cannot_be_created_boots_serves_readyz_and_answers_uploads_storage_failed()
+ {
+    let db_name = format!(
+        "oml_test_uploads_{}_{}_{}",
+        std::process::id(),
+        DB_N.fetch_add(1, Ordering::SeqCst),
+        run_tag()
+    );
+    if !mint_database(&db_name).await {
+        return;
+    }
+    let store = PgStore::connect(&serving_url(&db_name))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db_name));
+    store
+        .migrate(&owner_url(&db_name))
+        .await
+        .expect("migrations apply");
+    // A directory below a regular file cannot be created, as root too.
+    let blocker = std::env::temp_dir().join(format!("oml-uploads-blocker-{db_name}"));
+    std::fs::write(&blocker, b"not a directory").expect("a file");
+    let traffic = Traffic::default();
+    let metrics = Arc::clone(traffic.metrics());
+    let started = start_lead_with_models(
+        &store,
+        SigningKey::from_bytes(&OsIds.new_secret()),
+        None,
+        PinnedFetcher,
+        traffic,
+        None,
+        oml_app::domain::brief::BRIEF_MAX_TOKENS_DEFAULT,
+        None,
+        None,
+        None,
+        WebClient::default(),
+        false,
+        None,
+        Some(UploadSettings {
+            storage_dir: blocker.join("objects"),
+            ..UploadSettings::default()
+        }),
+    )
+    .await
+    .expect("the lead starts without a usable object store");
+    let r = &started.router;
+
+    let (status, body) = call(r, "GET", "/readyz", None, None, Vec::new()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let token = started
+        .enrollment_token
+        .clone()
+        .expect("an enrollment token");
+    let (status, body) = json_call(
+        r,
+        "POST",
+        "/v2/bootstrap/claim",
+        None,
+        json!({
+            "enrollment_token": token,
+            "name": "root-admin",
+            "tenant_name": "upload-tenant",
+            "admin_principal": "platform/admin",
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let admin = body["value"].as_str().expect("a key").to_owned();
+    let alice = writer(r, &admin, "alice-writer").await;
+    let (status, body) = json_call(
+        r,
+        "POST",
+        "/v2/uploads",
+        Some(&alice),
+        json!({ "purpose": "import", "size": 10, "sha256": "a".repeat(64) }),
+    )
+    .await;
+    assert_eq!(
+        (status, code(&body)),
+        (StatusCode::SERVICE_UNAVAILABLE, "upload.storage_failed"),
+        "{body}"
+    );
+
+    let scraped = metrics.encode();
+    let line = scraped
+        .lines()
+        .find(|l| l.starts_with("oml_upload_store_unavailable{"))
+        .unwrap_or_else(|| panic!("no unavailable line in {scraped}"));
+    assert!(line.ends_with("} 1"), "{line}");
+    assert!(line.contains("reason=\"not_a_directory\""), "{line}");
+
+    drop(started);
+    store.pool().close().await;
+    drop_db(&db_name).await;
+    let _ = std::fs::remove_file(&blocker);
 }

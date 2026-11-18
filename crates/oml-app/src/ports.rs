@@ -2480,6 +2480,13 @@ pub trait ObjectStore: Send + Sync {
 
     /// The bytes stored under `prefix`, for the doctor line.
     fn stored_bytes<'a>(&'a self, prefix: &'a str) -> ObjectFuture<'a, u64>;
+
+    /// Whether the store can be used now, or the reason it cannot: a store
+    /// opened lazily tries to open here, and an upload is not opened over
+    /// one that cannot (ADR-0004 d3, note of 2026-11-18).
+    fn ready(&self) -> ObjectFuture<'_, ()> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 /// The signer port — the lead/follower split as a trait: only the lead

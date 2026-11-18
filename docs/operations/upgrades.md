@@ -1,7 +1,7 @@
 ---
 status: Stable
 verified: 2026-11-14
-answers: "how to upgrade an OML server: how migrations run, the upgrade steps in order, what rollback does and does not mean, the upgrade from a pre-0.3.1 install, the v0.5.4 fix, how to move from v0.3, and the v0.8.0 rename that clients take before the server"
+answers: "how to upgrade an OML server: how migrations run, the upgrade steps in order, what rollback does and does not mean, the upgrade from a pre-0.3.1 install, the v0.5.4 fix, how to move from v0.3, the v0.8.0 rename that clients take before the server, and the storage.url to set before v0.8.2's uploads"
 ---
 
 # Upgrade OML
@@ -82,6 +82,20 @@ spellings that a new server refuses, and each refusal names the new spelling.
 
 Update the plugin with `claude plugin update oml@open-memory-lab`. Then set its `url` and `api_key` with
 `/plugin configure oml@open-memory-lab`. The plugin serves no tools until both are set.
+
+## Upgrading to v0.8.2: set `storage.url` before using uploads
+
+v0.8.2 adds upload sessions, which keep their encrypted parts in the directory `storage.url` names
+([ADR-0004](../adr/ADR-0004-bodies-and-attachments.md) d3). The default, `oml-objects`, is relative to
+the server's working directory, which a systemd unit or a container often cannot write. The server
+starts without it: it logs `upload_store_unavailable` once with the reason, serves every other route,
+and refuses each upload and import with `upload.storage_failed` (503) until the directory can be
+created. Before uploads or imports are used, set `storage.url` (`OML_STORAGE__URL`) to an absolute
+path the server's user can write, for example `/var/lib/oml/objects` under a unit whose
+`StateDirectory=oml`. `oml doctor` warns `upload_store_unavailable` while the directory cannot be
+opened, and the next sweep, within five minutes, or the next upload opens it once it can. The release image
+already sets `/var/lib/oml/objects`, and the Compose file and the Helm chart mount a writable volume
+there.
 
 ## Upgrading to v0.8.0: workspaces, reviewer, protected, frozen, used by
 

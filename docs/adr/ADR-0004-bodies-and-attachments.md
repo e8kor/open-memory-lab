@@ -168,6 +168,21 @@ flowchart LR
     - A bound session whose import stopped is shredded by the sweep (ADR-0084 I11), and a bound
       session whose key is still set 24 hours after binding is the doctor warning
       `upload_staging_stale`. A failure to shred is logged with its reason.
+  - **Note of 2026-11-18 (the coordinator, CI of bulk B; for the operator's batch).** An optional
+    feature never stops the server from starting. The lead opens the directory `storage.url` names
+    on first use, not at start: one it cannot create or open is logged once at start as
+    `upload_store_unavailable` with its reason, and the lead starts and serves every other route.
+    While the store cannot be opened, opening an upload session, storing a part and an import that
+    reads its upload answer `upload.storage_failed` (503, retryable); recall and every route that
+    does not touch the store are unaffected. Each sweep tries to open the store again, and the
+    metrics listener serves `oml_upload_store_unavailable{reason}` at 1 while it cannot, `reason`
+    being the closed kind of the failure (`permission_denied`, `read_only`, `not_a_directory`,
+    `not_found`, `full`, `other`), which `oml doctor` reads as the warning
+    `upload_store_unavailable: object store unavailable: <reason>`. The log line names the path
+    and the error; neither is served in an API answer or a metric label, since a label value comes
+    from a closed set and the path is the server's. The default stays the relative `oml-objects`; the release
+    image sets `storage.url` to `/var/lib/oml/objects`, a directory its user owns, and the Compose
+    file and the Helm chart mount a writable volume there.
 
 - **d4 — Stored objects are ciphertext in an S3-compatible object store, encrypted per artifact,
   with both digests recorded.** The object is named by the SHA-256 of its plaintext

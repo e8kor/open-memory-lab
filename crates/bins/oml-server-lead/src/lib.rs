@@ -1998,6 +1998,11 @@ pub async fn sweep_uploads(
 
 /// The `event` field of the log line a sweep that ended stopped imports
 /// writes (ADR-0084 I11).
+/// The `event` field of the log line a lead writes at start when the
+/// directory `storage.url` names cannot be opened (ADR-0004 d3, note of
+/// 2026-11-18).
+pub const EVENT_UPLOAD_STORE_UNAVAILABLE: &str = "upload_store_unavailable";
+
 pub const EVENT_IMPORTS_STOPPED: &str = "imports_stopped";
 
 /// The deployment's imports by state, how many used `allow_older`, how
@@ -2031,12 +2036,23 @@ pub fn spawn_upload_sweep(
     app: Arc<LeadApp>,
     store: PgStore,
     metrics: Arc<oml_transport_http::traffic::Metrics>,
+    objects: Arc<objects::LazyObjects>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut ticks = tokio::time::interval(std::time::Duration::from_secs(UPLOAD_SWEEP_SECONDS));
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             ticks.tick().await;
+            // Each sweep tries to open a store the lead could not open yet,
+            // and says which kind of failure keeps it closed (ADR-0004 d3,
+            // note of 2026-11-18).
+            let opened = tokio::task::spawn_blocking({
+                let objects = Arc::clone(&objects);
+                move || objects.probe().err().map(|f| f.kind)
+            })
+            .await
+            .unwrap_or(Some("other"));
+            metrics.upload_store(opened);
             // The sweep first ends stopped imports (I11), so the gauges
             // read after it.
             let swept = sweep_uploads(&app, &store).await;
@@ -2510,16 +2526,34 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
     };
     app.check_signup_policy().await?;
     // Upload sessions keep their parts in the local directory
-    // `storage.url` names, created owner-only (ADR-0004 d3, as amended
-    // 2026-11-17); a lead started without the settings answers every
-    // upload `upload.storage_failed`.
-    let app = match &uploads {
-        Some(settings) => app.with_uploads(
-            Arc::new(objects::LocalObjects::open(&settings.storage_dir)?),
+    // `storage.url` names, created owner-only on first use (ADR-0004 d3, as
+    // amended 2026-11-17): one the lead cannot open is a warning, never a
+    // stopped start, and every upload answers `upload.storage_failed` until
+    // it opens (note of 2026-11-18). A lead started without the settings
+    // answers every upload the same.
+    let objects = uploads
+        .as_ref()
+        .map(|settings| Arc::new(objects::LazyObjects::new(&settings.storage_dir)));
+    if let Some(objects) = &objects {
+        let unavailable = objects.probe().err();
+        if let Some(failure) = &unavailable {
+            tracing::warn!(
+                event = EVENT_UPLOAD_STORE_UNAVAILABLE,
+                reason = %failure.reason,
+                "UPLOAD STORE UNAVAILABLE — the lead serves every other route, and every upload answers upload.storage_failed until storage.url names a directory it can write (ADR-0004 d3)"
+            );
+        }
+        traffic
+            .metrics()
+            .upload_store(unavailable.as_ref().map(|f| f.kind));
+    }
+    let app = match (&uploads, &objects) {
+        (Some(settings), Some(objects)) => app.with_uploads(
+            Arc::clone(objects) as _,
             settings.max_bytes,
             settings.tenant_max_bytes,
         ),
-        None => app,
+        _ => app,
     };
     // The naming signs, and the lead never signs on top of a fork (ADR-0002
     // d7): after a failed fork check the start only reads whether a row has
@@ -2533,11 +2567,12 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
     };
     let enrollment_token = (tenants.is_empty() && fork_check.is_ok()).then(mint_enrollment_token);
     let app = Arc::new(app);
-    if uploads.is_some() {
+    if let Some(objects) = objects {
         let _sweep = spawn_upload_sweep(
             Arc::clone(&app),
             store.clone(),
             Arc::clone(traffic.metrics()),
+            objects,
         );
     }
     let state = composed(
