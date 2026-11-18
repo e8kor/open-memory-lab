@@ -2968,8 +2968,6 @@ fn run_events(cli: &Cli, stored: &Credentials, args: &EventsArgs) -> Result<Exit
     Ok(ExitCode::SUCCESS)
 }
 
-/// `oml workspaces status`: propose, ratify and the pending list over the
-/// transition routes and the workspace read (ADR-0046 d3).
 /// The arguments of `oml workspaces import`.
 struct ImportArgs<'a> {
     file: &'a std::path::Path,
@@ -3096,6 +3094,8 @@ fn run_workspaces_import(
     Ok(ExitCode::SUCCESS)
 }
 
+/// `oml workspaces status`: propose, ratify and the pending list over the
+/// transition routes and the workspace read (ADR-0046 d3).
 fn run_workspace_status(
     cli: &Cli,
     stored: &Credentials,
@@ -6277,12 +6277,6 @@ fn handlers_doctor(scrape: Option<&Scrape>) -> Vec<String> {
     lines
 }
 
-/// The `uploads` doctor lines (ADR-0004 d3, as amended 2026-11-17; #451),
-/// from the metrics listener alone: the sessions by state and the bytes
-/// stored at the last sweep; a warn for sessions whose key is shredded and
-/// whose objects remain, for failed sweeps, and for the refusals by code
-/// that say something is wrong (a digest mismatch, a failing store, a
-/// limit reached). Nothing from a server before uploads.
 /// The `exports` section (ADR-0084 d10, d15; reading I9): the tenant's
 /// export policy, which is `own_root` while no route sets another, and the
 /// bundles served since start, from the metrics listener.
@@ -6310,6 +6304,12 @@ fn exports_doctor(scrape: Option<&Scrape>) -> Vec<String> {
     }
 }
 
+/// The `uploads` doctor lines (ADR-0004 d3, as amended 2026-11-17; #451),
+/// from the metrics listener alone: the sessions by state and the bytes
+/// stored at the last sweep; a warn for sessions whose key is shredded and
+/// whose objects remain, for failed sweeps, and for the refusals by code
+/// that say something is wrong (a digest mismatch, a failing store, a
+/// limit reached). Nothing from a server before uploads.
 fn uploads_doctor(scrape: Option<&Scrape>) -> Vec<String> {
     let Some(scrape) = scrape else {
         return vec!["not read: set OML_METRICS_URL to the lead's metrics listener".to_owned()];
