@@ -10113,6 +10113,41 @@ fn web_call(credential: &str) -> Call {
     Call::auth(credential).header("oml-web-client", WEB_SECRET)
 }
 
+/// A person's session web key submits a memory in its own root over the
+/// HTTP API: the session refusals name only the key acts, so the builder's
+/// new item needs no other change (ADR-0082 d8 item 6).
+#[tokio::test]
+async fn the_web_key_submits_a_memory_in_its_root() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let token = rig.signed_in("alice@example.com", "alice", false).await;
+    let web = credential(&token, "web");
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v1/memories",
+        web_call(&web).idem("web-new-1").body(json!({
+            "kind": "memory",
+            "workspace": "alice",
+            "body": "Typed in the builder.",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    assert_eq!(body["state"], "held", "{body}");
+    let id = body["artifact_id"].as_str().expect("an id").to_owned();
+    let (status, _, row) = send(
+        &rig.router,
+        "GET",
+        &format!("/v1/memories/{id}"),
+        web_call(&web),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{row}");
+    drop_db(&rig.db_name).await;
+}
+
 /// A capacity credential reaches the API only with oml-web's client
 /// identity: without the secret, with a wrong one, or beside a client
 /// certificate a gateway forwarded, it is `auth.invalid`
