@@ -6,8 +6,6 @@ import httpx
 
 from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
-from ...models.list_memories_kind import ListMemoriesKind
-from ...models.list_memories_state import ListMemoriesState
 from ...models.memory_page import MemoryPage
 from ...models.origin_kind import OriginKind
 from ...types import UNSET, Response, Unset
@@ -17,10 +15,12 @@ def _get_kwargs(
     *,
     workspace: str | Unset = UNSET,
     claim_key: str | Unset = UNSET,
-    state: ListMemoriesState | Unset = UNSET,
-    kind: ListMemoriesKind | Unset = UNSET,
+    state: str | Unset = UNSET,
+    kind: str | Unset = UNSET,
     own: bool | Unset = False,
     with_own: bool | Unset = UNSET,
+    mine: bool | Unset = UNSET,
+    promoted_since: datetime.datetime | Unset = UNSET,
     author: str | Unset = UNSET,
     include_text: bool | Unset = UNSET,
     anchor_repo: str | Unset = UNSET,
@@ -56,21 +56,20 @@ def _get_kwargs(
 
     params["claim_key"] = claim_key
 
-    json_state: str | Unset = UNSET
-    if not isinstance(state, Unset):
-        json_state = state.value
+    params["state"] = state
 
-    params["state"] = json_state
-
-    json_kind: str | Unset = UNSET
-    if not isinstance(kind, Unset):
-        json_kind = kind.value
-
-    params["kind"] = json_kind
+    params["kind"] = kind
 
     params["own"] = own
 
     params["with_own"] = with_own
+
+    params["mine"] = mine
+
+    json_promoted_since: str | Unset = UNSET
+    if not isinstance(promoted_since, Unset):
+        json_promoted_since = promoted_since.isoformat()
+    params["promoted_since"] = json_promoted_since
 
     params["author"] = author
 
@@ -156,10 +155,12 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     workspace: str | Unset = UNSET,
     claim_key: str | Unset = UNSET,
-    state: ListMemoriesState | Unset = UNSET,
-    kind: ListMemoriesKind | Unset = UNSET,
+    state: str | Unset = UNSET,
+    kind: str | Unset = UNSET,
     own: bool | Unset = False,
     with_own: bool | Unset = UNSET,
+    mine: bool | Unset = UNSET,
+    promoted_since: datetime.datetime | Unset = UNSET,
     author: str | Unset = UNSET,
     include_text: bool | Unset = UNSET,
     anchor_repo: str | Unset = UNSET,
@@ -196,10 +197,12 @@ def sync_detailed(
             (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is
             universe, is neither, and is refused (request.validation).
         claim_key (str | Unset):
-        state (ListMemoriesState | Unset):
-        kind (ListMemoriesKind | Unset):
+        state (str | Unset):
+        kind (str | Unset):
         own (bool | Unset):  Default: False.
         with_own (bool | Unset):
+        mine (bool | Unset):
+        promoted_since (datetime.datetime | Unset):
         author (str | Unset):
         include_text (bool | Unset):
         anchor_repo (str | Unset): A repository, scheme, credentials and .git dropped
@@ -233,6 +236,8 @@ def sync_detailed(
         kind=kind,
         own=own,
         with_own=with_own,
+        mine=mine,
+        promoted_since=promoted_since,
         author=author,
         include_text=include_text,
         anchor_repo=anchor_repo,
@@ -260,10 +265,12 @@ def sync(
     client: AuthenticatedClient | Client,
     workspace: str | Unset = UNSET,
     claim_key: str | Unset = UNSET,
-    state: ListMemoriesState | Unset = UNSET,
-    kind: ListMemoriesKind | Unset = UNSET,
+    state: str | Unset = UNSET,
+    kind: str | Unset = UNSET,
     own: bool | Unset = False,
     with_own: bool | Unset = UNSET,
+    mine: bool | Unset = UNSET,
+    promoted_since: datetime.datetime | Unset = UNSET,
     author: str | Unset = UNSET,
     include_text: bool | Unset = UNSET,
     anchor_repo: str | Unset = UNSET,
@@ -300,10 +307,12 @@ def sync(
             (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is
             universe, is neither, and is refused (request.validation).
         claim_key (str | Unset):
-        state (ListMemoriesState | Unset):
-        kind (ListMemoriesKind | Unset):
+        state (str | Unset):
+        kind (str | Unset):
         own (bool | Unset):  Default: False.
         with_own (bool | Unset):
+        mine (bool | Unset):
+        promoted_since (datetime.datetime | Unset):
         author (str | Unset):
         include_text (bool | Unset):
         anchor_repo (str | Unset): A repository, scheme, credentials and .git dropped
@@ -338,6 +347,8 @@ def sync(
         kind=kind,
         own=own,
         with_own=with_own,
+        mine=mine,
+        promoted_since=promoted_since,
         author=author,
         include_text=include_text,
         anchor_repo=anchor_repo,
@@ -359,10 +370,12 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     workspace: str | Unset = UNSET,
     claim_key: str | Unset = UNSET,
-    state: ListMemoriesState | Unset = UNSET,
-    kind: ListMemoriesKind | Unset = UNSET,
+    state: str | Unset = UNSET,
+    kind: str | Unset = UNSET,
     own: bool | Unset = False,
     with_own: bool | Unset = UNSET,
+    mine: bool | Unset = UNSET,
+    promoted_since: datetime.datetime | Unset = UNSET,
     author: str | Unset = UNSET,
     include_text: bool | Unset = UNSET,
     anchor_repo: str | Unset = UNSET,
@@ -399,10 +412,12 @@ async def asyncio_detailed(
             (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is
             universe, is neither, and is refused (request.validation).
         claim_key (str | Unset):
-        state (ListMemoriesState | Unset):
-        kind (ListMemoriesKind | Unset):
+        state (str | Unset):
+        kind (str | Unset):
         own (bool | Unset):  Default: False.
         with_own (bool | Unset):
+        mine (bool | Unset):
+        promoted_since (datetime.datetime | Unset):
         author (str | Unset):
         include_text (bool | Unset):
         anchor_repo (str | Unset): A repository, scheme, credentials and .git dropped
@@ -436,6 +451,8 @@ async def asyncio_detailed(
         kind=kind,
         own=own,
         with_own=with_own,
+        mine=mine,
+        promoted_since=promoted_since,
         author=author,
         include_text=include_text,
         anchor_repo=anchor_repo,
@@ -461,10 +478,12 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     workspace: str | Unset = UNSET,
     claim_key: str | Unset = UNSET,
-    state: ListMemoriesState | Unset = UNSET,
-    kind: ListMemoriesKind | Unset = UNSET,
+    state: str | Unset = UNSET,
+    kind: str | Unset = UNSET,
     own: bool | Unset = False,
     with_own: bool | Unset = UNSET,
+    mine: bool | Unset = UNSET,
+    promoted_since: datetime.datetime | Unset = UNSET,
     author: str | Unset = UNSET,
     include_text: bool | Unset = UNSET,
     anchor_repo: str | Unset = UNSET,
@@ -501,10 +520,12 @@ async def asyncio(
             (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is
             universe, is neither, and is refused (request.validation).
         claim_key (str | Unset):
-        state (ListMemoriesState | Unset):
-        kind (ListMemoriesKind | Unset):
+        state (str | Unset):
+        kind (str | Unset):
         own (bool | Unset):  Default: False.
         with_own (bool | Unset):
+        mine (bool | Unset):
+        promoted_since (datetime.datetime | Unset):
         author (str | Unset):
         include_text (bool | Unset):
         anchor_repo (str | Unset): A repository, scheme, credentials and .git dropped
@@ -540,6 +561,8 @@ async def asyncio(
             kind=kind,
             own=own,
             with_own=with_own,
+            mine=mine,
+            promoted_since=promoted_since,
             author=author,
             include_text=include_text,
             anchor_repo=anchor_repo,

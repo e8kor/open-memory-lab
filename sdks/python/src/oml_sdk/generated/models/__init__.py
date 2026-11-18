@@ -176,8 +176,6 @@ from .key_used_by_type_2_type_1 import KeyUsedByType2Type1
 from .key_used_by_type_3_type_1 import KeyUsedByType3Type1
 from .list_edges_kind import ListEdgesKind
 from .list_keys_response_200 import ListKeysResponse200
-from .list_memories_kind import ListMemoriesKind
-from .list_memories_state import ListMemoriesState
 from .list_web_emails_response_200 import ListWebEmailsResponse200
 from .list_web_users_response_200 import ListWebUsersResponse200
 from .list_web_users_response_200_deletions_item import (
@@ -576,8 +574,6 @@ __all__ = (
     "KeyUsedByType3Type1",
     "ListEdgesKind",
     "ListKeysResponse200",
-    "ListMemoriesKind",
-    "ListMemoriesState",
     "ListWebEmailsResponse200",
     "ListWebUsersResponse200",
     "ListWebUsersResponse200DeletionsItem",

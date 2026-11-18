@@ -56,8 +56,8 @@ use oml_app::types::{
     ConnectOutcome, ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord, DocumentCaching,
     GrantRecord, GuardrailFields, HeldFilter, HeldRow, KeyAccess, KeyRecord, KindFields,
     ListingFilter, ListingPosition, ListingScope, MemoryRecord, MintedToken, OAuthClientRecord,
-    RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord,
-    TransitionState, UnnamedRows, WorkspaceRecord,
+    RefreshFacts, RefreshOutcome, StateClause, SweepReport, TenantRow, TokenPair, TokenRecord,
+    TransitionRecord, TransitionState, UnnamedRows, WorkspaceRecord,
 };
 use oml_app::types::{FindingVerdict, FoundBy, VersionFinding};
 use serde_json::{Value, json};
@@ -5963,13 +5963,12 @@ fn listing(scope: ListingScope) -> ListingFilter {
         anchor: oml_app::types::AnchorFilter::default(),
         scope,
         subtree: None,
-        state: None,
-        kind: None,
+        states: Vec::new(),
+        kinds: Vec::new(),
         claim_key: None,
         since: None,
         until: None,
         author: None,
-        tip: None,
         as_of: None,
     }
 }
@@ -6085,7 +6084,7 @@ pub async fn an_own_listing_holds_every_state_of_the_key_sets_rows_off_masked_no
     assert_eq!(
         list(ListingFilter {
             anchor: oml_app::types::AnchorFilter::default(),
-            state: Some(MemoryStatus::Held),
+            states: vec![StateClause::status(MemoryStatus::Held)],
             ..own(vec![denied])
         })
         .await,
@@ -6095,7 +6094,7 @@ pub async fn an_own_listing_holds_every_state_of_the_key_sets_rows_off_masked_no
     assert_eq!(
         list(ListingFilter {
             anchor: oml_app::types::AnchorFilter::default(),
-            kind: Some(MemoryKind::Steering),
+            kinds: vec![MemoryKind::Steering],
             ..own(Vec::new())
         })
         .await,
@@ -6136,13 +6135,64 @@ pub async fn an_own_listing_holds_every_state_of_the_key_sets_rows_off_masked_no
     );
     assert_eq!(
         list(ListingFilter {
-            tip: Some(true),
-            state: Some(MemoryStatus::Promoted),
+            states: vec![StateClause {
+                tip: Some(true),
+                ..StateClause::status(MemoryStatus::Promoted)
+            }],
             ..own(vec![denied])
         })
         .await,
         vec![promoted.memory_id],
         "the tip narrows (ADR-0045 d22)"
+    );
+    assert_eq!(
+        list(ListingFilter {
+            states: vec![
+                StateClause::status(MemoryStatus::Held),
+                StateClause::status(MemoryStatus::Rejected),
+            ],
+            ..own(vec![denied])
+        })
+        .await,
+        vec![rejected.memory_id, held.memory_id],
+        "a row passes when it passes any one state (ADR-0083 d3)"
+    );
+    assert_eq!(
+        list(ListingFilter {
+            kinds: vec![MemoryKind::Steering, MemoryKind::Memory],
+            ..own(vec![denied])
+        })
+        .await,
+        vec![rejected.memory_id, promoted.memory_id, held.memory_id],
+        "a row passes when it is any one kind (ADR-0082 d8 item 3)"
+    );
+    let promoted_since = |at: &str| {
+        vec![
+            StateClause::status(MemoryStatus::Held),
+            StateClause {
+                tip: Some(true),
+                promoted_since: Some(EventTime::parse(at).expect("fixture time")),
+                ..StateClause::status(MemoryStatus::Promoted)
+            },
+        ]
+    };
+    assert_eq!(
+        list(ListingFilter {
+            states: promoted_since("2000-01-01T00:00:00.000000Z"),
+            ..own(vec![denied])
+        })
+        .await,
+        vec![promoted.memory_id, held.memory_id],
+        "a promoted row approved at or after promoted_since passes"
+    );
+    assert_eq!(
+        list(ListingFilter {
+            states: promoted_since("2999-01-01T00:00:00.000000Z"),
+            ..own(vec![denied])
+        })
+        .await,
+        vec![held.memory_id],
+        "promoted_since narrows the promoted rows and leaves the held whole (ADR-0083 d3)"
     );
 }
 
@@ -6206,7 +6256,7 @@ pub async fn a_tips_listing_holds_only_the_promoted_tips_on_its_nodes<S: Journal
     assert!(
         list(ListingFilter {
             anchor: oml_app::types::AnchorFilter::default(),
-            state: Some(MemoryStatus::Held),
+            states: vec![StateClause::status(MemoryStatus::Held)],
             ..tips(vec![wa])
         })
         .await

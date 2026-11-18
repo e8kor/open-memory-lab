@@ -3159,3 +3159,187 @@ async fn a_held_skill_is_offered_to_its_authoring_key_and_no_other_key_of_its_pe
         ),
     }
 }
+
+// -- mine, state lists and promoted_since (ADR-0083 d3, d14; #409) -----------
+
+fn mine_listing(
+    states: Vec<oml_app::types::AdminState>,
+    kinds: Vec<MemoryKind>,
+    promoted_since: Option<EventTime>,
+) -> oml_app::app::WebListRequest {
+    oml_app::app::WebListRequest {
+        mine: true,
+        states,
+        kinds,
+        promoted_since,
+        limit: 50,
+        ..oml_app::app::WebListRequest::default()
+    }
+}
+
+async fn listed_ids(
+    app: &TestApp,
+    caller: &oml_app::app::Caller,
+    req: &oml_app::app::WebListRequest,
+) -> std::collections::BTreeSet<Uuid> {
+    app.list_memories_with_own(caller, req)
+        .await
+        .expect("the listing")
+        .items
+        .iter()
+        .map(|m| m.memory.memory_id)
+        .collect()
+}
+
+/// `mine=true` from a person's session web key lists the rows of every key
+/// of the person, in every state, and no scoped part: a `universe` tip the
+/// merged listing serves is absent. `state` takes a comma list, `kind` a
+/// comma list, `author` narrows to one own key, and `promoted_since`
+/// narrows the promoted rows alone, the held ones staying whole (ADR-0083
+/// d3, d14; ADR-0082 d8 item 3).
+#[tokio::test]
+async fn mine_lists_every_key_of_the_person_and_promoted_since_limits_only_promoted_rows() {
+    use oml_app::types::AdminState;
+    let store = MemStore::new();
+    let clock = FixedClock::new();
+    let app = App::new(
+        store,
+        MemSigner::new(TEST_SEED),
+        clock.clone(),
+        SeqIdGen::new(),
+        MarkerScanner::default(),
+    );
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let c = curated(&app, &boot).await;
+    let alice = signed_in(&app, admin, "alice", false).await;
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let review = app
+        .web_caller(&alice, Capacity::Review)
+        .await
+        .expect("alice-review");
+    clock.advance(60);
+    let cut = oml_app::ports::Clock::now(&clock);
+    let late = written(
+        &app,
+        &c.alice.value,
+        &submit("late", "Releases tag from main.", None),
+    )
+    .await;
+    app.post_verdict(Bearer::Session(&review), late, Verdict::Approve, None)
+        .await
+        .expect("alice's review key approves in her root");
+    let held = app
+        .submit_memory(
+            Bearer::Session(&web),
+            &submit("held", "Typed in the console.", None),
+        )
+        .await
+        .expect("the web key writes in its root")
+        .receipt
+        .memory_id;
+    let steer = written(
+        &app,
+        &c.alice.value,
+        &SubmitRequest {
+            kind: MemoryKind::Steering,
+            ..submit("steer", "Run the tests before a commit.", None)
+        },
+    )
+    .await;
+
+    let all = listed_ids(&app, &web, &mine_listing(Vec::new(), Vec::new(), None)).await;
+    let expected: std::collections::BTreeSet<Uuid> =
+        [c.source, late, held, steer].into_iter().collect();
+    assert_eq!(all, expected, "every key of the person, no scoped part");
+    let merged = listed_ids(
+        &app,
+        &web,
+        &oml_app::app::WebListRequest {
+            limit: 50,
+            ..oml_app::app::WebListRequest::default()
+        },
+    )
+    .await;
+    assert!(
+        merged.contains(&c.placed),
+        "the merged listing has the scoped part"
+    );
+
+    let since = listed_ids(
+        &app,
+        &web,
+        &mine_listing(
+            vec![AdminState::Held, AdminState::Promoted],
+            Vec::new(),
+            Some(cut),
+        ),
+    )
+    .await;
+    let expected: std::collections::BTreeSet<Uuid> = [late, held, steer].into_iter().collect();
+    assert_eq!(
+        since, expected,
+        "promoted_since drops the promoted row approved before it and leaves the held rows whole"
+    );
+
+    let steering = listed_ids(
+        &app,
+        &web,
+        &mine_listing(
+            Vec::new(),
+            vec![MemoryKind::Steering, MemoryKind::Skill],
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(steering, [steer].into_iter().collect());
+
+    let by_web = listed_ids(
+        &app,
+        &web,
+        &oml_app::app::WebListRequest {
+            author: web.key().name.clone(),
+            ..mine_listing(Vec::new(), Vec::new(), None)
+        },
+    )
+    .await;
+    assert_eq!(by_web, [held].into_iter().collect(), "author narrows mine");
+}
+
+/// `mine=true` from a key no person's session serves lists that key's own
+/// rows alone, as the own part of `with_own` does (ADR-0083 d14).
+#[tokio::test]
+async fn mine_from_a_key_no_session_serves_lists_that_key_alone() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", false).await;
+    let agent = user_writer(&app, admin, "alice", "alice/laptop").await;
+    let other = user_writer(&app, admin, "alice", "alice/desktop").await;
+    let mine = written(&app, &agent.value, &submit("a1", "The agent's note.", None)).await;
+    written(
+        &app,
+        &other.value,
+        &submit("o1", "Another key's note.", None),
+    )
+    .await;
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    app.submit_memory(
+        Bearer::Session(&web),
+        &submit("w1", "The person's own note.", None),
+    )
+    .await
+    .expect("the web key writes");
+    let caller = app
+        .caller(Bearer::from(agent.value.as_str()))
+        .await
+        .expect("the agent's caller");
+    let listed = listed_ids(&app, &caller, &mine_listing(Vec::new(), Vec::new(), None)).await;
+    assert_eq!(listed, [mine].into_iter().collect());
+}

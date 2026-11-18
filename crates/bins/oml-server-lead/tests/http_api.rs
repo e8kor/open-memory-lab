@@ -10914,14 +10914,44 @@ async fn the_changed_operations_serve_the_merged_listing_counts_offers_and_named
         StatusCode::NOT_FOUND,
         "another person's key: {body}"
     );
+    // kind and state are comma lists beside with_own and mine, guardrail
+    // among the kinds; mine drops the scoped part (ADR-0082 d8 item 3;
+    // ADR-0083 d3).
+    for query in [
+        "/v1/memories?with_own=true&kind=memory,guardrail",
+        "/v1/memories?mine=true&state=held,withdrawn&kind=memory",
+        "/v1/memories?mine=true&state=held,promoted&promoted_since=2026-01-01T00:00:00Z",
+    ] {
+        let (status, _, body) = send(&rig.router, "GET", query, web_call(&web)).await;
+        assert_eq!(status, StatusCode::OK, "{query}: {body}");
+        assert_eq!(
+            ids(&body),
+            [second.clone(), first.clone()],
+            "{query}: {body}"
+        );
+    }
     let (status, _, body) = send(
         &rig.router,
         "GET",
-        "/v1/memories?with_own=true&kind=memory",
+        "/v1/memories?mine=true&kind=guardrail,skill",
         web_call(&web),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(ids(&body).is_empty(), "{body}");
+    for (query, field) in [
+        ("/v1/memories?with_own=true&kind=memory,nope", "kind"),
+        ("/v1/memories?mine=true&state=held,erased", "state"),
+        (
+            "/v1/memories?mine=true&promoted_since=yesterday",
+            "promoted_since",
+        ),
+        ("/v1/memories?mine=yes", "mine"),
+    ] {
+        let (status, _, body) = send(&rig.router, "GET", query, web_call(&web)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{query}: {body}");
+        assert_eq!(body["error"]["details"]["field"], field, "{query}: {body}");
+    }
 
     let (status, _, tree) = send(
         &rig.router,

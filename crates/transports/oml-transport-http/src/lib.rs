@@ -78,9 +78,9 @@ use oml_app::types::{
     EdgeRatification, GrantRecord, GrantRequest, GuardrailRequest, GuardrailSet, IssueKeyRequest,
     IssuedKey, KeyDetail, KeyLimitsChange, KeyRecord, KindFields, ListRequest, MemoryRecord,
     NamedServe, OnSimilar, ProposeBriefEdge, ProposeClaimEdge, RecallRequest, ServedMemory,
-    SimilarItem, SkillRequest, SkillSet, SourceCheck, SourceCheckRequest, SubmitRequest,
-    SubmitVerb, SupersedeRequest, TailedEvent, Verdict, VerdictRequest, Whoami, WithdrawRequest,
-    WorkspaceInfo, WorkspaceRecord,
+    SimilarItem, SkillRequest, SkillSet, SourceCheck, SourceCheckRequest, StateClause,
+    SubmitRequest, SubmitVerb, SupersedeRequest, TailedEvent, Verdict, VerdictRequest, Whoami,
+    WithdrawRequest, WorkspaceInfo, WorkspaceRecord,
 };
 use oml_app::types::{
     BulkItem, BulkVerdictRequest, HELD_PAGE_DEFAULT, HeldListingRequest, HeldPage, ReviewLane,
@@ -782,10 +782,9 @@ where
     ) -> Result<Response, ApiError> {
         let acting = acting(headers, connection)?;
         refuse_workarea_header(headers, "workspace")?;
-        if params
-            .iter()
-            .any(|(n, v)| (n == "with_own" && v == "true") || n == "author")
-        {
+        if params.iter().any(|(n, v)| {
+            (n == "with_own" && v == "true") || (n == "mine" && v != "false") || n == "author"
+        }) {
             // as_of reads the scoped listing alone (ADR-0059 d19).
             if params.iter().any(|(n, _)| n == "as_of") {
                 return Err(ApiError::validation(
@@ -851,14 +850,42 @@ where
                     })?);
                 }
                 "workspace" => req.workspace = Some(reference("workspace", value)?),
+                "mine" if value == "true" => req.mine = true,
+                "mine" if value == "false" => {}
+                "mine" => {
+                    return Err(ApiError::validation("mine must be true or false")
+                        .with_details(json!({ "field": "mine" })));
+                }
+                // A comma list of the admin read's states (ADR-0083 d3).
                 "state" => {
-                    req.state =
-                        Some(oml_app::types::AdminState::parse(value).ok_or_else(|| {
-                            ApiError::validation(
-                                "state is held, promoted, rejected, superseded or demoted",
-                            )
-                            .with_details(json!({ "field": "state" }))
-                        })?);
+                    req.states = value
+                        .split(',')
+                        .map(|v| {
+                            oml_app::types::AdminState::parse(v).ok_or_else(|| {
+                                ApiError::validation(
+                                    "state is a comma list of held, promoted, superseded, rejected, demoted and withdrawn",
+                                )
+                                .with_details(json!({ "field": "state" }))
+                            })
+                        })
+                        .collect::<Result<_, _>>()?;
+                }
+                // A comma list of kinds (ADR-0082 d8 item 3).
+                "kind" => {
+                    req.kinds = value
+                        .split(',')
+                        .map(|v| {
+                            parse_kind(v).map_err(|e| e.with_details(json!({ "field": "kind" })))
+                        })
+                        .collect::<Result<_, _>>()?;
+                }
+                "promoted_since" => {
+                    req.promoted_since = Some(parse_date_time(value).ok_or_else(|| {
+                        ApiError::validation(
+                            "promoted_since must be an RFC 3339 date-time with an offset and at most microsecond precision",
+                        )
+                        .with_details(json!({ "field": "promoted_since" }))
+                    })?);
                 }
                 "origin_kinds" => {
                     let kinds = origin_grammar::parse_kinds(value.split(',')).map_err(|why| {
@@ -877,7 +904,7 @@ where
                 "cursor" => req.cursor = Some(value.clone()),
                 other => {
                     return Err(ApiError::validation(format!(
-                        "the query parameter {other:?} does not combine with with_own or author"
+                        "the query parameter {other:?} does not combine with with_own, mine or author"
                     )));
                 }
             }
@@ -4793,8 +4820,8 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
     let mut req = ListRequest {
         own: false,
         workspace: None,
-        state: None,
-        kind: None,
+        states: Vec::new(),
+        kinds: Vec::new(),
         claim_key: None,
         since: None,
         until: None,
@@ -4802,7 +4829,6 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
         cursor: None,
         anchor: AnchorFilter::default(),
         author: None,
-        tip: None,
         as_of: None,
     };
     let mut anchor_repo = None;
@@ -4842,8 +4868,8 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
             // v0.3.0's spelling, refused under its real name (ADR-0039 d7).
             "workarea_id" => return Err(ApiError::renamed("workarea_id", "workspace")),
             "claim_key" => req.claim_key = Some(value.clone()),
-            "state" => req.state = Some(parse_state(value)?),
-            "kind" => req.kind = Some(parse_kind(value)?),
+            "state" => req.states = vec![StateClause::status(parse_state(value)?)],
+            "kind" => req.kinds = vec![parse_kind(value)?],
             "since" => req.since = Some(date_time()?),
             "until" => req.until = Some(date_time()?),
             "as_of" => req.as_of = parse_as_of(Some(value), "as_of")?,
@@ -4864,6 +4890,8 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
             // `with_own=true` is the merged listing's; false is this one.
             "with_own" if value == "false" => {}
             "with_own" => return Err(ApiError::validation("with_own must be true or false")),
+            // `mine=true` is the own listing's (ADR-0083 d3); false is this one.
+            "mine" if value == "false" => {}
             other => {
                 return Err(ApiError::validation(format!(
                     "unknown query parameter {other:?}"

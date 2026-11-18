@@ -9151,11 +9151,36 @@ impl JournalStore for PgStore {
                 .push_bind(subtree.clone())
                 .push("::uuid[])");
         }
-        if let Some(state) = filter.state {
-            sql.push(" AND m.status = ").push_bind(state.as_str());
+        // Any one state clause admits a row (ADR-0083 d3).
+        if !filter.states.is_empty() {
+            sql.push(" AND (");
+            for (i, clause) in filter.states.iter().enumerate() {
+                if i > 0 {
+                    sql.push(" OR ");
+                }
+                sql.push("(m.status = ").push_bind(clause.status.as_str());
+                if let Some(tip) = clause.tip {
+                    sql.push(" AND m.is_tip = ").push_bind(tip);
+                }
+                if let Some(since) = &clause.promoted_since {
+                    sql.push(" AND m.promoted_at >= (")
+                        .push_bind(since.as_str().to_owned())
+                        .push(")::timestamptz");
+                }
+                sql.push(")");
+            }
+            sql.push(")");
         }
-        if let Some(kind) = filter.kind {
-            sql.push(" AND m.kind = ").push_bind(kind.as_str());
+        if !filter.kinds.is_empty() {
+            sql.push(" AND m.kind = ANY(")
+                .push_bind(
+                    filter
+                        .kinds
+                        .iter()
+                        .map(|k| k.as_str().to_owned())
+                        .collect::<Vec<_>>(),
+                )
+                .push("::text[])");
         }
         if let Some(claim_key) = &filter.claim_key {
             sql.push(" AND m.claim_key = ").push_bind(claim_key.clone());
@@ -9181,9 +9206,6 @@ impl JournalStore for PgStore {
         }
         if let Some(author) = filter.author {
             sql.push(" AND m.author_key_id = ").push_bind(author);
-        }
-        if let Some(tip) = filter.tip {
-            sql.push(" AND m.is_tip = ").push_bind(tip);
         }
         if let Some(since) = &filter.since {
             sql.push(" AND m.created_at >= (")

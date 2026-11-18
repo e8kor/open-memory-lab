@@ -3874,11 +3874,17 @@ export interface operations {
                 /** @description The subtree read, by id or name, which must name a node the key may be told about, else access.not_found, indistinguishable from a nonexistent node (ADR-0039 d4, d7). With own=true, a node the key holds some role on (the naming rule, docs/architecture/roles-and-keys.md, Own); it narrows the listing to the key's rows in that subtree whatever the key holds below it, and omitted the listing reads every workspace the key wrote in. Without own, the scope: a node where reader is effective, and omitted the key's default_workspace (request.workspace_unresolved for a key with neither). */
                 workspace?: components["schemas"]["WorkspaceRef"];
                 claim_key?: string;
-                state?: "held" | "promoted" | "demoted" | "rejected" | "erased" | "withdrawn";
-                kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release" | "skill" | "document" | "test";
+                /** @description One of held, promoted, demoted, rejected, erased or withdrawn. With with_own, `mine` or author, a comma list of held, promoted (the promoted tip), superseded, rejected, demoted and withdrawn, a row in any of them listed (ADR-0083 d3). Any other value is request.validation naming state. */
+                state?: string;
+                /** @description One of memory, derived_fact, steering, guardrail, term, term_mapping, vocab_release, skill, document or test. With with_own, `mine` or author, a comma list of them, a row of any of them listed (ADR-0082 d8 item 3). Any other value is request.validation naming kind. */
+                kind?: string;
                 own?: boolean;
-                /** @description true: the scoped listing (at workspace, else universe) and the caller's own rows, every key naming its user's for a person's web session key, merged newest first under one cursor, a row in both once (ADR-0045 d22, d23; ADR-0070 d5). Combines only with author, include_text, workspace, state (held, promoted, rejected, superseded, demoted), one origin_kinds, limit and cursor; any other parameter is request.validation. Since v0.6.4. */
+                /** @description true: the scoped listing (at workspace, else universe) and the caller's own rows, every key naming its user's for a person's web session key, merged newest first under one cursor, a row in both once (ADR-0045 d22, d23; ADR-0070 d5). Combines only with `mine`, author, include_text, workspace, state (a comma list of held, promoted, superseded, rejected, demoted and withdrawn), kind (a comma list), promoted_since, one origin_kinds, limit and cursor; any other parameter is request.validation. Since v0.6.4. */
                 with_own?: boolean;
+                /** @description true: the caller's own rows alone, with no scoped part, under one cursor: every key of the person for a person's session key, the key alone for any other key, in every state, off the subtrees the key's global denials cover (ADR-0083 d3, d14). Combines as with_own does; author narrows it to one own key. Since v0.8.0. */
+                mine?: boolean;
+                /** @description With with_own, `mine` or author: only the promoted rows approved at or after this instant, the rows of every other state left whole; with no state, every state is listed (ADR-0083 d3). Not an RFC 3339 date-time with an offset and at most microsecond precision is request.validation naming promoted_since. Since v0.8.0. */
+                promoted_since?: string;
                 /** @description One of the caller's own keys, by name: the caller's rows by that key alone, the scoped part dropped; a key that is not the caller's is access.not_found. Implies the with_own listing (ADR-0045 d23; ADR-0070 d5). Since v0.6.4. */
                 author?: string;
                 /** @description With with_own or author alone: true serves each item with its text, as the web console's Memories list shows it (ADR-0045 d22; ADR-0070 d5); false or absent, summaries. Since v0.7.0. */

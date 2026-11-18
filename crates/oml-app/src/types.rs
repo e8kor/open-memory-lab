@@ -2436,8 +2436,11 @@ pub struct ListingFilter {
     /// Only rows on these nodes — the own-work listing's `workspace_id`
     /// subtree; `None` narrows nothing.
     pub subtree: Option<Vec<Uuid>>,
-    pub state: Option<MemoryStatus>,
-    pub kind: Option<MemoryKind>,
+    /// Rows in any of these states; empty narrows nothing (ADR-0083 d3).
+    pub states: Vec<StateClause>,
+    /// Rows of any of these kinds; empty narrows nothing (ADR-0082 d8
+    /// item 3).
+    pub kinds: Vec<MemoryKind>,
     pub claim_key: Option<String>,
     /// `created_at` at or after this instant.
     pub since: Option<EventTime>,
@@ -2447,12 +2450,48 @@ pub struct ListingFilter {
     pub anchor: AnchorFilter,
     /// Only rows this key wrote; `None` narrows nothing (ADR-0045 d23).
     pub author: Option<Uuid>,
-    /// Only tips, or only replaced versions; `None` narrows nothing
-    /// (ADR-0045 d22).
-    pub tip: Option<bool>,
     /// On the tips scope: the tips at this instant and the held rows
     /// recorded by it, instead of today's tips (ADR-0059 d15, d19).
     pub as_of: Option<EventTime>,
+}
+
+/// One state a listing admits: a status, whether the row must be its
+/// claim's tip (`promoted` is the tip, `superseded` a replaced promoted
+/// version; ADR-0045 d22), and for a promoted row the instant it must have
+/// been approved at or after (`promoted_since`, ADR-0083 d3). A row passes
+/// a listing's states when it passes any one clause.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateClause {
+    pub status: MemoryStatus,
+    /// `Some(true)` only tips, `Some(false)` only replaced versions.
+    pub tip: Option<bool>,
+    /// `promoted_at` at or after this instant.
+    pub promoted_since: Option<EventTime>,
+}
+
+impl StateClause {
+    /// A clause on the status alone.
+    #[must_use]
+    pub fn status(status: MemoryStatus) -> Self {
+        Self {
+            status,
+            tip: None,
+            promoted_since: None,
+        }
+    }
+
+    /// Whether `memory` passes this clause.
+    #[must_use]
+    pub fn admits(&self, memory: &MemoryRecord) -> bool {
+        memory.status == self.status
+            && self.tip.is_none_or(|t| memory.is_tip == t)
+            && self.promoted_since.as_ref().is_none_or(|since| {
+                memory
+                    .promoted_at
+                    .as_ref()
+                    .is_some_and(|at| at.as_str() >= since.as_str())
+            })
+    }
 }
 
 /// Where a listing page resumes: the `created_at` and id of the last row
@@ -2576,8 +2615,13 @@ pub struct ListRequest {
     /// own-work listing it narrows the key's rows to that subtree, and
     /// `None` lists every workspace the key wrote in.
     pub workspace: Option<Reference>,
-    pub state: Option<MemoryStatus>,
-    pub kind: Option<MemoryKind>,
+    /// Rows in any of these states; empty narrows nothing. The API's
+    /// `state` is one clause on the status alone; the web pages' `promoted`
+    /// and `superseded` add the tip, and `mine`'s `promoted_since` the
+    /// approval instant (ADR-0045 d22; ADR-0083 d3).
+    pub states: Vec<StateClause>,
+    /// Rows of any of these kinds; empty narrows nothing.
+    pub kinds: Vec<MemoryKind>,
     pub claim_key: Option<String>,
     pub since: Option<EventTime>,
     pub until: Option<EventTime>,
@@ -2590,12 +2634,9 @@ pub struct ListRequest {
     /// Only rows this key wrote, inside the listing's scope; the web
     /// pages' `author` filter (ADR-0045 d22, d23). The API sets none.
     pub author: Option<Uuid>,
-    /// Only tips (`true`) or only versions a successor replaced (`false`);
-    /// the web pages' `promoted` and `superseded` (ADR-0045 d22). The API
-    /// sets none.
-    pub tip: Option<bool>,
     /// `as_of`: the scoped listing at a past instant under today's access;
-    /// refused with `own`, `author` and `tip` (ADR-0059 d14, d19).
+    /// refused with `own`, `author` and a tip or `promoted_since` clause
+    /// (ADR-0059 d14, d19).
     pub as_of: Option<EventTime>,
 }
 
@@ -4065,6 +4106,16 @@ pub enum AdminState {
 }
 
 impl AdminState {
+    /// Every state, in the order the admin read names them.
+    pub const ALL: [AdminState; 6] = [
+        AdminState::Held,
+        AdminState::Promoted,
+        AdminState::Rejected,
+        AdminState::Superseded,
+        AdminState::Demoted,
+        AdminState::Withdrawn,
+    ];
+
     #[must_use]
     pub fn of(memory: &MemoryRecord) -> Self {
         match memory.status {

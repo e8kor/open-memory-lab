@@ -4367,12 +4367,11 @@ impl JournalStore for MemStore {
                     .as_ref()
                     .is_none_or(|nodes| nodes.contains(&m.workspace_id))
             })
-            .filter(|m| filter.state.is_none_or(|s| m.status == s))
-            .filter(|m| filter.kind.is_none_or(|k| m.kind == k))
+            .filter(|m| filter.states.is_empty() || filter.states.iter().any(|c| c.admits(m)))
+            .filter(|m| filter.kinds.is_empty() || filter.kinds.contains(&m.kind))
             .filter(|m| filter.claim_key.as_ref().is_none_or(|c| &m.claim_key == c))
             .filter(|m| filter.anchor.admits_row(m.anchor.as_deref(), m.origin_kind))
             .filter(|m| filter.author.is_none_or(|a| m.author_key_id == a))
-            .filter(|m| filter.tip.is_none_or(|t| m.is_tip == t))
             .filter(|m| {
                 filter
                     .since

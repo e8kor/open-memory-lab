@@ -369,8 +369,8 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
                 &ListRequest {
                     own,
                     workspace: (!own).then(|| Reference::from(self.home)),
-                    state: None,
-                    kind: None,
+                    states: Vec::new(),
+                    kinds: Vec::new(),
                     claim_key: claim_key.map(ToOwned::to_owned),
                     since: None,
                     until: None,
@@ -378,7 +378,6 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
                     cursor: None,
                     anchor: AnchorFilter::default(),
                     author: None,
-                    tip: None,
                     as_of: as_of.cloned(),
                 },
             )

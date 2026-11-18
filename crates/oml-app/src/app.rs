@@ -133,7 +133,7 @@ use crate::types::{
     OAuthClientRecord, OnSimilar, OwnHeldGuardrail, PROVIDER_TENANT, ProposeBriefEdge,
     ProposeClaimEdge, RecallHit, RecallRequest, RecallResult, RefreshFacts, RefreshForm,
     RegisteredClient, RerankOutcome, SIMILAR_KINDS, ServedGuardrail, ServedMemory, SimilarItem,
-    SourceCheck, SourceCheckReceipt, SourceCheckRequest, SubmitOutcome, SubmitReceipt,
+    SourceCheck, SourceCheckReceipt, SourceCheckRequest, StateClause, SubmitOutcome, SubmitReceipt,
     SubmitRequest, SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage,
     TailedEvent, TenantRow, TokenPair, TransitionRecord, TransitionState, TransitionView, TreeNode,
     TreePage, UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami,
@@ -5262,7 +5262,13 @@ where
         // `as_of` reads the scoped listing at an instant that has happened
         // (ADR-0059 d17, d19).
         if let Some(at) = &req.as_of {
-            if req.own || req.author.is_some() || req.tip.is_some() {
+            if req.own
+                || req.author.is_some()
+                || req
+                    .states
+                    .iter()
+                    .any(|c| c.tip.is_some() || c.promoted_since.is_some())
+            {
                 return Err(AppError::AsOfInvalid {
                     field: "as_of",
                     reason: "as_of reads the scoped listing: it does not combine with own, with_own, author or tip",
@@ -5341,14 +5347,13 @@ where
         let filter = ListingFilter {
             scope,
             subtree,
-            state: req.state,
-            kind: req.kind,
+            states: req.states.clone(),
+            kinds: req.kinds.clone(),
             claim_key: req.claim_key.clone(),
             since: req.since.clone(),
             until: req.until.clone(),
             anchor: req.anchor.clone(),
             author: req.author,
-            tip: req.tip,
             as_of: req.as_of.clone(),
         };
         // One row past the page says whether another page exists.
@@ -8018,14 +8023,13 @@ where
         let filter = |scope: ListingScope| ListingFilter {
             scope,
             subtree: Some(applicable.to_vec()),
-            state: Some(MemoryStatus::Held),
-            kind: Some(MemoryKind::Steering),
+            states: vec![StateClause::status(MemoryStatus::Held)],
+            kinds: vec![MemoryKind::Steering],
             claim_key: None,
             since: None,
             until: None,
             anchor: crate::types::AnchorFilter::default(),
             author: None,
-            tip: None,
             as_of: None,
         };
         let current = self.scanner.version().map(str::to_owned);
