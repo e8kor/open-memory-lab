@@ -45,7 +45,7 @@ pub struct Checked {
 }
 
 impl Listed {
-    /// The sync adapter that wrote this claim ([`Kind::of_claim`]).
+    /// The sync adapter that wrote this claim ([`super::adapter::Kind::of_claim`]).
     #[must_use]
     pub fn adapter(&self) -> Option<super::adapter::Kind> {
         super::adapter::Kind::of_claim(&self.claim_key, &self.kind)
