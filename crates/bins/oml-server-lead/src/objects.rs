@@ -51,6 +51,14 @@ impl LocalObjects {
     /// The directory cannot be created, or is not a directory.
     pub fn open(root: &Path) -> Result<Self, String> {
         create_private_dir(root).map_err(|e| format!("storage.url {}: {e}", root.display()))?;
+        // A root that existed before is tightened to owner-only too
+        // (ADR-0004 d3, readings of 2026-11-18).
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700))
+                .map_err(|e| format!("storage.url {}: {e}", root.display()))?;
+        }
         Ok(Self {
             root: root.to_path_buf(),
         })
@@ -85,9 +93,17 @@ fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let parent = path.parent().unwrap_or(Path::new("."));
     create_private_dir(parent)?;
-    let tmp = path.with_extension("partial");
+    // A fresh random name opened exclusively: no file or link left at a
+    // fixed name is ever written through (ADR-0004 d3, readings of
+    // 2026-11-18).
+    let mut nonce = [0_u8; 16];
+    getrandom::getrandom(&mut nonce).map_err(std::io::Error::other)?;
+    let tmp = parent.join(format!(
+        ".{}.partial",
+        nonce.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    ));
     let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
+    options.write(true).create_new(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -96,7 +112,13 @@ fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let mut file = options.open(&tmp)?;
     file.write_all(bytes)?;
     file.sync_all()?;
-    std::fs::rename(&tmp, path)
+    drop(file);
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    // The rename is durable once the directory that holds it is synced.
+    std::fs::File::open(parent)?.sync_all()
 }
 
 fn dir_bytes(path: &Path) -> std::io::Result<u64> {
@@ -223,5 +245,35 @@ mod tests {
             .expect("deleting nothing is no error");
         assert_eq!(store.stored_bytes("uploads/").await.expect("bytes"), 0);
         std::fs::remove_dir_all(&dir).expect("clean up");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_put_never_writes_through_a_link_at_a_temporary_name_and_the_root_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("oml-objects-link-{}", std::process::id()));
+        let outside = std::env::temp_dir().join(format!("oml-objects-out-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("uploads/t/u")).expect("dirs");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        std::fs::write(&outside, b"untouched").expect("outside");
+        std::os::unix::fs::symlink(&outside, dir.join("uploads/t/u/000001.partial"))
+            .expect("a link at the old fixed name");
+        let store = LocalObjects::open(&dir).expect("open");
+        assert_eq!(
+            std::fs::metadata(&dir).expect("meta").permissions().mode() & 0o777,
+            0o700,
+            "an existing root is tightened"
+        );
+        store
+            .put("uploads/t/u/000001", b"one".to_vec())
+            .await
+            .expect("put");
+        assert_eq!(std::fs::read(&outside).expect("read"), b"untouched");
+        assert_eq!(
+            store.get("uploads/t/u/000001").await.expect("get"),
+            Some(b"one".to_vec())
+        );
+        std::fs::remove_dir_all(&dir).expect("clean up");
+        std::fs::remove_file(&outside).expect("clean up");
     }
 }
