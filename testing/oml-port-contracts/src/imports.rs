@@ -1129,7 +1129,7 @@ async fn an_import_that_fails_shreds_its_upload_key<S: JournalStore + Clone>(sto
         )
         .await
         .expect("ended");
-    let finished = rig.app.import_finish(job, &code_of).await;
+    let finished = rig.app.import_finish(*job, &code_of).await;
     assert!(finished.import.is_err(), "{:?}", finished.import);
     assert_eq!(finished.shred_failure, None);
     let session = rig
@@ -1229,7 +1229,7 @@ async fn an_import_stopped_for_an_hour_is_ended_and_shredded_by_the_sweep<
         .expect("read")
         .expect("the row");
     assert_eq!(live_row.state, ImportState::Running);
-    let finished = rig.app.import_finish(job, &code_of).await;
+    let finished = rig.app.import_finish(*job, &code_of).await;
     assert!(finished.import.is_ok(), "{:?}", finished.import);
 }
 

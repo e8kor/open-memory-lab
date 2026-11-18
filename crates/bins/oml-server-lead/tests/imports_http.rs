@@ -104,8 +104,15 @@ async fn an_imported_version_carrying_an_age_secret_key_is_refused_by_the_scan_a
     let (admin, _) = bootstrap(r).await;
     let ada = ada_key(r, &admin, "ada-laptop", "person").await;
     let fingerprint = oml_bundle::key_fingerprint(&source_key().verifying_key());
-    // Built at run time, so no identity sits in the source.
-    let identity = format!("AGE-SECRET-KEY-1{}", "Q".repeat(58));
+    // Built at run time with a checksum that holds, so no identity sits in
+    // the source and the scan's bech32 check reads it as one.
+    let identity = bech32::encode(
+        "age-secret-key-",
+        bech32::ToBase32::to_base32(&[7_u8; 32]),
+        bech32::Variant::Bech32,
+    )
+    .expect("bech32")
+    .to_uppercase();
     let bytes = bundle_with(vec![
         line("art-1", "deploy-day", "Deploys go out on Tuesdays."),
         line("art-2", "the-key", &format!("The identity is {identity}.")),

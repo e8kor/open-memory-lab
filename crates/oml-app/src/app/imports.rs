@@ -89,8 +89,8 @@ enum Target {
 /// [`App::import_finish`] after the request answers.
 #[derive(Debug)]
 pub enum ImportStart {
-    Planned(ImportPlan),
-    Started(ImportJob),
+    Planned(Box<ImportPlan>),
+    Started(Box<ImportJob>),
 }
 
 /// A begun import, owning what its run reads: the verified bundle, the
@@ -150,9 +150,9 @@ where
         code_of: &(dyn Fn(AppError) -> String + Send + Sync),
     ) -> Result<ImportAnswer, AppError> {
         match self.import_start(api_key, req).await? {
-            ImportStart::Planned(plan) => Ok(ImportAnswer::Planned(plan)),
+            ImportStart::Planned(plan) => Ok(ImportAnswer::Planned(*plan)),
             ImportStart::Started(job) => {
-                let finished = self.import_finish(job, code_of).await;
+                let finished = self.import_finish(*job, code_of).await;
                 if let Some(reason) = finished.shred_failure {
                     return Err(AppError::Store(StoreError::Backend(reason)));
                 }
@@ -263,7 +263,7 @@ where
             edges_reported,
         };
         if req.dry_run {
-            return Ok(ImportStart::Planned(planned));
+            return Ok(ImportStart::Planned(Box::new(planned)));
         }
 
         let target_id = match target {
@@ -328,7 +328,7 @@ where
             }
         }
         busy.running_import(import.import_id);
-        Ok(ImportStart::Started(ImportJob {
+        Ok(ImportStart::Started(Box::new(ImportJob {
             api_key: api_key.to_owned(),
             caller,
             record: import,
@@ -337,7 +337,7 @@ where
             view,
             session,
             _busy: busy,
-        }))
+        })))
     }
 
     /// Runs a begun import to its end: writes the plan, journals

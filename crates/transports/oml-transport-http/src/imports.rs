@@ -172,7 +172,7 @@ where
                         let code_of =
                             |e| map_app_error(e, ErrorContext::Write).code.to_owned();
                         let import_id = job.record().import_id;
-                        let finished = app.import_finish(job, &code_of).await;
+                        let finished = app.import_finish(*job, &code_of).await;
                         if let Some(reason) = &finished.shred_failure {
                             tracing::error!(
                                 event = EVENT_IMPORT_SHRED_FAILED,
