@@ -4214,6 +4214,18 @@ components:
           properties:
             size: { type: integer, minimum: 0 }
             cap: { type: integer, minimum: 1 }
+        passages:
+          type: array
+          description: "A document's passages as capture would cut them, each by its fragment and its lines, as a recall hit names its passage; absent for any other kind and a retirement (ADR-0081 d3; ADR-0082 d5)."
+          items:
+            type: object
+            required: [fragment, ordinal, start_line, end_line, heading_path]
+            properties:
+              fragment: { type: string, description: "The heading's slug for a whole section, else L<n>-L<m> (ADR-0057 d7, d21)." }
+              ordinal: { type: integer, minimum: 0 }
+              start_line: { type: integer, minimum: 1, description: "1-based, inclusive." }
+              end_line: { type: integer, minimum: 1, description: "1-based, inclusive." }
+              heading_path: { type: array, items: { type: string }, description: "The headings above it, outermost first." }
 
     SubmitRequest:
       type: object

@@ -190,6 +190,7 @@ from .listed_key_used_by import ListedKeyUsedBy
 from .memory import Memory
 from .memory_page import MemoryPage
 from .memory_preview import MemoryPreview
+from .memory_preview_passages_item import MemoryPreviewPassagesItem
 from .memory_preview_refusal_type_0 import MemoryPreviewRefusalType0
 from .memory_preview_refusal_type_0_details import MemoryPreviewRefusalType0Details
 from .memory_preview_rule import MemoryPreviewRule
@@ -598,6 +599,7 @@ __all__ = (
     "Memory",
     "MemoryPage",
     "MemoryPreview",
+    "MemoryPreviewPassagesItem",
     "MemoryPreviewRefusalType0",
     "MemoryPreviewRefusalType0Details",
     "MemoryPreviewRule",

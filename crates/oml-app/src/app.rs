@@ -9277,6 +9277,7 @@ where
             offered_as: None,
             shadows: Vec::new(),
             set_after: None,
+            passages: None,
         };
         let Some(workspace_id) = facts.workspace_id.filter(|_| preview.refusal.is_none()) else {
             return Ok(preview);
@@ -9295,6 +9296,31 @@ where
                     preview.shadows = self.skill_shadows(&caller, workspace_id, &name).await?;
                     preview.offered_as = Some(name);
                 }
+            }
+            // A document's passages, cut by the rule capture cuts with, by
+            // fragment and lines (ADR-0081 d3; ADR-0082 d5).
+            MemoryKind::Document if !retirement => {
+                let format = match req {
+                    PreviewRequest::Submit(r) => r.format.as_deref(),
+                    PreviewRequest::Supersede(r) => r.format.as_deref(),
+                }
+                .unwrap_or_else(|| default_format(MemoryKind::Document));
+                let cut = if format == "text/markdown" {
+                    oml_passage::Format::Markdown
+                } else {
+                    oml_passage::Format::Plain
+                };
+                preview.passages = oml_passage::passages(&nfc(body), cut).ok().map(|cut| {
+                    cut.into_iter()
+                        .map(|p| HitPassage {
+                            fragment: p.fragment,
+                            ordinal: p.ordinal,
+                            start_line: p.start_line,
+                            end_line: p.end_line,
+                            heading_path: p.heading_path,
+                        })
+                        .collect()
+                });
             }
             MemoryKind::Guardrail => {
                 preview.rule = rule

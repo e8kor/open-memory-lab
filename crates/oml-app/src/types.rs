@@ -1975,6 +1975,9 @@ pub struct Preview {
     /// A guardrail's set size at its workspace after it, the promoted
     /// rules alone, as the set cap counts them (ADR-0037 d7).
     pub set_after: Option<usize>,
+    /// A document's passages as capture would cut them, by fragment and
+    /// lines (ADR-0081 d3); `None` for any other kind and a retirement.
+    pub passages: Option<Vec<HitPassage>>,
 }
 
 #[derive(Debug, Clone)]

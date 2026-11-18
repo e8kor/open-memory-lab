@@ -10229,6 +10229,52 @@ async fn preview_answers_capture_refusals_in_its_body_and_authority_refusals_as_
     drop_db(&rig.db_name).await;
 }
 
+/// A document's preview answers its passages on the wire, each with its
+/// fragment, ordinal, lines and heading path, as recall's hit names its
+/// passage (ADR-0082 d5; ADR-0081 d3, d4; #409).
+#[tokio::test]
+async fn a_document_preview_answers_its_passages_on_the_wire() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let token = rig.signed_in("alice@example.com", "alice", false).await;
+    let web = credential(&token, "web");
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v1/memories/preview",
+        web_call(&web).body(json!({
+            "kind": "document",
+            "workspace": "alice",
+            "claim_key": "doc/runbook",
+            "format": "text/markdown",
+            "body": "# Runbook\n\nStart here.\n\n## Deploy\n\nRun the deployer.\n",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["would_capture"], true, "{body}");
+    assert_eq!(
+        body["passages"],
+        json!([
+            { "fragment": "runbook", "ordinal": 0, "start_line": 1, "end_line": 3,
+              "heading_path": ["Runbook"] },
+            { "fragment": "deploy", "ordinal": 1, "start_line": 5, "end_line": 7,
+              "heading_path": ["Runbook", "Deploy"] },
+        ]),
+        "{body}"
+    );
+    let (_, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v1/memories/preview",
+        web_call(&web).body(json!({ "kind": "memory", "workspace": "alice", "body": "A draft." })),
+    )
+    .await;
+    assert!(body.get("passages").is_none(), "{body}");
+    drop_db(&rig.db_name).await;
+}
+
 /// A capacity credential reaches the API only with oml-web's client
 /// identity: without the secret, with a wrong one, or beside a client
 /// certificate a gateway forwarded, it is `auth.invalid`

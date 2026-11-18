@@ -4351,3 +4351,59 @@ async fn the_admin_search_serves_only_the_kinds_its_kind_list_names() {
     let any = ids(any);
     assert!(any.contains(&note) && any.contains(&steering), "{any:?}");
 }
+
+/// A document's preview answers its passages as capture would cut them,
+/// each by its fragment and its lines, and a preview of any other kind
+/// answers none (ADR-0082 d5; ADR-0081 d3; #409).
+#[tokio::test]
+async fn a_document_preview_answers_its_passages_by_fragment_and_lines() {
+    use oml_app::types::PreviewRequest;
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", false).await;
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let document = SubmitRequest {
+        kind: MemoryKind::Document,
+        claim_key: Some("doc/runbook".to_owned()),
+        format: Some("text/markdown".to_owned()),
+        ..submit(
+            "d1",
+            "# Runbook\n\nStart here.\n\n## Deploy\n\nRun the deployer.\n",
+            Some("alice"),
+        )
+    };
+    let preview = app
+        .preview(Bearer::Session(&web), &PreviewRequest::Submit(document))
+        .await
+        .expect("a preview");
+    assert!(preview.refusal.is_none(), "{:?}", preview.refusal);
+    let passages = preview.passages.expect("a document answers its passages");
+    let cut: Vec<(String, usize, usize, Vec<String>)> = passages
+        .into_iter()
+        .map(|p| (p.fragment, p.start_line, p.end_line, p.heading_path))
+        .collect();
+    assert_eq!(
+        cut,
+        vec![
+            ("runbook".to_owned(), 1, 3, vec!["Runbook".to_owned()]),
+            (
+                "deploy".to_owned(),
+                5,
+                7,
+                vec!["Runbook".to_owned(), "Deploy".to_owned()]
+            ),
+        ]
+    );
+    let memory = app
+        .preview(
+            Bearer::Session(&web),
+            &PreviewRequest::Submit(submit("m1", "A plain memory.", Some("alice"))),
+        )
+        .await
+        .expect("a preview");
+    assert!(memory.passages.is_none(), "only a document is cut");
+}

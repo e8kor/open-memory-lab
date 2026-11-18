@@ -1891,6 +1891,18 @@ export interface components {
                 size: number;
                 cap: number;
             };
+            /** @description A document's passages as capture would cut them, each by its fragment and its lines, as a recall hit names its passage; absent for any other kind and a retirement (ADR-0081 d3; ADR-0082 d5). */
+            passages?: {
+                /** @description The heading's slug for a whole section, else L<n>-L<m> (ADR-0057 d7, d21). */
+                fragment: string;
+                ordinal: number;
+                /** @description 1-based, inclusive. */
+                start_line: number;
+                /** @description 1-based, inclusive. */
+                end_line: number;
+                /** @description The headings above it, outermost first. */
+                heading_path: string[];
+            }[];
         };
         /** @description The target is workspace, else the key's default_workspace; neither present is refused with request.workspace_unresolved (ADR-0039 d4, d7). This body, and its nested objects, stay open: ADR-0025 d16 closes the recall, supersede, key-issuance and grant bodies only. The designed attachment, simulation and vocabulary fields are declared under x-oml-designed-fields in openapi-designed.yaml; each sent here answers its v0.3.0 code (ADR-0039 d9). */
         SubmitRequest: {

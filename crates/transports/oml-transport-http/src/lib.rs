@@ -4990,6 +4990,25 @@ fn preview_json(preview: Option<&Preview>, refusal: Option<&ApiError>) -> Value 
                 json!({ "size": n, "cap": oml_app::domain::guardrail::SET_CAP }),
             );
         }
+        // A document's passages, each as recall's hit names its passage
+        // (ADR-0081 d3, d4; ADR-0082 d5).
+        if let Some(passages) = &p.passages {
+            obj.insert(
+                "passages".to_owned(),
+                passages
+                    .iter()
+                    .map(|p| {
+                        json!({
+                            "fragment": p.fragment,
+                            "ordinal": p.ordinal,
+                            "start_line": p.start_line,
+                            "end_line": p.end_line,
+                            "heading_path": p.heading_path,
+                        })
+                    })
+                    .collect(),
+            );
+        }
     }
     out
 }

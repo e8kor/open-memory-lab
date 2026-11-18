@@ -9,6 +9,7 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.memory_preview_passages_item import MemoryPreviewPassagesItem
     from ..models.memory_preview_refusal_type_0 import MemoryPreviewRefusalType0
     from ..models.memory_preview_rule import MemoryPreviewRule
     from ..models.memory_preview_set_after import MemoryPreviewSetAfter
@@ -40,6 +41,9 @@ class MemoryPreview:
                 reads: one on an ancestor it shadows, one on a descendant that shadows it there (ADR-0080 d5).
             set_after (MemoryPreviewSetAfter | Unset): A guardrail's set size at its workspace once the version is approved,
                 the approved rules an agent there loads, against the set cap (ADR-0037 d7).
+            passages (list[MemoryPreviewPassagesItem] | Unset): A document's passages as capture would cut them, each by its
+                fragment and its lines, as a recall hit names its passage; absent for any other kind and a retirement (ADR-0081
+                d3; ADR-0082 d5).
     """
 
     would_capture: bool
@@ -52,6 +56,7 @@ class MemoryPreview:
     offered_as: str | Unset = UNSET
     shadows: list[MemoryPreviewShadowsItem] | Unset = UNSET
     set_after: MemoryPreviewSetAfter | Unset = UNSET
+    passages: list[MemoryPreviewPassagesItem] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -95,6 +100,13 @@ class MemoryPreview:
         if not isinstance(self.set_after, Unset):
             set_after = self.set_after.to_dict()
 
+        passages: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.passages, Unset):
+            passages = []
+            for passages_item_data in self.passages:
+                passages_item = passages_item_data.to_dict()
+                passages.append(passages_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -115,11 +127,14 @@ class MemoryPreview:
             field_dict["shadows"] = shadows
         if set_after is not UNSET:
             field_dict["set_after"] = set_after
+        if passages is not UNSET:
+            field_dict["passages"] = passages
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.memory_preview_passages_item import MemoryPreviewPassagesItem
         from ..models.memory_preview_refusal_type_0 import MemoryPreviewRefusalType0
         from ..models.memory_preview_rule import MemoryPreviewRule
         from ..models.memory_preview_set_after import MemoryPreviewSetAfter
@@ -192,6 +207,15 @@ class MemoryPreview:
         else:
             set_after = MemoryPreviewSetAfter.from_dict(_set_after)
 
+        _passages = d.pop("passages", UNSET)
+        passages: list[MemoryPreviewPassagesItem] | Unset = UNSET
+        if _passages is not UNSET:
+            passages = []
+            for passages_item_data in _passages:
+                passages_item = MemoryPreviewPassagesItem.from_dict(passages_item_data)
+
+                passages.append(passages_item)
+
         memory_preview = cls(
             would_capture=would_capture,
             refusal=refusal,
@@ -203,6 +227,7 @@ class MemoryPreview:
             offered_as=offered_as,
             shadows=shadows,
             set_after=set_after,
+            passages=passages,
         )
 
         memory_preview.additional_properties = d

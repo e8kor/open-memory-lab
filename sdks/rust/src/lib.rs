@@ -589,6 +589,22 @@ pub struct MemoryPreview {
     pub shadows: Vec<SkillShadow>,
     #[serde(default)]
     pub set_after: Option<SetAfter>,
+    /// A document's passages as capture would cut them (ADR-0081 d3);
+    /// empty for any other kind and from an API that does not serve them.
+    #[serde(default)]
+    pub passages: Vec<PreviewPassage>,
+}
+
+/// One passage of a previewed document: its fragment, its place and its
+/// lines, 1-based and inclusive (ADR-0081 d3; ADR-0082 d5).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct PreviewPassage {
+    pub fragment: String,
+    pub ordinal: u32,
+    pub start_line: u32,
+    pub end_line: u32,
+    #[serde(default)]
+    pub heading_path: Vec<String>,
 }
 
 /// The refusal a preview answers inside its body (ADR-0082 d10).
