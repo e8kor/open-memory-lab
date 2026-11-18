@@ -247,6 +247,19 @@ operator's batch, which confirms or changes them, and each line names the decisi
   of ADR-0052 d5 count a document's passages under its own kind code. A version with no
   documents, which is every row written before this build, is ranked exactly as before.
 
+- **R8 (d4, ADR-0049 d6).** A promoted document's words join the vocabulary `did_you_mean`
+  draws on, as every other hit kind's do, so a misspelt word only a document holds is still
+  offered a spelling. Rejected: leaving documents out of the vocabulary, which offers no
+  spelling for a word a document-only workspace holds. Taken by the build; not yet confirmed by
+  the coordinator, for the operator's batch.
+- **R9 (d4, d6).** `passage`, `more_passages` and `uri` are members of the recall hit, beside
+  `memory`, `score` and `matched`, and the hit's `memory.text` and `memory.tokens` are the
+  passage's, since the claim item carries no byte count. `resources/list` pages the documents
+  first, then the skills, under one MCP cursor whose prefix, `doc:` or `skill:`, names the list
+  it continues. Rejected: the members inside `memory`, which every read of a claim item shares;
+  and two cursors, which MCP's `resources/list` does not have. Taken by the build; not yet
+  confirmed by the coordinator, for the operator's batch.
+
 ## Consequences
 
 - `MemoryKind` gains `Document`; submit and supersede gain `document`; recall's hit gains

@@ -131,7 +131,7 @@ Requires: reader effective access on the subtree.
 | `query` | string | yes |  |
 | `workspace` | WorkspaceRef | no | The subtree recalled, by id or name; omitted, the key's default_workspace. |
 | `k` | integer | no |  |
-| `kinds` | array of `memory` \| `derived_fact` | no | Filters hits only; an empty array is refused (request.validation), so only an absent kinds means no filter. |
+| `kinds` | array of `memory` \| `derived_fact` \| `document` | no | Filters hits only; an empty array is refused (request.validation), so only an absent kinds means no filter, every hit kind, documents included. |
 | `include_text` | boolean | no | Whether each served item carries its text. |
 | `anchor_repo` | string | no | A repository, scheme, credentials and.git dropped (github.com/e8kor/open-memory-lab); no segment is. or... |
 | `anchor_path_prefix` | string | no | A byte prefix of the anchor path, at most 1,024 UTF-8 bytes; rows whose anchor path starts with it, unanchored rows left out. |

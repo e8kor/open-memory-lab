@@ -46,10 +46,11 @@
               "term",
               "term_mapping",
               "vocab_release",
-              "skill"
+              "skill",
+              "document"
             ],
             "default": "memory",
-            "description": "The claim's kind; omitted, memory, or with replaces the target's. With replaces only memory, derived_fact, steering and skill are accepted, within the kind-change rule (docs/architecture/audit-and-lineage.md). A skill is markdown instructions with a skill object; its claim key is skill/<name>, derived, and a person approves every version."
+            "description": "The claim's kind; omitted, memory, or with replaces the target's. With replaces only memory, derived_fact, steering, skill and document are accepted, within the kind-change rule (docs/architecture/audit-and-lineage.md). A skill is markdown instructions with a skill object; its claim key is skill/<name>, derived, and a person approves every version. A document is a titled text/markdown or text/plain body, data like a memory, recalled one passage at a time and served as a resource; its claim key is doc/ and a path, derived from its title when omitted."
           },
           "derives_from": {
             "type": "array",
@@ -187,6 +188,18 @@
             ],
             "additionalProperties": false,
             "description": "With kind skill, required, also with replaces: the skill's name and description. The text is the skill's markdown instructions, at most 32,768 bytes, with no front matter. Refused on every other kind and on a retirement."
+          },
+          "document": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "maxLength": 200,
+                "description": "The document's title, one line. Omitted, the first level-1 heading of a markdown text, else the claim key's last segment."
+              }
+            },
+            "additionalProperties": false,
+            "description": "With kind document, optional: the document's title. Refused on every other kind and on a retirement. A document's format is text/markdown (the default for the kind) or text/plain, and a text cut into more than 4,096 passages is refused with request.validation, reason too_many_passages."
           }
         },
         "required": [
@@ -233,10 +246,11 @@
               "type": "string",
               "enum": [
                 "memory",
-                "derived_fact"
+                "derived_fact",
+                "document"
               ]
             },
-            "description": "Recall: the hit kinds served; an empty array is refused, so only an absent kinds means no filter. Steering is never a hit."
+            "description": "Recall: the hit kinds served; an empty array is refused, so only an absent kinds means no filter, every hit kind. Steering is never a hit. A document's hit is its best passage: its text, the passage's lines, its passage the fragment, ordinal, lines and headings, more_passages how many of its other passages matched (a lower bound), and its uri the passage's resource."
           },
           "anchor_repo": {
             "type": "string",
@@ -344,7 +358,8 @@
               "steering",
               "term",
               "term_mapping",
-              "vocab_release"
+              "vocab_release",
+              "document"
             ],
             "description": "Listing: a kind filter."
           },

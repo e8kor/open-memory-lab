@@ -6379,8 +6379,8 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 52,
-        "every migration through 0052_release_stranded_lane_claims"
+        applied, 59,
+        "every migration through 0059_document_passages_search"
     );
     drop(conn);
     drop_dbs(&created).await;
@@ -7836,8 +7836,8 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 52,
-        "every migration through 0052_release_stranded_lane_claims"
+        applied, 59,
+        "every migration through 0059_document_passages_search"
     );
     drop(conn);
 
@@ -8119,7 +8119,7 @@ async fn counts_from_postings(
         .await
         .expect("tenant");
     let terms: Vec<(Uuid, i16, i64, i32)> = sqlx::query_as(
-        "SELECT workspace_id, memory_kind, token_id, count(DISTINCT memory_id)::int4 \
+        "SELECT workspace_id, memory_kind, token_id, count(DISTINCT (memory_id, ordinal))::int4 \
            FROM search_postings WHERE tenant_id = $1 AND kind = 1 AND state = 1 \
           GROUP BY 1, 2, 3",
     )
@@ -8128,10 +8128,14 @@ async fn counts_from_postings(
     .await
     .expect("terms");
     let areas: Vec<(Uuid, i16, i32, i64)> = sqlx::query_as(
-        "SELECT workspace_id, oml_search_memory_kind(kind), count(*)::int4, sum(search_len)::int8 \
-           FROM memories WHERE tenant_id = $1 \
-            AND status = 'promoted' AND is_tip AND NOT retirement \
-            AND kind IN ('memory', 'derived_fact') \
+        "SELECT m.workspace_id, oml_search_memory_kind(m.kind), count(*)::int4, \
+                sum(u.search_len)::int8 \
+           FROM memories m \
+          CROSS JOIN LATERAL oml_search_units(m.tenant_id, m.id, m.kind, m.search_vector, \
+                                              m.search_len) u \
+          WHERE m.tenant_id = $1 \
+            AND m.status = 'promoted' AND m.is_tip AND NOT m.retirement \
+            AND m.kind IN ('memory', 'derived_fact', 'document') \
           GROUP BY 1, 2",
     )
     .bind(tenant)
@@ -8512,6 +8516,140 @@ async fn a_demoted_retired_or_erased_version_leaves_no_similar_key() {
     drop_dbs(&created).await;
 }
 
+/// A document version's passages are written with it and are its search
+/// units: each passage's postings carry its ordinal, the counts take one
+/// unit per passage and agree with the postings, the health check reads
+/// clean, the owner's refill leaves the counts as the fold kept them, and
+/// an erasure takes the passages with the body (ADR-0081 d3, d4; R6;
+/// migration 0059).
+#[tokio::test]
+async fn a_document_versions_passages_are_its_search_units_from_write_to_erasure() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut rig = ChainRig::new(591);
+    rig.seed_chain(&store, 0).await;
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0xD5);
+    let doc = Uuid::from_u128(0xD51);
+    let body = "# Guide\n\nIntro words.\n\n## One\n\nFirst part.\n\n## Two\n\nSecond part.\n";
+    oml_port_contracts::hold_and_promote(
+        &mut rig,
+        &store,
+        MemoryRecord {
+            kind: MemoryKind::Document,
+            claim_key: "doc/guide".to_owned(),
+            kind_fields: Some(Box::new(oml_app::types::KindFields::Document {
+                title: Some("Guide".to_owned()),
+            })),
+            format: Box::new(oml_app::types::FormatFields {
+                media_type: "text/markdown".to_owned(),
+                ..Default::default()
+            }),
+            ..held_memory(tenant, wa, doc, "rita", Uuid::from_u128(0xE5), body)
+        },
+    )
+    .await;
+    let mut owner = owner_conn(&store).await;
+    let mut tx = owner.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    let passages: Vec<(i32, i32, i32, String, i32, String)> = sqlx::query_as(
+        "SELECT ordinal, start_line, end_line, fragment, body_bytes, search_text \
+           FROM document_passages WHERE tenant_id = $1 AND memory_id = $2 ORDER BY ordinal",
+    )
+    .bind(tenant)
+    .bind(doc)
+    .fetch_all(&mut *tx)
+    .await
+    .expect("passages");
+    let ordinals: Vec<i32> = sqlx::query_scalar(
+        "SELECT DISTINCT ordinal FROM search_postings \
+          WHERE tenant_id = $1 AND memory_id = $2 AND kind = 1 ORDER BY 1",
+    )
+    .bind(tenant)
+    .bind(doc)
+    .fetch_all(&mut *tx)
+    .await
+    .expect("ordinals");
+    tx.commit().await.expect("commit");
+    assert_eq!(
+        passages
+            .iter()
+            .map(|p| (p.0, p.1, p.2, p.3.as_str(), p.4))
+            .collect::<Vec<_>>(),
+        vec![
+            (0, 1, 3, "guide", 21),
+            (1, 5, 7, "one", 19),
+            (2, 9, 11, "two", 20),
+        ],
+        "the passages the one rule cuts, with their served bytes"
+    );
+    assert_eq!(passages[1].5, "Guide > One\n\n## One\n\nFirst part.");
+    assert_eq!(ordinals, vec![0, 1, 2], "one unit per passage, none whole");
+    let (_, terms, areas) = postings_of(&store, tenant).await;
+    assert_eq!(
+        (terms, areas),
+        counts_from_postings(&store, tenant).await,
+        "the counts are the passages'"
+    );
+    let health = store
+        .postings_health(tenant)
+        .await
+        .expect("health")
+        .expect("PostgreSQL keeps postings");
+    assert_eq!(
+        (health.unfilled, health.served_behind, health.workspace_drift, health.term_drift),
+        (0, 0, 0, 0),
+        "{health:?}"
+    );
+    as_owner(
+        &store,
+        tenant,
+        "SELECT $2::uuid IS NOT NULL, oml_search_postings_refill($1)",
+        doc,
+    )
+    .await;
+    let (_, terms, areas) = postings_of(&store, tenant).await;
+    assert_eq!(
+        (terms, areas),
+        counts_from_postings(&store, tenant).await,
+        "the refill keeps the counts the fold kept"
+    );
+    as_owner(
+        &store,
+        tenant,
+        "UPDATE memories SET status = 'erased' WHERE tenant_id = $1 AND id = $2",
+        doc,
+    )
+    .await;
+    let mut tx = owner.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    let left: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM document_passages WHERE tenant_id = $1 AND memory_id = $2), \
+                (SELECT count(*) FROM search_postings WHERE tenant_id = $1 AND memory_id = $2)",
+    )
+    .bind(tenant)
+    .bind(doc)
+    .fetch_one(&mut *tx)
+    .await
+    .expect("left");
+    tx.commit().await.expect("commit");
+    assert_eq!(left, (0, 0), "an erasure takes the passages and their postings");
+    let (_, terms, areas) = postings_of(&store, tenant).await;
+    assert!(terms.is_empty() && areas.is_empty(), "no count is left");
+    drop_dbs(&created).await;
+}
+
 /// Doctor's similar-key health names a version with no key and a key in the
 /// wrong state, from the sample it reads, and reads clean again after the
 /// owner's refill (ADR-0050 d15, d17).
@@ -8720,8 +8858,8 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 52,
-        "every migration through 0052_release_stranded_lane_claims"
+        applied, 59,
+        "every migration through 0059_document_passages_search"
     );
     drop(conn);
 
@@ -9639,7 +9777,7 @@ async fn a_version_enqueued_again_after_its_read_is_not_written_with_the_older_c
             .sparse_write(
                 tenant,
                 &read[0],
-                &oml_app::doubles::FakeSparseEncoder::document(&read[0].claim)
+                &[oml_app::doubles::FakeSparseEncoder::document(&read[0].units[0].text)]
             )
             .await
             .expect("write"),

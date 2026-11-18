@@ -16125,6 +16125,117 @@ async fn a_document_over_4096_passages_is_refused_too_many_passages() {
 }
 
 #[tokio::test]
+async fn recall_serves_one_hit_per_document_its_best_passage() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = agent(&app, admin, "wanda", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana-reviewer", crew).await;
+    let body = "# Deploy guide\n\nWhat the guide covers.\n\n## Install\n\n\
+                Run the zebra installer with quokka flags.\n\n## Rollback\n\n\
+                Undo the zebra install.\n";
+    let doc = promoted(
+        &app,
+        &writer.value,
+        &reviewer.value,
+        &kind_req("g1", MemoryKind::Document, body, crew),
+    )
+    .await;
+    let note = promoted(
+        &app,
+        &writer.value,
+        &reviewer.value,
+        &submit_into("g2", "The zebra fleet runs quokka.", crew),
+    )
+    .await;
+    let recall = app
+        .recall(&writer.value, &recall_req("zebra quokka"))
+        .await
+        .expect("recall");
+    let ids: Vec<Uuid> = recall.hits.iter().map(|h| h.served.memory.memory_id).collect();
+    assert_eq!(
+        ids.iter().filter(|id| **id == doc).count(),
+        1,
+        "one hit for the document: {ids:?}"
+    );
+    assert!(ids.contains(&note), "{ids:?}");
+    let hit = recall
+        .hits
+        .iter()
+        .find(|h| h.served.memory.memory_id == doc)
+        .expect("the document's hit");
+    let passage = hit.passage.as_ref().expect("a passage");
+    assert_eq!(passage.fragment, "install");
+    assert_eq!((passage.start_line, passage.end_line), (5, 7));
+    assert_eq!(passage.heading_path, vec!["Deploy guide", "Install"]);
+    assert_eq!(
+        hit.served.memory.body,
+        "## Install\n\nRun the zebra installer with quokka flags."
+    );
+    assert_eq!(hit.served.memory.body_bytes, hit.served.memory.body.len() as u64);
+    assert_eq!(hit.more_passages, 1, "Rollback also says zebra");
+    assert!(
+        hit.uri
+            .as_deref()
+            .is_some_and(|u| u.ends_with("/doc/deploy-guide?passage=install")),
+        "{:?}",
+        hit.uri
+    );
+    let memory = recall
+        .hits
+        .iter()
+        .find(|h| h.served.memory.memory_id == note)
+        .expect("the memory's hit");
+    assert!(memory.passage.is_none() && memory.uri.is_none());
+    assert_eq!(memory.more_passages, 0);
+}
+
+#[tokio::test]
+async fn a_section_query_on_a_300_line_document_returns_that_passage_with_its_fragment_and_lines()
+{
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = agent(&app, admin, "wanda", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana-reviewer", crew).await;
+    // A title line, then 30 sections of ten lines: heading, blank, eight
+    // lines of text; section 17 alone names the wombat.
+    let mut body = String::from("# Operations manual\n");
+    for n in 1..=30 {
+        body.push_str(&format!("## Section {n}\n\n"));
+        for line in 1..=8 {
+            if n == 17 && line == 4 {
+                body.push_str("Feed the wombat before the night shift.\n");
+            } else {
+                body.push_str(&format!("Routine step {line} of section {n}.\n"));
+            }
+        }
+    }
+    assert_eq!(body.lines().count(), 301);
+    let doc = promoted(
+        &app,
+        &writer.value,
+        &reviewer.value,
+        &kind_req("m1", MemoryKind::Document, &body, crew),
+    )
+    .await;
+    let recall = app
+        .recall(&writer.value, &recall_req("wombat"))
+        .await
+        .expect("recall");
+    assert_eq!(recall.hits.len(), 1);
+    let hit = &recall.hits[0];
+    assert_eq!(hit.served.memory.memory_id, doc);
+    let passage = hit.passage.as_ref().expect("a passage");
+    assert_eq!(passage.fragment, "section-17");
+    // Section n starts on line 2 + 10 (n - 1) and ends 9 lines on.
+    assert_eq!((passage.start_line, passage.end_line), (162, 171));
+    assert!(hit.served.memory.body.starts_with("## Section 17\n"));
+    assert!(hit.served.memory.body.contains("Feed the wombat"));
+    assert_eq!(hit.more_passages, 0);
+}
+
+#[tokio::test]
 async fn a_document_takes_its_key_and_title_from_its_first_heading_or_a_sent_key() {
     let store = MemStore::new();
     let app = app_over(store.clone());

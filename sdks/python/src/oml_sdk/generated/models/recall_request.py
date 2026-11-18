@@ -36,9 +36,10 @@ class RecallRequest:
                 universe, is neither, and is refused (request.validation).
             k (int | Unset):  Default: 8.
             kinds (list[RecallRequestKindsItem] | Unset): Filters hits only; an empty array is refused (request.validation),
-                so only an absent kinds means no filter. Deliberately excludes steering (never ranked, always first) and the
-                vocabulary kinds (excluded from the shared recall indexes by default — ADR-0021 d9); where a vocabulary
-                workspace's journalled policy opts them in, they are hits only of a recall that omits kinds.
+                so only an absent kinds means no filter, every hit kind, documents included (ADR-0081 d4). Deliberately excludes
+                steering (never ranked, always first) and the vocabulary kinds (excluded from the shared recall indexes by
+                default — ADR-0021 d9); where a vocabulary workspace's journalled policy opts them in, they are hits only of a
+                recall that omits kinds.
             include_text (bool | Unset): Whether each served item carries its text (ADR-0039 d7). Default: True.
             anchor_repo (str | Unset): A repository, scheme, credentials and .git dropped (github.com/e8kor/open-memory-
                 lab); no segment is . or .. (ADR-0057 d3). As a filter, rows whose anchor names it; unanchored rows are left out

@@ -123,8 +123,9 @@ fn keyword_ranked<'a>(
     let terms: Vec<String> = words(query.query).into_iter().collect();
     let require_all = kind == RetrieverKind::KeywordAll || query.match_mode == MatchMode::All;
     let mut candidates: Vec<Candidate> = rows
-        .filter_map(|m| {
-            let body = words(&m.body);
+        .flat_map(units)
+        .filter_map(|u| {
+            let body = words(&u.text);
             let matched: Vec<String> = terms
                 .iter()
                 .filter(|t| body.contains(*t))
@@ -138,8 +139,9 @@ fn keyword_ranked<'a>(
             #[allow(clippy::cast_precision_loss, reason = "a query has few terms")]
             let score = matched.len() as f32;
             keep.then_some(Candidate {
-                memory_id: m.memory_id,
-                body_bytes: m.body_bytes,
+                memory_id: u.m.memory_id,
+                ordinal: u.ordinal,
+                body_bytes: u.bytes,
                 score,
                 matched,
                 tokens: Vec::new(),
@@ -153,6 +155,39 @@ fn keyword_ranked<'a>(
         candidates,
         ..Retrieved::default()
     }
+}
+
+/// One search unit as this store reads it (ADR-0081 d4): a document
+/// version's passage, its search text and served bytes, or any other row
+/// whole, its body, ordinal -1.
+struct Unit<'a> {
+    m: &'a MemoryRecord,
+    ordinal: i32,
+    text: std::borrow::Cow<'a, str>,
+    bytes: u64,
+}
+
+/// `m`'s search units, cut by the one passage rule as the PostgreSQL store
+/// cuts them at write.
+fn units(m: &MemoryRecord) -> Vec<Unit<'_>> {
+    let passages = m.passage_units();
+    if passages.is_empty() {
+        return vec![Unit {
+            m,
+            ordinal: -1,
+            text: std::borrow::Cow::Borrowed(&m.body),
+            bytes: m.body_bytes,
+        }];
+    }
+    passages
+        .into_iter()
+        .map(|p| Unit {
+            m,
+            ordinal: i32::try_from(p.passage.ordinal).unwrap_or(i32::MAX),
+            text: std::borrow::Cow::Owned(p.search_text),
+            bytes: p.body_bytes,
+        })
+        .collect()
 }
 
 /// Whether `m` counts in a reference set (ADR-0072 d4.2): a served tip of
@@ -195,6 +230,9 @@ fn bm25_over_reference<'a>(
     query: RetrievalQuery<'_>,
 ) -> Retrieved {
     let terms: Vec<String> = words(query.query).into_iter().collect();
+    // Every statistic is taken over the reference set's search units: a
+    // document counts once per passage (ADR-0081 d4).
+    let reference: Vec<Unit<'_>> = reference.iter().copied().flat_map(units).collect();
     let n = reference.len() as u64;
     #[allow(clippy::cast_precision_loss, reason = "counts far below 2^52")]
     let avgdl = if reference.is_empty() {
@@ -202,7 +240,7 @@ fn bm25_over_reference<'a>(
     } else {
         (reference
             .iter()
-            .map(|m| tokens(&m.body).len())
+            .map(|u| tokens(&u.text).len())
             .sum::<usize>() as f64
             / reference.len() as f64)
             .max(1.0)
@@ -212,13 +250,14 @@ fn bm25_over_reference<'a>(
         .map(|t| {
             reference
                 .iter()
-                .filter(|m| words(&m.body).contains(t))
+                .filter(|u| words(&u.text).contains(t))
                 .count() as u64
         })
         .collect();
     let mut candidates: Vec<Candidate> = rows
-        .filter_map(|m| {
-            let body = tokens(&m.body);
+        .flat_map(units)
+        .filter_map(|u| {
+            let body = tokens(&u.text);
             #[allow(clippy::cast_precision_loss, reason = "a row has few words")]
             let dl = body.len() as f64;
             let mut matched = Vec::new();
@@ -247,8 +286,9 @@ fn bm25_over_reference<'a>(
             )]
             let score = score as f32;
             keep.then_some(Candidate {
-                memory_id: m.memory_id,
-                body_bytes: m.body_bytes,
+                memory_id: u.m.memory_id,
+                ordinal: u.ordinal,
+                body_bytes: u.bytes,
                 score,
                 matched,
                 tokens: Vec::new(),
@@ -2686,6 +2726,7 @@ impl Retriever for MemStore {
                     let score = (1.0 / (1.0 + days)) as f32;
                     Some(Candidate {
                         memory_id: m.memory_id,
+                        ordinal: -1,
                         body_bytes: m.body_bytes,
                         score,
                         matched: Vec::new(),

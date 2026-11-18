@@ -90,20 +90,30 @@ pub async fn encode_sparse_pass<R: Retriever>(
     Ok(pass)
 }
 
-/// Each pending version's postings or its own failure: the batch at once,
-/// and, when the call fails whole or answers the wrong count, each text
-/// alone.
+/// Each pending version's postings, one list per search unit (a
+/// document's passages, ADR-0081 d4), or its own failure: the batch at
+/// once, and, when the call fails whole or answers the wrong count, each
+/// version alone; a version fails when any of its units does.
 async fn encode_each(
     encoder: &dyn SparseEncoder,
     pending: &[SparsePending],
-) -> Vec<Result<Vec<SparsePosting>, String>> {
-    let texts: Vec<String> = pending.iter().map(|p| p.claim.clone()).collect();
+) -> Vec<Result<Vec<Vec<SparsePosting>>, String>> {
+    let texts: Vec<String> = pending
+        .iter()
+        .flat_map(|p| p.units.iter().map(|u| u.text.clone()))
+        .collect();
+    let count = texts.len();
     let whole = match encoder.encode_documents(texts).await {
-        Ok(each) if each.len() == pending.len() => return each,
+        Ok(each) if each.len() == count => {
+            let mut each = each.into_iter();
+            return pending
+                .iter()
+                .map(|p| each.by_ref().take(p.units.len()).collect())
+                .collect();
+        }
         Ok(each) => format!(
-            "the encoder answered {} postings lists for {} texts",
-            each.len(),
-            pending.len()
+            "the encoder answered {} postings lists for {count} texts",
+            each.len()
         ),
         Err(reason) => reason,
     };
@@ -112,16 +122,16 @@ async fn encode_each(
     }
     let mut out = Vec::with_capacity(pending.len());
     for p in pending {
-        out.push(
-            match encoder.encode_documents(vec![p.claim.clone()]).await {
-                Ok(mut one) if one.len() == 1 => one.remove(0),
-                Ok(one) => Err(format!(
-                    "the encoder answered {} postings lists for 1 text",
-                    one.len()
-                )),
-                Err(reason) => Err(reason),
-            },
-        );
+        let texts: Vec<String> = p.units.iter().map(|u| u.text.clone()).collect();
+        out.push(match encoder.encode_documents(texts).await {
+            Ok(lists) if lists.len() == p.units.len() => lists.into_iter().collect(),
+            Ok(lists) => Err(format!(
+                "the encoder answered {} postings lists for {} texts",
+                lists.len(),
+                p.units.len()
+            )),
+            Err(reason) => Err(reason),
+        });
     }
     out
 }

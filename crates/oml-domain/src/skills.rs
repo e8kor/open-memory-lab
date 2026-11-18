@@ -147,6 +147,18 @@ pub fn skill_uri(workspace: &str, command: &str) -> String {
     format!("oml://workspace/{workspace}/skill/{command}")
 }
 
+/// A document's resource URI (ADR-0081 d4, d6): the workspace's name, the
+/// claim key after `doc/`, and `?passage=<fragment>` for one passage. Every
+/// character of a key in d2's grammar is unreserved, so nothing is encoded.
+#[must_use]
+pub fn document_uri(workspace: &str, claim_key: &str, passage: Option<&str>) -> String {
+    let path = claim_key.strip_prefix("doc/").unwrap_or(claim_key);
+    match passage {
+        Some(fragment) => format!("oml://workspace/{workspace}/doc/{path}?passage={fragment}"),
+        None => format!("oml://workspace/{workspace}/doc/{path}"),
+    }
+}
+
 /// What an `oml://` URI names (ADR-0081 d6).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResourceUri {

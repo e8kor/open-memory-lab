@@ -44,7 +44,7 @@ use oml_app::ports::{
 use oml_app::ports::{RecordedVersion, ScanBacklog};
 use oml_app::search::{
     Access, Candidate, CandidateScope, MatchMode, OwnHeldScope, PostingsHealth, RetrievalQuery,
-    Retrieved, RetrieverKind, SparsePending,
+    Retrieved, RetrieverKind, SparsePending, SparseUnit,
 };
 use oml_app::types::ReviewLane;
 use oml_app::types::{
@@ -13355,13 +13355,13 @@ fn same_list(a: &Retrieved, b: &Retrieved, what: &str) {
     assert_eq!(
         a.candidates
             .iter()
-            .map(|c| (c.memory_id, c.matched.clone()))
+            .map(|c| (c.memory_id, c.ordinal, c.matched.clone()))
             .collect::<Vec<_>>(),
         b.candidates
             .iter()
-            .map(|c| (c.memory_id, c.matched.clone()))
+            .map(|c| (c.memory_id, c.ordinal, c.matched.clone()))
             .collect::<Vec<_>>(),
-        "{what}: the same rows in the same order, matching the same words"
+        "{what}: the same units in the same order, matching the same words"
     );
     for (x, y) in a.candidates.iter().zip(&b.candidates) {
         assert!(
@@ -13435,6 +13435,96 @@ pub async fn bm25_postings_ranks_as_bm25_does_when_nothing_is_pruned<S: JournalS
             }
         }
     }
+}
+
+/// A document is searched by its passages (ADR-0081 d3, d4; the build's
+/// reading R6): each passage a unit with its own ordinal and served bytes,
+/// a version with no document one unit, ordinal -1, and `bm25-postings`
+/// ranks the units as `bm25`'s scan does, statistics included.
+pub async fn a_document_is_searched_by_its_passages_and_both_bm25_lists_agree<S: JournalStore>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(422);
+    rig.seed_chain(store, 0).await;
+    let (wa, own) = postings_fixture(&mut rig, store).await;
+    let body = "# Billing runbook\n\nHow billing is run.\n\n## Rollback\n\n\
+                Rollback the billing release on friday.\n\n## Kangaroo audit\n\n\
+                The kangaroo audit reads every invoice.\n";
+    let doc = Uuid::from_u128(0xF21);
+    let tenant = rig.tenant_id;
+    hold_and_promote(
+        &mut rig,
+        store,
+        MemoryRecord {
+            kind: MemoryKind::Document,
+            claim_key: "doc/billing-runbook".to_owned(),
+            kind_fields: Some(Box::new(oml_app::types::KindFields::Document {
+                title: Some("Billing runbook".to_owned()),
+            })),
+            format: Box::new(oml_app::types::FormatFields {
+                media_type: "text/markdown".to_owned(),
+                ..Default::default()
+            }),
+            ..held_memory(tenant, wa, doc, "rita", Uuid::from_u128(0xE5), body)
+        },
+    )
+    .await;
+    let mut seen_doc = false;
+    for query in [
+        "billing",
+        "kangaroo",
+        "rollback friday",
+        "invoice audit",
+        "zebra",
+    ] {
+        for own_held in [None, Some(own)] {
+            let scope = CandidateScope {
+                reference: None,
+                anchor: oml_app::types::AnchorFilter::default(),
+                kinds: HIT_KINDS.to_vec(),
+                ..scope_of(wa, own_held)
+            };
+            let ask = |kind| {
+                store.retrieve(
+                    rig.tenant_id,
+                    kind,
+                    &scope,
+                    RetrievalQuery {
+                        query,
+                        match_mode: MatchMode::Any,
+                        k: 20,
+                        sparse: &[],
+                        window: None,
+                        within: &[],
+                    },
+                )
+            };
+            let scan = ask(RetrieverKind::Bm25).await.expect("bm25");
+            if store.retrievers().contains(&RetrieverKind::Bm25Postings) {
+                let postings = ask(RetrieverKind::Bm25Postings).await.expect("postings");
+                same_list(&postings, &scan, &format!("{query:?} own {own_held:?}"));
+            }
+            for c in &scan.candidates {
+                if c.memory_id == doc {
+                    seen_doc = true;
+                    assert!(c.ordinal >= 0, "{query:?}: a document is read by passage");
+                } else {
+                    assert_eq!(c.ordinal, -1, "{query:?}: a memory is one unit");
+                }
+            }
+            let kangaroo: Vec<_> = scan.candidates.iter().filter(|c| c.memory_id == doc).collect();
+            if query == "kangaroo" {
+                assert_eq!(kangaroo.len(), 1, "one passage says kangaroo");
+                assert_eq!(kangaroo[0].ordinal, 2, "the third passage");
+                assert_eq!(
+                    kangaroo[0].body_bytes,
+                    "## Kangaroo audit\n\nThe kangaroo audit reads every invoice.".len() as u64,
+                    "a passage's served bytes are its lines'"
+                );
+            }
+        }
+    }
+    assert!(seen_doc, "the document's passages are candidates");
 }
 
 /// An expired version counts in no statistic: `bm25` and `bm25-postings`
@@ -14225,6 +14315,7 @@ where
         .await;
     bm25_scores_a_word_a_lone_row_says_once_at_its_weight(&new_store().await).await;
     bm25_counts_an_inflected_form_once_as_it_counts_the_exact_word(&new_store().await).await;
+    a_document_is_searched_by_its_passages_and_both_bm25_lists_agree(&new_store().await).await;
     trigram_finds_a_misspelled_words_memory(&new_store().await).await;
     did_you_mean_draws_only_on_the_words_of_promoted_served_tips_in_the_scope(&new_store().await)
         .await;
@@ -14707,12 +14798,15 @@ pub async fn a_failed_encode_stays_queued_and_a_stale_read_writes_nothing<S: Jou
     assert!(h.sparse_enabled, "{h:?}");
     let stale = SparsePending {
         memory_id: Uuid::from_u128(0xA11),
-        claim: "wombat notes".to_owned(),
+        units: vec![SparseUnit {
+            ordinal: -1,
+            text: "wombat notes".to_owned(),
+        }],
         enqueued_at_us: 0,
     };
     assert!(
         !store
-            .sparse_write(tenant, &stale, &FakeSparseEncoder::document("wombat notes"))
+            .sparse_write(tenant, &stale, &[FakeSparseEncoder::document("wombat notes")])
             .await
             .expect("write"),
         "an entry read before its re-enqueue writes nothing"
