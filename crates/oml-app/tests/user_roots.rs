@@ -3343,3 +3343,88 @@ async fn mine_from_a_key_no_session_serves_lists_that_key_alone() {
     let listed = listed_ids(&app, &caller, &mine_listing(Vec::new(), Vec::new(), None)).await;
     assert_eq!(listed, [mine].into_iter().collect());
 }
+
+// -- same-person supersede (ADR-0082 d2, d8 item 2; #409) --------------------
+
+fn supersede_req(idem: &str, target: Uuid, body: &str) -> SupersedeRequest {
+    SupersedeRequest {
+        idempotency_key: idem.to_owned(),
+        on_similar: Default::default(),
+        target_id: target,
+        body: body.to_owned(),
+        kind: None,
+        retirement: false,
+        derives_from: Vec::new(),
+        reason: None,
+        workspace: None,
+        refuse_vocabulary_target: false,
+        severity: None,
+        rule: None,
+        kind_fields: None,
+        valid_from: None,
+        valid_until: None,
+        anchor: None,
+        format: None,
+        title: None,
+        origin: None,
+        expected_version: 1,
+    }
+}
+
+/// A person's session web key supersedes a served row their agent's key
+/// wrote, the successor held; a served row no key of the person wrote, the
+/// curator's in `universe`, stays `access.author_only` (ADR-0082 d2, d8
+/// item 2).
+#[tokio::test]
+async fn a_session_web_key_supersedes_a_row_its_person_agent_wrote() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let c = curated(&app, &boot).await;
+    let alice = signed_in(&app, admin, "alice", false).await;
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let outcome = app
+        .supersede(
+            Bearer::Session(&web),
+            &supersede_req("s1", c.source, "quartz resonators drift with heat and age"),
+        )
+        .await
+        .expect("alice's web key revises her agent's row");
+    let successor = app
+        .get_memory(Bearer::Session(&web), outcome.receipt.memory_id)
+        .await
+        .expect("the author reads its successor");
+    assert_eq!(successor.memory.status, MemoryStatus::Held);
+    assert_eq!(successor.memory.replaces, Some(c.source));
+    assert_eq!(successor.memory.author_key_id, web.key().key_id);
+    let err = app
+        .supersede(
+            Bearer::Session(&web),
+            &supersede_req("s2", c.placed, "quartz drifts"),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::AuthorOnly), "{err:?}");
+}
+
+/// A key no session serves keeps the author-only rule: another writer key
+/// of the same person supersedes nothing its sibling wrote.
+#[tokio::test]
+async fn an_agent_key_supersedes_no_row_another_key_of_its_person_wrote() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let c = curated(&app, &boot).await;
+    let other = user_writer(&app, admin, "alice", "alice/desktop").await;
+    let err = app
+        .supersede(
+            other.value.as_str(),
+            &supersede_req("s1", c.source, "quartz resonators drift with heat and age"),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::AuthorOnly), "{err:?}");
+}
