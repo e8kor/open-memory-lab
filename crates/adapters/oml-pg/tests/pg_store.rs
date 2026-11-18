@@ -12512,3 +12512,96 @@ async fn the_serving_role_cannot_read_a_wrapped_data_key() {
     drop(tx);
     drop_dbs(&created).await;
 }
+
+/// A reviewer key used by a person, `used_by: person` and no crew, with one
+/// reviewer grant on `node` and its subtree.
+async fn person_reviewer_pg(app: &PgApp, admin: &str, key_name: &str, node: Uuid) -> Uuid {
+    app.issue_key(
+        admin,
+        &oml_app::types::IssueKeyRequest {
+            profile: None,
+            role: Role::Reviewer,
+            name: name(key_name),
+            principal: key_name.to_owned(),
+            used_by: Some(oml_app::domain::UsedBy::Person),
+            default_workspace: None,
+            crew: None,
+            connect_code: false,
+            user: None,
+            guardrail_scope: None,
+            grants: vec![oml_app::types::GrantRequest {
+                node: node.into(),
+                role: Role::Reviewer,
+                deny: Vec::new(),
+                covers: Covers::Subtree,
+            }],
+            expiry: None,
+            requests_per_minute: None,
+        },
+    )
+    .await
+    .expect("issue a person's reviewer key")
+    .key_id
+}
+
+/// The queue read over Postgres counts each workspace's held instructions
+/// and the live person's reviewer keys whose grants and denials confer
+/// reviewer there, as the double does (ADR-0080 d16; #435).
+#[tokio::test]
+async fn the_queue_counts_held_instructions_and_the_person_reviewers_that_may_approve_them() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let app = app_over_pg(&store);
+    let boot = bootstrap_pg(&app, "queue").await;
+    let admin = boot.admin_key.value.as_str();
+    let crew = workspace_pg(&app, admin, "crew", boot.root_workspace_id).await;
+    let team = workspace_pg(&app, admin, "team", crew).await;
+    let bots = workspace_pg(&app, admin, "bots", boot.root_workspace_id).await;
+    let writer = writer_pg(&app, admin, boot.root_workspace_id).await;
+    let dana = person_reviewer_pg(&app, admin, "dana-key", crew).await;
+    person_reviewer_pg(&app, admin, "erin-key", team).await;
+    // An agent's reviewer key on `bots`: it judges knowledge, not steering.
+    reviewer_pg(&app, admin, "bot-key", "bot", bots).await;
+    for (idem, kind, node) in [
+        ("q-1", MemoryKind::Memory, crew),
+        ("q-2", MemoryKind::Steering, crew),
+        ("q-3", MemoryKind::Steering, team),
+        ("q-4", MemoryKind::Steering, bots),
+    ] {
+        let mut req = kind_submit(idem, kind, &format!("Rule {idem}."), None, None);
+        req.workspace = Some(node.into());
+        app.submit_memory(&writer, &req).await.expect("held");
+    }
+    let caller = app
+        .caller(oml_app::types::Bearer::Key(admin))
+        .await
+        .expect("the admin");
+    let counts = |rows: &[oml_app::app::QueueRow]| {
+        rows.iter()
+            .map(|r| {
+                (
+                    r.depth.workspace_id,
+                    (r.depth.held, r.depth.held_instructions, r.person_reviewers),
+                )
+            })
+            .collect::<BTreeMap<_, _>>()
+    };
+    let rows = app.review_queue(&caller).await.expect("the queue");
+    assert_eq!(
+        counts(&rows),
+        BTreeMap::from([(crew, (2, 1, 1)), (team, (1, 1, 2)), (bots, (1, 1, 0))])
+    );
+    // A denial on the ancestor masks `dana` there and below.
+    app.deny_key(admin, dana.into(), crew.into())
+        .await
+        .expect("deny dana");
+    let rows = app.review_queue(&caller).await.expect("the queue");
+    assert_eq!(
+        counts(&rows),
+        BTreeMap::from([(crew, (2, 1, 0)), (team, (1, 1, 1)), (bots, (1, 1, 0))])
+    );
+    drop_dbs(&created).await;
+}

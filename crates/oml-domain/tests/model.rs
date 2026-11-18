@@ -218,7 +218,8 @@ fn every_kind_belongs_to_the_class_adr_0080_d16_names() {
 }
 
 #[test]
-fn an_approval_of_an_instruction_class_version_is_refused_from_every_key_but_a_persons_reviewer_key() {
+fn an_approval_of_an_instruction_class_version_is_refused_from_every_key_but_a_persons_reviewer_key()
+ {
     use oml_domain::{UsedBy, check_approval_class};
     for kind in [MemoryKind::Steering, MemoryKind::Guardrail] {
         assert_eq!(

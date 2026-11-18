@@ -45,10 +45,10 @@ use crate::types::{
     ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord, Credential, Crew,
     CrewRecord, DenialRecord, DocumentCaching, GrantRecord, HIT_KINDS, HeldFilter, HeldRow,
     KeyAccess, KeyRecord, KeyReferences, KindFields, ListingFilter, ListingPosition, ListingScope,
-    MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, PinOutcome, ProviderAnswer,
-    ProviderFailure, QueueDepth, RefreshFacts, RefreshOutcome, ReviewLane, SIMILAR_KINDS,
-    SourceCheck, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord, TransitionState,
-    UnnamedRows, WebEntry, WebSessionRecord, WorkspaceRecord, WorkspaceRef,
+    MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, PersonReviewer, PinOutcome,
+    ProviderAnswer, ProviderFailure, QueueDepth, RefreshFacts, RefreshOutcome, ReviewLane,
+    SIMILAR_KINDS, SourceCheck, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord,
+    TransitionState, UnnamedRows, WebEntry, WebSessionRecord, WorkspaceRecord, WorkspaceRef,
 };
 use oml_domain::web::Provider;
 
@@ -3656,11 +3656,23 @@ impl JournalStore for MemStore {
                     && m.approval.is_none()
             })
             .count();
+        let instructions = state
+            .memories
+            .values()
+            .filter(|m| {
+                m.status == MemoryStatus::Promoted
+                    && m.is_tip
+                    && !m.retirement
+                    && m.kind.class().needs_person()
+                    && m.approval.as_ref().map(|a| a.used_by) != Some(UsedBy::Person)
+            })
+            .count();
         Ok(crate::ports::ScanBacklog {
             held_unrescanned: held as u64,
             rescan_due: older.len() as u64,
             findings_unlisted: unlisted as u64,
             promoted_unapproved: unapproved as u64,
+            instructions_without_person_approval: instructions as u64,
         })
     }
 
@@ -4796,14 +4808,55 @@ impl WebStore for MemStore {
             let depth = depths.entry(m.workspace_id).or_insert_with(|| QueueDepth {
                 workspace_id: m.workspace_id,
                 held: 0,
+                held_instructions: 0,
                 oldest: m.created_at.clone(),
             });
             depth.held += 1;
+            if m.kind.class().needs_person() {
+                depth.held_instructions += 1;
+            }
             if m.created_at.unix_micros() < depth.oldest.unix_micros() {
                 depth.oldest = m.created_at.clone();
             }
         }
         Ok(depths.into_values().collect())
+    }
+
+    async fn web_person_reviewers(
+        &self,
+        tenant_id: Uuid,
+    ) -> Result<Vec<PersonReviewer>, StoreError> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = state.lock().expect("tenant lock");
+        let mut out: Vec<PersonReviewer> = state
+            .keys
+            .values()
+            .filter(|k| {
+                k.revoked_at.is_none()
+                    && oml_domain::model::is_person_reviewer(
+                        k.role,
+                        k.used_by,
+                        k.crew_id.is_some(),
+                        k.profile.is_some(),
+                    )
+            })
+            .map(|k| {
+                let access = state.access.get(&k.key_id);
+                PersonReviewer {
+                    key: k.clone(),
+                    grants: access
+                        .map(|a| a.grants.iter().map(|g| g.grant.clone()).collect())
+                        .unwrap_or_default(),
+                    denials: access
+                        .map(|a| a.denials.iter().map(|d| d.denial.clone()).collect())
+                        .unwrap_or_default(),
+                }
+            })
+            .collect();
+        out.sort_by(|a, b| a.key.name.cmp(&b.key.name));
+        Ok(out)
     }
 
     async fn web_admin_search(

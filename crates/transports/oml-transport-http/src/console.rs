@@ -695,9 +695,10 @@ where
         finish(&rid, Self::review_queue_inner(&st, &headers).await)
     }
 
-    /// `GET /v2/review/queue`, admin by key role: the held count and the
+    /// `GET /v2/review/queue`, admin by key role: the held count, the held
+    /// instructions, the person's reviewer keys that may approve them and the
     /// oldest per workspace, tenant-wide, by path, and no content
-    /// (ADR-0045 d10).
+    /// (ADR-0045 d10; ADR-0080 d16, #435).
     async fn review_queue_inner(st: &Self, headers: &HeaderMap) -> Result<Response, ApiError> {
         let caller = st.console_caller(headers).await?;
         let rows = st
@@ -712,6 +713,8 @@ where
                     "workspace_id": r.depth.workspace_id,
                     "path": r.path,
                     "held": r.depth.held,
+                    "held_instructions": r.depth.held_instructions,
+                    "person_reviewers": r.person_reviewers,
                     "oldest_at": r.depth.oldest.as_str(),
                 })).collect::<Vec<_>>(),
             }),
