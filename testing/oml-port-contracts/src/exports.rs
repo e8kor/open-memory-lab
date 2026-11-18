@@ -3,7 +3,7 @@
 //! PostgreSQL: the tenant's policy is `own_root` until one is set; a history
 //! export reads every promoted version and the exporter's own in any state,
 //! never another key's held one; an export is journalled once and its bytes
-//! are counted on the exporter's account.
+//! are counted on the exporter's account and on the tenant's.
 
 use std::collections::BTreeSet;
 
@@ -16,7 +16,7 @@ use oml_app::domain::export::ExportPolicy;
 use oml_app::domain::name::{Name, NamedKind, Reference};
 use oml_app::domain::{MemoryKind, MemoryStatus, Role, UsedBy, event_types};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, SeqIdGen};
-use oml_app::ports::{Clock, ConnectionStore, JournalStore};
+use oml_app::ports::{Clock, ConnectionStore, WebStore};
 use oml_app::types::{
     BootstrapRequest, GrantRequest, IssueKeyRequest, IssuedKey, SubmitRequest, Verdict,
 };
@@ -42,7 +42,7 @@ fn name(value: &str) -> Name {
     Name::parse(value).expect("a fixture name")
 }
 
-async fn rig<S: JournalStore + ConnectionStore + Clone>(store: S) -> Rig<S> {
+async fn rig<S: WebStore + ConnectionStore + Clone>(store: S) -> Rig<S> {
     let app: TestApp<S> = App::new(
         store.clone(),
         MemSigner::new(TEST_SEED),
@@ -152,7 +152,7 @@ fn submit(idem: &str, body: &str) -> SubmitRequest {
     }
 }
 
-async fn written<S: JournalStore + ConnectionStore + Clone>(
+async fn written<S: WebStore + ConnectionStore + Clone>(
     rig: &Rig<S>,
     key: &IssuedKey,
     idem: &str,
@@ -169,7 +169,7 @@ async fn written<S: JournalStore + ConnectionStore + Clone>(
 /// A tenant exports under `own_root` until a policy is set, and no
 /// allowance is in force for a workspace no admin allowed (d10).
 pub async fn a_tenant_exports_under_own_root_until_a_policy_is_set<
-    S: JournalStore + ConnectionStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
 >(
     store: S,
 ) {
@@ -193,7 +193,7 @@ pub async fn a_tenant_exports_under_own_root_until_a_policy_is_set<
 /// versions in any state, in creation order, and never another key's held
 /// or rejected one (d2, R3, reading I6).
 pub async fn a_history_export_reads_promoted_and_own_versions_and_never_another_keys_held_ones<
-    S: JournalStore + ConnectionStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
 >(
     store: S,
 ) {
@@ -248,7 +248,7 @@ pub async fn a_history_export_reads_promoted_and_own_versions_and_never_another_
 /// An export is journalled once as `workspace.exported`, and its bytes are
 /// counted on the `exports` meter of the exporter's account (d10, d15).
 pub async fn an_export_is_journalled_once_and_counted_on_the_exporters_account<
-    S: JournalStore + ConnectionStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
 >(
     store: S,
 ) {
@@ -300,10 +300,63 @@ pub async fn an_export_is_journalled_once_and_counted_on_the_exporters_account<
     );
 }
 
+/// Every export is counted on the tenant's `exports` meter as well, so an
+/// export by a key with no account root, which no account meter counts, is
+/// counted too; the meter reads the UTC month (ADR-0084 I19).
+pub async fn every_export_is_counted_on_the_tenants_exports_meter<
+    S: WebStore + ConnectionStore + Clone,
+>(
+    store: S,
+) {
+    let rig = rig(store).await;
+    written(&rig, &rig.person, "o", "the wheel turns at 120 rpm").await;
+    let now = FixedClock::new().now();
+    assert_eq!(
+        rig.store
+            .tenant_exported_bytes(rig.tenant_id, &now)
+            .await
+            .expect("meter"),
+        0
+    );
+    let mut total = 0;
+    for _ in 0..2 {
+        let exported = rig
+            .app
+            .export_workspace(
+                rig.person.value.as_str(),
+                Reference::parse("ada").expect("a reference"),
+                &ExportRequest {
+                    mode: Some("history".to_owned()),
+                    recipients: vec![RECIPIENT.to_owned()],
+                    release: None,
+                    since: None,
+                },
+            )
+            .await
+            .expect("export");
+        total += exported.file.len() as u64;
+    }
+    assert_eq!(
+        rig.store
+            .tenant_exported_bytes(rig.tenant_id, &now)
+            .await
+            .expect("meter"),
+        total
+    );
+    // Another tenant's meter reads nothing of this one's.
+    assert_eq!(
+        rig.store
+            .tenant_exported_bytes(Uuid::from_u128(77), &now)
+            .await
+            .expect("meter"),
+        0
+    );
+}
+
 /// Every export law, each over a fresh store from `make`.
 pub async fn run_export_suite<S, F, Fut>(make: F)
 where
-    S: JournalStore + ConnectionStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
     F: Fn() -> Fut,
     Fut: core::future::Future<Output = S>,
 {
@@ -311,4 +364,5 @@ where
     a_history_export_reads_promoted_and_own_versions_and_never_another_keys_held_ones(make().await)
         .await;
     an_export_is_journalled_once_and_counted_on_the_exporters_account(make().await).await;
+    every_export_is_counted_on_the_tenants_exports_meter(make().await).await;
 }

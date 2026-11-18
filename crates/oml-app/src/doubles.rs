@@ -370,6 +370,9 @@ struct TenantState {
     /// Each account's exported bytes by UTC day (`account_activity.exports`;
     /// ADR-0084 d10).
     exports: BTreeMap<(Uuid, String), u64>,
+    /// Every export's bytes by UTC day, the tenant's meter
+    /// (`tenant_activity.exports`; ADR-0084 I19).
+    tenant_exports: BTreeMap<String, u64>,
     /// The tenant's export policy and the admins' allowances by workspace,
     /// each with its end (`tenants.export_policy`, `export_allowances`;
     /// ADR-0084 d10).
@@ -1516,8 +1519,9 @@ fn apply_fold(
             entry.release_manifest_digest = ended.ledger.release_manifest_digest;
         }
         MetadataFold::WorkspaceExported { user_root, bytes } => {
+            let day = oml_domain::usage::day_of(at).to_owned();
+            *state.tenant_exports.entry(day.clone()).or_default() += bytes;
             if let Some(root) = user_root {
-                let day = oml_domain::usage::day_of(at).to_owned();
                 *state.exports.entry((root, day)).or_default() += bytes;
             }
         }
@@ -3598,6 +3602,25 @@ impl JournalStore for MemStore {
             .filter(|((r, day), _)| {
                 *r == user_root && day.as_str() >= from.as_str() && day.as_str() < until.as_str()
             })
+            .map(|(_, b)| b)
+            .sum())
+    }
+
+    async fn tenant_exported_bytes(
+        &self,
+        tenant_id: Uuid,
+        at: &EventTime,
+    ) -> Result<u64, StoreError> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(0);
+        };
+        let state = state.lock().expect("tenant lock");
+        let month = oml_domain::usage::Month::of(at);
+        let (from, until) = (month.first_day(), month.next().first_day());
+        Ok(state
+            .tenant_exports
+            .iter()
+            .filter(|(day, _)| day.as_str() >= from.as_str() && day.as_str() < until.as_str())
             .map(|(_, b)| b)
             .sum())
     }

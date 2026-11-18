@@ -481,9 +481,10 @@ pub enum MetadataFold {
     /// does not hold or one that is not `running`.
     WorkspaceImported(crate::types::ImportEnded),
     /// `workspace.exported`: the export's bytes counted on the `exports`
-    /// meter of the exporter's account on the event's UTC day; `None` for a
-    /// key of no account, whose export is journalled and counted nowhere
-    /// (ADR-0084 d10).
+    /// meter of the exporter's account on the event's UTC day, and on the
+    /// tenant's `exports` meter for every export; `None` for a key of no
+    /// account, whose export the tenant's meter alone counts (ADR-0084 d10,
+    /// I19).
     WorkspaceExported {
         user_root: Option<Uuid>,
         bytes: u64,
@@ -1168,6 +1169,15 @@ pub trait JournalStore: Retriever + Send + Sync {
         &self,
         tenant_id: Uuid,
         user_root: Uuid,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send;
+
+    /// The bytes every export of the tenant counted in the UTC month `at`
+    /// falls in, an export by a key of no account included: the tenant's
+    /// `exports` meter (ADR-0084 I19).
+    fn tenant_exported_bytes(
+        &self,
+        tenant_id: Uuid,
         at: &EventTime,
     ) -> impl Future<Output = Result<u64, StoreError>> + Send;
 

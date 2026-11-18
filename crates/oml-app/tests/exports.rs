@@ -437,8 +437,9 @@ async fn a_history_export_decrypts_verifies_and_carries_only_what_may_leave() {
     app.post_verdict(a.review.value.as_str(), promoted, Verdict::Approve, None)
         .await
         .expect("approve");
-    // Held, by the agent: another key's held row never leaves.
-    let foreign_held = written(
+    // Held, by the person's own agent key: hers by I6 as written, so it
+    // travels, without its event (R12).
+    let agent_held = written(
         &app,
         &a.agent.value,
         &submit("h", "glaze cracks below 900 C"),
@@ -500,8 +501,8 @@ async fn a_history_export_decrypts_verifies_and_carries_only_what_may_leave() {
         states.get(&own_rejected.to_string()),
         Some(&State::Rejected)
     );
-    assert!(!states.contains_key(&foreign_held.to_string()));
-    assert_eq!(states.len(), 3);
+    assert_eq!(states.get(&agent_held.to_string()), Some(&State::Held));
+    assert_eq!(states.len(), 4);
     // Only the exporter's own writes carry events (R1, R12).
     assert_eq!(verified.contents.events.len(), 2);
     assert_eq!(exported.counts.events, 2);
@@ -590,4 +591,264 @@ async fn an_erasure_marker_carries_no_digest() {
     let text = String::from_utf8_lossy(&tar).into_owned();
     assert!(!text.contains(digest.trim_start_matches("sha256:")));
     assert!(!text.contains("4417"));
+}
+
+/// Exports `alice` as her person key and opens the bundle.
+async fn exported_bundle(app: &TestApp, a: &Alice) -> oml_bundle::BundleContents {
+    let exported = app
+        .export_workspace(a.person.value.as_str(), by_name("alice"), &history())
+        .await
+        .expect("export");
+    let mut tar = Vec::new();
+    crypt::decrypting_reader(exported.file.as_slice(), &identity())
+        .expect("opens")
+        .read_to_end(&mut tar)
+        .expect("plaintext");
+    oml_bundle::read_bundle(tar.as_slice(), &VerifyOptions::default())
+        .expect("verifies")
+        .contents
+}
+
+#[tokio::test]
+async fn verdicts_jsonl_names_no_erasure_marker() {
+    let (app, store) = rig();
+    let a = alice(&app).await;
+    let erased = written(&app, &a.agent.value, &submit("e", "the gate code is 9921")).await;
+    app.post_verdict(a.review.value.as_str(), erased, Verdict::Approve, None)
+        .await
+        .expect("approve");
+    store.set_status(
+        a.boot.tenant_id,
+        erased,
+        oml_app::domain::MemoryStatus::Erased,
+    );
+    let contents = exported_bundle(&app, &a).await;
+    assert!(
+        contents
+            .versions
+            .iter()
+            .any(|e| matches!(e, VersionEntry::Erased(m) if m.artifact_id == erased.to_string()))
+    );
+    // I17: the approval of an erased version stays on the server.
+    assert!(
+        contents
+            .verdicts
+            .iter()
+            .all(|v| v.artifact_id != erased.to_string()),
+        "{:?}",
+        contents.verdicts
+    );
+}
+
+#[tokio::test]
+async fn a_crew_key_is_refused_export_as_person_only() {
+    let (app, _) = rig();
+    let a = alice(&app).await;
+    let admin = &a.boot.admin_key.value;
+    let crew = app
+        .create_crew(
+            admin,
+            &oml_app::types::CrewCreateRequest {
+                name: name("kiln-crew"),
+                charter_uri: None,
+                external_manager: None,
+            },
+        )
+        .await
+        .expect("create crew");
+    let crew_key = app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                profile: None,
+                role: Role::Reader,
+                name: fresh_key_name(),
+                principal: "kiln-crew/desk".to_owned(),
+                used_by: Some(UsedBy::Person),
+                default_workspace: None,
+                crew: Some(by_name("kiln-crew")),
+                grants: vec![grant("alice", Role::Reader)],
+                user: Some(name("alice")),
+                connect_code: false,
+                guardrail_scope: None,
+                expiry: None,
+                requests_per_minute: None,
+            },
+        )
+        .await
+        .expect("issue a crew key");
+    assert_eq!(crew_key.crew_id, Some(crew.crew_id));
+    let err = app
+        .export_workspace(crew_key.value.as_str(), by_name("alice"), &history())
+        .await
+        .expect_err("a crew key never exports");
+    assert!(matches!(err, AppError::ExportPersonOnly { .. }), "{err:?}");
+}
+
+#[tokio::test]
+async fn a_bearer_person_key_exports_its_persons_console_writes() {
+    let (app, _) = rig();
+    let a = alice(&app).await;
+    let admin = a.boot.admin_key.value.as_str();
+    let (entry, _) = app
+        .allow_web_email(
+            admin,
+            &oml_app::types::WebEmailRequest {
+                email: oml_app::domain::web::Email::parse("alice@example.com").expect("an email"),
+                user: name("alice"),
+                admin: false,
+            },
+        )
+        .await
+        .expect("the entry is added");
+    app.web_ensure_keys(&entry).await.expect("the session keys");
+    let token = app
+        .web_session_open(&entry, 3600, None)
+        .await
+        .expect("the session opens")
+        .token;
+    let session = app
+        .web_session(&token)
+        .await
+        .expect("a read")
+        .expect("a live session");
+    let web = app
+        .web_caller(&session, oml_app::app::Capacity::Web)
+        .await
+        .expect("alice-web");
+    let console = app
+        .submit_memory(
+            oml_app::types::Bearer::Session(&web),
+            &SubmitRequest {
+                workspace: Some(by_name("alice")),
+                ..submit("console", "the kiln door sticks in winter")
+            },
+        )
+        .await
+        .expect("a console write")
+        .receipt
+        .memory_id;
+    let contents = exported_bundle(&app, &a).await;
+    // I6 as written: the person's own set is every key of the person, so
+    // the console's held write travels with the bearer key's export, and
+    // its event does not (R12: only the exporting key's own writes).
+    let line = contents
+        .versions
+        .iter()
+        .find_map(|e| match e {
+            VersionEntry::Version(v) if v.artifact_id == console.to_string() => Some(v.clone()),
+            _ => None,
+        })
+        .expect("the console write travels");
+    assert_eq!(line.state, State::Held);
+    assert_eq!(line.source_event, None);
+}
+
+#[tokio::test]
+async fn a_bundle_over_uploads_max_bytes_is_export_too_large_and_journals_and_meters_nothing() {
+    let store = MemStore::new();
+    let app = App::new(
+        store.clone(),
+        MemSigner::new(TEST_SEED),
+        FixedClock::new(),
+        SeqIdGen::new(),
+        MarkerScanner::default(),
+    )
+    .with_uploads(
+        std::sync::Arc::new(oml_app::doubles::MemObjects::new()),
+        256,
+        1 << 20,
+    );
+    let a = alice(&app).await;
+    let tenant_id = a.boot.tenant_id;
+    written(&app, &a.person.value, &submit("big", &"glaze ".repeat(200))).await;
+    let head_before = store.chain_head(tenant_id).await.unwrap().unwrap().seq;
+    let err = app
+        .export_workspace(a.person.value.as_str(), by_name("alice"), &history())
+        .await
+        .expect_err("over uploads.max_bytes");
+    assert!(
+        matches!(err, AppError::ExportTooLarge { max_bytes: 256 }),
+        "{err:?}"
+    );
+    // I13: refused before anything is journalled or metered.
+    assert_eq!(
+        store.chain_head(tenant_id).await.unwrap().unwrap().seq,
+        head_before
+    );
+    let root = store
+        .resolve_name(
+            tenant_id,
+            oml_app::domain::name::NamedKind::Workspace,
+            &name("alice"),
+        )
+        .await
+        .unwrap()
+        .expect("alice's root");
+    let at = oml_app::ports::Clock::now(&FixedClock::new());
+    assert_eq!(store.exported_bytes(tenant_id, root, &at).await.unwrap(), 0);
+}
+
+#[tokio::test]
+async fn a_versions_derives_from_keeps_only_the_ids_the_bundle_exports() {
+    let (app, store) = rig();
+    let a = alice(&app).await;
+    let mut promoted = Vec::new();
+    for (idem, body) in [
+        ("kept", "the kiln vents north"),
+        ("gone", "the vent code is 5531"),
+    ] {
+        let id = written(&app, &a.agent.value, &submit(idem, body)).await;
+        app.post_verdict(a.review.value.as_str(), id, Verdict::Approve, None)
+            .await
+            .expect("approve");
+        promoted.push(id);
+    }
+    let (kept, gone) = (promoted[0], promoted[1]);
+    let child = written(
+        &app,
+        &a.person.value,
+        &SubmitRequest {
+            derives_from: vec![kept, gone],
+            ..submit("child", "the north vent needs a damper")
+        },
+    )
+    .await;
+    store.set_status(
+        a.boot.tenant_id,
+        gone,
+        oml_app::domain::MemoryStatus::Erased,
+    );
+    let contents = exported_bundle(&app, &a).await;
+    let line = contents
+        .versions
+        .iter()
+        .find_map(|e| match e {
+            VersionEntry::Version(v) if v.artifact_id == child.to_string() => Some(v.clone()),
+            _ => None,
+        })
+        .expect("the child travels");
+    // I17: an erased ancestor is a marker, not an exported version.
+    assert_eq!(line.derives_from, vec![kept.to_string()]);
+}
+
+#[tokio::test]
+async fn an_export_by_a_key_with_no_account_root_is_counted_on_the_tenants_meter() {
+    let (app, store) = rig();
+    let boot = bootstrap(&app).await;
+    store.set_export_policy(boot.tenant_id, ExportPolicy::Allowed);
+    let (carol, _) = shared(&app, &boot, false).await;
+    let exported = app
+        .export_workspace(carol.value.as_str(), by_name("crew"), &history())
+        .await
+        .expect("a shared workspace under the allowed policy");
+    let at = oml_app::ports::Clock::now(&FixedClock::new());
+    // I19: no account meter counts carol's export; the tenant's does.
+    assert_eq!(
+        store
+            .tenant_exported_bytes(boot.tenant_id, &at)
+            .await
+            .unwrap(),
+        exported.file.len() as u64
+    );
 }

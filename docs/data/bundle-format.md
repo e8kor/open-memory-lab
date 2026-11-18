@@ -28,7 +28,7 @@ The tar holds these entries, in this order, and no others. Every entry is a regu
 manifest.json         the manifest and its signature
 workspaces.jsonl      one line per exported workspace
 versions.jsonl        one line per claim version, or an erasure marker
-verdicts.jsonl        one line per verdict on an exported version
+verdicts.jsonl        one line per verdict on a version exported whole, never on an erasure marker
 events.jsonl          the signed source event of each of the exporter's own versions
 edges.jsonl           claim and brief edges whose two ends are exported
 bodies/<sha256 hex>   a text over 64 KiB, and every attachment, by plaintext digest
@@ -71,8 +71,9 @@ The tar is not compressed, and the same contents always make the same tar.
 ## Records
 
 A version line carries the claim's text inline up to 64 KiB, or a `body` digest. It also carries
-its kind, format, anchor, valid time, kind object, `derives_from`, `origin` exactly as signed,
-attachments by digest, state, and an `author` of `{used_by, same_user, pseudonym}`.
+its kind, format, anchor, valid time, kind object, `derives_from` (only the ids the bundle exports
+whole), `origin` exactly as signed, attachments by digest, state, and an `author` of
+`{used_by, same_user, pseudonym}`.
 
 A guardrail version that is not a retirement also carries `guardrail`, its `{severity, rule}` as
 signed: `severity` a known severity and `rule`, when not null, an `oml-gr/1` rule the severity
@@ -113,7 +114,7 @@ signatures. The first failure refuses the whole bundle.
 | `bundle.depth` | JSON nested deeper than 32 |
 | `bundle.duplicate` | an artifact id and version twice, a body twice, or an event id twice |
 | `bundle.unreferenced_body` | a body no line names |
-| `bundle.malformed` | a line that does not parse or breaks its closed shape, an `exported_at` outside `YYYY-MM-DDTHH:MM:SS.ffffffZ`, an erasure marker with content, an event on another author's version, or a foreign event |
+| `bundle.malformed` | a line that does not parse or breaks its closed shape, an `exported_at` outside `YYYY-MM-DDTHH:MM:SS.ffffffZ`, an erasure marker with content, a verdict on an erasure marker or on a version the bundle does not carry, an event on another author's version, or a foreign event |
 | `bundle.digest_mismatch` | a file, a body or a version's text that does not hash to what the manifest or its event states |
 | `bundle.signature_invalid` | the manifest or a carried event does not verify (strict Ed25519), an event names another tenant, or the manifest names a tenant other than the expected one |
 | `bundle.signature_unexpected` | the manifest verifies under a key other than `--expect-key` |
@@ -122,8 +123,10 @@ signatures. The first failure refuses the whole bundle.
 
 A `history` export is assembled in the server's memory and walks the tenant's journal once for
 the exported versions' submission events and verdicts, so its cost grows with the chain and the
-subtree. Its bytes are counted on the exporter's `exports` meter. Throughput and a per-day export
-limit are unmeasured (ADR-0084 d15).
+subtree. A bundle larger than `uploads.max_bytes` is refused `export.too_large`, and one tenant
+builds one export at a time (`export.busy`). Its bytes are counted on the exporter's `exports`
+meter and on the tenant's. Throughput and a per-day export limit are unmeasured (ADR-0084 d15,
+I13, I19).
 
 The size limits follow the target's quota until measurement sets them. The CLI's defaults are
 1 GiB unpacked, 100,000 entries and 64 MiB per entry.

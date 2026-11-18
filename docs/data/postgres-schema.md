@@ -60,6 +60,7 @@ Three roles reach the database. The owner role owns every table and runs the mig
 | [`search_vocabulary`](#search_vocabulary) | owns | SELECT, INSERT, UPDATE, DELETE |  |
 | [`search_workspace_rows`](#search_workspace_rows) | owns | SELECT, INSERT, UPDATE, DELETE |  |
 | [`similar_keys`](#similar_keys) | owns | SELECT, INSERT, UPDATE, DELETE |  |
+| [`tenant_activity`](#tenant_activity) | owns | SELECT, INSERT, UPDATE, DELETE |  |
 | [`tenants`](#tenants) | owns | SELECT, INSERT, UPDATE | SELECT |
 | [`upload_sessions`](#upload_sessions) | owns | SELECT, INSERT, UPDATE |  |
 | [`usage_daily`](#usage_daily) | owns | SELECT, INSERT, DELETE |  |
@@ -1490,6 +1491,35 @@ Row-level security: enabled and forced, so the owner is bound too.
 Grants: serving: SELECT, INSERT, UPDATE, DELETE.
 
 Partitions after the last migration: none. The lead creates one per tenant as the tenant is created.
+
+### tenant_activity
+
+Bytes of every workspace export of the tenant in one UTC day, a key with no account root's included, kept 62 days: the tenant's exports meter (I19).
+
+Kind: table.
+
+| Column | Type | Null | Default | Purpose |
+|---|---|---|---|---|
+| `tenant_id` | `uuid` | not null |  |  |
+| `day` | `date` | not null |  |  |
+| `exports` | `bigint` | not null | `0` |  |
+
+Checks:
+
+- `tenant_activity_exports_check`: `CHECK (exports >= 0)`
+
+Keys:
+
+- `tenant_activity_tenant_id_fkey` (foreign key): `FOREIGN KEY (tenant_id) REFERENCES tenants(id)`
+- `tenant_activity_pkey` (primary key): `PRIMARY KEY (tenant_id, day)`
+
+Row-level security: enabled and forced, so the owner is bound too.
+
+- Policy `tenant_isolation`, ALL for PUBLIC, permissive:
+    - using `tenant_id = NULLIF(current_setting('oml.tenant_id'::text, true), ''::text)::uuid`
+    - with check `tenant_id = NULLIF(current_setting('oml.tenant_id'::text, true), ''::text)::uuid`
+
+Grants: serving: SELECT, INSERT, UPDATE, DELETE.
 
 ### tenants
 

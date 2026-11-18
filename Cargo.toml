@@ -192,6 +192,9 @@ unicode-normalization = "0.1"
 # serde feature: idempotency-stored responses serialize ids (oml-app); the
 # domain stays deterministic — no v4 feature (workspace-plan.md).
 uuid = { version = "1.18", features = ["serde"] }
+# Wipes the age identity the CLI reads for an import once it is used
+# (oml-cli, ADR-0084 d5); already in the graph through age and ed25519-dalek.
+zeroize = "1.8"
 # The CLI's owner-only files on Windows (oml-cli src/owner_only.rs): std sets
 # no DACL, so the Win32 security calls come from Microsoft's bindings, the
 # version already in the graph through tokio, mio and clap's anstyle-query.

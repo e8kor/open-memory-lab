@@ -16,6 +16,7 @@ import {
   RequestError,
   SubmissionError,
   USER_AGENT,
+  WorkspaceImportError,
   type WriteInput,
   errorFromResponse,
 } from "../src/index.ts";
@@ -98,6 +99,12 @@ test("a code the client has never seen lands in its family's class", () => {
   const error = errorFromResponse(409, JSON.parse(envelope("submission.brand_new")), new Headers());
   assert.equal(error.constructor, SubmissionError);
   assert.equal(error.code, "submission.brand_new");
+});
+
+test("an import refusal is a WorkspaceImportError, named as the Python SDK names it", () => {
+  const error = errorFromResponse(409, JSON.parse(envelope("import.busy")), new Headers());
+  assert.equal(error.constructor, WorkspaceImportError);
+  assert.equal(error.name, "WorkspaceImportError");
 });
 
 test("a family the client has never seen lands in ApiError", () => {

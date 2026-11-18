@@ -45,6 +45,7 @@ toml.workspace = true
 unicode-normalization.workspace = true
 ureq.workspace = true
 uuid.workspace = true
+zeroize.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true

@@ -630,7 +630,10 @@ enum WorkspacesCommand {
         #[arg(long)]
         identity: std::path::PathBuf,
         /// The source key's fingerprint, checked out of band; required on
-        /// the first import from a source, which pins it.
+        /// the first import from a source, which pins it. A target name
+        /// that does not exist yet is refused without it before anything is
+        /// uploaded; for an existing target only the server knows whether it
+        /// pins this source, so the import request answers.
         #[arg(long)]
         expect_key: Option<String>,
         /// The source tenant id the bundle must name.
@@ -642,6 +645,10 @@ enum WorkspacesCommand {
         /// Admit a bundle older than the last one imported from its source.
         #[arg(long)]
         allow_older: bool,
+        /// A completed upload of this bundle, as a dry run names it, imported
+        /// without sending the bundle again.
+        #[arg(long)]
+        upload: Option<String>,
     },
 }
 
@@ -1926,6 +1933,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                     expect_tenant,
                     dry_run,
                     allow_older,
+                    upload,
                 },
         } => run_workspaces_import(
             cli,
@@ -1938,6 +1946,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 expect_tenant: expect_tenant.as_deref(),
                 dry_run: *dry_run,
                 allow_older: *allow_older,
+                upload: upload.as_deref(),
             },
         ),
 
@@ -2977,21 +2986,37 @@ struct ImportArgs<'a> {
     expect_tenant: Option<&'a str>,
     dry_run: bool,
     allow_older: bool,
+    upload: Option<&'a str>,
 }
 
-/// `oml workspaces import` (ADR-0084 d5, d7, d15): pass 1 decrypts and
+/// `oml workspaces import` (ADR-0084 d5, d7, d15, I10): pass 1 decrypts and
 /// verifies the bundle here; pass 2 decrypts it again into the parts of one
-/// upload session; then `POST /v2/imports` plans or imports it. No
-/// decrypted byte is written to disk, and the identity is never printed.
+/// upload session, unless `--upload` names a dry run's completed one; then
+/// `POST /v2/imports` plans the import, or starts it and the CLI reads its
+/// state until it ends. A session this run opened is abandoned on every
+/// failure before the import takes it. No decrypted byte is written to
+/// disk, and the identity is never printed and is zeroed after use.
 fn run_workspaces_import(
     cli: &Cli,
     stored: &Credentials,
     args: &ImportArgs<'_>,
 ) -> Result<ExitCode, CliError> {
-    use oml_cli::import::{PART_SIZE, identity_of, refusal_hint, upload_pass, verify_pass};
-    let identity_text = std::fs::read_to_string(args.identity)
-        .map_err(|e| CliError::local(format!("reading the identity file: {}", e.kind())))?;
-    let identity = identity_of(&identity_text)?;
+    use oml_cli::import::{
+        LONG_TIMEOUT, POLL_EVERY, identity_mode_warning, identity_of, refusal_hint, verify_pass,
+    };
+    use zeroize::Zeroizing;
+    #[cfg(unix)]
+    if let Ok(meta) = std::fs::metadata(args.identity) {
+        use std::os::unix::fs::PermissionsExt as _;
+        if let Some(warning) = identity_mode_warning(meta.permissions().mode()) {
+            eprintln!("{warning}");
+        }
+    }
+    let identity_text = Zeroizing::new(
+        std::fs::read_to_string(args.identity)
+            .map_err(|e| CliError::local(format!("reading the identity file: {}", e.kind())))?,
+    );
+    let identity = Zeroizing::new(identity_of(&identity_text)?);
     drop(identity_text);
     let open = || {
         std::fs::File::open(args.file)
@@ -3007,36 +3032,42 @@ fn run_workspaces_import(
     let verified =
         verify_pass(open()?, &identity, &options).map_err(|e| CliError::local(e.to_string()))?;
     let client = resolve(cli, stored)?;
-    let (_, session) = client.post(
-        "/v2/uploads",
-        &json!({ "purpose": "import", "size": verified.size, "sha256": verified.sha256 }),
-        &CallOpts {
-            auth: true,
-            idempotency: false,
-        },
-    )?;
-    let upload_id = field(&session, "upload_id").to_owned();
-    let parts_path = format!("/v2/uploads/{}/parts", segment(&upload_id)?);
-    // Pass 2: decrypt again and send each part as it is read.
-    let (size, sha256) = upload_pass(open()?, &identity, PART_SIZE, &mut |n, bytes| {
-        client
-            .put_bytes(&format!("{parts_path}/{n}"), bytes)
-            .map(|_| ())
-    })?;
-    if (size, sha256.as_str()) != (verified.size, verified.sha256.as_str()) {
-        return Err(CliError::local(
-            "the bundle changed between the two passes; nothing was imported",
-        ));
+    // R11: a target that does not exist yet holds no ledger, so this is a
+    // first import, which pins the source's key and needs --expect-key.
+    // An existing target may or may not hold one for this source, which only
+    // the server reads, so it answers there.
+    if args.expect_key.is_none()
+        && !args.dry_run
+        && let Err(CliError::Refused { status: 404, .. }) =
+            client.get(&format!("/v2/workspaces/{}", segment(args.into)?))
+    {
+        return Err(CliError::local(format!(
+            "{} does not exist yet, or this key cannot read it, so this is a first import from this source, which pins its key: check the source's key fingerprint out of band, then run again with --expect-key {} if it matches; nothing was uploaded",
+            args.into, verified.signer_fingerprint
+        )));
     }
-    client.post(
-        &format!("/v2/uploads/{}/complete", segment(&upload_id)?),
-        &json!({}),
-        &CallOpts {
-            auth: true,
-            idempotency: false,
-        },
-    )?;
-    let answer = client.post(
+    let slow = client.lasting(LONG_TIMEOUT);
+    let (upload_id, opened) = match args.upload {
+        Some(id) => (id.to_owned(), false),
+        None => {
+            let (_, session) = client.post(
+                "/v2/uploads",
+                &json!({ "purpose": "import", "size": verified.size, "sha256": verified.sha256 }),
+                &CallOpts {
+                    auth: true,
+                    idempotency: false,
+                },
+            )?;
+            let id = field(&session, "upload_id").to_owned();
+            if let Err(e) = send_import_upload(&slow, &id, &identity, &open, &verified) {
+                abandon_upload(&client, &id);
+                return Err(e);
+            }
+            (id, true)
+        }
+    };
+    drop(identity);
+    let answer = slow.post(
         "/v2/imports",
         &json!({
             "upload_id": upload_id,
@@ -3064,12 +3095,28 @@ fn run_workspaces_import(
     {
         eprintln!("{hint}");
     }
-    let (_, response) = answer?;
+    let mut response = match answer {
+        Ok((_, response)) => response,
+        Err(e) => {
+            if opened {
+                abandon_upload(&client, &upload_id);
+            }
+            return Err(e);
+        }
+    };
+    if response.get("plan").is_none() {
+        // I10: the import runs after its request answered; read it until it
+        // ends.
+        while response["import"]["state"] == "running" {
+            std::thread::sleep(POLL_EVERY);
+            let id = segment(field(&response["import"], "import_id"))?;
+            response = client.get(&format!("/v2/imports/{id}"))?.1;
+        }
+    }
+    let failed = response["import"]["state"] == "failed";
     if cli.json {
         print_json(&response);
-        return Ok(ExitCode::SUCCESS);
-    }
-    if let Some(plan) = response.get("plan") {
+    } else if let Some(plan) = response.get("plan") {
         println!(
             "plan (nothing written): {} from {} exported {}; signature {}",
             plan["counts"],
@@ -3081,6 +3128,9 @@ fn run_workspaces_import(
                 "intact, not authenticated"
             },
         );
+        println!(
+            "upload {upload_id} kept: run again with --upload {upload_id} to import it without sending it again"
+        );
     } else {
         let import = &response["import"];
         println!(
@@ -3091,7 +3141,57 @@ fn run_workspaces_import(
             import["refusals"].as_array().map_or(0, Vec::len),
         );
     }
-    Ok(ExitCode::SUCCESS)
+    Ok(if failed {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
+/// Pass 2 into the session `upload_id`, then its completion: decrypts
+/// again and sends each part as it is read, and refuses a bundle that
+/// changed since pass 1.
+fn send_import_upload<R: std::io::Read>(
+    slow: &Client,
+    upload_id: &str,
+    identity: &str,
+    open: &dyn Fn() -> Result<R, CliError>,
+    verified: &oml_cli::import::Verified,
+) -> Result<(), CliError> {
+    use oml_cli::import::{PART_SIZE, upload_pass};
+    let parts_path = format!("/v2/uploads/{}/parts", segment(upload_id)?);
+    let (size, sha256) = upload_pass(open()?, identity, PART_SIZE, &mut |n, bytes| {
+        slow.put_bytes(&format!("{parts_path}/{n}"), bytes)
+            .map(|_| ())
+    })?;
+    if (size, sha256.as_str()) != (verified.size, verified.sha256.as_str()) {
+        return Err(CliError::local(
+            "the bundle changed between the two passes; nothing was imported",
+        ));
+    }
+    slow.post(
+        &format!("/v2/uploads/{}/complete", segment(upload_id)?),
+        &json!({}),
+        &CallOpts {
+            auth: true,
+            idempotency: false,
+        },
+    )?;
+    Ok(())
+}
+
+/// Abandons the upload session this run opened (`DELETE /v2/uploads/{id}`),
+/// so a failed import leaves no staged parts behind until the sweep. A
+/// refused or unreachable abandon is named, never fatal: the sweep ends the
+/// session at its expiry.
+fn abandon_upload(client: &Client, upload_id: &str) {
+    let abandoned = segment(upload_id).and_then(|id| client.delete(&format!("/v2/uploads/{id}")));
+    let why = match abandoned {
+        Ok(_) => return,
+        Err(CliError::Refused { code, .. }) => code,
+        Err(CliError::Local(m) | CliError::Unanswered(m)) => m,
+    };
+    eprintln!("the upload session {upload_id} was not abandoned ({why}); it expires on its own");
 }
 
 /// `oml workspaces status`: propose, ratify and the pending list over the
@@ -6292,13 +6392,35 @@ fn exports_doctor(scrape: Option<&Scrape>) -> Vec<String> {
                   root, in history mode; no route sets another policy in this build"
         .to_owned();
     match scrape {
-        Some(scrape) if scrape.0.contains("oml_exports") => vec![
-            policy,
-            format!(
-                "{} bundle(s) served since start, each journalled as workspace.exported",
-                scrape.sum("oml_exports_total", &[])
-            ),
-        ],
+        Some(scrape) if scrape.0.contains("oml_exports") => {
+            let mut lines = vec![
+                policy,
+                format!(
+                    "{} bundle(s) served since start, each journalled as workspace.exported",
+                    scrape.sum("oml_exports_total", &[])
+                ),
+            ];
+            // ADR-0084 I13: export.busy and export.too_large, and every other
+            // refusal of the route, by code.
+            let mut refused: Vec<(String, u64)> = scrape
+                .samples("oml_export_refusals_total", &[])
+                .filter_map(|(set, n)| {
+                    set.split(',')
+                        .find_map(|pair| pair.strip_prefix("code=\"")?.strip_suffix('"'))
+                        .map(|code| (code.to_owned(), n))
+                })
+                .collect();
+            refused.sort();
+            if !refused.is_empty() {
+                let list = refused
+                    .iter()
+                    .map(|(code, n)| format!("{code} {n}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                lines.push(format!("export_refusals since start: {list}"));
+            }
+            lines
+        }
         Some(_) => vec![
             policy,
             "off (this server serves no workspace export)".to_owned(),
@@ -7836,6 +7958,23 @@ mod tests {
             approval_doctor(None),
             vec!["approval_unmatched: not read; an admin key reads it".to_owned()]
         );
+    }
+
+    #[test]
+    fn the_exports_doctor_names_export_refusals_by_code() {
+        let lines = exports_doctor(Some(&Scrape(
+            "oml_exports_total 3\n\
+             oml_export_refusals_total{code=\"export.too_large\"} 1\n\
+             oml_export_refusals_total{code=\"export.busy\"} 2\n"
+                .to_owned(),
+        )));
+        assert_eq!(
+            lines.get(2).map(String::as_str),
+            Some("export_refusals since start: export.busy 2, export.too_large 1"),
+            "{lines:?}"
+        );
+        let quiet = exports_doctor(Some(&Scrape("oml_exports_total 3\n".to_owned())));
+        assert_eq!(quiet.len(), 2, "no line without a refusal");
     }
 
     #[test]

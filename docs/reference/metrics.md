@@ -76,6 +76,7 @@ Histograms use bucket bounds that start at 1 ms and double sixteen times, to 32.
 | `oml_imports_allow_older` | gauge | none | Imports that admitted an older bundle under `allow_older`, at the last sweep. |
 | `oml_imports_stopped` | gauge | none | Imports running for more than an hour that the server is not running, at the last sweep; the sweep ends each `failed`. |
 | `oml_imports_unprovenanced` | gauge | none | Versions carrying an import's idempotency key and no `import_provenance`, at the last sweep. |
+| `oml_export_refusals_total` | counter | `code` | `POST /v2/workspaces/{workspace}/exports` refused, by code: `export.busy` (one export per tenant runs), `export.too_large` (a bundle over `uploads.max_bytes`) or another the route answered; `oml doctor` names them under `exports` ([ADR-0084](../adr/ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) I13). |
 | `oml_exports_total` | counter | none | Workspace bundles served by `POST /v2/workspaces/{workspace}/exports`, each journalled as `workspace.exported` ([ADR-0084](../adr/ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) d15). |
 | `oml_memories_unrecalled` | gauge | `promoted_for` | Served memories no recall in the last 30 days returned, by time since approval (`7d`, `30d`, `90d`, `older`). Refreshed every 10 minutes. |
 
