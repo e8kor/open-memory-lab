@@ -3052,7 +3052,8 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
                  - 'valid_from' - 'valid_until' - 'valid_from_us' - 'valid_until_us' \
                  - 'origin_kind' - 'scanned_under' - 'format' - 'title' - 'search_text' - 'search_text_by' \
                  - 'approver_used_by' - 'approver_same_user' - 'approved_at' \
-                 - 'skill_name' - 'skill_description' - 'document_title' - 'test_shape'"
+                 - 'skill_name' - 'skill_description' - 'document_title' - 'test_shape' \
+                 - 'import_provenance'"
             }
             (true, "key_denials") => "to_jsonb(t) - 'lifted_epoch'",
             _ => "to_jsonb(t)",

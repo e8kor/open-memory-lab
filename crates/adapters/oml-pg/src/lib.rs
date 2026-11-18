@@ -7282,7 +7282,10 @@ impl JournalStore for PgStore {
                 claim_key,
                 memory_id,
                 version: u32::try_from(version).map_err(backend)?,
-                body_digest: row.try_get("claim_digest").map_err(backend)?,
+                body_digest: {
+                    let digest: Vec<u8> = row.try_get("claim_digest").map_err(backend)?;
+                    hash32(&digest)?.to_prefixed()
+                },
                 retirement: row.try_get("retirement").map_err(backend)?,
             });
         }
