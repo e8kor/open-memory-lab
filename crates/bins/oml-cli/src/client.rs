@@ -181,6 +181,43 @@ impl Client {
         finish(self.send_post(path, body, opts)?)
     }
 
+    /// POST a JSON body under the key and copy a binary success body into
+    /// `out`; returns the bytes copied and the `OML-Manifest-Digest` header.
+    /// A refusal is read as [`Client::post`] reads it, and nothing is
+    /// written to `out` then.
+    ///
+    /// # Errors
+    ///
+    /// The server refused, could not be reached, or the body could not be
+    /// copied into `out`.
+    pub fn post_download(
+        &self,
+        path: &str,
+        body: &Value,
+        out: &mut dyn std::io::Write,
+    ) -> Result<(u64, Option<String>), CliError> {
+        let result = self
+            .agent
+            .post(&format!("{}{path}", self.server))
+            .set("Authorization", &self.bearer()?)
+            .send_json(body.clone());
+        match result {
+            Ok(response) => {
+                let digest = response
+                    .header("OML-Manifest-Digest")
+                    .map(ToOwned::to_owned);
+                let copied = std::io::copy(&mut response.into_reader(), out).map_err(|e| {
+                    CliError::Unanswered(format!(
+                        "the server answered, but its body could not be saved ({e}); the server \
+                         may have acted on the request"
+                    ))
+                })?;
+                Ok((copied, digest))
+            }
+            Err(e) => finish(Err(e)).map(|_| (0, None)),
+        }
+    }
+
     /// POST a JSON body; returns the parsed success body and whether it is an
     /// idempotent replay (`Idempotency-Replay: true`, http-api.md
     /// idempotency), which a connect-code verb reads because a replayed

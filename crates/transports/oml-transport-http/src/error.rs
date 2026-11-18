@@ -505,6 +505,58 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "limit": reached.limit,
             "used": reached.used,
         })),
+        AppError::ExportPersonOnly { role, used_by } => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "access.verb_ceiling",
+            "A workspace export is a person's act: no agent, admin or service key exports (ADR-0084 d10).",
+            format!(
+                "exporting a workspace needs a key used by a person, and this is a {} key used by {}",
+                role.as_str(),
+                used_by.as_str()
+            ),
+        )
+        .with_details(json!({
+            "reason": "export_person_only",
+            "role": role.as_str(),
+            "used_by": used_by.as_str(),
+        })),
+        AppError::ExportDisabled { reason } => {
+            let error = ApiError::new(
+                StatusCode::FORBIDDEN,
+                "export.disabled",
+                "The tenant's export policy decides what may leave the server (ADR-0084 d10).",
+                match reason {
+                    Some(_) => "the tenant's export policy is own_root, this workspace lies outside the exporter's own root, and no admin allowance is in force",
+                    None => "the tenant's export policy is off",
+                },
+            );
+            match reason {
+                Some(reason) => error.with_details(json!({ "reason": reason })),
+                None => error.with_details(json!({ "reason": "off" })),
+            }
+        }
+        AppError::ExportNotReadable => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "export.not_readable",
+            "An export carries a whole subtree, so a node the exporter cannot read refuses all of it (ADR-0084 d10).",
+            "a workspace of the subtree is not readable by this key",
+        ),
+        AppError::BundleUnencrypted { detail } => ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "bundle.unencrypted",
+            "A bundle is always encrypted to at least one named age recipient (ADR-0084 d5).",
+            detail,
+        )
+        .with_details(json!({ "field": "/recipients" })),
+        AppError::ExportModeRefused { field, reason } => ApiError::validation(format!(
+            "{field} cannot be taken: {}",
+            if reason == "releases_unbuilt" {
+                "releases are not built, so an export is history mode only"
+            } else {
+                reason
+            }
+        ))
+        .with_details(json!({ "field": format!("/{field}"), "reason": reason })),
         AppError::LineageUnknown(id) => ApiError::not_found().with_details(json!({
             // derives_from targets fail closed as absence, like CURIE
             // citations (errors.md vocab.unknown_curie rationale).

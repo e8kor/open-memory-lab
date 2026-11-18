@@ -545,6 +545,11 @@ async fn upload_sessions_double_passes_the_suite() {
     contracts::uploads::run_upload_suite(|| async { MemStore::new() }).await;
 }
 
+#[tokio::test]
+async fn workspace_export_double_passes_the_suite() {
+    contracts::exports::run_export_suite(|| async { MemStore::new() }).await;
+}
+
 /// Workspace imports over the double (ADR-0084 d6-d11, R11, I4).
 #[tokio::test]
 async fn imports_double_passes_the_suite() {

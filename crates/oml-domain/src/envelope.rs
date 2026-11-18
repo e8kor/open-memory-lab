@@ -136,6 +136,10 @@ pub mod event_types {
     /// and, for a search, a digest of the query, never either text
     /// (ADR-0045 d21).
     pub const MEMORY_ADMIN_READ: &str = "memory.admin_read";
+    /// A person's key exported a workspace as a bundle: the manifest
+    /// digest, the mode, the counts and the recipients' fingerprints, never
+    /// a line of content (ADR-0084 d10).
+    pub const WORKSPACE_EXPORTED: &str = "workspace.exported";
     /// An admin key set the tenant's default search pipeline, or cleared
     /// it to follow the deployment's (ADR-0049 d4).
     pub const SEARCH_DEFAULT_SET: &str = "search.default_set";

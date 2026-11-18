@@ -366,6 +366,14 @@ struct TenantState {
     /// Each account's writes and recalls by UTC day (`account_activity`;
     /// ADR-0071 d2).
     activity: BTreeMap<(Uuid, String), (u64, u64)>,
+    /// Each account's exported bytes by UTC day (`account_activity.exports`;
+    /// ADR-0084 d10).
+    exports: BTreeMap<(Uuid, String), u64>,
+    /// The tenant's export policy and the admins' allowances by workspace,
+    /// each with its end (`tenants.export_policy`, `export_allowances`;
+    /// ADR-0084 d10).
+    export_policy: oml_domain::export::ExportPolicy,
+    export_allowances: BTreeMap<Uuid, Option<EventTime>>,
     /// The profile an admin assigned each account (`account_profiles`;
     /// ADR-0071 d5).
     account_profiles: BTreeMap<Uuid, String>,
@@ -786,6 +794,25 @@ impl MemStore {
                 .entry(tenant_id)
                 .or_default(),
         )
+    }
+
+    /// Sets the tenant's export policy, as the deferred admin route will
+    /// (ADR-0084 d10, reading I9).
+    pub fn set_export_policy(&self, tenant_id: Uuid, policy: oml_domain::export::ExportPolicy) {
+        self.tenant(tenant_id)
+            .lock()
+            .expect("tenant lock")
+            .export_policy = policy;
+    }
+
+    /// Allows one workspace's export under `own_root` until `until`, or
+    /// without an end, as the deferred allowance route will (ADR-0084 d10).
+    pub fn allow_export(&self, tenant_id: Uuid, workspace_id: Uuid, until: Option<EventTime>) {
+        self.tenant(tenant_id)
+            .lock()
+            .expect("tenant lock")
+            .export_allowances
+            .insert(workspace_id, until);
     }
 
     fn tenant_existing(&self, tenant_id: Uuid) -> Option<Arc<Mutex<TenantState>>> {
@@ -1473,6 +1500,12 @@ fn apply_fold(
                 ),
                 ended.ledger,
             );
+        }
+        MetadataFold::WorkspaceExported { user_root, bytes } => {
+            if let Some(root) = user_root {
+                let day = oml_domain::usage::day_of(at).to_owned();
+                *state.exports.entry((root, day)).or_default() += bytes;
+            }
         }
         MetadataFold::SearchDefaultSet { pipeline } => state.search_default = pipeline,
         MetadataFold::FederationPolicySet(policy) => state.federation = policy,
@@ -3187,6 +3220,83 @@ impl JournalStore for MemStore {
             stats.allow_older += u64::from(import.allow_older);
         }
         Ok(stats)
+    }
+
+    async fn export_policy(
+        &self,
+        tenant_id: Uuid,
+    ) -> Result<oml_domain::export::ExportPolicy, StoreError> {
+        Ok(self
+            .tenant_existing(tenant_id)
+            .map(|s| s.lock().expect("tenant lock").export_policy)
+            .unwrap_or_default())
+    }
+
+    async fn export_allowed(
+        &self,
+        tenant_id: Uuid,
+        workspace_id: Uuid,
+        at: &EventTime,
+    ) -> Result<bool, StoreError> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(false);
+        };
+        let state = state.lock().expect("tenant lock");
+        Ok(state
+            .export_allowances
+            .get(&workspace_id)
+            .is_some_and(|until| {
+                until
+                    .as_ref()
+                    .is_none_or(|u| u.unix_micros() > at.unix_micros())
+            }))
+    }
+
+    async fn export_versions(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+        own_keys: &[Uuid],
+    ) -> Result<Vec<MemoryRecord>, StoreError> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = state.lock().expect("tenant lock");
+        let mut rows: Vec<MemoryRecord> = state
+            .memories
+            .values()
+            .filter(|m| nodes.contains(&m.workspace_id))
+            .filter(|m| {
+                m.status == MemoryStatus::Promoted
+                    || (m.status == MemoryStatus::Erased && m.promoted_at.is_some())
+                    || own_keys.contains(&m.author_key_id)
+            })
+            .cloned()
+            .collect();
+        rows.sort_by_key(|m| (m.created_at.unix_micros(), m.memory_id));
+        Ok(rows)
+    }
+
+    async fn exported_bytes(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+        at: &EventTime,
+    ) -> Result<u64, StoreError> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(0);
+        };
+        let state = state.lock().expect("tenant lock");
+        let month = oml_domain::usage::Month::of(at);
+        let (from, until) = (month.first_day(), month.next().first_day());
+        Ok(state
+            .exports
+            .iter()
+            .filter(|((r, day), _)| {
+                *r == user_root && day.as_str() >= from.as_str() && day.as_str() < until.as_str()
+            })
+            .map(|(_, b)| b)
+            .sum())
     }
 
     async fn user_usage(

@@ -47,6 +47,7 @@ pub mod chain;
 pub mod claim_edges;
 pub mod claim_kinds;
 pub mod envelope;
+pub mod export;
 pub mod federation;
 pub mod guardrail;
 pub mod import;

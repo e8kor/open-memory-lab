@@ -8,7 +8,7 @@ description = "Port traits and use-cases driving the domain; the constitution is
 
 [dependencies]
 oml-domain.workspace = true
-# The bundle format and its checks, the CLI's and the server's alike (ADR-0084 d7).
+# The bundle format the export writes and the import verifies (ADR-0084).
 oml-bundle.workspace = true
 chacha20poly1305.workspace = true
 ed25519-dalek.workspace = true
@@ -20,6 +20,7 @@ uuid.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["sync", "time"] }
+bech32.workspace = true
 
 [lints]
 workspace = true

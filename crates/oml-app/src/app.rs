@@ -7,6 +7,7 @@
 
 mod auth;
 mod emails;
+mod exports;
 mod federation;
 mod imports;
 mod key_limits;
@@ -21,6 +22,7 @@ mod uploads;
 mod usage;
 mod widen;
 pub use auth::{Callback, CallbackRefusal, WEB_SESSION_TTL_SECS};
+pub use exports::{ExportCounts, ExportRequest, Exported};
 pub use federation::WideKey;
 pub use imports::{ImportAnswer, ImportPlan, ImportRequest};
 pub use metering::{AccountLimits, UsageDriftReport};

@@ -226,6 +226,7 @@ pub struct Metrics {
     import_versions: Family<OutcomeLabels, Counter>,
     imports: Family<StateLabels, Gauge>,
     imports_allow_older: Gauge,
+    exports: Counter,
     scan_findings: Family<ScanLabels, Counter>,
     scan_counts: std::sync::OnceLock<ScanCounts>,
     scan_refresh: std::sync::Mutex<()>,
@@ -388,6 +389,7 @@ impl Default for Metrics {
         let import_versions = Family::<OutcomeLabels, Counter>::default();
         let imports = Family::<StateLabels, Gauge>::default();
         let imports_allow_older = Gauge::default();
+        let exports = Counter::default();
         registry.register(
             "oml_http_request_duration_seconds",
             "API-listener request duration by route template and status; probes answered 200 are not counted",
@@ -568,6 +570,11 @@ impl Default for Metrics {
             imports_allow_older.clone(),
         );
         registry.register(
+            "oml_exports",
+            "workspace bundles served, each journalled as workspace.exported (ADR-0084 d15)",
+            exports.clone(),
+        );
+        registry.register(
             "oml_handler_panics",
             "requests whose handler panicked and were answered system.internal by the panic guard; every one is a defect, named in the lead's log under event handler_panic",
             handler_panics.clone(),
@@ -615,6 +622,7 @@ impl Default for Metrics {
             upload_stored_bytes,
             upload_unswept,
             upload_sweep_failures,
+            exports,
             scan_findings,
             scan_counts: std::sync::OnceLock::new(),
             scan_refresh: std::sync::Mutex::new(()),
@@ -670,6 +678,9 @@ impl Metrics {
                     code: code.to_owned(),
                 })
                 .inc();
+        }
+        if route == "/v2/workspaces/{workspace}/exports" && status == 200 {
+            self.exports.inc();
         }
         if route == "/oauth/token" {
             self.oauth_tokens

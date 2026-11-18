@@ -3689,6 +3689,33 @@ async fn apply_fold(
             .await
             .map_err(backend)?;
         }
+        MetadataFold::WorkspaceExported { user_root, bytes } => {
+            // The export's bytes on its account's day, in the export's own
+            // transaction (ADR-0084 d10; ADR-0071 d2, d3).
+            if let Some(root) = user_root {
+                sqlx::query(
+                    "INSERT INTO account_meters (tenant_id, user_root) VALUES ($1, $2) \
+                     ON CONFLICT (tenant_id, user_root) DO NOTHING",
+                )
+                .bind(tenant_id)
+                .bind(root)
+                .execute(&mut **tx)
+                .await
+                .map_err(backend)?;
+                sqlx::query(
+                    "INSERT INTO account_activity (tenant_id, user_root, day, exports) \
+                     VALUES ($1, $2, ($3)::date, $4) ON CONFLICT (tenant_id, user_root, day) \
+                     DO UPDATE SET exports = account_activity.exports + EXCLUDED.exports",
+                )
+                .bind(tenant_id)
+                .bind(root)
+                .bind(oml_app::domain::usage::day_of(at))
+                .bind(i64::try_from(bytes).map_err(backend)?)
+                .execute(&mut **tx)
+                .await
+                .map_err(backend)?;
+            }
+        }
         MetadataFold::FederationPolicySet(policy) => {
             sqlx::query(
                 "UPDATE tenants SET federation_enabled = $2, federation_default_sources = $3, \
@@ -5189,6 +5216,9 @@ async fn meter_plan(
         | MetadataFold::TelemetrySettingsSet { .. }
         | MetadataFold::FederationPolicySet(_)
         | MetadataFold::WorkspaceFederationSet { .. } => {}
+        // The `exports` meter is a flow the fold counts itself, held under
+        // no quota (ADR-0084 d10, d15).
+        MetadataFold::WorkspaceExported { .. } => {}
     }
     Ok(plan)
 }
@@ -5485,11 +5515,11 @@ impl PgStore {
         set_tenant(&mut tx, tenant_id).await?;
         let appended = sqlx::query(
             "INSERT INTO usage_daily (tenant_id, user_root, day, profile, memories, text_bytes, \
-                                      writes, recalls, keys, connections, recorded_at) \
+                                      writes, recalls, keys, connections, exports, recorded_at) \
              SELECT m.tenant_id, m.user_root, d.day::date, coalesce(p.profile, $5), \
                     m.memories, m.text_bytes, \
                     coalesce(a.writes, 0), coalesce(a.recalls, 0), m.keys, m.connections, \
-                    ($3)::timestamptz \
+                    coalesce(a.exports, 0), ($3)::timestamptz \
                FROM account_meters m \
                CROSS JOIN LATERAL generate_series( \
                    greatest(coalesce((SELECT max(u.day) + 1 FROM usage_daily u \
@@ -7499,6 +7529,101 @@ impl JournalStore for PgStore {
             stats.allow_older += u64::try_from(older).map_err(backend)?;
         }
         Ok(stats)
+    }
+
+    async fn export_policy(
+        &self,
+        tenant_id: Uuid,
+    ) -> Result<oml_app::domain::export::ExportPolicy, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let policy: Option<String> =
+            sqlx::query_scalar("SELECT export_policy FROM tenants WHERE id = $1")
+                .bind(tenant_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        match policy {
+            None => Ok(oml_app::domain::export::ExportPolicy::default()),
+            Some(p) => oml_app::domain::export::ExportPolicy::parse(&p)
+                .ok_or_else(|| backend(format!("export_policy {p:?} is not a policy"))),
+        }
+    }
+
+    async fn export_allowed(
+        &self,
+        tenant_id: Uuid,
+        workspace_id: Uuid,
+        at: &EventTime,
+    ) -> Result<bool, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let allowed: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM export_allowances \
+                             WHERE tenant_id = $1 AND workspace_id = $2 \
+                               AND (until IS NULL OR until > ($3)::timestamptz))",
+        )
+        .bind(tenant_id)
+        .bind(workspace_id)
+        .bind(at.as_str())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(allowed)
+    }
+
+    async fn export_versions(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+        own_keys: &[Uuid],
+    ) -> Result<Vec<MemoryRecord>, StoreError> {
+        let sql = format!(
+            "SELECT {MEMORY_COLUMNS} FROM memories m WHERE m.tenant_id = $1 \
+             AND m.workspace_id = ANY($2) \
+             AND (m.status = 'promoted' \
+                  OR (m.status = 'erased' AND m.promoted_at IS NOT NULL) \
+                  OR m.author_key_id = ANY($3)) \
+             ORDER BY m.created_at, m.id"
+        );
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sqlx::query(&sql)
+            .bind(tenant_id)
+            .bind(nodes)
+            .bind(own_keys)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter().map(memory_from_row).collect()
+    }
+
+    async fn exported_bytes(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+        at: &EventTime,
+    ) -> Result<u64, StoreError> {
+        let month = Month::of(at);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let bytes: i64 = sqlx::query_scalar(
+            "SELECT coalesce(sum(exports), 0)::bigint FROM account_activity \
+              WHERE tenant_id = $1 AND user_root = $2 \
+                AND day >= ($3)::date AND day < ($4)::date",
+        )
+        .bind(tenant_id)
+        .bind(user_root)
+        .bind(month.first_day())
+        .bind(month.next().first_day())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        u64::try_from(bytes).map_err(backend)
     }
 
     async fn user_usage(

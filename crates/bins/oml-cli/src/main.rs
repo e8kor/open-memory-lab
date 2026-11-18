@@ -583,6 +583,30 @@ enum WorkspacesCommand {
         #[command(subcommand)]
         command: WorkspaceCrewCommand,
     },
+    /// Export a workspace's subtree as a signed bundle encrypted to named age
+    /// recipients, written to a new owner-only file. A person's key only;
+    /// journals workspace.exported.
+    Export {
+        /// Workspace id or name.
+        workspace: String,
+        /// An age X25519 public key (`age1…`) to encrypt to; repeat for more.
+        /// At least one: a bundle is never written unencrypted.
+        #[arg(long = "recipient", value_name = "AGE")]
+        recipients: Vec<String>,
+        /// The new file to write; an existing file is never overwritten.
+        #[arg(long)]
+        out: PathBuf,
+        /// History mode: every version ever promoted and the key's own drafts.
+        /// The default in a person's own root.
+        #[arg(long, conflicts_with_all = ["release", "since"])]
+        history: bool,
+        /// Release mode, one published release (refused until releases are built).
+        #[arg(long)]
+        release: Option<String>,
+        /// The difference since a base release (refused until releases are built).
+        #[arg(long)]
+        since: Option<String>,
+    },
     /// Move through development, protected and frozen; each step needs
     /// proposal and ratification by different keys.
     Status {
@@ -2017,6 +2041,59 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                         field(&response, "name")
                     );
                 }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Workspaces {
+            command:
+                WorkspacesCommand::Export {
+                    workspace,
+                    recipients,
+                    out,
+                    history,
+                    release,
+                    since,
+                },
+        } => {
+            // A bundle is never written unencrypted (ADR-0084 d5): refused
+            // here before anything is sent or created.
+            if recipients.is_empty() {
+                return Err(CliError::local(
+                    "bundle.unencrypted: name at least one --recipient <age1…>; a bundle is never \
+                     written unencrypted; nothing was sent",
+                ));
+            }
+            let client = resolve(cli, &stored)?;
+            let path = format!("/v2/workspaces/{}/exports", segment(workspace)?);
+            let mut body = json!({ "recipients": recipients });
+            if *history {
+                body["mode"] = json!("history");
+            }
+            if let Some(release) = release {
+                body["mode"] = json!("release");
+                body["release"] = json!(release);
+            }
+            if let Some(since) = since {
+                body["since"] = json!(since);
+            }
+            let (bytes, digest) = oml_cli::export::download(&client, &path, &body, out)?;
+            if cli.json {
+                print_json(&json!({
+                    "out": out.display().to_string(),
+                    "bytes": bytes,
+                    "manifest_digest": digest,
+                }));
+            } else {
+                println!(
+                    "wrote {} ({bytes} bytes, owner-only), manifest {}",
+                    out.display(),
+                    digest.as_deref().unwrap_or("unknown"),
+                );
+                println!(
+                    "the file is outside every server's erasure: whoever holds it and a \
+                     recipient's identity reads it"
+                );
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -5610,6 +5687,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let uploads_warn = uploads.iter().any(|line| line.starts_with("warn"));
     let imports = imports_doctor(scrape.as_ref());
     let imports_warn = imports.iter().any(|line| line.starts_with("warn"));
+    let exports = exports_doctor(scrape.as_ref());
     // The sync failures of ADR-0057 d17 that the clone alone answers; the
     // stale count and the waiting edges are the sources lines'.
     let sync = oml_cli::sync::doctor::lines(
@@ -5722,6 +5800,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "handlers": handlers,
             "uploads": uploads,
             "imports": imports,
+            "exports": exports,
             "scan": scan,
             "usage": usage,
             "key_limits": key_limits,
@@ -5862,6 +5941,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         for line in &imports {
             println!("imports     : {line}");
+        for line in &exports {
+            println!("exports     : {line}");
         }
         for line in &scan {
             println!("scan        : {line}");
@@ -6146,6 +6227,33 @@ fn handlers_doctor(scrape: Option<&Scrape>) -> Vec<String> {
 /// whose objects remain, for failed sweeps, and for the refusals by code
 /// that say something is wrong (a digest mismatch, a failing store, a
 /// limit reached). Nothing from a server before uploads.
+/// The `exports` section (ADR-0084 d10, d15; reading I9): the tenant's
+/// export policy, which is `own_root` while no route sets another, and the
+/// bundles served since start, from the metrics listener.
+fn exports_doctor(scrape: Option<&Scrape>) -> Vec<String> {
+    let policy = "export_policy: own_root, the default: a person exports only inside their own \
+                  root, in history mode; no route sets another policy in this build"
+        .to_owned();
+    match scrape {
+        Some(scrape) if scrape.0.contains("oml_exports") => vec![
+            policy,
+            format!(
+                "{} bundle(s) served since start, each journalled as workspace.exported",
+                scrape.sum("oml_exports_total", &[])
+            ),
+        ],
+        Some(_) => vec![
+            policy,
+            "off (this server serves no workspace export)".to_owned(),
+        ],
+        None => vec![
+            policy,
+            "bundles served: not read; set OML_METRICS_URL to the lead's metrics listener"
+                .to_owned(),
+        ],
+    }
+}
+
 fn uploads_doctor(scrape: Option<&Scrape>) -> Vec<String> {
     let Some(scrape) = scrape else {
         return vec!["not read: set OML_METRICS_URL to the lead's metrics listener".to_owned()];
@@ -7566,6 +7674,20 @@ mod tests {
         assert_eq!(
             approval_doctor(None),
             vec!["approval_unmatched: not read; an admin key reads it".to_owned()]
+        );
+    }
+
+    #[test]
+    fn the_exports_doctor_names_the_tenant_export_policy_and_counts_bundles_served() {
+        let lines = exports_doctor(Some(&Scrape("oml_exports_total 3\n".to_owned())));
+        assert!(lines[0].starts_with("export_policy: own_root"), "{lines:?}");
+        assert_eq!(
+            lines[1],
+            "3 bundle(s) served since start, each journalled as workspace.exported"
+        );
+        assert!(
+            exports_doctor(None)[1].starts_with("bundles served: not read"),
+            "named when the listener is not read"
         );
     }
 
