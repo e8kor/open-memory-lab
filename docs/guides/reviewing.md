@@ -62,9 +62,18 @@ To read the queue without taking anything, run `oml review list` (a reviewer key
 ## Reviewing on the user page
 
 Signed in at `/web`, the **Review** tab serves the next held memory to the user's own reviewer key,
-`<user>-review`, as `oml review next` does. **Memories** lists what the agents wrote, every
-state, newest first, 50 a page: filter by state, workspace, origin, author key or text. A held
-card says it is held until someone else reviews it. **Atlas** shows the workspaces as a map
+`<user>-review`, as `oml review next` does. **Memories** has two views, two links under its
+heading that keep the workspace and the filters. **Approved**, the default, lists the approved
+versions the person's keys read, newest first, 50 a page, filtered by workspace, text, state
+(approved or superseded), origin or author key; its search never serves a held version, inside an
+in-progress workspace either, so a held row is never listed there. **Submitted** lists what the
+person's own keys wrote that is held, rejected or withdrawn, and what was approved in the last 30
+days, each row led by one sentence: "Waiting for review.", "Waiting for review. v2 is still
+served.", "Approved on 2026-11-10 and served as `deploy-window` v3.", "Rejected." or
+"Withdrawn.". A held row offers **Withdraw**, which asks for confirmation first. Submitted has no
+text search, since a held row's text is read only by its author; when a rejection or a withdrawal
+happened is not served to its author, so neither sentence names a day
+([ADR-0083](../adr/ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) d1, d3, d4, d13). **Atlas** shows the workspaces as a map
 sized by readable count, with the same numbers in a table below it. **Workspaces** gives each workspace one dropdown
 of what the reviewer key may do there now: propose the next status, ratify another key's
 proposal, or set who sees its drafts: everyone working here, or the writing key only, which waits while

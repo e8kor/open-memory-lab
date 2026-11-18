@@ -20,8 +20,11 @@ the Memories list at `GET /web/memories` and `GET /web/admin/memories`; the Atla
 Keys view at `/web/keys` and `/web/admin/keys`. Every act on them runs through the API as the
 person's session keys, and a form sent twice runs once. Making a workspace's drafts visible to everyone working here or to
 the writing key only, proposing or ratifying a status change, and a bulk verdict are confirmed first. Every page of
-the admin list is one journalled admin read, as before. The Review view holds review next, and on
-the admin page the queue of held memories per workspace and bulk review; the reviewer is never the
+the admin list is one journalled admin read, as before. The Memories list has the views of
+ADR-0083: Approved and Submitted on the user page (`?view=submitted`), Approved, Held and Rejected
+on the admin page (`?view=held|rejected`). The user page's Review view holds review next; the
+admin page's Review view shows the queue of held memories per workspace alone, with no verdict,
+since the admin key never judges and bulk review is the command line's. The reviewer is never the
 author, and a verdict the API refuses is shown with its code. On the Keys view a key's value or a
 connect code is shown once, on the page the act lands on: it travels there sealed in a cookie that
 page clears, never in an address or a log line, and `oml-web` keeps no copy. The admin's Keys view
@@ -211,7 +214,7 @@ A list the page reads a page at a time is read whole or refused, never shown cut
 
 | List | Read by | Bound |
 |---|---|---|
-| a person's keys | the Memories view and its JSON | 10 pages of 200 |
+| a person's keys | the Memories view's text search by author and its JSON, and Withdraw on one memory's page | 10 pages of 200 |
 | a person's keys | the Keys views, and the confirmation before a person's last address is removed, which lists their agent keys with a cut-off beside each | 50 pages of 200 |
 | the allowlist | the People page and its acts | 50 pages of 200 |
 

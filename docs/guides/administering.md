@@ -110,10 +110,18 @@ There is no way back from that denial. Any denial on `<user>-web` has this effec
 
 ## The admin page
 
-At the overview, `/web/admin/people`, an administrator's session acts through its own keys. **Memories** lists every
-memory of the organisation, newest first, 50 a page, filtered by state, workspace, origin,
-author key or text; each page read is one `memory.admin_read` in the journal, the Atlas view's
-included. **Atlas** shows the workspaces as a map sized by their rows, with a table twin.
+At the overview, `/web/admin/people`, an administrator's session acts through its own keys. **Memories** lists the
+memories of the organisation in three views, newest first, 50 a page, filtered by workspace,
+origin, author key or text: **Approved**, the default, with the state filter (approved or
+superseded); **Held**, under a "Held per workspace" table of the tenant's queue, oldest first,
+each workspace a link that filters the rows, its tab carrying the held count ("Held 21"); and
+**Rejected**. Each page read is one `memory.admin_read` in the journal, the Atlas view's
+included. The admin key never judges: a held row links "Judge as `<user>-review`" to the
+Personal side, where the person's own reviewer key gives the verdict if it may, and no admin page
+draws a verdict form, Review next or a pick box. Bulk review is the command line's, `oml review
+list` and `oml review approve|reject --ids` under the person's reviewer key; the admin Review page
+shows the queue alone until it moves to Memories, Held
+([ADR-0083](../adr/ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) d5, d7). **Atlas** shows the workspaces as a map sized by their rows, with a table twin.
 **Workspaces** shows the tree with one dropdown a workspace: status changes as the admin key,
 ratified only by a key other than the proposer's; in progress and commit as the reviewer key.
 Apply asks for confirmation first ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d22–d30).
