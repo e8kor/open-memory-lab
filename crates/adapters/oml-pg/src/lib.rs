@@ -1077,7 +1077,7 @@ fn one_per_version(whole: &str, passages: &str) -> String {
 /// The versions of the tenant `$1` whose valid time ended at or before the
 /// request's now, `$NOW`, read by the `memories_valid_until` index's
 /// condition; the postings statements leave them out (proposed ADR-0059 d3).
-const EXPIRED_IDS: &str = "expired AS (SELECT m.id FROM memories m \
+const EXPIRED_IDS: &str = "expired AS NOT MATERIALIZED (SELECT m.id FROM memories m \
      WHERE m.tenant_id = $1 AND m.valid_until_us <= $NOW::int8)";
 
 /// The `time` statement (proposed ADR-0059 d7): of the rows the text list
@@ -1390,14 +1390,17 @@ fn search_forms_sql() -> String {
 /// token, the served versions on the readable nodes `$2` of the memory kinds
 /// `$3` and their summed length; then each token of `$4` with its document
 /// frequency among them. Both sum the per-workspace counts, so they are the
-/// readable rows', never the tenant's.
+/// readable rows', never the tenant's. The first row also counts the served
+/// documents among them, so a scope with none runs the statement that reads
+/// no passage (ADR-0081 d4).
 const POSTINGS_COUNTS: &str = "SELECT NULL::int8 AS token_id, COALESCE(sum(c.rows), 0)::int8 AS n, \
-            COALESCE(sum(c.total_len), 0)::int8 AS len, COALESCE(sum(c.units), 0)::int8 AS units \
+            COALESCE(sum(c.total_len), 0)::int8 AS len, COALESCE(sum(c.units), 0)::int8 AS units, \
+            COALESCE(sum(c.rows) FILTER (WHERE c.memory_kind = 3), 0)::int8 AS documents \
      FROM search_workspace_rows c \
      WHERE c.tenant_id = $1 AND c.workspace_id = ANY($2::uuid[]) AND c.kind = 1 \
        AND c.memory_kind = ANY($3::int2[]) \
      UNION ALL \
-     SELECT c.token_id, sum(c.rows)::int8, 0::int8, 0::int8 \
+     SELECT c.token_id, sum(c.rows)::int8, 0::int8, 0::int8, 0::int8 \
      FROM search_term_rows c \
      WHERE c.tenant_id = $1 AND c.workspace_id = ANY($2::uuid[]) AND c.kind = 1 \
        AND c.memory_kind = ANY($3::int2[]) AND c.token_id = ANY($4::int8[]) \
@@ -1465,8 +1468,10 @@ const REFERENCE_EXPIRED_TOKENS: &str = "SELECT DISTINCT p.memory_id, p.token_id 
 /// The own held rows a recall may rank: the held versions of the keys `$2`
 /// ([`held_authors`]) on their nodes `$3` of the kinds `$4`, never a
 /// retirement version (ADR-0025 d4, d5), with their lengths; read by the
-/// `memories_author` index (ADR-0052 d5, open question 7).
-const POSTINGS_OWN_HELD: &str = "SELECT m.id, COALESCE(d.search_len, m.search_len) FROM memories m \
+/// `memories_author` index (ADR-0052 d5, open question 7); and whether
+/// each is a document, whose passages are its units (ADR-0081 d4).
+const POSTINGS_OWN_HELD: &str = "SELECT m.id, COALESCE(d.search_len, m.search_len), m.kind = 'document' \
+     FROM memories m \
      LEFT JOIN document_passages d \
        ON m.kind = 'document' AND d.tenant_id = $1 AND d.memory_id = m.id \
      WHERE m.tenant_id = $1 AND m.status = 'held' \
@@ -1513,7 +1518,10 @@ const POSTING_CONTRIBUTION: &str = "q.idf * p.weight::float8 * 2.2 \
 /// BM25 score; under `$12` (`match: all`) only rows holding all `$13` words.
 /// `$8` the readable row count, `$9` their mean length, `$14` `k`. Every
 /// predicate on the postings is a leakproof equality, so the indexes serve
-/// the serving role under row security. Exported so the suite plans the
+/// the serving role under row security. It reads the whole versions
+/// (ordinal -1) alone, one row per version, and is the statement a scope
+/// that reads no document runs: [`bm25_postings_units_sql`] is the one
+/// that reads passages (ADR-0081 d4). Exported so the suite plans the
 /// statement the adapter runs.
 #[must_use]
 pub fn bm25_postings_sql() -> String {
@@ -1528,26 +1536,90 @@ fn bm25_postings_sql_within(anchor: &str) -> String {
         &format!(
             "WITH q AS (SELECT q.w, q.token_id, ln(1 + ($8 - q.df + 0.5) / (q.df + 0.5)) AS idf \
                     FROM unnest($5::text[], $6::int8[], $7::float8[]) AS q(w, token_id, df)), \
-         p AS (SELECT p.memory_id, p.ordinal, p.token_id, p.weight, p.doc_len FROM search_postings p \
+         p AS (SELECT p.memory_id, p.token_id, p.weight, p.doc_len FROM search_postings p \
                WHERE p.tenant_id = $1 AND p.kind = 1 AND p.token_id = ANY($10::int8[]) \
                  AND p.workspace_id = ANY($2::uuid[]) AND p.state = 1 \
-                 AND p.memory_kind = ANY($3::int2[]){anchor} \
+                 AND p.memory_kind = ANY($3::int2[]) AND p.ordinal < 0{anchor} \
                UNION ALL \
-               SELECT p.memory_id, p.ordinal, p.token_id, p.weight, p.doc_len FROM search_postings p \
+               SELECT p.memory_id, p.token_id, p.weight, p.doc_len FROM search_postings p \
                WHERE p.tenant_id = $1 AND p.memory_id = ANY($4::uuid[]) AND p.kind = 1 \
-                 AND p.token_id = ANY($10::int8[]){anchor}), \
-         gen AS (SELECT p.memory_id, p.ordinal, q.w, max({POSTING_CONTRIBUTION}) AS c \
-                 FROM p JOIN q ON q.token_id = p.token_id GROUP BY p.memory_id, p.ordinal, q.w), \
+                 AND p.token_id = ANY($10::int8[]) AND p.ordinal < 0{anchor}), \
+         gen AS (SELECT p.memory_id, q.w, max({POSTING_CONTRIBUTION}) AS c \
+                 FROM p JOIN q ON q.token_id = p.token_id GROUP BY p.memory_id, q.w), \
          {EXPIRED_IDS}, \
-         units AS (SELECT memory_id, ordinal, sum(c)::float4 AS s FROM gen \
-                   WHERE memory_id NOT IN (SELECT id FROM expired) GROUP BY memory_id, ordinal), \
+         top AS (SELECT memory_id FROM gen \
+                 WHERE memory_id NOT IN (SELECT id FROM expired) GROUP BY memory_id \
+                 ORDER BY sum(c)::float4 DESC, memory_id ASC LIMIT $11), \
+         scored AS (SELECT p.memory_id, q.w, max({POSTING_CONTRIBUTION}) AS c \
+                    FROM top JOIN search_postings p ON p.memory_id = top.memory_id \
+                    JOIN q ON q.token_id = p.token_id \
+                    WHERE p.tenant_id = $1 AND p.kind = 1 AND p.token_id = ANY($6::int8[]) \
+                    GROUP BY p.memory_id, q.w), \
+         ranked AS (SELECT memory_id, sum(c) AS score, array_agg(w ORDER BY w COLLATE \"C\") AS words \
+                    FROM scored GROUP BY memory_id) \
+         SELECT r.memory_id AS id, m.body_bytes, r.score::float4 AS score, r.words AS matched \
+         FROM ranked r JOIN memories m ON m.tenant_id = $1 AND m.id = r.memory_id \
+         WHERE NOT $12 OR cardinality(r.words) = $13 \
+         ORDER BY score DESC, id ASC \
+         LIMIT $14"
+        ),
+        15,
+    )
+}
+
+/// [`bm25_postings_sql`] over a scope that reads a document (ADR-0081 d4):
+/// the whole versions are generated, scored and cut as that statement
+/// does; a document's passages are generated apart and only they are
+/// collapsed to one unit per version, its best by score then ordinal,
+/// counting its other passages; the two cut lists are merged and cut
+/// again at `$11`, and each kept unit is rescored by its own postings.
+/// The binds are [`bm25_postings_sql`]'s. Exported so the suite plans the
+/// statement the adapter runs.
+#[must_use]
+pub fn bm25_postings_units_sql() -> String {
+    bm25_postings_units_sql_within("")
+}
+
+/// [`bm25_postings_units_sql`] with `anchor`, as
+/// [`bm25_postings_sql_within`] takes it.
+fn bm25_postings_units_sql_within(anchor: &str) -> String {
+    with_now(
+        &format!(
+            "WITH q AS (SELECT q.w, q.token_id, ln(1 + ($8 - q.df + 0.5) / (q.df + 0.5)) AS idf \
+                    FROM unnest($5::text[], $6::int8[], $7::float8[]) AS q(w, token_id, df)), \
+         p AS (SELECT p.memory_id, p.token_id, p.weight, p.doc_len FROM search_postings p \
+               WHERE p.tenant_id = $1 AND p.kind = 1 AND p.token_id = ANY($10::int8[]) \
+                 AND p.workspace_id = ANY($2::uuid[]) AND p.state = 1 \
+                 AND p.memory_kind = ANY($3::int2[]) AND p.ordinal < 0{anchor} \
+               UNION ALL \
+               SELECT p.memory_id, p.token_id, p.weight, p.doc_len FROM search_postings p \
+               WHERE p.tenant_id = $1 AND p.memory_id = ANY($4::uuid[]) AND p.kind = 1 \
+                 AND p.token_id = ANY($10::int8[]) AND p.ordinal < 0{anchor}), \
+         gen AS (SELECT p.memory_id, q.w, max({POSTING_CONTRIBUTION}) AS c \
+                 FROM p JOIN q ON q.token_id = p.token_id GROUP BY p.memory_id, q.w), \
+         {EXPIRED_IDS}, \
+         top_w AS (SELECT memory_id, sum(c)::float4 AS s FROM gen \
+                   WHERE memory_id NOT IN (SELECT id FROM expired) GROUP BY memory_id \
+                   ORDER BY sum(c)::float4 DESC, memory_id ASC LIMIT $11), \
+         pd AS (SELECT p.memory_id, p.ordinal, p.token_id, p.weight, p.doc_len FROM search_postings p \
+                WHERE p.tenant_id = $1 AND p.kind = 1 AND p.token_id = ANY($10::int8[]) \
+                  AND p.workspace_id = ANY($2::uuid[]) AND p.state = 1 \
+                  AND p.memory_kind = ANY($3::int2[]) AND p.ordinal >= 0{anchor} \
+                UNION ALL \
+                SELECT p.memory_id, p.ordinal, p.token_id, p.weight, p.doc_len FROM search_postings p \
+                WHERE p.tenant_id = $1 AND p.memory_id = ANY($4::uuid[]) AND p.kind = 1 \
+                  AND p.token_id = ANY($10::int8[]) AND p.ordinal >= 0{anchor}), \
+         gen_d AS (SELECT p.memory_id, p.ordinal, q.w, max({POSTING_CONTRIBUTION}) AS c \
+                   FROM pd p JOIN q ON q.token_id = p.token_id GROUP BY p.memory_id, p.ordinal, q.w), \
+         units_d AS (SELECT memory_id, ordinal, sum(c)::float4 AS s FROM gen_d \
+                     WHERE memory_id NOT IN (SELECT id FROM expired) GROUP BY memory_id, ordinal), \
          top AS (SELECT memory_id, ordinal, more_passages FROM ( \
-                   SELECT memory_id, ordinal, s, 0::int8 AS more_passages FROM units WHERE ordinal < 0 \
+                   SELECT memory_id, (-1)::int4 AS ordinal, s, 0::int8 AS more_passages FROM top_w \
                    UNION ALL \
                    SELECT memory_id, ordinal, s, more_passages FROM ( \
                      SELECT u.*, row_number() OVER (PARTITION BY u.memory_id ORDER BY u.s DESC, u.ordinal ASC) AS unit_rank, \
                             count(*) OVER (PARTITION BY u.memory_id) - 1 AS more_passages \
-                     FROM units u WHERE u.ordinal >= 0) b WHERE b.unit_rank = 1) t \
+                     FROM units_d u) b WHERE b.unit_rank = 1) t \
                  ORDER BY s DESC, memory_id ASC, ordinal ASC LIMIT $11), \
          scored AS (SELECT p.memory_id, p.ordinal, q.w, max({POSTING_CONTRIBUTION}) AS c \
                     FROM top JOIN search_postings p \
@@ -6605,7 +6677,7 @@ impl PgStore {
         // nodes, and the own held rows read by the author index; under a
         // reference set, its served versions' counts alone (ADR-0072 d4.2).
         let counted_nodes = scope.reference.unwrap_or(scope.nodes);
-        let counted: Vec<(Option<i64>, i64, i64, i64)> = sqlx::query_as(POSTINGS_COUNTS)
+        let counted: Vec<(Option<i64>, i64, i64, i64, i64)> = sqlx::query_as(POSTINGS_COUNTS)
             .bind(scope.tenant_id)
             .bind(counted_nodes)
             .bind(&memory_kinds)
@@ -6618,14 +6690,16 @@ impl PgStore {
         let mut rows = 0_u64;
         let mut units = 0_u64;
         let mut total_len = 0_u64;
+        let mut documents = 0_i64;
         let mut df: BTreeMap<i64, u64> = tokens.iter().map(|t| (*t, 0)).collect();
-        for (token, n, len, unit_count) in counted {
+        for (token, n, len, unit_count, document_count) in counted {
             let n = u64::try_from(n).map_err(backend)?;
             match token {
                 None => {
                     rows = n;
                     total_len = u64::try_from(len).map_err(backend)?;
                     units = u64::try_from(unit_count).map_err(backend)?;
+                    documents = document_count;
                 }
                 Some(token) => *df.entry(token).or_default() += n,
             }
@@ -6666,7 +6740,7 @@ impl PgStore {
                 }
             }
         }
-        let held: Vec<(Uuid, i32)> =
+        let held: Vec<(Uuid, i32, bool)> =
             if scope.authors.is_some_and(<[Uuid]>::is_empty) || scope.held_nodes.is_empty() {
                 Vec::new()
             } else {
@@ -6682,7 +6756,7 @@ impl PgStore {
             };
         // Under a reference set the own held rows are scored and never
         // counted: R holds served rows alone (ADR-0072 d7).
-        let mut held_ids: Vec<Uuid> = held.iter().map(|(id, _)| *id).collect();
+        let mut held_ids: Vec<Uuid> = held.iter().map(|(id, _, _)| *id).collect();
         held_ids.sort_unstable();
         held_ids.dedup();
         if scope.reference.is_none() {
@@ -6690,7 +6764,7 @@ impl PgStore {
             units += held.len() as u64;
             total_len += held
                 .iter()
-                .map(|(_, len)| u64::try_from(*len).unwrap_or(0))
+                .map(|(_, len, _)| u64::try_from(*len).unwrap_or(0))
                 .sum::<u64>();
         }
         if rows == 0 {
@@ -6800,7 +6874,22 @@ impl PgStore {
             rows as f64,
             (total_len as f64 / units.max(1) as f64).max(1.0),
         );
-        let sql = bm25_postings_sql_within(&scope.anchor.posting("p.memory_id", 16));
+        // A scope that reads no document runs the statement that reads no
+        // passage, which plans as the one before documents did: the
+        // passages' branch costs its planning on every recall (ADR-0081
+        // d4; the review's benchmark of 2026-11-18). The counts are the
+        // scanned nodes' only without a reference set.
+        // 3: the document code ([`memory_kind_code`]).
+        let reads_documents = memory_kinds.contains(&3)
+            && (scope.reference.is_some()
+                || documents > 0
+                || held.iter().any(|(_, _, document)| *document));
+        let anchor = scope.anchor.posting("p.memory_id", 16);
+        let sql = if reads_documents {
+            bm25_postings_units_sql_within(&anchor)
+        } else {
+            bm25_postings_sql_within(&anchor)
+        };
         let candidates = scope
             .anchor
             .bind(
@@ -7470,7 +7559,7 @@ impl PgStore {
             if scope.authors.is_some_and(<[Uuid]>::is_empty) || scope.held_nodes.is_empty() {
                 Vec::new()
             } else {
-                sqlx::query_as::<_, (Uuid, i32)>(POSTINGS_OWN_HELD)
+                sqlx::query_as::<_, (Uuid, i32, bool)>(POSTINGS_OWN_HELD)
                     .bind(scope.tenant_id)
                     .bind(scope.authors)
                     .bind(scope.held_nodes)
@@ -7480,7 +7569,7 @@ impl PgStore {
                     .await
                     .map_err(backend)?
                     .into_iter()
-                    .map(|(id, _)| id)
+                    .map(|(id, _, _)| id)
                     .collect()
             };
         let tokens: Vec<i64> = query.sparse.iter().map(|t| i64::from(t.token_id)).collect();

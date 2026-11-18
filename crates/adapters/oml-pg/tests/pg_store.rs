@@ -8720,62 +8720,66 @@ async fn the_bm25_postings_statement_reads_the_postings_by_their_index_under_row
     rig.seed_chain(&store, 0).await;
     let wa = Uuid::from_u128(0xE2);
     lexeme_rows(&mut rig, &store, wa).await;
-    let mut tx = store.pool().begin().await.expect("begin");
-    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
-        .bind(rig.tenant_id.to_string())
-        .execute(&mut *tx)
-        .await
-        .expect("tenant");
-    // Sequential scans off, so a plan that can use the index does: on five
-    // rows the planner would otherwise scan, and the law is that it may.
-    sqlx::query("SET LOCAL enable_seqscan = off")
-        .execute(&mut *tx)
-        .await
-        .expect("seqscan off");
     let token = oml_pg::token_id("deploy");
-    let plan: Vec<String> = sqlx::query_scalar(&format!(
-        "EXPLAIN (COSTS OFF) {}",
-        oml_pg::bm25_postings_sql()
-    ))
-    .bind(rig.tenant_id)
-    .bind(vec![wa])
-    .bind(vec![1_i16, 2])
-    .bind(Vec::<Uuid>::new())
-    .bind(vec!["deploy".to_owned()])
-    .bind(vec![token])
-    .bind(vec![2.0_f64])
-    .bind(5.0_f64)
-    .bind(10.0_f64)
-    .bind(vec![token])
-    .bind(Some(10_i64))
-    .bind(false)
-    .bind(1_i64)
-    .bind(10_i64)
-    .bind(i64::MIN)
-    .fetch_all(&mut *tx)
-    .await
-    .expect("plan");
-    tx.commit().await.expect("commit");
-    let plan = plan.join("\n");
-    assert!(
-        plan.lines()
-            .any(|l| l.contains("Index Cond") && l.contains("token_id")),
-        "the token is an index condition under the policy: {plan}"
-    );
-    // The served index carries what a score needs, ordered by workspace after
-    // the token, so a recall reads its readable workspaces' postings alone,
-    // without the heap (ADR-0052 d1, open question 1).
-    assert!(
-        plan.lines()
-            .any(|l| l.contains("Index Only Scan") && l.contains("kind_token_id_workspace_id")),
-        "an index-only scan of the partition's search_postings_served: {plan}"
-    );
-    assert!(
-        plan.lines().any(|l| l.contains("Index Cond")
-            && l.contains("token_id")
-            && l.contains("workspace_id")),
-        "the readable workspaces are an index condition beside the token: {plan}"
-    );
+    // The statement a scope without documents runs, and the one that reads
+    // passages too (ADR-0081 d4): each reads the postings by the index.
+    for statement in [
+        oml_pg::bm25_postings_sql(),
+        oml_pg::bm25_postings_units_sql(),
+    ] {
+        let mut tx = store.pool().begin().await.expect("begin");
+        sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+            .bind(rig.tenant_id.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("tenant");
+        // Sequential scans off, so a plan that can use the index does: on five
+        // rows the planner would otherwise scan, and the law is that it may.
+        sqlx::query("SET LOCAL enable_seqscan = off")
+            .execute(&mut *tx)
+            .await
+            .expect("seqscan off");
+        let plan: Vec<String> = sqlx::query_scalar(&format!("EXPLAIN (COSTS OFF) {statement}"))
+            .bind(rig.tenant_id)
+            .bind(vec![wa])
+            .bind(vec![1_i16, 2])
+            .bind(Vec::<Uuid>::new())
+            .bind(vec!["deploy".to_owned()])
+            .bind(vec![token])
+            .bind(vec![2.0_f64])
+            .bind(5.0_f64)
+            .bind(10.0_f64)
+            .bind(vec![token])
+            .bind(Some(10_i64))
+            .bind(false)
+            .bind(1_i64)
+            .bind(10_i64)
+            .bind(i64::MIN)
+            .fetch_all(&mut *tx)
+            .await
+            .expect("plan");
+        tx.commit().await.expect("commit");
+        let plan = plan.join("\n");
+        assert!(
+            plan.lines()
+                .any(|l| l.contains("Index Cond") && l.contains("token_id")),
+            "the token is an index condition under the policy: {plan}"
+        );
+        // The served index carries what a score needs, ordered by workspace after
+        // the token, so a recall reads its readable workspaces' postings alone,
+        // without the heap (ADR-0052 d1, open question 1).
+        assert!(
+            plan.lines()
+                .any(|l| l.contains("Index Only Scan") && l.contains("kind_token_id_workspace_id")),
+            "an index-only scan of the partition's search_postings_served: {plan}"
+        );
+        assert!(
+            plan.lines().any(|l| l.contains("Index Cond")
+                && l.contains("token_id")
+                && l.contains("workspace_id")),
+            "the readable workspaces are an index condition beside the token: {plan}"
+        );
+    }
     // The parent keeps no statistics of its own, which an ANALYZE of it
     // would gather across every tenant; the tenant's partition keeps its own
     // (#134; review F5).
