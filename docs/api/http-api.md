@@ -331,7 +331,7 @@ Requires: admin key role. parent and crew each take an id or a name, and parent_
 
 One node — id, parent, derived path, status, crew record — with the calling key's view of it.
 
-Requires: reader effective access (access.not_found otherwise), or the admin key role, which reads the structure of every workspace in its tenant without grants and never claim content — for an admin key every child and edge is present and my_effective_verbs is empty. children, my_effective_verbs and permission_epoch are relative to the calling key: children (ordered by path_leaf, then id) and edges (ordered by edge_id) outside read access are absent; my_effective_verbs is the union over the grant roles effective on the node (the effective-verbs table in docs/architecture/roles-and-keys.md); permission_epoch is the calling key's permission epoch as declared in docs/architecture/workspaces.md.
+Requires: reader effective access (access.not_found otherwise), or the admin key role, which reads the structure of every workspace in its tenant without grants and never claim content — for an admin key every child and edge is present and my_effective_verbs is empty. children, my_effective_verbs and permission_epoch are relative to the calling key: children (ordered by path_leaf, then id) and edges (ordered by edge_id) outside read access are absent; my_effective_verbs is the union over the grant roles effective on the node (the effective-verbs table in docs/architecture/roles-and-keys.md), with remember for a person's session reviewer key where it holds reviewer and reader; permission_epoch is the calling key's permission epoch as declared in docs/architecture/workspaces.md.
 
 | Parameter | In | Type | Required | Meaning |
 |---|---|---|---|---|

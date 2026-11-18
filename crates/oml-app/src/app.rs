@@ -623,6 +623,28 @@ fn require_role(key: &KeyRecord, role: Role, verb: &'static str) -> Result<(), A
 /// Step 1 of the refusal order: the key's role must admit the grant role the
 /// verb needs. It reads no node, so it runs before the workspace resolves
 /// (roles-and-keys.md grant admissibility and refusal order; ADR-0025 d1).
+/// The verbs a key lists on a node: the verbs table over its effective
+/// roles, and `remember` for a person's session reviewer key where it
+/// holds reviewer and reader, the grants under which its submit is held
+/// (ADR-0082 d10, d11), so the verbs it lists are the verbs it may use.
+fn listed_verbs(key: &KeyRecord, effective: &BTreeSet<Role>) -> Vec<&'static str> {
+    let mut verbs = effective_verbs(effective, key.used_by);
+    if session_reviewer_starts_claims(key)
+        && effective.contains(&Role::Reviewer)
+        && effective.contains(&Role::Reader)
+        && !verbs.contains(&"remember")
+    {
+        verbs.push("remember");
+    }
+    verbs
+}
+
+/// Whether `key` is a person's session key whose role is reviewer, which
+/// starts a held claim where it holds reviewer and reader (ADR-0082 d10).
+fn session_reviewer_starts_claims(key: &KeyRecord) -> bool {
+    key.credential == Credential::Session && key.role == Role::Reviewer
+}
+
 fn require_admissible(key: &KeyRecord, needed: Role, verb: &'static str) -> Result<(), AppError> {
     // A curator key reaches only the verbs that read or narrow (ADR-0030
     // d9), before any lookup.
@@ -4022,7 +4044,7 @@ where
             my_effective_verbs: if structure {
                 Vec::new()
             } else {
-                effective_verbs(&effective, caller.key.used_by)
+                listed_verbs(&caller.key, &effective)
             },
             permission_epoch: caller.permission_epoch,
         })
@@ -5660,7 +5682,7 @@ where
         // reviewer and reader, the grants a supersession's step 4 asks; the
         // version is held and its lineage excludes the key. Every other
         // reviewer key keeps the verb ceiling (ADR-0082 d2, d8 item 5, d10).
-        let session_reviewer = key.credential == Credential::Session && key.role == Role::Reviewer;
+        let session_reviewer = session_reviewer_starts_claims(key);
         if !session_reviewer {
             require_admissible(key, Role::Writer, "submit")?;
         }

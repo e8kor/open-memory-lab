@@ -119,11 +119,11 @@ A writer supersedes only its own memory; a person's session web key also superse
 |---|---|
 | `reader` | `recall`, `read`, `graph_read`, `events_tail` |
 | `writer` | `remember`, `learn`, `attach`, `supersede` |
-| `reviewer` | `propose`, `review`, `supersede` |
+| `reviewer` | `propose`, `review`, `supersede`; a person's session reviewer key with reader beside it also `remember` |
 
 A `service` key omits `review`.
 
-A person's session key whose role is reviewer also starts a new claim, held as every write is, where it holds reviewer and reader; its lineage excludes it from judging that claim. No other reviewer key starts one ([ADR-0082](../adr/ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) d2, d10).
+A person's session key whose role is reviewer also starts a new claim, held as every write is, where it holds reviewer and reader, and lists `remember` in `my_effective_verbs` there, so the verbs it lists are the verbs it may use; its lineage excludes it from judging that claim. No other reviewer key starts one or lists `remember` ([ADR-0082](../adr/ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) d2, d10).
 
 ## Review independence
 
