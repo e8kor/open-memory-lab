@@ -239,8 +239,7 @@ operator's batch, which confirms or changes them, and each line names the decisi
   name one fragment and start on one line, and end on one line wherever the section holds no
   heading of level 5 or 6 (`the_server_and_sync_cut_the_same_passages_for_the_same_bytes`).
   Rejected: cutting `headings` at level 4, which would supersede every synced section that holds
-  a deeper heading. The coordinator has not confirmed this reading; it goes to the operator's
-  batch with the others.
+  a deeper heading. Confirmed by the coordinator on 2026-11-18, for the operator's batch.
 - **R6 (d4, implementation).** Passages are search units in the existing postings: `search_postings`
   gains a passage `ordinal`, a document version holds one unit per passage with its own search
   text, vector and length on `document_passages`, the existing fold triggers keep them with the
