@@ -79,7 +79,10 @@ expectrl = "0.9"  # dev: drives `oml setup claude-code` on a pseudo-terminal (AD
 # (ADR-0060 d17). Only oml-lake names it.
 deltalake = { version = "1.1.2", default-features = false, features = ["datafusion", "rustls"] }
 url = "2.5"
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# The lake writer's own timestamps (#445; RUSTSEC-2026-0543 names chrono
+# unmaintained and recommends jiff). arrow and deltalake still bring chrono,
+# which the lake converts to at their API alone.
+jiff = { version = "0.2", default-features = false, features = ["std"] }
 # The local cross-encoder of the reranking stage (ADR-0053 d2): candle runs
 # the model on the CPU in pure Rust (ADR-0006), and tokenizers reads the
 # model's own tokenizer.json with its pure-Rust regex backend, never the

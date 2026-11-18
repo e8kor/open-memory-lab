@@ -15,7 +15,8 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicI64, AtomicU64};
 use std::time::Instant;
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
+use jiff::civil::Date;
 use oml_lake::crypto::{Keyring, sha256_hex};
 use oml_lake::table::{
     BENCH_RESULTS, BRONZE_EVENTS, GOLD_LINEAGE, LAKE_BATCHES, RECALL_DAILY, SILVER_CLAIMS, Spec, V,
@@ -373,7 +374,7 @@ impl Writer {
             V::Long(Some(end)),
             V::Long(Some(tenants)),
             V::Long(Some(i64::try_from(drained.events).unwrap_or(i64::MAX))),
-            V::Ts(Some(Utc::now().timestamp_micros())),
+            V::Ts(Some(Timestamp::now().as_microsecond())),
         ];
         self.commit(
             Prefix::Provider,
@@ -401,13 +402,13 @@ impl Writer {
     /// A read fails.
     pub async fn lag_seconds(&mut self) -> Result<i64, WriterError> {
         let frontier = self.frontier().await?;
-        let mut oldest: Option<DateTime<Utc>> = None;
+        let mut oldest: Option<Timestamp> = None;
         for t in self.src.tenants().await? {
             if let Some(at) = self.src.oldest_pending(t, frontier).await? {
                 oldest = Some(oldest.map_or(at, |o| o.min(at)));
             }
         }
-        let secs = oldest.map_or(0, |o| (Utc::now() - o).num_seconds().max(0));
+        let secs = oldest.map_or(0, |o| (Timestamp::now().as_second() - o.as_second()).max(0));
         self.metrics.lag_seconds.set(secs);
         Ok(secs)
     }
@@ -538,7 +539,7 @@ impl Writer {
                     V::Str(Some("ratified".to_owned())),
                     V::Str(Some(edge.proposer.to_string())),
                     V::Str(edge.ratifier.map(|r| r.to_string())),
-                    V::Ts(Some(edge.created_at.timestamp_micros())),
+                    V::Ts(Some(edge.created_at.as_microsecond())),
                     V::Long(Some(e.outbox_seq)),
                 ];
                 edges.insert(edge.id.to_string(), row);
@@ -630,7 +631,7 @@ impl Writer {
                         V::Str(Some("ratified".to_owned())),
                         V::Str(Some(m.author_key_id.to_string())),
                         V::Str(None),
-                        V::Ts(Some(promoted_at.timestamp_micros())),
+                        V::Ts(Some(promoted_at.as_microsecond())),
                         V::Long(Some(e.outbox_seq)),
                     ];
                     edges.insert(id, row);
@@ -646,7 +647,7 @@ impl Writer {
         &self,
         tenant: Uuid,
         m: &Memory,
-        promoted_at: DateTime<Utc>,
+        promoted_at: Timestamp,
         e: &Event,
         same_user: Option<bool>,
         erase: bool,
@@ -695,7 +696,7 @@ impl Writer {
                 None => return Ok(Err("version_state_unknown")),
             }
         };
-        let retracted = (state != "promoted").then(|| e.at.timestamp_micros());
+        let retracted = (state != "promoted").then(|| e.at.as_microsecond());
         Ok(Ok(vec![
             V::Str(Some(tenant.to_string())),
             V::Str(Some(m.id.to_string())),
@@ -715,8 +716,8 @@ impl Writer {
             V::Str(Some("lake".to_owned())),
             V::Str(Some(key.kek_id.clone())),
             V::Long(Some(m.body_bytes)),
-            V::Ts(Some(m.created_at.timestamp_micros())),
-            V::Ts(Some(promoted_at.timestamp_micros())),
+            V::Ts(Some(m.created_at.as_microsecond())),
+            V::Ts(Some(promoted_at.as_microsecond())),
             V::Ts(retracted),
             V::Long(Some(e.outbox_seq)),
         ]))
@@ -774,7 +775,7 @@ impl Writer {
     /// pass goes on.
     pub async fn maintain(
         &self,
-        retention: chrono::Duration,
+        retention: std::time::Duration,
     ) -> Result<oml_lake::Maintained, WriterError> {
         let mut sum = oml_lake::Maintained::default();
         for (prefix, spec) in self.lake.existing()? {
@@ -844,7 +845,7 @@ impl Writer {
 /// columns read through the former-name map, so a row signed before v0.8.0
 /// projects its former key into `workspace_id` (ADR-0091 d4).
 fn bronze_row(tenant: Uuid, e: &Event) -> Result<Vec<V>, oml_former_names::UnmappedFormerName> {
-    let at = e.at.timestamp_micros();
+    let at = e.at.as_microsecond();
     let read = oml_former_names::read_event(&e.event_type, &e.payload)?;
     let s = |k: &str| {
         read.payload
@@ -891,9 +892,11 @@ fn uuid_at(v: &Value, key: &str) -> Option<Uuid> {
         .and_then(|s| Uuid::parse_str(s).ok())
 }
 
-fn days_since_epoch(d: chrono::NaiveDate) -> i32 {
-    let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap_or_default();
-    i32::try_from((d - epoch).num_days()).unwrap_or(i32::MAX)
+/// A date as Delta's `date` stores it: days since 1970-01-01.
+fn days_since_epoch(d: Date) -> i32 {
+    jiff::civil::date(1970, 1, 1)
+        .until(d)
+        .map_or(i32::MAX, |span| span.get_days())
 }
 
 /// Loads every `oml-bench/1` JSON file under `paths` into `bench.results`,
@@ -914,7 +917,7 @@ pub async fn load_bench(
     files.sort();
     let mut rows = Vec::new();
     let mut loaded = 0;
-    let now = Utc::now().timestamp_micros();
+    let now = Timestamp::now().as_microsecond();
     for f in &files {
         let bytes = std::fs::read(f)
             .map_err(|e| WriterError::Bench(f.display().to_string(), e.to_string()))?;
@@ -934,7 +937,7 @@ pub async fn load_bench(
         };
         let n = |k: &str| doc.get(k).and_then(Value::as_i64);
         let date = s("date")
-            .and_then(|d| chrono::NaiveDate::parse_from_str(&d, "%Y-%m-%d").ok())
+            .and_then(|d| d.parse::<Date>().ok())
             .map_or(0, days_since_epoch);
         let mut numbers: Vec<(String, String, f64)> = Vec::new();
         for (section, category) in [
@@ -1073,5 +1076,26 @@ impl Status {
     #[must_use]
     pub fn read(lake: &Lake) -> Option<Self> {
         serde_json::from_slice(&std::fs::read(Self::path(lake)).ok()?).ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Date, days_since_epoch};
+
+    /// Delta's `date` is days since 1970-01-01, read off a jiff date as it
+    /// was off chrono's (#445).
+    #[test]
+    fn a_date_is_its_days_since_the_epoch() {
+        for (text, days) in [
+            ("1970-01-01", 0),
+            ("1970-01-02", 1),
+            ("1969-12-31", -1),
+            ("2000-03-01", 11_017),
+            ("2026-11-18", 20_775),
+        ] {
+            let date: Date = text.parse().expect("an ISO date");
+            assert_eq!(days_since_epoch(date), days, "{text}");
+        }
     }
 }
