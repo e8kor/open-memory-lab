@@ -104,56 +104,92 @@ pub fn heading(text: &str) -> Option<(usize, &str)> {
 /// Inline markdown as plain text: `[text](url)` and `![alt](url)` to their
 /// text, `<url>` to the URL, code marks and `*`/`**` emphasis dropped,
 /// backslash escapes resolved; code spans keep their content literally.
+///
+/// Iterative and linear in the text's length (the review's finding S1 of
+/// 2026-11-18): every bracket, parenthesis, `>` and code-mark run is matched
+/// in one pass before the read, and a link's label is read in place, within
+/// its brackets, so no nesting depth reaches the stack.
 #[must_use]
 pub fn plain(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
     let chars: Vec<char> = text.chars().collect();
+    let n = chars.len();
+    let marks = Marks::of(&chars);
+    let mut out = String::with_capacity(text.len());
+    // The links being read, innermost last: (label start, label end, the
+    // index after the link).
+    let mut links: Vec<(usize, usize, usize)> = Vec::new();
     let mut i = 0;
-    while i < chars.len() {
+    loop {
+        let (start, end) = links.last().map_or((0, n), |l| (l.0, l.1));
+        if i >= end {
+            match links.pop() {
+                Some((_, _, next)) => {
+                    i = next;
+                    continue;
+                }
+                None => break,
+            }
+        }
         let c = chars[i];
         match c {
-            '\\' if i + 1 < chars.len() && chars[i + 1].is_ascii_punctuation() => {
+            '\\' if i + 1 < end && chars[i + 1].is_ascii_punctuation() => {
                 out.push(chars[i + 1]);
                 i += 2;
             }
             '`' => {
-                let run = chars[i..].iter().take_while(|&&x| x == '`').count();
-                if let Some(end) = find_run(&chars, i + run, '`', run) {
-                    let inner: String = chars[i + run..end].iter().collect();
-                    out.push_str(inner.trim());
-                    i = end + run;
-                } else {
-                    i += run;
+                let run = chars[i..end].iter().take_while(|&&x| x == '`').count();
+                match marks.run_after(i + run, run).filter(|&e| e + run <= end) {
+                    Some(close) => {
+                        let inner: String = chars[i + run..close].iter().collect();
+                        out.push_str(inner.trim());
+                        i = close + run;
+                    }
+                    None => i += run,
                 }
             }
-            '!' if chars.get(i + 1) == Some(&'[') => {
+            '!' if i + 1 < end && chars[i + 1] == '[' => {
                 i += 1;
             }
-            '[' => {
-                if let Some((label, next)) = link(&chars, i) {
-                    out.push_str(&plain(&label));
-                    i = next;
-                } else {
+            '[' => match marks.link(&chars, i, end) {
+                Some((close, next)) => {
+                    links.push((i + 1, close, next));
+                    i += 1;
+                }
+                None => {
                     out.push('[');
                     i += 1;
                 }
-            }
+            },
             '<' => {
-                if let Some(end) = chars[i + 1..].iter().position(|&x| x == '>') {
-                    let inner: String = chars[i + 1..i + 1 + end].iter().collect();
-                    if inner.starts_with("http://") || inner.starts_with("https://") {
+                // The scheme is checked before the span is copied, so a run
+                // of `<` before one `>` is read once.
+                let url = marks.gt[i + 1..]
+                    .first()
+                    .copied()
+                    .flatten()
+                    .filter(|&gt| gt < end)
+                    .filter(|&gt| {
+                        let inner = &chars[i + 1..gt];
+                        ["http://", "https://"]
+                            .iter()
+                            .any(|p| inner.iter().copied().take(p.len()).eq(p.chars()))
+                    })
+                    .map(|gt| chars[i + 1..gt].iter().collect::<String>());
+                match url {
+                    Some(inner) => {
+                        i += inner.chars().count() + 2;
                         out.push_str(&inner);
-                        i += end + 2;
-                        continue;
+                    }
+                    None => {
+                        out.push('<');
+                        i += 1;
                     }
                 }
-                out.push('<');
-                i += 1;
             }
             '*' => {
-                let before = i.checked_sub(1).map(|j| chars[j]);
-                let run = chars[i..].iter().take_while(|&&x| x == '*').count();
-                let after = chars.get(i + run).copied();
+                let before = (i > start).then(|| chars[i - 1]);
+                let run = chars[i..end].iter().take_while(|&&x| x == '*').count();
+                let after = (i + run < end).then(|| chars[i + run]);
                 // A lone `*` between spaces is a literal (a product, a glob).
                 let literal = run == 1
                     && before.is_none_or(char::is_whitespace)
@@ -172,65 +208,101 @@ pub fn plain(text: &str) -> String {
     out
 }
 
-/// The index where a run of exactly `n` `c` starts at or after `from`.
-fn find_run(chars: &[char], from: usize, c: char, n: usize) -> Option<usize> {
-    let mut j = from;
-    while j < chars.len() {
-        if chars[j] == c {
-            let run = chars[j..].iter().take_while(|&&x| x == c).count();
-            if run == n {
-                return Some(j);
-            }
-            j += run;
-        } else {
-            j += 1;
-        }
-    }
-    None
+/// What [`plain`] matches, found in one pass over the text each.
+struct Marks {
+    /// The `]` closing each `[`, depth counted, a backslash escaping the
+    /// character after it.
+    bracket: Vec<Option<usize>>,
+    /// The `)` closing each `(`, depth counted.
+    paren: Vec<Option<usize>>,
+    /// The first `]` at or after each index.
+    next_bracket: Vec<Option<usize>>,
+    /// The first `>` at or after each index.
+    gt: Vec<Option<usize>>,
+    /// The start of every maximal run of backticks, by its length.
+    runs: std::collections::HashMap<usize, Vec<usize>>,
 }
 
-/// A link at `[`: its label and the index after `(url)`, `[ref]` or `[]`.
-fn link(chars: &[char], open: usize) -> Option<(String, usize)> {
-    let mut depth = 0;
-    let mut j = open;
-    let close = loop {
-        match chars.get(j)? {
-            '\\' => j += 1,
-            '[' => depth += 1,
-            ']' => {
-                depth -= 1;
-                if depth == 0 {
-                    break j;
-                }
-            }
-            _ => {}
-        }
-        j += 1;
-    };
-    let label: String = chars[open + 1..close].iter().collect();
-    match chars.get(close + 1) {
-        Some('(') => {
-            let mut depth = 0;
-            let mut k = close + 1;
-            loop {
-                match chars.get(k)? {
-                    '(' => depth += 1,
-                    ')' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            return Some((label, k + 1));
-                        }
+impl Marks {
+    fn of(chars: &[char]) -> Self {
+        let n = chars.len();
+        let mut bracket = vec![None; n];
+        let mut paren = vec![None; n];
+        let (mut open_brackets, mut open_parens) = (Vec::new(), Vec::new());
+        let mut j = 0;
+        while j < n {
+            match chars[j] {
+                '\\' => j += 1,
+                '[' => open_brackets.push(j),
+                ']' => {
+                    if let Some(o) = open_brackets.pop() {
+                        bracket[o] = Some(j);
                     }
-                    _ => {}
                 }
-                k += 1;
+                _ => {}
+            }
+            j += 1;
+        }
+        for (j, &c) in chars.iter().enumerate() {
+            match c {
+                '(' => open_parens.push(j),
+                ')' => {
+                    if let Some(o) = open_parens.pop() {
+                        paren[o] = Some(j);
+                    }
+                }
+                _ => {}
             }
         }
-        Some('[') => {
-            let end = chars[close + 1..].iter().position(|&x| x == ']')?;
-            Some((label, close + 1 + end + 1))
+        let mut next_bracket = vec![None; n + 1];
+        let mut gt = vec![None; n + 1];
+        for j in (0..n).rev() {
+            next_bracket[j] = if chars[j] == ']' { Some(j) } else { next_bracket[j + 1] };
+            gt[j] = if chars[j] == '>' { Some(j) } else { gt[j + 1] };
         }
-        _ => None,
+        let mut runs: std::collections::HashMap<usize, Vec<usize>> =
+            std::collections::HashMap::new();
+        let mut j = 0;
+        while j < n {
+            if chars[j] == '`' {
+                let run = chars[j..].iter().take_while(|&&x| x == '`').count();
+                runs.entry(run).or_default().push(j);
+                j += run;
+            } else {
+                j += 1;
+            }
+        }
+        Self {
+            bracket,
+            paren,
+            next_bracket,
+            gt,
+            runs,
+        }
+    }
+
+    /// The start of the first maximal run of exactly `len` backticks at or
+    /// after `from`.
+    fn run_after(&self, from: usize, len: usize) -> Option<usize> {
+        let starts = self.runs.get(&len)?;
+        starts.get(starts.partition_point(|&s| s < from)).copied()
+    }
+
+    /// A link at `[`, `open`, read within `end`: its label's end, the `]`,
+    /// and the index after `(url)`, `[ref]` or `[]`.
+    fn link(&self, chars: &[char], open: usize, end: usize) -> Option<(usize, usize)> {
+        let close = self.bracket[open].filter(|&c| c < end)?;
+        match chars.get(close + 1).filter(|_| close + 1 < end)? {
+            '(' => {
+                let shut = self.paren[close + 1].filter(|&p| p < end)?;
+                Some((close, shut + 1))
+            }
+            '[' => {
+                let shut = self.next_bracket[close + 1].filter(|&p| p < end)?;
+                Some((close, shut + 1))
+            }
+            _ => None,
+        }
     }
 }
 

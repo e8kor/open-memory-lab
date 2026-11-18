@@ -18,6 +18,16 @@ pub const MAX_PASSAGES: usize = 4096;
 /// The deepest heading that opens a passage (ADR-0081 d3).
 pub const PASSAGE_HEADING_MAX: usize = 4;
 
+/// The most characters of a heading read as its text, as ADR-0081 d1 cuts
+/// a title (the review's finding S1 of 2026-11-18): a heading path entry,
+/// and so a passage's search text, never carries more of one line.
+pub const HEADING_TEXT_MAX: usize = 200;
+
+/// The most headings a document's cut reads (the review's finding S1 of
+/// 2026-11-18): four for each passage it may hold; past it the document
+/// is refused as [`TooManyPassages`]. Chosen, not measured.
+pub const MAX_HEADINGS: usize = 4 * MAX_PASSAGES;
+
 /// How a document's text is read (ADR-0081 d1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
@@ -47,7 +57,9 @@ pub struct Passage {
 /// `details.reason: too_many_passages`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TooManyPassages {
-    /// How many the text would hold.
+    /// How many the cut had found when it stopped: one past
+    /// [`MAX_PASSAGES`] passages, or one past [`MAX_HEADINGS`] headings, so
+    /// a lower bound on what the text holds.
     pub count: usize,
 }
 
@@ -106,6 +118,12 @@ pub struct Heading {
 /// `headings` adapter's reading, ADR-0057 d7).
 #[must_use]
 pub fn headings(lines: &[Line<'_>], mask: &[bool]) -> Vec<Heading> {
+    headings_up_to(lines, mask, usize::MAX)
+}
+
+/// [`headings`], stopping once it holds more than `limit`, its text cut to
+/// [`HEADING_TEXT_MAX`] characters.
+fn headings_up_to(lines: &[Line<'_>], mask: &[bool], limit: usize) -> Vec<Heading> {
     let mut out = Vec::new();
     let mut fence: Option<String> = None;
     for (i, line) in lines.iter().enumerate() {
@@ -124,11 +142,18 @@ pub fn headings(lines: &[Line<'_>], mask: &[bool]) -> Vec<Heading> {
             continue;
         }
         if let Some((level, text)) = heading(line.text) {
+            let text: String = collapse(&plain(text))
+                .chars()
+                .take(HEADING_TEXT_MAX)
+                .collect();
             out.push(Heading {
                 at: i,
                 level,
-                text: collapse(&plain(text)),
+                text: text.trim_end().to_owned(),
             });
+            if out.len() > limit {
+                break;
+            }
         }
     }
     out
@@ -156,7 +181,10 @@ pub fn passages(text: &str, format: Format) -> Result<Vec<Passage>, TooManyPassa
         }
         Format::Markdown => {
             let mask = content_mask(&lines);
-            let all = headings(&lines, &mask);
+            let all = headings_up_to(&lines, &mask, MAX_HEADINGS);
+            if all.len() > MAX_HEADINGS {
+                return Err(TooManyPassages { count: all.len() });
+            }
             let bounds: Vec<usize> = all
                 .iter()
                 .filter(|h| h.level <= PASSAGE_HEADING_MAX)
@@ -168,24 +196,28 @@ pub fn passages(text: &str, format: Format) -> Result<Vec<Passage>, TooManyPassa
             }
             let mut slugs = Slugs::default();
             let mut stack: Vec<(usize, String)> = Vec::new();
+            // The next bound is read by index: each heading of level 1 to 4
+            // is the next bound in turn.
+            let mut bound = 0;
             for h in &all {
                 let slug = slugs.next(&h.text);
                 if h.level > PASSAGE_HEADING_MAX {
                     continue;
                 }
+                bound += 1;
                 stack.retain(|(l, _)| *l < h.level);
                 stack.push((h.level, h.text.clone()));
-                let next = bounds
-                    .iter()
-                    .copied()
-                    .find(|&b| b > h.at)
-                    .unwrap_or(lines.len());
+                let next = bounds.get(bound).copied().unwrap_or(lines.len());
                 // R1: a heading with no content line is no passage.
                 let Some((_, e)) = content_span(&lines, &mask, h.at + 1, next) else {
                     continue;
                 };
                 let path = stack.iter().map(|(_, t)| t.clone()).collect();
                 spans.push((h.at, e, path, Some(slug)));
+                // Every span is at least one passage: stop past the cap.
+                if spans.len() > MAX_PASSAGES {
+                    return Err(TooManyPassages { count: spans.len() });
+                }
             }
         }
     }
@@ -204,6 +236,9 @@ pub fn passages(text: &str, format: Format) -> Result<Vec<Passage>, TooManyPassa
         for (s, e) in cut {
             let fragment = format!("L{}-L{}", lines[s].number, lines[e - 1].number);
             out.push((s, e, heading_path.clone(), fragment));
+            if out.len() > MAX_PASSAGES {
+                return Err(TooManyPassages { count: out.len() });
+            }
         }
     }
     if out.len() > MAX_PASSAGES {
@@ -241,6 +276,38 @@ fn content_span(
     Some((first, past))
 }
 
+/// The fragment a passage's URI names (the review's reading R11 of
+/// 2026-11-18): its heading slug when that is non-empty and holds nothing
+/// outside `[a-z0-9_-]`, else its lines, `L<start>-L<end>`, so every URI is
+/// RFC 3986 text and every passage is readable through its own.
+#[must_use]
+pub fn uri_fragment(fragment: &str, start_line: usize, end_line: usize) -> String {
+    let safe = !fragment.is_empty()
+        && fragment
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_');
+    if safe {
+        fragment.to_owned()
+    } else {
+        lines_fragment(start_line, end_line)
+    }
+}
+
+/// A span's line fragment, `L<start>-L<end>` (ADR-0057 d21).
+#[must_use]
+pub fn lines_fragment(start_line: usize, end_line: usize) -> String {
+    format!("L{start_line}-L{end_line}")
+}
+
+impl Passage {
+    /// Whether `?passage=<f>` names this passage: its fragment or its
+    /// lines (R11).
+    #[must_use]
+    pub fn named_by(&self, f: &str) -> bool {
+        self.fragment == f || lines_fragment(self.start_line, self.end_line) == f
+    }
+}
+
 /// A passage's text as served: its source lines, `start_line` to
 /// `end_line`, byte for byte as `text` holds them (ADR-0081 d4, d6, the
 /// build's reading R2), so a passage read is the same span of a full read.
@@ -273,8 +340,11 @@ pub fn search_text(title: &str, text: &str, passage: &Passage) -> String {
     if path.first().is_some_and(|h| h == title) {
         path = &path[1..];
     }
+    // Each part at most HEADING_TEXT_MAX characters, so the line before a
+    // passage's lines is bounded however long a title or heading was sent.
     let line = std::iter::once(title)
         .chain(path.iter().map(String::as_str))
+        .map(|part| part.chars().take(HEADING_TEXT_MAX).collect::<String>())
         .collect::<Vec<_>>()
         .join(" > ");
     format!("{line}\n\n{}", passage_text(text, passage))

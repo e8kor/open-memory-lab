@@ -58,8 +58,9 @@ fn a_million_unclosed_angle_brackets_are_read_in_linear_time() {
 fn half_a_million_empty_headings_are_cut_in_linear_time() {
     let doc = "#\n".repeat(524_288);
     within_budget("empty headings", move || {
-        // Headings with no content line are no passage (R1).
-        assert_eq!(passages(&doc, Format::Markdown).expect("cut").len(), 0);
+        // Past MAX_HEADINGS the cut stops and refuses the document.
+        let err = passages(&doc, Format::Markdown).unwrap_err();
+        assert_eq!(err.count, oml_passage::MAX_HEADINGS + 1, "refused past the headings bound");
     });
 }
 
