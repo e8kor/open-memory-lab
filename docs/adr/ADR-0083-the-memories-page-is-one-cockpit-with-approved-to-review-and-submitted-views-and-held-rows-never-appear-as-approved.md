@@ -338,6 +338,24 @@ Decided, not built.
       Judge page, or to To do with its "Nothing waits" notice when nothing is held. It does not call
       `POST /v2/review/next`, which d10 leaves undecided for a workspace filter.
 
+- **d15 — Four readings the cockpit's build took, 2026-11-18** (proposed for the operator's batch;
+  confirmed by the operator's coordinator the same day, #411, #413).
+    - **No date on Rejected or Withdrawn (d3).** The own listing serves its author no instant of
+      the rejection or the withdrawal, so Submitted says "Rejected." or "Withdrawn." without a date
+      until the author's own read serves that instant, never naming the reviewer (ADR-0077 d2);
+      a follow-up issue on milestone Later tracks it. Rejected: the version's `created_at`, which
+      dates the write, not the decision.
+    - **"Served as" (d3).** An approved skill's sentence names the command its name is published
+      as, `/mcp__oml__<name>`, derived in the console from the row's skill name; since a nearer
+      workspace's skill of the same name shadows it (ADR-0080 d5, R15), the copy says "published
+      as", not what a session runs. A document names its resource address once the listing serves
+      it; every other kind names its claim key. Rejected: one more read per row.
+    - **Approved's State filter (d1, d5).** Both sides offer "approved" (the promoted tip) and
+      "superseded"; a superseded version was approved and is never held, so d1's rule stands.
+    - **Counts on the admin tabs (d5).** Held carries the queue's total; Approved and Rejected carry
+      no number, current or not, until a count read serves them. Rejected: counting a fetched page,
+      wrong past its first page.
+
 ## Consequences
 
 - API changes: `mine=true`, `promoted_since` and a comma-list `state` with `withdrawn` on
