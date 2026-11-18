@@ -3038,15 +3038,15 @@ fn run_workspaces_import(
     // first import, which pins the source's key and needs --expect-key.
     // An existing target may or may not hold one for this source, which only
     // the server reads, so it answers there.
-    if args.expect_key.is_none() && !args.dry_run {
-        if let Err(CliError::Refused { status: 404, .. }) =
+    if args.expect_key.is_none()
+        && !args.dry_run
+        && let Err(CliError::Refused { status: 404, .. }) =
             client.get(&format!("/v2/workspaces/{}", segment(args.into)?))
-        {
-            return Err(CliError::local(format!(
-                "{} does not exist yet, or this key cannot read it, so this is a first import from this source, which pins its key: check the source's key fingerprint out of band, then run again with --expect-key {} if it matches; nothing was uploaded",
-                args.into, verified.signer_fingerprint
-            )));
-        }
+    {
+        return Err(CliError::local(format!(
+            "{} does not exist yet, or this key cannot read it, so this is a first import from this source, which pins its key: check the source's key fingerprint out of band, then run again with --expect-key {} if it matches; nothing was uploaded",
+            args.into, verified.signer_fingerprint
+        )));
     }
     let slow = client.lasting(LONG_TIMEOUT);
     let (upload_id, opened) = match args.upload {
@@ -6391,13 +6391,35 @@ fn exports_doctor(scrape: Option<&Scrape>) -> Vec<String> {
                   root, in history mode; no route sets another policy in this build"
         .to_owned();
     match scrape {
-        Some(scrape) if scrape.0.contains("oml_exports") => vec![
-            policy,
-            format!(
-                "{} bundle(s) served since start, each journalled as workspace.exported",
-                scrape.sum("oml_exports_total", &[])
-            ),
-        ],
+        Some(scrape) if scrape.0.contains("oml_exports") => {
+            let mut lines = vec![
+                policy,
+                format!(
+                    "{} bundle(s) served since start, each journalled as workspace.exported",
+                    scrape.sum("oml_exports_total", &[])
+                ),
+            ];
+            // ADR-0084 I13: export.busy and export.too_large, and every other
+            // refusal of the route, by code.
+            let mut refused: Vec<(String, u64)> = scrape
+                .samples("oml_export_refusals_total", &[])
+                .filter_map(|(set, n)| {
+                    set.split(',')
+                        .find_map(|pair| pair.strip_prefix("code=\"")?.strip_suffix('"'))
+                        .map(|code| (code.to_owned(), n))
+                })
+                .collect();
+            refused.sort();
+            if !refused.is_empty() {
+                let list = refused
+                    .iter()
+                    .map(|(code, n)| format!("{code} {n}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                lines.push(format!("export_refusals since start: {list}"));
+            }
+            lines
+        }
         Some(_) => vec![
             policy,
             "off (this server serves no workspace export)".to_owned(),
@@ -7867,6 +7889,23 @@ mod tests {
             approval_doctor(None),
             vec!["approval_unmatched: not read; an admin key reads it".to_owned()]
         );
+    }
+
+    #[test]
+    fn the_exports_doctor_names_export_refusals_by_code() {
+        let lines = exports_doctor(Some(&Scrape(
+            "oml_exports_total 3\n\
+             oml_export_refusals_total{code=\"export.too_large\"} 1\n\
+             oml_export_refusals_total{code=\"export.busy\"} 2\n"
+                .to_owned(),
+        )));
+        assert_eq!(
+            lines.get(2).map(String::as_str),
+            Some("export_refusals since start: export.busy 2, export.too_large 1"),
+            "{lines:?}"
+        );
+        let quiet = exports_doctor(Some(&Scrape("oml_exports_total 3\n".to_owned())));
+        assert_eq!(quiet.len(), 2, "no line without a refusal");
     }
 
     #[test]

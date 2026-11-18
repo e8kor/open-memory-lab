@@ -224,6 +224,7 @@ pub struct Metrics {
     upload_unswept: Gauge,
     upload_sweep_failures: Counter,
     import_refusals: Family<CodeLabels, Counter>,
+    export_refusals: Family<CodeLabels, Counter>,
     import_versions: Family<OutcomeLabels, Counter>,
     imports: Family<StateLabels, Gauge>,
     imports_allow_older: Gauge,
@@ -388,6 +389,7 @@ impl Default for Metrics {
         let upload_unswept = Gauge::default();
         let upload_sweep_failures = Counter::default();
         let import_refusals = Family::<CodeLabels, Counter>::default();
+        let export_refusals = Family::<CodeLabels, Counter>::default();
         let import_versions = Family::<OutcomeLabels, Counter>::default();
         let imports = Family::<StateLabels, Gauge>::default();
         let imports_allow_older = Gauge::default();
@@ -578,6 +580,11 @@ impl Default for Metrics {
             imports_allow_older.clone(),
         );
         registry.register(
+            "oml_export_refusals",
+            "workspace exports refused, by code: export.busy, export.too_large or another the route answered (ADR-0084 I13)",
+            export_refusals.clone(),
+        );
+        registry.register(
             "oml_exports",
             "workspace bundles served, each journalled as workspace.exported (ADR-0084 d15)",
             exports.clone(),
@@ -623,6 +630,7 @@ impl Default for Metrics {
             sparse_backlog,
             upload_refusals,
             import_refusals,
+            export_refusals,
             import_versions,
             imports,
             imports_allow_older,
@@ -683,6 +691,15 @@ impl Metrics {
             && let Some(code) = error_code
         {
             self.import_refusals
+                .get_or_create(&CodeLabels {
+                    code: code.to_owned(),
+                })
+                .inc();
+        }
+        if route == "/v2/workspaces/{workspace}/exports"
+            && let Some(code) = error_code
+        {
+            self.export_refusals
                 .get_or_create(&CodeLabels {
                     code: code.to_owned(),
                 })

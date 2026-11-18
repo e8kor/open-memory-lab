@@ -503,10 +503,11 @@ oml workspaces import [OPTIONS] --into <INTO> --identity <IDENTITY> <FILE>
 |---|---|
 | `--into <INTO>` | Target workspace, by id or name; an absent name is created |
 | `--identity <IDENTITY>` | A file holding the age identity the bundle is encrypted to |
-| `--expect-key <EXPECT_KEY>` | The source key's fingerprint, checked out of band; required on the first import from a source, which pins it |
+| `--expect-key <EXPECT_KEY>` | The source key's fingerprint, checked out of band; required on the first import from a source, which pins it. A target name that does not exist yet is refused without it before anything is uploaded; for an existing target only the server knows whether it pins this source, so the import request answers |
 | `--expect-tenant <EXPECT_TENANT>` | The source tenant id the bundle must name |
 | `--dry-run` | Print the plan and write nothing |
 | `--allow-older` | Admit a bundle older than the last one imported from its source |
+| `--upload <UPLOAD>` | A completed upload of this bundle, as a dry run names it, imported without sending the bundle again |
 
 
 ## `oml edges`
