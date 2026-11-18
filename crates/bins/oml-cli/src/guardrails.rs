@@ -156,7 +156,9 @@ pub fn guardrails(
         REQUEST_TIMEOUT,
         "guardrails",
     );
-    let set = match client.get("/v1/guardrails") {
+    // The session is the key's own, so its own held guardrails load too,
+    // marked and asking (ADR-0080 d14).
+    let set = match client.get("/v1/guardrails?include_own_held=true") {
         Ok((_, set)) => set,
         Err(e) => return Ok(redact(&failed(describe(e)))),
     };
@@ -239,8 +241,12 @@ fn write_cache(
     std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
 }
 
-/// The served rules, each with its guardrail's id and text. A served rule
-/// that does not parse leaves the cache unwritten rather than a rule out.
+/// The served rules, each with its guardrail's id and text. A held rule the
+/// server serves with `effect_inside: ask` is cached with that effect and
+/// its text marked `[unreviewed]`, so it asks and never denies; the server
+/// decides the downgrade, and a promoted rule keeps its own (ADR-0080
+/// d10). A served rule that does not parse leaves the cache unwritten
+/// rather than a rule out.
 fn cached_rules(set: &Value) -> Result<Vec<CachedRule>, String> {
     let guardrails = set["guardrails"]
         .as_array()
@@ -254,10 +260,18 @@ fn cached_rules(set: &Value) -> Result<Vec<CachedRule>, String> {
             .as_str()
             .and_then(|s| Uuid::parse_str(s).ok())
             .ok_or("a guardrail's artifact_id is not an id")?;
-        let rule = Rule::parse(&g["rule"]).map_err(|e| format!("a served rule is refused: {e}"))?;
+        let mut served = g["rule"].clone();
+        let mut body = g["text"].as_str().unwrap_or_default().to_owned();
+        if g["unreviewed"] == true {
+            // A held rule never denies: the server's `effect_inside` where
+            // it names one, `ask` where it does not.
+            served["effect"] = json!(g["effect_inside"].as_str().unwrap_or("ask"));
+            body = format!("[unreviewed] {body}");
+        }
+        let rule = Rule::parse(&served).map_err(|e| format!("a served rule is refused: {e}"))?;
         rules.push(CachedRule {
             artifact_id,
-            body: g["text"].as_str().unwrap_or_default().to_owned(),
+            body,
             rule,
         });
     }

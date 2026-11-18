@@ -162,6 +162,22 @@ def test_reject_sends_its_reason_and_serve_id():
     }
 
 
+def test_withdraw_posts_the_reason_under_an_idempotency_key():
+    result = {
+        "artifact_id": "art_1",
+        "state": "withdrawn",
+        "at": "2026-11-17T18:00:00Z",
+        "journal_seq": 7,
+    }
+    requests, transport = recording(200, result)
+    with client(transport) as oml:
+        written = oml.withdraw("art_1", reason="written by mistake")
+    assert [(r.method, r.url.path) for r in requests] == [("POST", "/v1/memories/art_1/withdraw")]
+    assert json.loads(requests[0].content) == {"reason": "written by mistake"}
+    assert requests[0].headers["idempotency-key"] == written.idempotency_key
+    assert written.value.state == "withdrawn"
+
+
 def test_a_refusal_raises_the_envelopes_code_and_details():
     envelope = {
         "error": {

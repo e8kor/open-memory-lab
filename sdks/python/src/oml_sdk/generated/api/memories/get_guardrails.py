@@ -12,6 +12,7 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     *,
     workspace: str | Unset = UNSET,
+    include_own_held: bool | Unset = False,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -29,6 +30,8 @@ def _get_kwargs(
     params: dict[str, Any] = {}
 
     params["workspace"] = workspace
+
+    params["include_own_held"] = include_own_held
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -75,6 +78,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     workspace: str | Unset = UNSET,
+    include_own_held: bool | Unset = False,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -84,11 +88,16 @@ def sync_detailed(
 
      Requires: reader on the scope node. Serves the promoted guardrail tips on the node and, under
     guardrail_scope ancestors, on each ancestor the key reads; the scope is the key's, set at issuance,
-    and any parameter other than workspace, guardrail_scope included, is request.validation naming it
-    (docs/api/http-api.md, Guardrails; ADR-0037 d4, d5, d7; since v0.5.1).
+    and any parameter other than workspace and include_own_held, guardrail_scope included, is
+    request.validation naming it. On a node inside a workspace a person put in progress, every author's
+    held guardrail is served too, and under include_own_held the key's own held ones: each a line of its
+    own after the promoted rows, never a held retirement or a version the scan held, marked unreviewed
+    with effect_inside ask, so a held rule asks and never denies (docs/api/http-api.md, Guardrails;
+    ADR-0037 d4, d5, d7; ADR-0080 d10, d14, d16; since v0.5.1).
 
     Args:
         workspace (str | Unset):
+        include_own_held (bool | Unset):  Default: False.
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -103,6 +112,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         workspace=workspace,
+        include_own_held=include_own_held,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -119,6 +129,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     workspace: str | Unset = UNSET,
+    include_own_held: bool | Unset = False,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -128,11 +139,16 @@ def sync(
 
      Requires: reader on the scope node. Serves the promoted guardrail tips on the node and, under
     guardrail_scope ancestors, on each ancestor the key reads; the scope is the key's, set at issuance,
-    and any parameter other than workspace, guardrail_scope included, is request.validation naming it
-    (docs/api/http-api.md, Guardrails; ADR-0037 d4, d5, d7; since v0.5.1).
+    and any parameter other than workspace and include_own_held, guardrail_scope included, is
+    request.validation naming it. On a node inside a workspace a person put in progress, every author's
+    held guardrail is served too, and under include_own_held the key's own held ones: each a line of its
+    own after the promoted rows, never a held retirement or a version the scan held, marked unreviewed
+    with effect_inside ask, so a held rule asks and never denies (docs/api/http-api.md, Guardrails;
+    ADR-0037 d4, d5, d7; ADR-0080 d10, d14, d16; since v0.5.1).
 
     Args:
         workspace (str | Unset):
+        include_own_held (bool | Unset):  Default: False.
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -148,6 +164,7 @@ def sync(
     return sync_detailed(
         client=client,
         workspace=workspace,
+        include_own_held=include_own_held,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -158,6 +175,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     workspace: str | Unset = UNSET,
+    include_own_held: bool | Unset = False,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -167,11 +185,16 @@ async def asyncio_detailed(
 
      Requires: reader on the scope node. Serves the promoted guardrail tips on the node and, under
     guardrail_scope ancestors, on each ancestor the key reads; the scope is the key's, set at issuance,
-    and any parameter other than workspace, guardrail_scope included, is request.validation naming it
-    (docs/api/http-api.md, Guardrails; ADR-0037 d4, d5, d7; since v0.5.1).
+    and any parameter other than workspace and include_own_held, guardrail_scope included, is
+    request.validation naming it. On a node inside a workspace a person put in progress, every author's
+    held guardrail is served too, and under include_own_held the key's own held ones: each a line of its
+    own after the promoted rows, never a held retirement or a version the scan held, marked unreviewed
+    with effect_inside ask, so a held rule asks and never denies (docs/api/http-api.md, Guardrails;
+    ADR-0037 d4, d5, d7; ADR-0080 d10, d14, d16; since v0.5.1).
 
     Args:
         workspace (str | Unset):
+        include_own_held (bool | Unset):  Default: False.
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -186,6 +209,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         workspace=workspace,
+        include_own_held=include_own_held,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -200,6 +224,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     workspace: str | Unset = UNSET,
+    include_own_held: bool | Unset = False,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -209,11 +234,16 @@ async def asyncio(
 
      Requires: reader on the scope node. Serves the promoted guardrail tips on the node and, under
     guardrail_scope ancestors, on each ancestor the key reads; the scope is the key's, set at issuance,
-    and any parameter other than workspace, guardrail_scope included, is request.validation naming it
-    (docs/api/http-api.md, Guardrails; ADR-0037 d4, d5, d7; since v0.5.1).
+    and any parameter other than workspace and include_own_held, guardrail_scope included, is
+    request.validation naming it. On a node inside a workspace a person put in progress, every author's
+    held guardrail is served too, and under include_own_held the key's own held ones: each a line of its
+    own after the promoted rows, never a held retirement or a version the scan held, marked unreviewed
+    with effect_inside ask, so a held rule asks and never denies (docs/api/http-api.md, Guardrails;
+    ADR-0037 d4, d5, d7; ADR-0080 d10, d14, d16; since v0.5.1).
 
     Args:
         workspace (str | Unset):
+        include_own_held (bool | Unset):  Default: False.
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -230,6 +260,7 @@ async def asyncio(
         await asyncio_detailed(
             client=client,
             workspace=workspace,
+            include_own_held=include_own_held,
             x_request_id=x_request_id,
             x_correlation_id=x_correlation_id,
             traceparent=traceparent,

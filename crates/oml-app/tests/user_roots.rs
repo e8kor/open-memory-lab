@@ -1316,6 +1316,7 @@ async fn no_guardrail_of_another_users_root_is_ever_served() {
             alice.value.as_str(),
             &GuardrailRequest {
                 workspace: Some(Reference::Name(name("bob"))),
+                include_own_held: false,
             },
         )
         .await
@@ -2602,6 +2603,57 @@ async fn a_bearer_admin_key_links_nothing_and_a_console_admin_never_links_its_ow
     assert_eq!(after, head + 1, "only the console admin's link journals");
 }
 
+// -- Withdraw (ADR-0083 d13; #401) -------------------------------------------
+
+fn withdraw_req(idem: &str, id: Uuid) -> oml_app::types::WithdrawRequest {
+    oml_app::types::WithdrawRequest {
+        idempotency_key: idem.to_owned(),
+        memory_id: id,
+        reason: None,
+    }
+}
+
+/// A person's session web key withdraws a held version their agent's key
+/// wrote; another person's session key, which cannot read it, is told
+/// nothing.
+#[tokio::test]
+async fn a_person_web_key_withdraws_a_version_its_agent_wrote() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", false).await;
+    let bob = signed_in(&app, admin, "bob", false).await;
+    let agent = user_writer(&app, admin, "alice", "alice/laptop").await;
+    let id = written(
+        &app,
+        &agent.value,
+        &submit("w1", "A note to retract.", None),
+    )
+    .await;
+    let bobs = app.web_caller(&bob, Capacity::Web).await.expect("bob-web");
+    let err = app
+        .withdraw(Bearer::Session(&bobs), &withdraw_req("b1", id))
+        .await
+        .unwrap_err();
+    // bob reads nothing in alice's root, so he is told nothing exists.
+    assert!(matches!(err, AppError::NotFound), "{err:?}");
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let (receipt, replayed) = app
+        .withdraw(Bearer::Session(&web), &withdraw_req("a1", id))
+        .await
+        .expect("alice withdraws her agent's write");
+    assert!(!replayed);
+    assert_eq!(receipt.state, "withdrawn");
+    let row = app
+        .get_memory(agent.value.as_str(), id)
+        .await
+        .expect("the author still reads it");
+    assert_eq!(row.memory.status, MemoryStatus::Withdrawn);
+}
+
 // -- R2 by person (ADR-0001 d5; ADR-0082 d7; #392) ---------------------------
 
 /// A shared `team` workspace, alice signed in as an admin of it, and her
@@ -2973,4 +3025,70 @@ async fn the_bulk_confirmation_names_no_row_the_reviewers_own_person_wrote_outsi
     assert!(named[0].1.is_none(), "alice's own row is not confirmable");
     assert_eq!(named[1].0, theirs);
     assert!(named[1].1.is_some(), "bob's row is");
+}
+
+/// Held steering reaches the key that wrote it and no other key of its
+/// person: the web key of a person whose curate key wrote the row is not
+/// served it, `include_unreviewed: true` or not (ADR-0080 d14).
+#[tokio::test]
+async fn held_steering_reaches_the_authoring_key_and_no_other_key_of_its_person() {
+    let (app, _) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", true).await;
+    let alice_admin = app
+        .web_caller(&alice, Capacity::Admin)
+        .await
+        .expect("alice-admin");
+    app.grant_curation_capacity(&alice_admin, &name("alice"), by_name("alice"))
+        .await
+        .expect("the curation designation");
+    let curate = app
+        .web_caller(&alice, Capacity::Curate)
+        .await
+        .expect("alice-curate");
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let held = app
+        .submit_memory(
+            Bearer::Session(&curate),
+            &SubmitRequest {
+                on_similar: Default::default(),
+                kind: MemoryKind::Steering,
+                ..submit("steer", "cite every source", Some("universe"))
+            },
+        )
+        .await
+        .expect("a held steering row")
+        .receipt
+        .memory_id;
+    let own_steering = app
+        .submit_memory(
+            Bearer::Session(&web),
+            &SubmitRequest {
+                on_similar: Default::default(),
+                kind: MemoryKind::Steering,
+                ..submit("own", "cite the source twice", Some("alice"))
+            },
+        )
+        .await
+        .expect("the web key's own held steering row")
+        .receipt
+        .memory_id;
+    let asked = RecallRequest {
+        include_unreviewed: Some(true),
+        ..recall("source", Some("alice"))
+    };
+    let served = app
+        .recall(Bearer::Session(&web), &asked)
+        .await
+        .expect("the web key's recall");
+    let ids: Vec<Uuid> = served.steering.iter().map(|m| m.memory.memory_id).collect();
+    assert_eq!(
+        ids,
+        vec![own_steering],
+        "the calling key's own row, not alice-curate's {held}"
+    );
 }

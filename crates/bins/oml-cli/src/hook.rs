@@ -414,10 +414,18 @@ fn render(r: &Rendered<'_>) -> String {
 
     out.push(String::new());
     out.push("Steering in force:".to_owned());
+    // Held steering follows the promoted rows, marked (ADR-0080 d10).
     let steering: Vec<String> = r
         .steering
         .iter()
-        .map(|m| format!("- {}: {}", r.key_of(m), r.text(m, "text")))
+        .map(|m| {
+            let mark = if m["unreviewed"] == true {
+                "[unreviewed] "
+            } else {
+                ""
+            };
+            format!("- {mark}{}: {}", r.key_of(m), r.text(m, "text"))
+        })
         .collect();
     push_or_none(&mut out, steering, "- none");
 
@@ -1702,6 +1710,35 @@ mod tests {
         );
         assert!(
             context.contains("- [promoted] quote-validity: Treat an undated quote as expired."),
+            "{context}"
+        );
+    }
+
+    /// Held steering, served marked `unreviewed`, prints after the
+    /// promoted rows prefixed `[unreviewed]` (ADR-0080 d10).
+    #[test]
+    fn held_steering_prints_prefixed_unreviewed_after_the_promoted_rows() {
+        let approved = json!({ "claim_key": "pool", "state": "promoted",
+            "unreviewed": false, "text": "Prefer the canary pool." });
+        let held = json!({ "claim_key": "blue", "state": "held",
+            "unreviewed": true, "text": "Prefer the blue pool." });
+        let redact = |text: &str| text.to_owned();
+        let steering = [approved, held];
+        let context = render(&Rendered {
+            server: "https://oml.example",
+            brief: &[],
+            own: &[],
+            steering: &steering,
+            hits: &[],
+            budget: &Value::Null,
+            query: "pool",
+            compacted: false,
+            redact: &redact,
+        });
+        assert!(
+            context.contains(
+                "- pool: Prefer the canary pool.\n- [unreviewed] blue: Prefer the blue pool."
+            ),
             "{context}"
         );
     }

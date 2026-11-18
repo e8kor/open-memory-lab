@@ -378,6 +378,10 @@ pub(crate) struct Card {
     /// The held listing's mark: the author is one of the reviewer's
     /// person's keys (ADR-0055 d7).
     same_user: bool,
+    /// The user page's held row a key of the signed-in person wrote: it
+    /// offers Withdraw, which opens its confirmation (ADR-0083 d13, note of
+    /// 2026-11-17).
+    withdraw: bool,
 }
 
 impl Card {
@@ -431,6 +435,15 @@ impl Card {
             attachments: m.attachments.clone(),
             digest: m.plaintext_digest.clone(),
             same_user: false,
+            withdraw: false,
+        }
+    }
+
+    /// The card with Withdraw offered, on a held row only (ADR-0083 d13).
+    pub(crate) fn withdrawable(self) -> Self {
+        Self {
+            withdraw: self.state == "held",
+            ..self
         }
     }
 
@@ -490,6 +503,7 @@ impl Card {
             attachments: Vec::new(),
             digest: None,
             same_user: false,
+            withdraw: false,
         }
     }
 
@@ -551,6 +565,7 @@ impl Card {
             attachments: Vec::new(),
             digest: m.plaintext_digest.clone(),
             same_user: false,
+            withdraw: false,
         }
     }
 
@@ -1091,6 +1106,14 @@ impl Card {
             out.push_str(&self.timeline(view.roots));
         }
         out.push_str(&self.body_facts(view));
+        if self.withdraw && !view.admin {
+            let _ = write!(
+                out,
+                r#"<p><a href="{}?id={}&amp;act=withdraw">Withdraw</a>: a held version a key of this account wrote, retracted unreviewed.</p>"#,
+                view.memory_path(),
+                attr(&oml_sdk::encode(&self.id)),
+            );
+        }
         out.push_str("</div>");
         out.push_str(view.strip);
         out.push_str("</article>");

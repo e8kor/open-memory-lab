@@ -99,7 +99,7 @@ under a key of their own. The merge key is `artifact_id`, which names the versio
 | `version` | LONG | no | Version within the `claim_key` lineage |
 | `claim_key` | STRING | no | Groups the versions of one memory |
 | `kind` | STRING | no | The memory's kind |
-| `state` | STRING | no | `promoted`, `superseded`, `demoted`, `held` or `erased` |
+| `state` | STRING | no | `promoted`, `superseded`, `demoted`, `held`, `rejected`, `withdrawn` or `erased`: one for every state the server stores. The writer materializes a version at its promotion, so `rejected` and `withdrawn`, which a held version reaches instead of a promotion, are mapped and not written today. |
 | `workspace_id` | STRING | no | The workspace. Physical name `workarea_id` (ADR-0091 d7) |
 | `writer_identity` | STRING | no | The writing key |
 | `principal` | STRING | no | Acting principal |

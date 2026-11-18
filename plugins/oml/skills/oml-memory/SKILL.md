@@ -24,9 +24,10 @@ is one connection:
    `state`);
 5. revise or retire what no longer holds (`oml_write` with `replaces`).
 
-## Three tools, chosen by their arguments
+## Four tools, chosen by their arguments
 
-`oml_write` stores, `oml_read` reads and `oml_workspace` describes a workspace. The
+`oml_write` stores, `oml_read` reads, `oml_workspace` describes a workspace and
+`oml_withdraw` withdraws a held write of your own key. The
 arguments you pass choose what `oml_write` and `oml_read` do, and the result's `mode` says
 which ran:
 
@@ -40,7 +41,7 @@ An argument outside the call's mode is refused with `request.validation` naming 
 
 ## Name a workspace
 
-Every argument that names a workspace is `workspace`, on all three tools, and takes its name,
+Every argument that names a workspace is `workspace`, on every tool that takes one, and takes its name,
 such as `metals-crew`, or its id. A workspace's name is unique in the tenant and never
 changes. A path is not a name: pass `metals-crew`, not `universe.procurement.metals-crew`.
 A name the key cannot see is refused with `access.not_found`, exactly as its id would be.
@@ -151,6 +152,14 @@ sees it beside the text, and recall can then be narrowed with `anchor_repo` and
 To retire a claim that no longer holds, pass `replaces`, its `expected_version` and
 `retirement: true` with a `text` that says why. Once approved, recall stops serving the claim, and every version
 stays readable with `oml_read`.
+
+## Withdraw a mistaken write
+
+A write your key made by mistake, still held, is withdrawn with `oml_withdraw`, its
+`artifact_id`, an optional `reason` and an `idempotency_key`. The version is kept as
+`withdrawn` with its text, leaves review and is never served; no reviewer is involved. Only a
+held version is withdrawn (`memory.not_held`): a reviewed one is revised or retired with
+`oml_write` and `replaces`. Another key's write is refused `access.author_only`.
 
 ## What the tools cannot do
 

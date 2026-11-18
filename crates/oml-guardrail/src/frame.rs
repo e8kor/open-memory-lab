@@ -61,9 +61,15 @@ pub fn render_frame(set: &Value, options: &FrameOptions<'_>) -> Result<Frame, &'
         options.origin
     )];
     let count = guardrails.len();
-    let over = set["over_cap"].as_bool().unwrap_or(false) || count > SET_CAP;
+    // The cap counts the promoted rules; held versions listed beside them
+    // never push an approved rule out (ADR-0080 d10).
+    let promoted = guardrails
+        .iter()
+        .filter(|g| g["unreviewed"] != true)
+        .count();
+    let over = set["over_cap"].as_bool().unwrap_or(false) || promoted > SET_CAP;
     if over && !options.whole_over_cap {
-        lines.push(over_cap_sentence(count));
+        lines.push(over_cap_sentence(promoted));
     } else if guardrails.is_empty() {
         lines.push("No guardrail applies here.".to_owned());
     } else {
@@ -89,7 +95,7 @@ pub fn render_frame(set: &Value, options: &FrameOptions<'_>) -> Result<Frame, &'
     }
     Ok(Frame {
         text: lines.join("\n"),
-        over_cap: over.then_some(count),
+        over_cap: over.then_some(promoted),
         count,
     })
 }
@@ -104,16 +110,28 @@ fn line(g: &Value, checked: bool) -> Result<String, &'static str> {
     let verdicts = g["verdicts"].as_array().map_or(&[][..], Vec::as_slice);
     let persons = verdicts.iter().filter(|v| v["used_by"] == "person").count();
     let reviewers = verdicts.len();
-    let mut provenance = format!(
-        "{}, {} v{}, ratified {} by {reviewers} reviewer{} ({persons} by a person)",
-        g["workspace_path"].as_str().unwrap_or("?"),
-        one_line(g["claim_key"].as_str().unwrap_or("?")),
-        g["version"],
-        g["promoted_at"]
-            .as_str()
-            .map_or("?", |at| at.get(..10).unwrap_or(at)),
-        if reviewers == 1 { "" } else { "s" },
-    );
+    // A held version, served to its author or inside an in-progress
+    // workspace, says so and names no approval (ADR-0080 d10).
+    let unreviewed = g["unreviewed"] == true;
+    let mut provenance = if unreviewed {
+        format!(
+            "{}, {} v{}, unreviewed: not yet approved by a reviewer",
+            g["workspace_path"].as_str().unwrap_or("?"),
+            one_line(g["claim_key"].as_str().unwrap_or("?")),
+            g["version"],
+        )
+    } else {
+        format!(
+            "{}, {} v{}, ratified {} by {reviewers} reviewer{} ({persons} by a person)",
+            g["workspace_path"].as_str().unwrap_or("?"),
+            one_line(g["claim_key"].as_str().unwrap_or("?")),
+            g["version"],
+            g["promoted_at"]
+                .as_str()
+                .map_or("?", |at| at.get(..10).unwrap_or(at)),
+            if reviewers == 1 { "" } else { "s" },
+        )
+    };
     if checked && let Some(rule) = g["rule"].as_object() {
         let target = ["command", "path", "host", "name"]
             .iter()
@@ -124,13 +142,18 @@ fn line(g: &Value, checked: bool) -> Result<String, &'static str> {
             });
         provenance.push_str(&format!(
             "; checked: {} {} {}",
-            rule.get("effect").and_then(Value::as_str).unwrap_or("?"),
+            g["effect_inside"]
+                .as_str()
+                .or_else(|| unreviewed.then_some("ask"))
+                .or_else(|| rule.get("effect").and_then(Value::as_str))
+                .unwrap_or("?"),
             rule.get("tool").and_then(Value::as_str).unwrap_or("?"),
             one_line(&target)
         ));
     }
     let provenance = cut(&provenance, PROVENANCE_MAX_CHARS);
-    let mut out = format!("- [{severity}] {} ({provenance})", one_line(text));
+    let mark = if unreviewed { "[unreviewed] " } else { "" };
+    let mut out = format!("- {mark}[{severity}] {} ({provenance})", one_line(text));
     if let Some(others) = g["conflict"].as_array().filter(|c| !c.is_empty()) {
         let ids: Vec<&str> = others.iter().filter_map(Value::as_str).collect();
         out.push_str(&format!(" conflicts with {}", ids.join(", ")));

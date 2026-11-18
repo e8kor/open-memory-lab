@@ -402,6 +402,19 @@ def suite_page(suite, docs, earlier_docs):
     return "\n".join(lines).rstrip() + "\n"
 
 
+HELD_MARK_NOTE = (
+    "**Not yet measured: the in-progress mark.** A search over a scope that holds an "
+    "in-progress workspace admits every author's held row on that node, and the statement "
+    "recognises such a row by computing a SHA-256 mark from each held row's `scanned_under` "
+    "and `workspace_id` and comparing it with an array of marks (`held_authors` in "
+    "`oml-pg`, ADR-0080 d16). The mark is computed per row, so no index can serve that "
+    "predicate; the cost grows with the held rows on the readable nodes, which are few "
+    "beside the promoted ones. Binding the in-progress nodes as an array and comparing "
+    "`workspace_id = ANY($n) AND scanned_under IS NOT DISTINCT FROM $cur` would let an "
+    "index serve it. That change renumbers the parameters of every search statement that "
+    "shares the scope, so it is filed as #462 and not made here.\n")
+
+
 def scale_page(current):
     """Latency against scope rows, from the suites whose rows differ."""
     points = {}
@@ -422,6 +435,7 @@ def scale_page(current):
              "Each point is one suite's run: the rows in the recall's scope (for LoCoMo, all "
              "conversations together, though each query reads one) and the client's p50 and "
              f"p95 in milliseconds. The line is {LATENCY_LINE_MS} ms.\n", CEILING,
+             HELD_MARK_NOTE,
              "| method | rows | suite | p50 ms | p95 ms | p95 under 50 ms |",
              "|---|---:|---|---:|---:|---|"]
     for method in method_order(points):

@@ -12,7 +12,7 @@ A recall returns promoted memories that the key can read, ranked by the chosen s
 
 A recall returns promoted memories inside the key's effective access ([workspaces](workspaces.md)). It hides two kinds of row:
 
-- **Held memories** are visible to their author (`oml read`, and recall with `--include-unreviewed`), to the reviewer a memory is served to, to an admin through the journaled admin read, and, inside an in-progress workspace, to its readers when the scan raised no finding.
+- **Held memories** are visible to their author (`oml read`, and recall with `--include-unreviewed`), to the reviewer a memory is served to, to an admin through the journaled admin read, and, inside an in-progress workspace, to its readers and to readers of the workspaces above it, when the scan raised no finding.
 - **Demoted and erased memories** are not served.
 
 Superseded versions stay readable by id as history. They are never hits.
@@ -29,7 +29,7 @@ Each flag below belongs to `oml read`. The same fields exist on the `oml_read` M
 | A different subtree | `--workspace <id or name>` | the key's default workspace |
 | A different search pipeline | `--search <name>` | the tenant's default |
 | Every word to match | `--match all` | `any` |
-| The key's own held memories too | `--include-unreviewed` | off; on inside an in-progress workspace |
+| The key's own held memories too | `--include-unreviewed` | off; on when the scope is inside an in-progress workspace or above one |
 | Memories anchored in one repository | `--anchor-repo`, `--anchor-path-prefix` | no filter |
 | Memories from one origin | `--origin-kind`, repeatable | no filter |
 | Workspaces beyond the scope | `--sources wide` or `--sources legal,product` | `scope`; needs federation on |
@@ -134,7 +134,7 @@ A recall inside the user root also searches `universe`. Its memories rank with t
 
 With `--include-unreviewed`, the key's own held memories join the hits. Each is marked `state: held`. They rank by the same order and count against `k` and the token budget. Held steering and held retirements never appear, because neither is in force yet.
 
-Inside an in-progress workspace, every author's held memories and derived facts join, labeled unreviewed, except those the scan held, which stay visible to their author only. See [workspaces](workspaces.md#in-progress-workspaces).
+Inside an in-progress workspace, and from every workspace above it, every author's held memories and derived facts there join, labeled unreviewed, except those the scan held, which stay visible to their author only; a scope at a sibling or on another branch gets none. See [workspaces](workspaces.md#in-progress-workspaces).
 
 ## Token budgets
 

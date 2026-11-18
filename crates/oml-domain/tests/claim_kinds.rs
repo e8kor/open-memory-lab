@@ -6,7 +6,10 @@ use oml_domain::claim_kinds::{
     TestShape, check_document_key, check_document_title, check_skill_body, check_skill_description,
     check_skill_name, check_test_key, document_key_from_title, markdown_title, skill_claim_key,
 };
-use oml_domain::{ClaimClass, MemoryKind, MemoryStatus, TransitionError, transition};
+use oml_domain::{
+    ClaimClass, MemoryKind, MemoryStatus, TransitionError, WithdrawRefusal, Withdrawer, transition,
+    withdraw,
+};
 
 #[test]
 fn a_skill_name_ending_in_unreviewed_is_refused() {
@@ -151,6 +154,32 @@ fn only_a_held_version_is_withdrawn() {
         );
     }
     assert_eq!(MemoryStatus::Withdrawn.as_str(), "withdrawn");
+}
+
+#[test]
+fn the_author_key_or_its_persons_session_withdraws_a_held_version_and_another_key_is_refused_first()
+{
+    for by in [Withdrawer::AuthorKey, Withdrawer::PersonSession] {
+        assert_eq!(
+            withdraw(MemoryStatus::Held, by),
+            Ok(MemoryStatus::Withdrawn)
+        );
+        for from in [
+            MemoryStatus::Promoted,
+            MemoryStatus::Rejected,
+            MemoryStatus::Withdrawn,
+        ] {
+            assert_eq!(withdraw(from, by), Err(WithdrawRefusal::NotHeld));
+        }
+    }
+    // Another key is told author_only whatever the state, so it learns
+    // nothing of the version's.
+    for from in [MemoryStatus::Held, MemoryStatus::Promoted] {
+        assert_eq!(
+            withdraw(from, Withdrawer::Other),
+            Err(WithdrawRefusal::AuthorOnly)
+        );
+    }
 }
 
 #[test]

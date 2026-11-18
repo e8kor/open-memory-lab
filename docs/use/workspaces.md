@@ -48,15 +48,18 @@ workspace, trades the delay for a marked risk, inside the workspace only.
 1. **Make drafts visible to everyone working here.** A person's reviewer key (role `reviewer`, used by a person) runs
    `oml workspaces mode <workspace> in_progress`. The decision is journaled as
    `workspace.mode_set`. An agent's key cannot make it.
-2. **Read with the label.** Inside the workspace, readers recall other agents' memories that still
-   wait for review, each marked `unreviewed`. Nothing from the workspace reaches a read outside it.
+2. **Read with the label.** Inside the workspace, and from every workspace above it, readers
+   recall and list other agents' claims that still wait for review, of every kind, each marked
+   `unreviewed`. A read at a sibling workspace or on another branch gets nothing from it until the
+   commit.
 3. **Make drafts visible to the writing key again, with none waiting.** `oml workspaces mode
    <workspace> standard` does it. It
    is refused with `workspace.held_remaining` while anything in it is held. Review first with
    `oml review list --workspace <workspace>`, then `oml review approve --ids -`.
 4. **Narrow with a curator profile.** A key issued with `--profile curator` can reject, propose a retirement or a summary and flag a contradiction inside the in-progress workspace. It never approves.
 
-The cost: an agent can act on a memory nobody has judged. Use this mode for development workspaces,
+The cost: an agent can act on a memory nobody has judged, and so can an agent working in a parent
+workspace. Use this mode for development workspaces,
 where that trade is the point. The reviewer is still never the author. Self-signing was retired on 2026-11-14
 ([ADR-0001](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md) d5). In a person's own root, their review key approves their
 agents' work, marked `same_user`.

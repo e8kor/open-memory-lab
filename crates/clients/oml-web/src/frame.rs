@@ -30,16 +30,32 @@ fn cut(text: &str, cap: usize) -> String {
 fn line(g: &ServedGuardrail) -> String {
     let persons = g.verdicts.iter().filter(|v| v.used_by == "person").count();
     let reviewers = g.verdicts.len();
-    let provenance = format!(
-        "{}, {} v{}, ratified {} by {reviewers} reviewer{} ({persons} by a person)",
-        g.workspace_path.as_deref().unwrap_or("?"),
-        one_line(&g.claim_key),
-        g.version,
-        g.promoted_at.get(..10).unwrap_or(&g.promoted_at),
-        if reviewers == 1 { "" } else { "s" },
-    );
+    // A held version says so and names no approval (ADR-0080 d10, "Marked").
+    let provenance = if g.unreviewed {
+        format!(
+            "{}, {} v{}, unreviewed: not yet approved by a reviewer",
+            g.workspace_path.as_deref().unwrap_or("?"),
+            one_line(&g.claim_key),
+            g.version,
+        )
+    } else {
+        let at = g.promoted_at.as_deref().unwrap_or("?");
+        format!(
+            "{}, {} v{}, ratified {} by {reviewers} reviewer{} ({persons} by a person)",
+            g.workspace_path.as_deref().unwrap_or("?"),
+            one_line(&g.claim_key),
+            g.version,
+            at.get(..10).unwrap_or(at),
+            if reviewers == 1 { "" } else { "s" },
+        )
+    };
     let provenance = cut(&provenance, PROVENANCE_MAX_CHARS);
-    let mut out = format!("- [{}] {} ({provenance})", g.severity, one_line(&g.text));
+    let mark = if g.unreviewed { "[unreviewed] " } else { "" };
+    let mut out = format!(
+        "- {mark}[{}] {} ({provenance})",
+        g.severity,
+        one_line(&g.text)
+    );
     if let Some(others) = g.conflict.as_ref().filter(|c| !c.is_empty()) {
         out.push_str(&format!(" conflicts with {}", others.join(", ")));
     }
@@ -136,6 +152,16 @@ mod tests {
                 (0..14).map(|i| guardrail(i, json!({}))).collect(),
                 json!([]),
             ),
+            set(
+                vec![
+                    guardrail(1, json!({})),
+                    guardrail(
+                        2,
+                        json!({"unreviewed": true, "promoted_at": null, "verdicts": [], "effect_inside": "ask"}),
+                    ),
+                ],
+                json!([]),
+            ),
         ];
         for case in cases {
             let theirs = render_frame(
@@ -151,6 +177,26 @@ mod tests {
             let set: GuardrailSet = serde_json::from_value(case).unwrap();
             assert_eq!(lines(&set), theirs);
         }
+    }
+
+    #[test]
+    fn a_held_guardrail_is_listed_marked_unreviewed_and_names_no_ratification() {
+        let case = set(
+            vec![guardrail(
+                2,
+                json!({"unreviewed": true, "promoted_at": null, "verdicts": [], "effect_inside": "ask"}),
+            )],
+            json!([]),
+        );
+        let set: GuardrailSet = serde_json::from_value(case).unwrap();
+        let out = lines(&set);
+        assert_eq!(out.len(), 1);
+        assert!(out[0].starts_with("- [unreviewed] [must] "), "{out:?}");
+        assert!(
+            out[0].contains("unreviewed: not yet approved by a reviewer"),
+            "{out:?}"
+        );
+        assert!(!out[0].contains("ratified"), "{out:?}");
     }
 
     #[test]

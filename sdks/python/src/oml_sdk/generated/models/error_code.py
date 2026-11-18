@@ -17,6 +17,7 @@ class ErrorCode(StrEnum):
     LIFECYCLE_ERASED = "lifecycle.erased"
     LIMIT_QUOTA = "limit.quota"
     LIMIT_RATE = "limit.rate"
+    MEMORY_NOT_HELD = "memory.not_held"
     NAME_TAKEN = "name.taken"
     OAUTH_ATTACH_REFUSED = "oauth.attach_refused"
     OAUTH_AUTHORIZATION_CODE_INVALID = "oauth.authorization_code_invalid"
