@@ -17914,6 +17914,77 @@ async fn the_skill_set_pages_by_fifty_with_one_digest() {
     assert_eq!(first.set_digest, second.set_digest);
 }
 
+/// A demoted skill is offered to nobody and read by no name, an erased one
+/// neither, and the erasure keeps its name and description, as a title is
+/// kept (ADR-0089 d16; ADR-0005 d3, note of 2026-11-18).
+#[tokio::test]
+async fn a_demoted_or_erased_skill_is_not_offered_and_the_erasure_keeps_its_name_and_description() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = agent(&app, admin, "wanda", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
+    let reader = agent(&app, admin, "rita", crew).await;
+    let deploy = promoted(
+        &app,
+        &writer.value,
+        &reviewer.value,
+        &skill_named("s1", "deploy", "Run the deploy script.", crew),
+    )
+    .await;
+    let lint = promoted(
+        &app,
+        &writer.value,
+        &reviewer.value,
+        &skill_named("s2", "lint", "Run the linter.", crew),
+    )
+    .await;
+    assert_eq!(
+        offered_at(&app, &reader.value, crew, true).await,
+        vec![("deploy".to_owned(), false), ("lint".to_owned(), false)]
+    );
+    app.demote_version(admin.as_str(), deploy)
+        .await
+        .expect("the admin demotes the skill");
+    app.erase_claim(admin.as_str(), lint)
+        .await
+        .expect("the admin erases the skill");
+    for key in [&reader.value, &writer.value] {
+        assert!(
+            offered_at(&app, key, crew, true).await.is_empty(),
+            "neither is offered"
+        );
+        for command in ["deploy", "lint"] {
+            let read = app
+                .skill(
+                    key.as_str(),
+                    Some(&crew.into()),
+                    &oml_app::types::SkillRead {
+                        command: command.to_owned(),
+                        workspace_name: None,
+                        include_own_held: true,
+                    },
+                )
+                .await
+                .expect("the read");
+            assert!(read.is_none(), "{command}");
+        }
+    }
+    let erased = store
+        .memory(boot.tenant_id, lint)
+        .await
+        .expect("read")
+        .expect("the row stays");
+    assert_eq!(erased.status, MemoryStatus::Erased);
+    assert_eq!(erased.body, "");
+    assert_eq!(
+        erased.kind_fields.as_deref(),
+        Some(&skill_fields("lint")),
+        "the name and description stay"
+    );
+}
+
 /// The bootstrap admin key is offered no other key's held skill, and reads
 /// none by name (ADR-0080 d14; ADR-0089 d2: no admin act opens a held
 /// skill).
