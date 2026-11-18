@@ -141,6 +141,7 @@ where
         let fold = MetadataFold::MemoryDemoted {
             memory_id,
             restored: restored.as_ref().map(|r| r.memory_id),
+            reopened: reopened.clone(),
         };
         self.commit_requests(vec![commit_request(event, fold, None)])
             .await?;

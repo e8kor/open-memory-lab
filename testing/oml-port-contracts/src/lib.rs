@@ -30,6 +30,7 @@ use oml_app::domain::oauth::{
     RefreshDecision, RefreshInvalid, RevokedCause, TokenKind, UNUSED_REGISTRATIONS_MAX,
     decide_refresh,
 };
+use oml_app::domain::valid_time::ValidEnd;
 use oml_app::domain::vocab_edges::{ClaimEdge, DerivesFrom, EdgeState, lineage_artifacts};
 use oml_app::domain::{
     ChainHead, EventDraft, EventTime, KeySet, MemoryKind, MemoryStatus, Role, SignedEnvelope,
@@ -5353,13 +5354,14 @@ pub async fn promotion_makes_the_version_the_tip_and_stamps_promoted_at_from_its
     );
 }
 
-/// Commits `lifecycle.demote` of `memory_id`, restoring `restored`, through
-/// the rig.
+/// Commits `lifecycle.demote` of `memory_id`, restoring `restored` and
+/// reopening `reopened`, through the rig.
 async fn demote<S: JournalStore>(
     rig: &mut ChainRig,
     store: &S,
     memory_id: Uuid,
     restored: Option<Uuid>,
+    reopened: Option<(Uuid, Option<ValidEnd>)>,
 ) -> Result<CommitReceipt, StoreError> {
     rig.commit(
         store,
@@ -5367,10 +5369,43 @@ async fn demote<S: JournalStore>(
         json!({
             "artifact_id": memory_id.to_string(),
             "restored_artifact_id": restored.map(|r| r.to_string()),
+            "reopened_artifact_id": reopened.as_ref().map(|(r, _)| r.to_string()),
+            "restored_valid_until": reopened
+                .as_ref()
+                .and_then(|(_, end)| end.as_ref().map(ValidEnd::as_str)),
         }),
         MetadataFold::MemoryDemoted {
             memory_id,
             restored,
+            reopened,
+        },
+        None,
+    )
+    .await
+}
+
+/// Commits the ratification of `successor` over the tip `replaced`, ending
+/// `replaced` at `end` (ADR-0059 d4), through the rig.
+async fn supersede_tip_ending<S: JournalStore>(
+    rig: &mut ChainRig,
+    store: &S,
+    successor: Uuid,
+    replaced: Uuid,
+    end: ValidEnd,
+) -> Result<CommitReceipt, StoreError> {
+    rig.commit(
+        store,
+        event_types::LIFECYCLE_SUPERSEDE,
+        json!({
+            "new_artifact_id": successor.to_string(),
+            "replaces_artifact_id": replaced.to_string(),
+            "replaced_valid_until": end.as_str(),
+        }),
+        MetadataFold::TipSuperseded {
+            successor,
+            replaced,
+            replaced_valid_until: Some(Box::new(end)),
+            approval: rig.approval(),
         },
         None,
     )
@@ -5400,7 +5435,9 @@ async fn erase<S: JournalStore>(
 /// is refused with `TipMoved` and journals nothing. A demotion naming as
 /// restored a version that is not the greatest promoted one below the tip, or
 /// one that is already the tip, or a version that is no longer promoted, and
-/// an erasure that leaves out a version held since, each commit nothing.
+/// an erasure that leaves out a version held since, each commit nothing; so
+/// does a demotion naming as reopened a version, or an end, the store would
+/// not write back (#474).
 pub async fn a_stale_demotion_or_erasure_commits_nothing<S: JournalStore>(store: &S) {
     let mut rig = ChainRig::new(26);
     rig.seed_chain(store, 0).await;
@@ -5433,7 +5470,9 @@ pub async fn a_stale_demotion_or_erasure_commits_nothing<S: JournalStore>(store:
         .await
         .expect("ratify v2");
     hold(&mut rig, store, v3.clone()).await.expect("hold v3");
-    supersede_tip(&mut rig, store, v3.memory_id, v2.memory_id)
+    // v3's ratification ends v2, open until then, at v3's declared start.
+    let ended = ValidEnd::from_stored("2021-01-01".to_owned(), 1_609_459_200_000_000);
+    supersede_tip_ending(&mut rig, store, v3.memory_id, v2.memory_id, ended.clone())
         .await
         .expect("ratify v3");
     let tenant = rig.tenant_id;
@@ -5454,20 +5493,48 @@ pub async fn a_stale_demotion_or_erasure_commits_nothing<S: JournalStore>(store:
     // Read when v1 was the greatest promoted version below v3; v2 has been
     // promoted since.
     let head = store.chain_head(tenant).await.expect("head");
+    let reopen_v2 = Some((v2.memory_id, None));
     refused(
-        demote(&mut rig, store, v3.memory_id, Some(v1.memory_id)).await,
+        demote(
+            &mut rig,
+            store,
+            v3.memory_id,
+            Some(v1.memory_id),
+            reopen_v2.clone(),
+        )
+        .await,
         "a demotion restoring a version below the greatest one",
     );
     // `restored` is the tip already.
     refused(
-        demote(&mut rig, store, v2.memory_id, Some(v3.memory_id)).await,
+        demote(&mut rig, store, v2.memory_id, Some(v3.memory_id), None).await,
         "a demotion restoring the tip",
     );
     // Read when v3 had no promoted version below it.
     refused(
-        demote(&mut rig, store, v3.memory_id, None).await,
+        demote(&mut rig, store, v3.memory_id, None, reopen_v2.clone()).await,
         "a demotion of the tip restoring nothing over a promoted version",
     );
+    // The sixth: what the demotion read of the version it reopens is stale.
+    // Read before v3's ratification ended v2, it names no reopening; read
+    // with another end, or naming a version v3 does not replace, it names
+    // one the store would not write back (#474).
+    for (reopened, what) in [
+        (None, "a demotion naming no reopening over a ratified end"),
+        (
+            Some((v2.memory_id, Some(ended.clone()))),
+            "a demotion naming an end v2 did not have before",
+        ),
+        (
+            Some((v1.memory_id, None)),
+            "a demotion reopening a version it does not replace",
+        ),
+    ] {
+        refused(
+            demote(&mut rig, store, v3.memory_id, Some(v2.memory_id), reopened).await,
+            what,
+        );
+    }
     assert_eq!(
         store.chain_head(tenant).await.expect("head"),
         head,
@@ -5483,13 +5550,31 @@ pub async fn a_stale_demotion_or_erasure_commits_nothing<S: JournalStore>(store:
         assert_eq!(m.is_tip, tip, "{id} keeps its tip");
     }
 
-    // The fresh demotion commits; replayed, it finds v3 no longer promoted.
-    demote(&mut rig, store, v3.memory_id, Some(v2.memory_id))
-        .await
-        .expect("demote v3, restoring v2");
+    assert_eq!(
+        read(v2.memory_id).await.valid.until,
+        Some(ended.clone()),
+        "a lost compare-and-set leaves v2's ratified end"
+    );
+
+    // The fresh demotion commits and writes v2's earlier, open end back;
+    // replayed, it finds v3 no longer promoted.
+    demote(
+        &mut rig,
+        store,
+        v3.memory_id,
+        Some(v2.memory_id),
+        reopen_v2.clone(),
+    )
+    .await
+    .expect("demote v3, restoring v2");
+    assert_eq!(
+        read(v2.memory_id).await.valid.until,
+        None,
+        "v2 is open again"
+    );
     let head = store.chain_head(tenant).await.expect("head");
     refused(
-        demote(&mut rig, store, v3.memory_id, Some(v2.memory_id)).await,
+        demote(&mut rig, store, v3.memory_id, Some(v2.memory_id), reopen_v2).await,
         "a demotion of a version already demoted",
     );
     assert_eq!(store.chain_head(tenant).await.expect("head"), head);
@@ -14192,7 +14277,7 @@ pub async fn an_erased_or_demoted_documents_passages_are_never_recalled<S: Journ
         assert!(found("wombat", kind).await.contains(&demoted), "{kind:?}");
         assert!(found("quokka", kind).await.contains(&erased), "{kind:?}");
     }
-    demote(&mut rig, store, demoted, None)
+    demote(&mut rig, store, demoted, None, None)
         .await
         .expect("demote");
     erase(&mut rig, store, vec![erased]).await.expect("erase");

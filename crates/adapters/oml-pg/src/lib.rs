@@ -3869,14 +3869,18 @@ async fn supersede_tip(
 /// demotes `memory_id` only while it is promoted and, with `restored`, the
 /// tip whose greatest promoted version below is `restored`, not the tip;
 /// without, while it is not the tip or no promoted version lies below it.
-/// A zero row count refuses the commit, which rolls back. The postings and
-/// the similarity keys follow the state through their triggers; nothing is
-/// deleted (R4).
+/// A zero row count refuses the commit, which rolls back. `reopened` is
+/// compare-and-set the same way (#474): the version `memory_id` replaces,
+/// still promoted and ended by a ratification, locked, must be the one named
+/// with the end named, or none must exist when none is named. The postings
+/// and the similarity keys follow the state through their triggers; nothing
+/// is deleted (R4).
 async fn demote_memory(
     tx: &mut Transaction<'_, Postgres>,
     tenant_id: Uuid,
     memory_id: Uuid,
     restored: Option<Uuid>,
+    reopened: Option<&(Uuid, Option<ValidEnd>)>,
 ) -> Result<(), StoreError> {
     let moved = || StoreError::TipMoved {
         replaced: memory_id,
@@ -3909,21 +3913,43 @@ async fn demote_memory(
     }
     // The version it replaced, still promoted, gets back the end it had
     // before this version's ratification, whichever version is the tip
-    // (0058; ADR-0089 d16, note of 2026-11-18).
-    sqlx::query(
-        "UPDATE memories r SET valid_until = r.valid_until_before, \
-                valid_until_us = r.valid_until_before_us, valid_until_ratified = false, \
-                valid_until_before = NULL, valid_until_before_us = NULL \
-           FROM memories d \
+    // (0058; ADR-0089 d16, note of 2026-11-18). Locked and compared with
+    // what the demotion read and signed (#474).
+    let reopenable: Option<(Uuid, Option<String>, Option<i64>)> = sqlx::query_as(
+        "SELECT r.id, r.valid_until_before, r.valid_until_before_us \
+           FROM memories r, memories d \
           WHERE d.tenant_id = $1 AND d.id = $2 \
             AND r.tenant_id = $1 AND r.id = d.replaces_artifact_id \
-            AND r.status = 'promoted' AND r.valid_until_ratified",
+            AND r.status = 'promoted' AND r.valid_until_ratified \
+          FOR UPDATE OF r",
     )
     .bind(tenant_id)
     .bind(memory_id)
-    .execute(&mut **tx)
+    .fetch_optional(&mut **tx)
     .await
     .map_err(backend)?;
+    let reopenable = reopenable.map(|(r, text, micros)| {
+        (
+            r,
+            text.zip(micros).map(|(t, m)| ValidEnd::from_stored(t, m)),
+        )
+    });
+    if reopenable.as_ref() != reopened {
+        return Err(moved());
+    }
+    if let Some((r, _)) = reopened {
+        sqlx::query(
+            "UPDATE memories SET valid_until = valid_until_before, \
+                    valid_until_us = valid_until_before_us, valid_until_ratified = false, \
+                    valid_until_before = NULL, valid_until_before_us = NULL \
+              WHERE tenant_id = $1 AND id = $2",
+        )
+        .bind(tenant_id)
+        .bind(r)
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+    }
     if let Some(restored) = restored {
         // `memories_served_tip` admits it: the demoted version left the tip
         // in the statement above.
@@ -5075,8 +5101,9 @@ async fn apply_fold(
         MetadataFold::MemoryDemoted {
             memory_id,
             restored,
+            reopened,
         } => {
-            demote_memory(tx, tenant_id, memory_id, restored).await?;
+            demote_memory(tx, tenant_id, memory_id, restored, reopened.as_ref()).await?;
         }
         MetadataFold::ClaimErased { memory_ids } => {
             erase_claim(tx, tenant_id, &memory_ids).await?;

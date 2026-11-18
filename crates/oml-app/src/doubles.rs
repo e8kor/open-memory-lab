@@ -2200,6 +2200,7 @@ fn apply_fold(
         MetadataFold::MemoryDemoted {
             memory_id,
             restored,
+            reopened,
         } => {
             // The compare-and-set PostgreSQL's fold makes (ADR-0089 d16).
             let Some(demoted) = state.memories.get(&memory_id).cloned() else {
@@ -2228,6 +2229,18 @@ fn apply_fold(
                     }
                     None => !demoted.is_tip || greatest_below.is_none(),
                 };
+            // What the demotion reopens, compare-and-set too (#474): the
+            // version it replaces, still promoted, with the end it had
+            // before a ratification ended it.
+            let reopenable = demoted.replaces.and_then(|r| {
+                state
+                    .memories
+                    .get(&r)
+                    .filter(|m| m.status == MemoryStatus::Promoted)
+                    .and_then(|_| state.valid_until_before.get(&r))
+                    .map(|before| (r, before.clone()))
+            });
+            let cas = cas && reopenable == reopened;
             if !cas {
                 return Err(StoreError::TipMoved {
                     replaced: memory_id,
@@ -2240,15 +2253,11 @@ fn apply_fold(
             // The version it replaced, still promoted, gets back the end it
             // had before this version's ratification, tip or not (ADR-0089
             // d16, note of 2026-11-18).
-            if let Some(replaced) = demoted.replaces
-                && state
-                    .memories
-                    .get(&replaced)
-                    .is_some_and(|m| m.status == MemoryStatus::Promoted)
-                && let Some(before) = state.valid_until_before.remove(&replaced)
-                && let Some(memory) = state.memories.get_mut(&replaced)
-            {
-                memory.valid.until = before;
+            if let Some((replaced, before)) = reopened {
+                state.valid_until_before.remove(&replaced);
+                if let Some(memory) = state.memories.get_mut(&replaced) {
+                    memory.valid.until = before;
+                }
             }
             if let Some(r) = restored
                 && let Some(memory) = state.memories.get_mut(&r)

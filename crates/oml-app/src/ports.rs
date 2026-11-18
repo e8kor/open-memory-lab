@@ -397,9 +397,16 @@ pub enum MetadataFold {
     /// claim lies below it. A lost compare-and-set writes nothing and
     /// refuses with [`StoreError::TipMoved`] naming `memory_id`. The bytes
     /// stay (ADR-0089 d16; ADR-0009 d5; ADR-0001 d4).
+    ///
+    /// `reopened` is compare-and-set too (#474): with `Some((r, end))`, `r`
+    /// is the version `memory_id` replaces, still promoted, whose end a
+    /// ratification set and whose end before it is `end`, which the fold
+    /// writes back; with `None`, no such version exists. So the signed
+    /// `lifecycle.demote` never names an end the store did not write.
     MemoryDemoted {
         memory_id: Uuid,
         restored: Option<Uuid>,
+        reopened: Option<(Uuid, Option<oml_domain::valid_time::ValidEnd>)>,
     },
     /// `lifecycle.erase`: every version of one claim, `memory_ids`, becomes
     /// `erased`, no longer the tip, its body and every column derived from

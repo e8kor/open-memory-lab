@@ -827,6 +827,166 @@ pub async fn demoting_a_version_below_the_tip_restores_the_end_its_ratification_
     assert!(replaced.valid.until.is_none(), "v1's end is open again");
 }
 
+/// Demotes `id` and checks the signed `lifecycle.demote` against the stored
+/// rows (#474): the version it names as reopened carries the end the event
+/// names, and with none named the version the demoted one replaces keeps
+/// the end it had.
+async fn demote_and_check_the_event<S: JournalStore + Clone>(
+    w: &AsOfWorld<S>,
+    store: &S,
+    id: Uuid,
+) -> (Option<Uuid>, Option<Uuid>) {
+    let demoted = store
+        .memory(w.tenant, id)
+        .await
+        .expect("read")
+        .expect("row");
+    let replaced_before = match demoted.replaces {
+        Some(r) => store.memory(w.tenant, r).await.expect("read"),
+        None => None,
+    };
+    let demotion = w
+        .app
+        .demote_version(w.admin.as_str(), id)
+        .await
+        .expect("demote");
+    let event = store
+        .events_range(w.tenant, demotion.journal_seq, 1)
+        .await
+        .expect("range")
+        .remove(0)
+        .envelope;
+    assert_eq!(event.event_type, "lifecycle.demote");
+    let p = &event.payload;
+    assert_eq!(p["artifact_id"], id.to_string());
+    let restored = demotion.restored.map(|r| r.artifact_id);
+    assert_eq!(
+        p["restored_artifact_id"].as_str(),
+        restored.map(|r| r.to_string()).as_deref(),
+        "the event names the version the store made the tip"
+    );
+    if let Some(r) = restored {
+        assert!(
+            store
+                .memory(w.tenant, r)
+                .await
+                .expect("read")
+                .expect("row")
+                .is_tip
+        );
+    }
+    let reopened = p["reopened_artifact_id"]
+        .as_str()
+        .map(|s| Uuid::parse_str(s).expect("a uuid"));
+    match reopened {
+        Some(r) => {
+            assert_eq!(Some(r), demoted.replaces, "it reopens what it replaces");
+            let row = store.memory(w.tenant, r).await.expect("read").expect("row");
+            assert_eq!(
+                row.valid.until.as_ref().map(|e| e.as_str().to_owned()),
+                p["restored_valid_until"].as_str().map(ToOwned::to_owned),
+                "the stored end is the end the event names"
+            );
+            assert_eq!(
+                store.valid_until_before(w.tenant, r).await.expect("read"),
+                None,
+                "the end before the ratification was written back"
+            );
+        }
+        None => {
+            assert!(p["restored_valid_until"].is_null());
+            if let Some(before) = replaced_before {
+                let after = store
+                    .memory(w.tenant, before.memory_id)
+                    .await
+                    .expect("read")
+                    .expect("row");
+                assert_eq!(after.valid, before.valid, "no end was written back");
+            }
+        }
+    }
+    let row = store
+        .memory(w.tenant, id)
+        .await
+        .expect("read")
+        .expect("row");
+    assert_eq!(row.status, oml_app::domain::MemoryStatus::Demoted);
+    (restored, reopened)
+}
+
+/// `the_demote_event_names_what_the_store_wrote_whichever_of_two_versions_is_demoted_first`
+/// (#474): `v2` ends the open `v1` in 2020 and `v3` ends `v2` in 2021.
+/// Demoting `v2` then `v3`, `v2` reopens `v1` and `v3` reopens nothing, `v2`
+/// being demoted; demoting `v3` then `v2`, each reopens the version below it
+/// and restores it. Each event names what its commit wrote.
+pub async fn the_demote_event_names_what_the_store_wrote_in_either_order<S, F, Fut>(
+    make: F,
+    searches: &[&str],
+) where
+    S: JournalStore + Clone,
+    F: Fn() -> Fut,
+    Fut: core::future::Future<Output = S>,
+{
+    for v2_first in [true, false] {
+        let store = make().await;
+        let w = AsOfWorld::new(store.clone(), searches).await;
+        let v1 = w.promote(w.home, "shift", "the shift starts at six").await;
+        let v2 = w
+            .supersede_from(
+                v1,
+                1,
+                "the shift starts at seven",
+                false,
+                Some("2020-01-01"),
+            )
+            .await;
+        let v3 = w
+            .supersede_from(
+                v2,
+                2,
+                "the shift starts at eight",
+                false,
+                Some("2021-01-01"),
+            )
+            .await;
+        if v2_first {
+            assert_eq!(
+                demote_and_check_the_event(&w, &store, v2).await,
+                (None, Some(v1)),
+                "v2, below the tip, reopens v1"
+            );
+            assert_eq!(
+                demote_and_check_the_event(&w, &store, v3).await,
+                (Some(v1), None),
+                "v3 restores v1 and reopens nothing, v2 being demoted"
+            );
+        } else {
+            assert_eq!(
+                demote_and_check_the_event(&w, &store, v3).await,
+                (Some(v2), Some(v2)),
+                "v3 restores and reopens v2"
+            );
+            assert_eq!(
+                demote_and_check_the_event(&w, &store, v2).await,
+                (Some(v1), Some(v1)),
+                "v2 restores and reopens v1"
+            );
+        }
+        let v1_row = store.memory(w.tenant, v1).await.expect("read").expect("v1");
+        assert!(
+            v1_row.is_tip && v1_row.valid.until.is_none(),
+            "v1 serves, open"
+        );
+        for &search in &w.searches {
+            assert_eq!(
+                w.hits(&w.reader, "shift starts", search, None, false).await,
+                one(v1),
+                "{search}: v1 is today's tip"
+            );
+        }
+    }
+}
+
 /// `a_retired_claim_serves_its_earlier_tip_before_the_retirement_and_nothing_after`.
 pub async fn a_retired_claim_serves_its_earlier_tip_before_the_retirement<
     S: JournalStore + Clone,
@@ -1205,4 +1365,5 @@ where
         searches,
     )
     .await;
+    the_demote_event_names_what_the_store_wrote_in_either_order(&make, searches).await;
 }

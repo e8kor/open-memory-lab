@@ -314,7 +314,9 @@ Decided, not built.
       successor was the tip or a version below it: recall does not hide a restored tip as
       expired, and an as-of read in the demoted version's tenure serves the version below it.
       `lifecycle.demote` names that version and its end (`reopened_artifact_id`,
-      `restored_valid_until`), so a rebuild reads them.
+      `restored_valid_until`), so a rebuild reads them. Both stores compare-and-set the pair the
+      demotion read, as they do its restored tip, and refuse a stale one as a moved tip, so the
+      signed event never names an end the store did not write (#474).
       Each store keeps that earlier end when a ratification replaces it: PostgreSQL in
       `memories.valid_until_ratified` and `valid_until_before` (migration 0058). A version a
       ratification ended before 0058 keeps the end it has when restored. The law
