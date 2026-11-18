@@ -544,3 +544,8 @@ const AS_OF_SEARCHES: &[&str] = &[
 async fn upload_sessions_double_passes_the_suite() {
     contracts::uploads::run_upload_suite(|| async { MemStore::new() }).await;
 }
+
+#[tokio::test]
+async fn workspace_export_double_passes_the_suite() {
+    contracts::exports::run_export_suite(|| async { MemStore::new() }).await;
+}

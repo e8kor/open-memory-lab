@@ -68,6 +68,7 @@ Histograms use bucket bounds that start at 1 ms and double sixteen times, to 32.
 | `oml_upload_stored_bytes` | gauge | none | Bytes the object store held under `uploads/` at the last sweep. |
 | `oml_upload_unswept` | gauge | none | Upload sessions whose key is shredded and whose parts remain, at the last sweep. |
 | `oml_upload_sweep_failures_total` | counter | none | Upload sweep steps that failed since start; the next sweep, 5 minutes on, retries. |
+| `oml_exports_total` | counter | none | Workspace bundles served by `POST /v2/workspaces/{workspace}/exports`, each journalled as `workspace.exported` ([ADR-0084](../adr/ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) d15). |
 | `oml_memories_unrecalled` | gauge | `promoted_for` | Served memories no recall in the last 30 days returned, by time since approval (`7d`, `30d`, `90d`, `older`). Refreshed every 10 minutes. |
 
 ### Recall telemetry

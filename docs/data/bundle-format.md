@@ -14,8 +14,10 @@ with [age](https://age-encryption.org) to one or more named recipients.
 | Part | State |
 |---|---|
 | The format: layout, manifest, signature, encryption, verification, the import plan (crate `oml-bundle`) | built |
-| `POST /v2/workspaces/{workspace}/exports`, `POST /v2/imports`, `GET /v2/imports/{id}` | designed, not built ([#425](https://github.com/e8kor/open-memory-lab/issues/425), [#426](https://github.com/e8kor/open-memory-lab/issues/426)) |
-| `oml workspaces export` and `oml workspaces import` | designed, not built |
+| `POST /v2/workspaces/{workspace}/exports` in `history` mode | built ([#425](https://github.com/e8kor/open-memory-lab/issues/425)) |
+| `release` mode and `since` | designed, not built: refused `request.validation`, `details.reason` `releases_unbuilt`, until releases are built |
+| `oml workspaces export` | built |
+| `POST /v2/imports`, `GET /v2/imports/{id}`, `oml workspaces import` | designed, not built ([#426](https://github.com/e8kor/open-memory-lab/issues/426)) |
 | Export and Import on the console's personal side | designed, not built |
 
 ## Layout
@@ -110,6 +112,11 @@ signatures. The first failure refuses the whole bundle.
 | `bundle.signature_unexpected` | the manifest verifies under a key other than `--expect-key` |
 | `bundle.unencrypted` | an export to no recipient or to a recipient that does not parse, or an import of a file that is not age-encrypted |
 | `bundle.decrypt_failed` | the identity does not parse or is not a recipient of the file, the file is passphrase-encrypted, or its ciphertext does not authenticate |
+
+A `history` export is assembled in the server's memory and walks the tenant's journal once for
+the exported versions' submission events and verdicts, so its cost grows with the chain and the
+subtree. Its bytes are counted on the exporter's `exports` meter. Throughput and a per-day export
+limit are unmeasured (ADR-0084 d15).
 
 The size limits follow the target's quota until measurement sets them. The CLI's defaults are
 1 GiB unpacked, 100,000 entries and 64 MiB per entry.

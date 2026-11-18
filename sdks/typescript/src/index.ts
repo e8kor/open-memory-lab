@@ -34,6 +34,7 @@ export {
   ApiError,
   type ApiErrorFields,
   AuthError,
+  BundleError,
   ConfigError,
   ExportError,
   FAMILIES,

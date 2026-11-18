@@ -209,6 +209,50 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         timed("upload_stats", self.inner.upload_stats(tenant_id))
     }
 
+    fn export_policy(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<oml_app::domain::export::ExportPolicy, StoreError>> + Send
+    {
+        timed("export_policy", self.inner.export_policy(tenant_id))
+    }
+
+    fn export_allowed(
+        &self,
+        tenant_id: Uuid,
+        workspace_id: Uuid,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<bool, StoreError>> + Send {
+        timed(
+            "export_allowed",
+            self.inner.export_allowed(tenant_id, workspace_id, at),
+        )
+    }
+
+    fn export_versions(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+        own_keys: &[Uuid],
+    ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send {
+        timed(
+            "export_versions",
+            self.inner.export_versions(tenant_id, nodes, own_keys),
+        )
+    }
+
+    fn exported_bytes(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send {
+        timed(
+            "exported_bytes",
+            self.inner.exported_bytes(tenant_id, user_root, at),
+        )
+    }
+
     fn user_usage(
         &self,
         tenant_id: Uuid,

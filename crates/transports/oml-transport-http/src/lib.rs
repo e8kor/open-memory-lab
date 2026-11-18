@@ -20,6 +20,7 @@
 
 mod console;
 pub mod error;
+mod exports;
 mod federation;
 pub mod mcp;
 mod metering;
@@ -133,6 +134,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/workspaces/{workspace}/crew"),
     ("POST", "/v2/workspaces/{workspace}/mode"),
     ("POST", "/v2/workspaces/{workspace}/federation"),
+    ("POST", "/v2/workspaces/{workspace}/exports"),
     ("POST", "/v2/workspaces/{workspace}/transitions"),
     (
         "POST",
@@ -388,6 +390,7 @@ where
             ("POST", "/v2/workspaces/{workspace}/federation") => {
                 post(Self::set_workspace_federation)
             }
+            ("POST", "/v2/workspaces/{workspace}/exports") => post(Self::export_workspace_route),
             ("POST", "/v2/workspaces/{workspace}/transitions") => post(Self::propose_transition),
             ("POST", "/v2/workspaces/{workspace}/transitions/{transition_id}/ratify") => {
                 post(Self::ratify_transition)

@@ -11,6 +11,7 @@
 #![forbid(unsafe_code)]
 
 pub mod as_of;
+pub mod exports;
 pub mod federation;
 pub mod uploads;
 pub mod user_roots;

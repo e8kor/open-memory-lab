@@ -10,7 +10,7 @@ answers: what a workspace export carries and what it never carries; the bundle's
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its four questions decided at their
 recommendations and every other default as drafted · proposed the same day · the "unless its source server is
 pinned" of its file name is ADR-0088, which is deferred · the format built as the crate `oml-bundle`, with its readings and the
-operator's R1 decision of 2026-11-17 and the integration readings I1–I4 recorded at the end of this record; the routes and commands of d15 are not built
+operator's R1 decision of 2026-11-17 and the integration readings I1–I9 recorded at the end of this record; `history`-mode export (the route and `oml workspaces export`) is built (#425), and the import routes and commands of d15 are not
 
 **Release:** not scheduled; after ADR-0085, whose release manifest `release` mode exports. A
 trusted source server, the "unless" of the title, is the deferred ADR-0088.

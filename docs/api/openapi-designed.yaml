@@ -5,7 +5,7 @@ info:
   summary: >-
     The designed annex of the OML HTTP API: decided, not routed. Nothing is generated from it.
   description: >-
-    Status: designed, not built. This annex holds under paths the 54 operations the design
+    Status: designed, not built. This annex holds under paths the 50 operations the design
     decides and the server does not route, and under x-oml-designed-fields, keyed by
     operationId, the designed fields of operations that openapi.yaml serves (ADR-0039 d9). No
     SDK and no server code is generated from it, and a call to any operation here answers 404
@@ -33,7 +33,6 @@ tags:
   - name: keys
   - name: bans
   - name: simulations
-  - name: exports
   - name: settings
   - name: tenants
   - name: web
@@ -1025,108 +1024,6 @@ paths:
         '415': { $ref: 'openapi.yaml#/components/responses/UnsupportedMedia' }
         default: { $ref: 'openapi.yaml#/components/responses/Error' }
 
-  /v2/exports:
-    get:
-      tags: [exports]
-      operationId: listExports
-      summary: Export jobs and their states.
-      description: 'Requires: admin key role.'
-      parameters:
-        - { $ref: 'openapi.yaml#/components/parameters/Limit' }
-        - { $ref: 'openapi.yaml#/components/parameters/Cursor' }
-      responses:
-        '200':
-          description: One page of jobs.
-          headers:
-            X-Request-Id: { $ref: 'openapi.yaml#/components/headers/XRequestId' }
-          content:
-            application/json:
-              example:
-                items:
-                - export_id: exp_01JB2YD5F7H9K2M4P6R8TA1CWE
-                  kind: evidence
-                  state: done
-                  requested_at: '2026-10-29T16:30:00Z'
-                  finished_at: '2026-10-29T16:34:10Z'
-                  bundle_bytes: 7340032
-                next_cursor: null
-              schema: { $ref: '#/components/schemas/ExportPage' }
-        default: { $ref: 'openapi.yaml#/components/responses/Error' }
-    post:
-      tags: [exports]
-      operationId: createExport
-      summary: Start an async export job — the signed evidence bundle, or the digest-only chain stream for client-side verification.
-      description: 'Requires: admin key role. The export act is itself journalled; simulations are excluded unless asked for and then listed separately.'
-      parameters: [{ $ref: 'openapi.yaml#/components/parameters/IdempotencyKey' }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            example:
-              kind: evidence
-              from_seq: 1
-            schema: { $ref: '#/components/schemas/ExportRequest' }
-      responses:
-        '202':
-          description: Job accepted.
-          headers:
-            X-Request-Id: { $ref: 'openapi.yaml#/components/headers/XRequestId' }
-          content:
-            application/json:
-              example:
-                export_id: exp_01JB2YD5F7H9K2M4P6R8TA1CWE
-                kind: evidence
-                state: running
-                requested_at: '2026-10-29T16:30:00Z'
-                finished_at: null
-                bundle_bytes: null
-              schema: { $ref: '#/components/schemas/ExportJob' }
-        '415': { $ref: 'openapi.yaml#/components/responses/UnsupportedMedia' }
-        default: { $ref: 'openapi.yaml#/components/responses/Error' }
-
-  /v2/exports/{export_id}:
-    get:
-      tags: [exports]
-      operationId: getExport
-      summary: Job state — running, done or failed.
-      description: 'Requires: admin key role.'
-      parameters: [{ name: export_id, in: path, required: true, schema: { type: string } }]
-      responses:
-        '200':
-          description: The job.
-          headers:
-            X-Request-Id: { $ref: 'openapi.yaml#/components/headers/XRequestId' }
-          content:
-            application/json:
-              example:
-                export_id: exp_01JB2YD5F7H9K2M4P6R8TA1CWE
-                kind: evidence
-                state: done
-                requested_at: '2026-10-29T16:30:00Z'
-                finished_at: '2026-10-29T16:34:10Z'
-                bundle_bytes: 7340032
-              schema: { $ref: '#/components/schemas/ExportJob' }
-        '404': { $ref: 'openapi.yaml#/components/responses/NotFound' }
-        default: { $ref: 'openapi.yaml#/components/responses/Error' }
-
-  /v2/exports/{export_id}/bundle:
-    get:
-      tags: [exports]
-      operationId: downloadExportBundle
-      summary: The signed bundle; export.not_ready before the job is done.
-      description: 'Requires: admin key role.'
-      parameters: [{ name: export_id, in: path, required: true, schema: { type: string } }]
-      responses:
-        '200':
-          description: The signed bundle.
-          headers:
-            X-Request-Id: { $ref: 'openapi.yaml#/components/headers/XRequestId' }
-          content:
-            application/octet-stream:
-              schema: { type: string, format: binary }
-        '409': { $ref: 'openapi.yaml#/components/responses/Conflict' }
-        default: { $ref: 'openapi.yaml#/components/responses/Error' }
-
   /v2/settings:
     get:
       tags: [settings]
@@ -1592,32 +1489,6 @@ components:
       required: [items, next_cursor]
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/Simulation' } }
-        next_cursor: { type: [string, 'null'] }
-
-    ExportRequest:
-      type: object
-      required: [kind]
-      properties:
-        kind: { type: string, enum: [evidence, chain], description: "Signed evidence bundle, or digest-only chain stream for client-side verification." }
-        from_seq: { type: integer }
-        include_simulations: { type: boolean, default: false, description: "When true, simulation rows are listed separately by simulation_id." }
-
-    ExportJob:
-      type: object
-      required: [export_id, kind, state]
-      properties:
-        export_id: { type: string }
-        kind: { type: string, enum: [evidence, chain] }
-        state: { type: string, enum: [running, done, failed] }
-        requested_at: { type: string, format: date-time }
-        finished_at: { type: [string, 'null'], format: date-time }
-        bundle_bytes: { type: [integer, 'null'] }
-
-    ExportPage:
-      type: object
-      required: [items, next_cursor]
-      properties:
-        items: { type: array, items: { $ref: '#/components/schemas/ExportJob' } }
         next_cursor: { type: [string, 'null'] }
 
     SettingsDocument:

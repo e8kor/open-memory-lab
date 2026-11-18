@@ -787,6 +787,40 @@ paths:
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
+  /v2/workspaces/{workspace}/exports:
+    post:
+      tags: [workspaces]
+      operationId: exportWorkspace
+      summary: A person exports a workspace's subtree as a signed bundle encrypted to named age recipients (ADR-0084).
+      description: 'Requires: a key used_by person that is not an admin key and carries no profile, with reader effective access on every node of the subtree. Any other key is refused before any lookup with access.verb_ceiling, details.reason export_person_only. No recipient, or one that is not an age X25519 public key, is bundle.unencrypted, checked before anything is read. The answer is the bundle, format oml-bundle/1, as a binary age file (docs/data/bundle-format.md). history mode carries every version ever promoted and the exporter''s own held, rejected, demoted and withdrawn versions, never another key''s; an erased version travels as a marker. mode release, release and since are refused request.validation, details.reason releases_unbuilt, until releases are built; history is the default in a user root and must be named elsewhere. The tenant''s export policy (own_root by default) refuses with export.disabled; a subtree node the key cannot read refuses the whole export with export.not_readable. Journals workspace.exported with the manifest digest, the counts and the recipients'' fingerprints, and counts the bytes on the exports meter. Each call exports again under a new salt, so it takes no Idempotency-Key. Since v0.8.2.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { $ref: '#/components/parameters/WorkspaceId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              mode: history
+              recipients: [age1c7uc8xfckg2ntq76m2tsazw6xqsm9awvg8v4f4g57xqgcvs3e5pq9963un]
+            schema: { $ref: '#/components/schemas/ExportRequest' }
+      responses:
+        '200':
+          description: The encrypted bundle.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+            OML-Manifest-Digest:
+              description: The sha256 digest of the bundle's manifest.json, as workspace.exported journals it.
+              schema: { type: string }
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        default: { $ref: '#/components/responses/Error' }
+
   /v2/crews:
     get:
       tags: [crews]
@@ -3773,6 +3807,9 @@ components:
         - upload.session_limit
         - upload.tenant_limit
         - upload.storage_failed
+        - bundle.unencrypted
+        - export.disabled
+        - export.not_readable
         - lifecycle.erased
         - name.taken
         - limit.rate
@@ -3782,6 +3819,22 @@ components:
         - settings.invalid
         - system.internal
         - system.unavailable
+
+    ExportRequest:
+      type: object
+      additionalProperties: false
+      required: [recipients]
+      properties:
+        mode:
+          type: string
+          enum: [history, release]
+          description: history is the default in a user root; release is refused until releases are built.
+        recipients:
+          type: array
+          items: { type: string, description: 'An age X25519 public key, age1...' }
+          description: At least one; the bundle is encrypted to each.
+        release: { type: string, description: A release label; refused until releases are built. }
+        since: { type: string, description: A base release label; refused until releases are built. }
 
     ErrorEnvelope:
       type: object

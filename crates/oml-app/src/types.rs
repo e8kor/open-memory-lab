@@ -3382,6 +3382,33 @@ pub enum AppError {
     /// (ADR-0085 d16).
     #[error("the key cannot be linked or unlinked: {reason} (ADR-0085 d16)")]
     KeyLinkRefused { reason: &'static str },
+    /// Only a key used by a person exports, never an admin, agent or
+    /// service key (ADR-0084 d10, reading I1; `access.verb_ceiling`,
+    /// `details.reason: export_person_only`).
+    #[error("a workspace export is a person's act: a {} key used by {} is refused (ADR-0084 d10, access.verb_ceiling)", .role.as_str(), .used_by.as_str())]
+    ExportPersonOnly { role: Role, used_by: UsedBy },
+    /// The tenant's export policy refuses this export (ADR-0084 d10,
+    /// reading I2; `export.disabled`): `off`, or, with reason `own_root`, a
+    /// workspace outside the exporter's own root with no allowance in force.
+    #[error("the tenant's export policy refuses this export (ADR-0084 d10, export.disabled)")]
+    ExportDisabled { reason: Option<&'static str> },
+    /// A node of the subtree the exporter cannot read refuses the whole
+    /// export (ADR-0084 d10; `export.not_readable`).
+    #[error(
+        "a workspace of the subtree is not readable by this key (ADR-0084 d10, export.not_readable)"
+    )]
+    ExportNotReadable,
+    /// An export to no recipient, or to one that is not an age X25519 public
+    /// key, checked before anything is read (ADR-0084 d5; `bundle.unencrypted`).
+    #[error("{detail} (ADR-0084 d5, bundle.unencrypted)")]
+    BundleUnencrypted { detail: String },
+    /// `mode`, `release` or `since` an export cannot take (ADR-0084 d2,
+    /// reading I3; `request.validation`).
+    #[error("{field}: {reason} (ADR-0084 d2, request.validation)")]
+    ExportModeRefused {
+        field: &'static str,
+        reason: &'static str,
+    },
     /// An upload act refused under one of the ten `upload.*` codes
     /// (ADR-0004 d3, as amended 2026-11-17); nothing is journalled.
     #[error("{0} (ADR-0004 d3)")]

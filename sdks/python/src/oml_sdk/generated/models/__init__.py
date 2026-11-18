@@ -102,6 +102,8 @@ from .error_envelope import ErrorEnvelope
 from .error_envelope_error import ErrorEnvelopeError
 from .error_envelope_error_details import ErrorEnvelopeErrorDetails
 from .events_page import EventsPage
+from .export_request import ExportRequest
+from .export_request_mode import ExportRequestMode
 from .export_web_person_response_200 import ExportWebPersonResponse200
 from .export_web_person_response_200_keys_item import ExportWebPersonResponse200KeysItem
 from .export_web_person_response_200_memories_item import (
@@ -474,6 +476,8 @@ __all__ = (
     "ErrorEnvelopeError",
     "ErrorEnvelopeErrorDetails",
     "EventsPage",
+    "ExportRequest",
+    "ExportRequestMode",
     "ExportWebPersonResponse200",
     "ExportWebPersonResponse200KeysItem",
     "ExportWebPersonResponse200MemoriesItem",

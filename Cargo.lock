@@ -4157,8 +4157,10 @@ dependencies = [
 name = "oml-app"
 version = "0.7.3"
 dependencies = [
+ "bech32",
  "chacha20poly1305",
  "ed25519-dalek",
+ "oml-bundle",
  "oml-domain",
  "serde",
  "serde_json",
@@ -4358,6 +4360,7 @@ version = "0.7.3"
 dependencies = [
  "oml-app",
  "serde_json",
+ "sha2 0.10.9",
  "tokio",
  "uuid",
 ]
@@ -4408,9 +4411,11 @@ name = "oml-server-lead"
 version = "0.7.3"
 dependencies = [
  "axum",
+ "bech32",
  "getrandom 0.2.17",
  "hex",
  "oml-app",
+ "oml-bundle",
  "oml-fetch",
  "oml-format",
  "oml-guardrail",

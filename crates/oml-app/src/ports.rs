@@ -435,6 +435,14 @@ pub enum MetadataFold {
     /// `memory.admin_read`: an admin key read memories' text; nothing
     /// changes but the journal (ADR-0045 d21).
     AdminRead,
+    /// `workspace.exported`: the export's bytes counted on the `exports`
+    /// meter of the exporter's account on the event's UTC day; `None` for a
+    /// key of no account, whose export is journalled and counted nowhere
+    /// (ADR-0084 d10).
+    WorkspaceExported {
+        user_root: Option<Uuid>,
+        bytes: u64,
+    },
     /// `web.quota_set`: one person's override of one quota, or with `None`
     /// its return to the deployment's default (ADR-0068 d5).
     QuotaSet {
@@ -986,6 +994,44 @@ pub trait JournalStore: Retriever + Send + Sync {
         &self,
         tenant_id: Uuid,
     ) -> impl Future<Output = Result<crate::types::UploadStats, StoreError>> + Send;
+
+    /// The tenant's export policy (ADR-0084 d10): `own_root` until an admin
+    /// sets another.
+    fn export_policy(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<oml_domain::export::ExportPolicy, StoreError>> + Send;
+
+    /// Whether an admin's allowance in force at `at` lets `workspace_id` be
+    /// exported under `own_root` (ADR-0084 d10): one with no `until`, or
+    /// an `until` after `at`.
+    fn export_allowed(
+        &self,
+        tenant_id: Uuid,
+        workspace_id: Uuid,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<bool, StoreError>> + Send;
+
+    /// A history export's versions of `nodes` (ADR-0084 d2, reading I6), in
+    /// creation order: every version that is promoted, tip or superseded;
+    /// every erased version that was promoted once; and every version a key
+    /// of `own_keys` wrote, in any state. Another key's held, rejected,
+    /// demoted and withdrawn versions are never read.
+    fn export_versions(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+        own_keys: &[Uuid],
+    ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send;
+
+    /// The bytes the account's exports counted in the UTC month `at` falls
+    /// in, the `exports` meter (ADR-0084 d10; ADR-0071 d2).
+    fn exported_bytes(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send;
 
     /// The account's meters, read from its counters (ADR-0071 d2, d3): the
     /// four stocks and the flows of the UTC month `at` falls in.

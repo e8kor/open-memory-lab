@@ -48,7 +48,10 @@ rerank = ["oml-rerank/model"]
 e2e-sign-in = []
 
 [dev-dependencies]
+bech32.workspace = true
 hex.workspace = true
+# The export route's bundle is opened and verified as an importer would.
+oml-bundle.workspace = true
 # The page cases reach oml-web's moved pages through a path router in
 # front of both processes, as the parity rig does (ADR-0070 d7).
 oml-sdk.workspace = true
