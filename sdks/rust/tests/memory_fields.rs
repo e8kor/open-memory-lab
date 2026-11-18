@@ -125,3 +125,18 @@ fn a_held_guardrail_decodes_with_no_promotion_and_its_unreviewed_mark() {
     assert!(!promoted.unreviewed);
     assert_eq!(promoted.effect_inside, None);
 }
+
+/// A recall whose `kinds` does not name steering answers `steering:
+/// "not_requested"`, which the SDK reads as an empty list; any other
+/// string is refused (ADR-0092 d2).
+#[test]
+fn a_recall_answering_steering_not_requested_decodes_with_no_steering() {
+    let answer: oml_sdk::RecallResponse =
+        serde_json::from_value(json!({"steering": "not_requested", "hits": []}))
+            .expect("a recall");
+    assert!(answer.steering.is_empty());
+    assert!(
+        serde_json::from_value::<oml_sdk::RecallResponse>(json!({"steering": "x", "hits": []}))
+            .is_err()
+    );
+}

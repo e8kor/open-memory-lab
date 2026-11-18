@@ -772,8 +772,10 @@ async fn held_in_workspaces(rig: &Rig, n: usize) {
 /// one held row in each of 6 workspaces and in each of 48 is served in the
 /// same calls, since each row's workspace path comes from the walk that
 /// found the reviewer's reviewer nodes, not from a read per workspace. The
-/// web bench measured 13 and 55 before (ADR-0070 d8, 2026-11-13). Every
-/// row is listed and held.
+/// web bench measured 13 and 55 before (ADR-0070 d8, 2026-11-13). Since
+/// #448 each row's author person is read off the row, not resolved from its
+/// author key, so the listing makes 5 calls where it made 7. Every row is
+/// listed and held.
 #[tokio::test]
 async fn the_held_listings_store_calls_do_not_grow_with_the_workspaces() {
     let mut calls = Vec::new();
@@ -810,7 +812,7 @@ async fn the_held_listings_store_calls_do_not_grow_with_the_workspaces() {
         );
         calls.push(held.store_calls());
     }
-    assert_eq!(calls, [7, 7], "the held listing's store calls at 6 and 48");
+    assert_eq!(calls, [5, 5], "the held listing's store calls at 6 and 48");
 }
 
 // ---------------------------------------------------------------------------
@@ -907,4 +909,156 @@ async fn the_top_label_read_costs_the_gate_and_one_tree_walk() {
     // the structure, the reviewer key its access as well.
     assert_eq!(admin.store_calls(), 4, "{}", admin.line);
     assert_eq!(review.store_calls(), 7, "{}", review.line);
+}
+
+// ---------------------------------------------------------------------------
+// The Catalog page's one read (ADR-0092 d7)
+// ---------------------------------------------------------------------------
+
+/// The Catalog page makes one catalog read a page as `<user>-web`,
+/// `GET /v1/memories` without `own` and without text: the first page
+/// carries each kind's counts, which cost the count statement beside the
+/// listing's, and a page after it, read by its cursor, carries none and
+/// costs the listing alone (ADR-0092 d6, d7; ADR-0083 d6's rule that each
+/// page's reads are recorded here). Over alice's root holding two approved
+/// memories, read one a page so the second page has a cursor. Printed, so
+/// the counts the report states are the ones measured.
+#[tokio::test]
+async fn the_catalog_pages_read_costs_the_gate_the_listing_and_on_the_first_page_the_counts() {
+    let rig = rig().await;
+    let root = Reference::Name(Name::parse("alice").expect("a name"));
+    let writer = rig
+        .app
+        .issue_key(
+            rig.admin.as_str(),
+            &IssueKeyRequest {
+                profile: None,
+                role: Role::Writer,
+                name: Name::parse("alice-catalog-writer").expect("a name"),
+                principal: "catalog/writer".to_owned(),
+                used_by: Some(UsedBy::Agent),
+                default_workspace: Some(root.clone()),
+                crew: None,
+                grants: vec![GrantRequest {
+                    node: root.clone(),
+                    role: Role::Writer,
+                    deny: Vec::new(),
+                    covers: Covers::Subtree,
+                }],
+                connect_code: false,
+                user: Some(Name::parse("alice").expect("a name")),
+                guardrail_scope: None,
+                expiry: None,
+                requests_per_minute: None,
+            },
+        )
+        .await
+        .expect("the writer key")
+        .value;
+    let reviewer = rig
+        .app
+        .issue_key(
+            rig.admin.as_str(),
+            &IssueKeyRequest {
+                profile: None,
+                role: Role::Reviewer,
+                name: Name::parse("catalog-reviewer").expect("a name"),
+                principal: "catalog/reviewer".to_owned(),
+                used_by: Some(UsedBy::Agent),
+                default_workspace: None,
+                crew: None,
+                grants: [Role::Reviewer, Role::Reader]
+                    .into_iter()
+                    .map(|role| GrantRequest {
+                        node: root.clone(),
+                        role,
+                        deny: Vec::new(),
+                        covers: Covers::Subtree,
+                    })
+                    .collect(),
+                connect_code: false,
+                user: None,
+                guardrail_scope: None,
+                expiry: None,
+                requests_per_minute: None,
+            },
+        )
+        .await
+        .expect("the reviewer key")
+        .value;
+    for i in 0..2 {
+        let id = rig
+            .app
+            .submit_memory(
+                writer.as_str(),
+                &SubmitRequest {
+                    on_similar: Default::default(),
+                    anchor: None,
+                    origin: None,
+                    idempotency_key: format!("catalog-{i}"),
+                    claim_key: None,
+                    verb: None,
+                    kind: MemoryKind::Memory,
+                    body: format!("The catalog row {i} is one claim tip."),
+                    workspace: Some(root.clone()),
+                    derives_from: Vec::new(),
+                    severity: None,
+                    rule: None,
+                    kind_fields: None,
+                    valid_from: None,
+                    valid_until: None,
+                    format: None,
+                    title: None,
+                },
+            )
+            .await
+            .expect("the row is held")
+            .receipt
+            .memory_id;
+        rig.app
+            .post_verdict(
+                reviewer.as_str(),
+                id,
+                oml_app::types::Verdict::Approve,
+                None,
+            )
+            .await
+            .expect("the reviewer approves");
+    }
+    let bearer = web(&rig.alice, "web");
+    let first = get(
+        &rig.router,
+        "/v1/memories?workspace=alice&limit=1",
+        &bearer,
+        true,
+    )
+    .await;
+    assert_eq!(first.status, StatusCode::OK, "{}", first.body);
+    assert_eq!(first.body["counts"]["memory"], 2, "{}", first.body);
+    let cursor = first.body["next_cursor"]
+        .as_str()
+        .expect("a second page")
+        .to_owned();
+    let after = get(
+        &rig.router,
+        &format!("/v1/memories?workspace=alice&limit=1&cursor={cursor}"),
+        &bearer,
+        true,
+    )
+    .await;
+    assert_eq!(after.status, StatusCode::OK, "{}", after.body);
+    assert!(after.body.get("counts").is_none(), "{}", after.body);
+    assert_eq!(after.body["items"].as_array().map(Vec::len), Some(1));
+    println!(
+        "store calls: catalog first page {}, a page after it {}",
+        first.store_calls(),
+        after.store_calls()
+    );
+    // Measured 2026-11-18 over the in-memory store: the gate's and the
+    // listing's calls on both pages, and on the first one call more, the
+    // counts' statement. The design's estimate was two and one (ADR-0092
+    // d7); the gate's resolution and the scoped listing's walk are what the
+    // other listings here pay too.
+    assert_eq!(first.store_calls(), 11, "{}", first.line);
+    assert_eq!(after.store_calls(), 10, "{}", after.line);
 }

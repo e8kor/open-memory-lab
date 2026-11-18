@@ -11,6 +11,7 @@ mod acts;
 pub mod admin;
 pub mod atlas;
 mod card;
+pub mod catalog;
 pub mod config;
 pub mod doctor;
 pub mod frame;
@@ -69,6 +70,7 @@ pub const PAGES: &[(&str, &str)] = &[
     ("GET", ADMIN_WORKSPACES_PATH),
     ("POST", ADMIN_WORKSPACES_PATH),
     ("GET", USER_MEMORIES_PATH),
+    ("GET", USER_CATALOG_PATH),
     ("GET", USER_ATLAS_PATH),
     ("GET", ADMIN_MEMORIES_PATH),
     ("GET", ADMIN_ATLAS_PATH),
@@ -118,6 +120,9 @@ pub use oml_page::web::{ADMIN_CURATE_PATH, ADMIN_MEMORY_PATH, USER_MEMORY_PATH};
 pub use oml_page::web::{
     ADMIN_ATLAS_PATH, ADMIN_MEMORIES_PATH, USER_ATLAS_PATH, USER_MEMORIES_PATH,
 };
+
+/// The Personal side's Catalog page (ADR-0092 d7).
+pub use oml_page::web::USER_CATALOG_PATH;
 
 /// The user page's Review view and its acts (ADR-0045 d11; ADR-0055 d10),
 /// moved from `GET /web?view=review` and the review acts of `POST /web`.
@@ -290,6 +295,7 @@ pub fn router(web: Web) -> Router {
             get(workspaces::admin_page).post(workspaces::admin_act),
         )
         .route(USER_MEMORIES_PATH, get(memories::user_list))
+        .route(USER_CATALOG_PATH, get(catalog::page))
         .route(ADMIN_MEMORIES_PATH, get(memories::admin_list))
         .route(USER_ATLAS_PATH, get(memories::user_atlas))
         .route(ADMIN_ATLAS_PATH, get(memories::admin_atlas))
@@ -397,6 +403,8 @@ mod tests {
             assert!(serves("GET", path), "{path}");
             assert!(!serves("POST", path), "{path}");
         }
+        // The Catalog page reads only (ADR-0092 d7).
+        assert!(serves("GET", "/web/catalog") && !serves("POST", "/web/catalog"));
         for path in ["/web/memory", "/web/admin/memory", "/web/admin/curate"] {
             assert!(serves("GET", path), "{path}");
         }
