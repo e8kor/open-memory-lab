@@ -3492,6 +3492,11 @@ pub enum AppError {
     /// naming `/body`).
     #[error("a skill body is at most 32,768 bytes after NFC (ADR-0080 d9)")]
     SkillBodyTooLarge,
+    /// A document whose text cuts into more than 4,096 passages (ADR-0081
+    /// d3; request.validation naming `/body` with `details.reason`
+    /// `too_many_passages`).
+    #[error("a document holds at most 4,096 passages; this one would hold {count} (ADR-0081 d3)")]
+    TooManyPassages { count: usize },
     /// A key link an admin may not make or end, `request.validation` with
     /// `details.reason` one of `revoked`, `already_linked`, `admin_key`,
     /// `not_a_tenant_key`, `not_used_by_person`, `user_unknown`,

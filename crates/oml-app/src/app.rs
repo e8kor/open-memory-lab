@@ -1041,6 +1041,15 @@ fn kind_fields(
                     "a document is text/markdown or text/plain",
                 ));
             }
+            // The passage rule cuts at capture; a text past the cap is
+            // refused before anything is written (ADR-0081 d3).
+            let cut = if media_type == "text/markdown" {
+                oml_passage::Format::Markdown
+            } else {
+                oml_passage::Format::Plain
+            };
+            oml_passage::passages(body, cut)
+                .map_err(|e| AppError::TooManyPassages { count: e.count })?;
             let sent_title = match sent {
                 Some(KindFields::Document { title: Some(t) }) => {
                     ck::check_document_title(t).map_err(field)?;

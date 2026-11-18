@@ -34,6 +34,7 @@ getrandom.workspace = true
 hex.workspace = true
 oml-delta-log = { workspace = true, optional = true }
 oml-guardrail.workspace = true
+oml-passage.workspace = true
 oml-scan.workspace = true
 rpassword.workspace = true
 serde.workspace = true

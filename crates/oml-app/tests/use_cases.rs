@@ -16092,6 +16092,39 @@ async fn a_skill_successor_keeps_its_name_and_may_change_its_description() {
 }
 
 #[tokio::test]
+async fn a_document_over_4096_passages_is_refused_too_many_passages() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let writer = agent(&app, &boot.admin_key.value, "wanda", crew).await;
+    let body: String = (0..=4096).map(|i| format!("## H{i}\nx\n")).collect();
+    let err = app
+        .submit_memory(
+            &writer.value,
+            &SubmitRequest {
+                claim_key: Some("doc/big".to_owned()),
+                ..kind_req("p1", MemoryKind::Document, &body, crew)
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::TooManyPassages { count: 4097 }),
+        "{err:?}"
+    );
+    let fits: String = (0..4096).map(|i| format!("## H{i}\nx\n")).collect();
+    app.submit_memory(
+        &writer.value,
+        &SubmitRequest {
+            claim_key: Some("doc/fits".to_owned()),
+            ..kind_req("p2", MemoryKind::Document, &fits, crew)
+        },
+    )
+    .await
+    .expect("4,096 passages fit");
+}
+
+#[tokio::test]
 async fn a_document_takes_its_key_and_title_from_its_first_heading_or_a_sent_key() {
     let store = MemStore::new();
     let app = app_over(store.clone());

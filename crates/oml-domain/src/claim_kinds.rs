@@ -200,8 +200,10 @@ pub fn markdown_title(body: &str) -> Option<String> {
 }
 
 /// The document key derived from a title, by ADR-0057 d7's rule
-/// (ADR-0081 d2): the title's heading slug as GitHub renders it (lower
-/// case, punctuation dropped, spaces to `-`), then every character outside
+/// (ADR-0081 d2, amended 2026-11-18): the title's heading slug by the one
+/// rule `oml-passage` holds for the server and `oml sync` (links read by
+/// their text, code and emphasis marks dropped, lower case, punctuation
+/// dropped, spaces to `-`), then every character outside
 /// `a-z 0-9 . _ -` mapped to `-`. A slug longer than one segment's 64
 /// characters keeps its first 47 and ends in `-` and the first 16 hex
 /// digits of the SHA-256 of the full key, ADR-0057 d7's fitting cut to
@@ -210,18 +212,8 @@ pub fn markdown_title(body: &str) -> Option<String> {
 /// nothing, such as `.` or `..`, is refused.
 #[must_use]
 pub fn document_key_from_title(title: &str) -> String {
-    let slug: String = title
-        .to_lowercase()
+    let slug: String = oml_passage::slug(title)
         .chars()
-        .filter_map(|c| {
-            if c == ' ' {
-                Some('-')
-            } else if c.is_alphanumeric() || c == '-' || c == '_' {
-                Some(c)
-            } else {
-                None
-            }
-        })
         .map(|c| {
             if c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-') {
                 c

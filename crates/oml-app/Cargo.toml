@@ -8,6 +8,7 @@ description = "Port traits and use-cases driving the domain; the constitution is
 
 [dependencies]
 oml-domain.workspace = true
+oml-passage.workspace = true
 ed25519-dalek.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -211,6 +211,17 @@ fn a_documents_key_follows_the_heading_slug_rule_and_a_long_title_ends_in_its_di
 }
 
 #[test]
+fn a_documents_key_and_a_passages_fragment_are_one_slug_rule() {
+    // ADR-0081 d2, amended 2026-11-18: a link reads by its text, as the
+    // passage cut and `oml sync`'s headings adapter read it.
+    assert_eq!(document_key_from_title("[Guide](https://x.y)"), "doc/guide");
+    assert_eq!(
+        document_key_from_title("The `oml` *CLI*"),
+        format!("doc/{}", oml_passage::slug("The `oml` *CLI*"))
+    );
+}
+
+#[test]
 fn a_heading_title_is_cut_to_200_characters_at_a_character_boundary() {
     let long = format!("# {}", "é".repeat(250));
     let title = markdown_title(&long).expect("a title");
