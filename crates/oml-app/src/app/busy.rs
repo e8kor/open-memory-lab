@@ -12,6 +12,9 @@ use uuid::Uuid;
 /// Imports and dry runs the process runs at once, across tenants.
 pub const IMPORTS_AT_ONCE: usize = 2;
 
+/// Exports the process builds at once, across tenants (ADR-0084 I13).
+pub const EXPORTS_AT_ONCE: usize = 2;
+
 /// What a gate admits: the tenants running one, and the imports running in
 /// this process, by id, which the sweep never ends as stopped (I11).
 #[derive(Debug, Default)]
@@ -123,6 +126,18 @@ mod tests {
         drop(first);
         assert!(gate.try_enter(c).is_some(), "a freed place admits c");
         drop(second);
+    }
+
+    #[test]
+    fn the_process_builds_at_most_two_exports_at_once() {
+        let gate = BusyGate::new(EXPORTS_AT_ONCE);
+        let one = gate.try_enter(Uuid::from_u128(1)).expect("a first tenant");
+        let two = gate.try_enter(Uuid::from_u128(2)).expect("a second tenant");
+        assert!(
+            gate.try_enter(Uuid::from_u128(3)).is_none(),
+            "a third tenant's export is busy"
+        );
+        drop((one, two));
     }
 
     #[test]

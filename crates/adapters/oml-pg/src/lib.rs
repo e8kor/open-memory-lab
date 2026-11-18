@@ -7991,6 +7991,29 @@ impl JournalStore for PgStore {
         rows.iter().map(memory_from_row).collect()
     }
 
+    async fn export_body_bytes(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+        own_keys: &[Uuid],
+    ) -> Result<u64, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let bytes: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(sum(m.body_bytes), 0)::bigint FROM memories m \
+              WHERE m.tenant_id = $1 AND m.workspace_id = ANY($2) AND m.status <> 'erased' \
+                AND (m.status = 'promoted' OR m.author_key_id = ANY($3))",
+        )
+        .bind(tenant_id)
+        .bind(nodes)
+        .bind(own_keys)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        u64::try_from(bytes).map_err(backend)
+    }
+
     async fn exported_bytes(
         &self,
         tenant_id: Uuid,

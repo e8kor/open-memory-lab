@@ -271,7 +271,22 @@ where
         let paths = workspace_paths(&ancestry, &subtree, workspace_id);
         let nodes: Vec<Uuid> = subtree.iter().map(|w| w.workspace_id).collect();
         let user_root = self.person_root_of(&key).await?;
-        let own_keys = self.export_own_keys(&caller, user_root).await?;
+        // I6: a linked key owns itself alone; only a user or session key's
+        // person widens the set.
+        let own_root = self.own_set_root_of(&key).await?;
+        let own_keys = self.export_own_keys(&caller, own_root).await?;
+        // I13: what the bundle would carry, by its stored bytes, is weighed
+        // before a body is read.
+        if self
+            .journal
+            .export_body_bytes(tenant_id, &nodes, &own_keys)
+            .await?
+            > self.uploads.max_bytes
+        {
+            return Err(AppError::ExportTooLarge {
+                max_bytes: self.uploads.max_bytes,
+            });
+        }
         let rows = self
             .journal
             .export_versions(tenant_id, &nodes, &own_keys)

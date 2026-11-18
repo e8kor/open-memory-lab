@@ -358,6 +358,18 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         )
     }
 
+    fn export_body_bytes(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+        own_keys: &[Uuid],
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send {
+        timed(
+            "export_body_bytes",
+            self.inner.export_body_bytes(tenant_id, nodes, own_keys),
+        )
+    }
+
     fn exported_bytes(
         &self,
         tenant_id: Uuid,

@@ -852,3 +852,145 @@ async fn an_export_by_a_key_with_no_account_root_is_counted_on_the_tenants_meter
         exported.file.len() as u64
     );
 }
+
+/// I6 and R3: a tenant key linked to a person (ADR-0085 d16) owns itself
+/// alone. Exporting that person's root, it carries none of the person's
+/// other keys' held rows, which the person's own export carries.
+#[tokio::test]
+async fn a_linked_key_exports_none_of_its_persons_other_keys_held_rows() {
+    let (app, _) = rig();
+    let a = alice(&app).await;
+    let admin = a.boot.admin_key.value.as_str();
+    let held = written(
+        &app,
+        a.agent.value.as_str(),
+        &SubmitRequest {
+            workspace: Some(by_name("alice")),
+            ..submit("agent-held", "the glaze cracks below 900 degrees")
+        },
+    )
+    .await;
+    // Bob's tenant key, linked to alice by a console admin.
+    let (ops_entry, _) = app
+        .allow_web_email(
+            admin,
+            &oml_app::types::WebEmailRequest {
+                email: oml_app::domain::web::Email::parse("ops@example.com").expect("an email"),
+                user: name("ops"),
+                admin: true,
+            },
+        )
+        .await
+        .expect("the admin entry");
+    app.web_ensure_keys(&ops_entry).await.expect("the keys");
+    let token = app
+        .web_session_open(&ops_entry, 3600, None)
+        .await
+        .expect("opens")
+        .token;
+    let session = app
+        .web_session(&token)
+        .await
+        .expect("a read")
+        .expect("live");
+    let ops = app
+        .web_caller(&session, oml_app::app::Capacity::Admin)
+        .await
+        .expect("the console admin");
+    let (alice_entry, _) = app
+        .allow_web_email(
+            admin,
+            &oml_app::types::WebEmailRequest {
+                email: oml_app::domain::web::Email::parse("alice@example.com").expect("an email"),
+                user: name("alice"),
+                admin: false,
+            },
+        )
+        .await
+        .expect("alice signs in");
+    app.web_ensure_keys(&alice_entry).await.expect("the keys");
+    let bob = issue(
+        &app,
+        admin,
+        Role::Writer,
+        UsedBy::Person,
+        None,
+        "bob/laptop",
+        vec![grant("alice", Role::Reader)],
+    )
+    .await;
+    app.link_key_to_person(
+        oml_app::types::Bearer::Session(&ops),
+        bob.key_id.into(),
+        &name("alice"),
+    )
+    .await
+    .expect("linked");
+    let exported = app
+        .export_workspace(bob.value.as_str(), by_name("alice"), &history())
+        .await
+        .expect("export");
+    let mut tar = Vec::new();
+    crypt::decrypting_reader(exported.file.as_slice(), &identity())
+        .expect("opens")
+        .read_to_end(&mut tar)
+        .expect("plaintext");
+    let contents = oml_bundle::read_bundle(tar.as_slice(), &VerifyOptions::default())
+        .expect("verifies")
+        .contents;
+    let leaked: Vec<String> = contents
+        .versions
+        .iter()
+        .filter_map(|e| match e {
+            VersionEntry::Version(v) if v.state != State::Promoted => Some(v.artifact_id.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        leaked.is_empty(),
+        "a linked key exported held rows: {leaked:?}"
+    );
+    // The person's own export carries the agent's held row.
+    let own = exported_bundle(&app, &a).await;
+    assert!(
+        own.versions
+            .iter()
+            .any(|e| matches!(e, VersionEntry::Version(v) if v.artifact_id == held.to_string()))
+    );
+}
+
+/// I13: the stored-bytes estimate does not stand in for the bundle's size:
+/// a bundle whose bodies fit but whose lines do not is still refused once
+/// built, and nothing is journalled.
+#[tokio::test]
+async fn a_bundle_whose_bodies_fit_but_whose_lines_do_not_is_still_export_too_large() {
+    let store = MemStore::new();
+    let app = App::new(
+        store.clone(),
+        MemSigner::new(TEST_SEED),
+        FixedClock::new(),
+        SeqIdGen::new(),
+        MarkerScanner::default(),
+    )
+    .with_uploads(
+        std::sync::Arc::new(oml_app::doubles::MemObjects::new()),
+        256,
+        1 << 20,
+    );
+    let a = alice(&app).await;
+    let tenant_id = a.boot.tenant_id;
+    written(&app, &a.person.value, &submit("small", "kiln")).await;
+    let head_before = store.chain_head(tenant_id).await.unwrap().unwrap().seq;
+    let err = app
+        .export_workspace(a.person.value.as_str(), by_name("alice"), &history())
+        .await
+        .expect_err("the built bundle is over 256 bytes");
+    assert!(
+        matches!(err, AppError::ExportTooLarge { max_bytes: 256 }),
+        "{err:?}"
+    );
+    assert_eq!(
+        store.chain_head(tenant_id).await.unwrap().unwrap().seq,
+        head_before
+    );
+}

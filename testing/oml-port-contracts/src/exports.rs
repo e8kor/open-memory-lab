@@ -235,6 +235,15 @@ pub async fn a_history_export_reads_promoted_and_own_versions_and_never_another_
     let read: BTreeSet<Uuid> = ids.into_iter().collect();
     assert!(!read.contains(&foreign_held));
     assert!(!read.contains(&foreign_rejected));
+    // I13: the estimate sums the stored bytes of exactly those rows,
+    // without reading a body.
+    assert_eq!(
+        rig.store
+            .export_body_bytes(rig.tenant_id, &nodes, &[rig.person.key_id])
+            .await
+            .expect("body bytes"),
+        rows.iter().map(|m| m.body_bytes).sum::<u64>()
+    );
     // A node outside the list reads nothing.
     assert!(
         rig.store

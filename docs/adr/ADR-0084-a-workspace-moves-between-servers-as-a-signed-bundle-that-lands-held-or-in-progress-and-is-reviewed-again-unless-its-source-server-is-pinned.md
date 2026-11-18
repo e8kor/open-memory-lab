@@ -573,7 +573,8 @@ until the operator confirms or reverses it with the other decisions of the batch
   are removed by the sweep (d11's shred). What it wrote stays held. The doctor's
   `imports_stopped` warning counts only such imports. A bound upload whose key is still set more
   than 24 hours after it was bound is the doctor warning `upload_staging_stale` (d11). A store
-  failure while shredding is logged, never swallowed.
+  failure while shredding is logged, never swallowed. The list of imports this process runs is the
+  process's own: it holds while one lead serves the database, as ADR-0072 d12's counters do.
 - **I12 — The source key is pinned when the import begins (R11). [operator batch]** The
   transaction that binds the upload and inserts the import row also inserts the ledger's pin,
   `INSERT … ON CONFLICT DO NOTHING`, and compares: a pin naming another key refuses
@@ -588,7 +589,9 @@ until the operator confirms or reverses it with the other decisions of the batch
   are not streamed into the reader: the verified bundle holds every body in memory, so a streamed
   read saves only the tar's copy, and the bound above is what holds the peak. The export's
   whole-chain walk and in-memory build, and the per-day limits of d15 that are not built, are
-  bottleneck rows on the limits page.
+  bottleneck rows on the limits page. Exports are bounded at two in the process too, and an export
+  whose stored body bytes already pass the cap is refused before a body is read; the bounds are the
+  process's own and hold while one lead serves the database (ADR-0072 d12).
 - **I14 — An imported version's provenance is part of its write. [operator batch]** The
   `import_versions` row and `import_provenance` are written in the submit's or supersession's own
   transaction, as a field of its fold, so no version an import wrote lacks them.
@@ -624,3 +627,7 @@ until the operator confirms or reverses it with the other decisions of the batch
   unreviewed with `effect_inside: ask` (ADR-0080 d10, d16). The format is unreleased, so no
   reader of an earlier form exists. *Rejected:* leaving guardrails out of bundles, which an
   import refused by name and a person could not tell from a scan veto.
+- **I6, a linked key (2026-11-18, the re-verify of bulk B). [operator batch]** A tenant key linked to
+  a person (ADR-0085 d16) owns itself alone in an export: the own set widens to a person's keys only
+  for a user key or a session key of that person, never through `linked_user`, so a linked key
+  exports none of the person's other keys' held, rejected or withdrawn rows (R3).

@@ -1163,6 +1163,16 @@ pub trait JournalStore: Retriever + Send + Sync {
         own_keys: &[Uuid],
     ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send;
 
+    /// The stored body bytes of the versions [`Self::export_versions`]
+    /// would read that are not erased, summed without reading a body: an
+    /// export's estimate before it reads one (ADR-0084 I13).
+    fn export_body_bytes(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+        own_keys: &[Uuid],
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send;
+
     /// The bytes the account's exports counted in the UTC month `at` falls
     /// in, the `exports` meter (ADR-0084 d10; ADR-0071 d2).
     fn exported_bytes(

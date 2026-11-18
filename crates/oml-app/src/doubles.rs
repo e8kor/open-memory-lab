@@ -3584,6 +3584,25 @@ impl JournalStore for MemStore {
         Ok(rows)
     }
 
+    async fn export_body_bytes(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+        own_keys: &[Uuid],
+    ) -> Result<u64, StoreError> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(0);
+        };
+        let state = state.lock().expect("tenant lock");
+        Ok(state
+            .memories
+            .values()
+            .filter(|m| nodes.contains(&m.workspace_id) && m.status != MemoryStatus::Erased)
+            .filter(|m| m.status == MemoryStatus::Promoted || own_keys.contains(&m.author_key_id))
+            .map(|m| m.body_bytes)
+            .sum())
+    }
+
     async fn exported_bytes(
         &self,
         tenant_id: Uuid,

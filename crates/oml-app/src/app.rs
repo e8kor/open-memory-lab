@@ -296,7 +296,7 @@ pub struct App<J, S, C, I, Sc> {
     /// One import or dry run per tenant and two in the process (ADR-0084
     /// I13).
     imports_busy: busy::BusyGate,
-    /// One export per tenant (ADR-0084 I13).
+    /// One export per tenant and two in the process (ADR-0084 I13).
     exports_busy: busy::BusyGate,
 }
 
@@ -1740,7 +1740,7 @@ where
             profiles: Arc::new(crate::types::QuotaProfiles::default()),
             uploads: uploads::UploadConfig::default(),
             imports_busy: busy::BusyGate::new(busy::IMPORTS_AT_ONCE),
-            exports_busy: busy::BusyGate::new(usize::MAX),
+            exports_busy: busy::BusyGate::new(busy::EXPORTS_AT_ONCE),
         }
     }
 
@@ -4615,6 +4615,23 @@ where
             .await?
             .filter(|w| w.user_root)
             .map(|w| w.workspace_id))
+    }
+
+    /// The root whose person's keys are `key`'s own set in an export
+    /// (ADR-0084 I6, a linked key): a user key's root or a session key's
+    /// person's; never a linked tenant key's, which owns itself alone.
+    pub(crate) async fn own_set_root_of(&self, key: &KeyRecord) -> Result<Option<Uuid>, AppError> {
+        if let Some(root) = key.user {
+            return Ok(Some(root));
+        }
+        if key.session_user.is_none() {
+            return Ok(None);
+        }
+        let unlinked = KeyRecord {
+            linked_user: None,
+            ..key.clone()
+        };
+        self.person_root_of(&unlinked).await
     }
 
     /// Whether `workspace` sits inside the user root of the person `key`
