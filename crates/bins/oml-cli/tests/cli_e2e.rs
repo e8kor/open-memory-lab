@@ -4398,6 +4398,8 @@ async fn doctor_with_a_whole_pair_reads_whoami_and_the_events_tail_under_that_so
             "/v1/memories",
             // The offered skills, for the skill lines (ADR-0080).
             "/v1/skills",
+            // Whether the server serves the builder's preview (ADR-0082).
+            "/v1/memories/preview",
             "/v2/workspaces/w1",
             "/v2/edges",
             "/v2/events"
