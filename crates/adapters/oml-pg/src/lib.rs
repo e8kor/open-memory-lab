@@ -1129,12 +1129,14 @@ fn keyword_any_sql(anchor: &str) -> String {
             only = u.only,
         )
     };
+    // `q` is read in each branch and after the cut, and inlined in each,
+    // since a materialized CTE would keep the scan from a parallel plan.
     // The terms each kept unit holds are read after the cut, by its key,
     // so no row outside the k is tokenized twice: the sort over the two
     // branches' union cannot postpone them as one statement's sort does.
     with_now(
         &format!(
-            "WITH q AS (SELECT NULLIF(replace(plainto_tsquery('simple', $6)::text, ' & ', ' | '), '')::tsquery AS tq, \
+            "WITH q AS NOT MATERIALIZED (SELECT NULLIF(replace(plainto_tsquery('simple', $6)::text, ' & ', ' | '), '')::tsquery AS tq, \
                     tsvector_to_array(to_tsvector('simple', $6)) AS terms), \
              top AS ({} ORDER BY score DESC, id ASC, ordinal ASC LIMIT $7) \
              SELECT top.id, top.ordinal, top.body_bytes, top.score, top.more_passages, \
