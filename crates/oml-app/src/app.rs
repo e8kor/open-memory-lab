@@ -8,6 +8,7 @@
 mod auth;
 mod emails;
 mod federation;
+mod imports;
 mod key_limits;
 mod linked_keys;
 mod metering;
@@ -21,6 +22,7 @@ mod usage;
 mod widen;
 pub use auth::{Callback, CallbackRefusal, WEB_SESSION_TTL_SECS};
 pub use federation::WideKey;
+pub use imports::{ImportAnswer, ImportPlan, ImportRequest};
 pub use metering::{AccountLimits, UsageDriftReport};
 pub use pages::{
     ActClaim, ActTicket, AdminMemory, AdminPage, AdminSearchRequest, Capacity, CapacityGranted,
@@ -5479,7 +5481,19 @@ where
         bearer: impl Into<Bearer<'_>>,
         req: &SubmitRequest,
     ) -> Result<SubmitOutcome, AppError> {
-        let caller = self.authenticate_bearer(bearer.into()).await?;
+        self.submit_memory_as(bearer.into(), req, false).await
+    }
+
+    /// [`Self::submit_memory`], where `imported` says an import writes the
+    /// version: its claim key is the source's, verbatim, an `auto-` key
+    /// included, so a re-import plans against the same key (ADR-0084 d8).
+    pub(crate) async fn submit_memory_as(
+        &self,
+        bearer: Bearer<'_>,
+        req: &SubmitRequest,
+        imported: bool,
+    ) -> Result<SubmitOutcome, AppError> {
+        let caller = self.authenticate_bearer(bearer).await?;
         let key = &caller.key;
         require_admissible(key, Role::Writer, "submit")?;
         // The body's workspace, by id or name, resolves after step 1 and
@@ -5514,10 +5528,11 @@ where
         // is the key's own id while rotation is unbuilt; once it is, d6 names
         // the root of the key's `rotated_from` chain, so a rotated key keeps
         // deriving the keys its predecessor did.
-        if req
-            .claim_key
-            .as_deref()
-            .is_some_and(|sent| sent.starts_with(DERIVED_CLAIM_KEY_PREFIX))
+        if !imported
+            && req
+                .claim_key
+                .as_deref()
+                .is_some_and(|sent| sent.starts_with(DERIVED_CLAIM_KEY_PREFIX))
         {
             return Err(AppError::DerivedClaimKeySent);
         }

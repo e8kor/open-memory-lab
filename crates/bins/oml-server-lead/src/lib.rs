@@ -1986,6 +1986,29 @@ pub async fn sweep_uploads(
     Ok((totals, changed, failures, reasons))
 }
 
+/// The deployment's imports by state and how many used `allow_older`,
+/// for the `imports` doctor line (ADR-0084 d15). A tenant that fails to
+/// read is left out of the totals.
+pub async fn import_totals(
+    app: &LeadApp,
+    store: &PgStore,
+) -> (std::collections::BTreeMap<String, u64>, u64) {
+    let mut by_state = std::collections::BTreeMap::new();
+    let mut allow_older = 0;
+    let Ok(tenants) = enumerate_tenants(store.pool()).await else {
+        return (by_state, allow_older);
+    };
+    for tenant_id in tenants {
+        if let Ok(stats) = app.import_stats(tenant_id).await {
+            for (state, n) in stats.by_state {
+                *by_state.entry(state).or_default() += n;
+            }
+            allow_older += stats.allow_older;
+        }
+    }
+    (by_state, allow_older)
+}
+
 /// Runs [`sweep_uploads`] at the lead's start and every
 /// [`UPLOAD_SWEEP_SECONDS`] after, setting the upload gauges and logging
 /// [`EVENT_UPLOAD_SWEEP`] when it shredded or removed something, or
@@ -2001,6 +2024,8 @@ pub fn spawn_upload_sweep(
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             ticks.tick().await;
+            let (imports, allow_older) = import_totals(&app, &store).await;
+            metrics.import_sweep(&imports, allow_older);
             match sweep_uploads(&app, &store).await {
                 Ok((totals, changed, failures, reasons)) => {
                     metrics.upload_sweep(&totals, failures);

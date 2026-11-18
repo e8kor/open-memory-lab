@@ -222,6 +222,10 @@ pub struct Metrics {
     upload_stored_bytes: Gauge,
     upload_unswept: Gauge,
     upload_sweep_failures: Counter,
+    import_refusals: Family<CodeLabels, Counter>,
+    import_versions: Family<OutcomeLabels, Counter>,
+    imports: Family<StateLabels, Gauge>,
+    imports_allow_older: Gauge,
     scan_findings: Family<ScanLabels, Counter>,
     scan_counts: std::sync::OnceLock<ScanCounts>,
     scan_refresh: std::sync::Mutex<()>,
@@ -380,6 +384,10 @@ impl Default for Metrics {
         let upload_stored_bytes = Gauge::default();
         let upload_unswept = Gauge::default();
         let upload_sweep_failures = Counter::default();
+        let import_refusals = Family::<CodeLabels, Counter>::default();
+        let import_versions = Family::<OutcomeLabels, Counter>::default();
+        let imports = Family::<StateLabels, Gauge>::default();
+        let imports_allow_older = Gauge::default();
         registry.register(
             "oml_http_request_duration_seconds",
             "API-listener request duration by route template and status; probes answered 200 are not counted",
@@ -536,6 +544,29 @@ impl Default for Metrics {
             "upload sweeps or object removals that failed since start; the next sweep retries",
             upload_sweep_failures.clone(),
         );
+        // Workspace imports (ADR-0084 d15): refusals by their closed code,
+        // versions by the plan's outcome, and the imports by state at the
+        // last sweep, with no tenant label.
+        registry.register(
+            "oml_import_refusals",
+            "imports refused, by bundle.*, import.* or other refusal code",
+            import_refusals.clone(),
+        );
+        registry.register(
+            "oml_import_versions",
+            "claim keys imports planned, by outcome: new, changed, removed, unchanged, equivalent, conflict or refused",
+            import_versions.clone(),
+        );
+        registry.register(
+            "oml_imports",
+            "imports at the last sweep, by state; running ones outlive no live request, so they stopped",
+            imports.clone(),
+        );
+        registry.register(
+            "oml_imports_allow_older",
+            "imports that used allow_older, at the last sweep",
+            imports_allow_older.clone(),
+        );
         registry.register(
             "oml_handler_panics",
             "requests whose handler panicked and were answered system.internal by the panic guard; every one is a defect, named in the lead's log under event handler_panic",
@@ -575,6 +606,10 @@ impl Default for Metrics {
             sparse_encoded,
             sparse_backlog,
             upload_refusals,
+            import_refusals,
+            import_versions,
+            imports,
+            imports_allow_older,
             upload_sessions,
             upload_unbound_bytes,
             upload_stored_bytes,
@@ -627,6 +662,15 @@ impl Metrics {
                 })
                 .inc();
         }
+        if route == "/v2/imports"
+            && let Some(code) = error_code
+        {
+            self.import_refusals
+                .get_or_create(&CodeLabels {
+                    code: code.to_owned(),
+                })
+                .inc();
+        }
         if route == "/oauth/token" {
             self.oauth_tokens
                 .get_or_create(&TokenLabels {
@@ -635,6 +679,33 @@ impl Metrics {
                 })
                 .inc();
         }
+    }
+
+    /// One finished import's planned keys, by outcome (ADR-0084 d15).
+    pub(crate) fn import_versions(&self, counts: &std::collections::BTreeMap<String, u64>) {
+        for outcome in oml_app::domain::import::OUTCOMES {
+            if let Some(&n) = counts.get(outcome) {
+                self.import_versions
+                    .get_or_create(&OutcomeLabels {
+                        outcome: outcome.to_owned(),
+                    })
+                    .inc_by(n);
+            }
+        }
+    }
+
+    /// The deployment's imports by state and how many used `allow_older`,
+    /// at one sweep (ADR-0084 d15).
+    pub fn import_sweep(&self, by_state: &std::collections::BTreeMap<String, u64>, allow_older: u64) {
+        for state in oml_app::domain::import::ImportState::ALL {
+            self.imports
+                .get_or_create(&StateLabels {
+                    state: state.as_str().to_owned(),
+                })
+                .set(i64::try_from(by_state.get(state.as_str()).copied().unwrap_or(0)).unwrap_or(i64::MAX));
+        }
+        self.imports_allow_older
+            .set(i64::try_from(allow_older).unwrap_or(i64::MAX));
     }
 
     /// One item of a bulk verdict: `approved`, `rejected` or `skipped`

@@ -12,6 +12,7 @@
 
 pub mod as_of;
 pub mod federation;
+pub mod imports;
 pub mod uploads;
 pub mod user_roots;
 

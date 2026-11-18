@@ -68,6 +68,10 @@ Histograms use bucket bounds that start at 1 ms and double sixteen times, to 32.
 | `oml_upload_stored_bytes` | gauge | none | Bytes the object store held under `uploads/` at the last sweep. |
 | `oml_upload_unswept` | gauge | none | Upload sessions whose key is shredded and whose parts remain, at the last sweep. |
 | `oml_upload_sweep_failures_total` | counter | none | Upload sweep steps that failed since start; the next sweep, 5 minutes on, retries. |
+| `oml_import_refusals_total` | counter | `code` | `POST /v2/imports` refused, by code: a `bundle.*` or `import.*` code, or another the route answered. |
+| `oml_import_versions_total` | counter | `outcome` | Claim keys finished imports planned, by outcome: `new`, `changed`, `removed`, `unchanged`, `equivalent`, `conflict` or `refused`. |
+| `oml_imports` | gauge | `state` | Imports at the last sweep, by state (`running`, `done`, `failed`), across the deployment. A `running` one stopped with the server. |
+| `oml_imports_allow_older` | gauge | none | Imports that admitted an older bundle under `allow_older`, at the last sweep. |
 | `oml_memories_unrecalled` | gauge | `promoted_for` | Served memories no recall in the last 30 days returned, by time since approval (`7d`, `30d`, `90d`, `older`). Refreshed every 10 minutes. |
 
 ### Recall telemetry

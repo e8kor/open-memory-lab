@@ -291,6 +291,13 @@ struct TenantState {
     /// Upload sessions, with whether their objects were recorded removed
     /// (ADR-0004 d3, as amended 2026-11-17).
     uploads: BTreeMap<Uuid, (crate::types::UploadSession, bool)>,
+    /// Imports by id, the versions each recorded, each target's ledger by
+    /// (target, source server, source tenant), and the rows' provenance
+    /// (ADR-0084 d4, d8, d11).
+    imports: BTreeMap<Uuid, crate::types::ImportRecord>,
+    import_versions: Vec<(Uuid, crate::types::ImportedVersion)>,
+    import_ledger: BTreeMap<(Uuid, String, String), crate::types::ImportLedgerEntry>,
+    import_provenance: BTreeMap<Uuid, Value>,
     events: Vec<crate::domain::SignedEnvelope>,
     memories: BTreeMap<Uuid, MemoryRecord>,
     /// The findings list, in the order recorded (ADR-0074 d23), as
@@ -1441,6 +1448,32 @@ fn apply_fold(
         MetadataFold::TenantGenesis { .. }
         | MetadataFold::VerdictRecorded { .. }
         | MetadataFold::AdminRead => {}
+        MetadataFold::WorkspaceImported(ended) => {
+            let Some(import) = state.imports.get_mut(&ended.import_id) else {
+                return Err(StoreError::Backend(format!(
+                    "import {} is not held",
+                    ended.import_id
+                )));
+            };
+            if import.state != oml_domain::import::ImportState::Running {
+                return Err(StoreError::Backend(format!(
+                    "import {} is not running",
+                    ended.import_id
+                )));
+            }
+            import.state = oml_domain::import::ImportState::Done;
+            import.ended_at = Some(at.clone());
+            import.counts = ended.counts;
+            import.refusals = ended.refusals;
+            state.import_ledger.insert(
+                (
+                    ended.target_workspace_id,
+                    ended.source_server_id,
+                    ended.source_tenant_id,
+                ),
+                ended.ledger,
+            );
+        }
         MetadataFold::SearchDefaultSet { pipeline } => state.search_default = pipeline,
         MetadataFold::FederationPolicySet(policy) => state.federation = policy,
         MetadataFold::WorkspaceFederationSet {
@@ -2970,6 +3003,186 @@ impl JournalStore for MemStore {
             if session.part_key.is_none() && !removed {
                 stats.unswept += 1;
             }
+        }
+        Ok(stats)
+    }
+
+    async fn import_target_view(
+        &self,
+        tenant_id: Uuid,
+        target_workspace_id: Uuid,
+        source_server_id: &str,
+        source_tenant_id: &str,
+    ) -> Result<crate::types::ImportTargetView, StoreError> {
+        let mut view = crate::types::ImportTargetView::default();
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(view);
+        };
+        let state = state.lock().expect("tenant lock");
+        let from_source: BTreeSet<Uuid> = state
+            .imports
+            .values()
+            .filter(|i| {
+                i.target_workspace_id == target_workspace_id
+                    && i.source_server_id == source_server_id
+                    && i.source_tenant_id == source_tenant_id
+            })
+            .map(|i| i.import_id)
+            .collect();
+        let written: Vec<&crate::types::ImportedVersion> = state
+            .import_versions
+            .iter()
+            .filter(|(id, _)| from_source.contains(id))
+            .map(|(_, v)| v)
+            .collect();
+        let written_ids: BTreeSet<Uuid> = written.iter().map(|v| v.memory_id).collect();
+        let mut tips: BTreeMap<&str, &MemoryRecord> = BTreeMap::new();
+        for m in state.memories.values() {
+            if m.workspace_id != target_workspace_id
+                || !matches!(m.status, MemoryStatus::Held | MemoryStatus::Promoted)
+            {
+                continue;
+            }
+            let slot = tips.entry(m.claim_key.as_str()).or_insert(m);
+            if m.version > slot.version {
+                *slot = m;
+            }
+        }
+        let imported_keys: BTreeSet<&str> = state
+            .memories
+            .values()
+            .filter(|m| written_ids.contains(&m.memory_id))
+            .map(|m| m.claim_key.as_str())
+            .collect();
+        view.tips = tips
+            .into_iter()
+            .map(|(key, m)| crate::types::ImportTip {
+                claim_key: key.to_owned(),
+                memory_id: m.memory_id,
+                version: m.version,
+                body_digest: m.body_digest.clone(),
+                retirement: m.retirement,
+                written_by_import: written_ids.contains(&m.memory_id),
+                imported_from_source: imported_keys.contains(key),
+            })
+            .collect();
+        view.imported = written
+            .iter()
+            .map(|v| (v.source_artifact_id.clone(), v.source_version))
+            .collect();
+        view.carried = written
+            .iter()
+            .map(|v| (v.source_artifact_id.clone(), v.memory_id))
+            .collect();
+        view.ledger = state
+            .import_ledger
+            .get(&(
+                target_workspace_id,
+                source_server_id.to_owned(),
+                source_tenant_id.to_owned(),
+            ))
+            .cloned();
+        Ok(view)
+    }
+
+    async fn import_begin(
+        &self,
+        import: &crate::types::ImportRecord,
+        at: &EventTime,
+    ) -> Result<bool, StoreError> {
+        use oml_domain::upload::UploadState;
+        let state = self.tenant(import.tenant_id);
+        let mut state = state.lock().expect("tenant lock");
+        let Some((session, _)) = state.uploads.get_mut(&import.upload_id) else {
+            return Ok(false);
+        };
+        if session.state != UploadState::Completed || session.key_id != import.importer_key_id {
+            return Ok(false);
+        }
+        session.state = UploadState::Bound;
+        session.expires_at = None;
+        session.bound_at = Some(at.clone());
+        state.imports.insert(import.import_id, import.clone());
+        Ok(true)
+    }
+
+    async fn import_version_recorded(
+        &self,
+        tenant_id: Uuid,
+        import_id: Uuid,
+        version: &crate::types::ImportedVersion,
+    ) -> Result<(), StoreError> {
+        let state = self.tenant(tenant_id);
+        let mut state = state.lock().expect("tenant lock");
+        if !state.imports.contains_key(&import_id) {
+            return Err(StoreError::Backend(format!("import {import_id} is not held")));
+        }
+        if !state
+            .import_versions
+            .iter()
+            .any(|(id, v)| *id == import_id && v.memory_id == version.memory_id)
+        {
+            state.import_versions.push((import_id, version.clone()));
+        }
+        state
+            .import_provenance
+            .insert(version.memory_id, version.provenance.clone());
+        Ok(())
+    }
+
+    async fn import_failed(
+        &self,
+        tenant_id: Uuid,
+        import_id: Uuid,
+        at: &EventTime,
+        counts: &BTreeMap<String, u64>,
+        refusals: &[crate::types::ImportRefusal],
+    ) -> Result<(), StoreError> {
+        let state = self.tenant(tenant_id);
+        let mut state = state.lock().expect("tenant lock");
+        if let Some(import) = state.imports.get_mut(&import_id)
+            && import.state == oml_domain::import::ImportState::Running
+        {
+            import.state = oml_domain::import::ImportState::Failed;
+            import.ended_at = Some(at.clone());
+            import.counts = counts.clone();
+            import.refusals = refusals.to_vec();
+        }
+        Ok(())
+    }
+
+    async fn import_record(
+        &self,
+        tenant_id: Uuid,
+        import_id: Uuid,
+    ) -> Result<Option<crate::types::ImportRecord>, StoreError> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(None);
+        };
+        let state = state.lock().expect("tenant lock");
+        Ok(state.imports.get(&import_id).map(|import| {
+            let mut import = import.clone();
+            import.position = state
+                .import_versions
+                .iter()
+                .filter(|(id, _)| *id == import_id)
+                .count() as u64;
+            import
+        }))
+    }
+
+    async fn import_stats(&self, tenant_id: Uuid) -> Result<crate::types::ImportStats, StoreError> {
+        let mut stats = crate::types::ImportStats::default();
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(stats);
+        };
+        let state = state.lock().expect("tenant lock");
+        for import in state.imports.values() {
+            *stats
+                .by_state
+                .entry(import.state.as_str().to_owned())
+                .or_default() += 1;
+            stats.allow_older += u64::from(import.allow_older);
         }
         Ok(stats)
     }

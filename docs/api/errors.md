@@ -188,6 +188,33 @@ The routes under `/v2/uploads` ([ADR-0004](../adr/ADR-0004-bodies-and-attachment
 | `upload.tenant_limit` | 409 | The tenant's open and unbound sessions would declare more than `uploads.tenant_max_bytes`. `details.max_bytes`. |
 | `upload.storage_failed` | 503 | The object store at `storage.url` failed a read or a write, or the server has none; nothing changed state. Retryable, with `Retry-After`. |
 
+## `bundle` and `import` — workspace imports
+
+`POST /v2/imports` ([ADR-0084](../adr/ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) d6-d11, R6, R11, R16). The server verifies the whole bundle before it writes, and `oml workspaces import` runs the same `bundle.*` checks before it uploads. No refusal journals anything, and each is counted by code on the `imports` line of `oml doctor`. A message names a file, line or field, never content. A first import from a source without `expect_key` is `request.validation` with `details.field` `/expect_key` and `details.reason` `first_import`; a key other than a person's writer key is `access.verb_ceiling` with `details.reason` `import_person_only`.
+
+| Code | HTTP | Fires when |
+|---|---|---|
+| `bundle.format_unknown` | 422 | The manifest names a format other than `oml-bundle/1`. |
+| `bundle.layout` | 422 | An entry outside the fixed layout, out of order, or missing. |
+| `bundle.path_unsafe` | 422 | An entry path with `..`, an absolute path, a symlink or a hard link. |
+| `bundle.too_large` | 413 | The unpacked size, the entry count or one entry is over its limit; the server's total is `uploads.max_bytes`. |
+| `bundle.line_too_long` | 422 | A line over 2 MiB. |
+| `bundle.depth` | 422 | JSON nested deeper than 32. |
+| `bundle.duplicate` | 422 | A duplicate artifact id and version, or a duplicate body. |
+| `bundle.unreferenced_body` | 422 | A body no line references. |
+| `bundle.malformed` | 422 | A line that does not parse or breaks the closed schema; the message names the file, line and field. |
+| `bundle.digest_mismatch` | 422 | A file, body or version whose digest is not the one stated. |
+| `bundle.signature_invalid` | 422 | The manifest or a source event does not verify, or the manifest names a tenant other than `expect_tenant`. |
+| `bundle.signature_unexpected` | 422 | The manifest verifies under a key other than `expect_key`. |
+| `bundle.unencrypted` | 422 | The CLI's input is not an age file. The server never sees one. |
+| `bundle.decrypt_failed` | 422 | The CLI's identity is not a recipient, or the ciphertext does not authenticate. The server never sees one. |
+| `bundle.io` | 422 | The bundle could not be read. |
+| `import.target_not_in_progress` | 409 | The target is not a development workspace in progress, nor a new name the import creates in progress. `details.workspace_id`. |
+| `import.over_quota` | 429 | The whole plan does not fit the account's meters; nothing is written. `details: {quota, limit, used}`. |
+| `import.bundle_older` | 409 | The bundle is older than the last one imported from its source into this target, and `allow_older` is not set. |
+| `import.since_mismatch` | 409 | An incremental bundle's base is not the release last imported from its source. |
+| `import.source_key_changed` | 409 | The target pins another key for this source, or the bundle names no `expect_key` over an existing pin. Import into a new workspace if the source rotated its key. |
+
 ## `lifecycle` — erased content
 
 | Code | HTTP | Fires when |
@@ -228,12 +255,12 @@ Review unavailability is not an API error. When no reviewer can approve, writes 
 | 401 | `auth.missing`, `auth.invalid` |
 | 403 | `oauth.origin_refused`, `oauth.attach_refused`, `access.verb_ceiling`, `access.grant_refused`, `access.author_only`, `access.issuer_ceiling`, `access.role_exclusive`, `access.banned`, `review.author_in_lineage`, `review.person_required`, `review.ratifier_is_proposer`, `simulation.audience_refused` |
 | 404 | `access.not_found` |
-| 409 | `idempotency.in_progress`, `idempotency.digest_mismatch`, `submission.tip_conflict`, `submission.version_conflict`, `submission.claim_key_conflict`, `submission.similar_exists`, `submission.universe_refused`, `submission.user_root_refused`, `name.taken`, `workspace.frozen`, `workspace.transition_refused`, `workspace.in_progress_refused`, `workspace.held_remaining`, `workspace.admin_key_under_root`, `review.serve_invalid`, `simulation.ended`, `simulation.taint_refused`, `simulation.tip_refused`, `vocab.cycle_refused`, `vocab.prefix_conflict`, `upload.session_invalid`, `upload.incomplete`, `upload.session_limit`, `upload.tenant_limit`, `export.not_ready` |
+| 409 | `idempotency.in_progress`, `idempotency.digest_mismatch`, `submission.tip_conflict`, `submission.version_conflict`, `submission.claim_key_conflict`, `submission.similar_exists`, `submission.universe_refused`, `submission.user_root_refused`, `name.taken`, `workspace.frozen`, `workspace.transition_refused`, `workspace.in_progress_refused`, `workspace.held_remaining`, `workspace.admin_key_under_root`, `review.serve_invalid`, `simulation.ended`, `simulation.taint_refused`, `simulation.tip_refused`, `vocab.cycle_refused`, `vocab.prefix_conflict`, `upload.session_invalid`, `upload.incomplete`, `upload.session_limit`, `upload.tenant_limit`, `export.not_ready`, `import.target_not_in_progress`, `import.bundle_older`, `import.since_mismatch`, `import.source_key_changed` |
 | 410 | `lifecycle.erased`, `upload.expired` |
-| 413 | `request.payload_too_large`, `upload.too_large` |
+| 413 | `request.payload_too_large`, `upload.too_large`, `bundle.too_large` |
 | 415 | `request.unsupported_media` |
-| 422 | `oauth.connect_refused`, `request.workspace_unresolved`, `submission.scan_veto`, `submission.format_invalid`, `submission.attachment_missing`, `submission.simulation_id_required`, `submission.lineage_required`, `vocab.unknown_curie`, `vocab.inactive_curie`, `upload.digest_mismatch`, `upload.part_size`, `upload.part_number`, `settings.retired_key`, `settings.invalid` |
-| 429 | `limit.rate`, `limit.quota` |
+| 422 | `oauth.connect_refused`, `request.workspace_unresolved`, `submission.scan_veto`, `submission.format_invalid`, `submission.attachment_missing`, `submission.simulation_id_required`, `submission.lineage_required`, `vocab.unknown_curie`, `vocab.inactive_curie`, `upload.digest_mismatch`, `upload.part_size`, `upload.part_number`, `settings.retired_key`, `settings.invalid`, `bundle.format_unknown`, `bundle.layout`, `bundle.path_unsafe`, `bundle.line_too_long`, `bundle.depth`, `bundle.duplicate`, `bundle.unreferenced_body`, `bundle.malformed`, `bundle.digest_mismatch`, `bundle.signature_invalid`, `bundle.signature_unexpected`, `bundle.unencrypted`, `bundle.decrypt_failed`, `bundle.io` |
+| 429 | `limit.rate`, `limit.quota`, `import.over_quota` |
 | 500 | `system.internal` |
 | 503 | `system.unavailable`, `upload.storage_failed` |
 

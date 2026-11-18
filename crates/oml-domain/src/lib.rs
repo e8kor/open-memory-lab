@@ -49,6 +49,7 @@ pub mod claim_kinds;
 pub mod envelope;
 pub mod federation;
 pub mod guardrail;
+pub mod import;
 pub mod in_progress;
 pub mod jcs;
 pub mod keys;

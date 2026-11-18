@@ -79,6 +79,7 @@ tags:
   - name: usage
   - name: account
   - name: uploads
+  - name: imports
   - name: health
 
 paths:
@@ -3288,6 +3289,70 @@ paths:
         '503': { $ref: '#/components/responses/Error' }
         default: { $ref: '#/components/responses/Error' }
 
+  /v2/imports:
+    post:
+      tags: [imports]
+      operationId: importBundle
+      summary: Plan or run an import of a completed upload into an in-progress workspace; every version lands held.
+      description: 'Requires: a writer key used by a person; any other key is access.verb_ceiling with details.reason import_person_only (ADR-0084 d11). upload_id is a completed upload session of purpose import that this key opened (ADR-0004 d3), holding the decrypted bundle; another key''s is access.not_found, one in another state upload.session_invalid, one past its expiry 410 upload.expired. target is a development workspace in progress the key writes, or a bare name this key may create, which the import creates in progress; any other target is 409 import.target_not_in_progress, and a taken name name.taken (ADR-0084 d6, d9). The bundle is verified before anything is written, each check under its own bundle.* code (d7). expect_key is the source key''s fingerprint, 64 hex digits; the first import from a source requires it (request.validation, details.field /expect_key, details.reason first_import) and pins it, and a later bundle under another key, or with none named, is 409 import.source_key_changed (R11). A bundle older than the last imported from its source is 409 import.bundle_older unless allow_older (d8). A plan that does not fit the account''s meters is 429 import.over_quota and writes nothing. dry_run answers the plan and binds nothing. Otherwise the upload binds once, each claim key is written as the plan says, held by this key with the source''s origin kind and its import_provenance, under the idempotency key import:<target>:<source server>:<source tenant>:<artifact>:<version>, so the same bundle again writes nothing; a version the target''s scan or rules refuse is skipped and named in refusals. A claim edge whose two ends the target carries is proposed by this key where its verb ceiling allows, which a writer key''s does not; every edge not proposed is counted in edges_reported, and a refused proposal is named in refusals as edge:<src>:<dst>. The import journals workspace.imported, and the upload''s key is nulled when it ends. No Idempotency-Key is taken: the upload binds once. Since v0.8.2.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              upload_id: 0b8f0c3e-6a51-4d55-9e1f-8d3a4c2b7e10
+              target: payments-dev
+              dry_run: false
+              expect_key: b600306cfa76723fdec395e53a9b3d9fdb78b1e2d7a23c32fcbcd2dc6d0c4092
+            schema: { $ref: '#/components/schemas/ImportRequest' }
+      responses:
+        '200':
+          description: The plan of a dry run, or the finished import.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImportAnswer' }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410': { $ref: '#/components/responses/Gone' }
+        '413': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/imports/{import_id}:
+    get:
+      tags: [imports]
+      operationId: getImport
+      summary: An import's state, position, counts and refusals.
+      description: 'Requires: the key that ran the import; any other key, and an id no import has, answers access.not_found (ADR-0084 d15). state is running, done or failed; a running import outlives no request, so one read running stopped when the server did, and position is the versions it recorded. Since v0.8.2.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: import_id, in: path, required: true, schema: { type: string }, description: 'The id POST /v2/imports answered.' }
+      responses:
+        '200':
+          description: The import.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImportStatus' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+
   /v2/admin/usage:
     get:
       tags: [admin]
@@ -3773,6 +3838,26 @@ components:
         - upload.session_limit
         - upload.tenant_limit
         - upload.storage_failed
+        - bundle.format_unknown
+        - bundle.layout
+        - bundle.path_unsafe
+        - bundle.too_large
+        - bundle.line_too_long
+        - bundle.depth
+        - bundle.duplicate
+        - bundle.unreferenced_body
+        - bundle.malformed
+        - bundle.digest_mismatch
+        - bundle.signature_invalid
+        - bundle.signature_unexpected
+        - bundle.unencrypted
+        - bundle.decrypt_failed
+        - bundle.io
+        - import.target_not_in_progress
+        - import.over_quota
+        - import.bundle_older
+        - import.since_mismatch
+        - import.source_key_changed
         - lifecycle.erased
         - name.taken
         - limit.rate
@@ -5075,6 +5160,125 @@ components:
         created_at: { type: string }
         expires_at: { type: [string, 'null'], description: 'Null once bound: a bound upload ends with the verb that bound it.' }
         completed_at: { type: [string, 'null'] }
+
+    ImportRequest:
+      type: object
+      additionalProperties: false
+      required: [upload_id, target]
+      description: "An import of a completed upload (ADR-0084 d15, I4)."
+      properties:
+        upload_id: { type: string }
+        target: { type: string, description: 'An in-progress workspace by id or name, or a bare name the import creates in progress.' }
+        dry_run: { type: boolean, default: false }
+        allow_older: { type: boolean, default: false }
+        expect_key: { type: [string, 'null'], pattern: '^[0-9a-fA-F]{64}$', description: 'The source key''s fingerprint; required on the first import from a source (R11).' }
+        expect_tenant: { type: [string, 'null'], description: 'The source tenant id the bundle must name (R13).' }
+
+    ImportAnswer:
+      type: object
+      additionalProperties: false
+      description: "A dry run's plan, or the finished import."
+      properties:
+        plan: { $ref: '#/components/schemas/ImportPlan' }
+        import: { $ref: '#/components/schemas/Import' }
+
+    ImportStatus:
+      type: object
+      additionalProperties: false
+      required: [import]
+      properties:
+        import: { $ref: '#/components/schemas/Import' }
+
+    ImportPlan:
+      type: object
+      additionalProperties: false
+      required: [source, exported_at, manifest_digest, target_workspace_id, authenticated, signer_fingerprint, allow_older, counts, keys, erasure_markers, edges]
+      description: "What an import would write (ADR-0084 d8, R10)."
+      properties:
+        source:
+          type: object
+          additionalProperties: false
+          required: [server_id, tenant_id, tenant_name]
+          properties:
+            server_id: { type: string }
+            tenant_id: { type: string }
+            tenant_name: { type: string }
+        exported_at: { type: string }
+        manifest_digest: { type: string }
+        target_workspace_id: { type: [string, 'null'], description: 'Null for a new name the import would create.' }
+        authenticated: { type: boolean, description: 'The signature was checked against expect_key; otherwise it proves integrity only (d5).' }
+        signer_fingerprint: { type: string }
+        allow_older: { type: boolean }
+        counts: { type: object, additionalProperties: { type: integer } }
+        keys:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [claim_key, outcome, source, expected_version]
+            properties:
+              claim_key: { type: string }
+              outcome: { type: string, enum: [new, changed, removed, unchanged, equivalent, conflict] }
+              source:
+                oneOf:
+                  - type: object
+                    additionalProperties: false
+                    required: [artifact_id, version]
+                    properties:
+                      artifact_id: { type: string }
+                      version: { type: integer }
+                  - { type: 'null' }
+              expected_version: { type: [integer, 'null'] }
+        erasure_markers: { type: integer, description: 'Markers for versions already imported (d13).' }
+        edges:
+          type: object
+          additionalProperties: false
+          required: [proposed, reported]
+          properties:
+            proposed: { type: integer }
+            reported: { type: integer }
+
+    Import:
+      type: object
+      additionalProperties: false
+      required: [import_id, state, target_workspace_id, upload_id, source, manifest_digest, signer_fingerprint, authenticated, allow_older, position, counts, refusals, created_at, ended_at]
+      description: "One import as its importing key reads it (ADR-0084 d11, d15)."
+      properties:
+        import_id: { type: string }
+        state: { type: string, enum: [running, done, failed] }
+        target_workspace_id: { type: string }
+        upload_id: { type: string }
+        source:
+          type: object
+          additionalProperties: false
+          required: [server_id, tenant_id]
+          properties:
+            server_id: { type: string }
+            tenant_id: { type: string }
+        manifest_digest: { type: string }
+        signer_fingerprint: { type: string }
+        authenticated: { type: boolean }
+        allow_older: { type: boolean }
+        position: { type: integer, description: 'The versions the import recorded.' }
+        counts: { type: object, additionalProperties: { type: integer }, description: 'By outcome (new, changed, removed, unchanged, equivalent, conflict, refused), and edges_proposed, edges_reported and erasure_markers.' }
+        refusals:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [claim_key, source, code]
+            properties:
+              claim_key: { type: string }
+              source:
+                type: object
+                additionalProperties: false
+                required: [artifact_id, version]
+                properties:
+                  artifact_id: { type: string }
+                  version: { type: integer }
+              code: { type: string }
+        created_at: { type: string }
+        ended_at: { type: [string, 'null'] }
 
     KeyLink:
       type: object

@@ -61,6 +61,17 @@ where that trade is the point. The reviewer is still never the author. Self-sign
 ([ADR-0001](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md) d5). In a person's own root, their review key approves their
 agents' work, marked `same_user`.
 
+## Import a bundle
+
+A bundle exported from another server lands in a workspace in progress, and every version in it arrives held, written by the person who imports it ([ADR-0084](../adr/ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) d6). A second person reviews each one before anyone else is served it.
+
+```sh
+oml workspaces import payments.oml-bundle --into payments-dev \
+  --identity ~/.config/age/key.txt --expect-key <source key fingerprint> --dry-run
+```
+
+The CLI decrypts the bundle on the importing machine, checks it, and uploads it; nothing decrypted is written to disk. `--dry-run` prints the plan: which claim keys are new, changed, unchanged or in conflict. Without it the import runs and answers its id; `GET /v2/imports/{id}` reads its state and the versions the target refused. The first import from a source needs `--expect-key`, the source key's fingerprint obtained out of band, and the target pins it: a later bundle signed by another key is refused. Importing the same bundle again writes nothing, and an older one is refused unless `--allow-older`. A name that does not exist yet is created in progress. The key is a writer key used by a person; an agent's key never imports.
+
 ## Links and the brief
 
 Labeled links (`supports`, `contradicts`, `amends`) connect two memories. A **brief** is the few

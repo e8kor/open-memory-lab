@@ -589,6 +589,33 @@ enum WorkspacesCommand {
         #[command(subcommand)]
         command: WorkspaceStatusCommand,
     },
+    /// Import an encrypted bundle into an in-progress workspace, or a new
+    /// name created in progress. The bundle is decrypted here, twice, and
+    /// verified before upload; nothing decrypted is written to disk. Every
+    /// version lands held by this key. A writer key used by a person only.
+    Import {
+        /// The encrypted bundle (`.oml-bundle`).
+        file: std::path::PathBuf,
+        /// Target workspace, by id or name; an absent name is created.
+        #[arg(long)]
+        into: String,
+        /// A file holding the age identity the bundle is encrypted to.
+        #[arg(long)]
+        identity: std::path::PathBuf,
+        /// The source key's fingerprint, checked out of band; required on
+        /// the first import from a source, which pins it.
+        #[arg(long)]
+        expect_key: Option<String>,
+        /// The source tenant id the bundle must name.
+        #[arg(long)]
+        expect_tenant: Option<String>,
+        /// Print the plan and write nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Admit a bundle older than the last one imported from its source.
+        #[arg(long)]
+        allow_older: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1849,6 +1876,31 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             command: WorkspacesCommand::Status { command },
         } => run_workspace_status(cli, &stored, command),
 
+        Command::Workspaces {
+            command:
+                WorkspacesCommand::Import {
+                    file,
+                    into,
+                    identity,
+                    expect_key,
+                    expect_tenant,
+                    dry_run,
+                    allow_older,
+                },
+        } => run_workspaces_import(
+            cli,
+            &stored,
+            &ImportArgs {
+                file,
+                into,
+                identity,
+                expect_key: expect_key.as_deref(),
+                expect_tenant: expect_tenant.as_deref(),
+                dry_run: *dry_run,
+                allow_older: *allow_older,
+            },
+        ),
+
         Command::Edges { command } => run_edges(cli, &stored, command),
 
         Command::Workspaces {
@@ -2794,6 +2846,130 @@ fn run_events(cli: &Cli, stored: &Credentials, args: &EventsArgs) -> Result<Exit
 
 /// `oml workspaces status`: propose, ratify and the pending list over the
 /// transition routes and the workspace read (ADR-0046 d3).
+/// The arguments of `oml workspaces import`.
+struct ImportArgs<'a> {
+    file: &'a std::path::Path,
+    into: &'a str,
+    identity: &'a std::path::Path,
+    expect_key: Option<&'a str>,
+    expect_tenant: Option<&'a str>,
+    dry_run: bool,
+    allow_older: bool,
+}
+
+/// `oml workspaces import` (ADR-0084 d5, d7, d15): pass 1 decrypts and
+/// verifies the bundle here; pass 2 decrypts it again into the parts of one
+/// upload session; then `POST /v2/imports` plans or imports it. No
+/// decrypted byte is written to disk, and the identity is never printed.
+fn run_workspaces_import(
+    cli: &Cli,
+    stored: &Credentials,
+    args: &ImportArgs<'_>,
+) -> Result<ExitCode, CliError> {
+    use oml_cli::import::{PART_SIZE, identity_of, refusal_hint, upload_pass, verify_pass};
+    let identity_text = std::fs::read_to_string(args.identity)
+        .map_err(|e| CliError::local(format!("reading the identity file: {}", e.kind())))?;
+    let identity = identity_of(&identity_text)?;
+    drop(identity_text);
+    let open = || {
+        std::fs::File::open(args.file)
+            .map(std::io::BufReader::new)
+            .map_err(|e| CliError::local(format!("opening the bundle: {}", e.kind())))
+    };
+    let options = oml_bundle::VerifyOptions {
+        expect_key: args.expect_key.map(str::to_owned),
+        expect_tenant: args.expect_tenant.map(str::to_owned),
+        ..oml_bundle::VerifyOptions::default()
+    };
+    // Pass 1: the CLI side of d7, before anything is sent.
+    let verified =
+        verify_pass(open()?, &identity, &options).map_err(|e| CliError::local(e.to_string()))?;
+    let client = resolve(cli, stored)?;
+    let (_, session) = client.post(
+        "/v2/uploads",
+        &json!({ "purpose": "import", "size": verified.size, "sha256": verified.sha256 }),
+        &CallOpts {
+            auth: true,
+            idempotency: false,
+        },
+    )?;
+    let upload_id = field(&session, "upload_id").to_owned();
+    let parts_path = format!("/v2/uploads/{}/parts", segment(&upload_id)?);
+    // Pass 2: decrypt again and send each part as it is read.
+    let (size, sha256) = upload_pass(open()?, &identity, PART_SIZE, &mut |n, bytes| {
+        client.put_bytes(&format!("{parts_path}/{n}"), bytes).map(|_| ())
+    })?;
+    if (size, sha256.as_str()) != (verified.size, verified.sha256.as_str()) {
+        return Err(CliError::local(
+            "the bundle changed between the two passes; nothing was imported",
+        ));
+    }
+    client.post(
+        &format!("/v2/uploads/{}/complete", segment(&upload_id)?),
+        &json!({}),
+        &CallOpts {
+            auth: true,
+            idempotency: false,
+        },
+    )?;
+    let answer = client.post(
+        "/v2/imports",
+        &json!({
+            "upload_id": upload_id,
+            "target": args.into,
+            "dry_run": args.dry_run,
+            "allow_older": args.allow_older,
+            "expect_key": args.expect_key,
+            "expect_tenant": args.expect_tenant,
+        }),
+        &CallOpts {
+            auth: true,
+            idempotency: false,
+        },
+    );
+    if let Err(CliError::Refused {
+        ref code,
+        ref envelope,
+        ..
+    }) = answer
+        && let Some(hint) = refusal_hint(
+            code,
+            envelope["error"]["details"]["field"].as_str(),
+            &verified.signer_fingerprint,
+        )
+    {
+        eprintln!("{hint}");
+    }
+    let (_, response) = answer?;
+    if cli.json {
+        print_json(&response);
+        return Ok(ExitCode::SUCCESS);
+    }
+    if let Some(plan) = response.get("plan") {
+        println!(
+            "plan (nothing written): {} from {} exported {}; signature {}",
+            plan["counts"],
+            plan["source"]["tenant_name"].as_str().unwrap_or(""),
+            plan["exported_at"].as_str().unwrap_or(""),
+            if plan["authenticated"].as_bool() == Some(true) {
+                "authenticated against --expect-key"
+            } else {
+                "intact, not authenticated"
+            },
+        );
+    } else {
+        let import = &response["import"];
+        println!(
+            "import {} {}: {} held for review; {} refused",
+            field(import, "import_id"),
+            field(import, "state"),
+            import["counts"],
+            import["refusals"].as_array().map_or(0, Vec::len),
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 fn run_workspace_status(
     cli: &Cli,
     stored: &Credentials,
@@ -5420,6 +5596,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let handlers_warn = handlers.iter().any(|line| line.starts_with("warn"));
     let uploads = uploads_doctor(scrape.as_ref());
     let uploads_warn = uploads.iter().any(|line| line.starts_with("warn"));
+    let imports = imports_doctor(scrape.as_ref());
+    let imports_warn = imports.iter().any(|line| line.starts_with("warn"));
     // The sync failures of ADR-0057 d17 that the clone alone answers; the
     // stale count and the waiting edges are the sources lines'.
     let sync = oml_cli::sync::doctor::lines(
@@ -5471,6 +5649,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         || telemetry_warn
         || handlers_warn
         || uploads_warn
+        || imports_warn
         || scan_warn
         || approvals_warn
         || sync_warn
@@ -5530,6 +5709,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "journal": journal,
             "handlers": handlers,
             "uploads": uploads,
+            "imports": imports,
             "scan": scan,
             "usage": usage,
             "key_limits": key_limits,
@@ -5667,6 +5847,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         for line in &uploads {
             println!("uploads     : {line}");
+        }
+        for line in &imports {
+            println!("imports     : {line}");
         }
         for line in &scan {
             println!("scan        : {line}");
@@ -6009,6 +6192,56 @@ fn uploads_doctor(scrape: Option<&Scrape>) -> Vec<String> {
         } else {
             format!("upload_refusals since start: {list}")
         });
+    }
+    lines
+}
+
+/// The `imports` doctor lines (ADR-0084 d15; #426), from the metrics
+/// listener alone: the imports by state at the last sweep; a warn for
+/// imports stopped while running, whose position `GET /v2/imports/{id}`
+/// answers; the verification refusals by code; and the imports that used
+/// `allow_older`. Nothing from a server before imports.
+fn imports_doctor(scrape: Option<&Scrape>) -> Vec<String> {
+    let Some(scrape) = scrape else {
+        return vec!["not read: set OML_METRICS_URL to the lead's metrics listener".to_owned()];
+    };
+    if !scrape.0.contains("oml_imports") {
+        return vec!["off (this server runs no imports)".to_owned()];
+    }
+    let state = |s: &str| scrape.sum("oml_imports", &[("state", s)]);
+    let mut lines = vec![format!(
+        "{} done, {} failed, {} stopped while running",
+        state("done"),
+        state("failed"),
+        state("running"),
+    )];
+    if let n @ 1.. = state("running") {
+        lines.push(format!(
+            "warn imports_stopped: {n} import(s) stopped while running (the lead restarted mid-import); what each wrote stays held, GET /v2/imports/{{id}} names its position, and importing the same bundle again writes only what is missing"
+        ));
+    }
+    if let n @ 1.. = scrape.sum("oml_imports_allow_older", &[]) {
+        lines.push(format!(
+            "allow_older: {n} import(s) admitted a bundle older than the target's ledger (workspace.imported names each with allow_older: true)"
+        ));
+    }
+    let mut refused = Vec::new();
+    for (set, n) in scrape.samples("oml_import_refusals_total", &[]) {
+        if let Some(code) = set
+            .split(',')
+            .find_map(|pair| pair.strip_prefix("code=\"")?.strip_suffix('"'))
+        {
+            refused.push((code.to_owned(), n));
+        }
+    }
+    refused.sort();
+    if !refused.is_empty() {
+        let list = refused
+            .iter()
+            .map(|(code, n)| format!("{code} {n}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!("import_refusals since start: {list}"));
     }
     lines
 }
@@ -7308,6 +7541,42 @@ mod tests {
         );
         assert_eq!(
             uploads_doctor(None),
+            vec!["not read: set OML_METRICS_URL to the lead's metrics listener".to_owned()]
+        );
+    }
+
+    #[test]
+    fn the_imports_doctor_counts_imports_and_warns_on_stopped_ones() {
+        assert_eq!(
+            imports_doctor(Some(&Scrape("oml_http_requests 1\n".to_owned()))),
+            vec!["off (this server runs no imports)".to_owned()]
+        );
+        let quiet = Scrape(
+            "oml_imports{state=\"done\"} 3\n\
+             oml_imports{state=\"running\"} 0\n\
+             oml_imports_allow_older 0\n"
+                .to_owned(),
+        );
+        assert_eq!(
+            imports_doctor(Some(&quiet)),
+            vec!["3 done, 0 failed, 0 stopped while running".to_owned()]
+        );
+        let loud = Scrape(
+            "oml_imports{state=\"running\"} 1\n\
+             oml_imports_allow_older 2\n\
+             oml_import_refusals_total{code=\"bundle.digest_mismatch\"} 1\n"
+                .to_owned(),
+        );
+        let lines = imports_doctor(Some(&loud));
+        assert!(lines[1].starts_with("warn imports_stopped: 1 "), "{lines:?}");
+        assert!(lines[2].starts_with("allow_older: 2 "), "{lines:?}");
+        assert_eq!(
+            lines[3],
+            "import_refusals since start: bundle.digest_mismatch 1",
+            "{lines:?}"
+        );
+        assert_eq!(
+            imports_doctor(None),
             vec!["not read: set OML_METRICS_URL to the lead's metrics listener".to_owned()]
         );
     }

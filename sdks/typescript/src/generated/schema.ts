@@ -1510,6 +1510,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Plan or run an import of a completed upload into an in-progress workspace; every version lands held.
+         * @description Requires: a writer key used by a person; any other key is access.verb_ceiling with details.reason import_person_only (ADR-0084 d11). upload_id is a completed upload session of purpose import that this key opened (ADR-0004 d3), holding the decrypted bundle; another key's is access.not_found, one in another state upload.session_invalid, one past its expiry 410 upload.expired. target is a development workspace in progress the key writes, or a bare name this key may create, which the import creates in progress; any other target is 409 import.target_not_in_progress, and a taken name name.taken (ADR-0084 d6, d9). The bundle is verified before anything is written, each check under its own bundle.* code (d7). expect_key is the source key's fingerprint, 64 hex digits; the first import from a source requires it (request.validation, details.field /expect_key, details.reason first_import) and pins it, and a later bundle under another key, or with none named, is 409 import.source_key_changed (R11). A bundle older than the last imported from its source is 409 import.bundle_older unless allow_older (d8). A plan that does not fit the account's meters is 429 import.over_quota and writes nothing. dry_run answers the plan and binds nothing. Otherwise the upload binds once, each claim key is written as the plan says, held by this key with the source's origin kind and its import_provenance, under the idempotency key import:<target>:<source server>:<source tenant>:<artifact>:<version>, so the same bundle again writes nothing; a version the target's scan or rules refuse is skipped and named in refusals. A claim edge whose two ends the target carries is proposed by this key where its verb ceiling allows, which a writer key's does not; every edge not proposed is counted in edges_reported, and a refused proposal is named in refusals as edge:<src>:<dst>. The import journals workspace.imported, and the upload's key is nulled when it ends. No Idempotency-Key is taken: the upload binds once. Since v0.8.2.
+         */
+        post: operations["importBundle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/imports/{import_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * An import's state, position, counts and refusals.
+         * @description Requires: the key that ran the import; any other key, and an id no import has, answers access.not_found (ADR-0084 d15). state is running, done or failed; a running import outlives no request, so one read running stopped when the server did, and position is the versions it recorded. Since v0.8.2.
+         */
+        get: operations["getImport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/admin/usage": {
         parameters: {
             query?: never;
@@ -1655,7 +1695,7 @@ export interface components {
          * @description The closed error vocabulary; identical to docs/api/errors.md by construction. The oauth codes other than oauth.connect_refused and oauth.attach_refused travel inside RFC error bodies on the OAuth endpoints, at the start of error_description, or on the authorization page; oauth.connect_refused answers on /v2 in this envelope, and oauth.attach_refused, an /mcp tool result, is answered by no served tool since oml_attach left the catalog (ADR-0031, ADR-0039 d2, d9).
          * @enum {string}
          */
-        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workspace_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.format_invalid" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.version_conflict" | "submission.claim_key_conflict" | "submission.similar_exists" | "submission.universe_refused" | "submission.user_root_refused" | "workspace.frozen" | "workspace.in_progress_refused" | "workspace.held_remaining" | "workspace.admin_key_under_root" | "workspace.transition_refused" | "review.author_in_lineage" | "review.person_required" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "upload.expired" | "upload.too_large" | "upload.part_size" | "upload.part_number" | "upload.incomplete" | "upload.session_limit" | "upload.tenant_limit" | "upload.storage_failed" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
+        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workspace_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.format_invalid" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.version_conflict" | "submission.claim_key_conflict" | "submission.similar_exists" | "submission.universe_refused" | "submission.user_root_refused" | "workspace.frozen" | "workspace.in_progress_refused" | "workspace.held_remaining" | "workspace.admin_key_under_root" | "workspace.transition_refused" | "review.author_in_lineage" | "review.person_required" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "upload.expired" | "upload.too_large" | "upload.part_size" | "upload.part_number" | "upload.incomplete" | "upload.session_limit" | "upload.tenant_limit" | "upload.storage_failed" | "bundle.format_unknown" | "bundle.layout" | "bundle.path_unsafe" | "bundle.too_large" | "bundle.line_too_long" | "bundle.depth" | "bundle.duplicate" | "bundle.unreferenced_body" | "bundle.malformed" | "bundle.digest_mismatch" | "bundle.signature_invalid" | "bundle.signature_unexpected" | "bundle.unencrypted" | "bundle.decrypt_failed" | "bundle.io" | "import.target_not_in_progress" | "import.over_quota" | "import.bundle_older" | "import.since_mismatch" | "import.source_key_changed" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
         ErrorEnvelope: {
             error: {
                 code: components["schemas"]["ErrorCode"];
@@ -2848,6 +2888,95 @@ export interface components {
             /** @description Null once bound: a bound upload ends with the verb that bound it. */
             expires_at: string | null;
             completed_at: string | null;
+        };
+        /** @description An import of a completed upload (ADR-0084 d15, I4). */
+        ImportRequest: {
+            upload_id: string;
+            /** @description An in-progress workspace by id or name, or a bare name the import creates in progress. */
+            target: string;
+            /** @default false */
+            dry_run?: boolean;
+            /** @default false */
+            allow_older?: boolean;
+            /** @description The source key's fingerprint; required on the first import from a source (R11). */
+            expect_key?: string | null;
+            /** @description The source tenant id the bundle must name (R13). */
+            expect_tenant?: string | null;
+        };
+        /** @description A dry run's plan, or the finished import. */
+        ImportAnswer: {
+            plan?: components["schemas"]["ImportPlan"];
+            import?: components["schemas"]["Import"];
+        };
+        ImportStatus: {
+            import: components["schemas"]["Import"];
+        };
+        /** @description What an import would write (ADR-0084 d8, R10). */
+        ImportPlan: {
+            source: {
+                server_id: string;
+                tenant_id: string;
+                tenant_name: string;
+            };
+            exported_at: string;
+            manifest_digest: string;
+            /** @description Null for a new name the import would create. */
+            target_workspace_id: string | null;
+            /** @description The signature was checked against expect_key; otherwise it proves integrity only (d5). */
+            authenticated: boolean;
+            signer_fingerprint: string;
+            allow_older: boolean;
+            counts: {
+                [key: string]: number;
+            };
+            keys: {
+                claim_key: string;
+                /** @enum {string} */
+                outcome: "new" | "changed" | "removed" | "unchanged" | "equivalent" | "conflict";
+                source: {
+                    artifact_id: string;
+                    version: number;
+                } | null;
+                expected_version: number | null;
+            }[];
+            /** @description Markers for versions already imported (d13). */
+            erasure_markers: number;
+            edges: {
+                proposed: number;
+                reported: number;
+            };
+        };
+        /** @description One import as its importing key reads it (ADR-0084 d11, d15). */
+        Import: {
+            import_id: string;
+            /** @enum {string} */
+            state: "running" | "done" | "failed";
+            target_workspace_id: string;
+            upload_id: string;
+            source: {
+                server_id: string;
+                tenant_id: string;
+            };
+            manifest_digest: string;
+            signer_fingerprint: string;
+            authenticated: boolean;
+            allow_older: boolean;
+            /** @description The versions the import recorded. */
+            position: number;
+            /** @description By outcome (new, changed, removed, unchanged, equivalent, conflict, refused), and edges_proposed, edges_reported and erasure_markers. */
+            counts: {
+                [key: string]: number;
+            };
+            refusals: {
+                claim_key: string;
+                source: {
+                    artifact_id: string;
+                    version: number;
+                };
+                code: string;
+            }[];
+            created_at: string;
+            ended_at: string | null;
         };
         /** @description A key and the user the console acts with it for, null when unlinked (ADR-0085 d16). */
         KeyLink: {
@@ -8181,6 +8310,92 @@ export interface operations {
             410: components["responses"]["Gone"];
             422: components["responses"]["Unprocessable"];
             503: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    importBundle: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "upload_id": "0b8f0c3e-6a51-4d55-9e1f-8d3a4c2b7e10",
+                 *       "target": "payments-dev",
+                 *       "dry_run": false,
+                 *       "expect_key": "b600306cfa76723fdec395e53a9b3d9fdb78b1e2d7a23c32fcbcd2dc6d0c4092"
+                 *     }
+                 */
+                "application/json": components["schemas"]["ImportRequest"];
+            };
+        };
+        responses: {
+            /** @description The plan of a dry run, or the finished import. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportAnswer"];
+                };
+            };
+            400: components["responses"]["Error"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            410: components["responses"]["Gone"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["UnsupportedMedia"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getImport: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path: {
+                /** @description The id POST /v2/imports answered. */
+                import_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The import. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportStatus"];
+                };
+            };
+            404: components["responses"]["NotFound"];
             default: components["responses"]["Error"];
         };
     };

@@ -435,6 +435,12 @@ pub enum MetadataFold {
     /// `memory.admin_read`: an admin key read memories' text; nothing
     /// changes but the journal (ADR-0045 d21).
     AdminRead,
+    /// `workspace.imported`: the import's row ends `done` with its counts
+    /// and refusals, and the target's ledger for the source moves to the
+    /// bundle's export instant, release and signer, in the event's
+    /// transaction (ADR-0084 d8, d11, R11). The store refuses an import it
+    /// does not hold or one that is not `running`.
+    WorkspaceImported(crate::types::ImportEnded),
     /// `web.quota_set`: one person's override of one quota, or with `None`
     /// its return to the deployment's default (ADR-0068 d5).
     QuotaSet {
@@ -986,6 +992,64 @@ pub trait JournalStore: Retriever + Send + Sync {
         &self,
         tenant_id: Uuid,
     ) -> impl Future<Output = Result<crate::types::UploadStats, StoreError>> + Send;
+
+    /// The target workspace as an import from the source
+    /// (`source_server_id`, `source_tenant_id`) sees it: each claim key's
+    /// latest held or promoted version, what imports from that source
+    /// wrote, and the ledger (ADR-0084 R10, R11).
+    fn import_target_view(
+        &self,
+        tenant_id: Uuid,
+        target_workspace_id: Uuid,
+        source_server_id: &str,
+        source_tenant_id: &str,
+    ) -> impl Future<Output = Result<crate::types::ImportTargetView, StoreError>> + Send;
+
+    /// Binds the import's upload and inserts its row `running`, in one
+    /// transaction: the session moves from `completed` to `bound` only when
+    /// the importing key opened it. `false`, writing nothing, when the
+    /// session is not that key's completed session (ADR-0004 d3; ADR-0084
+    /// I4).
+    fn import_begin(
+        &self,
+        import: &crate::types::ImportRecord,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<bool, StoreError>> + Send;
+
+    /// Records one version the import wrote and sets the row's
+    /// `import_provenance`; recording it again changes nothing (ADR-0084
+    /// d4, d11).
+    fn import_version_recorded(
+        &self,
+        tenant_id: Uuid,
+        import_id: Uuid,
+        version: &crate::types::ImportedVersion,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+
+    /// Ends a `running` import `failed` with its counts and refusals so
+    /// far; nothing is journalled for a failure (ADR-0084 d11).
+    fn import_failed(
+        &self,
+        tenant_id: Uuid,
+        import_id: Uuid,
+        at: &EventTime,
+        counts: &std::collections::BTreeMap<String, u64>,
+        refusals: &[crate::types::ImportRefusal],
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+
+    /// One import's row, its position counted from the versions recorded.
+    fn import_record(
+        &self,
+        tenant_id: Uuid,
+        import_id: Uuid,
+    ) -> impl Future<Output = Result<Option<crate::types::ImportRecord>, StoreError>> + Send;
+
+    /// The tenant's imports by state and how many used `allow_older`
+    /// (ADR-0084 d15).
+    fn import_stats(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<crate::types::ImportStats, StoreError>> + Send;
 
     /// The account's meters, read from its counters (ADR-0071 d2, d3): the
     /// four stocks and the flows of the UTC month `at` falls in.

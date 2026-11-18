@@ -3386,6 +3386,32 @@ pub enum AppError {
     /// (ADR-0004 d3, as amended 2026-11-17); nothing is journalled.
     #[error("{0} (ADR-0004 d3)")]
     Upload(oml_domain::upload::UploadRefusal),
+    /// A bundle refused under one of ADR-0084 d7's codes, or a plan
+    /// refused before any key is planned (`import.bundle_older`,
+    /// `import.since_mismatch`, `import.source_key_changed`; d8, R11).
+    /// Nothing is journalled.
+    #[error("{0}")]
+    Bundle(oml_bundle::BundleError),
+    /// The import target is not a development workspace in progress, nor a
+    /// new name the import creates in progress (`import.target_not_in_progress`;
+    /// ADR-0084 d6).
+    #[error("the import target is not an in-progress development workspace (ADR-0084 d6)")]
+    ImportTargetNotInProgress { workspace_id: Uuid },
+    /// Only a writer key used by a person imports (`access.verb_ceiling`,
+    /// `import_person_only`; ADR-0084 d11).
+    #[error("an import needs a writer key used by a person (ADR-0084 d11)")]
+    ImportPersonOnly {
+        role: Role,
+        used_by: oml_domain::UsedBy,
+    },
+    /// A first import from a source names no key to pin (`request.validation`,
+    /// `details.field: expect_key`; ADR-0084 R11).
+    #[error("a first import from a source names its key with expect_key (ADR-0084 R11)")]
+    ImportExpectKeyRequired,
+    /// The plan does not fit the target account's meters; nothing is
+    /// written (`import.over_quota`; ADR-0084 d7).
+    #[error("the import does not fit the {} quota of {} (ADR-0084 d7)", .0.quota.as_str(), .0.limit)]
+    ImportOverQuota(oml_domain::signup::QuotaReached),
     /// `OML-Acting-Key` names a key the session may not act as (ADR-0085
     /// d16, amended 2026-11-17; `auth.invalid`, `acting_key_not_linked`).
     #[error("the acting key is not a live key linked to this session's user")]
@@ -3943,4 +3969,113 @@ pub struct UploadStats {
     pub unbound_bytes: u64,
     /// Sessions whose key is gone and whose objects remain.
     pub unswept: u64,
+}
+
+/// One version an import skipped, named in its outcome (ADR-0084 d11): the
+/// claim key, the source version, and the refusal's code.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImportRefusal {
+    pub claim_key: String,
+    pub source_artifact_id: String,
+    pub source_version: u64,
+    pub code: String,
+}
+
+/// The ledger of one target workspace for one source (ADR-0084 d8, R11):
+/// the newest export instant and release imported, and the fingerprint of
+/// the key that signed the source's imports, pinned at the first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportLedgerEntry {
+    pub exported_at: String,
+    pub release_label: Option<String>,
+    pub release_manifest_digest: Option<String>,
+    pub signer_fingerprint: String,
+}
+
+/// One import's row (ADR-0084 d11, I4): the target, the importing key, the
+/// bound upload, the source and what its bundle proved, the state, how many
+/// versions it has recorded, the outcome counts and the refusals.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportRecord {
+    pub tenant_id: Uuid,
+    pub import_id: Uuid,
+    pub target_workspace_id: Uuid,
+    pub importer_key_id: Uuid,
+    pub upload_id: Uuid,
+    pub source_server_id: String,
+    pub source_tenant_id: String,
+    pub manifest_digest: String,
+    pub signer_fingerprint: String,
+    pub authenticated: bool,
+    pub allow_older: bool,
+    pub state: oml_domain::import::ImportState,
+    /// The versions the import recorded so far: where a stopped import
+    /// stood (d15).
+    pub position: u64,
+    /// By outcome name ([`oml_domain::import::OUTCOMES`]).
+    pub counts: std::collections::BTreeMap<String, u64>,
+    pub refusals: Vec<ImportRefusal>,
+    pub created_at: EventTime,
+    pub ended_at: Option<EventTime>,
+}
+
+/// The target's tip of one claim key, held versions included, as the plan
+/// reads it (ADR-0084 R10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportTip {
+    pub claim_key: String,
+    pub memory_id: Uuid,
+    pub version: u32,
+    pub body_digest: String,
+    pub retirement: bool,
+    /// An import from this source wrote this very version.
+    pub written_by_import: bool,
+    /// An import from this source has written some version of this key.
+    pub imported_from_source: bool,
+}
+
+/// The target workspace as one source's import sees it (ADR-0084 R10).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ImportTargetView {
+    pub tips: Vec<ImportTip>,
+    pub ledger: Option<ImportLedgerEntry>,
+    /// The source (artifact id, version) pairs imported into the target.
+    pub imported: Vec<(String, u64)>,
+    /// Source artifact ids already imported, each with the target version
+    /// that carries it, for edges (d6).
+    pub carried: Vec<(String, Uuid)>,
+}
+
+/// One version an import wrote (ADR-0084 d4, d11): the target's row, the
+/// source version it carries, the plan's outcome, and the provenance the
+/// row keeps as `import_provenance`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportedVersion {
+    pub memory_id: Uuid,
+    pub source_artifact_id: String,
+    pub source_version: u64,
+    pub outcome: String,
+    pub provenance: Value,
+}
+
+/// What `workspace.imported` folds (ADR-0084 d8, d11): the import's row
+/// ends `done` with its counts and refusals, and the ledger of the target
+/// for this source moves to the bundle's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportEnded {
+    pub import_id: Uuid,
+    pub target_workspace_id: Uuid,
+    pub source_server_id: String,
+    pub source_tenant_id: String,
+    pub counts: std::collections::BTreeMap<String, u64>,
+    pub refusals: Vec<ImportRefusal>,
+    pub ledger: ImportLedgerEntry,
+}
+
+/// A tenant's imports by state and how many used `allow_older`, for the
+/// `imports` doctor line's metrics (ADR-0084 d15).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ImportStats {
+    pub by_state: std::collections::BTreeMap<String, u64>,
+    pub allow_older: u64,
 }

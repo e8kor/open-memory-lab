@@ -209,6 +209,78 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         timed("upload_stats", self.inner.upload_stats(tenant_id))
     }
 
+    fn import_target_view(
+        &self,
+        tenant_id: Uuid,
+        target_workspace_id: Uuid,
+        source_server_id: &str,
+        source_tenant_id: &str,
+    ) -> impl Future<Output = Result<oml_app::types::ImportTargetView, StoreError>> + Send {
+        timed(
+            "import_target_view",
+            self.inner.import_target_view(
+                tenant_id,
+                target_workspace_id,
+                source_server_id,
+                source_tenant_id,
+            ),
+        )
+    }
+
+    fn import_begin(
+        &self,
+        import: &oml_app::types::ImportRecord,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<bool, StoreError>> + Send {
+        timed("import_begin", self.inner.import_begin(import, at))
+    }
+
+    fn import_version_recorded(
+        &self,
+        tenant_id: Uuid,
+        import_id: Uuid,
+        version: &oml_app::types::ImportedVersion,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send {
+        timed(
+            "import_version_recorded",
+            self.inner
+                .import_version_recorded(tenant_id, import_id, version),
+        )
+    }
+
+    fn import_failed(
+        &self,
+        tenant_id: Uuid,
+        import_id: Uuid,
+        at: &EventTime,
+        counts: &std::collections::BTreeMap<String, u64>,
+        refusals: &[oml_app::types::ImportRefusal],
+    ) -> impl Future<Output = Result<(), StoreError>> + Send {
+        timed(
+            "import_failed",
+            self.inner
+                .import_failed(tenant_id, import_id, at, counts, refusals),
+        )
+    }
+
+    fn import_record(
+        &self,
+        tenant_id: Uuid,
+        import_id: Uuid,
+    ) -> impl Future<Output = Result<Option<oml_app::types::ImportRecord>, StoreError>> + Send {
+        timed(
+            "import_record",
+            self.inner.import_record(tenant_id, import_id),
+        )
+    }
+
+    fn import_stats(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<oml_app::types::ImportStats, StoreError>> + Send {
+        timed("import_stats", self.inner.import_stats(tenant_id))
+    }
+
     fn user_usage(
         &self,
         tenant_id: Uuid,

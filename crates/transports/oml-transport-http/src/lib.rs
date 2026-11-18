@@ -29,6 +29,7 @@ mod search;
 pub mod session;
 pub mod time;
 pub mod traffic;
+mod imports;
 mod uploads;
 mod usage;
 pub mod web;
@@ -166,6 +167,8 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/v2/uploads/{upload_id}"),
     ("POST", "/v2/uploads/{upload_id}/complete"),
     ("DELETE", "/v2/uploads/{upload_id}"),
+    ("POST", "/v2/imports"),
+    ("GET", "/v2/imports/{import_id}"),
     ("GET", "/v2/admin/usage"),
     ("GET", "/v2/admin/usage/drift"),
     ("GET", "/v2/search"),
@@ -428,6 +431,8 @@ where
             ("GET", "/v2/uploads/{upload_id}") => get(Self::upload_status_route),
             ("POST", "/v2/uploads/{upload_id}/complete") => post(Self::complete_upload_route),
             ("DELETE", "/v2/uploads/{upload_id}") => delete(Self::abandon_upload_route),
+            ("POST", "/v2/imports") => post(Self::import_route),
+            ("GET", "/v2/imports/{import_id}") => get(Self::import_status_route),
             ("GET", "/v2/admin/usage") => get(Self::admin_usage_route),
             ("GET", "/v2/admin/usage/drift") => get(Self::admin_usage_drift_route),
             ("GET", "/v2/search") => get(Self::search_settings),

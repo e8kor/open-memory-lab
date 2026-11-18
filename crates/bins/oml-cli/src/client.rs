@@ -156,6 +156,21 @@ impl Client {
         finish(request.send_json(body.clone()))
     }
 
+    /// PUT raw bytes as `application/octet-stream` under the key: one
+    /// upload part (ADR-0004 d3).
+    ///
+    /// # Errors
+    ///
+    /// The server refused, or could not be reached.
+    pub fn put_bytes(&self, path: &str, bytes: &[u8]) -> Result<(u16, Value), CliError> {
+        let request = self
+            .agent
+            .put(&format!("{}{path}", self.server))
+            .set("Authorization", &self.bearer()?)
+            .set("Content-Type", "application/octet-stream");
+        finish(request.send_bytes(bytes))
+    }
+
     /// POST a JSON body; returns (status, parsed body).
     pub fn post(
         &self,

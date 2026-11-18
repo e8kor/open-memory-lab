@@ -6379,8 +6379,8 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 53,
-        "every migration through 0052_release_stranded_lane_claims"
+        applied, 55,
+        "every migration through 0055_workspace_imports"
     );
     drop(conn);
     drop_dbs(&created).await;
@@ -7836,8 +7836,8 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 53,
-        "every migration through 0052_release_stranded_lane_claims"
+        applied, 55,
+        "every migration through 0055_workspace_imports"
     );
     drop(conn);
 
@@ -8720,8 +8720,8 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 53,
-        "every migration through 0052_release_stranded_lane_claims"
+        applied, 55,
+        "every migration through 0055_workspace_imports"
     );
     drop(conn);
 
@@ -10076,6 +10076,18 @@ async fn upload_sessions_pass_the_suite() {
     }
     let created = Mutex::new(Vec::new());
     oml_port_contracts::uploads::run_upload_suite(|| fresh_store(&created)).await;
+    drop_dbs(&created).await;
+}
+
+/// Workspace imports on PostgreSQL as the serving role, exactly as the
+/// double passes them (ADR-0084 d6-d11, R11, I4).
+#[tokio::test]
+async fn imports_pass_the_suite() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    oml_port_contracts::imports::run_import_suite(|| fresh_store(&created)).await;
     drop_dbs(&created).await;
 }
 

@@ -3641,6 +3641,54 @@ async fn apply_fold(
         MetadataFold::TenantGenesis { .. }
         | MetadataFold::VerdictRecorded { .. }
         | MetadataFold::AdminRead => {}
+        MetadataFold::WorkspaceImported(ended) => {
+            // The row ends done in the event's transaction, and the ledger
+            // moves to the bundle's (ADR-0084 d8, d11, R11).
+            let done = sqlx::query(
+                "UPDATE imports SET state = 'done', ended_at = ($3)::timestamptz, counts = $4, \
+                        refusals = $5 \
+                  WHERE tenant_id = $1 AND id = $2 AND state = 'running'",
+            )
+            .bind(tenant_id)
+            .bind(ended.import_id)
+            .bind(at.as_str())
+            .bind(json!(ended.counts))
+            .bind(serde_json::to_value(&ended.refusals).map_err(backend)?)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?
+            .rows_affected();
+            if done != 1 {
+                return Err(StoreError::Backend(format!(
+                    "import {} is not running",
+                    ended.import_id
+                )));
+            }
+            sqlx::query(
+                "INSERT INTO import_ledger (tenant_id, target_workspace_id, source_server_id, \
+                        source_tenant_id, exported_at, release_label, release_manifest_digest, \
+                        signer_fingerprint, updated_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, ($9)::timestamptz) \
+                 ON CONFLICT (tenant_id, target_workspace_id, source_server_id, source_tenant_id) \
+                 DO UPDATE SET exported_at = EXCLUDED.exported_at, \
+                    release_label = EXCLUDED.release_label, \
+                    release_manifest_digest = EXCLUDED.release_manifest_digest, \
+                    signer_fingerprint = EXCLUDED.signer_fingerprint, \
+                    updated_at = EXCLUDED.updated_at",
+            )
+            .bind(tenant_id)
+            .bind(ended.target_workspace_id)
+            .bind(&ended.source_server_id)
+            .bind(&ended.source_tenant_id)
+            .bind(&ended.ledger.exported_at)
+            .bind(&ended.ledger.release_label)
+            .bind(&ended.ledger.release_manifest_digest)
+            .bind(&ended.ledger.signer_fingerprint)
+            .bind(at.as_str())
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+        }
         MetadataFold::FederationPolicySet(policy) => {
             sqlx::query(
                 "UPDATE tenants SET federation_enabled = $2, federation_default_sources = $3, \
@@ -5123,6 +5171,9 @@ async fn meter_plan(
         | MetadataFold::WebEmailChanged { .. }
         | MetadataFold::WebEmailRemoved { .. }
         | MetadataFold::AdminRead
+        // An import's end moves no meter: each version it wrote was
+        // metered by its own commit (ADR-0084 d15).
+        | MetadataFold::WorkspaceImported(_)
         | MetadataFold::QuotaSet { .. }
         | MetadataFold::AccountProfileSet { .. }
         | MetadataFold::UserDisabled { .. }
@@ -7153,6 +7204,296 @@ impl JournalStore for PgStore {
                 .insert(state, u64::try_from(sessions).map_err(backend)?);
             stats.unbound_bytes += u64::try_from(bytes).map_err(backend)?;
             stats.unswept += u64::try_from(unswept).map_err(backend)?;
+        }
+        Ok(stats)
+    }
+
+    async fn import_target_view(
+        &self,
+        tenant_id: Uuid,
+        target_workspace_id: Uuid,
+        source_server_id: &str,
+        source_tenant_id: &str,
+    ) -> Result<oml_app::types::ImportTargetView, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        // What imports from this source into this target wrote.
+        let written = sqlx::query(
+            "SELECT v.memory_id, v.source_artifact_id, v.source_version, m.claim_key \
+               FROM import_versions v \
+               JOIN imports i ON i.tenant_id = v.tenant_id AND i.id = v.import_id \
+               JOIN memories m ON m.tenant_id = v.tenant_id AND m.id = v.memory_id \
+              WHERE v.tenant_id = $1 AND i.target_workspace_id = $2 \
+                AND i.source_server_id = $3 AND i.source_tenant_id = $4",
+        )
+        .bind(tenant_id)
+        .bind(target_workspace_id)
+        .bind(source_server_id)
+        .bind(source_tenant_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        // Each claim key's latest held or promoted version (R10).
+        let tips = sqlx::query(
+            "SELECT DISTINCT ON (claim_key) claim_key, id, version, claim_digest, retirement \
+               FROM memories \
+              WHERE tenant_id = $1 AND workspace_id = $2 AND status IN ('held', 'promoted') \
+              ORDER BY claim_key, version DESC",
+        )
+        .bind(tenant_id)
+        .bind(target_workspace_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        let ledger = sqlx::query(
+            "SELECT exported_at, release_label, release_manifest_digest, signer_fingerprint \
+               FROM import_ledger WHERE tenant_id = $1 AND target_workspace_id = $2 \
+                AND source_server_id = $3 AND source_tenant_id = $4",
+        )
+        .bind(tenant_id)
+        .bind(target_workspace_id)
+        .bind(source_server_id)
+        .bind(source_tenant_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        let mut view = oml_app::types::ImportTargetView::default();
+        let mut written_ids = BTreeSet::new();
+        let mut imported_keys = BTreeSet::new();
+        for row in &written {
+            let memory_id: Uuid = row.try_get("memory_id").map_err(backend)?;
+            let source: String = row.try_get("source_artifact_id").map_err(backend)?;
+            let version: i64 = row.try_get("source_version").map_err(backend)?;
+            let claim_key: String = row.try_get("claim_key").map_err(backend)?;
+            written_ids.insert(memory_id);
+            imported_keys.insert(claim_key);
+            view.imported
+                .push((source.clone(), u64::try_from(version).map_err(backend)?));
+            view.carried.push((source, memory_id));
+        }
+        for row in &tips {
+            let claim_key: String = row.try_get("claim_key").map_err(backend)?;
+            let memory_id: Uuid = row.try_get("id").map_err(backend)?;
+            let version: i32 = row.try_get("version").map_err(backend)?;
+            view.tips.push(oml_app::types::ImportTip {
+                written_by_import: written_ids.contains(&memory_id),
+                imported_from_source: imported_keys.contains(&claim_key),
+                claim_key,
+                memory_id,
+                version: u32::try_from(version).map_err(backend)?,
+                body_digest: row.try_get("claim_digest").map_err(backend)?,
+                retirement: row.try_get("retirement").map_err(backend)?,
+            });
+        }
+        view.ledger = ledger
+            .map(|row| -> Result<_, StoreError> {
+                Ok(oml_app::types::ImportLedgerEntry {
+                    exported_at: row.try_get("exported_at").map_err(backend)?,
+                    release_label: row.try_get("release_label").map_err(backend)?,
+                    release_manifest_digest: row
+                        .try_get("release_manifest_digest")
+                        .map_err(backend)?,
+                    signer_fingerprint: row.try_get("signer_fingerprint").map_err(backend)?,
+                })
+            })
+            .transpose()?;
+        Ok(view)
+    }
+
+    async fn import_begin(
+        &self,
+        import: &oml_app::types::ImportRecord,
+        at: &EventTime,
+    ) -> Result<bool, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, import.tenant_id).await?;
+        // The bind and the row are one transaction (ADR-0004 d3; I4).
+        let bound = sqlx::query(
+            "UPDATE upload_sessions SET state = 'bound', expires_at = NULL, \
+                    bound_at = COALESCE(bound_at, ($4)::timestamptz) \
+              WHERE tenant_id = $1 AND id = $2 AND key_id = $3 AND state = 'completed'",
+        )
+        .bind(import.tenant_id)
+        .bind(import.upload_id)
+        .bind(import.importer_key_id)
+        .bind(at.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?
+        .rows_affected();
+        if bound != 1 {
+            return Ok(false);
+        }
+        sqlx::query(
+            "INSERT INTO imports (tenant_id, id, target_workspace_id, importer_key_id, upload_id, \
+                    source_server_id, source_tenant_id, manifest_digest, signer_fingerprint, \
+                    authenticated, allow_older, state, counts, refusals, created_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, \
+                    ($15)::timestamptz)",
+        )
+        .bind(import.tenant_id)
+        .bind(import.import_id)
+        .bind(import.target_workspace_id)
+        .bind(import.importer_key_id)
+        .bind(import.upload_id)
+        .bind(&import.source_server_id)
+        .bind(&import.source_tenant_id)
+        .bind(&import.manifest_digest)
+        .bind(&import.signer_fingerprint)
+        .bind(import.authenticated)
+        .bind(import.allow_older)
+        .bind(import.state.as_str())
+        .bind(json!(import.counts))
+        .bind(serde_json::to_value(&import.refusals).map_err(backend)?)
+        .bind(import.created_at.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(true)
+    }
+
+    async fn import_version_recorded(
+        &self,
+        tenant_id: Uuid,
+        import_id: Uuid,
+        version: &oml_app::types::ImportedVersion,
+    ) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        sqlx::query(
+            "INSERT INTO import_versions (tenant_id, import_id, memory_id, source_artifact_id, \
+                    source_version, outcome) VALUES ($1, $2, $3, $4, $5, $6) \
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(tenant_id)
+        .bind(import_id)
+        .bind(version.memory_id)
+        .bind(&version.source_artifact_id)
+        .bind(i64::try_from(version.source_version).map_err(backend)?)
+        .bind(&version.outcome)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        sqlx::query("UPDATE memories SET import_provenance = $3 WHERE tenant_id = $1 AND id = $2")
+            .bind(tenant_id)
+            .bind(version.memory_id)
+            .bind(&version.provenance)
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
+    async fn import_failed(
+        &self,
+        tenant_id: Uuid,
+        import_id: Uuid,
+        at: &EventTime,
+        counts: &BTreeMap<String, u64>,
+        refusals: &[oml_app::types::ImportRefusal],
+    ) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        sqlx::query(
+            "UPDATE imports SET state = 'failed', ended_at = ($3)::timestamptz, counts = $4, \
+                    refusals = $5 \
+              WHERE tenant_id = $1 AND id = $2 AND state = 'running'",
+        )
+        .bind(tenant_id)
+        .bind(import_id)
+        .bind(at.as_str())
+        .bind(json!(counts))
+        .bind(serde_json::to_value(refusals).map_err(backend)?)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
+    async fn import_record(
+        &self,
+        tenant_id: Uuid,
+        import_id: Uuid,
+    ) -> Result<Option<oml_app::types::ImportRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let row = sqlx::query(
+            "SELECT i.tenant_id, i.id, i.target_workspace_id, i.importer_key_id, i.upload_id, \
+                    i.source_server_id, i.source_tenant_id, i.manifest_digest, \
+                    i.signer_fingerprint, i.authenticated, i.allow_older, i.state, i.counts, \
+                    i.refusals, \
+                    to_char(i.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+                        AS created_at_signed, \
+                    to_char(i.ended_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+                        AS ended_at_signed, \
+                    (SELECT count(*) FROM import_versions v \
+                      WHERE v.tenant_id = i.tenant_id AND v.import_id = i.id) AS position \
+               FROM imports i WHERE i.tenant_id = $1 AND i.id = $2",
+        )
+        .bind(tenant_id)
+        .bind(import_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let state: String = row.try_get("state").map_err(backend)?;
+        let counts: Value = row.try_get("counts").map_err(backend)?;
+        let refusals: Value = row.try_get("refusals").map_err(backend)?;
+        let position: i64 = row.try_get("position").map_err(backend)?;
+        Ok(Some(oml_app::types::ImportRecord {
+            tenant_id: row.try_get("tenant_id").map_err(backend)?,
+            import_id: row.try_get("id").map_err(backend)?,
+            target_workspace_id: row.try_get("target_workspace_id").map_err(backend)?,
+            importer_key_id: row.try_get("importer_key_id").map_err(backend)?,
+            upload_id: row.try_get("upload_id").map_err(backend)?,
+            source_server_id: row.try_get("source_server_id").map_err(backend)?,
+            source_tenant_id: row.try_get("source_tenant_id").map_err(backend)?,
+            manifest_digest: row.try_get("manifest_digest").map_err(backend)?,
+            signer_fingerprint: row.try_get("signer_fingerprint").map_err(backend)?,
+            authenticated: row.try_get("authenticated").map_err(backend)?,
+            allow_older: row.try_get("allow_older").map_err(backend)?,
+            state: oml_app::domain::import::ImportState::parse(&state)
+                .ok_or_else(|| StoreError::Backend(format!("import state {state:?}")))?,
+            position: u64::try_from(position).map_err(backend)?,
+            counts: serde_json::from_value(counts).map_err(backend)?,
+            refusals: serde_json::from_value(refusals).map_err(backend)?,
+            created_at: event_time_column(&row, "created_at_signed")?
+                .ok_or_else(|| StoreError::Backend("imports.created_at is null".to_owned()))?,
+            ended_at: event_time_column(&row, "ended_at_signed")?,
+        }))
+    }
+
+    async fn import_stats(
+        &self,
+        tenant_id: Uuid,
+    ) -> Result<oml_app::types::ImportStats, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sqlx::query(
+            "SELECT state, count(*) AS imports, count(*) FILTER (WHERE allow_older) AS older \
+               FROM imports WHERE tenant_id = $1 GROUP BY state",
+        )
+        .bind(tenant_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        let mut stats = oml_app::types::ImportStats::default();
+        for row in &rows {
+            let state: String = row.try_get("state").map_err(backend)?;
+            let imports: i64 = row.try_get("imports").map_err(backend)?;
+            let older: i64 = row.try_get("older").map_err(backend)?;
+            stats
+                .by_state
+                .insert(state, u64::try_from(imports).map_err(backend)?);
+            stats.allow_older += u64::try_from(older).map_err(backend)?;
         }
         Ok(stats)
     }

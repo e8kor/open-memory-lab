@@ -22,6 +22,11 @@ pub mod event_types {
     pub const WORKSPACE_MODE_SET: &str = "workspace.mode_set";
     /// A workspace now names another crew record (ADR-0026 d8).
     pub const WORKSPACE_CREW_UPDATED: &str = "workspace.crew_updated";
+    /// A person's key imported a bundle into an in-progress workspace: the
+    /// manifest digest, the outcome counts, whether the signature was
+    /// authenticated and allow_older, and the upload's digest (ADR-0084
+    /// d11, d15).
+    pub const WORKSPACE_IMPORTED: &str = "workspace.imported";
     /// A forward ladder step proposed by a reviewer or admin; pending until
     /// a second identity ratifies it (ADR-0009 d3).
     pub const WORKSPACE_STATUS_PROPOSED: &str = "workspace.status_proposed";

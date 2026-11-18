@@ -479,7 +479,7 @@ where
     /// Removes a session whose key is already nulled from the object store
     /// and records it; a failure is left to the next sweep, which finds the
     /// session among the unswept.
-    async fn remove_objects(&self, session: &UploadSession) {
+    pub(crate) async fn remove_objects(&self, session: &UploadSession) {
         let Some(objects) = &self.uploads.objects else {
             return;
         };

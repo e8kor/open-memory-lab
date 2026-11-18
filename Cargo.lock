@@ -4159,6 +4159,7 @@ version = "0.7.3"
 dependencies = [
  "chacha20poly1305",
  "ed25519-dalek",
+ "oml-bundle",
  "oml-domain",
  "serde",
  "serde_json",
@@ -4189,12 +4190,14 @@ name = "oml-cli"
 version = "0.7.3"
 dependencies = [
  "axum",
+ "bech32",
  "clap",
  "ed25519-dalek",
  "expectrl",
  "getrandom 0.2.17",
  "hex",
  "oml-app",
+ "oml-bundle",
  "oml-delta-log",
  "oml-former-names",
  "oml-guardrail",
@@ -4209,6 +4212,7 @@ dependencies = [
  "sha2 0.10.9",
  "sqlx",
  "syn 2.0.119",
+ "tar",
  "tokio",
  "toml 0.8.23",
  "unicode-normalization",
@@ -4356,9 +4360,12 @@ dependencies = [
 name = "oml-port-contracts"
 version = "0.7.3"
 dependencies = [
+ "ed25519-dalek",
  "oml-app",
+ "oml-bundle",
  "serde_json",
  "sha2 0.10.9",
+ "tar",
  "tokio",
  "uuid",
 ]
@@ -4412,6 +4419,7 @@ dependencies = [
  "getrandom 0.2.17",
  "hex",
  "oml-app",
+ "oml-bundle",
  "oml-fetch",
  "oml-format",
  "oml-guardrail",
