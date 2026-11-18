@@ -769,3 +769,50 @@ fn check_events(c: &BundleContents) -> Result<(), BundleError> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod guardrail_line_tests {
+    use super::guardrail_defect;
+
+    fn line(kind: &str, guardrail: serde_json::Value) -> crate::VersionLine {
+        let mut v = serde_json::json!({
+            "artifact_id": "a", "version": 1, "claim_key": "k", "workspace": "w",
+            "kind": kind, "format": null, "title": null, "state": "promoted",
+            "retirement": false, "replaces": null, "simulation_id": null,
+            "text": "Never force-push.", "body": null,
+            "plaintext_digest": format!("sha256:{}", "0".repeat(64)),
+            "anchor": null, "valid_from": null, "valid_until": null,
+            "skill": null, "document": null, "test": null, "derives_from": [],
+            "origin": {"kind": "doc"}, "attachments": [],
+            "author": {"used_by": "person", "same_user": false, "pseudonym": "p"},
+            "created_at": "2026-11-01T10:00:00.000000Z", "promoted_at": null,
+            "source_event": null
+        });
+        if !guardrail.is_null() {
+            v["guardrail"] = guardrail;
+        }
+        serde_json::from_value(v).expect("a version line")
+    }
+
+    #[test]
+    fn a_guardrail_line_without_its_severity_and_rule_is_refused_by_name() {
+        assert_eq!(
+            guardrail_defect(&line("guardrail", serde_json::Value::Null)),
+            Some("guardrail_fields_missing")
+        );
+        assert_eq!(
+            guardrail_defect(&line("memory", serde_json::json!({"severity": "should"}))),
+            Some("guardrail_fields_unexpected")
+        );
+        assert!(
+            guardrail_defect(&line("guardrail", serde_json::json!({"severity": "loud"}))).is_some()
+        );
+        assert_eq!(
+            guardrail_defect(&line(
+                "guardrail",
+                serde_json::json!({"severity": "should", "rule": null})
+            )),
+            None
+        );
+    }
+}

@@ -1034,31 +1034,6 @@ async fn imported_steering_guardrail_and_skill_versions_land_held<S: JournalStor
     }
 }
 
-/// I20: a guardrail line without its severity and rule is refused by the
-/// reader by name, before anything is bound or written.
-async fn a_guardrail_line_without_its_fields_is_refused_by_name<S: JournalStore + Clone>(
-    store: S,
-) {
-    let rig = rig(store).await;
-    let mut guardrail = line("art-g", 1, "no-force-push", "Never force-push a shared branch.");
-    guardrail.kind = "guardrail".to_owned();
-    let bytes = bundle_of(vec![guardrail], "2026-11-17T09:00:00.000000Z", &source_key());
-    let up = upload(&rig, &rig.writer, &bytes).await;
-    let refused = import(
-        &rig,
-        &rig.writer,
-        &request(up, "notes", Some(fingerprint(&source_key()))),
-    )
-    .await;
-    match refused {
-        Err(AppError::Bundle(e)) => {
-            assert_eq!(e.code(), "bundle.malformed");
-            assert!(e.to_string().contains("guardrail_fields_missing"), "{e}");
-        }
-        other => panic!("expected bundle.malformed, got {other:?}"),
-    }
-}
-
 /// d4, I14: each imported version carries its provenance from its own
 /// commit, `workspace.imported` lists it, and the doctor counts none
 /// without provenance.
@@ -1336,7 +1311,6 @@ where
     imported_steering_guardrail_and_skill_versions_land_held(make().await).await;
     import_provenance_names_the_source_line_and_the_journal_lists_each_version(make().await).await;
     an_import_that_fails_shreds_its_upload_key(make().await).await;
-    a_guardrail_line_without_its_fields_is_refused_by_name(make().await).await;
     an_import_stopped_for_an_hour_is_ended_and_shredded_by_the_sweep(make().await).await;
     a_new_target_is_created_in_progress_and_a_retry_marks_its_own_empty_one(make().await).await;
 }

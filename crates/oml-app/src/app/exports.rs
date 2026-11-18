@@ -359,9 +359,10 @@ where
                 document: object_member(payload, "document"),
                 test: object_member(payload, "test"),
                 // I20: a guardrail's severity and rule travel with it.
-                guardrail: m.guardrail.as_ref().map(|g| {
-                    serde_json::json!({"severity": g.severity.as_str(), "rule": g.rule})
-                }),
+                guardrail: m
+                    .guardrail
+                    .as_ref()
+                    .map(|g| serde_json::json!({"severity": g.severity.as_str(), "rule": g.rule})),
                 derives_from: m.derives_from.iter().map(ToString::to_string).collect(),
                 origin: payload.get("origin").cloned().unwrap_or(Value::Null),
                 attachments: Vec::new(),
