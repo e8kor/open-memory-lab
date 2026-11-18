@@ -287,7 +287,7 @@ fn attribution(
     if m.state == "held" {
         let _ = write!(
             out,
-            r#"<p class="oml-noact">Read here as <code>{}</code>, which never judges. Judge it in Review as <code>{}</code>.</p>"#,
+            r#"<p class="oml-noact">Read here as <code>{}</code>, which never judges. Judge it in To do as <code>{}</code>.</p>"#,
             short(admin),
             short(reviewer)
         );
