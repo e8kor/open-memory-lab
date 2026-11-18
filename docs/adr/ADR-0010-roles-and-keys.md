@@ -74,7 +74,10 @@ Everything here is decided, not built.
   free-form manipulation of content exists only inside the simulation channel
   ([ADR-0011](ADR-0011-simulations.md)), marked as such. Admin's own verbs — issue/revoke keys,
   create/relate/re-parent/status workspaces, reassign claims, ban, demote, erase, crew metadata,
-  run simulations — are enumerated in [roles and keys](../architecture/roles-and-keys.md).
+  run simulations — are enumerated in [roles and keys](../architecture/roles-and-keys.md). *(Amended
+  2026-11-17 by the operator, ADR-0089 d16: demote and erase are reached only as an admin's fix
+  acts, `POST /v2/admin/fixes`, marked and queued for confirmation, never as routes of their own;
+  demote takes any promoted version, and erase every version of a claim.)*
 
 - **d7 — Keys are the agent credential; identity metadata feeds the independence axis.** Every
   key is journalled with its tenant, role, grants and the key→crew→external-manager metadata

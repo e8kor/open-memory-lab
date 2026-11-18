@@ -7,7 +7,7 @@ answers: how an append-only chain coexists with the right to erasure; what crypt
 
 # ADR-0005 — Erasure by crypto-shredding, with a named inventory and an honest boundary
 
-**Status:** accepted design · 2026-10-29 · amended by [ADR-0052](ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md) · amended by [ADR-0090](ADR-0090-the-lake-is-a-replayable-twin-of-postgresql-that-holds-every-signed-event-with-its-sealed-fold-inputs-and-rebuilds-it-into-an-empty-database.md) (d3, d4)
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0052](ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md) · amended by [ADR-0090](ADR-0090-the-lake-is-a-replayable-twin-of-postgresql-that-holds-every-signed-event-with-its-sealed-fold-inputs-and-rebuilds-it-into-an-empty-database.md) (d3, d4) · amended 2026-11-17 by the operator (d1, d2, d4: a PostgreSQL body in clear is emptied at erase; an erase takes a claim's every version)
 
 **Release:** not built ([releases](../changelog.md))
 
@@ -43,6 +43,11 @@ commitment about the design, enforced by nothing until the conformance work the
   [Postgres schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)); key custody is the
   [security page](../architecture/security.md)'s subject: only the serving path decrypts, the
   lake-writer's KMS grant is encrypt-only, the reconciler holds no keys.
+  *(Amended 2026-11-17 by the operator: as built, d1 holds in the lake alone. PostgreSQL keeps a
+  version's body in clear in `memories.claim`, with `rule` and `search_vector` derived from it,
+  and until at-rest encryption reaches PostgreSQL (#154) an erase there is no key destruction but
+  an overwrite: the erase transaction empties those columns of the live row, and d4 states the
+  copies that outlive it.)*
 
 - **d2 — Erasure is a journalled erase event plus DEK destruction.** The erase event enters the
   per-tenant hash chain like any other event; the wrapped DEK is then destroyed
@@ -51,11 +56,31 @@ commitment about the design, enforced by nothing until the conformance work the
   because journal and outbox payloads were digest-only from the start
   ([ADR-0004](ADR-0004-bodies-and-attachments.md) d1). An erased artifact's state is `erased` — a
   recorded fact, served as absence with provenance, never as an error.
+  *(Amended 2026-11-17 by the operator: "Wipe row + key", and "All its versions". An erase names
+  one version and erases every version of its claim in its workspace (ADR-0089 d16). In one
+  transaction it journals `lifecycle.erase` naming each version, empties each live row's body and
+  the columns derived from it, which drops the postings, destroys each keyed version's
+  `artifact_keys` row, and calls `oml_telemetry_erase`. Each version's state becomes `erased`;
+  the digest, the title, the attribution and the lineage stay (d3, d5). The serving role, which held no grant on `artifact_keys`, gains
+  only the update that destroys a key, and the reads that update needs, never `wrapped_dek`
+  (migration 0056). A version the lake writer has not keyed yet gets its destroyed row from the
+  lake writer when it folds the same `lifecycle.erase`, as it does today: the outbox is drained in
+  order, so it keys a version, if ever, before it reads that version's erase, and never after.)*
+  *(Note 2026-11-18: migration 0057's guard on `artifact_keys` refuses a destruction whose
+  `destroyed_at` is not `now()`, the time of the transaction that makes it. Any later path that
+  destroys a key by UPDATE, such as the ADR-0090 rebuild replaying erases, stamps `now()` or takes
+  a named exemption in a migration of its own; it never writes a replayed time into a live row.)*
 
 - **d3 — The guarantee is scoped to body and attachment bytes, and the scope is stated wherever
   the guarantee is.** What DEK destruction makes unreadable is the plaintext of the body and the
   attachments. It does not erase the fact that a memory existed, who wrote it, when, or where —
   that is d5's boundary. No page of this documentation states the guarantee without its scope. *(Amended 2026-11-14 by [ADR-0090](ADR-0090-the-lake-is-a-replayable-twin-of-postgresql-that-holds-every-signed-event-with-its-sealed-fold-inputs-and-rebuilds-it-into-an-empty-database.md) d7: clear text inside signed payloads is outside the guarantee and is kept as signed metadata: today a version's `title`, a verdict's `reason`, a workspace's or key's `name`, an anchor's `uri`, `path` and `fragment`, a crew's `charter_uri` and `external_manager`, and, once ADR-0089 is built, an `admin.fix` reason; the title is read by the admission scan at write and the reason by the veto scan. A digest with a sealed part for titles is #389.)*
+  *(Note 2026-11-18, the coordinator's reading for the operator's batch: the same rule keeps, on
+  an erased version's live row, its `claim_key`, a skill's `name` and `description` and a
+  document's `title`, each signed in the version's submission payload. Both stores keep them:
+  PostgreSQL's erase no longer empties `skill_name` and `skill_description`, and the in-memory
+  store keeps a skill's fields as it already kept a document's title, since emptying the row
+  would leave the same text in the journal. The operator confirms or narrows this list.)*
 
 - **d4 — The erasure inventory enumerates every copy class and its disposition, and the
   inventory is normative.** A copy class missing from this table is a design defect, not an
@@ -73,6 +98,7 @@ commitment about the design, enforced by nothing until the conformance work the
   | the widen hint's signals, in the lead's memory ([ADR-0072](ADR-0072-recall-searches-the-trusted-workspaces-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md), as built by #244) | **plaintext-derived** (per-workspace counts of hashed lexemes, read from `search_term_rows`) | dropped for the whole tenant when the erase commits, in the lead process that commits it, and a build already reading is discarded when it ends; the erase must commit through `App::commit_requests` for this to hold; never written to disk, gone at a restart, and otherwise at most 300 s old |
   | Postgres temp/spill files and standby replicas' disks | transient plaintext-derived content; every standby holds the primary's WAL and table copies | bounded by at-rest volume encryption and OS temp-file lifetime; standbys inherit every bound in this table |
   | OS/block-level volume snapshots of the Postgres volume | everything the volume held at snapshot time, wrapped DEKs included, outside the base-backup accounting | if the deployment takes them, their retention window joins the SLO composition exactly as base backups do, and the deployment backup table lists them |
+  | `memories.claim`, `memories.rule`, `memories.search_vector` (clear until at-rest encryption reaches PostgreSQL, #154; amended 2026-11-17) | **plaintext**: the body and the guardrail rule, and the lexemes derived from them | emptied in the erase's transaction; in Postgres base backups, WAL and standbys until the backup retention window ends, so the PostgreSQL copy is gone from live stores at once and from backups within that window, not at key destruction |
   | `artifact_keys.wrapped_dek` in Postgres base backups and WAL | **a usable copy of the wrapped DEK** — key material, not content | live row nulled at erase; copies in base backups and WAL survive the backup retention window, and while the wrapping KEK lives a restored backup plus KMS unwrap could recover the DEK and decrypt every surviving ciphertext copy. The designed answer: scheduled KEK rotation re-wraps **live** DEKs only, and a retired KEK is destroyed once the backup horizon has passed, invalidating every wrapped-DEK copy in older backups — erasure completes against live stores immediately and against backups no later than **backup retention window + KEK rotation period** |
   | `lake_staging` ([ADR-0090](ADR-0090-the-lake-is-a-replayable-twin-of-postgresql-that-holds-every-signed-event-with-its-sealed-fold-inputs-and-rebuilds-it-into-an-empty-database.md) d3) | **plaintext fold inputs** of a commit not yet drained to the lake: bodies, rules, key hashes, addresses, findings, idempotency outcomes | the erase's transaction replaces the version's staged rows with tombstones (the part, `erased: true`, no bytes), so the bytes leave staging at once; in base backups and WAL until the backup window ends, as `memories` is |
   | `twin/inputs`, all Delta versions ([ADR-0090](ADR-0090-the-lake-is-a-replayable-twin-of-postgresql-that-holds-every-signed-event-with-its-sealed-fold-inputs-and-rebuilds-it-into-an-empty-database.md) d2) | per-key ciphertext of the same inputs, held bodies included | never touched; unreadable once the key is destroyed |

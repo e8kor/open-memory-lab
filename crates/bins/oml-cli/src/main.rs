@@ -5598,6 +5598,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let withdrawals = withdrawn_queue_doctor(rescan_read.as_ref());
     let withdrawals_fail = withdrawals.iter().any(|line| line.starts_with("fail"));
     let withdrawals_warn = withdrawals.iter().any(|line| line.starts_with("warn"));
+    let lifecycle = lifecycle_doctor(rescan_read.as_ref());
+    let lifecycle_warn = lifecycle.iter().any(|line| line.starts_with("warn"));
     let telemetry_warn = telemetry.iter().any(|line| line.starts_with("warn"));
     let usage = usage_doctor(usage_drift.as_ref());
     let usage_warn = usage.iter().any(|line| line.starts_with("warn"));
@@ -5662,6 +5664,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         || scan_warn
         || approvals_warn
         || withdrawals_warn
+        || lifecycle_warn
         || sync_warn
         || chat_warn
         || skills_warn
@@ -5725,6 +5728,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "key_limits": key_limits,
             "approvals": approvals,
             "withdrawals": withdrawals,
+            "lifecycle": lifecycle,
             "sources": sources,
             "in_progress": in_progress,
             "user_root_status": user_root_status,
@@ -5867,6 +5871,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         for line in &withdrawals {
             println!("withdrawals : {line}");
+        }
+        for line in &lifecycle {
+            println!("lifecycle   : {line}");
         }
         for line in &sync {
             println!("sync        : {line}");
@@ -6388,6 +6395,55 @@ fn withdrawn_queue_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
     } else {
         "memory.withdrawn_in_queue: 0".to_owned()
     }]
+}
+
+/// Doctor's lifecycle lines (ADR-0089 d16, notes of 2026-11-18), from the
+/// same admin rescan window: `memory.held_successor_stranded` warns of held
+/// versions whose target is no longer its claim's promoted tip, which no
+/// verdict can approve (a demoted tip's successors among them), and
+/// `lake.erased_key_live` of erased versions whose data key is still live,
+/// which the erase's own transaction and the lake writer's fold of it rule
+/// out. A server before a count does not report it, and its line is then
+/// absent; a count that is no unsigned integer is named, never read as zero.
+fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
+    const LINES: [(&str, &str, &str); 2] = [
+        (
+            "held_successors_stranded",
+            "memory.held_successor_stranded",
+            "held version(s) replace a version that is no longer their claim's promoted tip, so no verdict can approve them; their authors withdraw them or a reviewer rejects them",
+        ),
+        (
+            "erased_keys_live",
+            "lake.erased_key_live",
+            "erased version(s) still have a live data key, which the erase destroys in its own transaction; the lake writer destroys it when it drains the erase, so check that it runs",
+        ),
+    ];
+    let report = match read {
+        None => {
+            return LINES
+                .iter()
+                .map(|(_, line, _)| format!("{line}: not read; an admin key reads it"))
+                .collect();
+        }
+        Some(Err(reason)) => {
+            return LINES
+                .iter()
+                .map(|(_, line, _)| format!("warn {line}: not read ({reason})"))
+                .collect();
+        }
+        Some(Ok(report)) => report,
+    };
+    LINES
+        .iter()
+        .filter_map(|(field, line, what)| {
+            let count = report.get(*field)?;
+            Some(match count.as_u64() {
+                None => format!("warn {line}: the server's {field} is {count}, not a count"),
+                Some(0) => format!("{line}: 0"),
+                Some(n) => format!("warn {line}: {n} {what}"),
+            })
+        })
+        .collect()
 }
 
 /// The scan doctor lines (ADR-0065 d11): the rule set `/readyz` names, how
@@ -7483,6 +7539,46 @@ mod tests {
         assert_eq!(
             approval_doctor(None),
             vec!["approval_unmatched: not read; an admin key reads it".to_owned()]
+        );
+    }
+
+    #[test]
+    fn the_lifecycle_doctor_warns_of_stranded_held_successors_and_erased_versions_with_a_live_key()
+    {
+        let some = json!({
+            "scanner_version": "oml-scan/1.2",
+            "held_successors_stranded": 2,
+            "erased_keys_live": 1,
+        });
+        assert_eq!(
+            lifecycle_doctor(Some(&Ok(some))),
+            vec![
+                "warn memory.held_successor_stranded: 2 held version(s) replace a version that is no longer their claim's promoted tip, so no verdict can approve them; their authors withdraw them or a reviewer rejects them".to_owned(),
+                "warn lake.erased_key_live: 1 erased version(s) still have a live data key, which the erase destroys in its own transaction; the lake writer destroys it when it drains the erase, so check that it runs".to_owned(),
+            ]
+        );
+        let none = json!({ "held_successors_stranded": 0, "erased_keys_live": 0 });
+        assert_eq!(
+            lifecycle_doctor(Some(&Ok(none))),
+            vec![
+                "memory.held_successor_stranded: 0".to_owned(),
+                "lake.erased_key_live: 0".to_owned()
+            ]
+        );
+        assert!(lifecycle_doctor(Some(&Ok(json!({ "scanner_version": "x" })))).is_empty());
+        assert_eq!(
+            lifecycle_doctor(None),
+            vec![
+                "memory.held_successor_stranded: not read; an admin key reads it".to_owned(),
+                "lake.erased_key_live: not read; an admin key reads it".to_owned()
+            ]
+        );
+        assert_eq!(
+            lifecycle_doctor(Some(&Ok(json!({ "erased_keys_live": "many" })))),
+            vec![
+                "warn lake.erased_key_live: the server's erased_keys_live is \"many\", not a count"
+                    .to_owned()
+            ]
         );
     }
 

@@ -16616,6 +16616,546 @@ async fn a_lane_claim_a_crew_key_holds_is_not_counted_for_its_verdict_without_a_
     assert_eq!(outcome.memory_id, memory);
 }
 
+/// The ids `key`'s scoped listing of `crew` serves.
+async fn listed(app: &TestApp, key: &str, crew: &str) -> Vec<Uuid> {
+    app.list_memories(
+        key,
+        &ListRequest {
+            anchor: oml_app::types::AnchorFilter::default(),
+            own: false,
+            workspace: Some(by_name(crew)),
+            state: None,
+            kind: None,
+            claim_key: None,
+            since: None,
+            until: None,
+            limit: 50,
+            cursor: None,
+            author: None,
+            tip: None,
+            as_of: None,
+        },
+    )
+    .await
+    .expect("list")
+    .items
+    .iter()
+    .map(|m| m.memory.memory_id)
+    .collect()
+}
+
+/// A claim with two promoted versions, `v1` replaced by the tip `v2`:
+/// (store, app, bootstrap, writer, reader, v1, v2).
+async fn two_promoted_versions() -> (
+    MemStore,
+    TestApp,
+    BootstrapResult,
+    IssuedKey,
+    IssuedKey,
+    Uuid,
+    Uuid,
+) {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (writer, reader, reviewer) = crew_keys(&app, &boot.admin_key.value, crew).await;
+    let v1 = promoted(
+        &app,
+        &writer.value,
+        &reviewer.value,
+        &submit_req("dm1", "the canary drains first"),
+    )
+    .await;
+    let v2 = app
+        .supersede(
+            &writer.value,
+            &supersede_req("dm2", v1, "the canary drains and settles first"),
+        )
+        .await
+        .expect("supersede")
+        .receipt
+        .memory_id;
+    app.post_verdict(&reviewer.value, v2, Verdict::Approve, None)
+        .await
+        .expect("ratify v2");
+    (store, app, boot, writer, reader, v1, v2)
+}
+
+#[tokio::test]
+async fn a_demoted_version_is_not_served_and_keeps_its_text() {
+    let (store, app, boot, writer, reader, _v1, v2) = two_promoted_versions().await;
+    app.demote_version(&boot.admin_key.value, v2)
+        .await
+        .expect("demote the tip");
+    assert!(!hit_ids(&app, &reader.value, "settles").await.contains(&v2));
+    assert!(!listed(&app, &reader.value, "crew").await.contains(&v2));
+    assert!(matches!(
+        app.get_memory(&reader.value, v2).await.unwrap_err(),
+        AppError::NotFound
+    ));
+    let row = store
+        .memory(boot.tenant_id, v2)
+        .await
+        .expect("memory")
+        .expect("row");
+    assert_eq!(row.status, MemoryStatus::Demoted);
+    assert!(!row.is_tip);
+    assert_eq!(
+        row.body, "the canary drains and settles first",
+        "R4: the bytes stay"
+    );
+    // Its author reads the state every read reports.
+    let own = app.get_memory(&writer.value, v2).await.expect("own get");
+    assert_eq!(own.memory.status, MemoryStatus::Demoted);
+    let types = types_since(&store, boot.tenant_id, 0).await;
+    assert_eq!(
+        types.last().map(String::as_str),
+        Some(event_types::LIFECYCLE_DEMOTE)
+    );
+}
+
+#[tokio::test]
+async fn demoting_the_tip_serves_the_previous_promoted_version() {
+    let (store, app, boot, _writer, reader, v1, v2) = two_promoted_versions().await;
+    let demotion = app
+        .demote_version(&boot.admin_key.value, v2)
+        .await
+        .expect("demote the tip");
+    assert_eq!(
+        demotion.restored,
+        Some(VersionRef {
+            artifact_id: v1,
+            version: 1
+        })
+    );
+    assert_eq!(hit_ids(&app, &reader.value, "canary").await, vec![v1]);
+    assert_eq!(listed(&app, &reader.value, "crew").await, vec![v1]);
+    assert!(app.get_memory(&reader.value, v1).await.is_ok());
+    let tip = store
+        .claim_tip(
+            boot.tenant_id,
+            demotion_workspace(&store, boot.tenant_id, v1).await,
+            "claim-dm1",
+        )
+        .await
+        .expect("tip")
+        .expect("a tip");
+    assert_eq!(tip.memory_id, v1);
+    let event = journal(&store, boot.tenant_id)
+        .await
+        .pop()
+        .expect("an event");
+    assert_eq!(event.envelope.event_type, event_types::LIFECYCLE_DEMOTE);
+    assert_eq!(event.envelope.payload["artifact_id"], json!(v2.to_string()));
+    assert_eq!(
+        event.envelope.payload["restored_artifact_id"],
+        json!(v1.to_string())
+    );
+    assert_eq!(event.envelope.api_key_id, Some(boot.admin_key.key_id));
+}
+
+/// The workspace of `id`.
+async fn demotion_workspace(store: &MemStore, tenant: Uuid, id: Uuid) -> Uuid {
+    store
+        .memory(tenant, id)
+        .await
+        .expect("memory")
+        .expect("row")
+        .workspace_id
+}
+
+#[tokio::test]
+async fn demoting_the_only_promoted_version_serves_nothing_for_the_claim() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (writer, reader, reviewer) = crew_keys(&app, &boot.admin_key.value, crew).await;
+    let only = promoted(
+        &app,
+        &writer.value,
+        &reviewer.value,
+        &submit_req("dm-only", "the pager rota starts monday"),
+    )
+    .await;
+    let demotion = app
+        .demote_version(&boot.admin_key.value, only)
+        .await
+        .expect("demote");
+    assert_eq!(demotion.restored, None);
+    assert!(hit_ids(&app, &reader.value, "pager rota").await.is_empty());
+    assert!(listed(&app, &reader.value, "crew").await.is_empty());
+    assert!(
+        store
+            .claim_tip(boot.tenant_id, crew, "claim-dm-only")
+            .await
+            .expect("tip")
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn demoting_a_superseded_version_moves_no_tip() {
+    let (store, app, boot, _writer, reader, v1, v2) = two_promoted_versions().await;
+    let demotion = app
+        .demote_version(&boot.admin_key.value, v1)
+        .await
+        .expect("any approved version is demotable");
+    assert_eq!(demotion.restored, None);
+    assert_eq!(hit_ids(&app, &reader.value, "canary").await, vec![v2]);
+    let v1_row = store
+        .memory(boot.tenant_id, v1)
+        .await
+        .expect("memory")
+        .expect("row");
+    assert_eq!(v1_row.status, MemoryStatus::Demoted);
+    // A demotion of the tip now returns nothing: the version below is
+    // demoted.
+    let tip = app
+        .demote_version(&boot.admin_key.value, v2)
+        .await
+        .expect("demote the tip");
+    assert_eq!(tip.restored, None);
+    assert!(hit_ids(&app, &reader.value, "canary").await.is_empty());
+}
+
+#[tokio::test]
+async fn only_a_promoted_version_can_be_demoted_and_only_by_an_admin_key() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (writer, _reader, reviewer) = crew_keys(&app, &boot.admin_key.value, crew).await;
+    let held = app
+        .submit_memory(&writer.value, &submit_req("dm-held", "the build is green"))
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    let before = journal(&store, boot.tenant_id).await.len();
+    assert!(matches!(
+        app.demote_version(&boot.admin_key.value, held)
+            .await
+            .unwrap_err(),
+        AppError::Transition(_)
+    ));
+    assert_eq!(
+        journal(&store, boot.tenant_id).await.len(),
+        before,
+        "a refusal journals nothing"
+    );
+    let served = promoted(
+        &app,
+        &writer.value,
+        &reviewer.value,
+        &submit_req("dm-served", "the build is red"),
+    )
+    .await;
+    let mid = journal(&store, boot.tenant_id).await.len();
+    for key in [&writer.value, &reviewer.value] {
+        assert!(matches!(
+            app.demote_version(key, served).await.unwrap_err(),
+            AppError::VerbCeiling { verb: "demote", .. }
+        ));
+        assert!(matches!(
+            app.erase_claim(key, served).await.unwrap_err(),
+            AppError::VerbCeiling { verb: "erase", .. }
+        ));
+    }
+    assert!(matches!(
+        app.demote_version(&boot.admin_key.value, Uuid::from_u128(7))
+            .await
+            .unwrap_err(),
+        AppError::NotFound
+    ));
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), mid);
+}
+
+/// The version a demotion read as the one to restore is demoted by a
+/// concurrent request before the demotion commits: the store's
+/// compare-and-set refuses it, and nothing of it is journalled.
+#[tokio::test]
+async fn a_demotion_whose_claim_moved_in_the_store_journals_nothing() {
+    let (store, app, boot, _writer, _reader, v1, v2) = two_promoted_versions().await;
+    let app = std::sync::Arc::new(app);
+    let racing = std::sync::Arc::clone(&app);
+    let admin = boot.admin_key.value.clone();
+    let before = journal(&store, boot.tenant_id).await.len();
+    store.before_next_head_read(async move {
+        racing
+            .demote_version(admin.as_str(), v1)
+            .await
+            .expect("the racing demotion of v1");
+    });
+    assert!(matches!(
+        app.demote_version(&boot.admin_key.value, v2)
+            .await
+            .unwrap_err(),
+        AppError::Store(StoreError::TipMoved { .. })
+    ));
+    let events = journal(&store, boot.tenant_id).await;
+    assert_eq!(events.len(), before + 1, "only the racing demotion");
+    assert_eq!(
+        events.last().map(|e| &e.envelope.payload["artifact_id"]),
+        Some(&json!(v1.to_string()))
+    );
+    let row = |id| {
+        let store = store.clone();
+        let tenant = boot.tenant_id;
+        async move {
+            store
+                .memory(tenant, id)
+                .await
+                .expect("memory")
+                .expect("row")
+        }
+    };
+    let tip = row(v2).await;
+    assert_eq!(tip.status, MemoryStatus::Promoted, "v2 stays promoted");
+    assert!(tip.is_tip, "and the tip");
+    assert_eq!(row(v1).await.status, MemoryStatus::Demoted);
+}
+
+#[tokio::test]
+async fn an_erased_version_serves_no_text_to_recall_the_listing_or_get() {
+    let (store, app, boot, writer, reader, v1, v2) = two_promoted_versions().await;
+    let erasure = app
+        .erase_claim(&boot.admin_key.value, v2)
+        .await
+        .expect("erase");
+    assert_eq!(
+        erasure.erased,
+        vec![
+            VersionRef {
+                artifact_id: v1,
+                version: 1
+            },
+            VersionRef {
+                artifact_id: v2,
+                version: 2
+            }
+        ],
+        "an erase takes every version of the claim"
+    );
+    assert!(hit_ids(&app, &reader.value, "canary").await.is_empty());
+    assert!(hit_ids(&app, &writer.value, "canary").await.is_empty());
+    assert!(listed(&app, &reader.value, "crew").await.is_empty());
+    for id in [v1, v2] {
+        assert!(matches!(
+            app.get_memory(&reader.value, id).await.unwrap_err(),
+            AppError::NotFound
+        ));
+        // Its author reads absence with provenance: the state, the digest,
+        // no text (ADR-0005 d2).
+        let own = app.get_memory(&writer.value, id).await.expect("own get");
+        assert_eq!(own.memory.status, MemoryStatus::Erased);
+        assert!(own.memory.body.is_empty());
+        let row = store
+            .memory(boot.tenant_id, id)
+            .await
+            .expect("memory")
+            .expect("row");
+        assert!(row.body.is_empty());
+        assert!(row.body_digest.starts_with("sha256:"), "the digest stays");
+        assert!(!row.is_tip);
+    }
+    let event = journal(&store, boot.tenant_id)
+        .await
+        .pop()
+        .expect("an event");
+    assert_eq!(event.envelope.event_type, event_types::LIFECYCLE_ERASE);
+    assert_eq!(
+        event.envelope.payload["artifact_ids"],
+        json!([v1.to_string(), v2.to_string()])
+    );
+    assert!(matches!(
+        app.erase_claim(&boot.admin_key.value, v1)
+            .await
+            .unwrap_err(),
+        AppError::Transition(_)
+    ));
+}
+
+/// A demotion of a retirement or of a vocabulary term is refused by name
+/// and journals nothing (ADR-0089 d16, note of 2026-11-18).
+#[tokio::test]
+async fn demoting_a_retirement_or_a_vocabulary_term_is_refused_by_name_and_journals_nothing() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let (writer, _reader, reviewer) = crew_keys(&app, admin, crew).await;
+    let term = promoted(
+        &app,
+        &writer.value,
+        &reviewer.value,
+        &SubmitRequest {
+            on_similar: Default::default(),
+            kind: MemoryKind::Term,
+            ..submit_req("dk-term", "canary: a staged rollout slice")
+        },
+    )
+    .await;
+    let memory = promoted(
+        &app,
+        &writer.value,
+        &reviewer.value,
+        &submit_req("dk-ret", "the canary drains first"),
+    )
+    .await;
+    let retirement = app
+        .supersede(
+            &writer.value,
+            &retire_req("dk-ret-2", memory, "no canary now"),
+        )
+        .await
+        .expect("retire")
+        .receipt
+        .memory_id;
+    app.post_verdict(&reviewer.value, retirement, Verdict::Approve, None)
+        .await
+        .expect("ratify the retirement");
+    let before = journal(&store, boot.tenant_id).await.len();
+    for (id, kind, retires) in [
+        (term, MemoryKind::Term, false),
+        (retirement, MemoryKind::Memory, true),
+    ] {
+        let err = app.demote_version(admin, id).await.unwrap_err();
+        assert!(
+            matches!(
+                err,
+                AppError::DemoteKindUnsupported { kind: k, retirement: r } if k == kind && r == retires
+            ),
+            "{err:?}"
+        );
+        assert!(
+            err.to_string()
+                .contains("lifecycle.demote_kind_unsupported"),
+            "{err}"
+        );
+    }
+    assert_eq!(
+        journal(&store, boot.tenant_id).await.len(),
+        before,
+        "a refusal journals nothing"
+    );
+    for id in [term, retirement] {
+        let row = store
+            .memory(boot.tenant_id, id)
+            .await
+            .expect("memory")
+            .expect("row");
+        assert_eq!(row.status, MemoryStatus::Promoted);
+        assert!(row.is_tip);
+    }
+}
+
+/// Demoting a steering tip takes it out of every recall's steering and
+/// serves the steering version below it again (ADR-0089 d16).
+#[tokio::test]
+async fn demoting_a_steering_tip_serves_the_steering_version_below_it() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
+    let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
+    let v1 = promoted(
+        &app,
+        &writer.value,
+        &reviewer.value,
+        &submit_kind(
+            "dst",
+            MemoryKind::Steering,
+            "Quote validity dates are mandatory.",
+            crew,
+        ),
+    )
+    .await;
+    let v2 = app
+        .supersede(
+            &writer.value,
+            &supersede_req(
+                "dst-2",
+                v1,
+                "Quote validity dates and currencies are mandatory.",
+            ),
+        )
+        .await
+        .expect("supersede")
+        .receipt
+        .memory_id;
+    app.post_verdict(&reviewer.value, v2, Verdict::Approve, None)
+        .await
+        .expect("ratify v2");
+    let steering = || async {
+        steering_ids(
+            &app.recall(&reader.value, &recall_req("quote"))
+                .await
+                .expect("recall"),
+        )
+    };
+    assert_eq!(steering().await, vec![v2]);
+    let demotion = app.demote_version(admin, v2).await.expect("demote");
+    assert_eq!(demotion.restored.map(|r| r.artifact_id), Some(v1));
+    assert_eq!(steering().await, vec![v1], "v1 steers again");
+    app.demote_version(admin, v1).await.expect("demote v1");
+    assert!(steering().await.is_empty(), "no steering is served");
+}
+
+#[tokio::test]
+async fn an_erase_takes_the_claims_held_version_off_the_review_queue() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let (writer, _reader, reviewer) = crew_keys(&app, &boot.admin_key.value, crew).await;
+    let v1 = promoted(
+        &app,
+        &writer.value,
+        &reviewer.value,
+        &submit_req("er-q", "the canary drains first"),
+    )
+    .await;
+    let held = app
+        .supersede(
+            &writer.value,
+            &supersede_req("er-q2", v1, "the canary drains last"),
+        )
+        .await
+        .expect("supersede")
+        .receipt
+        .memory_id;
+    app.erase_claim(&boot.admin_key.value, v1)
+        .await
+        .expect("erase");
+    let row = store
+        .memory(boot.tenant_id, held)
+        .await
+        .expect("memory")
+        .expect("row");
+    assert_eq!(row.status, MemoryStatus::Erased);
+    assert!(
+        app.review_next(&reviewer.value)
+            .await
+            .expect("review next")
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn the_chain_verifies_after_an_erase_and_a_demotion() {
+    let (_store, app, boot, _writer, _reader, v1, v2) = two_promoted_versions().await;
+    app.demote_version(&boot.admin_key.value, v2)
+        .await
+        .expect("demote");
+    app.erase_claim(&boot.admin_key.value, v1)
+        .await
+        .expect("erase");
+    let head = app
+        .verify_chain(&boot.admin_key.value)
+        .await
+        .expect("the chain verifies");
+    assert!(head.seq > 0);
+}
+
 // -- Withdraw (ADR-0083 d13; #401) -------------------------------------------
 
 fn withdraw_req(idem: &str, id: Uuid, reason: Option<&str>) -> oml_app::types::WithdrawRequest {
