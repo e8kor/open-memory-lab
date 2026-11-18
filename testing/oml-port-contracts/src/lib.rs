@@ -1222,7 +1222,11 @@ fn hit_ids(hits: &[Candidate]) -> Vec<Uuid> {
 
 /// The hit kinds recall admits by default (retrieval.md: vocabulary kinds
 /// only by a workspace's opt-in, which is unbuilt).
-const HIT_KINDS: [MemoryKind; 2] = [MemoryKind::Memory, MemoryKind::DerivedFact];
+const HIT_KINDS: [MemoryKind; 3] = [
+    MemoryKind::Memory,
+    MemoryKind::DerivedFact,
+    MemoryKind::Document,
+];
 
 /// Recall serves promoted served tips only — R3 at the store (retrieval.md)
 /// — never a held row or a replaced version, searches exactly the readable
@@ -13546,7 +13550,13 @@ pub async fn a_document_is_searched_by_its_passages_and_both_bm25_lists_agree<S:
             }
             let kangaroo: Vec<_> = scan.candidates.iter().filter(|c| c.memory_id == doc).collect();
             if query == "kangaroo" {
-                assert_eq!(kangaroo.len(), 1, "one passage says kangaroo");
+                assert_eq!(
+                    kangaroo.len(),
+                    1,
+                    "one passage says kangaroo: {:?} {:?}",
+                    scan.terms,
+                    scan.candidates
+                );
                 assert_eq!(kangaroo[0].ordinal, 2, "the third passage");
                 assert_eq!(
                     kangaroo[0].body_bytes,

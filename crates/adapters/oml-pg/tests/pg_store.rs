@@ -4512,9 +4512,11 @@ async fn the_adapters_fts_read_scans_its_tenants_partition_alone() {
             tx.rollback().await.expect("rollback");
             let mut relations = std::collections::BTreeSet::new();
             plan_relations(&plan, &mut relations);
+            // A document's passages are read from their one table by its
+            // key, tenant first, gated by the row's kind (ADR-0081 d4).
             assert_eq!(
                 relations.into_iter().collect::<Vec<_>>(),
-                vec![partition_of(a)],
+                vec!["document_passages".to_owned(), partition_of(a)],
                 "{mode}: {plan}"
             );
         }
