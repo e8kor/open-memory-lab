@@ -9,7 +9,8 @@ answers: which kinds recall's kinds filter admits and what a recall that names n
 
 **Status:** accepted design · 2026-11-15, by the operator, before it is built: three decisions
 taken with the request (d1, d3, d6) and twelve answers the same day, every one at its
-recommendation (d11) · proposed the same day
+recommendation (d11) · proposed the same day · amended 2026-11-18 (d12: three readings the
+build took, recorded before the code and marked for the operator's batch, #443)
 
 **Release:** planned for v0.8.0; not built
 
@@ -397,6 +398,33 @@ workspace holds across kinds has the workspace page's contents by kind for one w
     12. **The default of `oml_read` with neither `query` nor `own`** (d6): the scoped catalog,
         `own: true` for the key's own work. Rejected: keep `own: true` as the MCP default and serve
         the catalog with `own: false`.
+
+- **d12 — Three readings the build took** (amended 2026-11-18, #443; the coordinator's
+  decisions on the build's questions, recorded before the code and **marked for the operator's
+  batch**). Each names the alternative it rejected.
+    1. **How a skill's name and description enter its search text** (d3, "a skill by its name,
+       description and body"). The store's search-vector fold reads the name, the description
+       and the body for a version of kind `skill`, and runs again when the name or the
+       description column changes, as it does for the claim and the search text; the in-memory
+       store reads the same three. The application derives no `search_text` for a skill.
+       Rejected: the application writing a `search_text` for skills, since `search_text` is the
+       format adapter's staged output (ADR-0056 d4, ADR-0090 d13) and a second writer of it would
+       drift from the adapter's.
+    2. **Vocabulary kinds before ADR-0021 d9's opt-in is built** (d1, d4, d11 answer 3). The
+       journalled opt-in does not exist yet, so no workspace admits vocabulary: with no `kinds`,
+       `term`, `term_mapping` and `vocab_release` are never hits and never in the BM25 reference
+       set; named in `kinds`, they are served wherever the key reads, d1's exception. The
+       postings and counts are written for them all the same, so the opt-in, once built, needs
+       no further migration. Rejected: building the opt-in in this change, which is ADR-0021's
+       record and has no decided event.
+    3. **The MCP own-work listing and text** (d6, ADR-0039 d4). `own: true` keeps answering its
+       items with their text, as the own-work check does today; the catalog, the default mode,
+       follows d6 and serves no body unless `include_text` asks. Rejected: one no-text rule for
+       both modes, which would make an agent checking its own write send a second flag.
+
+    **Waiting.** `binding` (d6, d8) waits on ADR-0085's releases, which are not built: every key
+    reads tips, so no catalog answer carries `binding` until they are. Document hits and the
+    document entries' `passages` follow ADR-0081's passages as that build defines them.
 
 ## Consequences
 
