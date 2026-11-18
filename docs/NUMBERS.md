@@ -167,9 +167,13 @@ branch that reserved later renumbers.
 | migration | 0051 | `feat/linked-tenant-keys` | #447 | validate the linked tenant key check | open |
 | migration | 0051 | `main` |  | linked tenant keys validate | used |
 | migration | 0052 | `main` |  | release stranded lane claims | used |
-| migration | 0053 | `bulk/v082-b` |  | upload sessions (ADR-0004 d3, #451) | reserved |
-| migration | 0054 | `bulk/v082-b` |  | workspace export policy and allowances (ADR-0084 d10, #425) | reserved |
-| migration | 0055 | `bulk/v082-b` |  | workspace imports and the import ledger (ADR-0084 d6-d11, #426) | reserved |
-| migration | 0056 | `bulk/v083-1` |  | the serving role destroys a version's data key when it erases it | reserved |
-| migration | 0057 | `bulk/v083-1` |  | a destroyed data key stays destroyed and a live one is re-keyed only with its KEK | reserved |
-| migration | 0058 | `bulk/v083-1` |  | a demotion restores the end a version had before its supersession | reserved |
+| migration | 0053 | `main` |  | upload sessions | used |
+| migration | 0054 | `main` |  | workspace export policy | used |
+| migration | 0055 | `main` |  | workspace imports | used |
+| migration | 0056 | `main` |  | serving role destroys erased keys | used |
+| migration | 0057 | `main` |  | artifact keys guard | used |
+| migration | 0058 | `main` |  | valid until before supersession | used |
+| migration | 0059 | `bulk/v080-c` |  | document passages as search units (ADR-0081 d3, d4, #405) | reserved |
+| migration | 0060 | `bulk/v080-c` |  | document passages: the served index rebuilt partition by partition and the kind check validated (ADR-0081 R14, #405) | reserved |
+| migration | 0061 | `bulk/v080-e` |  | a version records its author's person at write (ADR-0085 d16, #448) | reserved |
+| migration | 0062 | `bulk/v080-e` |  | postings and counts for every hit kind, and the catalog index (ADR-0092 d4, d9, #443) | reserved |
