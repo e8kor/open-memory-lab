@@ -512,14 +512,19 @@ decision it reads.
   alone, pending ADR-0026 d4's reading of a name that is not unique in the tenant.
 - **R17 (d15).** The ask matches the project's root `.claude/skills/` (the working directory and
   `CLAUDE_PROJECT_DIR`) and the home's, case-insensitively, after lexical normalisation; a
-  nested `.claude/skills/` and a directory added with `--add-dir` are not matched.
+  nested `.claude/skills/` and a directory added with `--add-dir` are not matched. The
+  comparison also folds a long s (U+017F) to `s` and the Kelvin sign (U+212A) to `k`, which a
+  case-folding file system reads that way (amended 2026-11-18).
 - **R18 (d8, d10).** Each index line's description is cut to 160 characters, the last `…`; a
   URI is printed whole; a held line begins `[unreviewed]` and still ends "(unreviewed)". The
   index is fitted into what the rest of the context leaves under Claude Code's 10,000-character
-  `additionalContext` cap: a line that does not fit is counted in "and N more". The read is
+  `additionalContext` cap, counted in UTF-16 units as a JavaScript string's length is (amended
+  2026-11-18): a line that does not fit is counted in "and N more". The read is
   skipped when one request timeout after the hook's elapsed time would pass its deadline.
 - **R19 (d1, d10, d11).** The offered set carries at most 50 held commands, counted in d5's
-  order after shadowing and dropped before any approved one, as held guardrails are capped. The
+  order after shadowing and dropped before any approved one, as held guardrails are capped; the
+  cap bounds what is listed, not what is read by URI, so a listed held command, and a shadowed
+  one, stay readable at their URI (amended 2026-11-18, re-verify of #467). The
   listing reads (`GET /v1/skills`, `prompts/list`, `resources/list`) load no body; `prompts/get`
   and `resources/read` read the one body they serve. A skill's name and description refuse C0
   and C1 controls, bidi overrides and isolates and zero-width characters at write
@@ -527,6 +532,13 @@ decision it reads.
   read the store cannot serve answers MCP's `-32603` with a generic message, page one of
   `prompts/list` then holding the guardrails prompt alone, while an unknown name or URI keeps
   `-32602` or `-32002`.
+- **R20 (d15).** The home whose `.claude/skills/` the ask matches, and the doctor counts, is
+  `HOME`, or `USERPROFILE` when `HOME` is unset or empty, as on Windows (the coordinator,
+  2026-11-18).
+- **R21 (d10; ADR-0089 d16).** A held successor of a demoted skill, where no promoted version
+  of its claim is left below it, holds no approved version, so it may take the bare `<name>`,
+  marked unreviewed, as d10's held version 1 does. `oml doctor` is to name such a skill; that
+  line is not built yet and is left for a follow-up.
 
 ## Consequences
 
