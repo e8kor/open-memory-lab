@@ -7047,7 +7047,14 @@ pub async fn instruction_rows_are_the_tips_in_force_the_named_keys_own_held_rows
     }
 
     let mut rows = store
-        .instruction_rows(rig.tenant_id, MemoryKind::Guardrail, &[wa], author, &[])
+        .instruction_rows(
+            rig.tenant_id,
+            MemoryKind::Guardrail,
+            &[wa],
+            author,
+            &[],
+            true,
+        )
         .await
         .expect("guardrail rows");
     rows.sort_by_key(|m| m.memory_id);
@@ -7058,7 +7065,14 @@ pub async fn instruction_rows_are_the_tips_in_force_the_named_keys_own_held_rows
     // On a node inside an in-progress subtree, every author's held rows
     // too (ADR-0080 d10, d16); the core judges which it serves.
     let mut inside = store
-        .instruction_rows(rig.tenant_id, MemoryKind::Guardrail, &[wa], author, &[wa])
+        .instruction_rows(
+            rig.tenant_id,
+            MemoryKind::Guardrail,
+            &[wa],
+            author,
+            &[wa],
+            true,
+        )
         .await
         .expect("guardrail rows");
     inside.sort_by_key(|m| m.memory_id);
@@ -7076,14 +7090,14 @@ pub async fn instruction_rows_are_the_tips_in_force_the_named_keys_own_held_rows
     );
     assert!(
         store
-            .instruction_rows(rig.tenant_id, MemoryKind::Guardrail, &[], author, &[])
+            .instruction_rows(rig.tenant_id, MemoryKind::Guardrail, &[], author, &[], true)
             .await
             .expect("guardrail rows")
             .is_empty(),
         "no node, no row"
     );
     let skills = store
-        .instruction_rows(rig.tenant_id, MemoryKind::Skill, &[wa], author, &[wa])
+        .instruction_rows(rig.tenant_id, MemoryKind::Skill, &[wa], author, &[wa], true)
         .await
         .expect("skill rows");
     assert_eq!(
@@ -7094,6 +7108,24 @@ pub async fn instruction_rows_are_the_tips_in_force_the_named_keys_own_held_rows
         skills[0].kind_fields, skill.kind_fields,
         "the fields round-trip"
     );
+    assert_eq!(skills[0].body, skill.body, "with bodies, the body is read");
+    // A listing read loads no body, and every other field still round-trips
+    // (ADR-0080 d11).
+    let bodiless = store
+        .instruction_rows(
+            rig.tenant_id,
+            MemoryKind::Skill,
+            &[wa],
+            author,
+            &[wa],
+            false,
+        )
+        .await
+        .expect("skill rows");
+    assert_eq!(bodiless.len(), 1);
+    assert_eq!(bodiless[0].body, "", "no body is loaded");
+    assert_eq!(bodiless[0].kind_fields, skill.kind_fields);
+    assert_eq!(bodiless[0].version, skill.version);
 }
 
 // ---------------------------------------------------------------------------

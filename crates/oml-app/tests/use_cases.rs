@@ -17022,7 +17022,7 @@ async fn offered_at(
 }
 
 #[tokio::test]
-async fn an_agent_proposes_a_skill_over_oml_write_and_it_stays_held_until_a_person_approves() {
+async fn an_agent_proposes_a_skill_and_it_stays_held_until_a_person_approves() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
@@ -17334,7 +17334,16 @@ async fn the_skill_set_pages_by_fifty_with_one_digest() {
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let writer = agent(&app, admin, "wanda", crew).await;
-    for i in 0..51 {
+    let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
+    // One approved and fifty held: the held ones stay within their cap.
+    promoted(
+        &app,
+        &writer.value,
+        &reviewer.value,
+        &skill_named("p0", "skill-00", "Do it.", crew),
+    )
+    .await;
+    for i in 1..51 {
         app.submit_memory(
             &writer.value,
             &skill_named(&format!("p{i}"), &format!("skill-{i:02}"), "Do it.", crew),
@@ -17363,6 +17372,47 @@ async fn the_skill_set_pages_by_fifty_with_one_digest() {
     );
     assert_eq!(second.next_cursor, None);
     assert_eq!(first.set_digest, second.set_digest);
+}
+
+/// The bootstrap admin key is offered no other key's held skill, and reads
+/// none by name (ADR-0080 d14; ADR-0089 d2: no admin act opens a held
+/// skill).
+#[tokio::test]
+async fn an_admin_key_is_not_offered_another_keys_held_skill() {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = agent(&app, admin, "wanda", crew).await;
+    app.submit_memory(
+        &writer.value,
+        &skill_named("s1", "deploy", "Run the deploy script.", crew),
+    )
+    .await
+    .expect("a held skill");
+    let req = oml_app::types::SkillRequest {
+        workspace: Some(crew.into()),
+        include_own_held: true,
+        cursor: None,
+    };
+    match app.skills(admin.as_str(), &req).await {
+        Ok(set) => assert!(set.skills.is_empty(), "{:?}", set.skills),
+        Err(e) => assert!(matches!(e, AppError::VerbCeiling { .. }), "{e:?}"),
+    }
+    let read = app
+        .skill(
+            admin.as_str(),
+            Some(&crew.into()),
+            &oml_app::types::SkillRead {
+                command: "deploy".to_owned(),
+                workspace_name: None,
+                include_own_held: true,
+            },
+        )
+        .await;
+    assert!(
+        matches!(read, Ok(None) | Err(AppError::VerbCeiling { .. })),
+        "{read:?}"
+    );
 }
 
 /// Held guardrails never push the approved rules over the cap: the cap

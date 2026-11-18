@@ -117,6 +117,10 @@ const INVALID_PARAMS: i64 = -32602;
 /// MCP's resource-not-found code (MCP 2025-06-18, server/resources, error
 /// handling): one answer for every URI the key is not served (ADR-0081 d6).
 const RESOURCE_NOT_FOUND: i64 = -32002;
+/// JSON-RPC's internal error: a skills read the store could not serve.
+const INTERNAL_ERROR: i64 = -32603;
+/// What an outage of the skills read answers, naming nothing about any row.
+const SKILLS_UNAVAILABLE: &str = "the skills could not be read; retry later";
 
 /// The argument every skill prompt takes (ADR-0080 d5).
 fn skill_prompt_arguments() -> Value {
@@ -513,9 +517,20 @@ where
                     prompts.extend(page.set.skills.iter().map(skill_prompt_listing));
                     rpc_result(&id, &with_cursor(json!({ "prompts": prompts }), &page))
                 }
-                Err(message) => {
+                Err(SkillPageError::Refused(message)) => {
                     call.rpc_error(INVALID_PARAMS);
                     rpc_error(&id, INVALID_PARAMS, &message)
+                }
+                // Page one still offers the guardrails prompt when the
+                // skills cannot be read, and says nothing of more pages.
+                Err(SkillPageError::Outage)
+                    if request.params.get("cursor").is_none_or(Value::is_null) =>
+                {
+                    rpc_result(&id, &json!({ "prompts": [guardrails_prompt_listing()] }))
+                }
+                Err(SkillPageError::Outage) => {
+                    call.rpc_error(INTERNAL_ERROR);
+                    rpc_error(&id, INTERNAL_ERROR, SKILLS_UNAVAILABLE)
                 }
             },
             "resources/list" => match Self::skill_page(st, presented, &request.params).await {
@@ -524,9 +539,13 @@ where
                         page.set.skills.iter().map(skill_resource_listing).collect();
                     rpc_result(&id, &with_cursor(json!({ "resources": resources }), &page))
                 }
-                Err(message) => {
+                Err(SkillPageError::Refused(message)) => {
                     call.rpc_error(INVALID_PARAMS);
                     rpc_error(&id, INVALID_PARAMS, &message)
+                }
+                Err(SkillPageError::Outage) => {
+                    call.rpc_error(INTERNAL_ERROR);
+                    rpc_error(&id, INTERNAL_ERROR, SKILLS_UNAVAILABLE)
                 }
             },
             "resources/templates/list" => {
@@ -602,16 +621,22 @@ where
     /// One page of the offered skills for `prompts/list` and
     /// `resources/list`, from the read behind `GET /v1/skills` with the
     /// caller's own held skills (ADR-0080 d5, d7, d11, d14): MCP's `cursor`
-    /// is the read's own. A refusal of the read is the method's error.
+    /// is the read's own. A refusal of the read is the method's error; a
+    /// read the server could not serve is logged and is an outage, which
+    /// names nothing about any row.
     async fn skill_page(
         st: &Self,
         presented: Presented<'_>,
         params: &Value,
-    ) -> Result<SkillPage, String> {
+    ) -> Result<SkillPage, SkillPageError> {
         let cursor = match params.get("cursor") {
             None | Some(Value::Null) => None,
             Some(Value::String(c)) => Some(c.clone()),
-            Some(_) => return Err("cursor is a string, a nextCursor this server served".to_owned()),
+            Some(_) => {
+                return Err(SkillPageError::Refused(
+                    "cursor is a string, a nextCursor this server served".to_owned(),
+                ));
+            }
         };
         let mut query = vec![("include_own_held".to_owned(), "true".to_owned())];
         if let Some(c) = &cursor {
@@ -619,7 +644,14 @@ where
         }
         let set = Self::skills_inner(st, &query, &ring_headers(presented), presented.connection)
             .await
-            .map_err(|e| e.message)?;
+            .map_err(|e| {
+                if e.status.is_server_error() {
+                    skills_outage(&e);
+                    SkillPageError::Outage
+                } else {
+                    SkillPageError::Refused(e.message)
+                }
+            })?;
         Ok(SkillPage {
             first: cursor.is_none(),
             set,
@@ -654,6 +686,13 @@ where
         };
         let served =
             Self::skill_inner(st, &ring_headers(presented), presented.connection, &read).await;
+        if let Err(e) = &served
+            && e.status.is_server_error()
+        {
+            skills_outage(e);
+            call.rpc_error(INTERNAL_ERROR);
+            return rpc_error(id, INTERNAL_ERROR, SKILLS_UNAVAILABLE);
+        }
         let Ok(Some(skill)) = served else {
             call.rpc_error(INVALID_PARAMS);
             return rpc_error(
@@ -724,6 +763,13 @@ where
         };
         let served =
             Self::skill_inner(st, &ring_headers(presented), presented.connection, &read).await;
+        if let Err(e) = &served
+            && e.status.is_server_error()
+        {
+            skills_outage(e);
+            call.rpc_error(INTERNAL_ERROR);
+            return rpc_error(id, INTERNAL_ERROR, SKILLS_UNAVAILABLE);
+        }
         let Ok(Some(skill)) = served else {
             return not_found(call);
         };
@@ -1566,6 +1612,20 @@ fn rpc_error_data(id: &Value, code: i64, message: &str, data: &Value) -> Respons
 struct SkillPage {
     first: bool,
     set: oml_app::types::SkillSet,
+}
+
+/// Why a page of the offered skills was not served: the read refused the
+/// request (`-32602`), or the server could not serve it (`-32603`, or the
+/// guardrails prompt alone on page one of `prompts/list`).
+enum SkillPageError {
+    Refused(String),
+    Outage,
+}
+
+/// Logs a skills read the server could not serve; the client is told only
+/// that it failed.
+fn skills_outage(e: &ApiError) {
+    tracing::warn!(code = e.code, reason = %e.message, "the skills read failed");
 }
 
 /// A list result with MCP's `nextCursor` when another page follows.

@@ -14,6 +14,11 @@ use crate::claim_kinds::UNREVIEWED_SUFFIX;
 /// `resources/list` serve it: the listing's default page size (ADR-0080 d5).
 pub const SKILL_PAGE: usize = 50;
 
+/// The most held commands an offered set carries, counted after the sort
+/// and dropped before any promoted command is, as the held guardrails are
+/// capped (ADR-0080 d10).
+pub const HELD_SKILLS_MAX: usize = 50;
+
 /// The most index lines the session-start hook prints before "and N more"
 /// (ADR-0080 d8).
 pub const INDEX_MAX_LINES: usize = 20;
@@ -42,6 +47,9 @@ pub struct SkillCandidate {
     /// A held version, served marked unreviewed.
     pub held: bool,
     pub version: u32,
+    /// When the version was written, as the store signs it: the second key
+    /// of the tie-break among held versions.
+    pub created_at: String,
 }
 
 /// One offered command: the name a prompt and a resource use, the version
@@ -69,9 +77,12 @@ pub struct Offer {
 /// d10): the promoted tip under `<name>`, and a held edit newer than it under
 /// `<name>-unreviewed`; with no promoted tip, the newest held version under
 /// `<name>` itself. A held version no newer than the promoted tip answers
-/// nothing.
+/// nothing. Held versions of one number go to the later created, then the
+/// larger artifact id, so the answer never depends on read order.
 fn commands(mut versions: Vec<SkillCandidate>) -> Vec<OfferedSkill> {
-    versions.sort_by_key(|c| std::cmp::Reverse(c.version));
+    versions.sort_by(|a, b| {
+        (b.version, &b.created_at, b.artifact_id).cmp(&(a.version, &a.created_at, a.artifact_id))
+    });
     let promoted = versions.iter().find(|c| !c.held).cloned();
     let held = versions.iter().find(|c| c.held).cloned();
     let command = |name: String, candidate: SkillCandidate| OfferedSkill {
@@ -90,13 +101,25 @@ fn commands(mut versions: Vec<SkillCandidate>) -> Vec<OfferedSkill> {
     }
 }
 
+/// A place's rank for a shared name: tree distance, an ancestor before a
+/// descendant, then the smaller path (ADR-0080 d5; R2).
+fn rank(c: &SkillCandidate) -> (u32, bool, &str) {
+    (c.distance, !c.ancestor, c.path.as_str())
+}
+
 /// The offered set from its candidates (ADR-0080 d4, d5, d10, d16). Each
 /// workspace's versions of one name give its commands; a name held in more
 /// than one workspace goes to the one nearest the scope node by tree
 /// distance, up or down, an ancestor winning a tie with a descendant and,
 /// between two descendants at one distance, the smaller path, so the answer
-/// never depends on read order. The offered commands are ordered by
-/// distance, then command name.
+/// never depends on read order. A held version only adds: a workspace that
+/// holds only held versions of a name never takes `<name>` while another
+/// offered workspace holds it approved, and answers as `<name>-unreviewed`
+/// beside it; the nearest such workspace, or the one that answers `<name>`
+/// with a held edit, wins that command, and the rest stay readable by URI
+/// (R15). The offered commands are ordered by distance, then command name,
+/// and held commands past [`HELD_SKILLS_MAX`] are dropped in that order,
+/// never a promoted one.
 #[must_use]
 pub fn offer(candidates: Vec<SkillCandidate>) -> Offer {
     let mut slots: BTreeMap<(String, Uuid), Vec<SkillCandidate>> = BTreeMap::new();
@@ -111,24 +134,38 @@ pub fn offer(candidates: Vec<SkillCandidate>) -> Offer {
         }
     }
     let mut offer = Offer::default();
-    for (_, mut places) in by_name {
-        places.sort_by(|a, b| {
-            let rank = |p: &[OfferedSkill]| {
-                let c = &p[0].candidate;
-                (c.distance, !c.ancestor, c.path.clone())
-            };
-            rank(a).cmp(&rank(b))
-        });
-        let overrides: Vec<String> = places[1..]
+    for (name, mut places) in by_name {
+        places.sort_by(|a, b| rank(&a[0].candidate).cmp(&rank(&b[0].candidate)));
+        let approved = places.iter().any(|p| p.iter().any(|o| !o.candidate.held));
+        if approved {
+            for place in places
+                .iter_mut()
+                .filter(|p| p.iter().all(|o| o.candidate.held))
+            {
+                for o in place {
+                    o.command = format!("{name}{UNREVIEWED_SUFFIX}");
+                }
+            }
+        }
+        // The workspace whose `<name>` answers: the nearest approved one, or
+        // the nearest of all when none is approved.
+        let winner = places
             .iter()
-            .map(|p| p[0].candidate.path.clone())
-            .collect();
+            .position(|p| p.iter().any(|o| o.command == name));
+        let mut answered: BTreeMap<String, usize> = BTreeMap::new();
         for (i, place) in places.into_iter().enumerate() {
-            for mut command in place {
-                if i == 0 {
-                    command.overrides.clone_from(&overrides);
-                    offer.offered.push(command.clone());
-                    command.overrides.clear();
+            let held_only = place.iter().all(|o| o.candidate.held);
+            for command in place {
+                if command.command == name || held_only || Some(i) == winner {
+                    match answered.get(&command.command) {
+                        Some(&at) => offer.offered[at]
+                            .overrides
+                            .push(command.candidate.path.clone()),
+                        None => {
+                            answered.insert(command.command.clone(), offer.offered.len());
+                            offer.offered.push(command.clone());
+                        }
+                    }
                 }
                 offer.all.push(command);
             }
@@ -137,7 +174,22 @@ pub fn offer(candidates: Vec<SkillCandidate>) -> Offer {
     let order = |o: &OfferedSkill| (o.candidate.distance, o.command.clone());
     offer.offered.sort_by_key(order);
     offer.all.sort_by_key(order);
+    cap_held(&mut offer.offered);
+    cap_held(&mut offer.all);
     offer
+}
+
+/// Keeps the first [`HELD_SKILLS_MAX`] held commands in order and every
+/// promoted one.
+fn cap_held(commands: &mut Vec<OfferedSkill>) {
+    let mut held = 0;
+    commands.retain(|o| {
+        if !o.candidate.held {
+            return true;
+        }
+        held += 1;
+        held <= HELD_SKILLS_MAX
+    });
 }
 
 /// A skill's resource URI (ADR-0080 d7; ADR-0081 d6): the workspace's name

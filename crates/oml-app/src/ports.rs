@@ -1179,7 +1179,9 @@ pub trait JournalStore: Retriever + Send + Sync {
     /// author's held version (ADR-0080 d10, d16), whose serving the core
     /// judges. Unordered: the read orders the set (d4). The state and the
     /// author predicate are the store's own, as for the own held rows of
-    /// [`Retriever::retrieve`].
+    /// [`Retriever::retrieve`]. Without `bodies` each row's `body` is
+    /// empty and never read, so a listing that serves no body loads none
+    /// (ADR-0080 d11).
     fn instruction_rows(
         &self,
         tenant_id: Uuid,
@@ -1187,6 +1189,7 @@ pub trait JournalStore: Retriever + Send + Sync {
         nodes: &[Uuid],
         author_key_id: Uuid,
         held_nodes: &[Uuid],
+        bodies: bool,
     ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send;
 
     /// One listing page (http-api.md search; ADR-0025 d13): the rows the

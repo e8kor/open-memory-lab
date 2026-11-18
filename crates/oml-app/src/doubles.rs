@@ -382,6 +382,9 @@ pub struct MemStore {
     /// nothing, then settles normally: a failure between an act and its
     /// record (#233).
     fail_next_settle: Arc<AtomicBool>,
+    /// Every `instruction_rows` read fails as a lost connection would,
+    /// until disarmed: an outage of the skill and guardrail reads.
+    fail_instruction_rows: Arc<AtomicBool>,
     /// The next commit parks once it has applied, until the park opens:
     /// an act whose commit landed and whose request is still in flight.
     park_after_commit: Arc<Mutex<Option<CommitPark>>>,
@@ -674,6 +677,13 @@ impl MemStore {
     /// (#233).
     pub fn fail_next_idempotency_settle(&self) {
         self.fail_next_settle.store(true, Ordering::SeqCst);
+    }
+
+    /// Fails every `instruction_rows` read with a backend error while
+    /// `failing` is true: a store outage behind the skill and guardrail
+    /// reads.
+    pub fn fail_instruction_rows(&self, failing: bool) {
+        self.fail_instruction_rows.store(failing, Ordering::SeqCst);
     }
 
     /// Parks the next commit once it has applied, until the returned park
@@ -3410,7 +3420,13 @@ impl JournalStore for MemStore {
         nodes: &[Uuid],
         author_key_id: Uuid,
         held_nodes: &[Uuid],
+        bodies: bool,
     ) -> Result<Vec<MemoryRecord>, StoreError> {
+        if self.fail_instruction_rows.load(Ordering::SeqCst) {
+            return Err(StoreError::Backend(
+                "the connection was lost before the instruction rows were read".to_owned(),
+            ));
+        }
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(Vec::new());
         };
@@ -3425,7 +3441,13 @@ impl JournalStore for MemStore {
                         && (m.author_key_id == author_key_id
                             || held_nodes.contains(&m.workspace_id)))
             })
-            .cloned()
+            .map(|m| {
+                let mut m = m.clone();
+                if !bodies {
+                    m.body = String::new();
+                }
+                m
+            })
             .collect())
     }
 
