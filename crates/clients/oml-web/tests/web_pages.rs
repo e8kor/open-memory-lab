@@ -8592,11 +8592,11 @@ async fn the_console_judges_in_a_shared_workspace_with_the_linked_key() {
     );
 }
 
-/// A held row a key of the signed-in person wrote offers Withdraw on the
-/// Memories list; its confirmation withdraws it as the person's web key,
-/// and the version is kept as withdrawn (ADR-0083 d13, note of 2026-11-17).
+/// A held row a key of the signed-in person wrote offers Withdraw under
+/// Memories, Submitted, and never under Approved; its confirmation withdraws it as the person's web key,
+/// and the version is kept as withdrawn (ADR-0083 d3, d13; #410).
 #[tokio::test]
-async fn a_person_withdraws_their_agents_held_write_from_the_memories_list_after_a_confirmation() {
+async fn a_person_withdraws_their_agents_held_write_from_submitted_after_a_confirmation() {
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     let (_, _, page) = act_and_follow(
@@ -8612,9 +8612,16 @@ async fn a_person_withdraws_their_agents_held_write_from_the_memories_list_after
     .await;
     let value = value_of(&page);
     let id = agent_writes(&rig, &value, "a note written by mistake").await;
-    let (status, _, list) = send(&rig.router, get("/web/memories", Some(&cookie))).await;
-    assert_eq!(status, StatusCode::OK);
     let link = format!("/web/memory?id={id}&amp;act=withdraw");
+    let (status, _, approved) = send(&rig.router, get("/web/memories", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!approved.contains(&link), "{approved}");
+    let (status, _, list) = send(
+        &rig.router,
+        get("/web/memories?view=submitted", Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
     assert!(list.contains(&link), "{list}");
     let (status, _, confirm) = send(
         &rig.router,
@@ -8648,6 +8655,359 @@ async fn a_person_withdraws_their_agents_held_write_from_the_memories_list_after
         .expect("kept, and read by its author");
     assert_eq!(row.memory.status, oml_app::domain::MemoryStatus::Withdrawn);
     // Withdrawn, the row offers Withdraw no more.
-    let (_, _, list) = send(&rig.router, get("/web/memories", Some(&cookie))).await;
+    let (_, _, list) = send(
+        &rig.router,
+        get("/web/memories?view=submitted", Some(&cookie)),
+    )
+    .await;
     assert!(!list.contains(&link), "{list}");
+}
+
+// -- the Memories cockpit (ADR-0083 d1, d3, d4, d5, d6, d7; #411, #413) -----
+
+/// A person's agent writes, in the person's `proj` workspace, a row the
+/// helper approves and then edits by a held successor, and a held row of
+/// its own; `proj` is put in progress, where every author's held row is
+/// served to its readers. Answers the cookie, the agent's key and the
+/// helper's.
+async fn in_progress_with_held_rows(rig: &Rig) -> (String, String, String) {
+    let (alice, agent) = person_with_agent(rig, "sub-1", EMAIL).await;
+    let (status, _, page) = act(
+        rig,
+        &alice,
+        "/web/workspaces",
+        &[("action", "create_workspace"), ("name", "proj")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
+    let served = agent_writes_in(rig, &agent, "approved inside proj", "alice.proj").await;
+    agent_writes_in(rig, &agent, "own held inside proj", "alice.proj").await;
+    put_in_progress(rig, &alice, "alice.proj").await;
+    let helper = reviewer_in_alices_root(rig).await;
+    reviewer_holds_a_successor(rig, &helper.value, served, "helper held inside proj").await;
+    (alice, agent, helper.value)
+}
+
+/// Approved reads the promoted tips alone, and its search sends
+/// `include_unreviewed: false`, so no held row reaches it: not the
+/// person's own and not, inside an in-progress workspace, another
+/// author's (ADR-0083 d1).
+#[tokio::test]
+async fn approved_shows_no_held_row_even_inside_an_in_progress_workspace() {
+    let rig = rig().await;
+    let (alice, _, _) = in_progress_with_held_rows(&rig).await;
+    for path in [
+        "/web/memories",
+        "/web/memories?workspace=alice.proj",
+        "/web/memories?workspace=alice.proj&q=inside",
+        "/web/memories?q=inside",
+        "/web/data/memories?workspace=alice.proj",
+        "/web/data/memories?workspace=alice.proj&q=inside",
+    ] {
+        let (status, _, page) = send(&rig.router, get(path, Some(&alice))).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {page}");
+        assert!(page.contains("approved inside proj"), "{path}: {page}");
+        for held in ["own held inside proj", "helper held inside proj"] {
+            assert!(!page.contains(held), "{path} shows {held}");
+        }
+    }
+}
+
+/// Submitted lists the person's own rows, held, rejected and withdrawn,
+/// each led by one plain sentence, a held one offering Withdraw; it has no
+/// search box, and another person's row is never in it (ADR-0083 d3, d4,
+/// d13).
+#[tokio::test]
+async fn submitted_leads_each_of_the_persons_rows_with_a_sentence_and_offers_withdraw_on_a_held_row()
+ {
+    let rig = rig().await;
+    rig.allow("bob@example.com", "bob", false).await;
+    let (alice, agent) = person_with_agent(&rig, "sub-1", EMAIL).await;
+    let (_, bob_agent) = person_with_agent(&rig, "sub-bob", "bob@example.com").await;
+    agent_writes(&rig, &bob_agent, "bob held secret").await;
+    let helper = reviewer_in_alices_root(&rig).await;
+    let held = agent_writes(&rig, &agent, "alice waits for review").await;
+    let rejected = agent_writes(&rig, &agent, "alice was refused").await;
+    rig.app
+        .post_verdict(
+            helper.value.as_str(),
+            rejected,
+            oml_app::types::Verdict::Reject,
+            Some("no source"),
+        )
+        .await
+        .expect("the helper rejects");
+    let withdrawn = agent_writes(&rig, &agent, "alice took this back").await;
+    rig.app
+        .withdraw(
+            agent.as_str(),
+            &oml_app::types::WithdrawRequest {
+                idempotency_key: "w-alice".to_owned(),
+                memory_id: withdrawn,
+                reason: None,
+            },
+        )
+        .await
+        .expect("the author withdraws");
+    let (status, _, page) = send(
+        &rig.router,
+        get("/web/memories?view=submitted", Some(&alice)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(
+        page.contains("<title>Submitted · Memories · OML</title>"),
+        "{page}"
+    );
+    assert!(!page.contains("bob held secret"), "{page}");
+    assert!(!page.contains(r#"name="q""#), "no search box: {page}");
+    let lead = |id: uuid::Uuid| {
+        between(
+            card_of(&page, &id.to_string()),
+            r#"<p class="mc-lead">"#,
+            "</p>",
+        )
+        .to_owned()
+    };
+    assert_eq!(lead(held), "Waiting for review.");
+    assert_eq!(
+        lead(rejected),
+        "Rejected. The text is kept and never served."
+    );
+    assert_eq!(
+        lead(withdrawn),
+        "Withdrawn. The text is kept and never served."
+    );
+    let withdraw = |id: uuid::Uuid| format!("/web/memory?id={id}&amp;act=withdraw");
+    assert!(page.contains(&withdraw(held)), "{page}");
+    assert!(!page.contains(&withdraw(rejected)), "{page}");
+    assert!(!page.contains(&withdraw(withdrawn)), "{page}");
+    // The State filter narrows to one of the four.
+    let (status, _, only) = send(
+        &rig.router,
+        get("/web/memories?view=submitted&state=rejected", Some(&alice)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{only}");
+    assert!(only.contains("alice was refused"), "{only}");
+    assert!(!only.contains("alice waits for review"), "{only}");
+    // Approved lists none of them and offers no Withdraw.
+    let (_, _, approved) = send(&rig.router, get("/web/memories", Some(&alice))).await;
+    for text in [
+        "alice waits for review",
+        "alice was refused",
+        "alice took this back",
+    ] {
+        assert!(!approved.contains(text), "{approved}");
+    }
+    assert!(!approved.contains("act=withdraw"), "{approved}");
+}
+
+/// The views are two links in `nav.oml-views`, the current one
+/// `aria-current="page"`, each keeping the picked workspace and the query
+/// (ADR-0083 d4, d6); a view the page does not draw is refused naming the
+/// field.
+#[tokio::test]
+async fn the_memories_views_are_two_links_that_keep_the_workspace_and_the_query() {
+    let rig = rig().await;
+    let (alice, _) = person_with_agent(&rig, "sub-1", EMAIL).await;
+    let (_, _, approved) = send(
+        &rig.router,
+        get("/web/memories?workspace=alice&q=deploy", Some(&alice)),
+    )
+    .await;
+    assert!(
+        approved.contains(r#"<nav class="oml-views" aria-label="Memories views"><a href="/web/memories?q=deploy&amp;workspace=alice" aria-current="page">Approved</a><a href="/web/memories?view=submitted&amp;q=deploy&amp;workspace=alice">Submitted</a></nav>"#),
+        "{approved}"
+    );
+    let (_, _, submitted) = send(
+        &rig.router,
+        get(
+            "/web/memories?view=submitted&workspace=alice&q=deploy",
+            Some(&alice),
+        ),
+    )
+    .await;
+    assert!(
+        submitted.contains(r#"<nav class="oml-views" aria-label="Memories views"><a href="/web/memories?q=deploy&amp;workspace=alice">Approved</a><a href="/web/memories?view=submitted&amp;q=deploy&amp;workspace=alice" aria-current="page">Submitted</a></nav>"#),
+        "{submitted}"
+    );
+    // The query rides along unseen, so going back to Approved keeps it.
+    assert!(
+        submitted.contains(r#"<input type="hidden" name="q" value="deploy">"#),
+        "{submitted}"
+    );
+    let (status, _, refused) = send(
+        &rig.router,
+        get("/web/memories?view=everything", Some(&alice)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    assert!(refused.contains("view"), "{refused}");
+}
+
+/// A held row, a rejected one and a served one, and the admin `boss`
+/// signed in: the cookie, the held id and the rejected id.
+async fn admin_with_held_and_rejected(rig: &Rig) -> (String, uuid::Uuid, uuid::Uuid) {
+    rig.allow("boss@example.com", "boss", true).await;
+    let (_, agent) = person_with_agent(rig, "sub-1", EMAIL).await;
+    let boss = signed_in(rig, "sub-boss", "boss@example.com").await;
+    let helper = reviewer_in_alices_root(rig).await;
+    let served = agent_writes(rig, &agent, "served to readers").await;
+    rig.app
+        .post_verdict(
+            helper.value.as_str(),
+            served,
+            oml_app::types::Verdict::Approve,
+            None,
+        )
+        .await
+        .expect("the helper approves");
+    let rejected = agent_writes(rig, &agent, "refused by review").await;
+    rig.app
+        .post_verdict(
+            helper.value.as_str(),
+            rejected,
+            oml_app::types::Verdict::Reject,
+            Some("no source"),
+        )
+        .await
+        .expect("the helper rejects");
+    let held = agent_writes(rig, &agent, "waiting for a verdict").await;
+    (boss, held, rejected)
+}
+
+/// No admin page draws Judge, Review next, a pick box or a verdict form,
+/// and the admin Review view's old acts run nothing: an admin key gives no
+/// verdict, and bulk review is the CLI's (ADR-0083 d5, d7).
+#[tokio::test]
+async fn no_admin_page_draws_a_verdict_form() {
+    let rig = rig().await;
+    let (boss, held, rejected) = admin_with_held_and_rejected(&rig).await;
+    let mut paths: Vec<String> = oml_page::web::ADMIN_TABS
+        .iter()
+        .map(|(path, _)| (*path).to_owned())
+        .collect();
+    paths.extend([
+        "/web/admin/memories?view=held".to_owned(),
+        "/web/admin/memories?view=rejected".to_owned(),
+        "/web/admin/review?held=1".to_owned(),
+        format!("/web/admin/review?memory={held}"),
+        format!("/web/admin/memory?id={held}"),
+        format!("/web/admin/memory?id={rejected}"),
+    ]);
+    for path in &paths {
+        let (status, _, page) = send(&rig.router, get(path, Some(&boss))).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {page}");
+        for drawn in [
+            r#"name="verdict""#,
+            r#"name="pick_"#,
+            r#"value="review_next""#,
+            r#"value="bulk_confirm""#,
+            r#"value="bulk_verdict""#,
+            r#"value="judge""#,
+            "Review next",
+            ">Judge</",
+        ] {
+            assert!(!page.contains(drawn), "{path} draws {drawn}: {page}");
+        }
+    }
+    for action in ["review_next", "bulk_confirm", "bulk_verdict", "verdict"] {
+        let (status, _, page) = act(
+            &rig,
+            &boss,
+            "/web/admin/review",
+            &[
+                ("action", action),
+                ("verdict", "approve"),
+                ("artifact_ids", &held.to_string()),
+                ("pick_000", &held.to_string()),
+            ],
+        )
+        .await;
+        assert_ne!(status, StatusCode::SEE_OTHER, "{action}: {page}");
+    }
+    let events = rig
+        .store
+        .events_range(rig.boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e.envelope.event_type.starts_with("review.")
+                && e.envelope.payload.to_string().contains(&held.to_string()))
+            .count(),
+        0,
+        "no verdict on the held row"
+    );
+}
+
+/// The admin Held view lists the tenant's held rows under the "Held per
+/// workspace" table, each workspace a link that filters them, carries its
+/// count on its tab, says the admin key never judges, and links each held
+/// row to Judge on the Personal side as the person's reviewer key
+/// (ADR-0083 d5).
+#[tokio::test]
+async fn admin_held_view_links_judge_on_the_personal_side() {
+    let rig = rig().await;
+    let (boss, held, rejected) = admin_with_held_and_rejected(&rig).await;
+    let (status, _, page) = send(
+        &rig.router,
+        get("/web/admin/memories?view=held", Some(&boss)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(
+        page.contains("<title>Admin · Held · Memories · OML</title>"),
+        "{page}"
+    );
+    assert!(
+        page.contains(r#"<nav class="oml-views" aria-label="Memories views"><a href="/web/admin/memories">Approved</a><a href="/web/admin/memories?view=held" aria-current="page">Held <span class="n">1</span></a><a href="/web/admin/memories?view=rejected">Rejected</a></nav>"#),
+        "{page}"
+    );
+    assert!(
+        page.contains("This key never judges; verdicts are given on the Personal side, as <code>boss-review</code>."),
+        "{page}"
+    );
+    assert!(page.contains("<h2>Held per workspace</h2>"), "{page}");
+    assert!(
+        page.contains(r#"href="/web/admin/memories?view=held&amp;workspace=alice">alice</a>"#),
+        "{page}"
+    );
+    assert!(page.contains("waiting for a verdict"), "{page}");
+    assert!(!page.contains("refused by review"), "{page}");
+    assert!(!page.contains("served to readers"), "{page}");
+    assert!(
+        page.contains(&format!(
+            r#"<a href="/web/todo/judge?memory={held}">Judge as <code>boss-review</code></a>"#
+        )),
+        "{page}"
+    );
+    // The workspace link filters the rows, the view kept.
+    let (status, _, filtered) = send(
+        &rig.router,
+        get("/web/admin/memories?view=held&workspace=alice", Some(&boss)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{filtered}");
+    assert!(filtered.contains("waiting for a verdict"), "{filtered}");
+    // Approved and Rejected hold their own rows, with no Judge link and no
+    // count on the tab.
+    let (_, _, approved) = send(&rig.router, get("/web/admin/memories", Some(&boss))).await;
+    assert!(approved.contains("served to readers"), "{approved}");
+    assert!(!approved.contains("waiting for a verdict"), "{approved}");
+    assert!(!approved.contains("/web/todo/judge"), "{approved}");
+    assert!(
+        approved.contains(r#"<a href="/web/admin/memories" aria-current="page">Approved</a><a href="/web/admin/memories?view=held">Held</a>"#),
+        "{approved}"
+    );
+    let (_, _, refused) = send(
+        &rig.router,
+        get("/web/admin/memories?view=rejected", Some(&boss)),
+    )
+    .await;
+    assert!(refused.contains(&rejected.to_string()), "{refused}");
+    assert!(!refused.contains("waiting for a verdict"), "{refused}");
+    assert!(!refused.contains("/web/todo/judge"), "{refused}");
 }
