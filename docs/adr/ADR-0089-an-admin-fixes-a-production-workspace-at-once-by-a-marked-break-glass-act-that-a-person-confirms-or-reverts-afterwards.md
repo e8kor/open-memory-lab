@@ -138,7 +138,7 @@ Decided, not built.
   not revert a superseded fix.**
   - **Who, in a production scope.** A person's reviewer key (`used_by: person`) with reviewer on the
     workspace, of a person other than the admin's own (never `same_user`). In a development scope, the rule below lets the admin's own person confirm,
-    marked `same_user`.
+    marked `same_user`. *(Superseded outside the admin's own root, proposed 2026-11-18 for the operator's batch: see the amendments at the end of this record.)*
   - **Confirm** journals `admin.fix_confirmed`.
   - **Revert** journals `admin.fix_reverted` and writes the inverse as new state:
     - a demoted version returns as a new version carrying its text;
@@ -171,7 +171,7 @@ Decided, not built.
 
   A hit with `confirmed: true` also has an `admin.fix_confirmed`: in a production scope by a person
   other than the admin's own; in a development scope it may be by the admin's own person, and the
-  hit's `approver.same_user` is then `true`.
+  hit's `approver.same_user` is then `true`. *(Superseded outside the admin's own root, proposed 2026-11-18 for the operator's batch: see the amendments at the end of this record.)*
 
 - **d10 — An admin reads claim text tenant-wide, as ADR-0045 d21 already serves it, with one
   reason per investigation.**
@@ -211,7 +211,7 @@ Decided, not built.
     - an admin edit is served before any identity other than its author has reviewed it;
     - it is reviewed afterwards: by a person other than the admin's own (never `same_user`) in a production scope, and in a
       development scope by any person holding reviewer there, its own person's key marked
-      `same_user` (d8).
+      `same_user` (d8). *(Superseded outside the admin's own root, proposed 2026-11-18 for the operator's batch: see the amendments at the end of this record.)*
   - **R3 changes in its first sentence:** an admin's edit is readable by others before it is
     ratified.
   - **ADR-0045 d21 already relaxed R3** for admin reads of held rows, without recording it in
@@ -251,7 +251,7 @@ Decided, not built.
     - Each entry carries the act, the target version, the replaced version, the reason, the time
       and `loosens_guardrail`. It never names the admin key, principal or user.
     - A fix taken by the reader's own person is listed with confirm and revert in a development
-      scope (marked `same_user` when confirmed) and without either in a production scope (d8).
+      scope (marked `same_user` when confirmed) and without either in a production scope (d8). *(Superseded outside the admin's own root, proposed 2026-11-18 for the operator's batch: see the amendments at the end of this record.)*
     - Confirm and revert are `POST /v2/review/fixes/{id}/confirm|revert`.
   - **CLI:**
     - `oml admin fix demote|edit|retire|release-rollback|import-rollback --reason`;
@@ -380,8 +380,8 @@ proposed and marked **[operator batch]**: it stands until the operator confirms 
 with the other decisions of the batch. Sentences above that contradict them stay as written,
 marked superseded.
 
-- **Confirmation is strict wherever the fixed version is served to production (amends d8, d14,
-  d15; ADR-0001 d5, exception 3) [operator batch].** Only a person other than the admin's own
+- **Confirmation is strict wherever the fixed version is served to production, and for any target
+  outside the admin's own root (amends d8, d14, d15; ADR-0001 d5, exception 3) [operator batch].** Only a person other than the admin's own
   (never `same_user`) confirms or reverts a fix whose target:
   - sits in a `protected` or `frozen` workspace;
   - is a member of any release, published or withdrawn, since a pin to a withdrawn release is
@@ -389,11 +389,14 @@ marked superseded.
   - lies outside the admin's own person's user root.
 
   A reviewer key of the admin's own person confirms or reverts, marked `same_user`, only a fix on
-  a target inside that person's own root that is a member of no release. Why: under ADR-0085 d6 as
-  first written, a `latest` key on a workspace with no release reads the promoted tip, so an open
-  shared workspace with no release would serve the admin's own-confirmed edit to every default
-  agent. D2 refuses that read only in a `protected` or `frozen` workspace, so in an open one the
-  strictness has to follow the version, not the binding. The cost: in a one-person tenant, a fix
+  a target inside that person's own root that is a member of no release. The rule covers two
+  sets: the places served to production (a `protected` or `frozen` workspace and every release
+  member), and any target outside the admin's own root, open shared workspaces included, which are
+  not production. Why the second set: under ADR-0085 d6 as first written, a `latest` key on a
+  workspace with no release reads the promoted tip, so an open shared workspace with no release
+  would serve the admin's own-confirmed edit to every default agent. D2 refuses that read only in a
+  `protected` or `frozen` workspace, so in an open shared workspace the confirmation has to be
+  another person's whatever the binding. The cost: in a one-person tenant, a fix
   in a shared workspace stays unconfirmed until a second person joins; it is served marked (d7)
   and excluded from every cut meanwhile. **Superseded:** d8's "On a target in a `development`
   workspace or an in-progress subtree, a reviewer key of the admin's own person may confirm or

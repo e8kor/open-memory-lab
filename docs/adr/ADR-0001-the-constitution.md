@@ -77,10 +77,11 @@ rest is not built; [releases](../changelog.md) says which part each release buil
   a key reads is production because it is a published release's member or sits in a `protected`
   or `frozen` workspace, never because of the binding; a `latest` key's fallback to the tip in an
   open workspace with no published release reads development content, marked on every hit, and in
-  a `protected` or `frozen` workspace that read is refused (ADR-0085, D2 of 2026-11-18). Two
-  amendments of the same day, for the operator's batch, would narrow exception 3 and the cut:
-  a fix is confirmed by the admin's own person only inside that person's own root and on a member
-  of no release, and a cut refuses a member whose only verdict is `same_user` (ADR-0089, proposed
+  a `protected` or `frozen` workspace that read is refused (ADR-0085, D2 of 2026-11-18).
+
+  *Proposed amendments of 2026-11-18, outside D1* **[operator batch]**. Exception 3 narrows: a fix
+  is confirmed by the admin's own person only inside that person's own root and on a member of no
+  release; and a cut refuses a member whose only verdict is `same_user` (ADR-0089, proposed
   amendments of 2026-11-18).
 
   1. **In-progress sharing** ([ADR-0030](ADR-0030-an-in-progress-workspace-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) d2, d3, widened by

@@ -442,8 +442,9 @@ reverses them with the rest of the batch.
   - **In a `protected` or `frozen` workspace, refused.** A read whose served workspaces include a
     `protected` or `frozen` one with no published, not withdrawn release whose subtree holds it is
     refused, and nothing is served from it, so a production reader never reads a set no second
-    person published. A workspace whose every release is withdrawn has none published. A pin
-    without an entry for the workspace resolves as `latest` (d6) and follows the same rule.
+    person published. A workspace whose every release is withdrawn has none published
+    **[operator batch]**. A pin without an entry for the workspace follows the same rule, since d6
+    resolves it as `latest`.
   - **In an open workspace, the tip, marked on every hit.** The key is served the promoted tip,
     never another key's held item, as d6 says, and every hit, not only the answer, is marked as not
     from a release (`binding_fallback: tip` on the hit). A read across several workspaces can then
@@ -480,11 +481,11 @@ reverses them with the rest of the batch.
     item at the cut. A publish that binds a label not raising the major number over the latest
     published release, for a candidate with a confirmed breaking item, is refused
     `workspace.release_refused`, reason `label_not_major`; the candidate stays `proposed`.
-  - **Who reads a candidate.** A person's key and a CI service key read a candidate, its manifest
+  - **Who reads a candidate [operator batch].** A person's key and a CI service key read a candidate, its manifest
     and members, under staging rules: no second person has published it, so nothing in it is
     production by being in it (D1). A candidate is never a binding for an agent key: no agent
     key's binding names a candidate, and a pin names only a published label.
-  - **Surfaces (d12).** A candidate is addressed by its id until it is published:
+  - **Surfaces (d12) [operator batch].** A candidate is addressed by its id until it is published:
     `POST /v2/workspaces/{w}/releases` answers the id, `.../releases/{id}/ratify {label}` publishes
     it and binds the label, and `GET .../releases/{id or label}` reads either. The CLI's
     `oml workspaces release publish` takes `--label`.

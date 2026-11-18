@@ -652,12 +652,12 @@ records the answer as proposed; the operator accepts the text.
     or `protected` workspace only the importer reads them until review (R3); in one in progress,
     d6's `tip` audience reads them marked unreviewed.
   - **A person's verdict where the workspace is protected or released.** In a `protected`
-    workspace, or a workspace with a published release, withdrawn or not, an approving verdict on
+    workspace, or a workspace with a published release, withdrawn or not **[operator batch]**, an approving verdict on
     an imported version comes only from a person's reviewer key (`used_by: person`) of a person
     other than the importer's own. Any other approval is refused `review.person_required`,
     `details.reason: imported_needs_person`, and the version stays held; a reviewer crew's agent
-    key does not approve an imported version there. The rule binds by where the version is at the
-    verdict, so it also covers a version still held when its workspace is moved to `protected` or
+    key does not approve an imported version there **[operator batch]**. The rule binds by where the version is at the
+    verdict **[operator batch]**, so it also covers a version still held when its workspace is moved to `protected` or
     first publishes a release. d4's `attests_not_source_author` still travels with the verdict.
     Why: R2 on the target is checked against the importer, and d4's honest limit leaves only an
     attestation between a source author and their own work; an agent's attestation carries
