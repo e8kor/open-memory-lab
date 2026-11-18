@@ -1082,7 +1082,7 @@ where
             .iter()
             .map(|hit| {
                 let mut value = json!({
-                    "memory": memory_json(&hit.served, include_text),
+                    "memory": recall_hit_memory_json(hit, include_text),
                     // A reranked hit's score is its relevance, printed as set
                     // (ADR-0053 d7).
                     "score": if hit.rerank.is_some() { relevance(hit.score) } else { f64::from(hit.score) },
@@ -1111,7 +1111,14 @@ where
                 value
             })
             .collect();
-        // What ran and what the query was read as (ADR-0049 d5, d6).
+        // What ran and what the query was read as (ADR-0049 d5, d6); per
+        // kind, the candidates before the `k` cut, a lower bound (ADR-0092
+        // d4).
+        let matched_by_kind: serde_json::Map<String, Value> = result
+            .matched_by_kind
+            .iter()
+            .map(|(kind, n)| (kind.as_str().to_owned(), Value::from(*n)))
+            .collect();
         let mut response = json!({
             "recall_id": result.recall_id,
             "steering": steering,
@@ -1119,6 +1126,7 @@ where
             "query_digest": result.query_digest,
             "search": {
                 "pipeline": result.pipeline.as_str(),
+                "matched_by_kind": matched_by_kind,
                 "match": if match_mode == MatchMode::All { "all" } else { "any" },
                 "terms": result.terms,
                 // The tenant's default the deployment does not serve names the
@@ -1144,6 +1152,19 @@ where
                 })),
             },
         });
+        // A filter that does not name steering serves no steering list and
+        // says so, and one naming steering alone ranks nothing (ADR-0092
+        // d2).
+        if !result.steering_requested
+            && let Some(obj) = response.as_object_mut()
+        {
+            obj.insert("steering".to_owned(), json!("not_requested"));
+        }
+        if !result.hits_requested
+            && let Some(search) = response.get_mut("search").and_then(Value::as_object_mut)
+        {
+            search.insert("hits".to_owned(), json!("not_requested"));
+        }
         // `search.sources` under wide or a list, and `search.widen` on a
         // scope answer whose precomputed signal finds a richer source
         // (ADR-0072 d8; #244).
@@ -5089,35 +5110,30 @@ fn parse_guardrail_scope(scope: Option<&str>) -> Result<Option<GuardrailScope>, 
         .transpose()
 }
 
-/// The recall `kinds` filter: absent is no filter, and a sent one names at
-/// least one of `memory` and `derived_fact`, the only kinds it filters —
-/// steering is never ranked and the vocabulary kinds are no filter value
-/// (openapi.yaml `RecallRequest.kinds`; ADR-0021 d9, ADR-0025 d16).
+/// The recall `kinds` filter: absent is no filter, a sent one names any of
+/// the ten kinds, repeated or not, and an empty or unknown one is refused
+/// naming the field (openapi.yaml `RecallRequest.kinds`; ADR-0092 d1).
 fn parse_hit_kinds(kinds: Option<&[String]>) -> Result<Vec<MemoryKind>, ApiError> {
     let Some(kinds) = kinds else {
         return Ok(Vec::new());
     };
     if kinds.is_empty() {
-        return Err(ApiError::validation(
-            "an empty kinds is refused: omit kinds for no filter",
-        ));
+        return Err(
+            ApiError::validation("an empty kinds is refused: omit kinds for no filter")
+                .with_details(json!({ "field": "/kinds" })),
+        );
     }
-    kinds
-        .iter()
-        .map(|name| match MemoryKind::parse(name) {
-            Some(kind @ (MemoryKind::Memory | MemoryKind::DerivedFact)) => Ok(kind),
-            // Recall never serves a guardrail; the filter that names one is
-            // refused, never answered empty, and points at the one read
-            // that serves the set (proposed ADR-0037 d5, d18 Q7).
-            Some(MemoryKind::Guardrail) => Err(ApiError::validation(
-                "recall never serves kind guardrail: GET /v1/guardrails serves the set in force",
-            )
-            .with_details(json!({ "field": "/kinds" }))),
-            _ => Err(ApiError::validation(format!(
-                "kinds names memory or derived_fact, not {name:?}"
-            ))),
-        })
-        .collect()
+    let mut parsed: Vec<MemoryKind> = Vec::with_capacity(kinds.len());
+    for name in kinds {
+        let kind = MemoryKind::parse(name).ok_or_else(|| {
+            ApiError::validation(format!("kinds names an unknown kind {name:?}"))
+                .with_details(json!({ "field": "/kinds" }))
+        })?;
+        if !parsed.contains(&kind) {
+            parsed.push(kind);
+        }
+    }
+    Ok(parsed)
 }
 
 /// No upload sessions exist in the PoC, so every attachment digest fails the
@@ -5206,6 +5222,40 @@ pub fn source_checked_json(check: &SourceCheck) -> Value {
             "fragment": fragment,
         })),
     })
+}
+
+/// A recall hit's claim item (ADR-0092 d3): [`memory_json`], and for an
+/// instruction what a choice needs and nothing that runs it. A skill hit
+/// carries its `name`, `description`, the `prompt` that runs it and the
+/// `uri` that reads its body, and as `text` its description, never its
+/// body; a guardrail hit its severity, rule and text, and `in_force: true`,
+/// since only an applicable one is a hit. A held instruction is marked
+/// `needs_person`, as only a person's verdict promotes it (ADR-0080 d16).
+pub fn recall_hit_memory_json(hit: &oml_app::types::RecallHit, include_text: bool) -> Value {
+    let mut value = memory_json(&hit.served, include_text);
+    let m = &hit.served.memory;
+    let Some(obj) = value.as_object_mut() else {
+        return value;
+    };
+    if let (Some(skill), Some(KindFields::Skill { name, description })) =
+        (&hit.skill, m.kind_fields.as_deref())
+    {
+        obj.insert("name".to_owned(), json!(name));
+        obj.insert("description".to_owned(), json!(description));
+        obj.insert("prompt".to_owned(), json!(skill.prompt));
+        obj.insert("uri".to_owned(), json!(skill.uri));
+        if include_text {
+            obj.insert("text".to_owned(), json!(description));
+        }
+    }
+    if m.kind == MemoryKind::Guardrail {
+        obj.insert("in_force".to_owned(), json!(true));
+    }
+    if m.kind.class() == oml_app::domain::ClaimClass::Instruction && m.status == MemoryStatus::Held
+    {
+        obj.insert("needs_person".to_owned(), json!(true));
+    }
+    value
 }
 
 pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {

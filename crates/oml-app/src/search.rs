@@ -660,11 +660,25 @@ impl Default for SearchConfig {
 /// The rows a retriever may rank, computed by the core and never by an
 /// adapter (ADR-0049 d2): the promoted served tips on `promoted_nodes` of
 /// `kinds`, and, when `own_held` is set, the held rows those keys authored
-/// on its nodes. Steering and the vocabulary kinds are never candidates.
+/// on its nodes; and the offered instructions of `instructions` (ADR-0092
+/// d3). Steering is never a candidate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CandidateScope {
     pub promoted_nodes: Vec<Uuid>,
+    /// The kinds a candidate may be. A row of an instruction kind
+    /// ([`crate::types::INSTRUCTION_HIT_KINDS`]) is never a candidate by
+    /// its node: only by [`Self::instructions`] (ADR-0092 d3).
     pub kinds: Vec<MemoryKind>,
+    /// The offered skills and applicable guardrails at the scope node, by
+    /// version id and kind, in any state the core admits (ADR-0092 d3):
+    /// each is a candidate whatever its node when its kind is in `kinds`,
+    /// and each counts in BM25's statistics whatever `kinds` says (d4).
+    pub instructions: Vec<(Uuid, MemoryKind)>,
+    /// The kinds BM25's statistics count on the scope's nodes, fixed
+    /// before `kinds` narrows the candidates, so a row's score never
+    /// depends on which kinds were asked (ADR-0092 d4); the instruction
+    /// kinds count through [`Self::instructions`] alone.
+    pub counted_kinds: Vec<MemoryKind>,
     pub own_held: Option<OwnHeldScope>,
     /// The request's now in microseconds: a version whose valid time ended
     /// at or before it is outside the scope; `None` under
@@ -685,6 +699,48 @@ pub struct CandidateScope {
     /// it and the held part the rows recorded by it, instead of today's
     /// tips (ADR-0059 d15, d18). `None` reads today.
     pub as_of: Option<oml_domain::EventTime>,
+}
+
+impl CandidateScope {
+    /// The kinds a row is a candidate of by its node: `kinds` less the
+    /// instruction kinds, which are candidates by id alone (ADR-0092 d3).
+    #[must_use]
+    pub fn node_kinds(&self) -> Vec<MemoryKind> {
+        self.kinds
+            .iter()
+            .copied()
+            .filter(|k| !crate::types::INSTRUCTION_HIT_KINDS.contains(k))
+            .collect()
+    }
+
+    /// The kinds BM25's statistics count by node: `counted_kinds` less the
+    /// instruction kinds, which count by id (ADR-0092 d4).
+    #[must_use]
+    pub fn counted_node_kinds(&self) -> Vec<MemoryKind> {
+        self.counted_kinds
+            .iter()
+            .copied()
+            .filter(|k| !crate::types::INSTRUCTION_HIT_KINDS.contains(k))
+            .collect()
+    }
+
+    /// The offered instructions that are candidates: those whose kind is
+    /// in `kinds` (ADR-0092 d3).
+    #[must_use]
+    pub fn instruction_candidates(&self) -> Vec<Uuid> {
+        self.instructions
+            .iter()
+            .filter(|(_, k)| self.kinds.contains(k))
+            .map(|(id, _)| *id)
+            .collect()
+    }
+
+    /// Every offered instruction, which BM25's statistics count whatever
+    /// `kinds` says (ADR-0092 d4).
+    #[must_use]
+    pub fn instruction_ids(&self) -> Vec<Uuid> {
+        self.instructions.iter().map(|(id, _)| *id).collect()
+    }
 }
 
 /// The held part of a candidate scope (ADR-0025 d4, d5): the listed keys'
@@ -831,6 +887,9 @@ pub struct Retrieved {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Candidate {
     pub memory_id: Uuid,
+    /// The version's kind, which `search.matched_by_kind` counts before the
+    /// `k` cut (ADR-0092 d4).
+    pub kind: MemoryKind,
     pub body_bytes: u64,
     /// The retriever's score; comparable only within its own list.
     pub score: f32,
@@ -846,6 +905,8 @@ pub struct Candidate {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Fused {
     pub memory_id: Uuid,
+    /// The candidate's kind, as [`Candidate::kind`].
+    pub kind: MemoryKind,
     pub body_bytes: u64,
     pub score: f32,
     pub matched: Vec<String>,
@@ -912,6 +973,7 @@ pub fn fuse(lists: &[(RetrieverKind, Retrieved)], fusion: Fusion) -> Vec<Fused> 
             };
             let entry = by_id.entry(c.memory_id).or_insert_with(|| Fused {
                 memory_id: c.memory_id,
+                kind: c.kind,
                 body_bytes: c.body_bytes,
                 score: 0.0,
                 matched: Vec::new(),
@@ -1072,6 +1134,7 @@ mod tests {
     fn cand(id: u128, score: f32, matched: &[&str]) -> Candidate {
         Candidate {
             memory_id: Uuid::from_u128(id),
+            kind: MemoryKind::Memory,
             body_bytes: 10,
             score,
             matched: matched.iter().map(|s| (*s).to_owned()).collect(),
@@ -1313,6 +1376,7 @@ mod tests {
     fn fused(id: u128, score: f32) -> Fused {
         Fused {
             memory_id: Uuid::from_u128(id),
+            kind: MemoryKind::Memory,
             body_bytes: 10,
             score,
             matched: vec!["a".to_owned()],

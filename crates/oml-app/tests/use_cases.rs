@@ -1907,7 +1907,7 @@ async fn steering_on_an_unreadable_ancestor_is_not_served() {
 }
 
 #[tokio::test]
-async fn kinds_filters_hits_only() {
+async fn kinds_decides_whether_the_steering_list_is_served_and_narrows_the_hits() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
@@ -1940,10 +1940,18 @@ async fn kinds_filters_hits_only() {
     }
     let [steering, memory, derived] = ids.try_into().expect("three rows");
 
-    for (kinds, hits) in [
-        (vec![MemoryKind::DerivedFact], vec![derived]),
-        (vec![MemoryKind::Memory], vec![memory]),
-        (Vec::new(), vec![memory, derived]),
+    // (kinds, steering served, hits, hits asked) under ADR-0092 d2.
+    for (kinds, steered, hits, asked) in [
+        (vec![MemoryKind::DerivedFact], false, vec![derived], true),
+        (vec![MemoryKind::Memory], false, vec![memory], true),
+        (
+            vec![MemoryKind::Memory, MemoryKind::Steering],
+            true,
+            vec![memory],
+            true,
+        ),
+        (vec![MemoryKind::Steering], true, Vec::new(), false),
+        (Vec::new(), true, vec![memory, derived], true),
     ] {
         let recall = app
             .recall(
@@ -1957,8 +1965,11 @@ async fn kinds_filters_hits_only() {
             )
             .await
             .expect("recall");
-        assert_eq!(steering_ids(&recall), vec![steering], "kinds {kinds:?}");
+        let expected = if steered { vec![steering] } else { Vec::new() };
+        assert_eq!(steering_ids(&recall), expected, "kinds {kinds:?}");
+        assert_eq!(recall.steering_requested, steered, "kinds {kinds:?}");
         assert_eq!(hit_ids_of(&recall), hits, "kinds {kinds:?}");
+        assert_eq!(recall.hits_requested, asked, "kinds {kinds:?}");
     }
 }
 
@@ -10614,7 +10625,7 @@ async fn a_held_guardrail_is_never_served_as_a_rule_even_inside_an_in_progress_w
 }
 
 #[tokio::test]
-async fn recall_never_serves_kind_guardrail() {
+async fn recall_ranks_an_applicable_guardrail_as_a_data_hit_and_the_guardrail_read_alone_binds() {
     let app = app();
     let (boot, crew, _team, writer, reviewer) = guardrail_tenant(&app).await;
     let admin = &boot.admin_key.value;
@@ -10626,12 +10637,15 @@ async fn recall_never_serves_kind_guardrail() {
     )
     .await;
     let author = agent(&app, admin, "wanda-agent", crew).await;
-    app.submit_memory(
-        &author.value,
-        &guardrail_req("g2", Severity::Must, "Rotate the canary daily.", crew),
-    )
-    .await
-    .expect("submit");
+    let held = app
+        .submit_memory(
+            &author.value,
+            &guardrail_req("g2", Severity::Must, "Rotate the canary daily.", crew),
+        )
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
     let recall = app
         .recall(
             &author.value,
@@ -10644,12 +10658,38 @@ async fn recall_never_serves_kind_guardrail() {
         )
         .await
         .expect("recall");
-    assert!(recall.hits.is_empty(), "{:?}", hit_ids_of(&recall));
+    // The promoted rule and the author's own held one are ranked hits,
+    // each marked by kind (ADR-0092 d1, d3).
+    let mut ids = hit_ids_of(&recall);
+    ids.sort();
+    let mut expected = vec![rail, held];
+    expected.sort();
+    assert_eq!(ids, expected);
+    assert!(
+        recall
+            .hits
+            .iter()
+            .all(|h| h.served.memory.kind == MemoryKind::Guardrail)
+    );
     assert!(recall.steering.is_empty());
+    // A hit binds nothing: the set in force is the guardrail read's.
     assert_eq!(
         served_guardrail_ids(&guardrail_set(&app, &author.value).await),
         vec![rail]
     );
+    // Without include_unreviewed the held rule is no hit.
+    let recall = app
+        .recall(
+            &author.value,
+            &RecallRequest {
+                sources: None,
+                timings: false,
+                ..recall_req("canary")
+            },
+        )
+        .await
+        .expect("recall");
+    assert_eq!(hit_ids_of(&recall), vec![rail]);
 }
 
 #[tokio::test]

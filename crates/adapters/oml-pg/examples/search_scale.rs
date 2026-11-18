@@ -65,6 +65,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             anchor: oml_app::types::AnchorFilter::default(),
             promoted_nodes: uuids(&item["nodes"]),
             kinds: vec![MemoryKind::Memory, MemoryKind::DerivedFact],
+            instructions: Vec::new(),
+            counted_kinds: vec![MemoryKind::Memory, MemoryKind::DerivedFact],
             own_held: (!own_keys.is_empty()).then(|| OwnHeldScope {
                 any_author_nodes: Vec::new(),
                 author_key_ids: own_keys,

@@ -49,12 +49,12 @@ use oml_app::types::{
     ClaimEdgeRecord, ClaimEdgeSelection, ClaimKeyState, ClientDescription, ClientKind, ConnectCode,
     ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord, Credential, CrewRecord,
     DenialRecord, DocumentCaching, FormatFields, GrantRecord, GuardrailFields, HIT_KINDS,
-    HeldFilter, HeldRow, KeyAccess, KeyRecord, KeyReferences, KindFields, ListingFilter,
-    ListingPosition, ListingScope, MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT,
-    PersonReviewer, PinOutcome, QueueDepth, RefreshFacts, RefreshOutcome, ReviewLane, SourceCheck,
-    SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord, TransitionState, UnnamedRows,
-    VersionFinding, WebCredentialKey, WebCredentialRows, WebEntry, WebSessionRecord,
-    WorkspaceRecord, WorkspaceRef,
+    HeldFilter, HeldRow, INSTRUCTION_HIT_KINDS, KeyAccess, KeyRecord, KeyReferences, KindFields,
+    ListingFilter, ListingPosition, ListingScope, MemoryRecord, NamedRef, OAuthClientRecord,
+    PROVIDER_TENANT, PersonReviewer, PinOutcome, QueueDepth, RefreshFacts, RefreshOutcome,
+    ReviewLane, SourceCheck, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord,
+    TransitionState, UnnamedRows, VersionFinding, WebCredentialKey, WebCredentialRows, WebEntry,
+    WebSessionRecord, WorkspaceRecord, WorkspaceRef,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions, PgRow};
@@ -751,7 +751,7 @@ async fn ensure_postings_partitions(owner: &PgPool) -> Result<u64, sqlx::Error> 
 /// plan keeps that tenant's partition alone, or drops the rest as it
 /// starts; row security stays the fence (ADR-0034 d11). Exported so the
 /// suite plans the statement the adapter runs.
-pub const RECALL_FTS: &str = "SELECT m.id, m.body_bytes, \
+pub const RECALL_FTS: &str = "SELECT m.id, m.body_bytes, m.kind, \
             ts_rank(to_tsvector('simple', COALESCE(m.search_text, m.claim)), \
                     plainto_tsquery('simple', $3), 0) AS score \
      FROM memories m \
@@ -768,7 +768,7 @@ pub const RECALL_FTS: &str = "SELECT m.id, m.body_bytes, \
 /// `held_authors`), `$3` the readable nodes, `$4`
 /// the query, `$5` the kinds and `$6` `k`; pruned to the tenant's partition
 /// as [`RECALL_FTS`] is (ADR-0034 d11).
-pub const RECALL_OWN_HELD: &str = "SELECT m.id, m.body_bytes, \
+pub const RECALL_OWN_HELD: &str = "SELECT m.id, m.body_bytes, m.kind, \
             ts_rank(to_tsvector('simple', COALESCE(m.search_text, m.claim)), \
                     plainto_tsquery('simple', $4), 0) AS score \
      FROM memories m \
@@ -780,6 +780,19 @@ pub const RECALL_OWN_HELD: &str = "SELECT m.id, m.body_bytes, \
        AND to_tsvector('simple', COALESCE(m.search_text, m.claim)) @@ plainto_tsquery('simple', $4) \
      ORDER BY score DESC, m.id ASC \
      LIMIT $6";
+
+/// The offered instructions' part of the v0.5.0 recall statement
+/// (ADR-0092 d3): `$2` the candidates by id, `$3` the query, `$4` `k`,
+/// the anchor's binds from `$5`; the rows of the instructions the core
+/// admitted, in any state, every query word held.
+pub const RECALL_INSTRUCTIONS: &str = "SELECT m.id, m.body_bytes, m.kind, \
+            ts_rank(to_tsvector('simple', COALESCE(m.search_text, m.claim)), \
+                    plainto_tsquery('simple', $3), 0) AS score \
+     FROM memories m \
+     WHERE m.tenant_id = $1 AND m.id = ANY($2::uuid[]) AND NOT m.retirement /*anchor*/ \
+       AND to_tsvector('simple', COALESCE(m.search_text, m.claim)) @@ plainto_tsquery('simple', $3) \
+     ORDER BY score DESC, m.id ASC \
+     LIMIT $4";
 
 /// The lineage widening a `claim_edge.proposed` fold runs after its
 /// INSERT, binding `$1` the tenant, `$2` the edge's source and `$3` its
@@ -846,12 +859,13 @@ pub const WIDEN_LINEAGE: &str = "WITH RECURSIVE \
 /// own number for `$NOW` with [`with_now`].
 const SEARCH_SCOPE: &str = "m.tenant_id = $1 AND NOT m.retirement \
        AND (m.valid_until_us IS NULL OR m.valid_until_us > $NOW::int8) \
-       AND m.kind = ANY($3::text[]) \
+       AND ((m.kind = ANY($3::text[]) \
        AND ((m.status = 'promoted' AND m.is_tip AND m.workspace_id = ANY($2::uuid[])) \
          OR (m.status = 'held' AND m.workspace_id = ANY($5::uuid[]) \
              AND (m.author_key_id = ANY($4::uuid[]) \
                OR (m.scan_finding IS NULL \
-                   AND encode(substring(sha256(convert_to(COALESCE(m.scanned_under, '') || '/' || m.workspace_id::text, 'UTF8')) FROM 1 FOR 16), 'hex')::uuid = ANY($4::uuid[])))))";
+                   AND encode(substring(sha256(convert_to(COALESCE(m.scanned_under, '') || '/' || m.workspace_id::text, 'UTF8')) FROM 1 FOR 16), 'hex')::uuid = ANY($4::uuid[])))))) \
+         OR m.id = ANY($4::uuid[]))";
 
 /// The author keys a held search statement binds: the own key set, and,
 /// for each node inside an in-progress subtree (`any_author_nodes`), the
@@ -993,7 +1007,7 @@ const EXPIRED_IDS: &str = "expired AS (SELECT m.id FROM memories m \
 pub fn time_sql() -> String {
     with_now(
         &format!(
-            "SELECT m.id, m.body_bytes, \
+            "SELECT m.id, m.body_bytes, m.kind, \
                     (1.0 / (1.0 + GREATEST(COALESCE($6::int8, m.valid_from_us) - m.valid_from_us, 0)::float8 \
                                     / 86400000000.0))::float4 AS score, \
                     '{{}}'::text[] AS matched \
@@ -1017,7 +1031,7 @@ fn keyword_any_sql(anchor: &str) -> String {
         &format!(
             "WITH q AS (SELECT NULLIF(replace(plainto_tsquery('simple', $6)::text, ' & ', ' | '), '')::tsquery AS tq, \
                     tsvector_to_array(to_tsvector('simple', $6)) AS terms) \
-         SELECT m.id, m.body_bytes, ts_rank(to_tsvector('simple', COALESCE(m.search_text, m.claim)), q.tq, 0) AS score, \
+         SELECT m.id, m.body_bytes, m.kind, ts_rank(to_tsvector('simple', COALESCE(m.search_text, m.claim)), q.tq, 0) AS score, \
                 ARRAY(SELECT t FROM unnest(q.terms) t \
                       WHERE t = ANY(tsvector_to_array(to_tsvector('simple', COALESCE(m.search_text, m.claim)))) ORDER BY t) AS matched \
          FROM memories m CROSS JOIN q \
@@ -1105,7 +1119,8 @@ fn bm25_sql_within(anchor: &str) -> String {
                  GROUP BY tf.id, tf.body_bytes, forms.w), \
          scored AS (SELECT id, body_bytes, sum(c) AS score, array_agg(w ORDER BY w COLLATE \"C\") AS words \
                     FROM per GROUP BY id, body_bytes) \
-         SELECT id, body_bytes, score::float4 AS score, words AS matched FROM scored \
+         SELECT id, body_bytes, (SELECT k.kind FROM memories k WHERE k.tenant_id = $1 AND k.id = scored.id) AS kind, \
+                score::float4 AS score, words AS matched FROM scored \
          WHERE (NOT $8 OR cardinality(words) = (SELECT count(*) FROM kept)) \
          ORDER BY score DESC, id ASC \
          LIMIT $7"
@@ -1169,7 +1184,8 @@ pub fn bm25_reference_sql_within(anchor: &str) -> String {
                  GROUP BY tf.id, tf.body_bytes, forms.w), \
          scored AS (SELECT id, body_bytes, sum(c) AS score, array_agg(w ORDER BY w COLLATE \"C\") AS words \
                     FROM per GROUP BY id, body_bytes) \
-         SELECT id, body_bytes, score::float4 AS score, words AS matched FROM scored \
+         SELECT id, body_bytes, (SELECT k.kind FROM memories k WHERE k.tenant_id = $1 AND k.id = scored.id) AS kind, \
+                score::float4 AS score, words AS matched FROM scored \
          WHERE (NOT $8 OR cardinality(words) = (SELECT count(*) FROM kept)) \
          ORDER BY score DESC, id ASC \
          LIMIT $7"
@@ -1271,7 +1287,7 @@ const REFERENCE_EXPIRED_TOKENS: &str = "SELECT DISTINCT p.memory_id, p.token_id 
 /// ([`held_authors`]) on their nodes `$3` of the kinds `$4`, never a
 /// retirement version (ADR-0025 d4, d5), with their lengths; read by the
 /// `memories_author` index (ADR-0052 d5, open question 7).
-const POSTINGS_OWN_HELD: &str = "SELECT m.id, m.search_len FROM memories m \
+const POSTINGS_OWN_HELD: &str = "SELECT m.id, m.search_len, m.kind FROM memories m \
      WHERE m.tenant_id = $1 AND m.status = 'held' \
         AND (m.author_key_id = ANY($2::uuid[]) \
           OR (m.scan_finding IS NULL AND encode(substring(sha256(convert_to(COALESCE(m.scanned_under, '') || '/' || m.workspace_id::text, 'UTF8')) FROM 1 FOR 16), 'hex')::uuid = ANY($2::uuid[]))) \
@@ -1288,6 +1304,12 @@ const POSTINGS_EXPIRED: &str = "SELECT m.id, m.search_len FROM memories m \
      WHERE m.tenant_id = $1 AND m.valid_until_us <= $4::int8 AND m.status = 'promoted' \
        AND m.is_tip AND NOT m.retirement AND m.workspace_id = ANY($2::uuid[]) \
        AND m.kind = ANY($3::text[])";
+
+/// The offered instructions `$2` (ADR-0092 d3, d4) with their lengths, in
+/// any state the core admitted them in: each counts in BM25's statistics
+/// as an own held row does, read by the primary key.
+const POSTINGS_INSTRUCTIONS: &str = "SELECT m.id, m.search_len FROM memories m \
+     WHERE m.tenant_id = $1 AND m.id = ANY($2::uuid[]) AND NOT m.retirement";
 
 /// Each token of `$3`'s document frequency among the own held rows `$2`,
 /// from their postings by the `(memory_id)` index.
@@ -1351,7 +1373,7 @@ fn bm25_postings_sql_within(anchor: &str) -> String {
                     GROUP BY p.memory_id, q.w), \
          ranked AS (SELECT memory_id, sum(c) AS score, array_agg(w ORDER BY w COLLATE \"C\") AS words \
                     FROM scored GROUP BY memory_id) \
-         SELECT r.memory_id AS id, m.body_bytes, r.score::float4 AS score, r.words AS matched \
+         SELECT r.memory_id AS id, m.body_bytes, m.kind, r.score::float4 AS score, r.words AS matched \
          FROM ranked r JOIN memories m ON m.tenant_id = $1 AND m.id = r.memory_id \
          WHERE NOT $12 OR cardinality(r.words) = $13 \
          ORDER BY score DESC, id ASC \
@@ -1395,13 +1417,13 @@ fn sparse_sql_within(anchor: &str) -> String {
              WHERE memory_id NOT IN (SELECT id FROM expired) GROUP BY memory_id \
              HAVING NOT $8 OR count(*) = $9 \
              ORDER BY sum(c)::float4 DESC, memory_id ASC LIMIT $10) \
-     SELECT t.memory_id AS id, m.body_bytes, t.score::float4 AS score, \
+     SELECT t.memory_id AS id, m.body_bytes, m.kind, t.score::float4 AS score, \
             array_agg(h.piece ORDER BY h.c DESC, h.piece COLLATE \"C\") AS pieces, \
             array_agg(h.c::float4 ORDER BY h.c DESC, h.piece COLLATE \"C\") AS contributions, \
             array_agg(h.in_text ORDER BY h.c DESC, h.piece COLLATE \"C\") AS in_text \
      FROM top t JOIN hit h ON h.memory_id = t.memory_id \
      JOIN memories m ON m.tenant_id = $1 AND m.id = t.memory_id \
-     GROUP BY t.memory_id, m.body_bytes, t.score \
+     GROUP BY t.memory_id, m.body_bytes, m.kind, t.score \
      ORDER BY score DESC, id ASC"), 11)
         .replace("/*anchor*/", anchor)
 }
@@ -1634,7 +1656,7 @@ impl PruneLimits {
 fn trigram_sql(anchor: &str) -> String {
     with_now(
         &format!(
-            "SELECT m.id, m.body_bytes, word_similarity($6, oml_search_text(COALESCE(m.search_text, m.claim))) AS score \
+            "SELECT m.id, m.body_bytes, m.kind, word_similarity($6, oml_search_text(COALESCE(m.search_text, m.claim))) AS score \
          FROM memories m \
          WHERE {SEARCH_SCOPE}{anchor} AND $6 <% oml_search_text(COALESCE(m.search_text, m.claim)) \
          ORDER BY score DESC, m.id ASC \
@@ -2598,12 +2620,21 @@ fn approval_from_row(row: &PgRow) -> Result<Option<Approval>, StoreError> {
     }))
 }
 
-/// A recall candidate from a row of `id`, `body_bytes` and `score`, and
-/// `matched` when the statement selects it.
+/// A row's `kind` column as the kind it names; a kind this build does not
+/// know fails the read by name rather than being guessed.
+fn kind_of_row(row: &PgRow) -> Result<MemoryKind, StoreError> {
+    let kind: String = row.try_get("kind").map_err(backend)?;
+    MemoryKind::parse(&kind)
+        .ok_or_else(|| StoreError::Backend(format!("a stored row names an unknown kind {kind:?}")))
+}
+
+/// A recall candidate from a row of `id`, `body_bytes`, `kind` and
+/// `score`, and `matched` when the statement selects it.
 fn candidate_from_row(row: &PgRow) -> Result<Candidate, StoreError> {
     let matched: Option<Vec<String>> = row.try_get("matched").ok();
     Ok(Candidate {
         memory_id: row.try_get("id").map_err(backend)?,
+        kind: kind_of_row(row)?,
         body_bytes: unsigned(row, "body_bytes")?,
         score: row.try_get("score").map_err(backend)?,
         matched: matched.unwrap_or_default(),
@@ -2637,6 +2668,7 @@ fn sparse_candidate_from_row(row: &PgRow) -> Result<Candidate, StoreError> {
     matched.dedup();
     Ok(Candidate {
         memory_id: row.try_get("id").map_err(backend)?,
+        kind: kind_of_row(row)?,
         body_bytes: unsigned(row, "body_bytes")?,
         score: row.try_get("score").map_err(backend)?,
         matched,
@@ -2644,15 +2676,59 @@ fn sparse_candidate_from_row(row: &PgRow) -> Result<Candidate, StoreError> {
     })
 }
 
-/// The kinds of `kinds` a recall serves as hits: steering and the
-/// vocabulary kinds never are, whatever the filter names (retrieval.md, the
-/// recall-ordering contract).
+/// The kinds of `kinds` a recall serves as hits by their node: steering
+/// never is, whatever the filter names, and the instruction kinds are
+/// candidates by id alone (ADR-0092 d2, d3).
 fn hit_kinds(kinds: &[MemoryKind]) -> Vec<&'static str> {
     kinds
         .iter()
-        .filter(|kind| HIT_KINDS.contains(kind))
+        .filter(|kind| HIT_KINDS.contains(kind) && !INSTRUCTION_HIT_KINDS.contains(kind))
         .map(|kind| kind.as_str())
         .collect()
+}
+
+/// A bm25 statement's candidates narrowed to the kinds `scope` asks, a
+/// predicate on `m` naming them as literals from [`MemoryKind::as_str`]'s
+/// closed set (ADR-0092 d4): empty when they hold every kind the statement
+/// reads, which a recall naming no `kinds` always does, so its statement is
+/// the one it always was.
+fn kind_narrowing(scope: &CandidateScope) -> String {
+    let read = scope
+        .counted_node_kinds()
+        .into_iter()
+        .chain(scope.instructions.iter().map(|(_, k)| *k));
+    let mut asked = read.filter(|k| !scope.kinds.contains(k)).peekable();
+    if asked.peek().is_none() {
+        return String::new();
+    }
+    let names: Vec<String> = scope
+        .kinds
+        .iter()
+        .filter(|k| HIT_KINDS.contains(k))
+        .map(|k| format!("'{}'", k.as_str()))
+        .collect();
+    if names.is_empty() {
+        " AND false".to_owned()
+    } else {
+        format!(" AND m.kind IN ({})", names.join(", "))
+    }
+}
+
+/// A kind's code in the postings and their counts, as
+/// `oml_search_memory_kind` stores it (migrations 0021, 0062; ADR-0092 d4).
+fn memory_kind_code(kind: &str) -> Option<i16> {
+    match kind {
+        "memory" => Some(1),
+        "derived_fact" => Some(2),
+        "document" => Some(3),
+        "test" => Some(4),
+        "skill" => Some(5),
+        "guardrail" => Some(6),
+        "term" => Some(7),
+        "term_mapping" => Some(8),
+        "vocab_release" => Some(9),
+        _ => None,
+    }
 }
 
 /// The workspace columns every workspace read selects (unqualified: the
@@ -5856,6 +5932,23 @@ impl PgStore {
                     .map_err(backend)?,
             );
         }
+        let instructions = scope.instruction_candidates();
+        if !instructions.is_empty() {
+            let offered = RECALL_INSTRUCTIONS.replace("/*anchor*/", &anchor.row("m", 5));
+            rows.extend(
+                anchor
+                    .bind(
+                        sqlx::query(&offered)
+                            .bind(tenant_id)
+                            .bind(&instructions)
+                            .bind(query.query)
+                            .bind(k),
+                    )
+                    .fetch_all(&mut **tx)
+                    .await
+                    .map_err(backend)?,
+            );
+        }
         let mut candidates = rows
             .iter()
             .map(candidate_from_row)
@@ -6039,7 +6132,22 @@ impl AnchorRead {
 struct ScopeBinds<'a> {
     tenant_id: Uuid,
     nodes: &'a [Uuid],
+    /// The kinds a row is a candidate of by its node ([`hit_kinds`]).
     kinds: &'a [&'static str],
+    /// The kinds BM25's statistics count by node, fixed before `kinds`
+    /// (ADR-0092 d4).
+    counted: &'a [&'static str],
+    /// The held rows' author keys and every offered instruction: the `$4`
+    /// of a bm25 statement, whose statistics count them all (ADR-0092 d4).
+    counted_ids: &'a [Uuid],
+    /// Every offered instruction, and those that are candidates
+    /// (ADR-0092 d3).
+    instructions: &'a [Uuid],
+    candidate_instructions: &'a [Uuid],
+    /// A bm25 statement's candidates narrowed to the asked kinds, a
+    /// predicate on `m` of literal kind names; empty when it narrows
+    /// nothing (ADR-0092 d4).
+    narrowing: &'a str,
     /// The held rows' author keys ([`held_authors`]): on each node inside
     /// an in-progress subtree it names the server's rule-set mark there
     /// too, every author's unflagged held rows scanned under it on that
@@ -6149,14 +6257,18 @@ impl PgStore {
         // Under a reference set its nodes are `$10` and the anchor's binds
         // follow (ADR-0072 d7).
         let sql = match scope.reference {
-            None => bm25_sql_within(&scope.anchor.row("m", 10)),
-            Some(_) => bm25_reference_sql_within(&scope.anchor.row("m", 11)),
+            None => bm25_sql_within(&format!("{}{}", scope.anchor.row("m", 10), scope.narrowing)),
+            Some(_) => bm25_reference_sql_within(&format!(
+                "{}{}",
+                scope.anchor.row("m", 11),
+                scope.narrowing
+            )),
         };
         let mut statement = sqlx::query(&sql)
             .bind(scope.tenant_id)
             .bind(scope.nodes)
-            .bind(scope.kinds)
-            .bind(scope.authors)
+            .bind(scope.counted)
+            .bind(scope.counted_ids)
             .bind(scope.held_nodes)
             .bind(query.query)
             .bind(i64::try_from(query.k).unwrap_or(i64::MAX))
@@ -6209,11 +6321,12 @@ impl PgStore {
         let memory_kinds: Vec<i16> = scope
             .kinds
             .iter()
-            .filter_map(|k| match *k {
-                "memory" => Some(1_i16),
-                "derived_fact" => Some(2_i16),
-                _ => None,
-            })
+            .filter_map(|k| memory_kind_code(k))
+            .collect();
+        let counted_kinds: Vec<i16> = scope
+            .counted
+            .iter()
+            .filter_map(|k| memory_kind_code(k))
             .collect();
         let tokens: Vec<i64> = {
             let mut t: Vec<i64> = forms.iter().map(|(_, f)| token_id(f)).collect();
@@ -6228,7 +6341,7 @@ impl PgStore {
         let counted: Vec<(Option<i64>, i64, i64)> = sqlx::query_as(POSTINGS_COUNTS)
             .bind(scope.tenant_id)
             .bind(counted_nodes)
-            .bind(&memory_kinds)
+            .bind(&counted_kinds)
             .bind(&tokens)
             .fetch_all(&mut **tx)
             .await
@@ -6252,7 +6365,7 @@ impl PgStore {
         let expired: Vec<(Uuid, i32)> = sqlx::query_as(POSTINGS_EXPIRED)
             .bind(scope.tenant_id)
             .bind(counted_nodes)
-            .bind(scope.kinds)
+            .bind(scope.counted)
             .bind(scope.expired_at)
             .fetch_all(&mut **tx)
             .await
@@ -6279,7 +6392,9 @@ impl PgStore {
                 }
             }
         }
-        let held: Vec<(Uuid, i32)> =
+        // The own held rows of the counted kinds count; those of the asked
+        // kinds are candidates (ADR-0092 d4).
+        let mut held: Vec<(Uuid, i32, String)> =
             if scope.authors.is_some_and(<[Uuid]>::is_empty) || scope.held_nodes.is_empty() {
                 Vec::new()
             } else {
@@ -6287,29 +6402,50 @@ impl PgStore {
                     .bind(scope.tenant_id)
                     .bind(scope.authors)
                     .bind(scope.held_nodes)
-                    .bind(scope.kinds)
+                    .bind(scope.counted)
                     .bind(scope.expired_at)
                     .fetch_all(&mut **tx)
                     .await
                     .map_err(backend)?
             };
+        // The offered instructions count as the own held rows do, and are
+        // candidates when their kind is asked (ADR-0092 d3, d4).
+        if !scope.instructions.is_empty() {
+            let offered: Vec<(Uuid, i32)> = sqlx::query_as(POSTINGS_INSTRUCTIONS)
+                .bind(scope.tenant_id)
+                .bind(scope.instructions)
+                .fetch_all(&mut **tx)
+                .await
+                .map_err(backend)?;
+            held.extend(
+                offered
+                    .into_iter()
+                    .map(|(id, len)| (id, len, String::new())),
+            );
+        }
         // Under a reference set the own held rows are scored and never
         // counted: R holds served rows alone (ADR-0072 d7).
         if scope.reference.is_none() {
             rows += held.len() as u64;
             total_len += held
                 .iter()
-                .map(|(_, len)| u64::try_from(*len).unwrap_or(0))
+                .map(|(_, len, _)| u64::try_from(*len).unwrap_or(0))
                 .sum::<u64>();
         }
         if rows == 0 {
             return Ok(empty(terms));
         }
-        let held_ids: Vec<Uuid> = held.iter().map(|(id, _)| *id).collect();
-        if !held_ids.is_empty() && scope.reference.is_none() {
+        let all_held: Vec<Uuid> = held.iter().map(|(id, _, _)| *id).collect();
+        let held_ids: Vec<Uuid> = held
+            .iter()
+            .filter(|(_, _, kind)| scope.kinds.contains(&kind.as_str()))
+            .map(|(id, _, _)| *id)
+            .chain(scope.candidate_instructions.iter().copied())
+            .collect();
+        if !all_held.is_empty() && scope.reference.is_none() {
             let held_counted: Vec<(i64, i64)> = sqlx::query_as(POSTINGS_OWN_HELD_DF)
                 .bind(scope.tenant_id)
-                .bind(&held_ids)
+                .bind(&all_held)
                 .bind(&tokens)
                 .fetch_all(&mut **tx)
                 .await
@@ -6484,12 +6620,33 @@ impl Retriever for PgStore {
             (_, kind) => kind,
         };
         let kinds = hit_kinds(&scope.kinds);
+        let counted = hit_kinds(&scope.counted_kinds);
         let (authors, held_nodes): (Option<Vec<Uuid>>, Vec<Uuid>) = scope
             .own_held
             .as_ref()
             .map_or((Some(Vec::new()), Vec::new()), |own| {
                 (Some(held_authors(own)), own.nodes.clone())
             });
+        // The offered instructions join the scope by id (ADR-0092 d3): the
+        // statements' `$4` holds them beside the held rows' author keys, a
+        // version id never being a key id or a rule-set mark. A candidate
+        // statement names the candidates; bm25's statistics every offered
+        // one, its candidates narrowed by kind (d4).
+        let instructions = scope.instruction_ids();
+        let candidate_instructions = scope.instruction_candidates();
+        let scoped_ids: Vec<Uuid> = authors
+            .iter()
+            .flatten()
+            .chain(&candidate_instructions)
+            .copied()
+            .collect();
+        let counted_ids: Vec<Uuid> = authors
+            .iter()
+            .flatten()
+            .chain(&instructions)
+            .copied()
+            .collect();
+        let narrowing = kind_narrowing(scope);
         let k = i64::try_from(query.k).unwrap_or(i64::MAX);
         let all = every_word || query.match_mode == MatchMode::All;
         let mut tx = self.pool.begin().await.map_err(backend)?;
@@ -6537,7 +6694,7 @@ impl Retriever for PgStore {
                 tenant_id,
                 &kinds,
                 scope,
-                authors.as_deref(),
+                Some(&scoped_ids),
                 &held_nodes,
             )
             .await?;
@@ -6545,7 +6702,12 @@ impl Retriever for PgStore {
             tenant_id,
             nodes: &scope.promoted_nodes,
             kinds: &kinds,
+            counted: &counted,
             authors: authors.as_deref(),
+            counted_ids: &counted_ids,
+            instructions: &instructions,
+            candidate_instructions: &candidate_instructions,
+            narrowing: &narrowing,
             held_nodes: &held_nodes,
             anchor: &anchor,
             expired_at,
@@ -6567,7 +6729,7 @@ impl Retriever for PgStore {
                     .bind(tenant_id)
                     .bind(&scope.promoted_nodes)
                     .bind(&kinds)
-                    .bind(&authors)
+                    .bind(&scoped_ids)
                     .bind(&held_nodes)
                     .bind(window.from_us)
                     .bind(window.until_us)
@@ -6611,19 +6773,29 @@ impl Retriever for PgStore {
                 let sql = scope_at(
                     &match kind {
                         RetrieverKind::KeywordAny => keyword_any_sql(&anchor.row("m", 10)),
-                        RetrieverKind::Bm25 => bm25_sql_within(&anchor.row("m", 10)),
+                        RetrieverKind::Bm25 => {
+                            bm25_sql_within(&format!("{}{narrowing}", anchor.row("m", 10)))
+                        }
                         _ => trigram_sql(&anchor.row("m", 9)),
                     },
                     as_of,
                 );
+                // bm25 counts every kind the statistics count and narrows
+                // its candidates by kind; the other lists read the
+                // candidates alone (ADR-0092 d4).
+                let (bound_kinds, bound_ids) = if kind == RetrieverKind::Bm25 {
+                    (&counted, &counted_ids)
+                } else {
+                    (&kinds, &scoped_ids)
+                };
                 // A statement at an instant is planned once: its literal
                 // instant would fill the statement cache (ADR-0059 d20).
                 let mut statement = sqlx::query(&sql)
                     .persistent(as_of.is_none())
                     .bind(tenant_id)
                     .bind(&scope.promoted_nodes)
-                    .bind(&kinds)
-                    .bind(&authors)
+                    .bind(bound_kinds)
+                    .bind(bound_ids)
                     .bind(&held_nodes)
                     .bind(query.query)
                     .bind(k);
@@ -7056,17 +7228,13 @@ impl PgStore {
         let memory_kinds: Vec<i16> = scope
             .kinds
             .iter()
-            .filter_map(|k| match *k {
-                "memory" => Some(1_i16),
-                "derived_fact" => Some(2_i16),
-                _ => None,
-            })
+            .filter_map(|k| memory_kind_code(k))
             .collect();
-        let held: Vec<Uuid> =
+        let mut held: Vec<Uuid> =
             if scope.authors.is_some_and(<[Uuid]>::is_empty) || scope.held_nodes.is_empty() {
                 Vec::new()
             } else {
-                sqlx::query_as::<_, (Uuid, i32)>(POSTINGS_OWN_HELD)
+                sqlx::query_as::<_, (Uuid, i32, String)>(POSTINGS_OWN_HELD)
                     .bind(scope.tenant_id)
                     .bind(scope.authors)
                     .bind(scope.held_nodes)
@@ -7076,9 +7244,10 @@ impl PgStore {
                     .await
                     .map_err(backend)?
                     .into_iter()
-                    .map(|(id, _)| id)
+                    .map(|(id, _, _)| id)
                     .collect()
             };
+        held.extend(scope.candidate_instructions.iter().copied());
         let tokens: Vec<i64> = query.sparse.iter().map(|t| i64::from(t.token_id)).collect();
         let weights: Vec<f64> = query.sparse.iter().map(|t| f64::from(t.weight)).collect();
         let pieces: Vec<&str> = query.sparse.iter().map(|t| t.piece.as_str()).collect();

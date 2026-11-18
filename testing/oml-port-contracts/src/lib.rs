@@ -1197,6 +1197,8 @@ pub trait KeywordAllReads: Retriever {
             anchor: oml_app::types::AnchorFilter::default(),
             promoted_nodes: readable.to_vec(),
             kinds: kinds.to_vec(),
+            instructions: Vec::new(),
+            counted_kinds: kinds.to_vec(),
             own_held: None,
             expired_at: None,
             as_of: None,
@@ -1235,6 +1237,8 @@ pub trait KeywordAllReads: Retriever {
             anchor: oml_app::types::AnchorFilter::default(),
             promoted_nodes: Vec::new(),
             kinds: kinds.to_vec(),
+            instructions: Vec::new(),
+            counted_kinds: kinds.to_vec(),
             own_held: Some(OwnHeldScope {
                 any_author_nodes: Vec::new(),
                 author_key_ids: author_key_ids.to_vec(),
@@ -1842,6 +1846,12 @@ pub async fn held_rows_of_every_author_are_read_on_the_named_nodes_alone<S: Jour
         anchor: oml_app::types::AnchorFilter::default(),
         promoted_nodes: Vec::new(),
         kinds: vec![
+            MemoryKind::Memory,
+            MemoryKind::DerivedFact,
+            MemoryKind::Steering,
+        ],
+        instructions: Vec::new(),
+        counted_kinds: vec![
             MemoryKind::Memory,
             MemoryKind::DerivedFact,
             MemoryKind::Steering,
@@ -12782,6 +12792,8 @@ fn scope_of(wa: Uuid, own: Option<Uuid>) -> CandidateScope {
         anchor: oml_app::types::AnchorFilter::default(),
         promoted_nodes: vec![wa],
         kinds: HIT_KINDS.to_vec(),
+        instructions: Vec::new(),
+        counted_kinds: HIT_KINDS.to_vec(),
         own_held: own.map(|key| OwnHeldScope {
             any_author_nodes: Vec::new(),
             author_key_ids: vec![key],
@@ -12896,6 +12908,8 @@ pub async fn a_retriever_never_returns_a_row_outside_the_scope<S: JournalStore>(
                     anchor: oml_app::types::AnchorFilter::default(),
                     promoted_nodes: Vec::new(),
                     kinds: HIT_KINDS.to_vec(),
+                    instructions: Vec::new(),
+                    counted_kinds: HIT_KINDS.to_vec(),
                     own_held: None,
                     expired_at: None,
                     as_of: None,
@@ -12990,6 +13004,208 @@ where
             }
         }
     }
+}
+
+/// The instruction rows of the kind-filter laws (ADR-0092 d3, d4), beside
+/// [`retriever_fixture`]'s memories on `wa`: an offered skill and an
+/// applicable guardrail on `wa`, an offered skill on `elsewhere`, a skill
+/// and a guardrail on `wa` that are not offered, a derived fact and a test
+/// on `wa`. Each says the law queries' words. Returns the offered set.
+async fn instruction_fixture<S: JournalStore>(
+    rig: &mut ChainRig,
+    store: &S,
+    wa: Uuid,
+) -> Vec<(Uuid, MemoryKind)> {
+    let tenant = rig.tenant_id;
+    let elsewhere = Uuid::from_u128(0xE3);
+    let other = Uuid::from_u128(0xE5);
+    let skill = |node: Uuid, id: u128, name: &str, body: &str| MemoryRecord {
+        kind: MemoryKind::Skill,
+        kind_fields: Some(Box::new(KindFields::Skill {
+            name: name.to_owned(),
+            description: "Ships the billing service".to_owned(),
+        })),
+        claim_key: format!("skill/{name}"),
+        ..held_memory(tenant, node, Uuid::from_u128(id), "rita", other, body)
+    };
+    let rail = |id: u128, body: &str| MemoryRecord {
+        kind: MemoryKind::Guardrail,
+        guardrail: Some(Box::new(GuardrailFields {
+            severity: Severity::Must,
+            rule: None,
+        })),
+        ..held_memory(tenant, wa, Uuid::from_u128(id), "rita", other, body)
+    };
+    let kinded = |kind: MemoryKind, id: u128, body: &str| MemoryRecord {
+        kind,
+        ..held_memory(tenant, wa, Uuid::from_u128(id), "rita", other, body)
+    };
+    let offered_here = skill(wa, 0xF41, "deploy", "deploy the billing service on friday");
+    let offered_there = skill(
+        elsewhere,
+        0xF42,
+        "release",
+        "rollback the release on friday",
+    );
+    let not_offered = skill(wa, 0xF43, "invoice", "billing invoices per tenant deploy");
+    let applicable = rail(0xF44, "never deploy billing on friday");
+    let not_applicable = rail(0xF45, "invoices billing release friday");
+    for row in [
+        offered_here.clone(),
+        offered_there.clone(),
+        not_offered,
+        applicable.clone(),
+        not_applicable,
+        kinded(
+            MemoryKind::DerivedFact,
+            0xF46,
+            "billing invoices follow the release",
+        ),
+        kinded(MemoryKind::Test, 0xF47, "deploy rollback test on friday"),
+    ] {
+        hold_and_promote(rig, store, row).await;
+    }
+    vec![
+        (offered_here.memory_id, MemoryKind::Skill),
+        (offered_there.memory_id, MemoryKind::Skill),
+        (applicable.memory_id, MemoryKind::Guardrail),
+    ]
+}
+
+/// The candidate scope of the kind-filter laws: the scope's knowledge
+/// kinds counted, `kinds` asked, and the offered instructions.
+fn kinds_scope(wa: Uuid, offered: &[(Uuid, MemoryKind)], kinds: &[MemoryKind]) -> CandidateScope {
+    CandidateScope {
+        kinds: kinds.to_vec(),
+        instructions: offered.to_vec(),
+        counted_kinds: vec![
+            MemoryKind::Memory,
+            MemoryKind::DerivedFact,
+            MemoryKind::Test,
+        ],
+        ..scope_of(wa, None)
+    }
+}
+
+/// Under a single retriever, a `kinds` filter inside the reference set
+/// gives the unfiltered answer restricted to those kinds: the same rows in
+/// the same order with the same scores, since every statistic is taken
+/// before the filter narrows the candidates (ADR-0092 d4).
+pub async fn a_kinds_filter_inside_the_reference_set_restricts_the_unfiltered_answer_under_a_single_retriever<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(404);
+    rig.seed_chain(store, 0).await;
+    let (_, _, wa, _) = retriever_fixture(&mut rig, store, false).await;
+    let offered = instruction_fixture(&mut rig, store, wa).await;
+    let every = [
+        MemoryKind::Memory,
+        MemoryKind::DerivedFact,
+        MemoryKind::Test,
+        MemoryKind::Skill,
+        MemoryKind::Guardrail,
+    ];
+    let filters: [&[MemoryKind]; 5] = [
+        &[MemoryKind::Memory],
+        &[MemoryKind::Skill],
+        &[MemoryKind::Guardrail, MemoryKind::DerivedFact],
+        &[MemoryKind::Test, MemoryKind::Memory],
+        &[MemoryKind::Skill, MemoryKind::Guardrail],
+    ];
+    for kind in store.retrievers() {
+        for query in LAW_QUERIES {
+            let whole = run(
+                store,
+                rig.tenant_id,
+                kind,
+                &kinds_scope(wa, &offered, &every),
+                query,
+                MatchMode::Any,
+            )
+            .await;
+            for filter in filters {
+                let narrowed = run(
+                    store,
+                    rig.tenant_id,
+                    kind,
+                    &kinds_scope(wa, &offered, filter),
+                    query,
+                    MatchMode::Any,
+                )
+                .await;
+                let restricted: Vec<Candidate> = whole
+                    .candidates
+                    .iter()
+                    .filter(|c| filter.contains(&c.kind))
+                    .cloned()
+                    .collect();
+                assert_eq!(
+                    narrowed.candidates, restricted,
+                    "{kind:?} {query:?} {filter:?}: the filtered list is the whole one restricted"
+                );
+            }
+        }
+    }
+}
+
+/// A skill or guardrail outside the offered set is never a candidate,
+/// whatever its node and however well it matches; an offered one is,
+/// wherever it lives (ADR-0092 d3).
+pub async fn an_instruction_outside_the_offered_set_is_never_a_hit<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(405);
+    rig.seed_chain(store, 0).await;
+    let (_, _, wa, _) = retriever_fixture(&mut rig, store, false).await;
+    let offered = instruction_fixture(&mut rig, store, wa).await;
+    let asked = [MemoryKind::Memory, MemoryKind::Skill, MemoryKind::Guardrail];
+    let mut seen_elsewhere = false;
+    for kind in store.retrievers() {
+        for query in LAW_QUERIES
+            .iter()
+            .copied()
+            .chain(["rollback release friday"])
+        {
+            let read = run(
+                store,
+                rig.tenant_id,
+                kind,
+                &kinds_scope(wa, &offered, &asked),
+                query,
+                MatchMode::Any,
+            )
+            .await;
+            for c in &read.candidates {
+                if matches!(c.kind, MemoryKind::Skill | MemoryKind::Guardrail) {
+                    assert!(
+                        offered.iter().any(|(id, _)| *id == c.memory_id),
+                        "{kind:?} {query:?}: {c:?} is an instruction outside the offered set"
+                    );
+                }
+                seen_elsewhere |= c.memory_id == Uuid::from_u128(0xF42);
+            }
+            // With no instruction offered, no instruction row is a hit.
+            let none = run(
+                store,
+                rig.tenant_id,
+                kind,
+                &kinds_scope(wa, &[], &asked),
+                query,
+                MatchMode::Any,
+            )
+            .await;
+            assert!(
+                none.candidates
+                    .iter()
+                    .all(|c| !matches!(c.kind, MemoryKind::Skill | MemoryKind::Guardrail)),
+                "{kind:?} {query:?}: an instruction was a hit with none offered"
+            );
+        }
+    }
+    assert!(
+        seen_elsewhere,
+        "the offered skill on another node is a candidate by its id"
+    );
 }
 
 /// The words every leak class of [`crowd`] says: those of the law queries.
@@ -13717,6 +13933,8 @@ pub async fn bm25_postings_ranks_as_bm25_does_when_nothing_is_pruned<S: JournalS
                         reference: None,
                         anchor: oml_app::types::AnchorFilter::default(),
                         kinds: kinds.clone(),
+                        instructions: Vec::new(),
+                        counted_kinds: kinds.clone(),
                         ..scope_of(wa, own_held)
                     };
                     let ask = |kind| {
@@ -14367,6 +14585,8 @@ pub async fn the_time_leg_never_returns_a_row_outside_the_scope<S: JournalStore>
         reference: None,
         promoted_nodes: Vec::new(),
         kinds: HIT_KINDS.to_vec(),
+        instructions: Vec::new(),
+        counted_kinds: HIT_KINDS.to_vec(),
         own_held: None,
         expired_at: None,
         anchor: oml_app::types::AnchorFilter::default(),
@@ -14533,6 +14753,11 @@ where
     a_retriever_never_returns_a_row_outside_the_scope(&new_store().await).await;
     a_retriever_orders_deterministically_by_score_then_id(&new_store().await).await;
     a_row_outside_the_scope_never_changes_a_candidates_score(&new_store).await;
+    a_kinds_filter_inside_the_reference_set_restricts_the_unfiltered_answer_under_a_single_retriever(
+        &new_store().await,
+    )
+    .await;
+    an_instruction_outside_the_offered_set_is_never_a_hit(&new_store().await).await;
     the_keyword_retrievers_match_all_or_any_word_on_every_store(&new_store().await).await;
     bm25_finds_an_identifier_by_its_parts_and_a_word_by_its_stem(&new_store().await).await;
     bm25_reads_a_query_without_its_english_stop_words_unless_it_has_no_other(&new_store().await)
@@ -14633,6 +14858,12 @@ pub async fn similar_candidates_are_the_scopes_served_tips_and_own_held_rows_hol
         reference: None,
         promoted_nodes: nodes.clone(),
         kinds: vec![
+            MemoryKind::Memory,
+            MemoryKind::DerivedFact,
+            MemoryKind::Steering,
+        ],
+        instructions: Vec::new(),
+        counted_kinds: vec![
             MemoryKind::Memory,
             MemoryKind::DerivedFact,
             MemoryKind::Steering,

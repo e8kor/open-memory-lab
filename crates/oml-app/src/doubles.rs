@@ -44,11 +44,12 @@ use crate::types::{
     ClaimEdgeRecord, ClaimEdgeSelection, ClaimKeyState, ClientDescription, ClientKind,
     ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord, Credential, Crew,
     CrewRecord, DenialRecord, DocumentCaching, GrantRecord, HIT_KINDS, HeldFilter, HeldRow,
-    KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition, ListingScope,
-    MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, PersonReviewer, PinOutcome,
-    ProviderAnswer, ProviderFailure, QueueDepth, RefreshFacts, RefreshOutcome, ReviewLane,
-    SIMILAR_KINDS, SourceCheck, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord,
-    TransitionState, UnnamedRows, WebEntry, WebSessionRecord, WorkspaceRecord, WorkspaceRef,
+    INSTRUCTION_HIT_KINDS, KeyAccess, KeyRecord, KeyReferences, KindFields, ListingFilter,
+    ListingPosition, ListingScope, MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT,
+    PersonReviewer, PinOutcome, ProviderAnswer, ProviderFailure, QueueDepth, RefreshFacts,
+    RefreshOutcome, ReviewLane, SIMILAR_KINDS, SourceCheck, SweepReport, TenantRow, TokenPair,
+    TokenRecord, TransitionRecord, TransitionState, UnnamedRows, WebEntry, WebSessionRecord,
+    WorkspaceRecord, WorkspaceRef,
 };
 use oml_domain::web::Provider;
 
@@ -108,6 +109,18 @@ fn words(text: &str) -> BTreeSet<String> {
         .collect()
 }
 
+/// The text a row is searched by: its body, and for a skill its name and
+/// description before it, as migration 0062's vector fold reads them
+/// (ADR-0092 d3, d12 reading 1).
+fn searched_text(m: &MemoryRecord) -> std::borrow::Cow<'_, str> {
+    match m.kind_fields.as_deref() {
+        Some(KindFields::Skill { name, description }) => {
+            std::borrow::Cow::Owned(format!("{name} {description} {}", m.body))
+        }
+        _ => std::borrow::Cow::Borrowed(m.body.as_str()),
+    }
+}
+
 /// The keyword retrievers over `rows`, with PostgreSQL's semantics on the
 /// `simple` index for plain words (ADR-0049 d7): `KeywordAll` keeps a row
 /// holding every query term, `KeywordAny` one holding any, and `match: all`
@@ -125,7 +138,7 @@ fn keyword_ranked<'a>(
     let require_all = kind == RetrieverKind::KeywordAll || query.match_mode == MatchMode::All;
     let mut candidates: Vec<Candidate> = rows
         .filter_map(|m| {
-            let body = words(&m.body);
+            let body = words(&searched_text(m));
             let matched: Vec<String> = terms
                 .iter()
                 .filter(|t| body.contains(*t))
@@ -140,6 +153,7 @@ fn keyword_ranked<'a>(
             let score = matched.len() as f32;
             keep.then_some(Candidate {
                 memory_id: m.memory_id,
+                kind: m.kind,
                 body_bytes: m.body_bytes,
                 score,
                 matched,
@@ -172,6 +186,7 @@ fn form_key(word: &str) -> i64 {
 fn reference_row(m: &MemoryRecord, kinds: &[MemoryKind], expired_at: Option<i64>) -> bool {
     served_tip(m)
         && HIT_KINDS.contains(&m.kind)
+        && !INSTRUCTION_HIT_KINDS.contains(&m.kind)
         && kinds.contains(&m.kind)
         && !expired_at.is_some_and(|now| m.valid.expired_at(now))
 }
@@ -203,7 +218,7 @@ fn bm25_over_reference<'a>(
     } else {
         (reference
             .iter()
-            .map(|m| tokens(&m.body).len())
+            .map(|m| tokens(&searched_text(m)).len())
             .sum::<usize>() as f64
             / reference.len() as f64)
             .max(1.0)
@@ -213,13 +228,13 @@ fn bm25_over_reference<'a>(
         .map(|t| {
             reference
                 .iter()
-                .filter(|m| words(&m.body).contains(t))
+                .filter(|m| words(&searched_text(m)).contains(t))
                 .count() as u64
         })
         .collect();
     let mut candidates: Vec<Candidate> = rows
         .filter_map(|m| {
-            let body = tokens(&m.body);
+            let body = tokens(&searched_text(m));
             #[allow(clippy::cast_precision_loss, reason = "a row has few words")]
             let dl = body.len() as f64;
             let mut matched = Vec::new();
@@ -249,6 +264,7 @@ fn bm25_over_reference<'a>(
             let score = score as f32;
             keep.then_some(Candidate {
                 memory_id: m.memory_id,
+                kind: m.kind,
                 body_bytes: m.body_bytes,
                 score,
                 matched,
@@ -2860,13 +2876,34 @@ impl Retriever for MemStore {
         let rows_of = |nodes: &BTreeSet<Uuid>| -> Vec<&MemoryRecord> {
             self.rows_on(&state, nodes.iter()).collect()
         };
-        let scoped = rows_of(&nodes);
+        let mut scoped = rows_of(&nodes);
+        // The offered instructions, read by id wherever they live (ADR-0092
+        // d3).
+        for (id, _) in &scope.instructions {
+            if let Some(m) = state.memories.get(id)
+                && !nodes.contains(&m.workspace_id)
+            {
+                scoped.push(m);
+            }
+        }
         // The scope is the core's: promoted served tips on its nodes, and
         // the own held rows of its keys on theirs; the state and author
         // predicates are this read's own, never the caller's to forget
         // (ADR-0025 d4, d5, d8).
+        // An offered instruction is a candidate by id, whatever its node,
+        // and no other row of its kind is (ADR-0092 d3).
+        let instructions = scope.instruction_candidates();
+        let node_kinds = scope.node_kinds();
         let admitted = |m: &&MemoryRecord| {
             if m.retirement || !HIT_KINDS.contains(&m.kind) || !scope.kinds.contains(&m.kind) {
+                return false;
+            }
+            if INSTRUCTION_HIT_KINDS.contains(&m.kind) {
+                return instructions.contains(&m.memory_id)
+                    && (kind == RetrieverKind::KeywordAll
+                        || !scope.expired_at.is_some_and(|now| m.valid.expired_at(now)));
+            }
+            if !node_kinds.contains(&m.kind) {
                 return false;
             }
             // An ended version is outside the scope unless asked for
@@ -2922,6 +2959,7 @@ impl Retriever for MemStore {
                     let score = (1.0 / (1.0 + days)) as f32;
                     Some(Candidate {
                         memory_id: m.memory_id,
+                        kind: m.kind,
                         body_bytes: m.body_bytes,
                         score,
                         matched: Vec::new(),
@@ -2943,7 +2981,7 @@ impl Retriever for MemStore {
         {
             let r: Vec<&MemoryRecord> = rows_of(&reference.iter().copied().collect())
                 .into_iter()
-                .filter(|m| reference_row(m, &scope.kinds, scope.expired_at))
+                .filter(|m| reference_row(m, &scope.counted_kinds, scope.expired_at))
                 .collect();
             return Ok(bm25_over_reference(
                 scoped.iter().copied().filter(admitted),

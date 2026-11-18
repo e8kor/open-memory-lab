@@ -125,19 +125,20 @@ use crate::types::{
     ClientAuthentication, ClientDescription, ClientKind, CodeEntryOutcome, ConfirmAction,
     ConfirmOutcome, ConfirmationGrant, ConfirmationView, ConnectCode, ConnectCodeIssued,
     ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord, CreatedWorkspace,
-    Credential, CrewCreateRequest, CrewPage, CrewRecord, CrewUpdate, DenialRecord,
-    EdgeRatification, ExchangeForm, FormatFields, GrantRecord, GuardrailFields, GuardrailRequest,
-    GuardrailSet, GuardrailVerdict, HIT_KINDS, IssueKeyRequest, IssuedKey, IssuedTokens, KeyAccess,
-    KeyDetail, KeyRecord, KindFields, ListRequest, ListingFilter, ListingPosition, ListingScope,
-    LiveConnectCode, MemoryPage, MemoryRecord, MintedToken, NamedRef, NamingRefusal,
-    OAuthClientRecord, OnSimilar, OwnHeldGuardrail, PROVIDER_TENANT, ProposeBriefEdge,
-    ProposeClaimEdge, RecallHit, RecallRequest, RecallResult, RefreshFacts, RefreshForm,
-    RegisteredClient, RerankOutcome, SIMILAR_KINDS, ServedGuardrail, ServedMemory, SimilarItem,
-    SourceCheck, SourceCheckReceipt, SourceCheckRequest, SubmitOutcome, SubmitReceipt,
-    SubmitRequest, SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage,
-    TailedEvent, TenantRow, TokenPair, TransitionRecord, TransitionState, TransitionView, TreeNode,
-    TreePage, UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami,
-    WithdrawReceipt, WithdrawRequest, WorkspaceInfo, WorkspaceRecord, WorkspaceStatusView,
+    Credential, CrewCreateRequest, CrewPage, CrewRecord, CrewUpdate, DEFAULT_HIT_KINDS,
+    DenialRecord, EdgeRatification, ExchangeForm, FormatFields, GrantRecord, GuardrailFields,
+    GuardrailRequest, GuardrailSet, GuardrailVerdict, HIT_KINDS, INSTRUCTION_HIT_KINDS,
+    IssueKeyRequest, IssuedKey, IssuedTokens, KeyAccess, KeyDetail, KeyRecord, KindFields,
+    ListRequest, ListingFilter, ListingPosition, ListingScope, LiveConnectCode, MemoryPage,
+    MemoryRecord, MintedToken, NamedRef, NamingRefusal, OAuthClientRecord, OnSimilar,
+    OwnHeldGuardrail, PROVIDER_TENANT, ProposeBriefEdge, ProposeClaimEdge, RecallHit,
+    RecallRequest, RecallResult, RefreshFacts, RefreshForm, RegisteredClient, RerankOutcome,
+    SIMILAR_KINDS, ServedGuardrail, ServedMemory, SimilarItem, SkillHit, SourceCheck,
+    SourceCheckReceipt, SourceCheckRequest, SubmitOutcome, SubmitReceipt, SubmitRequest,
+    SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent,
+    TenantRow, TokenPair, TransitionRecord, TransitionState, TransitionView, TreeNode, TreePage,
+    UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami, WithdrawReceipt,
+    WithdrawRequest, WorkspaceInfo, WorkspaceRecord, WorkspaceStatusView,
 };
 use crate::types::{
     BULK_VERDICT_MAX, BulkItem, BulkVerdictRequest, FindingVerdict, FoundBy, HELD_PAGE_MAX,
@@ -163,6 +164,16 @@ struct PipelineRun {
     fallback: bool,
     access: Access,
     pruned: Vec<String>,
+}
+
+/// The instructions a recall ranks at its scope node (ADR-0092 d3): the
+/// offered skills and the applicable guardrails by version id and kind, in
+/// the states their own reads serve them, and each skill hit's command and
+/// resource.
+#[derive(Debug, Default)]
+struct RecallInstructions {
+    ids: Vec<(Uuid, MemoryKind)>,
+    skills: BTreeMap<Uuid, SkillHit>,
 }
 
 const EVENTS_PAGE: usize = 512;
@@ -5502,6 +5513,8 @@ where
             reference: None,
             promoted_nodes: hit_nodes.clone(),
             kinds: SIMILAR_KINDS.to_vec(),
+            instructions: Vec::new(),
+            counted_kinds: SIMILAR_KINDS.to_vec(),
             own_held: Some(OwnHeldScope {
                 author_key_ids: vec![key.key_id],
                 nodes: readable.clone(),
@@ -7005,7 +7018,14 @@ where
         // tip in force, never a retirement version (ADR-0025 d8, d11).
         // At an instant, the steering tips then, promoted today (ADR-0059
         // d15, d18).
+        // `kinds` decides whether the steering list is served: absent, or
+        // naming `steering`; and whether hits are: absent, or naming any
+        // other kind (ADR-0092 d2).
+        let steering_requested = req.kinds.is_empty() || req.kinds.contains(&MemoryKind::Steering);
+        let hits_requested =
+            req.kinds.is_empty() || req.kinds.iter().any(|k| *k != MemoryKind::Steering);
         let steering_rows = match &req.as_of {
+            _ if !steering_requested => Vec::new(),
             None => {
                 self.journal
                     .steering_in_force(key.tenant_id, &applicable)
@@ -7056,17 +7076,19 @@ where
             inside,
         } = self.served_nodes(caller, scope).await?;
         let include_unreviewed = req.include_unreviewed.unwrap_or(!inside.is_empty());
-        steering.extend(
-            self.held_steering(
-                caller,
-                &scope_ancestry,
-                &applicable,
-                include_unreviewed,
-                own_everywhere,
-                req,
-            )
-            .await?,
-        );
+        if steering_requested {
+            steering.extend(
+                self.held_steering(
+                    caller,
+                    &scope_ancestry,
+                    &applicable,
+                    include_unreviewed,
+                    own_everywhere,
+                    req,
+                )
+                .await?,
+            );
+        }
         // A scope inside a user root also searches `universe`'s own claims
         // where the key reads that node, ranked with the scope's own; own
         // held rows never include them (ADR-0044 d10).
@@ -7078,10 +7100,44 @@ where
         {
             hit_nodes.push(universe);
         }
-        let kinds: Vec<MemoryKind> = HIT_KINDS
+        // The hit kinds: those named, or with none named every hit kind but
+        // the vocabulary kinds, which join only by a workspace's opt-in,
+        // unbuilt (ADR-0092 d1, d12 reading 2). The statistics count the
+        // knowledge kinds and any vocabulary kind named, whatever else
+        // `kinds` names, and the offered instructions by id (d4).
+        let kinds: Vec<MemoryKind> = if req.kinds.is_empty() {
+            DEFAULT_HIT_KINDS.to_vec()
+        } else {
+            HIT_KINDS
+                .into_iter()
+                .filter(|kind| req.kinds.contains(kind))
+                .collect()
+        };
+        let counted_kinds: Vec<MemoryKind> = HIT_KINDS
             .into_iter()
-            .filter(|kind| req.kinds.is_empty() || req.kinds.contains(kind))
+            .filter(|kind| {
+                !INSTRUCTION_HIT_KINDS.contains(kind)
+                    && (DEFAULT_HIT_KINDS.contains(kind) || kinds.contains(kind))
+            })
             .collect();
+        // The offered skills and the applicable guardrails at the scope
+        // node, the only rows of those kinds that are candidates; read
+        // whatever `kinds` names, since they count in the statistics
+        // (ADR-0092 d3, d4). An as-of recall reads its scope's knowledge
+        // alone: the offered set is today's.
+        let offered = if hits_requested && req.as_of.is_none() {
+            self.recall_instructions(
+                caller,
+                req.workspace.as_ref(),
+                &scope_ancestry,
+                own_everywhere,
+                include_unreviewed,
+                (!req.include_expired).then_some(now_us),
+            )
+            .await?
+        } else {
+            RecallInstructions::default()
+        };
         // A recall naming no `sources` reads the tenant's default with its
         // default pipeline, off one row; one naming them reads only the
         // pipeline's default, as before federation (ADR-0072 d12).
@@ -7107,7 +7163,15 @@ where
         let expired_at = (!req.include_expired).then_some(now_us);
         let plan = self
             .plan_sources(
-                caller, req, policy, scope, &hit_nodes, &kinds, pipeline, &query, expired_at,
+                caller,
+                req,
+                policy,
+                scope,
+                &hit_nodes,
+                &counted_kinds,
+                pipeline,
+                &query,
+                expired_at,
             )
             .await?;
         let promoted: BTreeSet<Uuid> = plan.promoted.iter().copied().collect();
@@ -7140,6 +7204,8 @@ where
             reference: plan.reference.clone(),
             promoted_nodes: plan.promoted.clone(),
             kinds: kinds.clone(),
+            instructions: offered.ids.clone(),
+            counted_kinds: counted_kinds.clone(),
             own_held: include_unreviewed.then(|| OwnHeldScope {
                 author_key_ids: caller.own_key_ids(),
                 // The key's own held rows on every served node, and every
@@ -7168,8 +7234,8 @@ where
             },
             _ => candidate_scope.clone(),
         };
-        let ran = self
-            .run_pipeline(
+        let ran = if hits_requested {
+            self.run_pipeline(
                 key.tenant_id,
                 pipeline,
                 &retrieval_scope,
@@ -7178,9 +7244,20 @@ where
                 req,
                 &mut timings,
             )
-            .await?;
+            .await?
+        } else {
+            // `kinds: ["steering"]` ranks nothing (ADR-0092 d2).
+            PipelineRun::default()
+        };
         let mut lap = std::time::Instant::now();
         let (mut candidates, terms, fallback) = (ran.fused, ran.terms, ran.fallback);
+        // Per kind, the candidates of the fused list before the `k` cut
+        // (ADR-0092 d4).
+        let matched_by_kind: Vec<(MemoryKind, u64)> = HIT_KINDS
+            .into_iter()
+            .map(|k| (k, candidates.iter().filter(|c| c.kind == k).count() as u64))
+            .filter(|(_, n)| *n > 0)
+            .collect();
         // The core's re-check at an instant: which candidates were their
         // claim's tip then, read once for the list (ADR-0059 d15, d16).
         let tips_then: BTreeSet<Uuid> = match &req.as_of {
@@ -7213,7 +7290,16 @@ where
         // hit; a retirement version is never in force (ADR-0025 d4, d8).
         // The reranker is handed only rows this admits (ADR-0053 d2).
         let own = caller.own_key_ids();
+        let instruction_ids: BTreeSet<Uuid> = offered.ids.iter().map(|(id, _)| *id).collect();
         let admits = |m: &MemoryRecord| {
+            // An instruction is a hit only as one of the offered set, which
+            // `recall_instructions` admitted by state (ADR-0092 d3).
+            if INSTRUCTION_HIT_KINDS.contains(&m.kind) {
+                return instruction_ids.contains(&m.memory_id)
+                    && !m.retirement
+                    && kinds.contains(&m.kind)
+                    && (req.include_expired || !m.valid.expired_at(now_us));
+            }
             let admitted = match m.status {
                 MemoryStatus::Promoted => {
                     (if req.as_of.is_some() {
@@ -7367,7 +7453,7 @@ where
                 caller,
                 scope,
                 &hit_nodes,
-                &kinds,
+                &counted_kinds,
                 req.include_expired,
                 prunes,
                 &query,
@@ -7451,7 +7537,9 @@ where
             if admits(&m) {
                 served_ids.push(m.memory_id);
                 let home = m.workspace_id;
+                let skill = offered.skills.get(&m.memory_id).cloned();
                 hits.push(RecallHit {
+                    skill,
                     served: self.served_in(caller, m, &mut ancestries).await?,
                     score: candidate.score,
                     matched: candidate.matched.clone(),
@@ -7474,6 +7562,9 @@ where
         }
         timings.lap(Stage::Hydrate, lap);
         Ok(RecallResult {
+            steering_requested,
+            hits_requested,
+            matched_by_kind,
             recall_id: self.ids.new_id(),
             scope_workspace_id: scope,
             steering: served_steering,
@@ -7717,6 +7808,103 @@ where
             own_held,
             served_ids,
         })
+    }
+
+    /// The instructions a recall at `workspace` ranks (ADR-0092 d3): the
+    /// skills ADR-0080 d4 and d5 offer there, and the guardrails ADR-0037 d4
+    /// applies there under the key's `guardrail_scope`, each a promoted tip
+    /// in force or a held version its own read serves: to its author key
+    /// under `include_unreviewed: true` (`own_held`) and inside an
+    /// in-progress subtree when `include_unreviewed` is not false
+    /// (`audience`), never one the scan held or has not scanned (ADR-0080
+    /// d10, d14, d16). A version whose valid time ended at `expired_at` is
+    /// left out. No descendant outside an in-progress root, wide source or
+    /// federation source contributes (d11 answer 5).
+    async fn recall_instructions(
+        &self,
+        caller: &Caller,
+        workspace: Option<&Reference>,
+        chain: &[WorkspaceRecord],
+        own_held: bool,
+        audience: bool,
+        expired_at: Option<i64>,
+    ) -> Result<RecallInstructions, AppError> {
+        let key = &caller.key;
+        let live = |m: &MemoryRecord| !expired_at.is_some_and(|now| m.valid.expired_at(now));
+        let mut found = RecallInstructions::default();
+        let (scope, offer, rows) = self.offered_skills(caller, workspace, own_held).await?;
+        for o in &offer.offered {
+            let Some(row) = rows.get(&o.candidate.artifact_id) else {
+                continue;
+            };
+            if (o.candidate.held && !(audience || own_held)) || !live(row) {
+                continue;
+            }
+            let Some(name) = scope.names.get(&row.workspace_id) else {
+                continue;
+            };
+            found.ids.push((row.memory_id, MemoryKind::Skill));
+            found.skills.insert(
+                row.memory_id,
+                SkillHit {
+                    prompt: o.command.clone(),
+                    uri: skill_uri(name, &o.command),
+                },
+            );
+        }
+        // The guardrails: the chain node to root, bounded by the key's
+        // scope, on each node the key reads (ADR-0037 d4).
+        let ids: Vec<Uuid> = chain.iter().map(|w| w.workspace_id).collect();
+        let bound = match key.guardrail_scope {
+            GuardrailScope::Workspace => ids.len().min(1),
+            GuardrailScope::Ancestors => ids.len(),
+        };
+        let listed: Vec<Uuid> = (0..bound)
+            .filter(|&i| caller.effective(&ids[i..]).contains(&Role::Reader))
+            .map(|i| ids[i])
+            .collect();
+        if listed.is_empty() {
+            return Ok(found);
+        }
+        let inside: Vec<Uuid> = (0..bound)
+            .filter(|&i| listed.contains(&ids[i]))
+            .filter(|&i| in_progress_root_in(&chain[i..]).is_some())
+            .map(|i| ids[i])
+            .collect();
+        let rows = self
+            .journal
+            .instruction_rows(
+                key.tenant_id,
+                MemoryKind::Guardrail,
+                &listed,
+                key.key_id,
+                &inside,
+                true,
+            )
+            .await?;
+        for m in rows {
+            if m.kind != MemoryKind::Guardrail
+                || m.retirement
+                || m.guardrail.is_none()
+                || !listed.contains(&m.workspace_id)
+                || !live(&m)
+            {
+                continue;
+            }
+            let served = match m.status {
+                MemoryStatus::Promoted => m.is_tip && m.promoted_at.is_some(),
+                MemoryStatus::Held => {
+                    served_unreviewed(&m, self.scanner.version())
+                        && ((m.author_key_id == key.key_id && own_held)
+                            || (audience && inside.contains(&m.workspace_id)))
+                }
+                _ => false,
+            };
+            if served {
+                found.ids.push((m.memory_id, MemoryKind::Guardrail));
+            }
+        }
+        Ok(found)
     }
 
     /// The offered skill set at the scope node, before paging (ADR-0080 d4,

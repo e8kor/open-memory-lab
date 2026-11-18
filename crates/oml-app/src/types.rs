@@ -2038,10 +2038,36 @@ pub struct VerdictRequest {
     pub idempotency_key: String,
 }
 
-/// The kinds recall serves as hits. Vocabulary kinds join them only by a
-/// workspace's journalled opt-in, which is unbuilt (retrieval.md, the
-/// recall-ordering contract; ADR-0021 d9, ADR-0025 d8).
-pub const HIT_KINDS: [MemoryKind; 2] = [MemoryKind::Memory, MemoryKind::DerivedFact];
+/// The kinds recall may serve as hits: every kind but steering, which is
+/// served first and never ranked (ADR-0092 d1, d2). `document` joins them
+/// with its passages (ADR-0081 d4).
+pub const HIT_KINDS: [MemoryKind; 8] = [
+    MemoryKind::Memory,
+    MemoryKind::DerivedFact,
+    MemoryKind::Test,
+    MemoryKind::Skill,
+    MemoryKind::Guardrail,
+    MemoryKind::Term,
+    MemoryKind::TermMapping,
+    MemoryKind::VocabRelease,
+];
+
+/// The hits of a recall that names no `kinds`: every hit kind but the
+/// vocabulary kinds, which join only by a workspace's journalled opt-in;
+/// that opt-in is unbuilt, so none does (ADR-0092 d1, d12 reading 2;
+/// ADR-0021 d9).
+pub const DEFAULT_HIT_KINDS: [MemoryKind; 5] = [
+    MemoryKind::Memory,
+    MemoryKind::DerivedFact,
+    MemoryKind::Test,
+    MemoryKind::Skill,
+    MemoryKind::Guardrail,
+];
+
+/// The instruction kinds recall ranks: a skill offered at the scope node
+/// and a guardrail applicable there are candidates, and no other row of
+/// these kinds is (ADR-0092 d3).
+pub const INSTRUCTION_HIT_KINDS: [MemoryKind; 2] = [MemoryKind::Skill, MemoryKind::Guardrail];
 
 #[derive(Debug, Clone)]
 pub struct RecallRequest {
@@ -2052,9 +2078,10 @@ pub struct RecallRequest {
     /// refused — there is no tenant-wide fallback (ADR-0025 d1; ADR-0026
     /// d4, ADR-0039 d4).
     pub workspace: Option<Reference>,
-    /// The hit kinds the request admits; empty when it sent no filter. It
-    /// narrows the hits only, never the steering (retrieval.md, the
-    /// recall-ordering contract; ADR-0025 d8).
+    /// The kinds the request names; empty when it sent no filter. It
+    /// narrows the hits, and decides whether the steering list is served:
+    /// a filter that does not name `steering` serves none, and one naming
+    /// `steering` alone serves no hits (ADR-0092 d1, d2).
     pub kinds: Vec<MemoryKind>,
     /// `include_text`: whether the served rows carry their text; a budget
     /// counts text, so `max_tokens` without it is refused (retrieval.md
@@ -2121,6 +2148,20 @@ pub struct RecallHit {
     /// The hit's `via` under `wide` or a list: whether its workspace is the
     /// scope's or a federated source; `None` under `scope` (ADR-0072 d8).
     pub source: Option<crate::federation::Via>,
+    /// A skill hit's command and resource: the name `prompts/list` offers
+    /// it under and its `oml://` URI (ADR-0092 d3; ADR-0080 d5, d7); `None`
+    /// for every other kind.
+    pub skill: Option<SkillHit>,
+}
+
+/// What a skill hit names beside its row (ADR-0092 d3): the prompt that
+/// runs it and the resource that reads its body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillHit {
+    /// The command: the skill's name, or `<name>-unreviewed` for a held
+    /// edit of a promoted skill (ADR-0080 d10).
+    pub prompt: String,
+    pub uri: String,
 }
 
 /// What the reranking stage did to one recall (ADR-0053 d5, d7):
@@ -2175,6 +2216,17 @@ pub struct RecallResult {
     /// The recall's id, the answer's `recall_id`: the event that records it
     /// and the id a `feedback` member names (ADR-0054 d2, d6).
     pub recall_id: Uuid,
+    /// Whether the steering list was asked for: `false` when `kinds` does
+    /// not name `steering`, answered `steering: "not_requested"` so an
+    /// empty list is never read as none in force (ADR-0092 d2).
+    pub steering_requested: bool,
+    /// Whether hits were asked for: `false` when `kinds` names `steering`
+    /// alone, answered `search.hits: "not_requested"` (ADR-0092 d2).
+    pub hits_requested: bool,
+    /// `search.matched_by_kind`: per kind, the candidates in the fused list
+    /// before the `k` cut, a lower bound bounded by each list's depth, in
+    /// [`HIT_KINDS`] order, kinds with none left out (ADR-0092 d4).
+    pub matched_by_kind: Vec<(MemoryKind, u64)>,
     /// The workspace node the recall read, resolved.
     pub scope_workspace_id: Uuid,
     pub steering: Vec<ServedMemory>,
