@@ -200,14 +200,27 @@ pub fn skill_uri(workspace: &str, command: &str) -> String {
 }
 
 /// A document's resource URI (ADR-0081 d4, d6): the workspace's name, the
-/// claim key after `doc/`, and `?passage=<fragment>` for one passage. Every
-/// character of a key in d2's grammar is unreserved, so nothing is encoded.
+/// claim key after `doc/`, `version=<n>` for one held version (the review's
+/// reading R10) and `passage=<fragment>` for one passage, the fragment
+/// [`oml_passage::uri_fragment`]'s (R11). Every character of a key in d2's
+/// grammar is unreserved, so nothing is encoded.
 #[must_use]
-pub fn document_uri(workspace: &str, claim_key: &str, passage: Option<&str>) -> String {
+pub fn document_uri(
+    workspace: &str,
+    claim_key: &str,
+    passage: Option<&str>,
+    version: Option<u64>,
+) -> String {
     let path = claim_key.strip_prefix("doc/").unwrap_or(claim_key);
-    match passage {
-        Some(fragment) => format!("oml://workspace/{workspace}/doc/{path}?passage={fragment}"),
-        None => format!("oml://workspace/{workspace}/doc/{path}"),
+    let query: Vec<String> = version
+        .map(|v| format!("version={v}"))
+        .into_iter()
+        .chain(passage.map(|p| format!("passage={p}")))
+        .collect();
+    if query.is_empty() {
+        format!("oml://workspace/{workspace}/doc/{path}")
+    } else {
+        format!("oml://workspace/{workspace}/doc/{path}?{}", query.join("&"))
     }
 }
 
@@ -223,6 +236,8 @@ pub enum ResourceUri {
         /// The claim key after `doc/`.
         path: String,
         passage: Option<String>,
+        /// One version, which a reader allowed to see it may read (R10).
+        version: Option<u64>,
     },
 }
 
@@ -286,17 +301,30 @@ pub fn parse_resource_uri(uri: &str) -> Result<ResourceUri, UriRefusal> {
             if segments.is_empty() {
                 return Err(UriRefusal::NotFound);
             }
-            let passage = match query {
-                None => None,
-                Some(q) => {
-                    let fragment = q.strip_prefix("passage=").ok_or(UriRefusal::NotFound)?;
-                    Some(segment(fragment)?.to_owned())
+            // `version=<n>` and `passage=<fragment>`, each at most once.
+            let (mut passage, mut version) = (None, None);
+            for pair in query.into_iter().flat_map(|q| q.split('&')) {
+                if let Some(fragment) = pair.strip_prefix("passage=")
+                    && passage.is_none()
+                {
+                    passage = Some(segment(fragment)?.to_owned());
+                } else if let Some(n) = pair.strip_prefix("version=")
+                    && version.is_none()
+                {
+                    let n = segment(n)?;
+                    if !n.bytes().all(|b| b.is_ascii_digit()) {
+                        return Err(UriRefusal::NotFound);
+                    }
+                    version = Some(n.parse().map_err(|_| UriRefusal::NotFound)?);
+                } else {
+                    return Err(UriRefusal::NotFound);
                 }
-            };
+            }
             Ok(ResourceUri::Document {
                 workspace,
                 path: segments.join("/"),
                 passage,
+                version,
             })
         }
         _ => Err(UriRefusal::NotFound),

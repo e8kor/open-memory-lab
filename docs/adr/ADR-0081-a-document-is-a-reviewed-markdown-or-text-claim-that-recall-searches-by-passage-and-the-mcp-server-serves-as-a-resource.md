@@ -291,7 +291,7 @@ confirms or changes it, and names the reading or decision it amends.
   allowed to see that version, and reads as absent for any other. Rejected: one URI naming
   whichever version is newest, which served a held edit and its promoted tip under one name.
 - **R11 (d4, d6), 2026-11-18, for the operator's batch.** A passage's URI uses its heading slug
-  only when the slug is non-empty and holds nothing outside `[a-z0-9_-]`; otherwise it uses its
+  only when the slug begins with a letter or a digit and holds nothing outside `[a-z0-9_-]`; otherwise it uses its
   lines, `L<start>-L<end>`. `?passage=` matches either form, so every hit's `uri` is a valid
   RFC 3986 URI and every passage is readable through it, a passage under a Cyrillic, emoji or
   `!!!` heading included. Rejected: percent-encoding the slug, a second spelling of one fragment.

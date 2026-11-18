@@ -7394,12 +7394,21 @@ where
                         heading_path: unit.passage.heading_path,
                     }
                 });
+                // A held version's hit names its version, which a read
+                // honours for a reader allowed to see it (R10); the
+                // fragment is URI text (R11).
                 let uri = passage.as_ref().and_then(|p| {
                     let name = served.workspace_path.as_deref()?.rsplit('.').next()?;
+                    let held = served.memory.status == oml_domain::MemoryStatus::Held;
                     Some(oml_domain::skills::document_uri(
                         name,
                         &served.memory.claim_key,
-                        Some(&p.fragment),
+                        Some(&oml_passage::uri_fragment(
+                            &p.fragment,
+                            p.start_line,
+                            p.end_line,
+                        )),
+                        held.then_some(u64::from(served.memory.version)),
                     ))
                 });
                 hits.push(RecallHit {

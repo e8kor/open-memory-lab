@@ -277,12 +277,17 @@ fn content_span(
 }
 
 /// The fragment a passage's URI names (the review's reading R11 of
-/// 2026-11-18): its heading slug when that is non-empty and holds nothing
-/// outside `[a-z0-9_-]`, else its lines, `L<start>-L<end>`, so every URI is
+/// 2026-11-18): its heading slug when that begins with a letter or a digit
+/// and holds nothing outside `[a-z0-9_-]`, else its lines, `L<start>-L<end>`, so every URI is
 /// RFC 3986 text and every passage is readable through its own.
 #[must_use]
 pub fn uri_fragment(fragment: &str, start_line: usize, end_line: usize) -> String {
-    let safe = !fragment.is_empty()
+    // A slug that begins with `-` or `_` was cut from a heading with no
+    // letter or digit of its own (a repeat suffix of an empty slug).
+    let safe = fragment
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
         && fragment
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_');

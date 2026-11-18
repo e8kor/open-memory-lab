@@ -568,7 +568,7 @@ async fn documents_are_listed_first_and_read_whole_or_by_passage_as_resources() 
     let templates = rpc(&router, &t.writer, "resources/templates/list", json!({})).await;
     assert_eq!(
         templates["resourceTemplates"][0]["uriTemplate"],
-        "oml://workspace/{workspace}/doc{/path*}{?passage}"
+        "oml://workspace/{workspace}/doc{/path*}{?version,passage}"
     );
 }
 
@@ -764,4 +764,332 @@ async fn an_outage_of_the_skills_read_serves_the_guardrails_prompt_alone_and_ans
     assert_eq!(missing["error"]["code"], -32002, "{missing}");
     let got = rpc(&router, &t.writer, "prompts/get", json!({"name": "deploy"})).await;
     assert!(got["messages"][0]["content"]["text"].is_string(), "{got}");
+}
+
+/// A document written over `oml_write` by `token` on the crew workspace;
+/// the write's structured result.
+async fn write_doc(router: &Router, t: &Tenant, token: &str, idem: &str, args: Value) -> Value {
+    let mut arguments = json!({"kind": "document", "idempotency_key": idem, "workspace": t.crew});
+    for (k, v) in args.as_object().expect("arguments") {
+        arguments[k] = v.clone();
+    }
+    if arguments.get("replaces").is_some() {
+        arguments
+            .as_object_mut()
+            .expect("object")
+            .remove("workspace");
+        arguments.as_object_mut().expect("object").remove("kind");
+    }
+    let wrote = rpc(
+        router,
+        token,
+        "tools/call",
+        json!({"name": "oml_write", "arguments": arguments}),
+    )
+    .await;
+    assert_eq!(wrote["isError"], false, "{wrote}");
+    wrote["structuredContent"].clone()
+}
+
+/// A supersession of `id` over the HTTP API, where a document is
+/// superseded and retired in this release; the receipt.
+async fn http_supersede(
+    router: &Router,
+    token: &str,
+    idem: &str,
+    id: &Value,
+    body: Value,
+) -> Value {
+    let (status, receipt) = send(
+        router,
+        "POST",
+        &format!("/v1/memories/{}/supersede", id.as_str().expect("an id")),
+        Some(token),
+        Some(idem),
+        Some(&body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{receipt}");
+    receipt
+}
+
+/// A reader key on the crew workspace, another person's.
+async fn reader(router: &Router, t: &Tenant) -> String {
+    issue(
+        router,
+        &t.admin,
+        json!({"role": "reader", "name": "reader", "principal": "crew/reader",
+               "grants": [{"workspace": t.crew, "role": "reader"}]}),
+    )
+    .await["value"]
+        .as_str()
+        .expect("reader value")
+        .to_owned()
+}
+
+/// A passage under a Cyrillic, an emoji or a punctuation heading is named
+/// by its lines in its hit's URI, every URI is RFC 3986 text, and each is
+/// read through its own URI (the review's reading R11).
+#[tokio::test]
+async fn a_passage_under_a_cyrillic_an_emoji_or_a_punctuation_heading_is_read_through_its_own_uri()
+{
+    let router = doubles_router();
+    let t = tenant(&router).await;
+    let body = "# Field notes\n\nWhat these cover.\n\n## Установка\n\nThe aardvark setup.\n\n\
+                ## 🚀\n\nThe bilby launch.\n\n## !!!\n\nThe cassowary alarm.\n";
+    write_doc(
+        &router,
+        &t,
+        &t.writer,
+        "doc-r11",
+        json!({"text": body, "document": {"title": "Field notes"}}),
+    )
+    .await;
+    approve_next(&router, &t, 1).await;
+    for (word, lines) in [
+        ("aardvark", "L5-L7"),
+        ("bilby", "L9-L11"),
+        ("cassowary", "L13-L15"),
+    ] {
+        let recalled = rpc(
+            &router,
+            &t.writer,
+            "tools/call",
+            json!({"name": "oml_read", "arguments": {"query": word}}),
+        )
+        .await;
+        let hit = &recalled["structuredContent"]["hits"][0];
+        let uri = hit["uri"].as_str().expect("a uri");
+        assert_eq!(
+            uri,
+            format!("oml://workspace/metals-crew/doc/field-notes?passage={lines}"),
+            "{word}"
+        );
+        assert!(
+            uri.chars()
+                .all(|c| c.is_ascii_alphanumeric() || "-._~:/?#[]@!$&'()*+,;=".contains(c)),
+            "{uri} is RFC 3986 text"
+        );
+        let read = rpc(&router, &t.writer, "resources/read", json!({"uri": uri})).await;
+        let text = read["contents"][0]["text"].as_str().expect("text");
+        assert!(text.contains(word), "{word}: {text}");
+    }
+}
+
+/// A held document is listed marked and read only through its version's
+/// URI by a key that may read it; a held edit of a promoted document is
+/// named beside it in the one entry, the bare URI serving the promoted
+/// version; a retired document is neither listed nor read (the review's
+/// reading R10 and finding S4).
+#[tokio::test]
+async fn held_documents_and_edits_are_marked_and_retired_documents_are_neither_listed_nor_read() {
+    let router = doubles_router();
+    let t = tenant(&router).await;
+    let other = reader(&router, &t).await;
+    // R: approved, then retired, the retirement approved.
+    let r = write_doc(
+        &router,
+        &t,
+        &t.writer,
+        "doc-r1",
+        json!({"text": "# Retired\n\nOld text.\n", "document": {"title": "Retired"}}),
+    )
+    .await;
+    approve_next(&router, &t, 1).await;
+    // oml_write supersedes no document in this release.
+    let refused = rpc(
+        &router,
+        &t.writer,
+        "tools/call",
+        json!({"name": "oml_write", "arguments": {"text": "x", "idempotency_key": "doc-r1x",
+               "replaces": r["artifact_id"], "expected_version": 1, "retirement": true}}),
+    )
+    .await;
+    assert_eq!(refused["isError"], true, "{refused}");
+    assert_eq!(
+        refused["structuredContent"]["error"]["details"]["field"],
+        "/kind"
+    );
+    http_supersede(
+        &router,
+        &t.writer,
+        "doc-r2",
+        &r["artifact_id"],
+        json!({"body": "Retired: superseded by the gamma guide.", "expected_version": 1,
+               "retirement": true}),
+    )
+    .await;
+    approve_next(&router, &t, 2).await;
+    // C: approved, then edited (held version 2).
+    let c = write_doc(
+        &router,
+        &t,
+        &t.writer,
+        "doc-c1",
+        json!({"text": "# Gamma\n\nVersion one.\n", "document": {"title": "Gamma"}}),
+    )
+    .await;
+    approve_next(&router, &t, 3).await;
+    let edit = http_supersede(
+        &router,
+        &t.writer,
+        "doc-c2",
+        &c["artifact_id"],
+        json!({"body": "# Gamma\n\nVersion two.\n", "expected_version": 1,
+               "format": "text/markdown"}),
+    )
+    .await;
+    assert_eq!(edit["version"], 2, "{edit}");
+    // H: held only.
+    write_doc(
+        &router,
+        &t,
+        &t.writer,
+        "doc-h1",
+        json!({"text": "# Held\n\nDraft text.\n", "document": {"title": "Held"}}),
+    )
+    .await;
+    let listed = rpc(&router, &t.writer, "resources/list", json!({})).await;
+    let docs: Vec<&Value> = listed["resources"]
+        .as_array()
+        .expect("resources")
+        .iter()
+        .filter(|r| r["name"].as_str().is_some_and(|n| n.starts_with("doc/")))
+        .collect();
+    let gamma: Vec<&&Value> = docs.iter().filter(|d| d["name"] == "doc/gamma").collect();
+    assert_eq!(gamma.len(), 1, "one entry per document: {listed}");
+    assert_eq!(gamma[0]["uri"], "oml://workspace/metals-crew/doc/gamma");
+    let described = gamma[0]["description"].as_str().expect("description");
+    assert!(
+        described.starts_with("Reviewed document in ")
+            && described.contains(
+                "An unreviewed edit, version 2, is held beside it: oml://workspace/metals-crew/doc/gamma?version=2"
+            ),
+        "{described}"
+    );
+    let held = docs
+        .iter()
+        .find(|d| d["name"] == "doc/held")
+        .expect("the held document is listed to its author");
+    assert_eq!(
+        held["uri"],
+        "oml://workspace/metals-crew/doc/held?version=1"
+    );
+    assert!(
+        held["description"]
+            .as_str()
+            .is_some_and(|d| d.starts_with("Unreviewed document in ")),
+        "{held}"
+    );
+    let read = |token: &str, uri: &'static str| {
+        let router = router.clone();
+        let token = token.to_owned();
+        async move { rpc_raw(&router, &token, "resources/read", json!({"uri": uri})).await }
+    };
+    let bare = read(&t.writer, "oml://workspace/metals-crew/doc/gamma").await;
+    assert_eq!(
+        bare["result"]["contents"][0]["text"],
+        "# Gamma\n\nVersion one.\n"
+    );
+    assert_eq!(
+        bare["result"]["contents"][0]["_meta"]["oml"]["unreviewed"],
+        false
+    );
+    let v2 = read(&t.writer, "oml://workspace/metals-crew/doc/gamma?version=2").await;
+    assert_eq!(
+        v2["result"]["contents"][0]["text"],
+        "# Gamma\n\nVersion two.\n"
+    );
+    assert_eq!(
+        v2["result"]["contents"][0]["_meta"]["oml"]["unreviewed"],
+        true
+    );
+    for uri in [
+        "oml://workspace/metals-crew/doc/gamma?version=2",
+        "oml://workspace/metals-crew/doc/held?version=1",
+    ] {
+        let refused = read(&other, uri).await;
+        assert_eq!(
+            refused["error"]["code"], -32002,
+            "another key: {uri}: {refused}"
+        );
+    }
+    let mine = read(&t.writer, "oml://workspace/metals-crew/doc/held?version=1").await;
+    assert_eq!(
+        mine["result"]["contents"][0]["text"],
+        "# Held\n\nDraft text.\n"
+    );
+    assert!(
+        !docs.iter().any(|d| d["name"] == "doc/retired"),
+        "a retired document is not listed: {listed}"
+    );
+    for uri in [
+        "oml://workspace/metals-crew/doc/retired",
+        "oml://workspace/metals-crew/doc/retired?version=1",
+        "oml://workspace/metals-crew/doc/retired?version=2",
+    ] {
+        let gone = read(&t.writer, uri).await;
+        assert_eq!(gone["error"]["code"], -32002, "{uri}: {gone}");
+    }
+}
+
+/// `resources/list` pages 50 documents, then carries on into the skills
+/// under one cursor whose prefix names the list it continues; a cursor
+/// this server did not serve is refused (ADR-0081 d6; the build's reading
+/// R9).
+#[tokio::test]
+async fn resources_list_pages_past_50_documents_into_the_skills_and_refuses_a_forged_cursor() {
+    let router = doubles_router();
+    let t = tenant(&router).await;
+    submit_skill(&router, &t, &t.writer, "deploy", "Run the deploy.").await;
+    approve_next(&router, &t, 1).await;
+    for n in 0..51 {
+        write_doc(
+            &router,
+            &t,
+            &t.writer,
+            &format!("page-doc-{n}"),
+            json!({"text": format!(
+                       "# Page {n}\n\n{}\n",
+                       (0..12_u64).map(|i| format!("w{:x}", (n as u64 + 1) * 7919 * (i + 3) * 104_729)).collect::<Vec<_>>().join(" ")
+                   ),
+                   "document": {"title": format!("Page {n}")}}),
+        )
+        .await;
+        approve_next(&router, &t, u32::try_from(n).expect("small") + 2).await;
+    }
+    let first = rpc(&router, &t.writer, "resources/list", json!({})).await;
+    let first_items = first["resources"].as_array().expect("resources");
+    assert_eq!(first_items.len(), 50, "50 documents a page");
+    assert!(
+        first_items
+            .iter()
+            .all(|r| r["name"].as_str().is_some_and(|n| n.starts_with("doc/")))
+    );
+    let cursor = first["nextCursor"].as_str().expect("a cursor");
+    assert!(cursor.starts_with("doc:"), "{cursor}");
+    let second = rpc(
+        &router,
+        &t.writer,
+        "resources/list",
+        json!({"cursor": cursor}),
+    )
+    .await;
+    let names = names(&second, "resources");
+    assert_eq!(names.len(), 2, "{second}");
+    assert!(names[0].starts_with("doc/page-"), "{names:?}");
+    assert_eq!(
+        names[1], "deploy",
+        "the skills follow the last document page"
+    );
+    for forged in ["doc:not-a-cursor", "elsewhere:1"] {
+        let refused = rpc_raw(
+            &router,
+            &t.writer,
+            "resources/list",
+            json!({"cursor": forged}),
+        )
+        .await;
+        assert!(refused.get("error").is_some(), "{forged}: {refused}");
+    }
 }
