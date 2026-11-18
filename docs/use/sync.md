@@ -57,6 +57,9 @@ against a stand-in that refuses the options git 2.30 added; it has not been run 
 - A changed adapter or exclude set needs `--change-adapter` or `--change-exclude`.
 - A file whose name matches a secret pattern (`.env*`, `*.pem`, `*id_*`, `*credentials*`) is
   reported `unreadable` and skipped.
+- With `--adapter document`, a file that cuts into more than 4,096 passages is reported
+  `unreadable`, in a `--dry-run` as in a run, and nothing is written for it; the server would
+  refuse it as `too_many_passages`.
 
 No measurement exists of whether a reviewer catches a wrong extraction in a batch of 200. All flags are
 in the [CLI reference](../cli/reference.md).
