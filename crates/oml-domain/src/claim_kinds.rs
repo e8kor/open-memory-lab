@@ -175,9 +175,15 @@ pub fn skill_claim_key(name: &str) -> String {
     format!("skill/{name}")
 }
 
-/// Whether `title` may title a document: one line of 1 to 200 characters
-/// (ADR-0081 d1).
+/// Whether `title` may title a document: one line of 1 to 200 characters,
+/// none of them a [`hidden_character`] (ADR-0081 d1; R12 of 2026-11-18).
 pub fn check_document_title(title: &str) -> Result<(), FieldRefusal> {
+    if title.chars().any(hidden_character) {
+        return Err(refused(
+            "/document/title",
+            "a document title holds no control, bidi override or zero-width character",
+        ));
+    }
     if one_line(title, DOCUMENT_TITLE_MAX) {
         Ok(())
     } else {
@@ -217,16 +223,27 @@ pub fn check_document_key(key: &str) -> Result<(), FieldRefusal> {
 }
 
 /// A document's title when it sends none: the first level-1 heading of a
-/// markdown body (ADR-0081 d1), cut to 200 characters at a character
-/// boundary so it meets the title's bound. `None` when there is none; the
-/// caller then takes the claim key's last segment.
+/// markdown body as the passage rule reads it (ADR-0081 d1; R12 of
+/// 2026-11-18), outside fences, HTML comments and front matter, its
+/// markdown read as plain text, cut to 200 characters, every
+/// [`hidden_character`] stripped. `None` when no such heading holds a
+/// visible character; the caller then takes the claim key's last segment.
 #[must_use]
 pub fn markdown_title(body: &str) -> Option<String> {
-    body.lines()
-        .filter_map(|line| line.strip_prefix("# "))
-        .map(str::trim)
+    let lines = oml_passage::markdown::lines(body);
+    let mask = oml_passage::markdown::content_mask(&lines);
+    oml_passage::headings(&lines, &mask)
+        .into_iter()
+        .filter(|h| h.level == 1)
+        .map(|h| {
+            let visible: String = h.text.chars().filter(|c| !hidden_character(*c)).collect();
+            visible
+                .trim()
+                .chars()
+                .take(DOCUMENT_TITLE_MAX)
+                .collect::<String>()
+        })
         .find(|title| !title.is_empty())
-        .map(|title| title.chars().take(DOCUMENT_TITLE_MAX).collect())
 }
 
 /// The document key derived from a title, by ADR-0057 d7's rule
