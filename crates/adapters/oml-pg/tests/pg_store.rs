@@ -13381,3 +13381,227 @@ async fn a_recall_of_k_10_answers_10_hits_beside_a_document_of_30_matching_passa
     }
     drop_dbs(&created).await;
 }
+
+/// Migrations 0059 and 0060 over a database at 0058 that holds a document
+/// version (ADR-0081 d4; the review's reading R14): 0059 keeps the fold's
+/// trigger and refills nothing, 0060 runs outside a transaction and
+/// rebuilds the served index on every partition with the ordinal, valid,
+/// validates the kind check, and the startup cut gives the document its
+/// passages, counted once in `rows` and once per passage in `units`, with
+/// no drift, and searched by passage.
+#[tokio::test]
+async fn migrations_0059_and_0060_apply_over_0058_with_a_document_row_and_count_it_once() {
+    let sql = |v: i64| {
+        MIGRATOR
+            .iter()
+            .find(|m| m.version == v)
+            .expect("migration")
+            .sql
+            .to_string()
+    };
+    let (m59, m60) = (sql(59), sql(60));
+    assert!(
+        !m59.contains("DROP TRIGGER") && !m59.contains("CREATE TRIGGER memories_search_postings"),
+        "0059 replaces the fold's function and keeps its trigger"
+    );
+    assert!(!m59.contains("oml_search_postings_refill(t)"), "0059 refills nothing");
+    assert!(m59.contains("NOT VALID"), "0059 adds the kind check unvalidated");
+    assert!(m60.starts_with("-- no-transaction"), "0060 runs outside a transaction");
+    for shape in [
+        "SET LOCAL lock_timeout = '5s'",
+        "ATTACH PARTITION",
+        "COMMIT;",
+        "VALIDATE CONSTRAINT search_postings_memory_kind",
+        "m.kind = 'document'",
+    ] {
+        assert!(m60.contains(shape), "0060 lacks {shape:?}");
+    }
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (db, mut conn) = schema_through(&created, 58).await;
+    let store = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
+    let mut rig = ChainRig::new(596);
+    rig.seed_chain(&store, 0).await;
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0xE2);
+    let other = Uuid::from_u128(0xE5);
+    let doc = Uuid::from_u128(0xF71);
+    for (id, body) in [
+        (0xF72_u128, "the kangaroo pen is cleaned daily"),
+        (0xF73, "the wombat burrow is checked weekly"),
+        (
+            0xF71,
+            "# Kangaroo guide\n\nWhat the guide covers.\n\n## Feeding\n\n\
+             The kangaroo eats grass.\n\n## Sleeping\n\nThe kangaroo sleeps by day.\n",
+        ),
+    ] {
+        oml_port_contracts::hold_and_promote(
+            &mut rig,
+            &store,
+            held_memory(tenant, wa, Uuid::from_u128(id), "rita", other, body),
+        )
+        .await;
+    }
+    // A document version as a build before 0059 stored it: its row, no
+    // passage, no posting.
+    let mut owner = PgConnection::connect(&owner_url(&db))
+        .await
+        .expect("owner connect");
+    let mut tx = owner.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    sqlx::query(
+        "UPDATE memories SET kind = 'document', document_title = 'Kangaroo guide', format = 'text/markdown', \
+                claim_key = 'doc/kangaroo-guide' WHERE tenant_id = $1 AND id = $2",
+    )
+    .bind(tenant)
+    .bind(doc)
+    .execute(&mut *tx)
+    .await
+    .expect("a document row at 0058");
+    tx.commit().await.expect("commit");
+    drop(owner);
+    // Two leads starting at once: the migrator's lock orders the files,
+    // and each tenant's cut takes its chain lock, so neither start fails.
+    let second = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
+    let url = owner_url(&db);
+    let (one, two) = tokio::join!(store.migrate(&url), second.migrate(&url));
+    one.expect("0059 and 0060 apply over a document row");
+    two.expect("a second lead starting at once applies nothing and cuts nothing twice");
+    let applied: i64 =
+        sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations WHERE success")
+            .fetch_one(&mut conn)
+            .await
+            .expect("versions");
+    assert_eq!(applied, 60);
+    let (partitions, attached, valid, carries, validated): (i64, i64, bool, bool, bool) =
+        sqlx::query_as(
+            "SELECT (SELECT count(*) FROM pg_inherits WHERE inhparent = 'search_postings'::regclass), \
+                    (SELECT count(*) FROM pg_inherits WHERE inhparent = 'search_postings_served'::regclass), \
+                    (SELECT indisvalid FROM pg_index WHERE indexrelid = 'search_postings_served'::regclass), \
+                    EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'search_postings_served'::regclass \
+                                                        AND attname = 'ordinal'), \
+                    (SELECT convalidated FROM pg_constraint WHERE conname = 'search_postings_memory_kind' \
+                                                              AND conrelid = 'search_postings'::regclass)",
+        )
+        .fetch_one(&mut conn)
+        .await
+        .expect("the index and the check");
+    assert!(partitions >= 1, "the seeded tenant has a partition");
+    assert_eq!(attached, partitions, "one served index per partition, attached");
+    assert!(valid && carries, "the served index is valid and carries the ordinal");
+    assert!(validated, "the kind check is validated");
+    let mut tx = conn.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    let passages: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM document_passages WHERE memory_id = $1")
+            .bind(doc)
+            .fetch_one(&mut *tx)
+            .await
+            .expect("passages");
+    assert_eq!(passages, 3, "the startup cut gives the document its passages");
+    let (rows, units): (i64, i64) = sqlx::query_as(
+        "SELECT rows::int8, units FROM search_workspace_rows \
+          WHERE tenant_id = $1 AND kind = 1 AND memory_kind = 3",
+    )
+    .bind(tenant)
+    .fetch_one(&mut *tx)
+    .await
+    .expect("the document's counts");
+    assert_eq!((rows, units), (1, 3), "one version, three units");
+    let df: i64 = sqlx::query_scalar(
+        "SELECT rows::int8 FROM search_term_rows WHERE tenant_id = $1 AND kind = 1 \
+            AND memory_kind = 3 AND token_id = $2",
+    )
+    .bind(tenant)
+    .bind(oml_pg::token_id("kangaroo"))
+    .fetch_one(&mut *tx)
+    .await
+    .expect("kangaroo's count");
+    assert_eq!(df, 1, "the document holds kangaroo once however many passages do");
+    tx.rollback().await.expect("rollback");
+    let health = store
+        .postings_health(tenant)
+        .await
+        .expect("health")
+        .expect("a partition");
+    assert_eq!(
+        (health.unfilled, health.served_behind, health.workspace_drift, health.term_drift),
+        (0, 0, 0, 0),
+        "{health:?}"
+    );
+    let found = store
+        .retrieve(
+            tenant,
+            RetrieverKind::Bm25Postings,
+            &oml_app::search::CandidateScope {
+                reference: None,
+                anchor: oml_app::types::AnchorFilter::default(),
+                promoted_nodes: vec![wa],
+                kinds: vec![MemoryKind::Memory, MemoryKind::DerivedFact, MemoryKind::Document],
+                own_held: None,
+                expired_at: None,
+                as_of: None,
+            },
+            oml_app::search::RetrievalQuery {
+                query: "kangaroo",
+                match_mode: oml_app::search::MatchMode::Any,
+                k: 10,
+                sparse: &[],
+                window: None,
+                within: &[],
+            },
+        )
+        .await
+        .expect("retrieve");
+    let d = found
+        .candidates
+        .iter()
+        .find(|c| c.memory_id == doc)
+        .expect("the document is found");
+    assert!(d.ordinal >= 0, "by passage");
+    // The title is in every passage's search text (R2), so all three say it.
+    assert_eq!(d.more_passages, 2, "every passage says kangaroo");
+    assert_eq!(health.documents_uncut, 0, "every document is cut");
+    // A version whose passages are gone is named by doctor.
+    let mut owner = PgConnection::connect(&owner_url(&db))
+        .await
+        .expect("owner connect");
+    let mut tx = owner.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    sqlx::query("DELETE FROM document_passages WHERE tenant_id = $1 AND memory_id = $2")
+        .bind(tenant)
+        .bind(doc)
+        .execute(&mut *tx)
+        .await
+        .expect("drop the passages");
+    tx.commit().await.expect("commit");
+    drop(owner);
+    let health = store
+        .postings_health(tenant)
+        .await
+        .expect("health")
+        .expect("a partition");
+    assert_eq!(health.documents_uncut, 1, "doctor names the uncut document");
+    drop(conn);
+    drop_dbs(&created).await;
+}

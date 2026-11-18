@@ -6834,6 +6834,15 @@ fn postings_doctor(recall_counts: Option<(u64, u64)>, settings: Option<&Value>) 
             n("similar_drift")
         ));
     }
+    // A document version with no passage is searched whole (ADR-0081 d3,
+    // d4); a server before 0059 sends no such field.
+    if n("documents_uncut") > 0 {
+        lines.push(format!(
+            "warn search: {} document version{} have no passages, so recall reads each whole: one written before migration 0059 is cut when the lead restarts; one whose text holds no passage stays whole",
+            n("documents_uncut"),
+            if n("documents_uncut") == 1 { "" } else { "s" },
+        ));
+    }
     let faulty = h["partition"] != Value::Bool(true)
         || h["similar_partition"] == Value::Bool(false)
         || n("similar_unfilled") > 0
@@ -7153,6 +7162,27 @@ fn verdict(ok: bool) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn doctor_names_document_versions_with_no_passages() {
+        let settings = serde_json::json!({"postings": {
+            "partition": true, "similar_partition": true, "terms_checked": 4,
+            "documents_uncut": 2,
+        }});
+        let lines = super::postings_doctor(None, Some(&settings));
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.starts_with("warn search: 2 document versions have no passages")),
+            "{lines:?}"
+        );
+        let clean = serde_json::json!({"postings": {
+            "partition": true, "similar_partition": true, "terms_checked": 4,
+            "documents_uncut": 0,
+        }});
+        let lines = super::postings_doctor(None, Some(&clean));
+        assert!(!lines.iter().any(|l| l.contains("no passages")), "{lines:?}");
+    }
+
     use super::*;
 
     #[test]

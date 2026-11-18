@@ -735,6 +735,11 @@ pub struct PostingsHealth {
     /// Versions whose similar keys hold another state than theirs, or
     /// that should hold none.
     pub similar_drift: u64,
+    /// Document versions in a searched state with no passage cut
+    /// (ADR-0081 d3, d4): written before migration 0059 and not cut since,
+    /// so each is one whole-version unit until the lead cuts it at
+    /// startup, or a text that holds no passage (R1).
+    pub documents_uncut: u64,
 }
 
 /// The tenant's valid time for doctor (proposed ADR-0059 d12): its served

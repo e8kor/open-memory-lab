@@ -1720,7 +1720,10 @@ const POSTINGS_HEALTH: &str = "WITH v AS ( \
             SELECT 1 FROM search_term_rows c WHERE c.tenant_id = $1 AND c.kind = 1 \
                AND c.workspace_id = t.workspace_id AND c.memory_kind = t.memory_kind \
                AND c.token_id = t.token_id)))::int8 AS term_drift, \
-       ((SELECT count(*) FROM sampled) + (SELECT count(*) FROM posted))::int8 AS terms_checked";
+       ((SELECT count(*) FROM sampled) + (SELECT count(*) FROM posted))::int8 AS terms_checked, \
+       (SELECT count(*) FROM v WHERE v.kind = 'document' AND v.state IS NOT NULL \
+           AND NOT EXISTS (SELECT 1 FROM document_passages d \
+                            WHERE d.tenant_id = $1 AND d.memory_id = v.id))::int8 AS documents_uncut";
 
 /// A lexeme's posting id, as `oml_token_id` computes it in SQL: the first
 /// eight bytes of SHA-256 over its UTF-8 bytes, a signed big-endian integer
@@ -3350,6 +3353,16 @@ async fn ensure_document_passages(owner: &PgPool) -> Result<u64, StoreError> {
     for tenant_id in tenants {
         let mut tx = owner.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
+        // The tenant's chain lock, which the refill takes too: a second lead
+        // starting at once waits here, then finds the passages cut.
+        sqlx::query(
+            "SELECT pg_advisory_xact_lock( \
+                 ('x' || encode(substr(sha256(uuid_send($1)), 1, 8), 'hex'))::bit(64)::bigint)",
+        )
+        .bind(tenant_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
         let rows = sqlx::query(&format!(
             "SELECT {MEMORY_COLUMNS} FROM memories m WHERE m.tenant_id = $1 \
                AND m.kind = 'document' AND NOT m.retirement AND m.status <> 'erased' \
@@ -6989,6 +7002,7 @@ impl Retriever for PgStore {
             similar_partition: similar.0,
             similar_unfilled: u64::try_from(similar.1).map_err(backend)?,
             similar_drift: u64::try_from(similar.2).map_err(backend)?,
+            documents_uncut: count("documents_uncut")?,
         }))
     }
 
