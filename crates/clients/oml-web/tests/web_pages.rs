@@ -5091,7 +5091,7 @@ async fn the_admin_memory_page_shows_the_scan_finding_the_persons_page_shows() {
         "{page}"
     );
     assert!(
-        page.contains("Read here as <code>boss-admin</code>, which never judges. Judge it in Review as <code>boss-review</code>."),
+        page.contains("Read here as <code>boss-admin</code>, which never judges. Judge it in To do as <code>boss-review</code>."),
         "{page}"
     );
 }
