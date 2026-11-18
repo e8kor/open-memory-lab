@@ -66,6 +66,10 @@ commitment about the design, enforced by nothing until the conformance work the
   (migration 0056). A version the lake writer has not keyed yet gets its destroyed row from the
   lake writer when it folds the same `lifecycle.erase`, as it does today: the outbox is drained in
   order, so it keys a version, if ever, before it reads that version's erase, and never after.)*
+  *(Note 2026-11-18: migration 0057's guard on `artifact_keys` refuses a destruction whose
+  `destroyed_at` is not `now()`, the time of the transaction that makes it. Any later path that
+  destroys a key by UPDATE, such as the ADR-0090 rebuild replaying erases, stamps `now()` or takes
+  a named exemption in a migration of its own; it never writes a replayed time into a live row.)*
 
 - **d3 — The guarantee is scoped to body and attachment bytes, and the scope is stated wherever
   the guarantee is.** What DEK destruction makes unreadable is the plaintext of the body and the

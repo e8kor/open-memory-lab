@@ -385,7 +385,9 @@ pub enum MetadataFold {
     },
     /// `lifecycle.demote`: `memory_id`, a promoted version, becomes
     /// `demoted` and stops being the tip, and `restored`, when named,
-    /// becomes the tip again. The store compare-and-sets what the demotion
+    /// becomes the tip again. The version `memory_id` replaces, while
+    /// promoted, gets back the end it had before `memory_id`'s ratification
+    /// gave it one, whichever version is the tip. The store compare-and-sets what the demotion
     /// read: `memory_id` is promoted; with `restored`, it is the tip and
     /// `restored` is the greatest promoted version of its claim below it,
     /// not the tip; without, it is not the tip or no promoted version of its
@@ -1293,6 +1295,16 @@ pub trait JournalStore: Retriever + Send + Sync {
         own_key_ids: &[Uuid],
         reads_promoted: bool,
     ) -> impl Future<Output = Result<Option<u32>, StoreError>> + Send;
+
+    /// The end `memory_id` had before a ratified supersession replaced it:
+    /// `None` when no ratification gave it its end, `Some(None)` for an
+    /// open end. A demotion of the successor gives it back and names it in
+    /// its event (`memories.valid_until_before`, 0058; ADR-0089 d16).
+    fn valid_until_before(
+        &self,
+        tenant_id: Uuid,
+        memory_id: Uuid,
+    ) -> impl Future<Output = Result<Option<Option<oml_domain::valid_time::ValidEnd>>, StoreError>> + Send;
 
     /// Every version of `claim_key` in the workspace, in any state, by
     /// `version` ascending: what a demotion reads for the version it

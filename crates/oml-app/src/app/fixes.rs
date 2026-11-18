@@ -13,6 +13,7 @@
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+use oml_domain::valid_time::ValidEnd;
 use oml_domain::{MemoryKind, MemoryStatus, Role, SignedEnvelope, event_types, transition};
 
 use super::{App, commit_request, require_role};
@@ -110,8 +111,32 @@ where
         } else {
             None
         };
+        // The version it replaced gets back the end it had before this
+        // version's ratification; the event names both, so a rebuild reads
+        // them rather than infers them (ADR-0089 d16, note of 2026-11-18).
+        let reopened = match memory.replaces {
+            Some(r)
+                if self
+                    .journal
+                    .memory(tenant_id, r)
+                    .await?
+                    .is_some_and(|m| m.status == MemoryStatus::Promoted) =>
+            {
+                self.journal
+                    .valid_until_before(tenant_id, r)
+                    .await?
+                    .map(|before| (r, before))
+            }
+            _ => None,
+        };
         let prev = self.head_event(tenant_id).await?;
-        let event = self.demote_event(prev.as_ref(), &admin, &memory, restored.as_ref())?;
+        let event = self.demote_event(
+            prev.as_ref(),
+            &admin,
+            &memory,
+            restored.as_ref(),
+            reopened.as_ref(),
+        )?;
         let journal_seq = event.envelope.seq;
         let fold = MetadataFold::MemoryDemoted {
             memory_id,
@@ -182,6 +207,7 @@ where
         admin: &KeyRecord,
         memory: &MemoryRecord,
         restored: Option<&MemoryRecord>,
+        reopened: Option<&(Uuid, Option<ValidEnd>)>,
     ) -> Result<SignedEnvelope, AppError> {
         self.seal(
             prev,
@@ -196,6 +222,8 @@ where
                 "claim_key": memory.claim_key,
                 "restored_artifact_id": restored.map(|r| r.memory_id.to_string()),
                 "restored_version": restored.map(|r| r.version),
+                "reopened_artifact_id": reopened.map(|(id, _)| id.to_string()),
+                "restored_valid_until": reopened.and_then(|(_, end)| end.as_ref().map(ValidEnd::as_str)),
                 "demoted_by_key_id": admin.key_id.to_string(),
             }),
         )

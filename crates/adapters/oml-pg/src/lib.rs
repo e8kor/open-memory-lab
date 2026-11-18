@@ -3408,19 +3408,28 @@ async fn demote_memory(
     if demoted.rows_affected() != 1 {
         return Err(moved());
     }
+    // The version it replaced, still promoted, gets back the end it had
+    // before this version's ratification, whichever version is the tip
+    // (0058; ADR-0089 d16, note of 2026-11-18).
+    sqlx::query(
+        "UPDATE memories r SET valid_until = r.valid_until_before, \
+                valid_until_us = r.valid_until_before_us, valid_until_ratified = false, \
+                valid_until_before = NULL, valid_until_before_us = NULL \
+           FROM memories d \
+          WHERE d.tenant_id = $1 AND d.id = $2 \
+            AND r.tenant_id = $1 AND r.id = d.replaces_artifact_id \
+            AND r.status = 'promoted' AND r.valid_until_ratified",
+    )
+    .bind(tenant_id)
+    .bind(memory_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
     if let Some(restored) = restored {
         // `memories_served_tip` admits it: the demoted version left the tip
         // in the statement above.
-        // It gets back the end it had before the supersession this undoes
-        // (0058; ADR-0089 d16, note of 2026-11-18).
         let back = sqlx::query(
-            "UPDATE memories SET is_tip = true, \
-                    valid_until = CASE WHEN valid_until_ratified \
-                                       THEN valid_until_before ELSE valid_until END, \
-                    valid_until_us = CASE WHEN valid_until_ratified \
-                                          THEN valid_until_before_us ELSE valid_until_us END, \
-                    valid_until_ratified = false, valid_until_before = NULL, \
-                    valid_until_before_us = NULL \
+            "UPDATE memories SET is_tip = true \
               WHERE tenant_id = $1 AND id = $2 AND status = 'promoted' AND NOT is_tip",
         )
         .bind(tenant_id)
@@ -8435,6 +8444,26 @@ impl JournalStore for PgStore {
                     .map_err(|_| StoreError::Backend(format!("stored version {v} is negative")))
             })
             .transpose()
+    }
+
+    async fn valid_until_before(
+        &self,
+        tenant_id: Uuid,
+        memory_id: Uuid,
+    ) -> Result<Option<Option<ValidEnd>>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let row: Option<(Option<String>, Option<i64>)> = sqlx::query_as(
+            "SELECT valid_until_before, valid_until_before_us FROM memories \
+              WHERE tenant_id = $1 AND id = $2 AND valid_until_ratified",
+        )
+        .bind(tenant_id)
+        .bind(memory_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(row.map(|(text, micros)| text.zip(micros).map(|(t, m)| ValidEnd::from_stored(t, m))))
     }
 
     async fn claim_versions(

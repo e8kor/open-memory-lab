@@ -2055,14 +2055,23 @@ fn apply_fold(
                 memory.status = MemoryStatus::Demoted;
                 memory.is_tip = false;
             }
+            // The version it replaced, still promoted, gets back the end it
+            // had before this version's ratification, tip or not (ADR-0089
+            // d16, note of 2026-11-18).
+            if let Some(replaced) = demoted.replaces
+                && state
+                    .memories
+                    .get(&replaced)
+                    .is_some_and(|m| m.status == MemoryStatus::Promoted)
+                && let Some(before) = state.valid_until_before.remove(&replaced)
+                && let Some(memory) = state.memories.get_mut(&replaced)
+            {
+                memory.valid.until = before;
+            }
             if let Some(r) = restored
                 && let Some(memory) = state.memories.get_mut(&r)
             {
                 memory.is_tip = true;
-                // The end it had before the supersession this undoes.
-                if let Some(before) = state.valid_until_before.remove(&r) {
-                    memory.valid.until = before;
-                }
             }
         }
         MetadataFold::ClaimErased { memory_ids } => {
@@ -3772,6 +3781,21 @@ impl JournalStore for MemStore {
             })
             .map(|m| m.version)
             .max())
+    }
+
+    async fn valid_until_before(
+        &self,
+        tenant_id: Uuid,
+        memory_id: Uuid,
+    ) -> Result<Option<Option<oml_domain::valid_time::ValidEnd>>, StoreError> {
+        Ok(self.tenant_existing(tenant_id).and_then(|tenant| {
+            tenant
+                .lock()
+                .expect("tenant lock")
+                .valid_until_before
+                .get(&memory_id)
+                .cloned()
+        }))
     }
 
     async fn claim_versions(

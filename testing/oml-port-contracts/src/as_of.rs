@@ -240,6 +240,19 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
         body: &str,
         retirement: bool,
     ) -> Uuid {
+        self.supersede_from(target, expected, body, retirement, None)
+            .await
+    }
+
+    /// [`Self::supersede`], the successor declaring `valid_from`.
+    pub async fn supersede_from(
+        &self,
+        target: Uuid,
+        expected: u32,
+        body: &str,
+        retirement: bool,
+        valid_from: Option<&str>,
+    ) -> Uuid {
         let n = self.idem.fetch_add(1, Ordering::Relaxed);
         let id = self
             .app
@@ -259,7 +272,7 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
                     severity: None,
                     rule: None,
                     kind_fields: None,
-                    valid_from: None,
+                    valid_from: valid_from.map(ToOwned::to_owned),
                     valid_until: None,
                     anchor: None,
                     format: None,
@@ -719,39 +732,15 @@ pub async fn a_demotion_restores_the_end_the_version_had_before_its_supersession
     let v1 = w
         .promote(w.home, "lease", "the lease renews every month")
         .await;
-    let n = w.idem.fetch_add(1, Ordering::Relaxed);
     let v2 = w
-        .app
-        .supersede(
-            w.writer.value.as_str(),
-            &SupersedeRequest {
-                idempotency_key: format!("asof-s-{n}"),
-                on_similar: Default::default(),
-                target_id: v1,
-                body: "the lease renews every quarter".to_owned(),
-                kind: None,
-                retirement: false,
-                derives_from: Vec::new(),
-                reason: None,
-                workspace: None,
-                refuse_vocabulary_target: false,
-                severity: None,
-                rule: None,
-                kind_fields: None,
-                valid_from: Some("2020-01-01".to_owned()),
-                valid_until: None,
-                anchor: None,
-                format: None,
-                title: None,
-                origin: None,
-                expected_version: 1,
-            },
+        .supersede_from(
+            v1,
+            1,
+            "the lease renews every quarter",
+            false,
+            Some("2020-01-01"),
         )
-        .await
-        .expect("supersede")
-        .receipt
-        .memory_id;
-    w.approve(v2).await;
+        .await;
     for &search in &w.searches {
         assert_eq!(
             w.hits(&w.reader, "lease renews", search, None, false).await,
@@ -789,6 +778,53 @@ pub async fn a_demotion_restores_the_end_the_version_had_before_its_supersession
     );
     let restored = store.memory(w.tenant, v1).await.expect("read").expect("v1");
     assert!(restored.valid.until.is_none(), "v1's end is open again");
+}
+
+/// A demotion of a version below the tip restores the end that version's
+/// ratification gave the version it replaced (ADR-0089 d16, note of
+/// 2026-11-18): `v2` supersedes the open `v1` with a `valid_from` in the
+/// past, `v3` supersedes `v2`, and demoting `v2` leaves `v1` open again, so
+/// an as-of read in `v2`'s tenure serves `v1` in its place.
+pub async fn demoting_a_version_below_the_tip_restores_the_end_its_ratification_gave_the_version_it_replaced<
+    S: JournalStore + Clone,
+>(
+    store: S,
+    searches: &[&str],
+) {
+    let w = AsOfWorld::new(store.clone(), searches).await;
+    let v1 = w
+        .promote(w.home, "rota", "the rota rotates every week")
+        .await;
+    let v2 = w
+        .supersede_from(
+            v1,
+            1,
+            "the rota rotates every fortnight",
+            false,
+            Some("2020-01-01"),
+        )
+        .await;
+    let t2 = w.instant();
+    let v3 = w
+        .supersede(v2, 2, "the rota rotates every month", false)
+        .await;
+    let demotion = w
+        .app
+        .demote_version(w.admin.as_str(), v2)
+        .await
+        .expect("demote v2, below the tip");
+    assert_eq!(demotion.restored, None, "the tip does not move");
+    for &search in &w.searches {
+        let at = |t| w.hits(&w.reader, "rota rotates", search, t, false);
+        assert_eq!(
+            at(Some(&t2)).await,
+            one(v1),
+            "{search}: v1 stands in for v2 in v2's tenure"
+        );
+        assert_eq!(at(None).await, one(v3), "{search}: v3 is today's tip");
+    }
+    let replaced = store.memory(w.tenant, v1).await.expect("read").expect("v1");
+    assert!(replaced.valid.until.is_none(), "v1's end is open again");
 }
 
 /// `a_retired_claim_serves_its_earlier_tip_before_the_retirement_and_nothing_after`.
@@ -1164,4 +1200,9 @@ where
         .await;
     a_demotion_restores_the_end_the_version_had_before_its_supersession(make().await, searches)
         .await;
+    demoting_a_version_below_the_tip_restores_the_end_its_ratification_gave_the_version_it_replaced(
+        make().await,
+        searches,
+    )
+    .await;
 }

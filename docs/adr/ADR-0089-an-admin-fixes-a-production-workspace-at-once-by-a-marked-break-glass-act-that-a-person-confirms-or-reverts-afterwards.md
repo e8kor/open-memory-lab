@@ -307,15 +307,20 @@ Decided, not built.
     already read.
   - **Notes of 2026-11-18, the coordinator's readings for the operator's batch (#454, #455).**
     Each is built as stated unless it says otherwise; the operator confirms, widens or reverses it.
-    - **A restored tip gets back the end it had before the supersession.** A ratified
+    - **A replaced version gets back the end it had before the supersession.** A ratified
       supersession whose successor declares a start ends the version it replaces there
-      (ADR-0059 d4). Demoting that successor returns the version as the tip with the end it had
-      before the ratification, an open end staying open, so recall does not hide it as expired.
+      (ADR-0059 d4). Demoting that successor gives the replaced version, while it is still
+      approved, the end it had before the ratification, an open end staying open, whether the
+      successor was the tip or a version below it: recall does not hide a restored tip as
+      expired, and an as-of read in the demoted version's tenure serves the version below it.
+      `lifecycle.demote` names that version and its end (`reopened_artifact_id`,
+      `restored_valid_until`), so a rebuild reads them.
       Each store keeps that earlier end when a ratification replaces it: PostgreSQL in
       `memories.valid_until_ratified` and `valid_until_before` (migration 0058). A version a
       ratification ended before 0058 keeps the end it has when restored. The law
-      `a_demotion_restores_the_end_the_version_had_before_its_supersession` holds it over both
-      stores, today and at an instant before the demotion.
+      `a_demotion_restores_the_end_the_version_had_before_its_supersession` and
+      `demoting_a_version_below_the_tip_restores_the_end_its_ratification_gave_the_version_it_replaced`
+      hold it over both stores, today and at instants before the demotion.
     - **A retirement and a vocabulary term are not demoted.** A demotion of a retirement version
       or of a `term`, `term_mapping` or `vocab_release` version is refused, naming
       `lifecycle.demote_kind_unsupported`, and journals nothing: returning a retired claim to
