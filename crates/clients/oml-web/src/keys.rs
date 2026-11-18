@@ -306,7 +306,7 @@ pub(crate) fn table(
 }
 
 /// This process's clock, in Unix seconds.
-fn unix_now() -> i64 {
+pub(crate) fn unix_now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
@@ -321,6 +321,32 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let doy = (153 * mp + 2) / 5 + d - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     era * 146_097 + doe - 719_468
+}
+
+/// The civil date of `days` after 1970-01-01 (proleptic Gregorian), the
+/// inverse of [`days_from_civil`].
+const fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    (yoe + era * 400 + if m <= 2 { 1 } else { 0 }, m, d)
+}
+
+/// Unix seconds as `YYYY-MM-DDTHH:MM:SSZ`, the instant a query sends.
+pub(crate) fn rfc3339(unix: i64) -> String {
+    let (y, m, d) = civil_from_days(unix.div_euclid(86_400));
+    let secs = unix.rem_euclid(86_400);
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
+        secs / 3_600,
+        secs % 3_600 / 60,
+        secs % 60
+    )
 }
 
 /// `YYYY-MM-DDTHH:MM:SS[.fraction]Z` as Unix seconds; `None` for any other
@@ -928,6 +954,16 @@ pub async fn admin_act(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_instant_sent_in_a_query_reads_back_as_the_same_unix_second() {
+        assert_eq!(rfc3339(0), "1970-01-01T00:00:00Z");
+        assert_eq!(rfc3339(1_794_392_400), "2026-11-11T10:20:00Z");
+        assert_eq!(rfc3339(951_782_400), "2000-02-29T00:00:00Z");
+        for unix in [-86_401, 59, 951_868_799, 1_794_392_400, 4_102_444_799] {
+            assert_eq!(unix_of(&rfc3339(unix)), Some(unix), "{unix}");
+        }
+    }
 
     #[test]
     fn a_connect_codes_expiry_reads_as_minutes_left_and_its_utc_clock_time() {

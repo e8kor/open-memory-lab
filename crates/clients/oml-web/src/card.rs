@@ -48,6 +48,10 @@ use crate::keys::instant;
 use crate::picker::Roots;
 use serde_json::{Value, json};
 
+/// The Personal side's Judge page, which #412 builds; the admin Held view
+/// links each held row to it (ADR-0083 d2, d5).
+pub(crate) const TODO_JUDGE_PATH: &str = "/web/todo/judge";
+
 /// The states the admin read names a version by.
 const ADMIN_STATES: &[&str] = &["held", "promoted", "rejected", "superseded", "demoted"];
 
@@ -123,6 +127,7 @@ pub(crate) fn row_state(state: &str, tip: bool) -> &'static str {
         "promoted" if tip => "promoted",
         "promoted" => "superseded",
         "rejected" => "rejected",
+        "withdrawn" => "withdrawn",
         _ => "demoted",
     }
 }
@@ -382,6 +387,12 @@ pub(crate) struct Card {
     /// offers Withdraw, which opens its confirmation (ADR-0083 d13, note of
     /// 2026-11-17).
     withdraw: bool,
+    /// Submitted's one plain sentence, markup, after the head (ADR-0083
+    /// d3).
+    lead: Option<String>,
+    /// The admin Held row's link to Judge on the Personal side, as the
+    /// person's reviewer key this names (ADR-0083 d5).
+    judge_as: Option<String>,
 }
 
 impl Card {
@@ -436,6 +447,8 @@ impl Card {
             digest: m.plaintext_digest.clone(),
             same_user: false,
             withdraw: false,
+            lead: None,
+            judge_as: None,
         }
     }
 
@@ -443,6 +456,52 @@ impl Card {
     pub(crate) fn withdrawable(self) -> Self {
         Self {
             withdraw: self.state == "held",
+            ..self
+        }
+    }
+
+    /// The card as Submitted lists it, led by its one plain sentence: a
+    /// row of the person's own, so a held one offers Withdraw (ADR-0083 d3,
+    /// d13).
+    pub(crate) fn submitted(self) -> Self {
+        let lead = self.submitted_lead();
+        Self {
+            lead: Some(lead),
+            ..self.withdrawable()
+        }
+    }
+
+    /// Submitted's sentence, by state, from what the listing serves: the
+    /// version a held edit or retirement replaces, and the approval's day
+    /// and claim. A rejection's or a withdrawal's day is not served to the
+    /// author, so neither sentence names one (ADR-0083 d3, d10).
+    fn submitted_lead(&self) -> String {
+        match self.state {
+            "held" => match self.replaces.as_ref().and_then(|(_, v)| *v) {
+                Some(v) => format!("Waiting for review. v{v} is still served."),
+                None => "Waiting for review.".to_owned(),
+            },
+            "rejected" => "Rejected. The text is kept and never served.".to_owned(),
+            "withdrawn" => "Withdrawn. The text is kept and never served.".to_owned(),
+            _ => {
+                let on = self
+                    .approved
+                    .as_deref()
+                    .map_or_else(String::new, |at| format!(" on {}", text(&day(at))));
+                format!(
+                    "Approved{on} and served as <code>{}</code> v{}.",
+                    text(&self.claim_key),
+                    self.version
+                )
+            }
+        }
+    }
+
+    /// The admin Held row, linked to Judge on the Personal side as
+    /// `reviewer`, the person's own reviewer key (ADR-0083 d5).
+    pub(crate) fn judged_as(self, reviewer: &str) -> Self {
+        Self {
+            judge_as: (self.state == "held").then(|| reviewer.to_owned()),
             ..self
         }
     }
@@ -504,6 +563,8 @@ impl Card {
             digest: None,
             same_user: false,
             withdraw: false,
+            lead: None,
+            judge_as: None,
         }
     }
 
@@ -566,6 +627,8 @@ impl Card {
             digest: m.plaintext_digest.clone(),
             same_user: false,
             withdraw: false,
+            lead: None,
+            judge_as: None,
         }
     }
 
@@ -720,7 +783,10 @@ impl Card {
     }
 
     fn quiet(&self) -> bool {
-        matches!(self.state, "superseded" | "rejected" | "demoted")
+        matches!(
+            self.state,
+            "superseded" | "rejected" | "withdrawn" | "demoted"
+        )
     }
 
     /// The head line's markers: the state or the decision, `stale`, a kind
@@ -1093,7 +1159,18 @@ impl Card {
                 self.head_text()
             );
         }
+        if let Some(lead) = &self.lead {
+            let _ = write!(out, r#"<p class="mc-lead">{lead}</p>"#);
+        }
         out.push_str(&self.facts(view));
+        if let Some(reviewer) = self.judge_as.as_deref().filter(|_| view.admin) {
+            let _ = write!(
+                out,
+                r#"<p class="mc-lead"><a href="{TODO_JUDGE_PATH}?memory={}">Judge as <code>{}</code></a></p>"#,
+                attr(&oml_sdk::encode(&self.id)),
+                text(reviewer),
+            );
+        }
         out.push_str(r#"<div class="mc-body">"#);
         if let Some(warning) = &self.load_warning {
             let _ = write!(out, r#"<p class="lede">Guardrail: {}.</p>"#, text(warning));

@@ -6,11 +6,20 @@
 //! assertions unchanged but for the path (`tests/web_pages.rs`).
 //!
 //! The list is server-rendered rows, one page at a time, resumed by the
-//! listing's keyset cursor and narrowed by five filters. The user page
-//! lists through `GET /v1/memories` with `with_own` as `<user>-web` (d23),
-//! or with a text query through recall, its one ranked page; the admin page
-//! lists through `POST /v2/admin/memories/search` as `<user>-admin`, one
-//! `memory.admin_read` per page, which the API journals (d24). The Atlas
+//! listing's keyset cursor and narrowed by five filters, in the views of
+//! the Memories cockpit (ADR-0083 d1, d3 to d6), two links in
+//! `nav.oml-views` that keep the workspace and the filters. The user page's
+//! Approved, the default, lists the promoted tips through `GET /v1/memories`
+//! with `with_own` and `state=promoted` as `<user>-web` (d23), or with a text
+//! query through recall with `include_unreviewed: false`, its one ranked
+//! page, so no held row reaches it; Submitted lists the person's own rows
+//! held, rejected, withdrawn and approved in the last 30 days through
+//! `mine=true`, each led by one plain sentence, a held one offering
+//! Withdraw. The admin page's Approved, Held and Rejected list through
+//! `POST /v2/admin/memories/search` as `<user>-admin`, one
+//! `memory.admin_read` per page, which the API journals (d24); Held adds the
+//! tenant's queue per workspace and links each row to Judge on the Personal
+//! side, and no admin view judges (ADR-0083 d5, d7). The Atlas
 //! reads no memory: `GET /v2/workspaces/{w}/tree?counts=true` and the scope's
 //! offers (d30). Each row links to the memory's own page, `crate::memory`.
 
@@ -25,11 +34,12 @@ use oml_page::web::{
     ADMIN_ATLAS_PATH, ADMIN_MEMORIES_PATH, USER_ATLAS_PATH, USER_MEMORIES_PATH, attr, input,
     select, shell, text,
 };
-use oml_sdk::{AdminSearch, CountedNode, Memory, MemoryQuery, RecallQuery};
+use oml_sdk::{AdminSearch, CountedNode, MemoryQuery, RecallQuery};
 use serde_json::{Value, json};
 
 use crate::atlas::{Counts, Tile, legend, lifebar, svg};
 use crate::card::{Card, Kinds, kind_word, row_state};
+use crate::keys::{instant, rfc3339, unix_now};
 use crate::pages::{Fields, WalkEnd, refused, walk};
 use crate::picker::{self, Browse, Chosen, Field, Names, Roots};
 use crate::session::{PageCalls, Session, call, cookie};
@@ -49,6 +59,9 @@ pub const RECALL_MAX: u32 = 100;
 /// refused with `limit.list_too_long`, never run against a cut list. A
 /// constant of the build, unmeasured (#170).
 pub const KEY_PAGES_MAX: usize = 10;
+
+/// How far back Submitted lists the person's approved rows (ADR-0083 d3).
+pub const SUBMITTED_APPROVED_DAYS: i64 = 30;
 
 /// The user page's JSON route (ADR-0045 d25).
 pub const USER_DATA_PATH: &str = "/web/data/memories";
@@ -94,23 +107,125 @@ impl Side {
 
     /// The view's one line under its heading: on the admin side the
     /// capacity line, which names the key that reads (BrandHeader,
-    /// MemoriesScreen, AtlasScreen).
-    fn lede(self, atlas: bool, session: &Session) -> String {
-        let admin = session.whoami.user.as_ref().map_or_else(
-            || "the admin key".to_owned(),
-            |u| format!("{}-admin", u.name),
-        );
-        match (self, atlas) {
-            (Self::User, false) => "Newest first. A held memory waits for another identity's review. Its author and the agent's signed-in owner can read it; an in-progress workspace also serves it to readers.".to_owned(),
-            (Self::User, true) => "Each workspace sized by the memories this account reads in it, by state.".to_owned(),
-            (Self::Admin, false) => format!(
-                "Read as <code>{}</code>: every memory of the tenant, newest first. Each page read is journalled. This key never recalls and never judges.",
+    /// MemoriesCockpit, AdminMemoriesCockpit, AtlasScreen).
+    fn lede(self, view: Option<View>, session: &Session) -> String {
+        let user = session.whoami.user.as_ref().map(|u| u.name.as_str());
+        let admin = user.map_or_else(|| "the admin key".to_owned(), |u| format!("{u}-admin"));
+        let read_as = |what: &str| {
+            format!(
+                "Read as <code>{}</code>: every {what} of the tenant, newest first. Each page read is journalled.",
                 text(&admin)
+            )
+        };
+        match (self, view) {
+            (Self::User, Some(View::Submitted)) => format!("Writes by this account's keys, newest first: held, rejected, withdrawn, and approved in the last {SUBMITTED_APPROVED_DAYS} days. A held one can be withdrawn; a rejected or withdrawn one stays listed with its text."),
+            (Self::User, Some(_)) => "Approved versions this account reads, newest first. A held, rejected or withdrawn version is never listed here.".to_owned(),
+            (Self::User, None) => "Each workspace sized by the memories this account reads in it, by state.".to_owned(),
+            (Self::Admin, Some(View::Held)) => format!(
+                "{} This key never judges; verdicts are given on the Personal side, as <code>{}</code>.",
+                read_as("held memory"),
+                text(&user.map_or_else(|| "the reviewer key".to_owned(), |u| format!("{u}-review")))
             ),
-            (Self::Admin, true) => format!(
+            (Self::Admin, Some(View::Rejected)) => format!("{} This key never judges.", read_as("rejected memory")),
+            (Self::Admin, Some(_)) => format!(
+                "{} This key never recalls and never judges.",
+                read_as("approved memory")
+            ),
+            (Self::Admin, None) => format!(
                 "Read as <code>{}</code>: every workspace of the tenant, sized by its memories, each row counted as structure. No text is read.",
                 text(&admin)
             ),
+        }
+    }
+
+    /// The side's views, the default first (ADR-0083 d6).
+    const fn views(self) -> &'static [View] {
+        match self {
+            Self::User => &[View::Approved, View::Submitted],
+            Self::Admin => &[View::Approved, View::Held, View::Rejected],
+        }
+    }
+}
+
+/// A view of the Memories cockpit, named by `?view=` and none for Approved
+/// (ADR-0083 d1, d3, d5, d6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum View {
+    /// The promoted tips (or superseded versions, from the filter).
+    Approved,
+    /// The person's own held, rejected, withdrawn and recently approved
+    /// rows; the user page only.
+    Submitted,
+    /// The tenant's held rows; the admin page only.
+    Held,
+    /// The tenant's rejected rows; the admin page only.
+    Rejected,
+}
+
+impl View {
+    /// `value` read on `side`; a view the side does not draw is refused
+    /// naming the field. Approved, the default, has no value.
+    fn of(side: Side, value: Option<&str>) -> Result<Self, FieldRefusal> {
+        let view = match value {
+            None => return Ok(Self::Approved),
+            Some("submitted") => Self::Submitted,
+            Some("held") => Self::Held,
+            Some("rejected") => Self::Rejected,
+            Some(_) => Self::Approved,
+        };
+        if value.is_some() && (view == Self::Approved || !side.views().contains(&view)) {
+            return Err((
+                "view",
+                match side {
+                    Side::User => "view is submitted, or none for Approved".to_owned(),
+                    Side::Admin => "view is held or rejected, or none for Approved".to_owned(),
+                },
+            ));
+        }
+        Ok(view)
+    }
+
+    const fn value(self) -> Option<&'static str> {
+        match self {
+            Self::Approved => None,
+            Self::Submitted => Some("submitted"),
+            Self::Held => Some("held"),
+            Self::Rejected => Some("rejected"),
+        }
+    }
+
+    const fn word(self) -> &'static str {
+        match self {
+            Self::Approved => "Approved",
+            Self::Submitted => "Submitted",
+            Self::Held => "Held",
+            Self::Rejected => "Rejected",
+        }
+    }
+
+    /// The states its State filter offers, value and word, the default
+    /// first; none where the view is one state.
+    const fn states(self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            Self::Approved => &[("promoted", "approved"), ("superseded", "superseded")],
+            Self::Submitted => &[
+                ("", "any of these"),
+                ("held", "held"),
+                ("rejected", "rejected"),
+                ("withdrawn", "withdrawn"),
+                ("promoted", "approved in the last 30 days"),
+            ],
+            Self::Held | Self::Rejected => &[],
+        }
+    }
+
+    /// The `state` the view reads when the filter names none.
+    const fn default_state(self) -> &'static str {
+        match self {
+            Self::Approved => "promoted",
+            Self::Submitted => "held,rejected,withdrawn,promoted",
+            Self::Held => "held",
+            Self::Rejected => "rejected",
         }
     }
 }
@@ -123,6 +238,7 @@ type FieldRefusal = (&'static str, String);
 /// workspace's ([`crate::picker`]).
 #[derive(Clone)]
 struct ListQuery {
+    view: View,
     q: Option<String>,
     state: Option<String>,
     workspace: Option<String>,
@@ -133,11 +249,10 @@ struct ListQuery {
     limit_sent: Option<String>,
 }
 
-const STATES: &[&str] = &["held", "promoted", "rejected", "superseded", "demoted"];
 const ORIGINS: &[&str] = &["repo", "doc", "code", "lake", "chat", "web", "manual"];
 
 impl ListQuery {
-    fn parse(fields: &Fields) -> Result<Self, FieldRefusal> {
+    fn parse(fields: &Fields, side: Side) -> Result<Self, FieldRefusal> {
         // An empty field is no filter, as a submitted filter form sends it.
         let value = |name: &str| {
             fields
@@ -154,11 +269,24 @@ impl ListQuery {
                 .filter(|l| (1..=PAGE_MAX).contains(l))
                 .ok_or_else(|| ("limit", format!("limit is between 1 and {PAGE_MAX}")))?,
         };
+        let view = View::of(side, value("view").as_deref())?;
         let state = value("state");
-        if state.as_deref().is_some_and(|s| !STATES.contains(&s)) {
+        let offered = view.states();
+        if let Some(sent) = state.as_deref()
+            && !offered.iter().any(|(v, _)| !v.is_empty() && *v == sent)
+        {
+            let named: Vec<&str> = offered
+                .iter()
+                .filter(|(v, _)| !v.is_empty())
+                .map(|(v, _)| *v)
+                .collect();
             return Err((
                 "state",
-                "state is held, promoted, rejected, superseded or demoted".to_owned(),
+                if named.is_empty() {
+                    format!("{} lists one state; send no state", view.word())
+                } else {
+                    format!("on {}, state is {}", view.word(), named.join(" or "))
+                },
             ));
         }
         let origin = value("origin");
@@ -169,6 +297,7 @@ impl ListQuery {
             ));
         }
         Ok(Self {
+            view,
             q: value("q"),
             state,
             workspace: value("workspace"),
@@ -185,6 +314,7 @@ impl ListQuery {
     fn link(&self, path: &str, cursor: Option<&str>) -> String {
         let mut pairs = Vec::new();
         for (name, value) in [
+            ("view", self.view.value()),
             ("q", self.q.as_deref()),
             ("state", self.state.as_deref()),
             ("workspace", self.workspace.as_deref()),
@@ -202,6 +332,26 @@ impl ListQuery {
         } else {
             format!("{path}?{}", pairs.join("&amp;"))
         }
+    }
+
+    /// The same query on `view`, its first page: the workspace and every
+    /// filter but the state, whose values are each view's own (ADR-0083 d6).
+    fn on(&self, view: View) -> Self {
+        Self {
+            view,
+            state: if view == self.view {
+                self.state.clone()
+            } else {
+                None
+            },
+            cursor: None,
+            ..self.clone()
+        }
+    }
+
+    /// The state the view reads: the filter's, or the view's default.
+    fn state_sent(&self) -> &str {
+        self.state.as_deref().unwrap_or(self.view.default_state())
     }
 }
 
@@ -274,8 +424,17 @@ async fn own_kinds(web: &Web, credential: &str, calls: &PageCalls) -> Result<Kin
     })
 }
 
-/// The user page's page of the list, as `<user>-web`: the merged listing,
-/// or with `q` recall's one ranked page narrowed by the other filters.
+/// The instant Submitted lists approved rows from: [`SUBMITTED_APPROVED_DAYS`]
+/// before this process's clock (ADR-0083 d3).
+fn submitted_since() -> String {
+    rfc3339(unix_now() - SUBMITTED_APPROVED_DAYS * 86_400)
+}
+
+/// The user page's page of the list, as `<user>-web`. Approved: the merged
+/// listing of the promoted tips, or with `q` recall's one ranked page with
+/// `include_unreviewed: false`, narrowed by the other filters, so no held
+/// row is listed (ADR-0083 d1). Submitted: the person's own rows, `mine`,
+/// in its four states, each a card led by its sentence (ADR-0083 d3, d4).
 async fn user_cards(
     web: &Web,
     session: &Session,
@@ -283,11 +442,16 @@ async fn user_cards(
     q: &ListQuery,
 ) -> Result<CardPage, Failed> {
     let credential = session.credential(Capacity::Web);
-    let Some(text_query) = &q.q else {
+    let submitted = q.view == View::Submitted;
+    let text_query = q.q.as_ref().filter(|_| !submitted);
+    let Some(text_query) = text_query else {
         let ids = calls.next_ids();
+        let since = submitted.then(submitted_since);
         let query = MemoryQuery {
+            mine: submitted,
             workspace: q.workspace.as_deref(),
-            state: q.state.as_deref(),
+            state: Some(q.state_sent()),
+            promoted_since: since.as_deref(),
             origin: q.origin.as_deref(),
             author: q.author.as_deref(),
             limit: q.limit,
@@ -298,7 +462,16 @@ async fn user_cards(
             .api
             .list_memories(&call(&credential, &ids), &query)
             .await?;
-        let cards = with_withdraw(web, &credential, calls, &page.items, None).await?;
+        // Every row Submitted lists is the person's own (`mine`), so a held
+        // one offers Withdraw without a read of the person's keys.
+        let cards = page
+            .items
+            .iter()
+            .map(|m| {
+                let card = Card::of_memory(m);
+                if submitted { card.submitted() } else { card }
+            })
+            .collect();
         return Ok(CardPage {
             cards,
             next: page.next_cursor,
@@ -313,6 +486,7 @@ async fn user_cards(
         k: q.limit.min(RECALL_MAX),
         workspace: q.workspace.as_deref(),
         origin: q.origin.as_deref(),
+        include_unreviewed: false,
     };
     let keys = async {
         match &q.author {
@@ -341,23 +515,21 @@ async fn user_cards(
         _ => None,
     };
     let result = result?;
-    let rows: Vec<Memory> = result
+    // Approved's state, read off each hit as the card names it: a held row
+    // the recall served would be `held`, which no filter value names.
+    let state = q.state_sent();
+    let cards = result
         .steering
         .iter()
         .chain(result.hits.iter().map(|h| &h.memory))
-        .filter(|m| {
-            q.state
-                .as_deref()
-                .is_none_or(|s| row_state(&m.state, m.tip) == s)
-        })
+        .filter(|m| row_state(&m.state, m.tip) == state)
         .filter(|m| {
             author
                 .as_deref()
                 .is_none_or(|a| m.author_key_id.as_deref() == Some(a))
         })
-        .cloned()
+        .map(Card::of_memory)
         .collect();
-    let cards = with_withdraw(web, &credential, calls, &rows, kinds.as_ref()).await?;
     Ok(CardPage { cards, next: None })
 }
 
@@ -380,42 +552,10 @@ pub(crate) async fn written_by_own_key(
     }
 }
 
-/// The rows as cards, a held row a key of the signed-in person wrote
-/// offering Withdraw (ADR-0083 d13, note of 2026-11-17). The person's keys
-/// are read only where a row is held and `kinds` does not already hold
-/// them, so a page with no held row costs no read more.
-async fn with_withdraw(
-    web: &Web,
-    credential: &str,
-    calls: &PageCalls,
-    rows: &[Memory],
-    kinds: Option<&Kinds>,
-) -> Result<Vec<Card>, Failed> {
-    let read;
-    let kinds = match kinds {
-        Some(kinds) => Some(kinds),
-        None if rows.iter().any(|m| m.state == "held") => {
-            read = own_kinds(web, credential, calls).await?;
-            Some(&read)
-        }
-        None => None,
-    };
-    Ok(rows
-        .iter()
-        .map(|m| {
-            let card = Card::of_memory(m);
-            let own = kinds.is_some_and(|kinds| {
-                m.author_key_id
-                    .as_deref()
-                    .is_some_and(|a| kinds.iter().any(|(id, _, _)| id == a))
-            });
-            if own { card.withdrawable() } else { card }
-        })
-        .collect())
-}
-
 /// The admin page's page of the list, as `<user>-admin`: one admin read,
-/// which the API journals as one event.
+/// which the API journals as one event, in the view's state; a Held row
+/// links to Judge on the Personal side as the person's reviewer key
+/// (ADR-0083 d5).
 async fn admin_cards(
     web: &Web,
     session: &Session,
@@ -431,7 +571,7 @@ async fn admin_cards(
             &AdminSearch {
                 query: q.q.as_deref(),
                 workspace: q.workspace.as_deref(),
-                state: q.state.as_deref(),
+                state: Some(q.state_sent()),
                 origin_kind: q.origin.as_deref(),
                 author: q.author.as_deref(),
                 limit: q.limit,
@@ -439,8 +579,20 @@ async fn admin_cards(
             },
         )
         .await?;
+    let reviewer = session
+        .whoami
+        .user
+        .as_ref()
+        .map(|u| format!("{}-review", u.name));
     Ok(CardPage {
-        cards: page.items.iter().map(Card::of_admin).collect(),
+        cards: page
+            .items
+            .iter()
+            .map(|m| match (&reviewer, q.view) {
+                (Some(reviewer), View::Held) => Card::of_admin(m).judged_as(reviewer),
+                _ => Card::of_admin(m),
+            })
+            .collect(),
         next: page.next_cursor,
     })
 }
@@ -448,7 +600,9 @@ async fn admin_cards(
 /// The filters the picker's links keep beside the workspace, in the form's
 /// order.
 fn keep(q: &ListQuery) -> Vec<(&'static str, String)> {
+    let view = q.view.value().map(str::to_owned);
     [
+        ("view", &view),
         ("q", &q.q),
         ("state", &q.state),
         ("origin", &q.origin),
@@ -490,9 +644,40 @@ fn field(
     .html()
 }
 
+/// The views as two or three links in `nav.oml-views`, the current one
+/// `aria-current="page"`, each keeping the workspace and the filters but
+/// the state; `count`, where the page read one, on the current view's link
+/// as a word and a number ("Held 21") (ADR-0083 d5, d6).
+fn views_nav(side: Side, q: &ListQuery, count: Option<u64>) -> String {
+    let mut out = String::from(r#"<nav class="oml-views" aria-label="Memories views">"#);
+    for view in side.views() {
+        let current = *view == q.view;
+        let _ = write!(
+            out,
+            r#"<a href="{}"{}>{}{}</a>"#,
+            q.on(*view).link(side.memories(), None),
+            if current {
+                r#" aria-current="page""#
+            } else {
+                ""
+            },
+            view.word(),
+            match count {
+                Some(n) if current => format!(r#" <span class="n">{n}</span>"#),
+                _ => String::new(),
+            }
+        );
+    }
+    out.push_str("</nav>");
+    out
+}
+
 /// The filter form, its workspace field first, the link to the same
 /// filters on the other view and, for the list, the rows and the pager
-/// (ADR-0045 d22, d25, d27; design notes row 23).
+/// (ADR-0045 d22, d25, d27; design notes row 23). On the list the views
+/// lead, with `above`, the admin Held view's queue, under the lede; the
+/// form offers Text wherever recall or the admin search runs, never on
+/// Submitted, and the view's own states (ADR-0083 d4, d5).
 fn list_view(
     side: Side,
     lede: &str,
@@ -500,6 +685,7 @@ fn list_view(
     page: Option<(&CardPage, &Roots)>,
     atlas: bool,
     field: &str,
+    above: Option<(&str, Option<u64>)>,
 ) -> String {
     let state = q.state.as_deref().unwrap_or("");
     let origin = q.origin.as_deref().unwrap_or("");
@@ -513,17 +699,7 @@ fn list_view(
         out.extend(options.iter().filter(|(v, _)| *v != chosen).copied());
         out
     };
-    let states = selected(
-        &[
-            ("", "any"),
-            ("held", "held"),
-            ("promoted", "approved"),
-            ("rejected", "rejected"),
-            ("superseded", "superseded"),
-            ("demoted", "demoted"),
-        ],
-        state,
-    );
+    let states = selected(q.view.states(), state);
     let origins = selected(
         &[
             ("", "any"),
@@ -538,19 +714,51 @@ fn list_view(
         origin,
     );
     let mut out = format!(
-        r#"<header class="oml-section-head"><div class="top"><h1>{}</h1></div><p class="desc">{}</p></header>"#,
+        r#"<header class="oml-section-head"><div class="top"><h1>{}</h1></div>"#,
         if atlas { "Atlas" } else { "Memories" },
-        lede,
     );
+    if !atlas {
+        out.push_str(&views_nav(side, q, above.and_then(|(_, n)| n)));
+    }
+    let _ = write!(out, r#"<p class="desc">{lede}</p></header>"#);
+    if let Some((table, _)) = above {
+        out.push_str(table);
+    }
+    let submitted = q.view == View::Submitted;
+    // Submitted runs no search (d4): the view and a query sent on another
+    // view ride along unseen, so the links back keep them.
+    let mut hidden = String::new();
+    if let Some(view) = q.view.value().filter(|_| !atlas) {
+        let _ = write!(
+            hidden,
+            r#"<input type="hidden" name="view" value="{view}">"#
+        );
+    }
+    let text_field = match (&q.q, submitted) {
+        (Some(query), true) => {
+            let _ = write!(
+                hidden,
+                r#"<input type="hidden" name="q" value="{}">"#,
+                attr(query)
+            );
+            String::new()
+        }
+        (_, true) => String::new(),
+        (query, false) => input("q", "Text", query.as_deref().unwrap_or(""), false),
+    };
+    let state_field = if states.is_empty() {
+        String::new()
+    } else {
+        select("state", "State", &states)
+    };
     let _ = write!(
         out,
-        r#"<form class="filters" method="get" action="{}">{field}{}{}{}{}<button type="submit">Filter</button></form>"#,
+        r#"<form class="filters" method="get" action="{}">{hidden}{field}{text_field}{state_field}{}{}<button type="submit">Filter</button></form>"#,
         if atlas { side.atlas() } else { side.memories() },
-        input("q", "Text", q.q.as_deref().unwrap_or(""), false),
-        select("state", "State", &states),
         select("origin", "Source", &origins),
         input("author", "Author", q.author.as_deref().unwrap_or(""), false),
     );
+    let approved = q.on(View::Approved);
     let _ = if atlas {
         write!(
             out,
@@ -561,17 +769,21 @@ fn list_view(
         write!(
             out,
             r#"<p class="oml-other-view"><a href="{}">The same filters on the Atlas</a></p>"#,
-            q.link(side.atlas(), None)
+            approved.link(side.atlas(), None)
         )
     };
     let Some((page, roots)) = page else {
         return out;
     };
-    if q.q.is_some() && side == Side::User {
+    if q.q.is_some() && side == Side::User && !submitted {
         out.push_str(r#"<p class="dim">Best text matches first; one page.</p>"#);
     }
     if page.cards.is_empty() {
-        out.push_str(r#"<p class="dim">No memory matches.</p>"#);
+        out.push_str(match q.view {
+            View::Submitted => r#"<p class="dim">Nothing submitted matches: no held, rejected or withdrawn write, and none approved in the last 30 days.</p>"#,
+            View::Held => r#"<p class="dim">Nothing held matches.</p>"#,
+            _ => r#"<p class="dim">No memory matches.</p>"#,
+        });
     }
     out.push_str(r#"<ul class="oml-mlist">"#);
     for card in &page.cards {
@@ -594,6 +806,33 @@ fn list_view(
     }
     out.push_str("</p>");
     out
+}
+
+/// The admin Held view's "Held per workspace" table from the tenant's
+/// queue, oldest first, each workspace a link that filters the rows below
+/// with the view kept; and the held total, the view's count (ADR-0083 d5).
+fn held_table(queue: &oml_sdk::ReviewQueue, roots: &Roots) -> (String, u64) {
+    let mut rows: Vec<&oml_sdk::QueueItem> = queue.items.iter().collect();
+    rows.sort_by(|a, b| a.oldest_at.cmp(&b.oldest_at));
+    let mut out = String::from(
+        r#"<h2>Held per workspace</h2><table><caption class="desc">Oldest first</caption><tr><th scope="col">Workspace</th><th scope="col" class="num">Held</th><th scope="col">Oldest since</th></tr>"#,
+    );
+    if rows.is_empty() {
+        out.push_str(r#"<tr><td colspan="3" class="dim">Nothing is held in the tenant.</td></tr>"#);
+    }
+    for row in &rows {
+        let reference = roots.reference(&row.path);
+        let _ = write!(
+            out,
+            r#"<tr><td class="mono"><a href="{ADMIN_MEMORIES_PATH}?view=held&amp;workspace={}">{}</a></td><td class="num">{}</td><td class="mono">{}</td></tr>"#,
+            attr(&oml_sdk::encode(&reference)),
+            text(&reference),
+            row.held,
+            instant(&row.oldest_at)
+        );
+    }
+    out.push_str("</table>");
+    (out, rows.iter().map(|r| r.held).sum())
 }
 
 /// The Atlas's scope: the workspace the filter names, else the person's
@@ -862,13 +1101,15 @@ fn admin_only(side: Side, session: &Session, calls: &PageCalls) -> Option<Respon
     })
 }
 
-/// The page's chrome around `body`, with `active` the tab marked.
-fn page(side: Side, session: &Session, active: &str, body: &str) -> Response {
+/// The page's chrome around `body`, with `active` the tab marked and
+/// `title` before the tab's word in the title, where a view names one
+/// (`Submitted · Memories · OML`).
+fn page(side: Side, session: &Session, active: &str, title: &str, body: &str) -> Response {
     let bar = match side {
         Side::User => session.personal(),
         Side::Admin => session.administration(),
     };
-    outcome::html(StatusCode::OK, shell("", &bar, active, None, body))
+    outcome::html(StatusCode::OK, shell(title, &bar, active, None, body))
 }
 
 fn failed_page(failed: Failed, calls: &PageCalls, next: &str) -> Response {
@@ -995,7 +1236,7 @@ async fn list_page(
         .path_and_query()
         .map_or(side.memories(), |pq| pq.as_str());
     let parsed = Fields::of(uri).and_then(|f| {
-        ListQuery::parse(&f)
+        ListQuery::parse(&f, side)
             .map(|q| (q, picker::browse_asked(f.get(picker::BROWSE))))
             .map_err(|(_, m)| m)
     });
@@ -1017,10 +1258,25 @@ async fn list_page(
             value => Some(cards(&web, &session, &calls, side, &q, value).await),
         }
     };
-    let ((names, browse), first) = tokio::join!(
+    // The admin Held view's queue, beside the page's first read (d5).
+    let queue = async {
+        if q.view == View::Held {
+            let credential = session.credential(Capacity::Admin);
+            let ids = calls.next_ids();
+            Some(web.api.review_queue(&call(&credential, &ids)).await)
+        } else {
+            None
+        }
+    };
+    let ((names, browse), first, queue) = tokio::join!(
         picker_reads(&web, &session, &calls, side, browse, true),
-        first
+        first,
+        queue
     );
+    let queue = match queue.transpose() {
+        Ok(queue) => queue,
+        Err(e) => return failed_page(Failed::Api(e), &calls, next),
+    };
     let primary = settle(&names, chosen, first, |id| {
         let (web, session, calls, q) = (&web, &session, &calls, &q);
         async move { cards(web, session, calls, side, q, Some(&id)).await }
@@ -1034,6 +1290,10 @@ async fn list_page(
     q.workspace = chosen.shown().map(str::to_owned);
     // Each row names its workspace by reference: the names' kinds, and a
     // read of any top label they leave unknown (design notes row 20).
+    let queued: Vec<&str> = queue
+        .iter()
+        .flat_map(|q| q.items.iter().map(|r| r.path.as_str()))
+        .collect();
     let roots = match &cards {
         Some(cards) => {
             names
@@ -1043,25 +1303,42 @@ async fn list_page(
                     &web,
                     &session.credential(reader(side)),
                     &calls,
-                    cards.cards.iter().map(Card::workspace),
+                    cards
+                        .cards
+                        .iter()
+                        .map(Card::workspace)
+                        .chain(queued.iter().copied()),
                 )
                 .await
         }
-        None => names.roots().clone(),
+        None => {
+            names
+                .roots()
+                .clone()
+                .learn(&web, &session.credential(reader(side)), &calls, queued)
+                .await
+        }
     };
+    let held = queue.as_ref().map(|queue| held_table(queue, &roots));
     let field = field(side, &q, false, &chosen, &names, browse.as_ref());
+    let title = match q.view {
+        View::Approved => "",
+        view => view.word(),
+    };
     with_status(
         page(
             side,
             &session,
             side.memories(),
+            title,
             &list_view(
                 side,
-                &side.lede(false, &session),
+                &side.lede(Some(q.view), &session),
                 &q,
                 cards.as_ref().map(|c| (c, &roots)),
                 false,
                 &field,
+                held.as_ref().map(|(table, n)| (table.as_str(), Some(*n))),
             ),
         ),
         chosen.status(),
@@ -1080,7 +1357,7 @@ async fn atlas_page(
     }
     let next = uri.path_and_query().map_or(side.atlas(), |pq| pq.as_str());
     let parsed = Fields::of(uri).and_then(|f| {
-        ListQuery::parse(&f)
+        ListQuery::parse(&f, side)
             .map(|q| (q, picker::browse_asked(f.get(picker::BROWSE))))
             .map_err(|(_, m)| m)
     });
@@ -1184,9 +1461,20 @@ async fn atlas_page(
     let browse = reused.or(browse);
     q.workspace = chosen.shown().map(str::to_owned);
     let field = field(side, &q, true, &chosen, &names, browse.as_ref());
-    let mut body = list_view(side, &side.lede(true, &session), &q, None, true, &field);
+    let mut body = list_view(
+        side,
+        &side.lede(None, &session),
+        &q,
+        None,
+        true,
+        &field,
+        None,
+    );
     body.push_str(&drawn);
-    with_status(page(side, &session, side.atlas(), &body), chosen.status())
+    with_status(
+        page(side, &session, side.atlas(), "", &body),
+        chosen.status(),
+    )
 }
 
 /// `GET /web/memories`: the user page's Memories list.
@@ -1346,7 +1634,7 @@ async fn data(
             &calls,
         );
     }
-    let q = match Fields::of(uri).and_then(|f| ListQuery::parse(&f).map_err(|(_, m)| m)) {
+    let q = match Fields::of(uri).and_then(|f| ListQuery::parse(&f, side).map_err(|(_, m)| m)) {
         Ok(q) => q,
         Err(message) => {
             return json_refusal(
@@ -1427,26 +1715,81 @@ mod tests {
             ("state".to_owned(), "held".to_owned()),
             ("q".to_owned(), String::new()),
             ("author".to_owned(), "alice-phone".to_owned()),
+            ("view".to_owned(), "submitted".to_owned()),
         ];
-        let q = ListQuery::parse(&Fields::of_pairs(pairs).unwrap()).unwrap();
+        let q = ListQuery::parse(&Fields::of_pairs(pairs).unwrap(), Side::User).unwrap();
         assert_eq!(
             q.link(USER_ATLAS_PATH, None),
-            "/web/atlas?state=held&amp;author=alice-phone"
+            "/web/atlas?view=submitted&amp;state=held&amp;author=alice-phone"
         );
         assert_eq!(
             q.link(USER_MEMORIES_PATH, Some("c 1")),
-            "/web/memories?state=held&amp;author=alice-phone&amp;cursor=c%201"
+            "/web/memories?view=submitted&amp;state=held&amp;author=alice-phone&amp;cursor=c%201"
         );
-        let none = ListQuery::parse(&Fields::of_pairs(Vec::new()).unwrap()).unwrap();
+        // Another view keeps every filter but the state, on its first page.
+        assert_eq!(
+            q.on(View::Approved).link(USER_MEMORIES_PATH, None),
+            "/web/memories?author=alice-phone"
+        );
+        let none = ListQuery::parse(&Fields::of_pairs(Vec::new()).unwrap(), Side::User).unwrap();
         assert_eq!(none.link(USER_MEMORIES_PATH, None), "/web/memories");
     }
 
-    fn parsed(pairs: &[(&str, &str)]) -> Result<ListQuery, FieldRefusal> {
+    fn parsed_on(side: Side, pairs: &[(&str, &str)]) -> Result<ListQuery, FieldRefusal> {
         let pairs = pairs
             .iter()
             .map(|(n, v)| ((*n).to_owned(), (*v).to_owned()))
             .collect();
-        ListQuery::parse(&Fields::of_pairs(pairs).unwrap())
+        ListQuery::parse(&Fields::of_pairs(pairs).unwrap(), side)
+    }
+
+    fn parsed(pairs: &[(&str, &str)]) -> Result<ListQuery, FieldRefusal> {
+        parsed_on(Side::User, pairs)
+    }
+
+    #[test]
+    fn each_view_reads_its_own_states_and_refuses_another_views() {
+        for (side, pairs, sent) in [
+            (Side::User, &[][..], "promoted"),
+            (Side::User, &[("state", "superseded")][..], "superseded"),
+            (
+                Side::User,
+                &[("view", "submitted")][..],
+                "held,rejected,withdrawn,promoted",
+            ),
+            (
+                Side::User,
+                &[("view", "submitted"), ("state", "withdrawn")][..],
+                "withdrawn",
+            ),
+            (Side::Admin, &[][..], "promoted"),
+            (Side::Admin, &[("view", "held")][..], "held"),
+            (Side::Admin, &[("view", "rejected")][..], "rejected"),
+        ] {
+            assert_eq!(
+                parsed_on(side, pairs).unwrap().state_sent(),
+                sent,
+                "{pairs:?}"
+            );
+        }
+        for (side, pairs, field) in [
+            (Side::User, &[("state", "held")][..], "state"),
+            (Side::User, &[("view", "held")][..], "view"),
+            (Side::Admin, &[("view", "submitted")][..], "view"),
+            (
+                Side::Admin,
+                &[("view", "held"), ("state", "held")][..],
+                "state",
+            ),
+            (
+                Side::User,
+                &[("view", "submitted"), ("state", "superseded")][..],
+                "state",
+            ),
+        ] {
+            let refused = parsed_on(side, pairs).err().map(|(name, _)| name);
+            assert_eq!(refused, Some(field), "{pairs:?}");
+        }
     }
 
     #[test]

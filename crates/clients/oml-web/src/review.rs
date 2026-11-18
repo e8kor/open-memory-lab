@@ -8,8 +8,10 @@
 //! verdict from a key in the item's lineage, which the page shows by name
 //! (`review.author_in_lineage`). The view holds:
 //!
-//! - on the admin page, the tenant's queue: held rows per workspace, read
-//!   as the admin key (`reviewQueue`);
+//! - on the admin page, the tenant's queue alone: held rows per workspace,
+//!   read as the admin key (`reviewQueue`), each linking to the admin
+//!   Memories page's Held view, and no act: the admin key gives no verdict,
+//!   and bulk review left the console for the CLI (ADR-0083 d5, d7);
 //! - review next: `POST` claims the next item (`reviewNext`) and redirects
 //!   to the view with its serve id and the served memory's id; the view
 //!   draws the item's card from the held listing by that memory id
@@ -22,12 +24,6 @@
 //!   card with a verdict form whose act, `judge`, records a one-id
 //!   listed-set verdict (`postBulkVerdict`; ADR-0055 d4, as the operator
 //!   decided on 2026-11-13: design notes rows 1 and 2);
-//! - on the admin page only, bulk review (ADR-0055 d1): the held listing
-//!   with its filters and a box per card;
-//!   picking posts `bulk_confirm`, which records nothing and shows each
-//!   picked row by its claim key and first line with the one form that
-//!   records a verdict on each (`postBulkVerdict`) and redirects to the
-//!   view with the counts. A resubmitted confirmation replays.
 
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -38,8 +34,8 @@ use axum::extract::{Form, State};
 use axum::response::Response;
 use http::{StatusCode, Uri};
 use oml_page::web::{
-    ADMIN_REVIEW_PATH, Bar, USER_MEMORIES_PATH, USER_REVIEW_PATH, attr, form, hidden, input,
-    select, shell, short, text,
+    ADMIN_MEMORIES_PATH, ADMIN_REVIEW_PATH, Bar, USER_MEMORIES_PATH, USER_REVIEW_PATH, attr, form,
+    hidden, input, select, shell, short, text,
 };
 use oml_sdk::{HeldItem, HeldPage, LinkedKey, Memory, encode};
 
@@ -51,9 +47,6 @@ use crate::picker::{self, Browse, Chosen, Field, Names, Roots};
 use crate::session::{PageCalls, Session, call, call_as};
 use crate::{Capacity, Web, acts, outcome};
 
-/// The held listing's page size on the admin page (ADR-0055 d10).
-pub const HELD_PAGE: u32 = 50;
-
 /// The held listing's page size on the user page: the API's largest, so
 /// "Waiting for review" is exact from one read up to it (design notes
 /// row 6).
@@ -63,16 +56,13 @@ pub const WAITING_PAGE: u32 = 200;
 /// held row's author is one of them: one page (design notes row 15).
 const OWN_KEYS_PAGE: u32 = 200;
 
-/// The most memories one bulk verdict names (ADR-0055 d3).
-pub const BULK_MAX: usize = 200;
-
 /// The user page's acts: review next and the verdict.
 pub const USER_ACTIONS: &[&str] = &["review_next", "verdict", "judge"];
 
-/// The admin page's acts: review next, the served verdict and bulk review
-/// (ADR-0055 d1); "Open to judge" is the person's page's alone (ADR-0055
-/// d10 as amended on 2026-11-13: the admin page is unchanged).
-pub const ADMIN_ACTIONS: &[&str] = &["review_next", "verdict", "bulk_confirm", "bulk_verdict"];
+/// The admin page's acts: none. The admin key gives no verdict, and bulk
+/// review left the console for the CLI (ADR-0083 d5, d7), so every act
+/// posted to the admin page is refused and runs nothing.
+pub const ADMIN_ACTIONS: &[&str] = &[];
 
 /// Which page the view is on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,23 +117,6 @@ fn notice(fields: &Fields) -> Option<String> {
             ))
         }
         "empty" => Some("Nothing waits for review.".to_owned()),
-        "bulk" => {
-            let mut line = format!(
-                "Recorded: {} approved, {} rejected, {} skipped.",
-                count(fields, "approved"),
-                count(fields, "rejected"),
-                count(fields, "skipped")
-            );
-            let same = count(fields, "same_user");
-            if same > 0 {
-                let _ = write!(line, " {same} by the same user.");
-            }
-            let replayed = count(fields, "replayed");
-            if replayed > 0 {
-                let _ = write!(line, " {replayed} replayed: already recorded.");
-            }
-            Some(line)
-        }
         _ => None,
     }
 }
@@ -492,9 +465,9 @@ enum Act<'a> {
 }
 
 /// The tenant's queue, as the admin key reads it; each workspace links to
-/// its held rows in the list below, by reference. Beside it, the queue's
-/// references, the bulk filter's hints.
-async fn queue(view: &ViewCtx<'_>) -> Result<(String, Names), Refusal> {
+/// its held rows on the admin Memories page's Held view, by reference
+/// (ADR-0083 d5).
+async fn queue(view: &ViewCtx<'_>) -> Result<String, Refusal> {
     let credential = view.session.credential(Capacity::Admin);
     let ids = view.calls.next_ids();
     // Beside the queue, one page of the tree as the admin key, whose
@@ -514,7 +487,6 @@ async fn queue(view: &ViewCtx<'_>) -> Result<(String, Names), Refusal> {
         ),
     );
     let rows = rows.map_err(|e| Box::new(outcome::page(&e, view.calls, view.side.path())))?;
-    let page = view.side.path();
     let roots = tree
         .roots()
         .clone()
@@ -526,7 +498,7 @@ async fn queue(view: &ViewCtx<'_>) -> Result<(String, Names), Refusal> {
         )
         .await;
     let mut body = String::from(
-        r#"<h2>Queue</h2><p class="desc">Held memories per workspace, every one of the tenant's; the list below shows only what this reviewer key may judge.</p><table><tr><th>Workspace</th><th>Held</th><th>Oldest since</th></tr>"#,
+        r#"<h2>Queue</h2><p class="desc">Held memories per workspace, every one of the tenant's, each workspace linking to its held rows under Memories, Held.</p><table><tr><th>Workspace</th><th>Held</th><th>Oldest since</th></tr>"#,
     );
     if rows.items.is_empty() {
         body.push_str(r#"<tr><td colspan="3" class="dim">Nothing is held.</td></tr>"#);
@@ -535,7 +507,7 @@ async fn queue(view: &ViewCtx<'_>) -> Result<(String, Names), Refusal> {
         let reference = roots.reference(&row.path);
         let _ = write!(
             body,
-            r#"<tr><td class="mono"><a href="{page}?held=1&amp;workspace={}">{}</a></td><td>{}</td><td class="mono">{}</td></tr>"#,
+            r#"<tr><td class="mono"><a href="{ADMIN_MEMORIES_PATH}?view=held&amp;workspace={}">{}</a></td><td>{}</td><td class="mono">{}</td></tr>"#,
             attr(&encode(&reference)),
             short(&reference),
             row.held,
@@ -543,13 +515,7 @@ async fn queue(view: &ViewCtx<'_>) -> Result<(String, Names), Refusal> {
         );
     }
     body.push_str("</table>");
-    let names = Names::of_places(
-        rows.items
-            .iter()
-            .map(|r| (r.workspace_id.clone(), r.path.clone())),
-        roots,
-    );
-    Ok((body, names))
+    Ok(body)
 }
 
 /// The filters, in the order both pages draw them: the workspace first, as
@@ -859,100 +825,6 @@ fn lane_section(view: &ViewCtx<'_>, fields: &Fields, lane: &HeldPage, roots: &Ro
     body
 }
 
-/// The bulk listing (AdminReviewScreen): the rows the reviewer key may
-/// judge, filtered, each a review card with a box to pick it; "select all"
-/// draws the page with every box checked, since the page carries no
-/// script. The picker's names are the queue's workspaces.
-async fn held(
-    view: &ViewCtx<'_>,
-    fields: &Fields,
-    names: &Names,
-    browse: Option<&Browse>,
-) -> Result<String, Refusal> {
-    let page = view.side.path();
-    let chosen = names.resolve(Chosen::of(fields.get("workspace")));
-    let read = listing(
-        view,
-        fields,
-        &chosen,
-        HELD_PAGE,
-        None,
-        fields.given("cursor"),
-    )
-    .await?;
-    let (listing, chosen) = settled(read, chosen, names);
-    // The queue's kinds, and a read of any top label the listing names
-    // beyond them, as the admin key, which reads every node.
-    let roots = names
-        .roots()
-        .clone()
-        .learn(
-            view.web,
-            &view.session.credential(Capacity::Admin),
-            view.calls,
-            listing
-                .items
-                .iter()
-                .filter_map(|i| i.memory().workspace_path.as_deref()),
-        )
-        .await;
-    let all = fields.get("select") == Some("all");
-    let kept = kept_filters(fields);
-    let cursor = fields.given("cursor").map_or(String::new(), |c| {
-        format!("&amp;cursor={}", attr(&encode(c)))
-    });
-    let mut body = format!(
-        r#"<h2>Bulk review</h2><p class="desc">Oldest first, {HELD_PAGE} a page. A memory this reviewer key wrote, or that derives from one, is never listed.</p>{}<p><a href="{page}?held=1{kept}{cursor}&amp;select=all">Select all on this page</a> · <a href="{page}?held=1{kept}{cursor}">Clear</a></p>"#,
-        filters(view, fields, names, &chosen, browse)
-    );
-    let mut rows = String::new();
-    if chosen.refused() {
-        // The field's refusal stands in for the rows.
-    } else if listing.items.is_empty() {
-        rows.push_str(r#"<p class="dim">Nothing waits for review here.</p>"#);
-    } else {
-        rows.push_str(r#"<ul class="oml-mcs">"#);
-        for (i, item) in listing.items.iter().enumerate() {
-            let m = item.memory();
-            let _ = write!(
-                rows,
-                r#"<li class="oml-pick"><span class="box"><input type="checkbox" aria-label="Pick {} v{}" name="pick_{i:03}" value="{}"{}></span>{}</li>"#,
-                attr(&m.claim_key),
-                m.version,
-                attr(&m.artifact_id),
-                if all { " checked" } else { "" },
-                review_row(view, m, item.same_user, item.needs_person, &roots)
-            );
-        }
-        rows.push_str("</ul>");
-    }
-    body.push_str(&form(
-        page,
-        "bulk_confirm",
-        &view.session.csrf(),
-        &format!(
-            r#"{rows}<div class="oml-bulkbar">{}{}<p class="desc">Each pick gets its own verdict under {}; a confirmation comes first.</p></div>"#,
-            select(
-                "verdict",
-                "verdict",
-                &[("approve", "approve"), ("reject", "reject")]
-            ),
-            input("reason", "reason (required to reject)", "", false),
-            code(&view.reviewer())
-        ),
-        "Review picks",
-        false,
-    ));
-    if let Some(next) = &listing.next_cursor {
-        let _ = write!(
-            body,
-            r#"<p><a href="{page}?held=1{kept}&amp;cursor={}">Next page</a></p>"#,
-            attr(&encode(next))
-        );
-    }
-    Ok(body)
-}
-
 fn bar(session: &Session, side: Side) -> Bar {
     match side {
         Side::User => session.personal(),
@@ -1034,7 +906,7 @@ async fn view(
         ),
         Side::Admin => write!(
             body,
-            r#"<p class="desc">The queue is read as {}, which never judges. Every verdict here is {}'s.</p>"#,
+            r#"<p class="desc">The queue is read as {}, which never judges; verdicts are given on the Personal side, as {}. The held rows are listed under <a href="{ADMIN_MEMORIES_PATH}?view=held">Memories, Held</a>.</p>"#,
             code(&session.whoami.user.as_ref().map_or_else(
                 || "the admin key".to_owned(),
                 |u| format!("{}-admin", u.name)
@@ -1045,10 +917,12 @@ async fn view(
     let mut framed = false;
     // One item, served by Review next or opened to judge from the list,
     // drawn alone at page density.
+    // The admin page serves and opens nothing to judge (ADR-0083 d5).
     let act = match (fields.given("serve"), fields.given("memory"), side) {
-        (Some(serve), _, _) => Some(Act::Serve(serve)),
+        (_, _, Side::Admin) => None,
+        (Some(serve), _, Side::User) => Some(Act::Serve(serve)),
         (None, Some(_), Side::User) => Some(Act::Judge),
-        _ => None,
+        (None, None, Side::User) => None,
     };
     if let Some(act) = act {
         if let (Act::Serve(_), Some(at)) = (act, expiry(&fields)) {
@@ -1076,7 +950,7 @@ async fn view(
             r#"<p><a href="{page}{back}">Back to the list</a></p>"#
         );
     } else {
-        if ctx.acting.is_none() {
+        if ctx.acting.is_none() && side == Side::User {
             body.push_str(&review_next(&ctx, &fields, true));
         }
         // Browse, opened by the field's link: the counted tree as the
@@ -1120,13 +994,10 @@ async fn view(
                 let lane = lane.ok().flatten();
                 person_list(&ctx, &fields, chosen, read, lane, browse.as_ref()).await
             }
-            Side::Admin => match tokio::join!(browse, queue(&ctx)) {
-                (browse, Ok(queue)) => {
-                    body.push_str(&queue.0);
-                    held(&ctx, &fields, &queue.1, browse.as_ref()).await
-                }
-                (_, Err(response)) => Err(response),
-            },
+            Side::Admin => {
+                drop(browse);
+                queue(&ctx).await
+            }
         };
         match listed {
             Ok(listed) => body.push_str(&listed),
@@ -1219,20 +1090,12 @@ pub async fn admin_page(
     view(web, session, calls, &uri, Side::Admin).await
 }
 
-/// Whether `name` is a listing box, `pick_000` to `pick_199`.
-fn is_pick(name: &str) -> bool {
-    name.strip_prefix("pick_")
-        .is_some_and(|n| n.len() == 3 && n.bytes().all(|b| b.is_ascii_digit()))
-}
-
 /// The fields each action defines, beside `action`, `csrf_token` and
 /// `nonce`.
 fn defined(action: &str, name: &str) -> bool {
     match action {
         "verdict" => matches!(name, "serve_id" | "verdict" | "reason"),
         "judge" => matches!(name, "artifact_id" | "verdict" | "reason" | "as"),
-        "bulk_confirm" => matches!(name, "verdict" | "reason") || is_pick(name),
-        "bulk_verdict" => matches!(name, "verdict" | "reason" | "artifact_ids"),
         _ => false,
     }
 }
@@ -1362,66 +1225,9 @@ async fn act(
             acts::see_other(&location, &[])
         }
         "judge" => judge(&web, &session, &calls, &fields, side).await,
-        "bulk_confirm" => bulk_confirm(&web, &session, &calls, &fields, side).await,
-        _ => {
-            let verdict = match verdict_of(&fields, &calls) {
-                Ok(v) => v,
-                Err(refusal) => return *refusal,
-            };
-            let reason = fields.given("reason");
-            if verdict == "reject" && reason.is_none() {
-                return acts::invalid("reason is required to reject", &calls);
-            }
-            let ids: Vec<&str> = fields
-                .given("artifact_ids")
-                .unwrap_or_default()
-                .split(' ')
-                .filter(|id| !id.is_empty())
-                .collect();
-            if ids.is_empty() {
-                return acts::invalid("pick at least one memory", &calls);
-            }
-            if ids.len() > BULK_MAX || !ids.iter().all(|id| is_id(id)) {
-                return acts::invalid("artifact_ids holds at most 200 ids", &calls);
-            }
-            let key = match acts::key(&session, &fields, &calls) {
-                Ok(key) => key,
-                Err(refusal) => return *refusal,
-            };
-            let _in_flight = acts::hold(&key).await;
-            let call_ids = calls.next_ids();
-            match web
-                .api
-                .post_bulk_verdict(&call(&credential, &call_ids), &key, verdict, &ids, reason)
-                .await
-            {
-                Ok(result) => {
-                    let same = result
-                        .items
-                        .iter()
-                        .filter(|i| i.same_user == Some(true))
-                        .count();
-                    let replayed = result
-                        .items
-                        .iter()
-                        .filter(|i| i.replayed == Some(true))
-                        .count();
-                    acts::see_other(
-                        &format!(
-                            "{page}?done=bulk&approved={}&rejected={}&skipped={}&same_user={same}&replayed={replayed}",
-                            result.summary.approved,
-                            result.summary.rejected,
-                            result.summary.skipped
-                        ),
-                        &[],
-                    )
-                }
-                Err(e) => outcome::page(&e, &calls, page),
-            }
-        }
+        _ => acts::invalid("no such action here", &calls),
     }
 }
-
 /// The page status of a skipped item's code, as the single verdict would
 /// answer it (`docs/api/errors.md`).
 fn skip_status(code: &str) -> StatusCode {
@@ -1532,115 +1338,6 @@ async fn judge(
     )
 }
 
-/// `bulk_confirm`: what was picked, by claim key and first line, with the
-/// one form that records the verdict on each. Records nothing.
-async fn bulk_confirm(
-    web: &Web,
-    session: &Session,
-    calls: &PageCalls,
-    fields: &Fields,
-    side: Side,
-) -> Response {
-    let page = side.path();
-    let verdict = match verdict_of(fields, calls) {
-        Ok(v) => v,
-        Err(refusal) => return *refusal,
-    };
-    let reason = fields.given("reason");
-    let mut picks: Vec<(&str, &str)> = fields
-        .pairs()
-        .filter(|(name, value)| is_pick(name) && !value.is_empty())
-        .collect();
-    picks.sort_unstable();
-    if let Some((name, _)) = picks.iter().find(|(_, value)| !is_id(value)) {
-        return acts::invalid(&format!("{name} is not an id"), calls);
-    }
-    let ids: Vec<&str> = picks.iter().map(|(_, id)| *id).collect();
-    if ids.is_empty() {
-        return acts::invalid("pick at least one memory", calls);
-    }
-    if ids.len() > BULK_MAX {
-        return acts::invalid("a page picks at most 200 memories", calls);
-    }
-    if verdict == "reject" && reason.is_none() {
-        return acts::invalid("reason is required to reject", calls);
-    }
-    let credential = session.credential(Capacity::Review);
-    let call_ids = calls.next_ids();
-    let named = match web
-        .api
-        .review_named(&call(&credential, &call_ids), &ids)
-        .await
-    {
-        Ok(named) => named,
-        Err(e) => return outcome::page(&e, calls, page),
-    };
-    let mut body = format!(
-        r#"<h1>{} {} memories?</h1><p class="desc">One verdict each. Any no longer held is skipped.</p><table><tr><th>Claim key</th><th>First line</th><th>Artifact</th></tr>"#,
-        if verdict == "approve" {
-            "Approve"
-        } else {
-            "Reject"
-        },
-        ids.len()
-    );
-    for id in &ids {
-        match named
-            .items
-            .iter()
-            .find(|n| n.id == *id)
-            .and_then(|n| n.item.as_ref())
-        {
-            Some(m) => {
-                let _ = write!(
-                    body,
-                    r#"<tr><td class="mono">{}</td><td class="text">{}</td><td class="mono">{}</td></tr>"#,
-                    short(&m.claim_key),
-                    text(
-                        m.text
-                            .as_deref()
-                            .unwrap_or_default()
-                            .lines()
-                            .next()
-                            .unwrap_or_default()
-                    ),
-                    attr(id)
-                );
-            }
-            None => {
-                let _ = write!(
-                    body,
-                    r#"<tr><td class="dim" colspan="2">no longer held, or this reviewer key may not judge it: it will be skipped</td><td class="mono">{}</td></tr>"#,
-                    attr(id)
-                );
-            }
-        }
-    }
-    body.push_str("</table>");
-    if let Some(reason) = reason {
-        let _ = write!(body, r#"<p>Reason: {}</p>"#, text(reason));
-    }
-    body.push_str(&form(
-        page,
-        "bulk_verdict",
-        &session.csrf(),
-        &format!(
-            "{}{}{}{}",
-            hidden("verdict", verdict),
-            hidden("reason", reason.unwrap_or("")),
-            hidden("artifact_ids", &ids.join(" ")),
-            acts::nonce_field()
-        ),
-        &format!("Yes, {verdict} {}", ids.len()),
-        true,
-    ));
-    let _ = write!(body, r#"<p><a href="{page}">Back to the list</a></p>"#);
-    outcome::html(
-        StatusCode::OK,
-        shell("Confirm", &bar(session, side), page, None, &body),
-    )
-}
-
 /// `POST /web/review`: an act of the user page's view.
 pub async fn user_act(
     State(web): State<Web>,
@@ -1679,9 +1376,10 @@ mod tests {
             notice(&fields("done=verdict&version=3&state=%3Cb%3E")),
             None
         );
+        // The admin page's bulk review left the console (ADR-0083 d7).
         assert_eq!(
-            notice(&fields("done=bulk&approved=x%3Cb%3E&rejected=0&skipped=0")).as_deref(),
-            Some("Recorded: 0 approved, 0 rejected, 0 skipped.")
+            notice(&fields("done=bulk&approved=1&rejected=0&skipped=0")),
+            None
         );
         assert_eq!(notice(&fields("done=hello")), None);
     }

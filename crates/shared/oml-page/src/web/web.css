@@ -100,6 +100,13 @@ p.held{font:var(--t-body-dense-weight) var(--t-body-dense-size)/var(--t-body-den
 .oml-section-head .top{display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap}
 .oml-section-head h2,.oml-section-head h1{margin:0}
 .oml-section-head .top>button,.oml-section-head .top>.end{margin-left:auto}
+/* The views of one tab (MemoriesCockpit, AdminMemoriesCockpit): links under the heading, the
+   current one underlined in star; a count, where drawn, is a word and a number, never a colour. */
+.oml-views{display:flex;flex-wrap:wrap;gap:0 var(--space-1);margin:var(--space-2) 0 var(--space-1);border-bottom:1px solid var(--rule)}
+.oml-views a{display:inline-flex;align-items:center;gap:var(--space-2);min-height:var(--target-min);padding:0 var(--space-3);color:var(--ink-dim);text-decoration:none;font:var(--t-button-weight) var(--t-button-size)/var(--t-button-line) var(--font-body)}
+.oml-views a:hover{color:var(--ink)}
+.oml-views a[aria-current]{color:var(--ink);box-shadow:inset 0 calc(-1 * var(--stroke-strong)) 0 var(--star)}
+.oml-views .n{font-family:var(--font-mono);font-variant-numeric:tabular-nums;font-variant-ligatures:none}
 details.help,details.oml-help{max-width:var(--measure);margin:0 0 var(--space-4);color:var(--ink-dim);font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body)}
 details.help summary,details.oml-help summary{list-style:none;display:inline-flex;align-items:center;justify-content:center;min-width:var(--target-min);height:var(--target-min);padding:0 var(--space-2);border:1px solid var(--control-border);border-radius:var(--radius-pill);color:var(--ink-dim);font:var(--t-button-weight) var(--t-caption-size)/1 var(--font-body);cursor:pointer}
 details.help summary::-webkit-details-marker,details.oml-help summary::-webkit-details-marker{display:none}
@@ -265,6 +272,7 @@ details.oml-more>summary{cursor:pointer;min-height:var(--target-min);display:inl
 .oml-mc>.mc-head{display:flex;flex-direction:column;gap:var(--space-2);padding:var(--space-3) var(--space-4)}
 .oml-mc>.mc-d:not([open])~.mc-body,.oml-mc>.mc-d:not([open])~.oml-strip{display:none}
 .oml-mc>ul.mc-facts{padding:0 var(--space-4) var(--space-3)}
+.oml-mc>p.mc-lead{margin:0;padding:0 var(--space-4) var(--space-2);font:var(--t-body-dense-weight) var(--t-body-dense-size)/var(--t-body-dense-line) var(--font-body);color:var(--ink)}
 .oml-mc .mc-top{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2)}
 .oml-mc .mc-more{display:inline-flex;align-items:center;gap:var(--space-1);color:var(--ice);font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body)}
 .oml-mc .mc-more::after{content:"";width:var(--space-2);height:var(--space-2);border-right:var(--stroke-strong) solid currentColor;border-bottom:var(--stroke-strong) solid currentColor;transform:translateY(-25%) rotate(45deg)}

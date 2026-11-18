@@ -53,11 +53,6 @@ impl Fields {
             .map(|(_, v)| v.as_str())
     }
 
-    /// Every field, `(name, value)`, in the order sent.
-    pub(crate) fn pairs(&self) -> impl Iterator<Item = (&str, &str)> {
-        self.0.iter().map(|(n, v)| (n.as_str(), v.as_str()))
-    }
-
     /// Every field's name, in the order sent.
     pub(crate) fn names(&self) -> impl Iterator<Item = &str> {
         self.0.iter().map(|(n, _)| n.as_str())

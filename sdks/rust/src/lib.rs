@@ -1303,14 +1303,16 @@ pub struct MemoryQuery<'a> {
     pub cursor: Option<&'a str>,
 }
 
-/// A text search of the caller's readable memories, its own held ones
-/// among them.
+/// A text search of the caller's readable memories.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RecallQuery<'a> {
     pub query: &'a str,
     pub k: u32,
     pub workspace: Option<&'a str>,
     pub origin: Option<&'a str>,
+    /// Sent as `include_unreviewed`, always, so an in-progress scope's
+    /// default of `true` never applies unasked (ADR-0030 d4; ADR-0083 d1).
+    pub include_unreviewed: bool,
 }
 
 /// The admin read's filters.
@@ -1722,8 +1724,8 @@ impl<T: Transport> Client<T> {
     }
 
     /// `POST /v1/memories/recall`: memories and derived facts with their
-    /// text, the caller's own held ones among them. Read-shaped: no
-    /// idempotency key.
+    /// text, held ones only where `include_unreviewed` asks for them.
+    /// Read-shaped: no idempotency key.
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
@@ -1737,7 +1739,7 @@ impl<T: Transport> Client<T> {
             "k": query.k,
             "kinds": ["memory", "derived_fact"],
             "include_text": true,
-            "include_unreviewed": true,
+            "include_unreviewed": query.include_unreviewed,
         });
         if let Some(workspace) = query.workspace {
             body["workspace"] = serde_json::json!(workspace);
