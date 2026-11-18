@@ -849,8 +849,13 @@ pub async fn a_read_at_an_ancestor_serves_a_descendant_in_progress_subtree_besid
         let by_default = hits(&second, w.home, None, None).await;
         assert_eq!(
             ids(&by_default),
+            set(&[inside, approved, late]),
+            "{search}: by default at the ancestor, the root's rows alone, never the key's own at home or {outside}"
+        );
+        assert_eq!(
+            ids(&hits(&second, w.home, None, Some(true)).await),
             set(&[inside, own, approved, late]),
-            "{search}: by default at the ancestor, the root's rows and the key's own, never {outside}"
+            "{search}: true adds the key's own held rows elsewhere, never {outside}"
         );
         assert!(
             by_default.iter().all(|(id, status)| (*id == approved)
