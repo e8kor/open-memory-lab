@@ -118,8 +118,8 @@ fn rank(c: &SkillCandidate) -> (u32, bool, &str) {
 /// beside it; the nearest such workspace, or the one that answers `<name>`
 /// with a held edit, wins that command, and the rest stay readable by URI
 /// (R15). The offered commands are ordered by distance, then command name,
-/// and held commands past [`HELD_SKILLS_MAX`] are dropped in that order,
-/// never a promoted one.
+/// and held commands past [`HELD_SKILLS_MAX`] are dropped from them in that
+/// order, never a promoted one; `all` keeps every command.
 #[must_use]
 pub fn offer(candidates: Vec<SkillCandidate>) -> Offer {
     let mut slots: BTreeMap<(String, Uuid), Vec<SkillCandidate>> = BTreeMap::new();
@@ -174,8 +174,10 @@ pub fn offer(candidates: Vec<SkillCandidate>) -> Offer {
     let order = |o: &OfferedSkill| (o.candidate.distance, o.command.clone());
     offer.offered.sort_by_key(order);
     offer.all.sort_by_key(order);
+    // Only the offered list is capped: `all` is the URI lookup, read without
+    // bodies, so every command it holds, an offered one included, stays
+    // readable by its URI (R15, R19).
     cap_held(&mut offer.offered);
-    cap_held(&mut offer.all);
     offer
 }
 

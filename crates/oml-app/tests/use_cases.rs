@@ -18203,6 +18203,34 @@ async fn a_demoted_or_erased_skill_is_not_offered_and_the_erasure_keeps_its_name
     );
 }
 
+/// A skill whose row changed between the set's read and the body's read is
+/// not served: the body read must find the version the set offered, in the
+/// same state and still the tip it was (ADR-0080 d6, d11).
+#[tokio::test]
+async fn a_skill_approved_between_the_set_read_and_the_body_read_is_not_served() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let writer = agent(&app, &boot.admin_key.value, "wanda", crew).await;
+    app.submit_memory(
+        &writer.value,
+        &skill_named("s1", "deploy", "Run the deploy script.", crew),
+    )
+    .await
+    .expect("a held skill");
+    let read = oml_app::types::SkillRead {
+        command: "deploy".to_owned(),
+        workspace_name: None,
+        include_own_held: true,
+    };
+    store.promote_on_next_memory_read();
+    let served = app
+        .skill(&writer.value, Some(&crew.into()), &read)
+        .await
+        .expect("the read");
+    assert!(served.is_none(), "{served:?}");
+}
+
 /// The bootstrap admin key is offered no other key's held skill, and reads
 /// none by name (ADR-0080 d14; ADR-0089 d2: no admin act opens a held
 /// skill).

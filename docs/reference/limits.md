@@ -1,6 +1,6 @@
 ---
 status: Stable
-verified: 2026-11-06
+verified: 2026-11-18
 answers: "the size, rate, page and capacity bounds OML enforces or has measured, with units, who sets them and what error is returned"
 ---
 
@@ -46,6 +46,7 @@ From the maintainers' own runs on one 8-vCPU host with PostgreSQL:
 - Per-tenant write ceiling under the chain lock.
 - Lake writer lag under sustained load ([run the lake writer](../operations/lake.md)).
 - The admin queue read's person-reviewer count (`GET /v2/review/queue`, #435): one pass over the tenant's held rows, one over its person's reviewer keys with their grants and denials, then a match per workspace and key, so it grows with workspaces holding rows times those keys.
+- The offered skill set (`GET /v1/skills`, and every MCP `prompts/list`, `prompts/get`, `resources/list` and `resources/read`): each call recomputes the whole set at the key's scope, one ancestry read, a walk of the in-progress subtree below it and one read of every skill row on those workspaces, without bodies, and nothing is cached between calls, so its cost grows with the skill rows in scope and is paid again by each prompt or resource read ([ADR-0080](../adr/ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) d11).
 
 ## Not verified against a live client
 

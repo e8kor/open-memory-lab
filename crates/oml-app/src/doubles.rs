@@ -438,6 +438,9 @@ pub struct MemStore {
     /// Every `instruction_rows` read fails as a lost connection would,
     /// until disarmed: an outage of the skill and guardrail reads.
     fail_instruction_rows: Arc<AtomicBool>,
+    /// The next `memory` read finds a held row promoted, as a verdict that
+    /// lands between two reads of one request would leave it.
+    promote_on_next_memory_read: Arc<AtomicBool>,
     /// The next commit parks once it has applied, until the park opens:
     /// an act whose commit landed and whose request is still in flight.
     park_after_commit: Arc<Mutex<Option<CommitPark>>>,
@@ -730,6 +733,14 @@ impl MemStore {
     /// (#233).
     pub fn fail_next_idempotency_settle(&self) {
         self.fail_next_settle.store(true, Ordering::SeqCst);
+    }
+
+    /// Promotes the row the next `memory` read names, when it is held,
+    /// before answering: a verdict that lands between two reads of one
+    /// request.
+    pub fn promote_on_next_memory_read(&self) {
+        self.promote_on_next_memory_read
+            .store(true, Ordering::SeqCst);
     }
 
     /// Fails every `instruction_rows` read with a backend error while
@@ -3287,7 +3298,16 @@ impl JournalStore for MemStore {
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(None);
         };
-        let state = tenant.lock().expect("tenant lock");
+        let mut state = tenant.lock().expect("tenant lock");
+        if self
+            .promote_on_next_memory_read
+            .swap(false, Ordering::SeqCst)
+            && let Some(m) = state.memories.get_mut(&memory_id)
+            && m.status == MemoryStatus::Held
+        {
+            m.status = MemoryStatus::Promoted;
+            m.is_tip = true;
+        }
         Ok(state.memories.get(&memory_id).cloned())
     }
 
@@ -3599,6 +3619,8 @@ impl JournalStore for MemStore {
                 let mut m = m.clone();
                 if !bodies {
                     m.body = String::new();
+                    // The search text carries a titled version's body.
+                    m.format.search_text = None;
                 }
                 m
             })

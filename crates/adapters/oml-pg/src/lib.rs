@@ -8426,11 +8426,14 @@ impl JournalStore for PgStore {
     ) -> Result<Vec<MemoryRecord>, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
-        // A listing that serves no body selects none (ADR-0080 d11).
+        // A listing that serves no body selects none (ADR-0080 d11), nor
+        // the search text, which carries a titled version's body.
         let columns = if bodies {
             MEMORY_COLUMNS.to_owned()
         } else {
-            MEMORY_COLUMNS.replacen("m.claim, ", "''::text AS claim, ", 1)
+            MEMORY_COLUMNS
+                .replacen("m.claim, ", "''::text AS claim, ", 1)
+                .replacen("m.search_text, ", "NULL::text AS search_text, ", 1)
         };
         // The promoted served tips of the kind on the named nodes,
         // never a retirement version, the held versions the calling key

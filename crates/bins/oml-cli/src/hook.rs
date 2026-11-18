@@ -47,8 +47,16 @@ pub const DEADLINE: Duration = Duration::from_secs(8);
 const COUNT: usize = 10;
 /// Claude Code's cap on a hook's `additionalContext`, in characters: past
 /// it the text is saved to a file and only a preview enters the session.
-/// The skills index is fitted under it, after everything else (ADR-0080 d8).
+/// Claude Code is JavaScript, whose string length counts UTF-16 units, so
+/// the cap is counted in those (`units`). The skills index is fitted
+/// under it, after everything else (ADR-0080 d8).
 pub const CONTEXT_CAP: usize = 10_000;
+
+/// `text`'s length as a JavaScript string counts it: UTF-16 units, two for
+/// a character outside the Basic Multilingual Plane.
+fn units(text: &str) -> usize {
+    text.encode_utf16().count()
+}
 /// The characters a skill's description takes in the index at most, the
 /// last one `…` when cut (ADR-0080 d8).
 pub const SKILL_DESCRIPTION_CAP: usize = 160;
@@ -535,7 +543,7 @@ fn render(r: &Rendered<'_>) -> String {
     }
     if let Some(set) = r.skills {
         // The index is fitted into what the rest left under the cap.
-        let used = out.iter().map(|l| l.chars().count() + 1).sum::<usize>();
+        let used = out.iter().map(|l| units(l) + 1).sum::<usize>();
         skill_index(r, set, CONTEXT_CAP.saturating_sub(used), &mut out);
     }
     out.join("\n")
@@ -546,7 +554,7 @@ fn render(r: &Rendered<'_>) -> String {
 /// body, at most [`SKILL_INDEX_LINES`], then "and N more" with no partial
 /// line. A description is cut to [`SKILL_DESCRIPTION_CAP`] characters and a
 /// URI is never cut. A held skill's line begins `[unreviewed]` and ends
-/// "(unreviewed)". The lines fit in `room` characters, the closing line
+/// "(unreviewed)". The lines fit in `room` UTF-16 units, the closing line
 /// included, so the whole context stays under [`CONTEXT_CAP`]; a line that
 /// does not fit is counted in N. N counts the first page past the lines
 /// printed; a further page makes it "at least N more", since the hook makes
@@ -562,7 +570,7 @@ fn skill_index(r: &Rendered<'_>, set: &Value, room: usize, out: &mut Vec<String>
         r.name(set["scope_path"].as_str().unwrap_or("?"))
     );
     // The blank line and the header, each with its newline.
-    let mut used = 1 + header.chars().count() + 1 + MORE_LINE_RESERVE;
+    let mut used = 1 + units(&header) + 1 + MORE_LINE_RESERVE;
     let mut lines = Vec::new();
     for s in skills.iter().take(SKILL_INDEX_LINES) {
         let name = r.name(&printed(s["name"].as_str().unwrap_or("?")));
@@ -580,7 +588,7 @@ fn skill_index(r: &Rendered<'_>, set: &Value, room: usize, out: &mut Vec<String>
             ),
             printed(s["uri"].as_str().unwrap_or("?")),
         );
-        let length = line.chars().count() + 1;
+        let length = units(&line) + 1;
         if used + length > room {
             break;
         }
@@ -1987,6 +1995,47 @@ mod tests {
                 assert_eq!(line.ends_with(" (unreviewed)"), held, "{line}");
             }
         }
+    }
+
+    /// The cap is counted in UTF-16 units, as a JavaScript string's length
+    /// is: a recall full of characters outside the Basic Multilingual Plane,
+    /// two units each, still leaves the whole context under the cap
+    /// (ADR-0080 d8; R18).
+    #[test]
+    fn the_context_cap_counts_utf16_units_so_astral_characters_stay_under_it() {
+        let skills: Vec<Value> = (0..20)
+            .map(|i| {
+                json!({
+                    "name": format!("skill-{i:02}"),
+                    "description": "d".repeat(1024),
+                    "uri": format!("oml://workspace/metals/skill/skill-{i:02}"),
+                    "unreviewed": false,
+                })
+            })
+            .collect();
+        let set = json!({ "scope_path": "acme.metals", "skills": skills, "next_cursor": null });
+        let hits: Vec<Value> = (0..10)
+            .map(|i| {
+                json!({ "memory": { "claim_key": format!("fact-{i}"),
+                "state": "promoted", "text": "\u{1F600}".repeat(320) } })
+            })
+            .collect();
+        let redact = |text: &str| text.to_owned();
+        let context = render(&Rendered {
+            server: "https://oml.example",
+            brief: &[],
+            skills: Some(&set),
+            own: &[],
+            steering: &[],
+            hits: &hits,
+            budget: &json!({ "truncated": false, "max_tokens": 800 }),
+            query: "metals",
+            compacted: false,
+            redact: &redact,
+        });
+        let units = context.encode_utf16().count();
+        assert!(units <= CONTEXT_CAP, "{units} UTF-16 units");
+        assert!(context.contains("OML skills at acme.metals:"), "{context}");
     }
 
     /// A skill's URI is printed whole in the index, however long, and a

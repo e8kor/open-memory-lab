@@ -7216,6 +7216,13 @@ pub async fn instruction_rows_are_the_tips_in_force_the_named_keys_own_held_rows
             description: "Ships the service".to_owned(),
         })),
         claim_key: "skill/deploy".to_owned(),
+        // A titled skill: its search text carries the title and the body.
+        format: Box::new(oml_app::types::FormatFields {
+            media_type: "text/markdown".to_owned(),
+            title: Some("Deploy".to_owned()),
+            search_text: Some("Deploy\nrun the tests first".to_owned()),
+            search_text_by: Some("markdown/1".to_owned()),
+        }),
         ..rail(wa, 0xC477, other)
     };
     for row in [&in_force, &retired, &off_node, &memory, &skill] {
@@ -7289,6 +7296,7 @@ pub async fn instruction_rows_are_the_tips_in_force_the_named_keys_own_held_rows
         "the fields round-trip"
     );
     assert_eq!(skills[0].body, skill.body, "with bodies, the body is read");
+    assert_eq!(skills[0].format.search_text, skill.format.search_text);
     // A listing read loads no body, and every other field still round-trips
     // (ADR-0080 d11).
     let bodiless = store
@@ -7304,6 +7312,10 @@ pub async fn instruction_rows_are_the_tips_in_force_the_named_keys_own_held_rows
         .expect("skill rows");
     assert_eq!(bodiless.len(), 1);
     assert_eq!(bodiless[0].body, "", "no body is loaded");
+    assert_eq!(
+        bodiless[0].format.search_text, None,
+        "nor the search text, which carries the body"
+    );
     assert_eq!(bodiless[0].kind_fields, skill.kind_fields);
     assert_eq!(bodiless[0].version, skill.version);
 }

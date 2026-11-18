@@ -175,7 +175,8 @@ fn skill_prompt_listing(s: &oml_app::types::ServedSkill) -> Value {
 
 /// A skill's listed description: "Unreviewed: " first on a held one, and
 /// "(overrides <path>)" last on one that shadows a farther skill (ADR-0080
-/// d5, d10).
+/// d5, d10). A held command only ever shadows held versions, never an
+/// approved skill (R15), so its suffix names what it shadows as unreviewed.
 fn skill_description(s: &oml_app::types::ServedSkill) -> String {
     let mut text = if s.unreviewed {
         format!("Unreviewed: {}", s.description)
@@ -183,7 +184,12 @@ fn skill_description(s: &oml_app::types::ServedSkill) -> String {
         s.description.clone()
     };
     if !s.overrides.is_empty() {
-        text.push_str(&format!(" (overrides {})", s.overrides.join(", ")));
+        let what = if s.unreviewed {
+            "overrides the unreviewed version at"
+        } else {
+            "overrides"
+        };
+        text.push_str(&format!(" ({what} {})", s.overrides.join(", ")));
     }
     text
 }
@@ -1978,6 +1984,51 @@ fn rpc_error(id: &Value, code: i64, message: &str) -> Response {
 
 #[cfg(test)]
 mod tests {
+
+    fn served(unreviewed: bool, overrides: &[&str]) -> oml_app::types::ServedSkill {
+        oml_app::types::ServedSkill {
+            artifact_id: uuid::Uuid::nil(),
+            claim_key: "skill/deploy".to_owned(),
+            name: if unreviewed {
+                "deploy-unreviewed"
+            } else {
+                "deploy"
+            }
+            .to_owned(),
+            skill_name: "deploy".to_owned(),
+            description: "Ship it.".to_owned(),
+            version: 1,
+            workspace_id: uuid::Uuid::nil(),
+            workspace_name: "app".to_owned(),
+            workspace_path: "universe.app".to_owned(),
+            depth: 0,
+            overrides: overrides.iter().map(|p| (*p).to_owned()).collect(),
+            approved_at: None,
+            approver: None,
+            uri: "oml://workspace/app/skill/deploy".to_owned(),
+            unreviewed,
+            body_bytes: 8,
+        }
+    }
+
+    /// A held command's description names what it shadows as unreviewed,
+    /// since it never shadows an approved skill; an approved one keeps
+    /// "(overrides <path>)" (ADR-0080 d5, d10; R15).
+    #[test]
+    fn an_unreviewed_commands_description_says_it_overrides_an_unreviewed_version() {
+        assert_eq!(
+            skill_description(&served(true, &["universe.team.wip-b"])),
+            "Unreviewed: Ship it. (overrides the unreviewed version at universe.team.wip-b)"
+        );
+        assert_eq!(
+            skill_description(&served(false, &["universe"])),
+            "Ship it. (overrides universe)"
+        );
+        assert_eq!(
+            skill_description(&served(true, &[])),
+            "Unreviewed: Ship it."
+        );
+    }
     use super::*;
 
     /// The pure half of `a_failing_tool_answers_is_error_with_the_envelope_

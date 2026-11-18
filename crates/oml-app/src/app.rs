@@ -7940,11 +7940,16 @@ where
             return Ok(None);
         };
         // The set was read without bodies; the one served is read here
-        // (ADR-0080 d11). A row gone since is not served.
+        // (ADR-0080 d11). A row gone since, or one whose state, tip or
+        // version moved between the two reads, is not served: the header
+        // would describe a version other than the body's.
         let Some(full) = self
             .journal
             .memory(caller.key.tenant_id, row.memory_id)
             .await?
+            .filter(|f| {
+                f.status == row.status && f.is_tip == row.is_tip && f.version == row.version
+            })
         else {
             return Ok(None);
         };
