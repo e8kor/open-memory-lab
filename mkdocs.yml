@@ -111,6 +111,7 @@ nav:
           - Sync docs and code: use/sync.md
           - Give agents rules: use/guardrails.md
           - Keep agent skills in OML: use/skills.md
+          - Keep documents in OML: use/documents.md
       - Integrate:
           - Integrate a reviewer crew over HTTP: api/reviewer-crews.md
           - Use the client SDKs: engineering/sdks.md

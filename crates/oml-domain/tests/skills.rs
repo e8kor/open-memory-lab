@@ -328,8 +328,51 @@ fn a_skill_uri_names_the_workspace_and_the_command_and_parses_back() {
             workspace: "team".to_owned(),
             path: "guides/setup.md".to_owned(),
             passage: Some("install".to_owned()),
+            version: None,
         })
     );
+}
+
+#[test]
+fn a_document_uri_names_a_held_version_and_a_line_fragment_and_parses_back() {
+    use oml_domain::skills::document_uri;
+    let uri = document_uri("team", "doc/guides/setup", Some("L5-L7"), Some(3));
+    assert_eq!(
+        uri,
+        "oml://workspace/team/doc/guides/setup?version=3&passage=L5-L7"
+    );
+    assert_eq!(
+        parse_resource_uri(&uri),
+        Ok(ResourceUri::Document {
+            workspace: "team".to_owned(),
+            path: "guides/setup".to_owned(),
+            passage: Some("L5-L7".to_owned()),
+            version: Some(3),
+        })
+    );
+    for uri in [
+        "oml://workspace/team/doc/a?version=x",
+        "oml://workspace/team/doc/a?version=1&version=2",
+        "oml://workspace/team/doc/a?passage=b&passage=c",
+        "oml://workspace/team/doc/a?other=1",
+    ] {
+        assert_eq!(parse_resource_uri(uri), Err(UriRefusal::NotFound), "{uri}");
+    }
+}
+
+#[test]
+fn a_passage_under_a_heading_whose_slug_is_not_uri_text_is_named_by_its_lines() {
+    use oml_passage::uri_fragment;
+    assert_eq!(uri_fragment("install", 5, 7), "install");
+    assert_eq!(uri_fragment("установка", 5, 7), "L5-L7");
+    assert_eq!(uri_fragment("🚀-launch", 9, 12), "L9-L12");
+    assert_eq!(uri_fragment("", 2, 3), "L2-L3");
+    assert_eq!(
+        uri_fragment("-1", 4, 6),
+        "L4-L6",
+        "a repeat of an empty slug"
+    );
+    assert_eq!(uri_fragment("L40-L80", 40, 80), "L40-L80");
 }
 
 #[test]

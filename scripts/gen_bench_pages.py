@@ -415,6 +415,21 @@ HELD_MARK_NOTE = (
     "shares the scope, so it is filed as #462 and not made here.\n")
 
 
+DOCUMENTS_NOTE = (
+    "**Documents grow the index by their passages.** A document is searched by its passages "
+    "([ADR-0081](../adr/ADR-0081-a-document-is-a-reviewed-markdown-or-text-claim-that-recall-"
+    "searches-by-passage-and-the-mcp-server-serves-as-a-resource.md) d4), each a search unit with "
+    "its own postings. On 2026-11-18, 19 of OML's own guides, 142,552 bytes of markdown, cut into "
+    "129 passages and added 16,678 postings beside the 5,309 of the recall eval's 200 memories: "
+    "about 880 postings a document, 129 a passage, 120 a kilobyte of text. The postings "
+    "partition, with its indexes, grew from 1.6 MiB to 7.5 MiB, and the passages' own table took "
+    "0.5 MiB. On a corpus with no documents, the scale lane's 10,000 memories, `bm25-postings` "
+    "measured p50 7.2 ms and p95 13.1 ms after the change against 6.6 and 11.5 ms before, and "
+    "`bm25` p95 35.8 against 31.9 ms, medians of 9 and 6 rounds on a host shared with other "
+    "jobs (load average 2.4 to 3.6), the driver a debug build on both sides. The numbers are in "
+    "`bench/scale/results/passages/`. Recall over many large documents is not yet measured.\n")
+
+
 def scale_page(current):
     """Latency against scope rows, from the suites whose rows differ."""
     points = {}
@@ -436,6 +451,7 @@ def scale_page(current):
              "conversations together, though each query reads one) and the client's p50 and "
              f"p95 in milliseconds. The line is {LATENCY_LINE_MS} ms.\n", CEILING,
              HELD_MARK_NOTE,
+             DOCUMENTS_NOTE,
              "| method | rows | suite | p50 ms | p95 ms | p95 under 50 ms |",
              "|---|---:|---|---:|---:|---|"]
     for method in method_order(points):

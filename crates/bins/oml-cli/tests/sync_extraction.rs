@@ -478,3 +478,53 @@ fn decision_prose_outside_a_dn_bullet_is_warned_not_loaded() {
         x.warnings
     );
 }
+
+/// The `headings` adapter's sections and the server's passages are one rule
+/// (ADR-0081 d3, d7): for the shared vector file, every section the adapter
+/// writes names the fragment and lines of the passage the server cuts.
+#[test]
+fn the_server_and_sync_cut_the_same_passages_for_the_same_bytes() {
+    let vectors: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../shared/oml-passage/tests/vectors/passages.json"
+    ))
+    .unwrap();
+    let mut compared = 0;
+    for v in vectors.iter().filter(|v| v["format"] == "markdown") {
+        let text = v["text"].as_str().unwrap();
+        let cut = oml_passage::passages(text, oml_passage::Format::Markdown).unwrap();
+        let x = HeadingsAdapter
+            .extract("docs/v.md", text.as_bytes())
+            .unwrap();
+        for item in &x.items {
+            // A section over 40 lines is one claim to `headings` and blocks
+            // to the passage rule (ADR-0081 d3).
+            if item.lines.1 - item.lines.0 >= oml_passage::BLOCK_LINES {
+                continue;
+            }
+            let fragment = item.fragment.as_deref().unwrap();
+            let p = cut
+                .iter()
+                .find(|p| p.fragment == fragment)
+                .unwrap_or_else(|| panic!("{}: no passage {fragment}", v["name"]));
+            // `headings` ends a section at a heading of level 5 or 6 as well,
+            // where a passage runs on (ADR-0081 R7): the fragment is one,
+            // and the lines are one wherever the section holds neither.
+            if p.end_line == item.lines.1 || !text_holds_deep_heading(text, p) {
+                assert_eq!((p.start_line, p.end_line), item.lines, "{}", v["name"]);
+            } else {
+                assert_eq!(p.start_line, item.lines.0, "{}", v["name"]);
+            }
+            compared += 1;
+        }
+    }
+    assert!(compared >= 4, "{compared}");
+}
+
+/// Whether the passage's lines below its own heading hold a heading of
+/// level 5 or 6.
+fn text_holds_deep_heading(text: &str, p: &oml_passage::Passage) -> bool {
+    text.split('\n')
+        .skip(p.start_line)
+        .take(p.end_line - p.start_line)
+        .any(|l| l.starts_with("##### ") || l.starts_with("###### "))
+}

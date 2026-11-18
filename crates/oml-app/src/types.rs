@@ -1272,6 +1272,57 @@ impl MemoryRecord {
     pub fn searched(&self) -> &str {
         self.format.search_text.as_deref().unwrap_or(&self.body)
     }
+
+    /// A document version's passages as search units (ADR-0081 d3, d4;
+    /// the build's reading R2), cut again from the body by the one rule:
+    /// each passage with its search text and the bytes a hit on it serves.
+    /// Empty for every other kind, for a retirement version, and for a
+    /// text that holds no passage, each of which is one whole-version unit.
+    /// A body past the cap, which capture refuses, is one unit too.
+    #[must_use]
+    pub fn passage_units(&self) -> Vec<PassageUnit> {
+        if self.kind != MemoryKind::Document || self.retirement {
+            return Vec::new();
+        }
+        let format = if self.format.media_type == "text/markdown" {
+            oml_passage::Format::Markdown
+        } else {
+            oml_passage::Format::Plain
+        };
+        let Ok(passages) = oml_passage::passages(&self.body, format) else {
+            return Vec::new();
+        };
+        let title = match self.kind_fields.as_deref() {
+            Some(KindFields::Document { title: Some(t) }) => t.as_str(),
+            _ => self.claim_key.rsplit('/').next().unwrap_or_default(),
+        };
+        passages
+            .into_iter()
+            .map(|passage| PassageUnit {
+                search_text: oml_passage::search_text(title, &self.body, &passage),
+                body_bytes: oml_passage::passage_text(&self.body, &passage).len() as u64,
+                passage,
+            })
+            .collect()
+    }
+}
+
+/// One passage of a document version as a search unit (ADR-0081 d4): the
+/// passage, the text its postings are read from, and its served bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PassageUnit {
+    pub passage: oml_passage::Passage,
+    pub search_text: String,
+    pub body_bytes: u64,
+}
+
+impl PassageUnit {
+    /// The passage's text as served: its lines of `body`, the version's
+    /// body it was cut from, byte for byte (ADR-0081 d4, d6; R2).
+    #[must_use]
+    pub fn text<'a>(&self, body: &'a str) -> &'a str {
+        oml_passage::passage_text(body, &self.passage)
+    }
 }
 
 /// The approving verdict that ratified a version, as stored on its row:
@@ -2035,7 +2086,11 @@ pub struct VerdictRequest {
 /// The kinds recall serves as hits. Vocabulary kinds join them only by a
 /// workspace's journalled opt-in, which is unbuilt (retrieval.md, the
 /// recall-ordering contract; ADR-0021 d9, ADR-0025 d8).
-pub const HIT_KINDS: [MemoryKind; 2] = [MemoryKind::Memory, MemoryKind::DerivedFact];
+pub const HIT_KINDS: [MemoryKind; 3] = [
+    MemoryKind::Memory,
+    MemoryKind::DerivedFact,
+    MemoryKind::Document,
+];
 
 #[derive(Debug, Clone)]
 pub struct RecallRequest {
@@ -2092,7 +2147,18 @@ pub struct RecallRequest {
 /// reads as the served row it carries.
 #[derive(Debug, Clone)]
 pub struct RecallHit {
+    /// The claim item; for a document's hit, its `body` and `body_bytes`
+    /// are the best passage's (ADR-0081 d4).
     pub served: ServedMemory,
+    /// For a document's hit, the passage it serves (ADR-0081 d4).
+    pub passage: Option<HitPassage>,
+    /// For a document's hit, its passage's resource URI,
+    /// `oml://workspace/<workspace>/doc/<path>?passage=<fragment>`
+    /// (ADR-0081 d4, d6).
+    pub uri: Option<String>,
+    /// For a document's hit, its other passages in the fused list before
+    /// the `k` cut, a lower bound (the build's reading R3); 0 otherwise.
+    pub more_passages: u32,
     /// The pipeline's score: one retriever's own score, or the fused
     /// reciprocal-rank score; comparable only within one result
     /// (retrieval.md, the recall-ordering contract; ADR-0049 d3).
@@ -2115,6 +2181,18 @@ pub struct RecallHit {
     /// The hit's `via` under `wide` or a list: whether its workspace is the
     /// scope's or a federated source; `None` under `scope` (ADR-0072 d8).
     pub source: Option<crate::federation::Via>,
+}
+
+/// The passage a document's hit serves (ADR-0081 d4): its fragment, the
+/// `?passage=` of its URI, its ordinal, its lines (1-based, inclusive) and
+/// the headings above it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HitPassage {
+    pub fragment: String,
+    pub ordinal: usize,
+    pub start_line: usize,
+    pub end_line: usize,
+    pub heading_path: Vec<String>,
 }
 
 /// What the reranking stage did to one recall (ADR-0053 d5, d7):
@@ -3502,6 +3580,11 @@ pub enum AppError {
     /// naming `/body`).
     #[error("a skill body is at most 32,768 bytes after NFC (ADR-0080 d9)")]
     SkillBodyTooLarge,
+    /// A document whose text cuts into more than 4,096 passages (ADR-0081
+    /// d3; request.validation naming `/body` with `details.reason`
+    /// `too_many_passages`).
+    #[error("a document holds at most 4,096 passages; this one would hold {count} (ADR-0081 d3)")]
+    TooManyPassages { count: usize },
     /// A key link an admin may not make or end, `request.validation` with
     /// `details.reason` one of `revoked`, `already_linked`, `admin_key`,
     /// `not_a_tenant_key`, `not_used_by_person`, `user_unknown`,

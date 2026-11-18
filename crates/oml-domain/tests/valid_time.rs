@@ -385,3 +385,20 @@ fn a_ratified_end_is_the_successors_declared_start_inside_the_replaced_interval(
         "an earlier end stays"
     );
 }
+
+/// A document states no valid time (ADR-0059 d2; ADR-0081 d1), so recall's
+/// expired-version paths, which subtract one unit per version, never meet a
+/// document's passages (the review's finding of 2026-11-18).
+#[test]
+fn valid_time_is_refused_on_a_document() {
+    for (from, until, field) in [
+        (Some("2015"), None, "/valid_from"),
+        (None, Some("2030"), "/valid_until"),
+    ] {
+        let declared = ValidTime::parse(from, until).unwrap();
+        let err = declared
+            .check_kind(MemoryKind::Document, false)
+            .unwrap_err();
+        assert_eq!(err.field(), field);
+    }
+}

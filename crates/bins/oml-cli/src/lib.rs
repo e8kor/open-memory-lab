@@ -11,6 +11,7 @@ pub mod client;
 pub mod creds;
 pub mod demo;
 pub mod discovery;
+pub mod documents;
 pub mod events;
 pub mod export;
 pub mod guardrails;

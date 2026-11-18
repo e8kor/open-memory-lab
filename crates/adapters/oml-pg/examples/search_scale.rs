@@ -44,6 +44,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let kind = match retriever.as_str() {
         "bm25" => RetrieverKind::Bm25,
+        "keyword_any" => RetrieverKind::KeywordAny,
+        "keyword_all" => RetrieverKind::KeywordAll,
+        "trigram" => RetrieverKind::Trigram,
         "bm25_postings" => RetrieverKind::Bm25Postings,
         "sparse" => RetrieverKind::Sparse,
         other => return Err(format!("unknown retriever {other}").into()),
@@ -55,7 +58,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         _ => PruneLimits::SERVED,
     };
-    let store = PgStore::connect(url).await?.with_prune_limits(limits);
+    let store = PgStore::connect(url)
+        .await?
+        .with_prune_limits(limits)
+        .with_search_probe()
+        .await?;
     let items: Vec<Value> = serde_json::from_str(&std::fs::read_to_string(workload)?)?;
     for (i, item) in items.iter().enumerate() {
         let tenant = Uuid::parse_str(item["tenant"].as_str().unwrap_or_default())?;
@@ -64,7 +71,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             reference: None,
             anchor: oml_app::types::AnchorFilter::default(),
             promoted_nodes: uuids(&item["nodes"]),
-            kinds: vec![MemoryKind::Memory, MemoryKind::DerivedFact],
+            kinds: vec![
+                MemoryKind::Memory,
+                MemoryKind::DerivedFact,
+                MemoryKind::Document,
+            ],
             own_held: (!own_keys.is_empty()).then(|| OwnHeldScope {
                 any_author_nodes: Vec::new(),
                 author_key_ids: own_keys,

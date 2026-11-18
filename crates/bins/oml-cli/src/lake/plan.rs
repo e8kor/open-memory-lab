@@ -59,6 +59,7 @@ fn bare(outcome: Outcome, key: &str, rel: &str) -> Entry {
         note: None,
         writes_this_run: false,
         text: None,
+        format: None,
         path: rel.to_owned(),
     }
 }
