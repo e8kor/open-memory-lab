@@ -117,7 +117,7 @@ where
     /// all, and in its transaction each row's body and what derives from it
     /// are emptied, its passages and telemetry erased and its data key
     /// destroyed; the digest, title, attribution and lineage stay. It
-    /// commits through [`Self::commit_requests`], so the tenant's widen
+    /// commits through `commit_requests`, so the tenant's widen
     /// signals drop with it (ADR-0005 d4). A claim already erased is
     /// [`AppError::Transition`]; a version the tenant does not hold is
     /// [`AppError::NotFound`]; a claim that gained a version since it was

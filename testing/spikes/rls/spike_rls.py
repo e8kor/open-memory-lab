@@ -682,11 +682,11 @@ def s3_2(admin_db_ci: str, owner_ci: str, service_ci: str, owner: str, service: 
             s.check(got == "42501", f"as the service role set to tenant A, with the journal grants the migrations make, "
                                     f"{statement} is refused with {got} (expected 42501)")
         refused = unreadable_tables(conn) + [SQLX_MIGRATIONS]
-        reads = {t: sqlstate_rolled_back(conn, sql.SQL("SELECT 1 FROM {} LIMIT 1").format(sql.Identifier(t)), a.id)
+        reads = {t: sqlstate_rolled_back(conn, sql.SQL("SELECT * FROM {} LIMIT 1").format(sql.Identifier(t)), a.id)
                  for t in refused}
         s.check(all(v == "42501" for v in reads.values()),
-                f"as the service role, a SELECT on each table its migrations grant it no SELECT on is refused "
-                f"with 42501: {reads}")
+                f"as the service role, a SELECT of every column of each table its migrations grant it no "
+                f"table-wide SELECT on is refused with 42501 (artifact_keys grants three columns, 0056): {reads}")
         held = conn.execute(
             "SELECT array_agg(p) FILTER (WHERE has_table_privilege(current_user, %s, p)) FROM unnest(ARRAY["
             "'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p",
