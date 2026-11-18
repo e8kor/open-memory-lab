@@ -227,6 +227,7 @@ from .recall_event_labels_item_source import RecallEventLabelsItemSource
 from .recall_matched import RecallMatched
 from .recall_matched_tokens_item import RecallMatchedTokensItem
 from .recall_matched_via_item import RecallMatchedViaItem
+from .recall_passage import RecallPassage
 from .recall_request import RecallRequest
 from .recall_request_match import RecallRequestMatch
 from .recall_request_search import RecallRequestSearch
@@ -625,6 +626,7 @@ __all__ = (
     "RecallMatched",
     "RecallMatchedTokensItem",
     "RecallMatchedViaItem",
+    "RecallPassage",
     "RecallRequest",
     "RecallRequestMatch",
     "RecallRequestSearch",

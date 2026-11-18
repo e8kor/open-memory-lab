@@ -24,6 +24,7 @@ fn rev(n: u8) -> String {
 struct Version {
     artifact_id: String,
     claim_key: String,
+    kind: String,
     version: u64,
     state: String,
     retirement: bool,
@@ -144,7 +145,7 @@ impl Fake {
 
     fn served(&self, v: &Version) -> Value {
         json!({
-            "artifact_id": v.artifact_id, "claim_key": v.claim_key, "version": v.version,
+            "artifact_id": v.artifact_id, "claim_key": v.claim_key, "kind": v.kind, "version": v.version,
             "tip": v.state == "promoted" && v.version == self.tip_version(&v.claim_key, &v.workspace_id),
             "state": v.state, "retirement": v.retirement, "workspace_id": v.workspace_id,
             "plaintext_digest": v.digest, "anchor": v.anchor,
@@ -171,9 +172,24 @@ impl Fake {
     fn capture(&self, claim_key: &str, workspace: &str, version: u64, body: &Value) -> Value {
         let artifact_id = format!("art-{claim_key}-{workspace}-v{version}");
         let text = body["body"].as_str().unwrap_or_default();
+        // A supersession sends no kind and keeps its target's, as the
+        // server's does.
+        let kept = self
+            .versions
+            .borrow()
+            .iter()
+            .filter(|v| v.claim_key == claim_key && v.workspace_id == workspace)
+            .max_by_key(|v| v.version)
+            .map(|v| v.kind.clone());
+        let kind = body["kind"]
+            .as_str()
+            .map(str::to_owned)
+            .or(kept)
+            .unwrap_or_else(|| "memory".to_owned());
         self.versions.borrow_mut().push(Version {
             artifact_id: artifact_id.clone(),
             claim_key: claim_key.to_owned(),
+            kind,
             version,
             state: "held".into(),
             retirement: body["retirement"] == true,
@@ -192,6 +208,7 @@ impl Fake {
         self.versions.borrow_mut().push(Version {
             artifact_id: format!("art-{claim_key}-{workspace}-v{version}"),
             claim_key: claim_key.into(),
+            kind: "memory".into(),
             version,
             state: "promoted".into(),
             retirement: false,
@@ -808,6 +825,37 @@ fn a_rollback_to_an_earlier_promoted_hash_is_never_written() {
     assert!(outcomes(&revert).contains(&("changed".into(), "doc/docs/guide/beta".into())));
     assert_eq!(fake.writes().len(), 1);
     assert_eq!(fake.writes()[0].1["expected_version"], 2);
+}
+
+/// ADR-0081 d7, R13 of 2026-11-18: a document's body is served byte for
+/// byte, so a version whose text differs from an older one by whitespace
+/// alone is a change, never a rollback to that version.
+#[test]
+fn a_whitespace_only_edit_of_a_document_is_written_and_not_taken_for_a_rollback() {
+    let fake = Fake::new();
+    let v1 = loaded(&[("docs/guide.md", GUIDE_V1)], Kind::Document, &rev(1));
+    run(&fake, &v1, &opts());
+    fake.promote_all();
+    let edited = GUIDE_V1.replace("Beta holds.", "Beta changed.");
+    run(
+        &fake,
+        &loaded(&[("docs/guide.md", &edited)], Kind::Document, &rev(2)),
+        &opts(),
+    );
+    fake.promote_all();
+    let spaced = GUIDE_V1.replace("Alpha holds.", "Alpha  holds.");
+    let before = fake.writes().len();
+    let third = run(
+        &fake,
+        &loaded(&[("docs/guide.md", &spaced)], Kind::Document, &rev(3)),
+        &opts(),
+    );
+    assert!(
+        outcomes(&third).contains(&("changed".into(), "doc/docs/guide".into())),
+        "{:?}",
+        outcomes(&third)
+    );
+    assert_eq!(fake.writes().len(), before + 1, "the edit is written");
 }
 
 #[test]
@@ -1945,4 +1993,155 @@ fn an_adr_or_headings_run_over_a_workspace_holding_only_rust_claims_never_touche
             "{kind:?} wrote {keys:?}"
         );
     }
+}
+
+const NOTES: &str = "First line.\n\nSecond line.\n";
+
+/// ADR-0081 d7, the build's reading R4: one `document` claim per `.md` or
+/// `.txt` file, keyed `doc/` and the path without its extension, anchored
+/// to the whole file, and a run with no change writes nothing.
+#[test]
+fn sync_document_writes_one_claim_per_file_keyed_doc_path() {
+    let fake = Fake::new();
+    let files = [("docs/guide.md", GUIDE_V1), ("docs/notes.txt", NOTES)];
+    let first = run(&fake, &loaded(&files, Kind::Document, &rev(1)), &opts());
+    assert_eq!(first.json["source"]["adapter"], "document");
+    let writes = fake.writes();
+    let keys: Vec<&str> = writes
+        .iter()
+        .map(|(_, b)| b["claim_key"].as_str().unwrap())
+        .collect();
+    assert_eq!(keys, ["doc/docs/guide", "doc/docs/notes"]);
+    for ((_, body), (text, format)) in writes
+        .iter()
+        .zip([(GUIDE_V1, "text/markdown"), (NOTES, "text/plain")])
+    {
+        assert_eq!(body["kind"], "document");
+        assert_eq!(body["format"], format);
+        assert_eq!(body["body"], text);
+        assert!(body["anchor"]["fragment"].is_null(), "{body}");
+        assert_eq!(
+            body["anchor"]["hash"],
+            oml_cli::sync::hash::md_hash(text).as_str()
+        );
+    }
+    fake.promote_all();
+    let again = run(&fake, &loaded(&files, Kind::Document, &rev(1)), &opts());
+    assert!(fake.writes().is_empty(), "{}", again.json);
+    assert_eq!(again.json["summary"]["unchanged"], 2, "{}", again.json);
+}
+
+/// ADR-0081 d2 and the build's reading R4: a path whose key breaks the
+/// document key grammar is unreadable and nothing is written for it.
+#[test]
+fn sync_document_reports_a_path_outside_the_key_grammar_unreadable() {
+    let fake = Fake::new();
+    let long = format!("docs/{}.md", "a".repeat(70));
+    let files = [(long.as_str(), NOTES), ("docs/guide.md", GUIDE_V1)];
+    let report = run(&fake, &loaded(&files, Kind::Document, &rev(1)), &opts());
+    assert_eq!(report.exit, 1);
+    let keys: Vec<String> = fake
+        .writes()
+        .iter()
+        .map(|(_, b)| b["claim_key"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(keys, ["doc/docs/guide"]);
+}
+
+/// ADR-0081 d3 and the build's reading R4: a file that cuts past the
+/// 4,096 passages a document holds is reported unreadable by a dry run,
+/// naming the count and the cap, and a run writes nothing for it, where
+/// the server would refuse it with `too_many_passages`.
+#[test]
+fn sync_document_dry_run_reports_a_file_past_the_passage_cap_unreadable() {
+    let fake = Fake::new();
+    let big = "## h\nx\n".repeat(oml_passage::MAX_PASSAGES + 1);
+    let files = [("docs/big.md", big.as_str()), ("docs/guide.md", GUIDE_V1)];
+    let dry = Options {
+        dry_run: true,
+        ..opts()
+    };
+    let report = run(&fake, &loaded(&files, Kind::Document, &rev(1)), &dry);
+    assert_eq!(report.exit, 1, "{}", report.json);
+    assert!(fake.writes().is_empty());
+    let unreadable = report.json["unreadable"].as_array().unwrap();
+    assert_eq!(unreadable.len(), 1, "{}", report.json);
+    assert_eq!(unreadable[0]["path"], "docs/big.md");
+    let why = unreadable[0]["why"].as_str().unwrap();
+    assert!(
+        why.contains("4097 passages") && why.contains("4096"),
+        "{why}"
+    );
+    let wet = run(&fake, &loaded(&files, Kind::Document, &rev(1)), &opts());
+    assert_eq!(wet.exit, 1);
+    let keys: Vec<String> = fake
+        .writes()
+        .iter()
+        .map(|(_, b)| b["claim_key"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(keys, ["doc/docs/guide"]);
+}
+
+/// ADR-0081 d7, R5 amended 2026-11-18: the refusal is taken per loaded
+/// path, by the live claims anchored at that path. Two paths loaded two
+/// ways in two single-file runs stay apart, and a run over the whole
+/// source with either adapter is refused at the path the other loaded,
+/// however many adapters the source already holds.
+#[test]
+fn sync_refuses_per_path_so_a_source_holding_both_adapters_cannot_load_a_path_the_other_way() {
+    let fake = Fake::new();
+    let a = ("docs/a.md", GUIDE_V1);
+    let b = ("docs/b.md", GUIDE_V1);
+    let only = |files: &[(&str, &str)], kind: Kind| Loaded {
+        scope: Scope::Files(files.iter().map(|(p, _)| (*p).to_owned()).collect()),
+        ..loaded(files, kind, &rev(1))
+    };
+    run(&fake, &only(&[a], Kind::Document), &opts());
+    fake.promote_all();
+    // Another path of the same source, the other way: no path is mixed.
+    run(&fake, &only(&[b], Kind::Headings), &opts());
+    fake.promote_all();
+    let before = fake.writes().len();
+    for kind in [Kind::Document, Kind::Headings] {
+        let err = try_run(&fake, &loaded(&[a, b], kind, &rev(1)), &opts()).unwrap_err();
+        let (path, keys) = if kind == Kind::Document {
+            ("docs/b.md", "doc/docs/b/alpha")
+        } else {
+            ("docs/a.md", "doc/docs/a")
+        };
+        for word in [path, keys, "headings", "document", "--change-adapter"] {
+            assert!(err.contains(word), "{kind:?}: {word}: {err}");
+        }
+    }
+    assert_eq!(fake.writes().len(), before, "nothing written");
+}
+
+/// ADR-0081 d7, the build's reading R5: one path is loaded one way; a run
+/// with another adapter is refused naming both and the keys it would leave.
+#[test]
+fn sync_refuses_a_path_loaded_by_another_adapter_naming_both() {
+    let fake = Fake::new();
+    let files = [("docs/guide.md", GUIDE_V1)];
+    run(&fake, &loaded(&files, Kind::Headings, &rev(1)), &opts());
+    fake.promote_all();
+    let err = try_run(&fake, &loaded(&files, Kind::Document, &rev(1)), &opts()).unwrap_err();
+    for word in [
+        "headings",
+        "document",
+        "doc/docs/guide/alpha",
+        "--change-adapter",
+    ] {
+        assert!(err.contains(word), "{word}: {err}");
+    }
+    assert!(fake.writes().is_empty());
+
+    // The other way round: a document, then headings.
+    let fake = Fake::new();
+    run(&fake, &loaded(&files, Kind::Document, &rev(1)), &opts());
+    fake.promote_all();
+    let err = try_run(&fake, &loaded(&files, Kind::Headings, &rev(1)), &opts()).unwrap_err();
+    for word in ["headings", "document", "doc/docs/guide"] {
+        assert!(err.contains(word), "{word}: {err}");
+    }
+    assert!(fake.writes().is_empty());
 }

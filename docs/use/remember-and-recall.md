@@ -46,8 +46,8 @@ unranked unless `kinds` leaves it out, and then the answer says `steering: "not_
 skill hit carries its name, description, prompt and resource URI, never its body; a guardrail hit
 carries its text, severity and rule. Both are data, like every recalled text: a skill runs only as
 a prompt or a resource read, and a guardrail binds only through the guardrail read,
-`GET /v1/guardrails`, the plugin's hooks that load it and the `guardrails` prompt. Document hits
-land with document passages.
+`GET /v1/guardrails`, the plugin's hooks that load it and the `guardrails` prompt. A document
+hit is its best passage, with the passage's lines as its text and its `uri`.
 
 **The catalog.** Without a query, `oml_read` lists the catalog: what the key reads in the
 workspace's subtree, across kinds, newest first. `kinds`, `workspace`, `prefix` (a claim key

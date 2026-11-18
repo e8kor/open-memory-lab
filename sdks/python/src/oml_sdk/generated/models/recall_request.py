@@ -40,7 +40,8 @@ class RecallRequest:
                 every kind but steering and the vocabulary kinds, which join only by a workspace's opt-in (ADR-0021 d9). kinds
                 decides whether the steering list is served: naming steering, or absent, it is; otherwise the answer's steering
                 is "not_requested"; steering alone serves the list and ranks nothing (search.hits "not_requested"). A skill is a
-                hit only as one the scope offers, and a guardrail only as one applicable there (ADR-0092 d2, d3).
+                hit only as one the scope offers, and a guardrail only as one applicable there; a document's hit is its best
+                passage (ADR-0092 d2, d3; ADR-0081 d4).
             include_text (bool | Unset): Whether each served item carries its text (ADR-0039 d7). Default: True.
             anchor_repo (str | Unset): A repository, scheme, credentials and .git dropped (github.com/e8kor/open-memory-
                 lab); no segment is . or .. (ADR-0057 d3). As a filter, rows whose anchor names it; unanchored rows are left out

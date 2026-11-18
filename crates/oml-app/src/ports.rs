@@ -915,7 +915,8 @@ pub trait Retriever: Send + Sync {
         async { Ok(Vec::new()) }
     }
 
-    /// Writes one version's kind 2 postings with the version's current
+    /// Writes one version's kind 2 postings, one list per search unit of
+    /// `pending` in its order (ADR-0081 d4), with the version's current
     /// state and takes it off the queue, in one transaction; `false`, and
     /// nothing written, when its entry is gone or was enqueued again since
     /// it was read (ADR-0052 d15).
@@ -923,7 +924,7 @@ pub trait Retriever: Send + Sync {
         &self,
         tenant_id: Uuid,
         pending: &SparsePending,
-        postings: &[SparsePosting],
+        postings: &[Vec<SparsePosting>],
     ) -> impl Future<Output = Result<bool, StoreError>> + Send {
         let _ = (tenant_id, pending, postings);
         async { Ok(false) }

@@ -7,8 +7,8 @@ use super::markdown::lines;
 
 pub struct LinesAdapter;
 
-/// The most lines one block holds (ADR-0057 d21).
-pub const BLOCK_LINES: usize = 40;
+/// The most lines one block holds (ADR-0057 d21), the passage rule's.
+pub const BLOCK_LINES: usize = oml_passage::BLOCK_LINES;
 
 impl Adapter for LinesAdapter {
     fn name(&self) -> &'static str {
@@ -22,27 +22,7 @@ impl Adapter for LinesAdapter {
     fn extract(&self, path: &str, bytes: &[u8]) -> Result<Extraction, String> {
         let doc = utf8(path, bytes)?;
         let lines = lines(&doc);
-        // Paragraphs as index ranges, each cut at BLOCK_LINES.
-        let mut paragraphs: Vec<(usize, usize)> = Vec::new();
-        let mut i = 0;
-        while i < lines.len() {
-            if lines[i].text.trim().is_empty() {
-                i += 1;
-                continue;
-            }
-            let start = i;
-            while i < lines.len() && !lines[i].text.trim().is_empty() && i - start < BLOCK_LINES {
-                i += 1;
-            }
-            paragraphs.push((start, i));
-        }
-        let mut blocks: Vec<(usize, usize)> = Vec::new();
-        for (start, end) in paragraphs {
-            match blocks.last_mut() {
-                Some(block) if end - block.0 <= BLOCK_LINES => block.1 = end,
-                _ => blocks.push((start, end)),
-            }
-        }
+        let blocks = oml_passage::blocks(&lines, 0, lines.len());
         let prefix = doc_key_prefix(path);
         let mut out = Extraction::default();
         for (start, end) in blocks {

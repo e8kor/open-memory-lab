@@ -11,11 +11,13 @@ fn list(ids: std::ops::Range<u128>) -> Retrieved {
             .map(|i| Candidate {
                 memory_id: Uuid::from_u128(i),
                 kind: oml_app::domain::MemoryKind::Memory,
+                ordinal: -1,
                 body_bytes: 10,
                 #[allow(clippy::cast_precision_loss, reason = "small test ids")]
                 score: 1000.0 - i as f32,
                 matched: vec!["word".to_owned()],
                 tokens: Vec::new(),
+                more_passages: 0,
             })
             .collect(),
         ..Retrieved::default()

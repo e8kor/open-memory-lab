@@ -764,7 +764,8 @@ async fn keyword_all_returns_exactly_the_v0_5_0_rows_and_order() {
                 .await
                 .expect("tenant");
             let mut old: Vec<(Uuid, f32)> = Vec::new();
-            for row in sqlx::query(oml_pg::RECALL_FTS)
+            let (fts, held) = (oml_pg::recall_fts_sql(), oml_pg::recall_own_held_sql());
+            for row in sqlx::query(&fts)
                 .bind(rig.tenant_id)
                 .bind(vec![wa])
                 .bind(query)
@@ -775,7 +776,7 @@ async fn keyword_all_returns_exactly_the_v0_5_0_rows_and_order() {
                 .expect("v0.5.0 statement")
                 .iter()
                 .chain(
-                    sqlx::query(oml_pg::RECALL_OWN_HELD)
+                    sqlx::query(&held)
                         .bind(rig.tenant_id)
                         .bind(vec![own])
                         .bind(vec![wa])
@@ -4486,14 +4487,15 @@ async fn the_adapters_fts_read_scans_its_tenants_partition_alone() {
     let readable = Uuid::from_u128(0xB210);
     let author = Uuid::from_u128(0xD210);
     let mut conn = store.pool().acquire().await.expect("serving connection");
+    let (fts, held) = (oml_pg::recall_fts_sql(), oml_pg::recall_own_held_sql());
     for (statement, types, args) in [
         (
-            oml_pg::RECALL_FTS,
+            fts.as_str(),
             "uuid, uuid[], text, text[], bigint",
             format!("'{a}', '{{{}}}', 'runbook', '{{memory}}', 10", readable),
         ),
         (
-            oml_pg::RECALL_OWN_HELD,
+            held.as_str(),
             "uuid, uuid[], uuid[], text, text[], bigint",
             format!(
                 "'{a}', '{{{}}}', '{{{}}}', 'runbook', '{{memory}}', 10",
@@ -4527,6 +4529,10 @@ async fn the_adapters_fts_read_scans_its_tenants_partition_alone() {
             tx.rollback().await.expect("rollback");
             let mut relations = std::collections::BTreeSet::new();
             plan_relations(&plan, &mut relations);
+            // A document's passages are read from their one table by its
+            // key, tenant first, gated by the row's kind (ADR-0081 d4); a
+            // custom plan for kinds without `document` prunes that branch.
+            relations.remove("document_passages");
             assert_eq!(
                 relations.into_iter().collect::<Vec<_>>(),
                 vec![partition_of(a)],
@@ -8059,7 +8065,7 @@ async fn similar_keys_computed_in_sql_equal_the_cores() {
 type Postings = (
     BTreeMap<Uuid, (i16, i64)>,
     BTreeMap<(Uuid, i16, i64), i32>,
-    BTreeMap<(Uuid, i16), (i32, i64)>,
+    BTreeMap<(Uuid, i16), (i32, i64, i64)>,
 );
 
 async fn postings_of(store: &PgStore, tenant: Uuid) -> Postings {
@@ -8095,8 +8101,8 @@ async fn postings_of(store: &PgStore, tenant: Uuid) -> Postings {
     .fetch_all(&mut *tx)
     .await
     .expect("term rows");
-    let areas: Vec<(Uuid, i16, i32, i64)> = sqlx::query_as(
-        "SELECT workspace_id, memory_kind, rows, total_len FROM search_workspace_rows \
+    let areas: Vec<(Uuid, i16, i32, i64, i64)> = sqlx::query_as(
+        "SELECT workspace_id, memory_kind, rows, total_len, units FROM search_workspace_rows \
           WHERE tenant_id = $1 AND kind = 1",
     )
     .bind(tenant)
@@ -8115,7 +8121,7 @@ async fn postings_of(store: &PgStore, tenant: Uuid) -> Postings {
             .collect(),
         areas
             .into_iter()
-            .map(|(w, k, n, l)| ((w, k), (n, l)))
+            .map(|(w, k, n, l, u)| ((w, k), (n, l, u)))
             .collect(),
     )
 }
@@ -8127,7 +8133,7 @@ async fn counts_from_postings(
     tenant: Uuid,
 ) -> (
     BTreeMap<(Uuid, i16, i64), i32>,
-    BTreeMap<(Uuid, i16), (i32, i64)>,
+    BTreeMap<(Uuid, i16), (i32, i64, i64)>,
 ) {
     let mut owner = owner_conn(store).await;
     let mut tx = owner.begin().await.expect("begin");
@@ -8145,11 +8151,15 @@ async fn counts_from_postings(
     .fetch_all(&mut *tx)
     .await
     .expect("terms");
-    let areas: Vec<(Uuid, i16, i32, i64)> = sqlx::query_as(
-        "SELECT workspace_id, oml_search_memory_kind(kind), count(*)::int4, sum(search_len)::int8 \
-           FROM memories WHERE tenant_id = $1 \
-            AND status = 'promoted' AND is_tip AND NOT retirement \
-            AND kind IN ('memory', 'derived_fact') \
+    let areas: Vec<(Uuid, i16, i32, i64, i64)> = sqlx::query_as(
+        "SELECT m.workspace_id, oml_search_memory_kind(m.kind), count(DISTINCT m.id)::int4, \
+                sum(u.search_len)::int8, count(*)::int8 \
+           FROM memories m \
+          CROSS JOIN LATERAL oml_search_units(m.tenant_id, m.id, m.kind, m.search_vector, \
+                                              m.search_len) u \
+          WHERE m.tenant_id = $1 \
+            AND m.status = 'promoted' AND m.is_tip AND NOT m.retirement \
+            AND m.kind IN ('memory', 'derived_fact', 'document') \
           GROUP BY 1, 2",
     )
     .bind(tenant)
@@ -8164,7 +8174,7 @@ async fn counts_from_postings(
             .collect(),
         areas
             .into_iter()
-            .map(|(w, k, n, l)| ((w, k), (n, l)))
+            .map(|(w, k, n, l, u)| ((w, k), (n, l, u)))
             .collect(),
     )
 }
@@ -8531,6 +8541,120 @@ async fn a_demoted_retired_or_erased_version_leaves_no_similar_key() {
     drop_dbs(&created).await;
 }
 
+/// A document version's passages are written with it and are its search
+/// units: each passage's postings carry its ordinal, the counts take the
+/// version once and its units' lengths and agree with the postings, the
+/// health check reads clean, and the owner's refill leaves the counts as the
+/// fold kept them (ADR-0081 d3, d4; R6 amended; migration 0059). Its
+/// erasure is
+/// `a_documents_passages_postings_words_and_sparse_entries_go_with_its_erasure`.
+#[tokio::test]
+async fn a_document_versions_passages_are_its_search_units_and_the_refill_keeps_their_counts() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut rig = ChainRig::new(591);
+    rig.seed_chain(&store, 0).await;
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0xD5);
+    let doc = Uuid::from_u128(0xD51);
+    let body = "# Guide\n\nIntro words.\n\n## One\n\nFirst part.\n\n## Two\n\nSecond part.\n";
+    oml_port_contracts::hold_and_promote(
+        &mut rig,
+        &store,
+        MemoryRecord {
+            kind: MemoryKind::Document,
+            claim_key: "doc/guide".to_owned(),
+            kind_fields: Some(Box::new(oml_app::types::KindFields::Document {
+                title: Some("Guide".to_owned()),
+            })),
+            format: Box::new(oml_app::types::FormatFields {
+                media_type: "text/markdown".to_owned(),
+                ..Default::default()
+            }),
+            ..held_memory(tenant, wa, doc, "rita", Uuid::from_u128(0xE5), body)
+        },
+    )
+    .await;
+    let mut owner = owner_conn(&store).await;
+    let mut tx = owner.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    let passages: Vec<(i32, i32, i32, String, i32, String)> = sqlx::query_as(
+        "SELECT ordinal, start_line, end_line, fragment, body_bytes, search_text \
+           FROM document_passages WHERE tenant_id = $1 AND memory_id = $2 ORDER BY ordinal",
+    )
+    .bind(tenant)
+    .bind(doc)
+    .fetch_all(&mut *tx)
+    .await
+    .expect("passages");
+    let ordinals: Vec<i32> = sqlx::query_scalar(
+        "SELECT DISTINCT ordinal FROM search_postings \
+          WHERE tenant_id = $1 AND memory_id = $2 AND kind = 1 ORDER BY 1",
+    )
+    .bind(tenant)
+    .bind(doc)
+    .fetch_all(&mut *tx)
+    .await
+    .expect("ordinals");
+    tx.commit().await.expect("commit");
+    assert_eq!(
+        passages
+            .iter()
+            .map(|p| (p.0, p.1, p.2, p.3.as_str(), p.4))
+            .collect::<Vec<_>>(),
+        vec![
+            (0, 1, 3, "guide", 21),
+            (1, 5, 7, "one", 19),
+            (2, 9, 11, "two", 20),
+        ],
+        "the passages the one rule cuts, with their served bytes"
+    );
+    assert_eq!(passages[1].5, "Guide > One\n\n## One\n\nFirst part.");
+    assert_eq!(ordinals, vec![0, 1, 2], "one unit per passage, none whole");
+    let (_, terms, areas) = postings_of(&store, tenant).await;
+    assert_eq!(
+        (terms, areas),
+        counts_from_postings(&store, tenant).await,
+        "the counts are the passages'"
+    );
+    let health = store
+        .postings_health(tenant)
+        .await
+        .expect("health")
+        .expect("PostgreSQL keeps postings");
+    assert_eq!(
+        (
+            health.unfilled,
+            health.served_behind,
+            health.workspace_drift,
+            health.term_drift
+        ),
+        (0, 0, 0, 0),
+        "{health:?}"
+    );
+    as_owner(
+        &store,
+        tenant,
+        "SELECT $2::uuid IS NOT NULL, oml_search_postings_refill($1)",
+        doc,
+    )
+    .await;
+    let (_, terms, areas) = postings_of(&store, tenant).await;
+    assert_eq!(
+        (terms, areas),
+        counts_from_postings(&store, tenant).await,
+        "the refill keeps the counts the fold kept"
+    );
+    drop_dbs(&created).await;
+}
+
 /// Doctor's similar-key health names a version with no key and a key in the
 /// wrong state, from the sample it reads, and reads clean again after the
 /// owner's refill (ADR-0050 d15, d17).
@@ -8605,62 +8729,66 @@ async fn the_bm25_postings_statement_reads_the_postings_by_their_index_under_row
     rig.seed_chain(&store, 0).await;
     let wa = Uuid::from_u128(0xE2);
     lexeme_rows(&mut rig, &store, wa).await;
-    let mut tx = store.pool().begin().await.expect("begin");
-    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
-        .bind(rig.tenant_id.to_string())
-        .execute(&mut *tx)
-        .await
-        .expect("tenant");
-    // Sequential scans off, so a plan that can use the index does: on five
-    // rows the planner would otherwise scan, and the law is that it may.
-    sqlx::query("SET LOCAL enable_seqscan = off")
-        .execute(&mut *tx)
-        .await
-        .expect("seqscan off");
     let token = oml_pg::token_id("deploy");
-    let plan: Vec<String> = sqlx::query_scalar(&format!(
-        "EXPLAIN (COSTS OFF) {}",
-        oml_pg::bm25_postings_sql()
-    ))
-    .bind(rig.tenant_id)
-    .bind(vec![wa])
-    .bind(vec![1_i16, 2])
-    .bind(Vec::<Uuid>::new())
-    .bind(vec!["deploy".to_owned()])
-    .bind(vec![token])
-    .bind(vec![2.0_f64])
-    .bind(5.0_f64)
-    .bind(10.0_f64)
-    .bind(vec![token])
-    .bind(Some(10_i64))
-    .bind(false)
-    .bind(1_i64)
-    .bind(10_i64)
-    .bind(i64::MIN)
-    .fetch_all(&mut *tx)
-    .await
-    .expect("plan");
-    tx.commit().await.expect("commit");
-    let plan = plan.join("\n");
-    assert!(
-        plan.lines()
-            .any(|l| l.contains("Index Cond") && l.contains("token_id")),
-        "the token is an index condition under the policy: {plan}"
-    );
-    // The served index carries what a score needs, ordered by workspace after
-    // the token, so a recall reads its readable workspaces' postings alone,
-    // without the heap (ADR-0052 d1, open question 1).
-    assert!(
-        plan.lines()
-            .any(|l| l.contains("Index Only Scan") && l.contains("kind_token_id_workspace_id")),
-        "an index-only scan of the partition's search_postings_served: {plan}"
-    );
-    assert!(
-        plan.lines().any(|l| l.contains("Index Cond")
-            && l.contains("token_id")
-            && l.contains("workspace_id")),
-        "the readable workspaces are an index condition beside the token: {plan}"
-    );
+    // The statement a scope without documents runs, and the one that reads
+    // passages too (ADR-0081 d4): each reads the postings by the index.
+    for statement in [
+        oml_pg::bm25_postings_sql(),
+        oml_pg::bm25_postings_units_sql(),
+    ] {
+        let mut tx = store.pool().begin().await.expect("begin");
+        sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+            .bind(rig.tenant_id.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("tenant");
+        // Sequential scans off, so a plan that can use the index does: on five
+        // rows the planner would otherwise scan, and the law is that it may.
+        sqlx::query("SET LOCAL enable_seqscan = off")
+            .execute(&mut *tx)
+            .await
+            .expect("seqscan off");
+        let plan: Vec<String> = sqlx::query_scalar(&format!("EXPLAIN (COSTS OFF) {statement}"))
+            .bind(rig.tenant_id)
+            .bind(vec![wa])
+            .bind(vec![1_i16, 2])
+            .bind(Vec::<Uuid>::new())
+            .bind(vec!["deploy".to_owned()])
+            .bind(vec![token])
+            .bind(vec![2.0_f64])
+            .bind(5.0_f64)
+            .bind(10.0_f64)
+            .bind(vec![token])
+            .bind(Some(10_i64))
+            .bind(false)
+            .bind(1_i64)
+            .bind(10_i64)
+            .bind(i64::MIN)
+            .fetch_all(&mut *tx)
+            .await
+            .expect("plan");
+        tx.commit().await.expect("commit");
+        let plan = plan.join("\n");
+        assert!(
+            plan.lines()
+                .any(|l| l.contains("Index Cond") && l.contains("token_id")),
+            "the token is an index condition under the policy: {plan}"
+        );
+        // The served index carries what a score needs, ordered by workspace after
+        // the token, so a recall reads its readable workspaces' postings alone,
+        // without the heap (ADR-0052 d1, open question 1).
+        assert!(
+            plan.lines()
+                .any(|l| l.contains("Index Only Scan") && l.contains("kind_token_id_workspace_id")),
+            "an index-only scan of the partition's search_postings_served: {plan}"
+        );
+        assert!(
+            plan.lines().any(|l| l.contains("Index Cond")
+                && l.contains("token_id")
+                && l.contains("workspace_id")),
+            "the readable workspaces are an index condition beside the token: {plan}"
+        );
+    }
     // The parent keeps no statistics of its own, which an ANALYZE of it
     // would gather across every tenant; the tenant's partition keeps its own
     // (#134; review F5).
@@ -9660,7 +9788,9 @@ async fn a_version_enqueued_again_after_its_read_is_not_written_with_the_older_c
             .sparse_write(
                 tenant,
                 &read[0],
-                &oml_app::doubles::FakeSparseEncoder::document(&read[0].claim)
+                &[oml_app::doubles::FakeSparseEncoder::document(
+                    &read[0].units[0].text
+                )]
             )
             .await
             .expect("write"),
@@ -12483,8 +12613,9 @@ async fn an_erase_leaves_no_clear_body_in_the_live_row_its_passages_queue_teleme
     owner_exec(
         &store,
         tenant,
-        "INSERT INTO document_passages (tenant_id, memory_id, ordinal, start_line, end_line, fragment) \
-         VALUES ($1, $2, 0, 1, 1, 'The canary drains and settles first.')",
+        "INSERT INTO document_passages (tenant_id, memory_id, ordinal, start_line, end_line, \
+                fragment, body_bytes, search_text) \
+         VALUES ($1, $2, 0, 1, 1, 'L1-L1', 36, 'The canary drains and settles first.')",
         v2,
     )
     .await;
@@ -13039,5 +13170,633 @@ async fn the_queue_counts_held_instructions_and_the_person_reviewers_that_may_ap
         counts(&rows),
         BTreeMap::from([(crew, (2, 1, 0)), (team, (1, 1, 1)), (bots, (1, 1, 0))])
     );
+    drop_dbs(&created).await;
+}
+
+// ---------------------------------------------------------------------------
+// Documents served by passage through the use cases (ADR-0081 d3, d4)
+// ---------------------------------------------------------------------------
+
+/// The pipelines a document recall is checked under: the lead's default
+/// and every scan beside it.
+const DOCUMENT_PIPELINES: [&str; 5] = [
+    "bm25-postings",
+    "keyword-any",
+    "keyword-all",
+    "bm25",
+    "bm25-trigram",
+];
+
+/// A recall of `query` under `pipeline` cut at `k`, text included.
+fn doc_recall(query: &str, pipeline: &str, k: usize) -> oml_app::types::RecallRequest {
+    oml_app::types::RecallRequest {
+        sources: None,
+        timings: false,
+        anchor: oml_app::types::AnchorFilter::default(),
+        query: query.to_owned(),
+        k,
+        workspace: None,
+        kinds: Vec::new(),
+        include_text: true,
+        include_unreviewed: Some(false),
+        max_tokens: None,
+        search: Some(pipeline.to_owned()),
+        match_mode: oml_app::search::MatchMode::Any,
+        include_expired: false,
+        now: None,
+        as_of: None,
+    }
+}
+
+/// A tenant with a crew node, a writer and a reviewer on it, over the
+/// serving login.
+struct DocumentRig {
+    app: PgApp,
+    writer: String,
+    reviewer: String,
+    crew: Uuid,
+    admin: String,
+    tenant: Uuid,
+}
+
+async fn document_rig(store: &PgStore, tenant: &str) -> DocumentRig {
+    use oml_app::search::Pipeline;
+    let app = app_over_pg(store).with_search(
+        oml_app::search::SearchConfig::new(
+            &[
+                Pipeline::Bm25Postings,
+                Pipeline::KeywordAny,
+                Pipeline::KeywordAll,
+                Pipeline::Bm25,
+                Pipeline::Bm25Trigram,
+            ],
+            Pipeline::Bm25Postings,
+        )
+        .expect("a configuration"),
+    );
+    let boot = bootstrap_pg(&app, tenant).await;
+    let admin = boot.admin_key.value.clone();
+    let crew = workspace_pg(&app, &admin, "crew", boot.root_workspace_id).await;
+    let writer = writer_pg(&app, &admin, crew).await;
+    let reviewer = reviewer_pg(&app, &admin, "docs-reviewer", "dana/reviewer", crew)
+        .await
+        .value;
+    DocumentRig {
+        app,
+        writer,
+        reviewer,
+        crew,
+        admin,
+        tenant: boot.tenant_id,
+    }
+}
+
+/// `body` written as `kind` by `writer` and approved by `reviewer`; its id.
+async fn promoted_pg(
+    app: &PgApp,
+    writer: &str,
+    reviewer: &str,
+    idem: &str,
+    kind: oml_app::domain::MemoryKind,
+    body: &str,
+) -> Uuid {
+    let id = app
+        .submit_memory(writer, &kind_submit(idem, kind, body, None, None))
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    app.post_verdict(reviewer, id, oml_app::types::Verdict::Approve, None)
+        .await
+        .expect("approve");
+    id
+}
+
+#[tokio::test]
+async fn recall_serves_one_hit_per_document_its_best_passage_on_postgres() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let DocumentRig {
+        app,
+        writer,
+        reviewer,
+        ..
+    } = document_rig(&store, "docs-best").await;
+    let body = "# Deploy guide\n\nWhat the guide covers.\n\n## Install\n\n\
+                Run the zebra installer with quokka flags.\n\n## Rollback\n\n\
+                Undo the zebra install.\n";
+    let doc = promoted_pg(&app, &writer, &reviewer, "g1", MemoryKind::Document, body).await;
+    let note = promoted_pg(
+        &app,
+        &writer,
+        &reviewer,
+        "g2",
+        MemoryKind::Memory,
+        "The zebra fleet runs quokka.",
+    )
+    .await;
+    for pipeline in DOCUMENT_PIPELINES {
+        let recall = app
+            .recall(&writer, &doc_recall("zebra quokka", pipeline, 10))
+            .await
+            .expect("recall");
+        let ids: Vec<Uuid> = recall
+            .hits
+            .iter()
+            .map(|h| h.served.memory.memory_id)
+            .collect();
+        assert!(ids.contains(&note), "{pipeline}: {ids:?}");
+        if pipeline == "keyword-all" {
+            // Every word in one passage: Install alone.
+            assert_eq!(ids.iter().filter(|id| **id == doc).count(), 1, "{pipeline}");
+            continue;
+        }
+        assert_eq!(
+            ids.iter().filter(|id| **id == doc).count(),
+            1,
+            "{pipeline}: one hit for the document: {ids:?}"
+        );
+        let hit = recall
+            .hits
+            .iter()
+            .find(|h| h.served.memory.memory_id == doc)
+            .expect("the document's hit");
+        let passage = hit.passage.as_ref().expect("a passage");
+        assert_eq!(passage.fragment, "install", "{pipeline}");
+        assert_eq!((passage.start_line, passage.end_line), (5, 7), "{pipeline}");
+        assert_eq!(passage.heading_path, vec!["Deploy guide", "Install"]);
+        assert_eq!(
+            hit.served.memory.body,
+            "## Install\n\nRun the zebra installer with quokka flags."
+        );
+        assert_eq!(
+            hit.served.memory.body_bytes,
+            hit.served.memory.body.len() as u64
+        );
+        assert_eq!(hit.more_passages, 1, "{pipeline}: Rollback also says zebra");
+        assert!(
+            hit.uri
+                .as_deref()
+                .is_some_and(|u| u.ends_with("/doc/deploy-guide?passage=install")),
+            "{pipeline}: {:?}",
+            hit.uri
+        );
+    }
+    drop_dbs(&created).await;
+}
+
+#[tokio::test]
+async fn a_section_query_on_a_300_line_document_returns_that_passage_on_postgres() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let DocumentRig {
+        app,
+        writer,
+        reviewer,
+        ..
+    } = document_rig(&store, "docs-section").await;
+    let mut body = String::from("# Operations manual\n");
+    for n in 1..=30 {
+        body.push_str(&format!("## Section {n}\n\n"));
+        for line in 1..=8 {
+            if n == 17 && line == 4 {
+                body.push_str("Feed the wombat before the night shift.\n");
+            } else {
+                body.push_str(&format!("Routine step {line} of section {n}.\n"));
+            }
+        }
+    }
+    let doc = promoted_pg(&app, &writer, &reviewer, "m1", MemoryKind::Document, &body).await;
+    for pipeline in DOCUMENT_PIPELINES {
+        let recall = app
+            .recall(&writer, &doc_recall("wombat", pipeline, 10))
+            .await
+            .expect("recall");
+        assert_eq!(recall.hits.len(), 1, "{pipeline}");
+        let hit = &recall.hits[0];
+        assert_eq!(hit.served.memory.memory_id, doc);
+        let passage = hit.passage.as_ref().expect("a passage");
+        assert_eq!(passage.fragment, "section-17", "{pipeline}");
+        assert_eq!((passage.start_line, passage.end_line), (162, 171));
+        assert!(hit.served.memory.body.starts_with("## Section 17\n"));
+        assert_eq!(hit.more_passages, 0, "{pipeline}");
+    }
+    drop_dbs(&created).await;
+}
+
+#[tokio::test]
+async fn a_recall_of_k_10_answers_10_hits_beside_a_document_of_30_matching_passages_on_postgres() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let DocumentRig {
+        app,
+        writer,
+        reviewer,
+        ..
+    } = document_rig(&store, "docs-k").await;
+    let mut body = String::from("# Wombat manual\n\nHow the wombat is kept.\n\n");
+    for n in 1..=30 {
+        body.push_str(&format!(
+            "## Part {n}\n\nThe wombat step {n} is written down.\n\n"
+        ));
+    }
+    let doc = promoted_pg(&app, &writer, &reviewer, "w0", MemoryKind::Document, &body).await;
+    for n in 0..20 {
+        promoted_pg(
+            &app,
+            &writer,
+            &reviewer,
+            &format!("w{}", n + 1),
+            MemoryKind::Memory,
+            &format!("A wombat note numbered {n} for keeper {}.", n * 7 + 3),
+        )
+        .await;
+    }
+    for pipeline in DOCUMENT_PIPELINES {
+        let recall = app
+            .recall(&writer, &doc_recall("wombat", pipeline, 10))
+            .await
+            .expect("recall");
+        let mut ids: Vec<Uuid> = recall
+            .hits
+            .iter()
+            .map(|h| h.served.memory.memory_id)
+            .collect();
+        assert_eq!(ids.len(), 10, "{pipeline}: k = 10 answers 10 hits");
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), 10, "{pipeline}: one hit per version");
+        let wide = app
+            .recall(&writer, &doc_recall("wombat", pipeline, 50))
+            .await
+            .expect("recall");
+        assert_eq!(
+            wide.hits.len(),
+            21,
+            "{pipeline}: 20 memories and the document"
+        );
+        let hit = wide
+            .hits
+            .iter()
+            .find(|h| h.served.memory.memory_id == doc)
+            .expect("the document");
+        assert_eq!(
+            hit.more_passages, 30,
+            "{pipeline}: its intro and 29 parts say wombat"
+        );
+    }
+    drop_dbs(&created).await;
+}
+
+/// Migrations 0059 and 0060 over a database at 0058 that holds a document
+/// version (ADR-0081 d4; the review's reading R14): 0059 keeps the fold's
+/// trigger and refills nothing, 0060 runs outside a transaction and
+/// rebuilds the served index on every partition with the ordinal, valid,
+/// validates the kind check, and the startup cut gives the document its
+/// passages, counted once in `rows` and once per passage in `units`, with
+/// no drift, and searched by passage.
+#[tokio::test]
+async fn migrations_0059_and_0060_apply_over_0058_with_a_document_row_and_count_it_once() {
+    let sql = |v: i64| {
+        MIGRATOR
+            .iter()
+            .find(|m| m.version == v)
+            .expect("migration")
+            .sql
+            .to_string()
+    };
+    let (m59, m60) = (sql(59), sql(60));
+    assert!(
+        !m59.contains("DROP TRIGGER") && !m59.contains("CREATE TRIGGER memories_search_postings"),
+        "0059 replaces the fold's function and keeps its trigger"
+    );
+    assert!(
+        !m59.contains("oml_search_postings_refill(t)"),
+        "0059 refills nothing"
+    );
+    assert!(
+        m59.contains("NOT VALID"),
+        "0059 adds the kind check unvalidated"
+    );
+    assert!(
+        m60.starts_with("-- no-transaction"),
+        "0060 runs outside a transaction"
+    );
+    for shape in [
+        "SET LOCAL lock_timeout = '5s'",
+        "ATTACH PARTITION",
+        "COMMIT;",
+        "VALIDATE CONSTRAINT search_postings_memory_kind",
+        "m.kind = 'document'",
+    ] {
+        assert!(m60.contains(shape), "0060 lacks {shape:?}");
+    }
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (db, mut conn) = schema_through(&created, 58).await;
+    let store = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
+    let mut rig = ChainRig::new(596);
+    rig.seed_chain(&store, 0).await;
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0xE2);
+    let other = Uuid::from_u128(0xE5);
+    let doc = Uuid::from_u128(0xF71);
+    for (id, body) in [
+        (0xF72_u128, "the kangaroo pen is cleaned daily"),
+        (0xF73, "the wombat burrow is checked weekly"),
+        (
+            0xF71,
+            "# Kangaroo guide\n\nWhat the guide covers.\n\n## Feeding\n\n\
+             The kangaroo eats grass.\n\n## Sleeping\n\nThe kangaroo sleeps by day.\n",
+        ),
+    ] {
+        oml_port_contracts::hold_and_promote(
+            &mut rig,
+            &store,
+            held_memory(tenant, wa, Uuid::from_u128(id), "rita", other, body),
+        )
+        .await;
+    }
+    // A document version as a build before 0059 stored it: its row, no
+    // passage, no posting.
+    let mut owner = PgConnection::connect(&owner_url(&db))
+        .await
+        .expect("owner connect");
+    let mut tx = owner.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    sqlx::query(
+        "UPDATE memories SET kind = 'document', document_title = 'Kangaroo guide', format = 'text/markdown', \
+                claim_key = 'doc/kangaroo-guide' WHERE tenant_id = $1 AND id = $2",
+    )
+    .bind(tenant)
+    .bind(doc)
+    .execute(&mut *tx)
+    .await
+    .expect("a document row at 0058");
+    tx.commit().await.expect("commit");
+    drop(owner);
+    // Two leads starting at once: the migrator's lock orders the files,
+    // and each tenant's cut takes its chain lock, so neither start fails.
+    let second = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
+    let url = owner_url(&db);
+    let (one, two) = tokio::join!(store.migrate(&url), second.migrate(&url));
+    one.expect("0059 and 0060 apply over a document row");
+    two.expect("a second lead starting at once applies nothing and cuts nothing twice");
+    let applied: i64 =
+        sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations WHERE success")
+            .fetch_one(&mut conn)
+            .await
+            .expect("versions");
+    assert_eq!(applied, 62, "0059 to 0062 apply over 0058");
+    let (partitions, attached, valid, carries, validated): (i64, i64, bool, bool, bool) =
+        sqlx::query_as(
+            "SELECT (SELECT count(*) FROM pg_inherits WHERE inhparent = 'search_postings'::regclass), \
+                    (SELECT count(*) FROM pg_inherits WHERE inhparent = 'search_postings_served'::regclass), \
+                    (SELECT indisvalid FROM pg_index WHERE indexrelid = 'search_postings_served'::regclass), \
+                    EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'search_postings_served'::regclass \
+                                                        AND attname = 'ordinal'), \
+                    (SELECT convalidated FROM pg_constraint WHERE conname = 'search_postings_memory_kind' \
+                                                              AND conrelid = 'search_postings'::regclass)",
+        )
+        .fetch_one(&mut conn)
+        .await
+        .expect("the index and the check");
+    assert!(partitions >= 1, "the seeded tenant has a partition");
+    assert_eq!(
+        attached, partitions,
+        "one served index per partition, attached"
+    );
+    assert!(
+        valid && carries,
+        "the served index is valid and carries the ordinal"
+    );
+    assert!(validated, "the kind check is validated");
+    let mut tx = conn.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    let passages: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM document_passages WHERE memory_id = $1")
+            .bind(doc)
+            .fetch_one(&mut *tx)
+            .await
+            .expect("passages");
+    assert_eq!(
+        passages, 3,
+        "the startup cut gives the document its passages"
+    );
+    let (rows, units): (i64, i64) = sqlx::query_as(
+        "SELECT rows::int8, units FROM search_workspace_rows \
+          WHERE tenant_id = $1 AND kind = 1 AND memory_kind = 3",
+    )
+    .bind(tenant)
+    .fetch_one(&mut *tx)
+    .await
+    .expect("the document's counts");
+    assert_eq!((rows, units), (1, 3), "one version, three units");
+    let df: i64 = sqlx::query_scalar(
+        "SELECT rows::int8 FROM search_term_rows WHERE tenant_id = $1 AND kind = 1 \
+            AND memory_kind = 3 AND token_id = $2",
+    )
+    .bind(tenant)
+    .bind(oml_pg::token_id("kangaroo"))
+    .fetch_one(&mut *tx)
+    .await
+    .expect("kangaroo's count");
+    assert_eq!(
+        df, 1,
+        "the document holds kangaroo once however many passages do"
+    );
+    tx.rollback().await.expect("rollback");
+    let health = store
+        .postings_health(tenant)
+        .await
+        .expect("health")
+        .expect("a partition");
+    assert_eq!(
+        (
+            health.unfilled,
+            health.served_behind,
+            health.workspace_drift,
+            health.term_drift
+        ),
+        (0, 0, 0, 0),
+        "{health:?}"
+    );
+    let found = store
+        .retrieve(
+            tenant,
+            RetrieverKind::Bm25Postings,
+            &oml_app::search::CandidateScope {
+                reference: None,
+                anchor: oml_app::types::AnchorFilter::default(),
+                promoted_nodes: vec![wa],
+                kinds: vec![
+                    MemoryKind::Memory,
+                    MemoryKind::DerivedFact,
+                    MemoryKind::Document,
+                ],
+                instructions: Vec::new(),
+                counted_kinds: vec![
+                    MemoryKind::Memory,
+                    MemoryKind::DerivedFact,
+                    MemoryKind::Document,
+                ],
+                own_held: None,
+                expired_at: None,
+                as_of: None,
+            },
+            oml_app::search::RetrievalQuery {
+                query: "kangaroo",
+                match_mode: oml_app::search::MatchMode::Any,
+                k: 10,
+                sparse: &[],
+                window: None,
+                within: &[],
+            },
+        )
+        .await
+        .expect("retrieve");
+    let d = found
+        .candidates
+        .iter()
+        .find(|c| c.memory_id == doc)
+        .expect("the document is found");
+    assert!(d.ordinal >= 0, "by passage");
+    // The title is in every passage's search text (R2), so all three say it.
+    assert_eq!(d.more_passages, 2, "every passage says kangaroo");
+    assert_eq!(health.documents_uncut, 0, "every document is cut");
+    // A version whose passages are gone is named by doctor.
+    let mut owner = PgConnection::connect(&owner_url(&db))
+        .await
+        .expect("owner connect");
+    let mut tx = owner.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    sqlx::query("DELETE FROM document_passages WHERE tenant_id = $1 AND memory_id = $2")
+        .bind(tenant)
+        .bind(doc)
+        .execute(&mut *tx)
+        .await
+        .expect("drop the passages");
+    tx.commit().await.expect("commit");
+    drop(owner);
+    let health = store
+        .postings_health(tenant)
+        .await
+        .expect("health")
+        .expect("a partition");
+    assert_eq!(health.documents_uncut, 1, "doctor names the uncut document");
+    drop(conn);
+    drop_dbs(&created).await;
+}
+
+/// A promoted document erased through `erase_claim` leaves nothing that
+/// was cut or derived from its text (ADR-0081 d3; ADR-0089 d16; ADR-0005
+/// d2): its passages, its lexical and its sparse postings, its sparse
+/// queue entry, its words in the vocabulary and its counts all go with the
+/// body, and recall finds it in no pipeline.
+#[tokio::test]
+async fn a_documents_passages_postings_words_and_sparse_entries_go_with_its_erasure() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let DocumentRig {
+        app,
+        writer,
+        reviewer,
+        crew,
+        admin,
+        tenant,
+    } = document_rig(&store, "docs-erase").await;
+    store
+        .sparse_backfill(tenant, 1_000)
+        .await
+        .expect("sparse on");
+    let body = "# Echidna guide\n\nWhat the guide covers.\n\n## Feeding\n\n\
+                The echidna eats ants.\n\n## Sleeping\n\nThe echidna sleeps in logs.\n";
+    let doc = promoted_pg(&app, &writer, &reviewer, "e1", MemoryKind::Document, body).await;
+    oml_port_contracts::encode_sparse_backlog(&store).await;
+    let left = || async {
+        let mut owner = owner_conn(&store).await;
+        let mut tx = owner.begin().await.expect("begin");
+        sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+            .bind(tenant.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("tenant");
+        let row: (i64, i64, i64, i64, i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM document_passages WHERE tenant_id = $1 AND memory_id = $2), \
+                    (SELECT count(*) FROM search_postings \
+                      WHERE tenant_id = $1 AND memory_id = $2 AND kind = 1), \
+                    (SELECT count(*) FROM search_postings \
+                      WHERE tenant_id = $1 AND memory_id = $2 AND kind = 2), \
+                    (SELECT count(*) FROM search_sparse_queue WHERE tenant_id = $1 AND memory_id = $2), \
+                    (SELECT count(*) FROM search_vocabulary \
+                      WHERE tenant_id = $1 AND workspace_id = $3 AND word = 'echidna'), \
+                    (SELECT count(*) FROM search_workspace_rows WHERE tenant_id = $1 AND memory_kind = 3)",
+        )
+        .bind(tenant)
+        .bind(doc)
+        .bind(crew)
+        .fetch_one(&mut *tx)
+        .await
+        .expect("what is left");
+        tx.rollback().await.expect("rollback");
+        row
+    };
+    let (passages, lexical, sparse, queued, words, counts) = left().await;
+    assert_eq!(passages, 3, "three passages");
+    assert!(
+        lexical > 0 && sparse > 0,
+        "lexical {lexical} and sparse {sparse} postings"
+    );
+    assert_eq!(queued, 0, "encoded, off the queue");
+    assert_eq!((words, counts), (1, 1), "its words and its counts");
+    app.erase_claim(admin.as_str(), doc).await.expect("erase");
+    assert_eq!(
+        left().await,
+        (0, 0, 0, 0, 0, 0),
+        "passages, postings, the queue, the vocabulary and the counts go with the body"
+    );
+    for pipeline in DOCUMENT_PIPELINES {
+        let recall = app
+            .recall(&writer, &doc_recall("echidna", pipeline, 10))
+            .await
+            .expect("recall");
+        assert!(
+            recall.hits.is_empty(),
+            "{pipeline}: {:?}",
+            recall.hits.len()
+        );
+    }
     drop_dbs(&created).await;
 }

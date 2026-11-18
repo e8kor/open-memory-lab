@@ -2049,7 +2049,7 @@ export interface components {
             workspace?: components["schemas"]["WorkspaceRef"];
             /** @default 8 */
             k?: number;
-            /** @description Any of the ten kinds; an empty array or an unknown kind is refused (request.validation naming /kinds), so only an absent kinds means no filter (ADR-0092 d1). Absent, hits are every kind but steering and the vocabulary kinds, which join only by a workspace's opt-in (ADR-0021 d9). kinds decides whether the steering list is served: naming steering, or absent, it is; otherwise the answer's steering is "not_requested"; steering alone serves the list and ranks nothing (search.hits "not_requested"). A skill is a hit only as one the scope offers, and a guardrail only as one applicable there (ADR-0092 d2, d3). */
+            /** @description Any of the ten kinds; an empty array or an unknown kind is refused (request.validation naming /kinds), so only an absent kinds means no filter (ADR-0092 d1). Absent, hits are every kind but steering and the vocabulary kinds, which join only by a workspace's opt-in (ADR-0021 d9). kinds decides whether the steering list is served: naming steering, or absent, it is; otherwise the answer's steering is "not_requested"; steering alone serves the list and ranks nothing (search.hits "not_requested"). A skill is a hit only as one the scope offers, and a guardrail only as one applicable there; a document's hit is its best passage (ADR-0092 d2, d3; ADR-0081 d4). */
             kinds?: components["schemas"]["ClaimKind"][];
             /**
              * @description Whether each served item carries its text (ADR-0039 d7).
@@ -2121,11 +2121,29 @@ export interface components {
                  * @enum {string}
                  */
                 via?: "scope" | "federated";
+                passage?: components["schemas"]["RecallPassage"];
+                /** @description A document's hit only: how many of the document's other passages were in the fused list before the k cut, from any retriever. A lower bound, bounded by each list's depth, never an exact count of the passages holding a query word (ADR-0081 d4, the build's reading R3). */
+                more_passages?: number;
+                /** @description A document's hit only: the passage's resource, oml://workspace/<workspace>/doc/<path>?passage=<fragment>, which MCP resources/read serves (ADR-0081 d4, d6). */
+                uri?: string;
             }[];
             /** @description Present if and only if max_tokens was sent. */
             budget?: components["schemas"]["RecallBudget"];
             query_digest: components["schemas"]["Digest"];
             search: components["schemas"]["RecallSearch"];
+        };
+        /** @description A document's hit only: the passage it serves (ADR-0081 d3, d4). A document is ranked by its passages and contributes one hit, its best passage by score, then ordinal; the hit's memory.text is that passage's lines byte for byte and memory.tokens its budget, so k counts claims and max_tokens counts the passage. */
+        RecallPassage: {
+            /** @description The heading's slug when the passage is a whole section, else L<n>-L<m>. */
+            fragment: string;
+            /** @description The passage's place in the document, from 0. */
+            ordinal: number;
+            /** @description Its first line, 1-based. */
+            start_line: number;
+            /** @description Its last line, inclusive. */
+            end_line: number;
+            /** @description The headings of level 1 to 4 above it, outermost first, as plain text. */
+            heading_path: string[];
         };
         /** @description Why a hit matched (ADR-0049 d6). */
         RecallMatched: {

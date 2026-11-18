@@ -167,9 +167,9 @@ branch that reserved later renumbers.
 | migration | 0051 | `feat/linked-tenant-keys` | #447 | validate the linked tenant key check | open |
 | migration | 0051 | `main` |  | linked tenant keys validate | used |
 | migration | 0052 | `main` |  | release stranded lane claims | used |
-| migration | 0053 | `main` |  | upload sessions | used |
-| migration | 0054 | `main` |  | workspace export policy | used |
-| migration | 0055 | `main` |  | workspace imports | used |
+| migration | 0053 | `bulk/v082-b` |  | upload sessions (ADR-0004 d3, #451) | reserved |
+| migration | 0054 | `bulk/v082-b` |  | workspace export policy and allowances (ADR-0084 d10, #425) | reserved |
+| migration | 0055 | `bulk/v082-b` |  | workspace imports and the import ledger (ADR-0084 d6-d11, #426) | reserved |
 | migration | 0056 | `main` |  | serving role destroys erased keys | used |
 | migration | 0057 | `main` |  | artifact keys guard | used |
 | migration | 0058 | `main` |  | valid until before supersession | used |

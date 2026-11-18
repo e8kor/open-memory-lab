@@ -460,9 +460,14 @@ Kind: table.
 | `end_line` | `integer` | not null |  |  |
 | `heading_path` | `text[]` | not null | `'{}'::text[]` |  |
 | `fragment` | `text` | not null |  |  |
+| `body_bytes` | `integer` | not null |  | The UTF-8 bytes of the passage's lines as a hit serves them. |
+| `search_text` | `text` | not null |  | The title, the heading path joined by > and the passage's lines (reading R2). |
+| `search_vector` | `tsvector` | not null |  | oml_search_vector(search_text), set at write by document_passages_search_vector. |
+| `search_len` | `integer` | not null |  | The count of distinct lexemes in search_vector, BM25's unit length. |
 
 Checks:
 
+- `document_passages_body_bytes_check`: `CHECK (body_bytes >= 0)`
 - `document_passages_check`: `CHECK (end_line >= start_line)`
 - `document_passages_ordinal_check`: `CHECK (ordinal >= 0 AND ordinal < 4096)`
 - `document_passages_start_line_check`: `CHECK (start_line >= 1)`
@@ -1288,6 +1293,7 @@ Kind: partitioned table, `PARTITION BY LIST (tenant_id)`.
 | `kind` | `smallint` | not null |  |  |
 | `memory_kind` | `smallint` | not null |  |  |
 | `state` | `smallint` | not null |  |  |
+| `ordinal` | `integer` | not null | `'-1'::integer` | The search unit: -1 the whole version, else the document passage's ordinal. |
 
 Checks:
 
@@ -1444,6 +1450,7 @@ Kind: table.
 | `memory_kind` | `smallint` | not null |  |  |
 | `rows` | `integer` | not null |  |  |
 | `total_len` | `bigint` | not null |  |  |
+| `units` | `bigint` | not null | `0` | The search units of the counted versions, whose lengths total_len sums: a document version's passages, one for any other version (R6 amended). |
 
 Checks:
 

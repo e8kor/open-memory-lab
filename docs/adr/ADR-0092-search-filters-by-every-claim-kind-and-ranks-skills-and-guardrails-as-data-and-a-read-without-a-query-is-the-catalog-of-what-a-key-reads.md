@@ -69,7 +69,7 @@ What exists today (2026-11-15, `main` at a5eb6876):
   are summaries without text unless `include_text` asks, which today combines only with
   `with_own` or `author`; MCP's listing mode answers claim items with their text (ADR-0039 d4).
   Neither answers counts.
-- **Not built:** passages (ADR-0081 d3, d4), `GET /v1/skills`, the MCP `prompts` beyond
+- **Built in v0.8.0:** passages (ADR-0081 d3, d4, #405). **Not built:** `GET /v1/skills`, the MCP `prompts` beyond
   `guardrails` and the `resources` capability (ADR-0080 d5 to d11, ADR-0081 d6), releases and
   bindings (ADR-0085).
 
@@ -443,8 +443,10 @@ workspace holds across kinds has the workspace page's contents by kind for one w
        index.
 
     **Waiting.** `binding` (d6, d8) waits on ADR-0085's releases, which are not built: every key
-    reads tips, so no catalog answer carries `binding` until they are. Document hits and the
-    document entries' `passages` follow ADR-0081's passages as that build defines them.
+    reads tips, so no catalog answer carries `binding` until they are. Document hits are
+    ADR-0081's best-passage hits, and a document counts in the statistics as ADR-0081 R6
+    amended counts it (once in a word's document frequency, once in N, its passages in the
+    mean length); a catalog entry's `passages` count is not served yet.
 
 ## Consequences
 

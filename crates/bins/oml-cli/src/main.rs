@@ -2529,6 +2529,72 @@ fn run_chat_init(
     Ok(ExitCode::SUCCESS)
 }
 
+/// The document lines (ADR-0081 Consequences): whether the server's MCP
+/// resources serve documents, then, in a clone, the paths the default
+/// workspace holds both as a document and by another adapter, and the
+/// document files that now cut past the passage cap. One listing of this
+/// repository's document claims, one per document's path (at most 20).
+fn document_doctor(client: &Client) -> Vec<String> {
+    let mut lines = oml_cli::documents::server_lines(
+        &client
+            .post(
+                "/mcp",
+                &json!({"jsonrpc": "2.0", "id": 1, "method": "resources/templates/list"}),
+                &CallOpts {
+                    auth: true,
+                    idempotency: false,
+                },
+            )
+            .map(|(_, v)| v),
+    );
+    let Ok(git) = oml_cli::sync::source::Git::at(&std::env::current_dir().unwrap_or_default())
+    else {
+        return lines;
+    };
+    let Some(repo) = git
+        .origin_url()
+        .and_then(|url| oml_cli::sync::source::repo_of_remote(&url).ok())
+        .map(|r| r.repo)
+    else {
+        return lines;
+    };
+    let Ok((_, page)) = client.get(&format!(
+        "/v1/memories?kind=document&anchor_repo={}&limit=100",
+        encode(&repo)
+    )) else {
+        return lines;
+    };
+    let docs: Vec<Value> = page["items"].as_array().cloned().unwrap_or_default();
+    let mut anchored = docs.clone();
+    let mut files = Vec::new();
+    for doc in docs.iter().take(20) {
+        let Some(path) = doc["anchor"]["path"].as_str() else {
+            continue;
+        };
+        if let Ok((_, near)) = client.get(&format!(
+            "/v1/memories?anchor_repo={}&anchor_path_prefix={}&limit=100",
+            encode(&repo),
+            encode(path)
+        )) {
+            anchored.extend(
+                near["items"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|i| i["kind"] != "document")
+                    .cloned(),
+            );
+        }
+        if let Some(text) = oml_cli::documents::read_document_file(git.root(), path) {
+            let format = doc["format"].as_str().unwrap_or("text/plain").to_owned();
+            files.push((path.to_owned(), text, format));
+        }
+    }
+    lines.extend(oml_cli::documents::mixed_lines(&anchored));
+    lines.extend(oml_cli::documents::cap_lines(&files));
+    lines
+}
+
 /// The chat lines only the server answers (ADR-0063 d13): whether it takes
 /// `origin_kinds`, and whether the named chat workspace resolves and is the
 /// key's user's own.
@@ -5837,6 +5903,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut chat_server: Vec<String> = Vec::new();
     // The skill lines from the key's offered set (ADR-0080 Consequences).
     let mut skills: Vec<String> = Vec::new();
+    // The document lines (ADR-0081 Consequences).
+    let mut documents: Vec<String> = Vec::new();
     let mut held_blocking: Option<usize> = None;
     // Every node of the tenant's tree, read by an admin key for the
     // user-root lines (ADR-0085 d17).
@@ -5855,6 +5923,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
                     .get("/v1/skills?include_own_held=true")
                     .map(|(_, page)| page),
             );
+            documents = document_doctor(&client);
             if let Some(Ok(v)) = &me
                 && v["user"].is_object()
             {
@@ -6027,6 +6096,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let chat_warn = chat.iter().any(|line| line.starts_with("warn"));
     skills.extend(local_skill_lines());
     let skills_warn = skills.iter().any(|line| line.starts_with("warn"));
+    let documents_warn = documents.iter().any(|line| line.starts_with("warn"));
     let sources = sources_doctor(
         server_version(ready.as_ref()).as_deref(),
         default_node.as_ref(),
@@ -6072,6 +6142,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         || sync_warn
         || chat_warn
         || skills_warn
+        || documents_warn
         || sources_warn
         || in_progress_warn
         || !user_root_status.is_empty()
@@ -6124,6 +6195,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "sync": sync,
             "chat": chat,
             "skills": skills,
+            "documents": documents,
             "telemetry": telemetry,
             "journal": journal,
             "handlers": handlers,
@@ -6299,6 +6371,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         for line in &skills {
             println!("skills      : {line}");
+        }
+        for line in &documents {
+            println!("documents   : {line}");
         }
         for line in &sources {
             println!("sources     : {line}");
@@ -7367,6 +7442,15 @@ fn postings_doctor(recall_counts: Option<(u64, u64)>, settings: Option<&Value>) 
             n("similar_drift")
         ));
     }
+    // A document version with no passage is searched whole (ADR-0081 d3,
+    // d4); a server before 0059 sends no such field.
+    if n("documents_uncut") > 0 {
+        lines.push(format!(
+            "warn search: {} document version{} have no passages, so recall finds none of them: one written before migration 0059 is cut when the lead restarts; one whose text holds no content line has nothing to find",
+            n("documents_uncut"),
+            if n("documents_uncut") == 1 { "" } else { "s" },
+        ));
+    }
     let faulty = h["partition"] != Value::Bool(true)
         || h["similar_partition"] == Value::Bool(false)
         || n("similar_unfilled") > 0
@@ -7686,6 +7770,30 @@ fn verdict(ok: bool) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn doctor_names_document_versions_with_no_passages() {
+        let settings = serde_json::json!({"postings": {
+            "partition": true, "similar_partition": true, "terms_checked": 4,
+            "documents_uncut": 2,
+        }});
+        let lines = super::postings_doctor(None, Some(&settings));
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.starts_with("warn search: 2 document versions have no passages")),
+            "{lines:?}"
+        );
+        let clean = serde_json::json!({"postings": {
+            "partition": true, "similar_partition": true, "terms_checked": 4,
+            "documents_uncut": 0,
+        }});
+        let lines = super::postings_doctor(None, Some(&clean));
+        assert!(
+            !lines.iter().any(|l| l.contains("no passages")),
+            "{lines:?}"
+        );
+    }
+
     use super::*;
 
     #[test]

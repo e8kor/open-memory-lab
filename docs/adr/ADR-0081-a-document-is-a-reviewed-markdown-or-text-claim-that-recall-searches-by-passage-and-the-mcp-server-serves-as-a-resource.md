@@ -8,9 +8,9 @@ answers: why a document is a kind and not a memory with a markdown format; which
 # ADR-0081 — A document is a reviewed markdown or text claim that recall searches by passage and the MCP server serves as a resource
 
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, every default as
-drafted · proposed the same day, tracking #374 · amended by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) (d4, 2026-11-15)
+drafted · proposed the same day, tracking #374 · amended by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) (d4, 2026-11-15) · d2 amended 2026-11-18 (the long-title cut and the one slug rule, #405) · [the build's readings of 2026-11-18](#the-builds-readings-of-2026-11-18), proposed for the operator's batch; [the review's readings of 2026-11-18](#the-reviews-readings-of-2026-11-18-pr-475), decided by the coordinator, for the operator's batch
 
-**Release:** planned for v0.7.4
+**Release:** built in v0.8.0 (#405, #406)
 
 **Twin parts** (ADR-0090 d18, PR #388): a document is a `memories` row, so its body and search
 text are parts and its fold is the journal's; its passages are derived, cut again by the same rule
@@ -57,7 +57,7 @@ What exists today:
   resources" ([code.claude.com/docs/en/mcp](https://code.claude.com/docs/en/mcp), fetched
   2026-11-14), so the model can read a document without a person naming it.
 
-Decided, not built.
+Decided 2026-11-14; built in v0.8.0 (#405, #406), with the readings below. Not built: d6's escaping of hidden characters in a read's text content, which serves the stored bytes unescaped; d9's files.
 
 ## Decision
 
@@ -78,8 +78,18 @@ Decided, not built.
   already keeps, ADR-0057 d7). Absent on submit, the server derives `doc/<slug of the title>` by
   ADR-0057 d7's slug rule; a key outside the grammar is refused naming `claim_key`. Every character
   is unreserved in RFC 3986, so a key maps to a URI segment for segment with no encoding, which
-  meets proposed ADR-0036 d5's rule that the server decodes no segment. Sync's keys already fit:
-  its key rule maps every character outside `[a-z0-9._/-]` to `-` (ADR-0057 d7).
+  meets proposed ADR-0036 d5's rule that the server decodes no segment. Sync's characters fit:
+  its key rule maps every character outside `[a-z0-9._/-]` to `-` (ADR-0057 d7). Its lengths do
+  not always fit: a path segment over 64 characters, or a key `fit_key` cuts at 111 characters
+  and a 16-digit hash, breaks the segment bound, and the `document` adapter reports such a path
+  unreadable naming this rule (R4, 2026-11-18). *Amended 2026-11-18 (#405, the #438 review):* a
+  title whose slug is longer than one segment's 64 characters keeps its first 47, then `-`, then
+  the first 16 hex digits of the SHA-256 of the full key `doc/<slug>`: ADR-0057 d7's 111-character
+  fitting cut, scaled to this record's 64-character segment bound, so two long titles that share
+  a prefix keep distinct keys. The slug is the one rule d3 names: the heading's plain text (links
+  to their text, code and emphasis marks dropped) slugged as GitHub renders it, held in the leaf
+  crate `oml-passage` that the server and `oml-cli` both link, so `# [Guide](https://x.y)` keys
+  as `doc/guide` on both.
 
 - **d3 — Passages are cut by the server at capture, by one deterministic rule shared with sync.**
   For `text/markdown`, a passage is each level-1 to level-4 heading with its text up to the next
@@ -89,7 +99,8 @@ Decided, not built.
   `start_line` and `end_line` (1-based, inclusive), `heading_path` (the headings above it), and a
   `fragment`: the heading's slug as ADR-0057 d7's `headings` adapter computes it when the passage is
   a whole section, else `L<n>-L<m>` (ADR-0057 d21). Front matter and HTML comments are skipped as
-  the `headings` adapter skips them. The rule lives in one leaf crate with no I/O that the server
+  the `headings` adapter skips them: a heading inside one opens no passage, and a comment's lines
+  inside a passage's span are served with it, since a passage is served as its source lines. The rule lives in one leaf crate with no I/O that the server
   and `oml-cli` both link, so sync's spans and the server's passages are the same bytes. A version
   holds at most 4,096 passages, chosen, not measured (1 MiB of 40-line blocks of 6 bytes a line
   would exceed it; such a body is refused, `request.validation`, `details.field: body`,
@@ -154,7 +165,7 @@ Decided, not built.
       provenance and data framing travel in `_meta` and the list's `description`, never inside the
       text, so the bytes stay the signed source (ADR-0074 d12 keeps the JSON text byte for byte for
       the same reason); hidden characters are escaped in the text content as ADR-0074 d12 escapes
-      them for a model. A missing, unreadable, held-and-not-served or malformed URI answers one
+      them for a model (not built in v0.8.0: the text is served unescaped). A missing, unreadable, held-and-not-served or malformed URI answers one
       error, `-32002` "Resource not found" with `data: {uri}`, so a read never discloses a row the
       key cannot read; a URI whose segment holds a `%` or a reserved character is `-32602`,
       `details.field: uri`, as proposed ADR-0036 d5 has it. Reads are logged as recall is
@@ -187,6 +198,136 @@ Decided, not built.
 - **d9 — Files, PDFs and binary resources wait for attachments.** A document is text in the
   claim's body. A PDF, an image or any other file is an ADR-0004 attachment and an ADR-0057 d21
   `page=<n>` fragment, both refused until built; `resources/read` serves no `blob` until then.
+
+## The build's readings of 2026-11-18
+
+The v0.8.0 build (#405, #406) took the readings below where this record was silent. The
+coordinator confirmed each at its recommendation on 2026-11-18; they are proposed for the
+operator's batch, which confirms or changes them, and each line names the decision it reads.
+
+- **R1 (d3).** A heading with no content line before the next heading of level 1 to 4 is not a
+  passage of its own: its text joins the `heading_path` of the passages below it. Text before the
+  first heading is a passage only when it holds a content line. A passage of one title line would
+  be the shortest unit in the index and, under BM25's length normalisation, outrank the section
+  that answers the query; the `headings` adapter already skips such a heading (ADR-0057 d7).
+  Rejected: every heading a passage, which keeps `?passage=<slug>` resolvable for a bare title
+  and ranks bare titles first.
+- **R2 (d3, d4, d6).** A passage is indexed by the document's title, then its `heading_path`
+  joined by ` > `, then its lines, as the `headings` adapter writes a section's claim text, so a
+  section under "Install" of the "Deploy guide" matches "deploy install". The served `text` is the
+  passage's source lines, `start_line` to `end_line`, byte for byte, so a passage read equals the
+  same span of a full read. Rejected: indexing the lines alone, which misses a query naming the
+  document's subject.
+- **R3 (d4).** `more_passages` counts the document's other passages in the pipeline's fused
+  candidate list before the `k` cut, from any retriever: a lower bound, bounded by each list's
+  depth, as ADR-0092 d4's `matched_by_kind` is. Rejected: an exact count of every passage that
+  holds a query word, one more statement per document hit.
+- **R4 (d2, d7).** `--adapter document` reads `.md` as `text/markdown` and `.txt` as
+  `text/plain`, the `lines` adapter's set, keyed by the path without that extension under
+  ADR-0057 d7's mapping. A path whose key breaks d2's grammar (a segment over 64 characters, a
+  key over 128) is reported unreadable naming the key rule, and nothing is written for it.
+  Rejected: cutting each long segment by d2's title cut, a second key rule.
+- **R5 (d7).** A run refuses a path when the workspace holds live claims written for it the other
+  way: a `document` claim at `doc/<p>` beside claims of another kind under `doc/<p>/` whose anchor
+  `path` is the same file, in either direction. The refusal names both adapters and the keys it
+  would leave. The anchor path, not the key shape alone, decides, so `docs/guide.md` loaded as a
+  document (`doc/docs/guide`) and `docs/guide/intro.md` loaded by `headings`
+  (`doc/docs/guide/intro/<slug>`) never collide. Rejected: the key prefix alone, which refuses
+  that pair.
+- **R7 (d3, d7).** The `headings` adapter ends a section at a heading of any level, 1 to 6,
+  and a passage runs on past a heading of level 5 or 6. The build keeps the adapter as it is, so
+  no synced claim's span or hash changes. A passage and a `headings` claim of one section
+  name one fragment and start on one line, and end on one line wherever the section holds no
+  heading of level 5 or 6 (`the_server_and_sync_cut_the_same_passages_for_the_same_bytes`).
+  Rejected: cutting `headings` at level 4, which would supersede every synced section that holds
+  a deeper heading. Confirmed by the coordinator on 2026-11-18, for the operator's batch.
+- **R6 (d4, implementation).** Passages are search units in the existing postings: `search_postings`
+  gains a passage `ordinal`, a document version holds one unit per passage with its own search
+  text, vector and length on `document_passages`, the existing fold triggers keep them with the
+  version's state, and every retriever reads a document through its passages; the per-kind counts
+  of ADR-0052 d5 count a document's passages under its own kind code. A version with no
+  documents, which is every row written before this build, is ranked exactly as before.
+
+- **R8 (d4, ADR-0049 d6).** A promoted document's words join the vocabulary `did_you_mean`
+  draws on, as every other hit kind's do, so a misspelt word only a document holds is still
+  offered a spelling. Rejected: leaving documents out of the vocabulary, which offers no
+  spelling for a word a document-only workspace holds. Taken by the build; not yet confirmed by
+  the coordinator, for the operator's batch.
+- **R9 (d4, d6).** `passage`, `more_passages` and `uri` are members of the recall hit, beside
+  `memory`, `score` and `matched`, and the hit's `memory.text` and `memory.tokens` are the
+  passage's, since the claim item carries no byte count. `resources/list` pages the documents
+  first, then the skills, under one MCP cursor whose prefix, `doc:` or `skill:`, names the list
+  it continues. Rejected: the members inside `memory`, which every read of a claim item shares;
+  and two cursors, which MCP's `resources/list` does not have. Taken by the build; not yet
+  confirmed by the coordinator, for the operator's batch.
+
+## The review's readings of 2026-11-18 (PR #475)
+
+Two reviews of the build returned REVISE on 2026-11-18. The coordinator decided the items below
+that same day, before the code that takes them; each is marked **for the operator's batch**, which
+confirms or changes it, and names the reading or decision it amends.
+
+- **R3 amended (d4), 2026-11-18, for the operator's batch.** `k` counts versions, never passages.
+  Every retriever's statement keeps one row per version before its own limit: the version's best
+  unit by score, then ordinal (`row_number() OVER (PARTITION BY id ORDER BY score DESC,
+  ordinal)`), carrying `count(*) OVER (PARTITION BY id) - 1` as its `more_passages`; the fused
+  list then keeps one hit per version across the lists, its `more_passages` the larger of the
+  lists' counts and the other passages fused beside it. A recall of `k` = 10 over a document whose
+  30 passages hold the word and 20 memories that hold it answers 10 hits. Rejected: collapsing
+  after the cut, which let one document's passages fill `k`.
+- **R6 amended (d4), 2026-11-18, for the operator's batch.** A document adds at most 1 to a term's
+  document frequency: df counts distinct versions, never units, and the row count N counts
+  versions; the mean length stays per unit, the mean of the units' lengths. A 4,096-passage
+  document therefore cannot flatten a word's IDF for the memories beside it. R6's sentence
+  "ranked exactly as before" holds for a scope with no document; a scope holding documents ranks
+  its memories with N and df each moved by at most one per document version. Rejected: df and N
+  per unit, under which one long document repeating a word makes it near-worthless for every
+  memory in the workspace.
+- **R10 (d6), 2026-11-18, for the operator's batch.** `resources/list` lists one entry per
+  document: its promoted version when it has one, with a held successor the reader may see
+  described beside it as an unreviewed edit; a document with only a held version is listed marked
+  held. `resources/read` of a document URI serves the promoted version. A recall hit on a held
+  version carries a `uri` with `?version=<n>`, which `resources/read` honours only for a reader
+  allowed to see that version, and reads as absent for any other. Rejected: one URI naming
+  whichever version is newest, which served a held edit and its promoted tip under one name.
+- **R11 (d4, d6), 2026-11-18, for the operator's batch.** A passage's URI uses its heading slug
+  only when the slug begins with a letter or a digit and holds nothing outside `[a-z0-9_-]`; otherwise it uses its
+  lines, `L<start>-L<end>`. `?passage=` matches either form, so every hit's `uri` is a valid
+  RFC 3986 URI and every passage is readable through it, a passage under a Cyrillic, emoji or
+  `!!!` heading included. Rejected: percent-encoding the slug, a second spelling of one fragment.
+- **R12 (d1), 2026-11-18, for the operator's batch.** A sent title holding a hidden character
+  (C0 or C1 controls, bidi controls, zero-width characters: the set skills refuse) is refused;
+  a derived title has them stripped. A derived title is the first level-1 heading as
+  `oml_passage::headings` reads it, through `plain()`, so a heading inside a fence, front matter
+  or an HTML comment never names the document.
+- **R13 (d7), 2026-11-18, for the operator's batch.** For a document item, a sync rollback match
+  also requires the text digest to match, so an edit that changes whitespace alone is written as
+  a new version and not mistaken for the version it restores.
+- **R5 amended (d7), 2026-11-18, for the operator's batch.** The mixed-adapter refusal is taken per
+  loaded path, never per source: a path is refused by the document and non-document split of the
+  live claims anchored at that path, so a source loaded in two runs under two adapters is refused
+  path by path.
+- **R14 (migration 0059), 2026-11-18, for the operator's batch.** Migration 0059 takes no lock
+  that blocks a read of `memories` or `search_postings` for its run: it replaces the fold's
+  function and leaves its trigger, widens the kind check `NOT VALID`, and refills only tenants
+  holding a `document` row. Its served index is rebuilt by a second, `-- no-transaction`
+  migration under a new name, partition by partition, each build committed before the next and
+  attached to the parent, then the old index dropped. The coordinator asked for `CREATE INDEX
+  CONCURRENTLY`; PostgreSQL refuses it inside a `DO` block and inside a multi-statement string,
+  and the partitions are known only at run time, so each partition's build is a plain `CREATE
+  INDEX` under that partition's `SHARE` lock, as 0041 builds its index: reads never wait, and a
+  tenant's writes wait for its own partition's build alone.
+  A document version with no passage cut, written before 0059 and not cut yet or a text with
+  no content line (R1), is no search unit in any list and counts in no statistic, so the scans
+  read memories with no probe of the passages; the lead cuts the first kind at startup, before it
+  serves, and doctor names both. Rejected: reading such a version whole in a third scan branch,
+  which re-reads every memory of the scope for rows that hold, at most, a title.
+- **R15 (d3), 2026-11-18, for the operator's batch.** The cut reads markdown in linear time and
+  bounds what it keeps: a heading's text is read to 200 characters, as a title is (d1), so a
+  heading path entry and a passage's search text never carry more of one line; and a document
+  with more than 16,384 headings, four for each passage it may hold, is refused as
+  `too_many_passages` like one past 4,096 passages. Rejected: no heading bound, under which half a
+  million empty headings are read and kept to cut no passage.
 
 ## Consequences
 
