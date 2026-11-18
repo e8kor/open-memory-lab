@@ -206,7 +206,6 @@ The routes under `/v2/uploads` ([ADR-0004](../adr/ADR-0004-bodies-and-attachment
 | `bundle.digest_mismatch` | 422 | A file, body or version whose digest is not the one stated. |
 | `bundle.signature_invalid` | 422 | The manifest or a source event does not verify, or the manifest names a tenant other than `expect_tenant`. |
 | `bundle.signature_unexpected` | 422 | The manifest verifies under a key other than `expect_key`. |
-| `bundle.unencrypted` | 422 | The CLI's input is not an age file. The server never sees one. |
 | `bundle.decrypt_failed` | 422 | The CLI's identity is not a recipient, or the ciphertext does not authenticate. The server never sees one. |
 | `bundle.io` | 422 | The bundle could not be read. |
 | `import.target_not_in_progress` | 409 | The target is not a development workspace in progress, nor a new name the import creates in progress. `details.workspace_id`. |
@@ -275,7 +274,7 @@ Review unavailability is not an API error. When no reviewer can approve, writes 
 | 410 | `lifecycle.erased`, `upload.expired` |
 | 413 | `request.payload_too_large`, `upload.too_large`, `bundle.too_large` |
 | 415 | `request.unsupported_media` |
-| 422 | `oauth.connect_refused`, `request.workspace_unresolved`, `submission.scan_veto`, `submission.format_invalid`, `submission.attachment_missing`, `submission.simulation_id_required`, `submission.lineage_required`, `vocab.unknown_curie`, `vocab.inactive_curie`, `upload.digest_mismatch`, `upload.part_size`, `upload.part_number`, `settings.retired_key`, `settings.invalid`, `bundle.format_unknown`, `bundle.layout`, `bundle.path_unsafe`, `bundle.line_too_long`, `bundle.depth`, `bundle.duplicate`, `bundle.unreferenced_body`, `bundle.malformed`, `bundle.digest_mismatch`, `bundle.signature_invalid`, `bundle.signature_unexpected`, `bundle.unencrypted`, `bundle.decrypt_failed`, `bundle.io` |
+| 422 | `oauth.connect_refused`, `request.workspace_unresolved`, `submission.scan_veto`, `submission.format_invalid`, `submission.attachment_missing`, `submission.simulation_id_required`, `submission.lineage_required`, `vocab.unknown_curie`, `vocab.inactive_curie`, `upload.digest_mismatch`, `upload.part_size`, `upload.part_number`, `settings.retired_key`, `settings.invalid`, `bundle.format_unknown`, `bundle.layout`, `bundle.path_unsafe`, `bundle.line_too_long`, `bundle.depth`, `bundle.duplicate`, `bundle.unreferenced_body`, `bundle.malformed`, `bundle.digest_mismatch`, `bundle.signature_invalid`, `bundle.signature_unexpected`, `bundle.decrypt_failed`, `bundle.io` |
 | 429 | `limit.rate`, `limit.quota`, `import.over_quota` |
 | 500 | `system.internal` |
 | 503 | `system.unavailable`, `upload.storage_failed` |

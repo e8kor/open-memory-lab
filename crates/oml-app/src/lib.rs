@@ -20,11 +20,11 @@ pub mod types;
 
 pub use app::App;
 
+/// The bundle format, for the transport's refusal mapping (ADR-0084 d7).
+pub use oml_bundle as bundle;
 /// The domain surface, re-exported so adapters depend on `oml-app` only
 /// (workspace-plan.md dependency direction).
 pub use oml_domain as domain;
-/// The bundle format, for the transport's refusal mapping (ADR-0084 d7).
-pub use oml_bundle as bundle;
 
 /// `ed25519-dalek` is part of the domain's public signature types; adapters
 /// reach it here rather than declaring the dependency themselves.

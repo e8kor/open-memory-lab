@@ -5993,6 +5993,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         for line in &imports {
             println!("imports     : {line}");
+        }
         for line in &exports {
             println!("exports     : {line}");
         }

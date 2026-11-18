@@ -1768,6 +1768,8 @@ pub fn bundle_error(refusal: &oml_app::bundle::BundleError) -> ApiError {
     let code = refusal.code();
     let status = match code {
         "bundle.too_large" => StatusCode::PAYLOAD_TOO_LARGE,
+        // The export's code, a request the caller fixes (errors.md).
+        "bundle.unencrypted" => StatusCode::BAD_REQUEST,
         "import.bundle_older" | "import.since_mismatch" | "import.source_key_changed" => {
             StatusCode::CONFLICT
         }
@@ -1818,7 +1820,7 @@ mod bundle_refusals {
                 },
                 422,
             ),
-            (B::Unencrypted { detail: s() }, 422),
+            (B::Unencrypted { detail: s() }, 400),
             (B::DecryptFailed { detail: s() }, 422),
             (
                 B::BundleOlder {
