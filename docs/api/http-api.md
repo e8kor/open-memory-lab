@@ -161,11 +161,7 @@ What capture would decide for a submit's body or a supersession's, without captu
 
 Requires: the grant submit would need, or, with replaces, the grant supersede would need on that target.
 
-**Request body** (`application/json`)
-
-| Field | Type | Required | Meaning |
-|---|---|---|---|
-| `replaces` | string | no | The artifact_id of the version a supersession would replace; with it, the body is SupersedeRequest's. |
+**Request body** (`application/json`): PreviewRequest
 
 **Responses.** `200` What capture would decide.; `401` auth.missing or auth.invalid.; `415` 415 request.unsupported_media — the request body's media type is not the application/json the operation declares; not retryable as sent.; `429` 429 limit.rate or limit.quota — retryable; Retry-After says when.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
 
