@@ -437,6 +437,8 @@ struct TenantState {
     /// (`memories.valid_until_ratified` and `valid_until_before`, 0058;
     /// ADR-0089 d16, note of 2026-11-18).
     valid_until_before: BTreeMap<Uuid, Option<oml_domain::valid_time::ValidEnd>>,
+    /// The admin investigations, by id (ADR-0089 d10; 0063).
+    investigations: BTreeMap<Uuid, crate::types::Investigation>,
 }
 
 /// BTreeMap journal-and-metadata store with a real lock per tenant: chain
@@ -1557,6 +1559,49 @@ fn apply_fold(
         MetadataFold::TenantGenesis { .. }
         | MetadataFold::VerdictRecorded { .. }
         | MetadataFold::AdminRead => {}
+        MetadataFold::AdminMemoryRead {
+            investigation_id,
+            key_id,
+        } => {
+            match state
+                .investigations
+                .get_mut(&investigation_id)
+                .filter(|i| i.key_id == key_id && i.closed_at.is_none())
+            {
+                Some(i) => i.reads += 1,
+                None => return Err(StoreError::InvestigationNotOpen { investigation_id }),
+            }
+        }
+        MetadataFold::InvestigationOpened {
+            investigation_id,
+            key_id,
+            reason,
+        } => {
+            state.investigations.insert(
+                investigation_id,
+                crate::types::Investigation {
+                    investigation_id,
+                    key_id,
+                    reason,
+                    opened_at: at.clone(),
+                    reads: 0,
+                    closed_at: None,
+                },
+            );
+        }
+        MetadataFold::InvestigationClosed {
+            investigation_id,
+            key_id,
+        } => {
+            match state
+                .investigations
+                .get_mut(&investigation_id)
+                .filter(|i| i.key_id == key_id && i.closed_at.is_none())
+            {
+                Some(i) => i.closed_at = Some(at.clone()),
+                None => return Err(StoreError::InvestigationNotOpen { investigation_id }),
+            }
+        }
         MetadataFold::WorkspaceImported(ended) => {
             let Some(import) = state.imports.get_mut(&ended.import_id) else {
                 return Err(StoreError::Backend(format!(
@@ -4634,6 +4679,45 @@ impl JournalStore for MemStore {
             })
             .map(|m| m.version)
             .max())
+    }
+
+    async fn investigation(
+        &self,
+        tenant_id: Uuid,
+        investigation_id: Uuid,
+    ) -> Result<Option<crate::types::Investigation>, StoreError> {
+        Ok(self.tenant_existing(tenant_id).and_then(|tenant| {
+            tenant
+                .lock()
+                .expect("tenant lock")
+                .investigations
+                .get(&investigation_id)
+                .cloned()
+        }))
+    }
+
+    async fn investigations(
+        &self,
+        tenant_id: Uuid,
+        key_id: Option<Uuid>,
+        open_only: bool,
+    ) -> Result<Vec<crate::types::Investigation>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let mut all: Vec<crate::types::Investigation> = state
+            .investigations
+            .values()
+            .filter(|i| key_id.is_none_or(|k| i.key_id == k))
+            .filter(|i| !open_only || i.closed_at.is_none())
+            .cloned()
+            .collect();
+        all.sort_by(|a, b| {
+            (a.opened_at.as_str(), a.investigation_id)
+                .cmp(&(b.opened_at.as_str(), b.investigation_id))
+        });
+        Ok(all)
     }
 
     async fn valid_until_before(

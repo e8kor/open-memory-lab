@@ -1389,7 +1389,7 @@ export interface paths {
         put?: never;
         /**
          * Search every memory of the tenant, in every state, workspace and user root, with its text and attribution.
-         * @description Requires: admin key role (ADR-0045 d21); the operator and every other role answer access.verb_ceiling. query is the recall full-text search without the visibility filter; state and workspace narrow it. A POST so that the query travels in a body, never a path or query string. Each answer journals one memory.admin_read event naming the admin key, the artifact_ids served and a query_digest, never the text or the query. Served on the lead only. Records no verdict, creates no serve binding. Since v0.5.0.
+         * @description Requires: admin key role (ADR-0045 d21); the operator and every other role answer access.verb_ceiling. query is the recall full-text search without the visibility filter; state and workspace narrow it. A POST so that the query travels in a body, never a path or query string. Each read names an open investigation of the admin key in investigation, else it is refused admin.investigation_required naming /investigation (ADR-0089 d10). Each answer journals one memory.admin_read event naming the admin key, the artifact_ids served, the investigation_id and a query_digest, never the text or the query. Served on the lead only. Records no verdict, creates no serve binding. Since v0.5.0.
          */
         post: operations["adminSearchMemories"];
         delete?: never;
@@ -1407,11 +1407,55 @@ export interface paths {
         };
         /**
          * One memory of the tenant with its text and full attribution, a universe claim with its source.
-         * @description Requires: admin key role (ADR-0045 d21). The fields of the search plus derives_from, replaces, every verdict with its reviewing key, principal, reason and time, and plaintext_digest; ADR-0044 d9's served view does not apply. Journalled as memory.admin_read with the one artifact_id. Served on the lead only. Since v0.5.0.
+         * @description Requires: admin key role (ADR-0045 d21). The fields of the search plus derives_from, replaces, every verdict with its reviewing key, principal, reason and time, and plaintext_digest; ADR-0044 d9's served view does not apply. Requires an open investigation of the admin key in ?investigation=, else admin.investigation_required naming investigation (ADR-0089 d10). Journalled as memory.admin_read with the one artifact_id and the investigation_id. Served on the lead only. Since v0.5.0.
          */
         get: operations["adminReadMemory"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/admin/investigations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The admin key's own investigations, open by default, each with its reason, read count and age.
+         * @description Requires: admin key role (ADR-0089 d15). Lists only the calling key's investigations, oldest first. Journals nothing. Since v0.8.3.
+         */
+        get: operations["adminListInvestigations"];
+        put?: never;
+        /**
+         * Open an investigation, the reason the admin key's reads of claim text are made under.
+         * @description Requires: admin key role (ADR-0089 d10, d15); every other role answers access.verb_ceiling. reason is 1 to 1,024 bytes, stored in clear and scanned as a verdict's reason is; a veto answers submission.scan_veto. Journalled as admin.investigation_opened with the id and the reason. Not idempotent: each call opens one. The investigation stays open until its key closes it. Since v0.8.3.
+         */
+        post: operations["adminOpenInvestigation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/admin/investigations/{investigation_id}/close": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Close an investigation of the admin key; reads under it are refused from then on.
+         * @description Requires: admin key role and the key that opened it (ADR-0089 d10, d17); another key's or an unknown id answers access.not_found. Journalled as admin.investigation_closed; closing one already closed answers it and journals nothing. Since v0.8.3.
+         */
+        post: operations["adminCloseInvestigation"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1654,6 +1698,21 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description An admin key's investigation, the reason its reads of claim text are made under (ADR-0089 d10, d15). Since v0.8.3. */
+        Investigation: {
+            /** Format: uuid */
+            investigation_id: string;
+            reason: string;
+            /** Format: date-time */
+            opened_at: string;
+            /** @description The admin reads made under it. */
+            reads: number;
+            age_seconds: number;
+            /** @enum {string} */
+            state: "open" | "closed";
+            /** Format: date-time */
+            closed_at: string | null;
+        };
         /** @description A memory as the admin read serves it (ADR-0045 d21): its text and who wrote it, in every state. */
         AdminMemory: {
             artifact_id: string;
@@ -1755,7 +1814,7 @@ export interface components {
          * @description The closed error vocabulary; identical to docs/api/errors.md by construction. The oauth codes other than oauth.connect_refused and oauth.attach_refused travel inside RFC error bodies on the OAuth endpoints, at the start of error_description, or on the authorization page; oauth.connect_refused answers on /v2 in this envelope, and oauth.attach_refused, an /mcp tool result, is answered by no served tool since oml_attach left the catalog (ADR-0031, ADR-0039 d2, d9).
          * @enum {string}
          */
-        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workspace_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.format_invalid" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.version_conflict" | "submission.claim_key_conflict" | "submission.similar_exists" | "submission.universe_refused" | "submission.user_root_refused" | "workspace.frozen" | "workspace.in_progress_refused" | "workspace.held_remaining" | "workspace.admin_key_under_root" | "workspace.transition_refused" | "review.author_in_lineage" | "review.person_required" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "upload.expired" | "upload.too_large" | "upload.part_size" | "upload.part_number" | "upload.incomplete" | "upload.session_limit" | "upload.tenant_limit" | "upload.storage_failed" | "bundle.format_unknown" | "bundle.layout" | "bundle.path_unsafe" | "bundle.too_large" | "bundle.line_too_long" | "bundle.depth" | "bundle.duplicate" | "bundle.unreferenced_body" | "bundle.malformed" | "bundle.digest_mismatch" | "bundle.signature_invalid" | "bundle.signature_unexpected" | "bundle.unencrypted" | "bundle.decrypt_failed" | "bundle.io" | "import.target_not_in_progress" | "import.over_quota" | "import.bundle_older" | "import.since_mismatch" | "import.source_key_changed" | "import.busy" | "export.disabled" | "export.not_readable" | "export.busy" | "export.too_large" | "memory.not_held" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
+        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "admin.investigation_required" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workspace_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.format_invalid" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.version_conflict" | "submission.claim_key_conflict" | "submission.similar_exists" | "submission.universe_refused" | "submission.user_root_refused" | "workspace.frozen" | "workspace.in_progress_refused" | "workspace.held_remaining" | "workspace.admin_key_under_root" | "workspace.transition_refused" | "review.author_in_lineage" | "review.person_required" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "upload.expired" | "upload.too_large" | "upload.part_size" | "upload.part_number" | "upload.incomplete" | "upload.session_limit" | "upload.tenant_limit" | "upload.storage_failed" | "bundle.format_unknown" | "bundle.layout" | "bundle.path_unsafe" | "bundle.too_large" | "bundle.line_too_long" | "bundle.depth" | "bundle.duplicate" | "bundle.unreferenced_body" | "bundle.malformed" | "bundle.digest_mismatch" | "bundle.signature_invalid" | "bundle.signature_unexpected" | "bundle.unencrypted" | "bundle.decrypt_failed" | "bundle.io" | "import.target_not_in_progress" | "import.over_quota" | "import.bundle_older" | "import.since_mismatch" | "import.source_key_changed" | "import.busy" | "export.disabled" | "export.not_readable" | "export.busy" | "export.too_large" | "memory.not_held" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
         ExportRequest: {
             /**
              * @description history is the default in a user root; release is refused until releases are built.
@@ -8110,7 +8169,8 @@ export interface operations {
                 /**
                  * @example {
                  *       "query": "deploy window",
-                 *       "state": "held"
+                 *       "state": "held",
+                 *       "investigation": "00000000-0000-4000-8000-0000000000c1"
                  *     }
                  */
                 "application/json": {
@@ -8128,6 +8188,11 @@ export interface operations {
                     /** @description At most 200, the console list's largest page (ADR-0045 d22; raised from 100 in v0.7.0). */
                     limit?: number;
                     cursor?: string;
+                    /**
+                     * Format: uuid
+                     * @description An open investigation of the admin key, from POST /v2/admin/investigations; required (ADR-0089 d10). Since v0.8.3.
+                     */
+                    investigation?: string;
                 };
             };
         };
@@ -8153,7 +8218,10 @@ export interface operations {
     };
     adminReadMemory: {
         parameters: {
-            query?: never;
+            query: {
+                /** @description An open investigation of the admin key (ADR-0089 d10). Since v0.8.3. */
+                investigation: string;
+            };
             header?: {
                 /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
                 "X-Request-Id"?: components["parameters"]["XRequestId"];
@@ -8190,6 +8258,117 @@ export interface operations {
                             at?: string;
                         }[];
                     };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    adminListInvestigations: {
+        parameters: {
+            query?: {
+                state?: "open" | "closed";
+            };
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The investigations. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Investigation"][];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    adminOpenInvestigation: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "reason": "ticket 41, a leaked hostname"
+                 *     }
+                 */
+                "application/json": {
+                    reason: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The investigation, open. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Investigation"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    adminCloseInvestigation: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path: {
+                investigation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The investigation, closed. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Investigation"];
                 };
             };
             403: components["responses"]["Forbidden"];

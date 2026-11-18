@@ -10,7 +10,7 @@ answers: which acts an admin key may take on a workspace's content, on which tar
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its five questions decided at their
 recommendations and every other default as drafted, and its amendment of ADR-0001 d5 accepted with
 it · proposed the same day · amended 2026-11-17 by the operator (d16: demote's targets, the
-fix route as the one surface for demote and erase, erase's claim-wide scope, a fix's events; as-of reads skip a demoted version)
+fix route as the one surface for demote and erase, erase's claim-wide scope, a fix's events; as-of reads skip a demoted version) · readings of 2026-11-18 recorded for the operator's batch (d17)
 
 **Release:** not scheduled; with ADR-0085, whose releases a fix overlays
 
@@ -99,7 +99,8 @@ Decided, not built.
   - The body is scanned like any write of its kind (ADR-0074, including d24's instruction kinds).
   - A veto refuses the edit with `submission.scan_veto`.
   - A finding that would hold the write also refuses the edit as a fix
-    (`admin.fix_used_by_scan`), because a fix serves at once and a held finding needs a person
+    (`admin.fix_held_by_scan`; d4 named it `admin.fix_used_by_scan`, a slip corrected 2026-11-18,
+    d17), because a fix serves at once and a held finding needs a person
     first. The admin can demote instead, which serves already-reviewed text.
 
 - **d5 — A fix reaches release-bound keys as a marked overlay.** For every release that lists the
@@ -344,6 +345,67 @@ Decided, not built.
       reviewer rejects them. A held first version is not counted: it replaces nothing and stays
       approvable. The doctor also counts erased versions whose data key is still live
       (`lake.erased_key_live`).
+
+- **d17 — Readings of v0.8.3 bulk 2, recorded 2026-11-18 before the code, for the operator's
+  batch (#422, #423, #474).** The operator decided the first three on 2026-11-17; the coordinator
+  confirmed the plan's c1, c2, c5-c8 and c10-c12 as recommended; the rest are the build's own,
+  each with its rejected alternative.
+  - **Investigations close only by an explicit close (the operator, 2026-11-17).** No idle expiry.
+    `POST /v2/admin/investigations/{id}/close` is one route beyond d15; only the key that opened
+    the investigation closes it, and a close of an investigation already closed answers it as it
+    is and journals nothing. `oml doctor` warns `admin.investigation_open_long` for each one open
+    for more than seven days. Rejected: an 8-hour idle expiry (plan c9), which the operator
+    overrode; closing by any admin key of the tenant, which would let one admin end another's
+    stated reason.
+  - **How a read names its investigation (c9, confirmed).** The search body's `investigation`
+    field and the one-memory read's `?investigation=` query. A read naming none, or one that is
+    unknown, closed or another key's, is refused `admin.investigation_required` (403), naming the
+    field (`/investigation` or `investigation`), and journals nothing; one code for all four, so
+    the refusal says nothing of another key's investigations. Every admin route that serves claim
+    text requires it: today the two of ADR-0045 d21. Counts, structure and recall telemetry
+    (ADR-0054 d2) serve no claim text and do not. `memory.admin_read` names `investigation_id`,
+    and its commit compare-and-sets that the investigation is still open and the key's.
+  - **The reason.** 1 to 1,024 bytes after trimming, scanned by the veto scan as a verdict's
+    reason is (a finding that would hold a write does not apply to a reason), stored in clear in
+    `admin.investigation_opened` and `admin_investigations` (migration 0063).
+    `GET /v2/admin/investigations?state=open|closed` lists the key's own, `open` by default.
+  - **The console keeps the id in the browser session** (c9's "the web session holds the open
+    id"), as the cookie `__Host-oml_investigation`, not in a new session column: an admin page
+    that reads claim text without one, or under one closed since, asks for the reason and opens
+    one through `POST /web/admin/investigation`, then returns to the page; the admin pages carry
+    a **Close investigation** control. Rejected: a column on `web_sessions`, which needs a lead
+    route for the console to set it; reading under the key's newest open investigation, which
+    would bind one person's browsers to one reason they did not all give.
+  - **The fix route is the only surface for demote and erase (c1, confirmed; d16).**
+  - **A reserved per-tenant server key authors a revert (c5, confirmed).** Role none,
+    `used_by: service`, revoked at issuance, principal `oml:server`, issued in the revert's own
+    transaction the first time a tenant needs it. Its restored version's lineage carries the
+    original version's lineage and the admin's principal, so R2 excludes both from the
+    reverter's verdict.
+  - **The held-by-scan code is `admin.fix_held_by_scan` (c6, confirmed).** d4's
+    `admin.fix_used_by_scan` was a slip; d4 reads `admin.fix_held_by_scan`.
+  - **Any admin edit of an instruction-class claim sets `loosens_guardrail` (c7, confirmed),**
+    since whether a rewritten rule binds less is undecidable; so does a demotion or retirement
+    that takes a served instruction-class tip out of service.
+  - **The scope is judged at confirm or revert time (c8, confirmed):** the target workspace's
+    status and in-progress mode then, the strictest current reading.
+  - **CLI and HTTP only (c10, confirmed).** No console Fix form until the Releases view exists
+    (ADR-0083 d9).
+  - **An erasure is confirmed, never reverted, and has no dispute comment yet (c11, confirmed);**
+    the dispute comment is a follow-up issue.
+  - **A fix journals `admin.fix` and the lifecycle event it causes (c12, confirmed; d16),**
+    `admin.fix` naming that event's id.
+  - **Demoting the last approved version of a claim is refused, `admin.fix_would_lock_claim_key`
+    (the coordinator, 2026-11-18).** A claim whose every approved version is demoted keeps its
+    claim key locked (d16's note "Not built"), so the fix route refuses a demotion that would
+    leave the claim no promoted, non-demoted version, journals nothing, and names the code. The
+    guard stays until the operator decides where a fresh claim's version ordinals start and how
+    the usage meter counts it (#474's second item); then the guard is lifted in the same change
+    that frees the key. Rejected: demoting it anyway, which locks the key with no way to write the
+    claim again; erasing instead, which destroys text a demotion keeps.
+  - **A demotion's reopened end is compare-and-set (#474).** `MetadataFold::MemoryDemoted`
+    carries the reopened version and its earlier end, and both stores refuse a stale pair as a
+    moved tip (d16's note of 2026-11-18).
 
 ## Consequences
 

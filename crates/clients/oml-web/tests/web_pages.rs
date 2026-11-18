@@ -408,11 +408,54 @@ fn csrf_of(page: &str) -> String {
     page[start..start + page[start..].find('"').expect("a quote")].to_owned()
 }
 
-/// A signed-in browser: its cookie header.
+/// A signed-in browser: its cookie header. An admin's browser opens an
+/// investigation through the console's own form first, as the console asks
+/// an admin who reads claim text to (ADR-0089 d10).
 async fn signed_in(rig: &Rig, subject: &str, email: &str) -> String {
     let (status, token, body) = sign_in_google(rig, subject, email).await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
-    format!("{SESSION_COOKIE}={}", token.expect("a session"))
+    let cookie = format!("{SESSION_COOKIE}={}", token.expect("a session"));
+    investigating(rig, &cookie).await
+}
+
+/// An open investigation of the tenant's boot admin key, for the tests'
+/// own admin reads through the application (ADR-0089 d10).
+async fn boot_investigation(rig: &Rig) -> uuid::Uuid {
+    rig.app
+        .open_investigation(rig.boot.admin_key.value.as_str(), "the console tests")
+        .await
+        .expect("an investigation")
+        .investigation_id
+}
+
+/// The cookie the console's investigation form sets.
+const INVESTIGATION_COOKIE: &str = "__Host-oml_investigation";
+
+/// `cookie` with an open investigation of the session's admin key, where
+/// the session is an admin's; else `cookie` as it is.
+async fn investigating(rig: &Rig, cookie: &str) -> String {
+    let (status, _, page) = send(&rig.router, get("/web/admin/memories", Some(cookie))).await;
+    if status != StatusCode::FORBIDDEN || !page.contains("Open an investigation") {
+        return cookie.to_owned();
+    }
+    let csrf = csrf_of(&page);
+    let (status, headers, body) = send(
+        &rig.router,
+        post(
+            "/web/admin/investigation",
+            &[
+                ("csrf_token", csrf.as_str()),
+                ("action", "open"),
+                ("reason", "the console tests"),
+                ("next", "/web/admin/memories"),
+            ],
+            Some(cookie),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let (id, _) = set_cookie(&headers, INVESTIGATION_COOKIE).expect("the investigation cookie");
+    format!("{cookie}; {INVESTIGATION_COOKIE}={id}")
 }
 
 /// A page act with the CSRF token read off the page first.
@@ -1364,7 +1407,6 @@ async fn the_atlas_treemap_draws_and_zooms_with_no_script_in_chromium() {
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
-    let value = |c: &str| c.split_once('=').expect("a cookie").1.to_owned();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("a free port");
@@ -1380,9 +1422,9 @@ async fn the_atlas_treemap_draws_and_zooms_with_no_script_in_chromium() {
         "--issuer",
         ISSUER,
         "--cookie",
-        &value(&cookie),
+        &cookie,
         "--admin-cookie",
-        &value(&boss),
+        &boss,
         "--shots",
         &shots,
     ]);
@@ -1985,7 +2027,13 @@ async fn sign_out_from(rig: &Rig, cookie: &str, page: &str) -> (StatusCode, Head
 /// The status `GET /v2/whoami` answers the session's `capacity` credential,
 /// sent as `oml-web` sends it: whether the credential still names a session.
 async fn credential_status(rig: &Rig, cookie: &str, capacity: &str) -> StatusCode {
-    let token = cookie.split_once('=').expect("a session cookie").1;
+    let token = cookie
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .split_once('=')
+        .expect("a session cookie")
+        .1;
     let credential = oml_app::domain::web::capacity_credential(token, capacity);
     let request = Request::get("/v2/whoami")
         .header(header::AUTHORIZATION, format!("Bearer {credential}"))
@@ -2005,7 +2053,13 @@ async fn every_signed_in_page_draws_the_sign_out_control_in_its_header() {
     rig.allow("bob@example.com", "bob", true).await;
     let (cookie, value) = person_with_agent(&rig, "sub-2", "bob@example.com").await;
     let memory = agent_writes(&rig, &value, "Sign-out is drawn on every page.").await;
-    let token = cookie.split_once('=').expect("a session cookie").1;
+    let token = cookie
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .split_once('=')
+        .expect("a session cookie")
+        .1;
     let expected = SignOutForm {
         method: "post".to_owned(),
         action: "/web".to_owned(),
@@ -2075,7 +2129,13 @@ async fn every_refusal_page_of_a_signed_in_person_draws_the_sign_out_control_in_
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     laptop_key(&rig, &cookie).await;
-    let token = cookie.split_once('=').expect("a session cookie").1;
+    let token = cookie
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .split_once('=')
+        .expect("a session cookie")
+        .1;
     let csrf = oml_web_credential::csrf_token(token);
     let expected = SignOutForm {
         method: "post".to_owned(),
@@ -2337,7 +2397,13 @@ async fn sign_out_is_a_same_origin_post_with_the_sessions_csrf_token_and_never_a
     }
     // Without the token, and with another session's.
     let other = signed_in(&rig, "sub-1", EMAIL).await;
-    let other_token = other.split_once('=').expect("a session cookie").1;
+    let other_token = other
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .split_once('=')
+        .expect("a session cookie")
+        .1;
     let other_csrf = oml_web_credential::csrf_token(other_token);
     for fields in [
         vec![("action", "sign_out")],
@@ -2636,7 +2702,12 @@ async fn a_render_token_names_the_diagram_and_carries_no_source_so_a_large_one_d
 async fn an_expired_render_token_does_not_open_through_the_route() {
     let rig = rig().await;
     let (cookie, memory) = person_with_a_diagram(&rig).await;
-    let token_value = cookie.split_once('=').map_or("", |(_, v)| v);
+    let token_value = cookie
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .split_once('=')
+        .map_or("", |(_, v)| v);
     let csrf = oml_web_credential::csrf_token(token_value);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -2693,6 +2764,7 @@ async fn author_of(rig: &Rig, text: &str) -> uuid::Uuid {
             None,
             None,
             10,
+            Some(boot_investigation(rig).await),
         )
         .await
         .expect("the admin reads");
@@ -2770,6 +2842,7 @@ async fn a_supersession_runs_as_the_curator_on_its_own_claim_and_as_the_reviewer
             None,
             None,
             10,
+            Some(boot_investigation(&rig).await),
         )
         .await
         .expect("the admin reads")
@@ -2847,6 +2920,7 @@ async fn memories_reading(rig: &Rig, text: &str) -> Vec<uuid::Uuid> {
             None,
             None,
             10,
+            Some(boot_investigation(rig).await),
         )
         .await
         .expect("the admin reads")
@@ -3692,7 +3766,12 @@ async fn an_issue_whose_name_a_stopped_attempt_holds_issues_no_next_name() {
     // The stopped attempt: the claim on `-2`'s key, under this form's
     // nonce, with the request it made.
     let nonce = "44444444444444444444444444444444";
-    let token = cookie.split_once('=').map_or("", |(_, v)| v);
+    let token = cookie
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .split_once('=')
+        .map_or("", |(_, v)| v);
     let form_key = oml_web_credential::act_idempotency_key(token, nonce);
     let attempt: String =
         ring::digest::digest(&ring::digest::SHA256, format!("{form_key}\n2").as_bytes())
@@ -4307,6 +4386,7 @@ async fn a_curated_claim_is_held_until_a_key_outside_its_lineage_approves_and_th
             None,
             None,
             10,
+            Some(boot_investigation(&rig).await),
         )
         .await
         .expect("the admin reads");
@@ -4350,7 +4430,11 @@ async fn a_curated_claim_is_held_until_a_key_outside_its_lineage_approves_and_th
     // The admin read shows its source and author; alice sees it anonymous.
     let read = rig
         .app
-        .admin_read(rig.boot.admin_key.value.as_str(), curated.memory.memory_id)
+        .admin_read(
+            rig.boot.admin_key.value.as_str(),
+            curated.memory.memory_id,
+            Some(boot_investigation(&rig).await),
+        )
         .await
         .expect("the admin reads one");
     assert_eq!(read.memory.derives_from, vec![source]);
@@ -4439,6 +4523,7 @@ async fn an_anonymous_universe_row_shows_no_scan_finding_to_a_reader_outside_its
             None,
             None,
             10,
+            Some(boot_investigation(&rig).await),
         )
         .await
         .expect("the admin reads");
@@ -4479,6 +4564,7 @@ async fn an_anonymous_universe_row_shows_no_scan_finding_to_a_reader_outside_its
             None,
             None,
             10,
+            Some(boot_investigation(&rig).await),
         )
         .await
         .expect("the admin reads");
@@ -5597,7 +5683,13 @@ async fn a_cut_off_confirmation_sent_twice_cuts_the_key_off_once() {
 /// sent to the lead through the router: the `web` credential, the web
 /// client's identity, a fresh key.
 async fn api_as_web(rig: &Rig, cookie: &str, path: &str, body: Value) -> (StatusCode, Value) {
-    let token = cookie.split_once('=').expect("a session cookie").1;
+    let token = cookie
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .split_once('=')
+        .expect("a session cookie")
+        .1;
     let credential = oml_app::domain::web::capacity_credential(token, "web");
     let request = Request::post(path)
         .header(header::AUTHORIZATION, format!("Bearer {credential}"))
@@ -5803,7 +5895,13 @@ async fn alice_key(
 /// The keys `GET /v2/keys` serves to the session `cookie` names, under its
 /// `capacity` credential, as the lead answers them.
 async fn api_keys(rig: &Rig, cookie: &str, capacity: &str, query: &str) -> Vec<Value> {
-    let token = cookie.split_once('=').expect("a session cookie").1;
+    let token = cookie
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .split_once('=')
+        .expect("a session cookie")
+        .1;
     let credential = oml_app::domain::web::capacity_credential(token, capacity);
     let request = Request::get(format!("/v2/keys{query}"))
         .header(header::AUTHORIZATION, format!("Bearer {credential}"))
@@ -7094,7 +7192,13 @@ async fn the_filters_narrow_the_list() {
 /// through the app: the act is the Workspaces view's, which `oml-web` runs
 /// now (ADR-0070 d7 (b)); these tests read what it changes.
 async fn put_in_progress(rig: &Rig, cookie: &str, workspace: &str) {
-    let token = cookie.split_once('=').expect("a cookie").1;
+    let token = cookie
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .split_once('=')
+        .expect("a cookie")
+        .1;
     let session = rig
         .app
         .web_session(token)

@@ -130,7 +130,9 @@ Issuing an access token and refreshing are not events. They change no authority.
 | `web.user_disabled` | `user`, `by_key_id` | An admin disabled a person: every entry of the user is disabled and its sessions end in the same commit. Each live agent key of the person is then cut off by its own `key.denied` (d8). |
 | `web.deletion_requested` | `user` | The person asked, as `<user>-web`, for their account to be deleted. Nothing ends and no access changes (d6). |
 | `web.deletion_closed` | `user`, `by_key_id` | An admin closed the request after disabling the person. The memories stay until they are erased (d6). |
-| `memory.admin_read` | `artifact_ids`, `query_digest` | An admin key read memory text and attribution. The payload holds ids and a query digest, never text. |
+| `memory.admin_read` | `artifact_ids`, `query_digest`, `investigation_id` | An admin key read memory text and attribution under one of its open investigations. The payload holds ids and a query digest, never text ([ADR-0089](../adr/ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) d10). |
+| `admin.investigation_opened` | `investigation_id`, `reason` | An admin key opened an investigation; the reason is in clear and was scanned (ADR-0089 d10, d17). |
+| `admin.investigation_closed` | `investigation_id` | The key that opened the investigation closed it (ADR-0089 d17). |
 | `search.default_set` | `pipeline`, `by_key_id` | An admin set the tenant's default search pipeline. A null `pipeline` follows the deployment's default. |
 | `federation.policy_set` | `policy`, `from`, `by_key_id` | An admin set the tenant's federation policy: `enabled`, `default_sources` and `max_sources`, with the previous policy ([ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workspaces-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md) d5). |
 | `telemetry.settings_set` | `query_text`, `by_key_id` | An admin turned recall query text on or off. Off also clears stored query text in the same commit. |

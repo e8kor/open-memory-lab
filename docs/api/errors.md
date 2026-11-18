@@ -227,6 +227,14 @@ The routes under `/v2/uploads` ([ADR-0004](../adr/ADR-0004-bodies-and-attachment
 |---|---|---|
 | `lifecycle.erased` | 410 | The fetched version's key was destroyed by a journaled erase, and this key could read it before. Every other key gets `access.not_found`. Erasure is designed and not built, so this build never returns it. |
 
+## `admin` — admin investigations and fixes
+
+An admin key reads claim text under one reason per investigation ([ADR-0089](../adr/ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) d10, d17).
+
+| Code | HTTP | Fires when |
+|---|---|---|
+| `admin.investigation_required` | 403 | An admin read of claim text, `POST /v2/admin/memories/search` or `GET /v2/admin/memories/{artifact_id}`, names no open investigation of its key: none, an unknown or malformed id, one closed, or another key's. `details.field` is `/investigation` on the search and `investigation` on the one-memory read. Nothing is journalled; open one with `POST /v2/admin/investigations {reason}`. |
+
 ## `limit` — rate limits
 
 | Code | HTTP | Fires when |
@@ -271,7 +279,7 @@ Review unavailability is not an API error. When no reviewer can approve, writes 
 |---|---|
 | 400 | `bundle.unencrypted`, `oauth.client_invalid`, `oauth.redirect_refused`, `oauth.pkce_required`, `oauth.resource_mismatch`, `oauth.authorization_expired`, `oauth.connect_code_invalid`, `oauth.authorization_code_invalid`, `oauth.refresh_invalid`, `request.validation`, `request.idempotency_key_required` |
 | 401 | `auth.missing`, `auth.invalid` |
-| 403 | `oauth.origin_refused`, `oauth.attach_refused`, `access.verb_ceiling`, `access.grant_refused`, `access.author_only`, `access.issuer_ceiling`, `access.role_exclusive`, `access.banned`, `review.author_in_lineage`, `review.person_required`, `review.ratifier_is_proposer`, `simulation.audience_refused`, `export.disabled`, `export.not_readable` |
+| 403 | `oauth.origin_refused`, `oauth.attach_refused`, `access.verb_ceiling`, `admin.investigation_required`, `access.grant_refused`, `access.author_only`, `access.issuer_ceiling`, `access.role_exclusive`, `access.banned`, `review.author_in_lineage`, `review.person_required`, `review.ratifier_is_proposer`, `simulation.audience_refused`, `export.disabled`, `export.not_readable` |
 | 404 | `access.not_found` |
 | 409 | `idempotency.in_progress`, `idempotency.digest_mismatch`, `submission.tip_conflict`, `submission.version_conflict`, `submission.claim_key_conflict`, `submission.similar_exists`, `submission.universe_refused`, `submission.user_root_refused`, `name.taken`, `workspace.frozen`, `workspace.transition_refused`, `workspace.in_progress_refused`, `workspace.held_remaining`, `workspace.admin_key_under_root`, `review.serve_invalid`, `memory.not_held`, `simulation.ended`, `simulation.taint_refused`, `simulation.tip_refused`, `vocab.cycle_refused`, `vocab.prefix_conflict`, `upload.session_invalid`, `upload.incomplete`, `upload.session_limit`, `upload.tenant_limit`, `export.not_ready`, `import.target_not_in_progress`, `import.bundle_older`, `import.since_mismatch`, `import.source_key_changed`, `import.busy`, `export.busy` |
 | 410 | `lifecycle.erased`, `upload.expired` |

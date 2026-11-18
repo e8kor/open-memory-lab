@@ -141,10 +141,22 @@ pub mod event_types {
     /// An admin closed a deletion request by disabling the person; the
     /// bytes wait for erasure (ADR-0068 d6).
     pub const WEB_DELETION_CLOSED: &str = "web.deletion_closed";
-    /// An admin key read memories' text and attribution: the ids served
-    /// and, for a search, a digest of the query, never either text
-    /// (ADR-0045 d21).
+    /// An admin key read memories' text and attribution: the ids served,
+    /// the investigation it read under and, for a search, a digest of the
+    /// query, never either text (ADR-0045 d21; ADR-0089 d10).
     pub const MEMORY_ADMIN_READ: &str = "memory.admin_read";
+    /// An admin key opened an investigation: its id and its reason, in
+    /// clear (ADR-0089 d10, d15).
+    pub const ADMIN_INVESTIGATION_OPENED: &str = "admin.investigation_opened";
+    /// An admin key closed its investigation (ADR-0089 d10).
+    pub const ADMIN_INVESTIGATION_CLOSED: &str = "admin.investigation_closed";
+    /// An admin's fix: its act, targets, reason and `loosens_guardrail`,
+    /// and the ids of the lifecycle events it caused (ADR-0089 d3, d16).
+    pub const ADMIN_FIX: &str = "admin.fix";
+    /// A person confirmed an admin's fix (ADR-0089 d8).
+    pub const ADMIN_FIX_CONFIRMED: &str = "admin.fix_confirmed";
+    /// A person reverted an admin's fix (ADR-0089 d8).
+    pub const ADMIN_FIX_REVERTED: &str = "admin.fix_reverted";
     /// A person's key exported a workspace as a bundle: the manifest
     /// digest, the mode, the counts and the recipients' fingerprints, never
     /// a line of content (ADR-0084 d10).

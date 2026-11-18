@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any, Self, TypeVar
+from uuid import UUID
 
 from attrs import define as _attrs_define
 
@@ -26,6 +27,8 @@ class AdminSearchMemoriesBody:
         author (str | Unset): The authoring key of the tenant, by name or id (ADR-0045 d24; ADR-0070 d5). Since v0.6.4.
         limit (int | Unset): At most 200, the console list's largest page (ADR-0045 d22; raised from 100 in v0.7.0).
         cursor (str | Unset):
+        investigation (UUID | Unset): An open investigation of the admin key, from POST /v2/admin/investigations;
+            required (ADR-0089 d10). Since v0.8.3.
     """
 
     query: str | Unset = UNSET
@@ -35,6 +38,7 @@ class AdminSearchMemoriesBody:
     author: str | Unset = UNSET
     limit: int | Unset = UNSET
     cursor: str | Unset = UNSET
+    investigation: UUID | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         query = self.query
@@ -55,6 +59,10 @@ class AdminSearchMemoriesBody:
 
         cursor = self.cursor
 
+        investigation: str | Unset = UNSET
+        if not isinstance(self.investigation, Unset):
+            investigation = str(self.investigation)
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update({})
@@ -72,6 +80,8 @@ class AdminSearchMemoriesBody:
             field_dict["limit"] = limit
         if cursor is not UNSET:
             field_dict["cursor"] = cursor
+        if investigation is not UNSET:
+            field_dict["investigation"] = investigation
 
         return field_dict
 
@@ -102,6 +112,13 @@ class AdminSearchMemoriesBody:
 
         cursor = d.pop("cursor", UNSET)
 
+        _investigation = d.pop("investigation", UNSET)
+        investigation: UUID | Unset
+        if isinstance(_investigation, Unset):
+            investigation = UNSET
+        else:
+            investigation = UUID(_investigation)
+
         admin_search_memories_body = cls(
             query=query,
             workspace=workspace,
@@ -110,6 +127,7 @@ class AdminSearchMemoriesBody:
             author=author,
             limit=limit,
             cursor=cursor,
+            investigation=investigation,
         )
 
         return admin_search_memories_body

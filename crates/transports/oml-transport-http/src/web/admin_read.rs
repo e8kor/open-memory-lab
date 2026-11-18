@@ -4,7 +4,9 @@
 //! The search is a `POST` so its query travels in a body.
 
 use axum::body::Bytes;
-use axum::extract::{Path, State};
+use std::collections::HashMap;
+
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use serde::Deserialize;
@@ -16,7 +18,7 @@ use oml_app::domain::EventTime;
 use oml_app::domain::name::Reference;
 use oml_app::domain::origin::OriginKind;
 use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer, WebStore};
-use oml_app::types::AdminState;
+use oml_app::types::{AdminState, Investigation};
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
 use crate::traffic::Rid;
@@ -34,6 +36,44 @@ struct SearchBody {
     author: Option<String>,
     limit: Option<usize>,
     cursor: Option<String>,
+    /// The open investigation of the admin key the read is made under
+    /// (ADR-0089 d10).
+    investigation: Option<String>,
+}
+
+/// `POST /v2/admin/investigations`'s body (ADR-0089 d15).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OpenBody {
+    reason: String,
+}
+
+/// An investigation id as a read names it: a malformed one names no open
+/// investigation (ADR-0089 d10).
+fn investigation_id(raw: Option<&str>, field: &'static str) -> Result<Option<Uuid>, ApiError> {
+    raw.map(|r| {
+        Uuid::parse_str(r).map_err(|_| {
+            map_app_error(
+                oml_app::types::AppError::InvestigationRequired { field },
+                ErrorContext::Write,
+            )
+        })
+    })
+    .transpose()
+}
+
+/// An investigation as `GET /v2/admin/investigations` serves it: its id,
+/// reason, read count and age, never another key's (ADR-0089 d15).
+fn investigation_json(i: &Investigation, now_us: i64) -> Value {
+    json!({
+        "investigation_id": i.investigation_id,
+        "reason": i.reason,
+        "opened_at": i.opened_at.as_str(),
+        "reads": i.reads,
+        "age_seconds": (now_us - i.opened_at.unix_micros()).max(0) / 1_000_000,
+        "state": if i.closed_at.is_some() { "closed" } else { "open" },
+        "closed_at": i.closed_at.as_ref().map(EventTime::as_str),
+    })
 }
 
 /// The cursor: the last item's `created_at` and id, as
@@ -212,6 +252,7 @@ where
             author,
             after,
             limit,
+            investigation: investigation_id(req.investigation.as_deref(), "/investigation")?,
         };
         let page = retry_chain(|| st.app.admin_search_filtered(acting.bearer(), &search))
             .await
@@ -223,28 +264,127 @@ where
         State(st): State<Self>,
         rid: Rid,
         Path(artifact_id): Path<String>,
+        Query(params): Query<HashMap<String, String>>,
         headers: HeaderMap,
     ) -> Response {
         finish(
             &rid,
-            Self::admin_read_inner(&st, &artifact_id, &headers).await,
+            Self::admin_read_inner(&st, &artifact_id, &params, &headers).await,
         )
     }
 
     async fn admin_read_inner(
         st: &Self,
         artifact_id: &str,
+        params: &HashMap<String, String>,
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let acting = acting(headers, None)?;
         let id = Uuid::parse_str(artifact_id).map_err(|_| ApiError::not_found())?;
-        let read = retry_chain(|| st.app.admin_read(acting.bearer(), id))
+        if let Some(other) = params.keys().find(|k| k.as_str() != "investigation") {
+            return Err(
+                ApiError::validation(format!("unknown query parameter {other}"))
+                    .with_details(json!({ "field": other })),
+            );
+        }
+        let investigation = investigation_id(
+            params.get("investigation").map(String::as_str),
+            "investigation",
+        )?;
+        let read = retry_chain(|| st.app.admin_read(acting.bearer(), id, investigation))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(
             StatusCode::OK,
             &admin_memory_json(&read, true),
         ))
+    }
+
+    /// `POST /v2/admin/investigations {reason}`: opens an investigation of
+    /// the admin key (ADR-0089 d10, d15).
+    pub(crate) async fn investigation_open_route(
+        State(st): State<Self>,
+        rid: Rid,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
+        let inner = async {
+            st.require_writes_open()?;
+            let acting = acting(&headers, None)?;
+            let req: OpenBody = parse_json(&headers, &body)?;
+            let opened = retry_chain(|| st.app.open_investigation(acting.bearer(), &req.reason))
+                .await
+                .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+            Ok(json_response(
+                StatusCode::CREATED,
+                &investigation_json(&opened, st.app.now().unix_micros()),
+            ))
+        };
+        finish(&rid, inner.await)
+    }
+
+    /// `POST /v2/admin/investigations/{investigation_id}/close`: the key
+    /// closes its own investigation (ADR-0089 d10; the operator,
+    /// 2026-11-17).
+    pub(crate) async fn investigation_close_route(
+        State(st): State<Self>,
+        rid: Rid,
+        Path(investigation): Path<String>,
+        headers: HeaderMap,
+    ) -> Response {
+        let inner = async {
+            st.require_writes_open()?;
+            let acting = acting(&headers, None)?;
+            let id = Uuid::parse_str(&investigation).map_err(|_| ApiError::not_found())?;
+            let closed = retry_chain(|| st.app.close_investigation(acting.bearer(), id))
+                .await
+                .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+            Ok(json_response(
+                StatusCode::OK,
+                &investigation_json(&closed, st.app.now().unix_micros()),
+            ))
+        };
+        finish(&rid, inner.await)
+    }
+
+    /// `GET /v2/admin/investigations?state=open|closed`: the admin key's
+    /// own investigations, `open` by default (ADR-0089 d15).
+    pub(crate) async fn investigations_route(
+        State(st): State<Self>,
+        rid: Rid,
+        Query(params): Query<HashMap<String, String>>,
+        headers: HeaderMap,
+    ) -> Response {
+        let inner = async {
+            let acting = acting(&headers, None)?;
+            if let Some(other) = params.keys().find(|k| k.as_str() != "state") {
+                return Err(
+                    ApiError::validation(format!("unknown query parameter {other}"))
+                        .with_details(json!({ "field": other })),
+                );
+            }
+            let open = match params.get("state").map(String::as_str) {
+                None | Some("open") => true,
+                Some("closed") => false,
+                Some(_) => {
+                    return Err(ApiError::validation("state is open or closed")
+                        .with_details(json!({ "field": "state" })));
+                }
+            };
+            let list = st
+                .app
+                .investigations(acting.bearer(), open)
+                .await
+                .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+            let now = st.app.now().unix_micros();
+            Ok(json_response(
+                StatusCode::OK,
+                &json!({
+                    "items": list.iter().map(|i| investigation_json(i, now)).collect::<Vec<_>>(),
+                }),
+            ))
+        };
+        finish(&rid, inner.await)
     }
 }

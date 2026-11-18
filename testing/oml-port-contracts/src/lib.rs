@@ -5612,6 +5612,124 @@ pub async fn a_stale_demotion_or_erasure_commits_nothing<S: JournalStore>(store:
     .expect("the erasure naming every version commits");
 }
 
+/// An admin investigation (ADR-0089 d10; 0063): opened with its reason,
+/// each admin read under it counted, closed once; a read or a close naming
+/// one that is closed, unknown or another key's commits nothing.
+pub async fn an_investigation_counts_its_reads_and_closes_once<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(27);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig.tenant_id;
+    let (id, key, other) = (
+        Uuid::from_u128(0x1A1),
+        Uuid::from_u128(0x1A2),
+        Uuid::from_u128(0x1A3),
+    );
+    rig.commit(
+        store,
+        event_types::ADMIN_INVESTIGATION_OPENED,
+        json!({ "investigation_id": id.to_string(), "reason": "ticket 9" }),
+        MetadataFold::InvestigationOpened {
+            investigation_id: id,
+            key_id: key,
+            reason: "ticket 9".to_owned(),
+        },
+        None,
+    )
+    .await
+    .expect("open");
+    let read = |investigation_id, key_id| MetadataFold::AdminMemoryRead {
+        investigation_id,
+        key_id,
+    };
+    for _ in 0..2 {
+        rig.commit(
+            store,
+            event_types::MEMORY_ADMIN_READ,
+            json!({ "investigation_id": id.to_string() }),
+            read(id, key),
+            None,
+        )
+        .await
+        .expect("a read under it");
+    }
+    let head = store.chain_head(tenant).await.expect("head");
+    for (investigation_id, key_id, what) in [
+        (id, other, "another key's"),
+        (Uuid::from_u128(0x1A4), key, "an unknown one"),
+    ] {
+        let refused = rig
+            .commit(
+                store,
+                event_types::MEMORY_ADMIN_READ,
+                json!({}),
+                read(investigation_id, key_id),
+                None,
+            )
+            .await;
+        assert!(
+            matches!(refused, Err(StoreError::InvestigationNotOpen { .. })),
+            "{what}: {refused:?}"
+        );
+    }
+    assert_eq!(store.chain_head(tenant).await.expect("head"), head);
+    let found = store
+        .investigation(tenant, id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert_eq!((found.key_id, found.reads), (key, 2));
+    assert_eq!(found.reason, "ticket 9");
+    assert!(found.closed_at.is_none());
+    let close = |key_id| MetadataFold::InvestigationClosed {
+        investigation_id: id,
+        key_id,
+    };
+    let refused = rig
+        .commit(
+            store,
+            event_types::ADMIN_INVESTIGATION_CLOSED,
+            json!({}),
+            close(other),
+            None,
+        )
+        .await;
+    assert!(matches!(
+        refused,
+        Err(StoreError::InvestigationNotOpen { .. })
+    ));
+    rig.commit(
+        store,
+        event_types::ADMIN_INVESTIGATION_CLOSED,
+        json!({ "investigation_id": id.to_string() }),
+        close(key),
+        None,
+    )
+    .await
+    .expect("close");
+    for fold in [close(key), read(id, key)] {
+        let refused = rig
+            .commit(store, event_types::MEMORY_ADMIN_READ, json!({}), fold, None)
+            .await;
+        assert!(
+            matches!(refused, Err(StoreError::InvestigationNotOpen { .. })),
+            "a closed investigation: {refused:?}"
+        );
+    }
+    assert!(
+        store
+            .investigations(tenant, Some(key), true)
+            .await
+            .expect("list")
+            .is_empty()
+    );
+    let all = store
+        .investigations(tenant, None, false)
+        .await
+        .expect("list");
+    assert_eq!(all.len(), 1);
+    assert!(all[0].closed_at.is_some());
+}
+
 /// The compare-and-set of ratification: a successor takes the tip only
 /// while the version it replaces is still the promoted tip under the
 /// successor's own workspace and claim_key; a lost compare-and-set commits
@@ -9719,6 +9837,10 @@ where
     // build stays inside a test thread's default stack.
     Box::pin(journal_commit_and_head(&new_store().await)).await;
     Box::pin(a_stale_demotion_or_erasure_commits_nothing(
+        &new_store().await,
+    ))
+    .await;
+    Box::pin(an_investigation_counts_its_reads_and_closes_once(
         &new_store().await,
     ))
     .await;

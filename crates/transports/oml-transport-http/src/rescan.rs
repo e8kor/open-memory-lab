@@ -49,6 +49,7 @@ fn report_json(r: &RescanReport) -> Value {
         "instructions_without_person_approval": r.instructions_without_person_approval,
         "held_successors_stranded": r.held_successors_stranded,
         "erased_keys_live": r.erased_keys_live,
+        "investigations_open_long": r.investigations_open_long,
     })
 }
 

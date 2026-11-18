@@ -603,6 +603,19 @@ pub struct AdminMemory {
     pub scan_finding: Option<String>,
 }
 
+/// An admin key's investigation (ADR-0089 d10, d15).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Investigation {
+    pub investigation_id: String,
+    pub reason: String,
+    pub opened_at: String,
+    pub reads: u64,
+    pub age_seconds: i64,
+    pub state: String,
+    #[serde(default)]
+    pub closed_at: Option<String>,
+}
+
 /// One verdict on a memory, as the admin read lists it.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct AdminVerdict {
@@ -1238,6 +1251,9 @@ pub struct AdminSearch<'a> {
     pub author: Option<&'a str>,
     pub limit: u32,
     pub cursor: Option<&'a str>,
+    /// The admin key's open investigation the read is made under
+    /// (ADR-0089 d10).
+    pub investigation: Option<&'a str>,
 }
 
 /// The typed client over a [`Transport`], with the headers every call
@@ -1684,6 +1700,7 @@ impl<T: Transport> Client<T> {
             ("origin_kind", search.origin_kind),
             ("author", search.author),
             ("cursor", search.cursor),
+            ("investigation", search.investigation),
         ] {
             if let Some(value) = value {
                 body[name] = serde_json::json!(value);
@@ -2007,10 +2024,60 @@ impl<T: Transport> Client<T> {
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
-    pub async fn admin_read(&self, call: &Call<'_>, artifact_id: &str) -> Result<AdminRead, Error> {
+    pub async fn admin_read(
+        &self,
+        call: &Call<'_>,
+        artifact_id: &str,
+        investigation: &str,
+    ) -> Result<AdminRead, Error> {
         self.get(
             Some(call),
-            format!("/v2/admin/memories/{}", encode(artifact_id)),
+            format!(
+                "/v2/admin/memories/{}?investigation={}",
+                encode(artifact_id),
+                encode(investigation)
+            ),
+        )
+        .await
+    }
+
+    /// `POST /v2/admin/investigations {reason}`: opens an investigation of
+    /// the admin key, the reason its reads of claim text are made under
+    /// (ADR-0089 d10). Not idempotent: each call opens one.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn open_investigation(
+        &self,
+        call: &Call<'_>,
+        reason: &str,
+    ) -> Result<Investigation, Error> {
+        self.send(
+            Method::POST,
+            Some(call),
+            "/v2/admin/investigations".to_owned(),
+            None,
+            Some(&serde_json::json!({ "reason": reason })),
+        )
+        .await
+    }
+
+    /// `POST /v2/admin/investigations/{id}/close`: the admin key closes its
+    /// own investigation (ADR-0089 d10).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn close_investigation(
+        &self,
+        call: &Call<'_>,
+        investigation: &str,
+    ) -> Result<Investigation, Error> {
+        self.send(
+            Method::POST,
+            Some(call),
+            format!("/v2/admin/investigations/{}/close", encode(investigation)),
+            None,
+            Some(&serde_json::json!({})),
         )
         .await
     }
@@ -2550,7 +2617,7 @@ mod tests {
                     .await,
             ),
             decodes(&client.get_memory(&CALL, "m-1").await),
-            decodes(&client.admin_read(&CALL, "m-1").await),
+            decodes(&client.admin_read(&CALL, "m-1", "i-1").await),
             decodes(
                 &client
                     .learn(

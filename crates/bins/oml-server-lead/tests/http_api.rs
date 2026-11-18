@@ -8029,8 +8029,8 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     );
     assert_eq!(
         declared.len(),
-        93,
-        "the source check (ADR-0057 d5), the workspace mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the four web routes the lead keeps (ADR-0045 d25; its two JSON routes are oml-web's, ADR-0070 d7 (b), and GET and POST /web/admin are deleted, ADR-0070 \"The old URLs deleted\"), open sign-up's one the lead keeps, POST /web/sign-up (ADR-0068 d10; the onboarding and users pages are oml-web's, ADR-0070 d7 (b)), the web console's ten (ADR-0070 d5), the sign-in page oml-web sends to (ADR-0070 d4) , federation's three (ADR-0072 d5), usage metering's six (ADR-0071 d5, d6), a key's limits (ADR-0079 d5), a key's link and unlink (ADR-0085 d16), the withdrawal (ADR-0083 d13), the skill read (ADR-0080 d11), the five upload routes (ADR-0004 d3), the workspace export and the import and its status (ADR-0084 d15)"
+        96,
+        "the source check (ADR-0057 d5), the workspace mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the four web routes the lead keeps (ADR-0045 d25; its two JSON routes are oml-web's, ADR-0070 d7 (b), and GET and POST /web/admin are deleted, ADR-0070 \"The old URLs deleted\"), open sign-up's one the lead keeps, POST /web/sign-up (ADR-0068 d10; the onboarding and users pages are oml-web's, ADR-0070 d7 (b)), the web console's ten (ADR-0070 d5), the sign-in page oml-web sends to (ADR-0070 d4) , federation's three (ADR-0072 d5), usage metering's six (ADR-0071 d5, d6), a key's limits (ADR-0079 d5), a key's link and unlink (ADR-0085 d16), the withdrawal (ADR-0083 d13), the skill read (ADR-0080 d11), the five upload routes (ADR-0004 d3), the workspace export and the import and its status (ADR-0084 d15), the admin investigation's open, list and close (ADR-0089 d10, d15)"
     );
     assert_eq!(oauth.len(), 6, "the six OAuth operations");
 
@@ -11018,11 +11018,23 @@ async fn the_changed_operations_serve_the_merged_listing_counts_offers_and_named
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 
+    let (status, _, opened) = send(
+        &rig.router,
+        "POST",
+        "/v2/admin/investigations",
+        Call::auth(&rig.admin).body(json!({ "reason": "which phone wrote it" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{opened}");
+    let inv = opened["investigation_id"]
+        .as_str()
+        .expect("an id")
+        .to_owned();
     let (status, _, found) = send(
         &rig.router,
         "POST",
         "/v2/admin/memories/search",
-        Call::auth(&rig.admin).body(json!({ "author": "alice-phone" })),
+        Call::auth(&rig.admin).body(json!({ "author": "alice-phone", "investigation": inv })),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{found}");
@@ -11031,7 +11043,8 @@ async fn the_changed_operations_serve_the_merged_listing_counts_offers_and_named
         &rig.router,
         "POST",
         "/v2/admin/memories/search",
-        Call::auth(&rig.admin).body(json!({ "author": "alice-phone", "origin_kind": "lake" })),
+        Call::auth(&rig.admin)
+            .body(json!({ "author": "alice-phone", "origin_kind": "lake", "investigation": inv })),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{none}");
@@ -11040,7 +11053,8 @@ async fn the_changed_operations_serve_the_merged_listing_counts_offers_and_named
         &rig.router,
         "POST",
         "/v2/admin/memories/search",
-        Call::auth(&rig.admin).body(json!({ "origin_kind": "carrier-pigeon" })),
+        Call::auth(&rig.admin)
+            .body(json!({ "origin_kind": "carrier-pigeon", "investigation": inv })),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");

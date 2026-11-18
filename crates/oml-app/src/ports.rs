@@ -58,6 +58,11 @@ pub enum StoreError {
     ApprovalMissing { memory_id: Uuid },
     #[error("chain head moved: expected seq {expected_seq}, commit carries seq {found_seq}")]
     SeqConflict { expected_seq: u64, found_seq: u64 },
+    /// An admin read or a close named an investigation that is not open,
+    /// or not the committing key's, inside the committing transaction; the
+    /// commit wrote nothing (ADR-0089 d10).
+    #[error("investigation {investigation_id} is not open for this key")]
+    InvestigationNotOpen { investigation_id: Uuid },
     #[error("prev_hash does not match the stored head at seq {seq}")]
     PrevHashConflict { seq: u64 },
     /// A ratification's compare-and-set found `replaced` no longer the
@@ -478,9 +483,32 @@ pub enum MetadataFold {
         /// tenant's last admin entry (ADR-0070 d5).
         keep_an_admin: bool,
     },
-    /// `memory.admin_read`: an admin key read memories' text; nothing
-    /// changes but the journal (ADR-0045 d21).
+    /// An admin read that changes nothing but the journal: a read of other
+    /// keys' recall telemetry or its replay (ADR-0054 d2, d11).
     AdminRead,
+    /// `memory.admin_read`: an admin key read memories' text under one of
+    /// its open investigations, whose read count moves; the store refuses
+    /// an investigation that is not open or not the key's with
+    /// [`StoreError::InvestigationNotOpen`] (ADR-0045 d21; ADR-0089 d10).
+    AdminMemoryRead {
+        investigation_id: Uuid,
+        key_id: Uuid,
+    },
+    /// `admin.investigation_opened`: an admin key's investigation, open
+    /// from the event, its reason in clear (ADR-0089 d10, d15).
+    InvestigationOpened {
+        investigation_id: Uuid,
+        key_id: Uuid,
+        reason: String,
+    },
+    /// `admin.investigation_closed`: the key closes its open investigation
+    /// at the event; the store refuses one that is not open or not the
+    /// key's with [`StoreError::InvestigationNotOpen`] (ADR-0089 d10; the
+    /// operator, 2026-11-17: closed only by its key, never by idling).
+    InvestigationClosed {
+        investigation_id: Uuid,
+        key_id: Uuid,
+    },
     /// `workspace.imported`: the import's row ends `done` with its counts
     /// and refusals, and the target's ledger for the source moves to the
     /// bundle's export instant, release and signer, in the event's
@@ -1572,6 +1600,22 @@ pub trait JournalStore: Retriever + Send + Sync {
         own_key_ids: &[Uuid],
         reads_promoted: bool,
     ) -> impl Future<Output = Result<Option<u32>, StoreError>> + Send;
+
+    /// One investigation of the tenant, open or closed (ADR-0089 d10).
+    fn investigation(
+        &self,
+        tenant_id: Uuid,
+        investigation_id: Uuid,
+    ) -> impl Future<Output = Result<Option<crate::types::Investigation>, StoreError>> + Send;
+
+    /// The investigations of the tenant, oldest first: `key_id`'s alone
+    /// when named, the open ones alone when `open_only` (ADR-0089 d15).
+    fn investigations(
+        &self,
+        tenant_id: Uuid,
+        key_id: Option<Uuid>,
+        open_only: bool,
+    ) -> impl Future<Output = Result<Vec<crate::types::Investigation>, StoreError>> + Send;
 
     /// The end `memory_id` had before a ratified supersession replaced it:
     /// `None` when no ratification gave it its end, `Some(None)` for an

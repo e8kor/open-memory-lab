@@ -235,6 +235,7 @@ pub struct Metrics {
     imports_stopped: Gauge,
     imports_unprovenanced: Gauge,
     exports: Counter,
+    admin_reads: Counter,
     scan_findings: Family<ScanLabels, Counter>,
     scan_counts: std::sync::OnceLock<ScanCounts>,
     scan_refresh: std::sync::Mutex<()>,
@@ -404,6 +405,7 @@ impl Default for Metrics {
         let imports_stopped = Gauge::default();
         let imports_unprovenanced = Gauge::default();
         let exports = Counter::default();
+        let admin_reads = Counter::default();
         registry.register(
             "oml_http_request_duration_seconds",
             "API-listener request duration by route template and status; probes answered 200 are not counted",
@@ -620,6 +622,11 @@ impl Default for Metrics {
             exports.clone(),
         );
         registry.register(
+            "oml_admin_reads",
+            "admin reads of claim text served, each journalled as memory.admin_read under an investigation (ADR-0089 d10, d15)",
+            admin_reads.clone(),
+        );
+        registry.register(
             "oml_handler_panics",
             "requests whose handler panicked and were answered system.internal by the panic guard; every one is a defect, named in the lead's log under event handler_panic",
             handler_panics.clone(),
@@ -674,6 +681,7 @@ impl Default for Metrics {
             upload_sweep_failures,
             upload_store_unavailable,
             exports,
+            admin_reads,
             scan_findings,
             scan_counts: std::sync::OnceLock::new(),
             scan_refresh: std::sync::Mutex::new(()),
@@ -741,6 +749,13 @@ impl Metrics {
         }
         if route == "/v2/workspaces/{workspace}/exports" && status == 200 {
             self.exports.inc();
+        }
+        if matches!(
+            route,
+            "/v2/admin/memories/search" | "/v2/admin/memories/{artifact_id}"
+        ) && status == 200
+        {
+            self.admin_reads.inc();
         }
         if route == "/oauth/token" {
             self.oauth_tokens

@@ -90,6 +90,10 @@ pub struct RescanReport {
     /// After this call, erased versions whose data key is still live:
     /// doctor's `lake.erased_key_live` (ADR-0005 d2).
     pub erased_keys_live: u64,
+    /// Admin investigations open for more than seven days: doctor's
+    /// `admin.investigation_open_long` (ADR-0089 d10; the operator,
+    /// 2026-11-17).
+    pub investigations_open_long: u64,
 }
 
 /// A finding as a version's `scan_finding` carries it, as admission's
@@ -347,6 +351,16 @@ where
             .await?;
         }
         let backlog = self.journal.scan_backlog(tenant_id, current).await?;
+        let long_before = self.clock.now().unix_micros()
+            - super::investigations::INVESTIGATION_OPEN_LONG_SECONDS * 1_000_000;
+        let investigations_open_long = self
+            .journal
+            .investigations(tenant_id, None, true)
+            .await?
+            .iter()
+            .filter(|i| i.opened_at.unix_micros() < long_before)
+            .count();
+        let investigations_open_long = u64::try_from(investigations_open_long).unwrap_or(u64::MAX);
         Ok(RescanReport {
             scanner_version: self.scanner.version(),
             scanned,
@@ -366,6 +380,7 @@ where
             instructions_without_person_approval: backlog.instructions_without_person_approval,
             held_successors_stranded: backlog.held_successors_stranded,
             erased_keys_live: backlog.erased_keys_live,
+            investigations_open_long,
         })
     }
 }

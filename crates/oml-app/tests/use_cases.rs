@@ -18626,3 +18626,140 @@ async fn a_served_held_guardrail_is_not_also_listed_as_held_and_not_in_force() {
     assert!(set.guardrails[0].unreviewed);
     assert!(set.own_held.is_empty(), "{:?}", set.own_held);
 }
+
+// -- admin investigations (ADR-0089 d10, d15; #423) --------------------------
+
+#[tokio::test]
+async fn an_admin_read_without_an_investigation_is_refused() {
+    let (store, app, boot, _writer, _reader, _v1, v2) = two_promoted_versions().await;
+    let admin = boot.admin_key.value.as_str();
+    let head = journal(&store, boot.tenant_id).await.len();
+    assert!(matches!(
+        app.admin_read(admin, v2, None).await.unwrap_err(),
+        AppError::InvestigationRequired {
+            field: "investigation"
+        }
+    ));
+    assert!(matches!(
+        app.admin_search(admin, Some("canary"), None, None, None, 10, None)
+            .await
+            .unwrap_err(),
+        AppError::InvestigationRequired {
+            field: "/investigation"
+        }
+    ));
+    // An id the tenant does not hold, and a closed one, name no open one.
+    assert!(matches!(
+        app.admin_read(admin, v2, Some(Uuid::from_u128(7)))
+            .await
+            .unwrap_err(),
+        AppError::InvestigationRequired { .. }
+    ));
+    let opened = app
+        .open_investigation(admin, "ticket 41: a leaked hostname")
+        .await
+        .expect("open");
+    app.close_investigation(admin, opened.investigation_id)
+        .await
+        .expect("close");
+    assert!(matches!(
+        app.admin_read(admin, v2, Some(opened.investigation_id))
+            .await
+            .unwrap_err(),
+        AppError::InvestigationRequired { .. }
+    ));
+    let types = types_since(&store, boot.tenant_id, 0).await;
+    assert!(
+        !types[head..]
+            .iter()
+            .any(|t| t == event_types::MEMORY_ADMIN_READ),
+        "a refused read journals no admin read"
+    );
+    // Another admin key's open investigation is not this key's.
+    let other = app
+        .issue_key(admin, &issue_req(Role::Admin, "second-admin", Vec::new()))
+        .await
+        .expect("a second admin key");
+    let theirs = app
+        .open_investigation(other.value.as_str(), "their own case")
+        .await
+        .expect("open");
+    assert!(matches!(
+        app.admin_read(admin, v2, Some(theirs.investigation_id))
+            .await
+            .unwrap_err(),
+        AppError::InvestigationRequired { .. }
+    ));
+}
+
+#[tokio::test]
+async fn each_admin_read_names_its_investigation() {
+    let (store, app, boot, _writer, _reader, _v1, v2) = two_promoted_versions().await;
+    let admin = boot.admin_key.value.as_str();
+    let opened = app
+        .open_investigation(admin, "ticket 42: review the canary claim")
+        .await
+        .expect("open");
+    let id = opened.investigation_id;
+    app.admin_read(admin, v2, Some(id)).await.expect("read");
+    app.admin_search(admin, Some("canary"), None, None, None, 10, Some(id))
+        .await
+        .expect("search");
+    let reads: Vec<_> = journal(&store, boot.tenant_id)
+        .await
+        .into_iter()
+        .filter(|e| e.envelope.event_type == event_types::MEMORY_ADMIN_READ)
+        .collect();
+    assert_eq!(reads.len(), 2);
+    for read in &reads {
+        assert_eq!(
+            read.envelope.payload["investigation_id"],
+            json!(id.to_string())
+        );
+    }
+    let opened_event = journal(&store, boot.tenant_id)
+        .await
+        .into_iter()
+        .find(|e| e.envelope.event_type == event_types::ADMIN_INVESTIGATION_OPENED)
+        .expect("the open is journalled");
+    assert_eq!(
+        opened_event.envelope.payload["reason"],
+        json!("ticket 42: review the canary claim")
+    );
+    let listed = app.investigations(admin, true).await.expect("list");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].reads, 2, "both reads are counted");
+    assert_eq!(listed[0].reason, "ticket 42: review the canary claim");
+    let closed = app.close_investigation(admin, id).await.expect("close");
+    assert!(closed.closed_at.is_some());
+    assert!(
+        app.investigations(admin, true)
+            .await
+            .expect("list")
+            .is_empty()
+    );
+    assert_eq!(
+        app.investigations(admin, false).await.expect("list").len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn an_investigation_reason_the_scan_vetoes_opens_nothing() {
+    let (store, app, boot, _writer, _reader, _v1, _v2) = two_promoted_versions().await;
+    let admin = boot.admin_key.value.as_str();
+    let head = journal(&store, boot.tenant_id).await.len();
+    assert!(matches!(
+        app.open_investigation(admin, "   ").await.unwrap_err(),
+        AppError::AdminField {
+            field: "/reason",
+            ..
+        }
+    ));
+    let vetoed = app
+        .open_investigation(admin, "-----BEGIN a pasted key")
+        .await
+        .unwrap_err();
+    assert!(matches!(vetoed, AppError::ScanVeto(_)), "{vetoed:?}");
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+}

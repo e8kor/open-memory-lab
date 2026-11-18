@@ -9,6 +9,7 @@ class ErrorCode(StrEnum):
     ACCESS_NOT_FOUND = "access.not_found"
     ACCESS_ROLE_EXCLUSIVE = "access.role_exclusive"
     ACCESS_VERB_CEILING = "access.verb_ceiling"
+    ADMIN_INVESTIGATION_REQUIRED = "admin.investigation_required"
     AUTH_INVALID = "auth.invalid"
     AUTH_MISSING = "auth.missing"
     BUNDLE_DECRYPT_FAILED = "bundle.decrypt_failed"

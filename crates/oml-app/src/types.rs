@@ -3282,6 +3282,20 @@ pub struct DeletionRequest {
     pub requested_at: EventTime,
 }
 
+/// An admin key's investigation: the reason its reads of claim text are
+/// made under, open until the key closes it (ADR-0089 d10, d15).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Investigation {
+    pub investigation_id: Uuid,
+    pub key_id: Uuid,
+    /// Stored in clear and scanned at open.
+    pub reason: String,
+    pub opened_at: EventTime,
+    /// The admin reads made under it.
+    pub reads: u64,
+    pub closed_at: Option<EventTime>,
+}
+
 /// A typed application refusal; every variant names the rule it enforces.
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
@@ -3433,6 +3447,21 @@ pub enum AppError {
         "a writer may supersede only the claims its own key authored (roles-and-keys.md#own, access.author_only)"
     )]
     AuthorOnly,
+    /// An admin read of claim text that names no open investigation of
+    /// its key (`admin.investigation_required`; ADR-0089 d10): `field` is
+    /// where the read names it, `investigation` on a search body or the
+    /// `?investigation=` query of a one-memory read.
+    #[error(
+        "an admin read of claim text names an open investigation of its key in {field}; open one with a reason first"
+    )]
+    InvestigationRequired { field: &'static str },
+    /// A field of an admin investigation or fix request that is refused,
+    /// as `request.validation` naming the field (ADR-0089 d3, d10).
+    #[error("{field}: {message}")]
+    AdminField {
+        field: &'static str,
+        message: String,
+    },
     /// A demotion of a retirement or of a vocabulary version (`term`,
     /// `term_mapping`, `vocab_release`), refused naming
     /// `lifecycle.demote_kind_unsupported` (ADR-0089 d16, note of

@@ -852,6 +852,30 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         )
     }
 
+    fn investigation(
+        &self,
+        tenant_id: Uuid,
+        investigation_id: Uuid,
+    ) -> impl Future<Output = Result<Option<oml_app::types::Investigation>, StoreError>> + Send
+    {
+        timed(
+            "investigation",
+            self.inner.investigation(tenant_id, investigation_id),
+        )
+    }
+
+    fn investigations(
+        &self,
+        tenant_id: Uuid,
+        key_id: Option<Uuid>,
+        open_only: bool,
+    ) -> impl Future<Output = Result<Vec<oml_app::types::Investigation>, StoreError>> + Send {
+        timed(
+            "investigations",
+            self.inner.investigations(tenant_id, key_id, open_only),
+        )
+    }
+
     fn valid_until_before(
         &self,
         tenant_id: Uuid,

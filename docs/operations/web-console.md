@@ -29,7 +29,9 @@ lists one person's keys, named by `user`, with a cut-off beside each. A signed-i
 on to the Keys view. One memory opened by its id is at
 `/web/memory?id=<id>`, and on the admin page, with its attribution and the form that proposes its
 next version, at `/web/admin/memory?id=<id>`; the admin page's Curate view is at
-`/web/admin/curate`. The onboarding page is at `/web/start`, with its status poll at `/web/start/status` and the
+`/web/admin/curate`. An admin page that shows claim text first asks for the reason of an investigation
+and opens it with a `POST` to `/web/admin/investigation`, which also closes it; the browser keeps its id in
+the `__Host-oml_investigation` cookie (ADR-0089 d10). The onboarding page is at `/web/start`, with its status poll at `/web/start/status` and the
 export at `/web/start/export`; the setup view at `/web/setup`, which, like a new key's panel, shows the address an agent
 sets beside its key: the API's issuer, else `web.public_url`, else a `no_server` line and no address (no release
 names a server, ADR-0076 d6); the admin overview (the allowlist and

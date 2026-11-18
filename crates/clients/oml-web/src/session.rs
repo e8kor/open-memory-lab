@@ -184,6 +184,9 @@ pub struct Session {
     token: String,
     pub whoami: Whoami,
     pub admin: bool,
+    /// The browser session's open admin investigation, from its cookie
+    /// (ADR-0089 d10).
+    pub investigation: Option<String>,
 }
 
 /// No debug output prints the session token.
@@ -193,11 +196,22 @@ impl std::fmt::Debug for Session {
             .field("token", &"<redacted>")
             .field("whoami", &self.whoami)
             .field("admin", &self.admin)
+            .field("investigation", &self.investigation)
             .finish()
     }
 }
 
 impl Session {
+    /// The session with the browser's open admin investigation, from its
+    /// cookie (ADR-0089 d10).
+    #[must_use]
+    pub fn investigating(self, investigation: Option<String>) -> Self {
+        Self {
+            investigation,
+            ..self
+        }
+    }
+
     /// The credential of `capacity`, derived from the session token.
     #[must_use]
     pub fn credential(&self, capacity: Capacity) -> String {
@@ -302,8 +316,10 @@ pub async fn load(State(web): State<Web>, mut req: Request, next: Next) -> Respo
         return outcome::sign_in(&page);
     };
     calls.carries_session(&token, req.uri().path());
+    let investigation = cookie(req.headers(), crate::investigation::INVESTIGATION_COOKIE)
+        .filter(|id| !id.is_empty());
     let session = match resolve(&web, &calls, token).await {
-        Ok(session) => session,
+        Ok(session) => session.investigating(investigation),
         Err(e) => return outcome::page(&e, &calls, &page),
     };
     calls.signed_in(&session);
@@ -337,6 +353,7 @@ pub async fn resolve(
         token,
         whoami,
         admin: admin.is_ok(),
+        investigation: None,
     })
 }
 
@@ -380,6 +397,7 @@ mod tests {
                 denied: None,
             },
             admin: false,
+            investigation: None,
         };
         let shown = format!("{session:?}");
         assert!(!shown.contains("the-secret-session-token"), "{shown}");

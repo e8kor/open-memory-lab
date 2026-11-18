@@ -107,6 +107,9 @@ pub fn refusal_page(code: &str, message: &str, calls: &PageCalls) -> String {
 pub fn page(error: &Error, calls: &PageCalls, next: &str) -> Response {
     let refusal = |code: &str, message: &str| refusal_page(code, message, calls);
     match error {
+        Error::Api(e) if e.code == crate::investigation::REQUIRED_CODE => {
+            crate::investigation::reason_page(calls, next)
+        }
         Error::Api(e) => {
             let outcome = PageOutcome::of_code(&e.code);
             if outcome == PageOutcome::SignIn {

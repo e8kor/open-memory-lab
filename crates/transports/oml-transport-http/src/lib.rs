@@ -162,6 +162,9 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/web/deletion-requests"),
     ("POST", "/v2/admin/memories/search"),
     ("GET", "/v2/admin/memories/{artifact_id}"),
+    ("POST", "/v2/admin/investigations"),
+    ("GET", "/v2/admin/investigations"),
+    ("POST", "/v2/admin/investigations/{investigation_id}/close"),
     ("GET", "/v2/admin/rescan"),
     ("POST", "/v2/admin/rescan"),
     ("GET", "/v2/admin/accounts/{account}/usage"),
@@ -421,6 +424,11 @@ where
             ("POST", "/v2/web/deletion-requests") => post(Self::request_deletion),
             ("POST", "/v2/admin/memories/search") => post(Self::admin_search_route),
             ("GET", "/v2/admin/memories/{artifact_id}") => get(Self::admin_read_route),
+            ("POST", "/v2/admin/investigations") => post(Self::investigation_open_route),
+            ("GET", "/v2/admin/investigations") => get(Self::investigations_route),
+            ("POST", "/v2/admin/investigations/{investigation_id}/close") => {
+                post(Self::investigation_close_route)
+            }
             ("GET", "/v2/admin/rescan") => get(Self::rescan_route),
             ("POST", "/v2/admin/rescan") => post(Self::rescan_record_route),
             ("GET", "/v1/account/usage") => get(Self::account_usage_route),

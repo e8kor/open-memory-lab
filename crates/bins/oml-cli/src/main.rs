@@ -775,6 +775,22 @@ enum AdminCommand {
         /// held, promoted, rejected, superseded or demoted.
         #[arg(long)]
         state: Option<String>,
+        /// The open investigation the read is made under (`oml admin
+        /// investigate --reason`); every read of claim text names one.
+        #[arg(long)]
+        investigation: String,
+    },
+    /// Open an investigation with the reason every admin read made under it
+    /// carries, print its id, or with --close end one; with neither, list the
+    /// key's open investigations. Journals admin.investigation_opened or
+    /// admin.investigation_closed.
+    Investigate {
+        /// Why the text is read; stored in clear and scanned.
+        #[arg(long, conflicts_with = "close")]
+        reason: Option<String>,
+        /// The id of an open investigation of this key to close.
+        #[arg(long)]
+        close: Option<String>,
     },
     /// Report by rule and location which stored versions current rules would
     /// refuse or hold; never prints text or changes data.
@@ -4435,22 +4451,80 @@ fn rates_lines(report: &Value) -> Vec<String> {
     out
 }
 
+/// `oml admin investigate`: opens an investigation with `reason`, closes
+/// `close`, or lists the key's open ones (ADR-0089 d10, d15).
+fn run_investigate(
+    cli: &Cli,
+    client: &Client,
+    reason: Option<&str>,
+    close: Option<&str>,
+) -> Result<ExitCode, CliError> {
+    let write = CallOpts {
+        auth: true,
+        idempotency: false,
+    };
+    let answer = match (reason, close) {
+        (Some(reason), _) => {
+            client
+                .post(
+                    "/v2/admin/investigations",
+                    &json!({ "reason": reason }),
+                    &write,
+                )?
+                .1
+        }
+        (None, Some(id)) => {
+            client
+                .post(
+                    &format!("/v2/admin/investigations/{}/close", segment(id)?),
+                    &json!({}),
+                    &write,
+                )?
+                .1
+        }
+        (None, None) => client.get("/v2/admin/investigations?state=open")?.1,
+    };
+    if cli.json {
+        print_json(&answer);
+        return Ok(ExitCode::SUCCESS);
+    }
+    let line = |i: &Value| {
+        format!(
+            "{}  {}  reads {}  age {}s  {}",
+            field(i, "investigation_id"),
+            field(i, "state"),
+            i["reads"],
+            i["age_seconds"],
+            field(i, "reason").replace('\n', " ")
+        )
+    };
+    match answer["items"].as_array() {
+        Some(items) => items.iter().for_each(|i| println!("{}", line(i))),
+        None => println!("{}", line(&answer)),
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 fn run_admin(
     cli: &Cli,
     stored: &Credentials,
     command: &AdminCommand,
 ) -> Result<ExitCode, CliError> {
     let client = resolve(cli, stored)?;
-    let (memory, query, workspace, state) = match command {
+    let (memory, query, workspace, state, investigation) = match command {
         AdminCommand::Rescan { record_held, rates } => {
             return run_rescan(cli, &client, *record_held, *rates);
+        }
+        AdminCommand::Investigate { reason, close } => {
+            return run_investigate(cli, &client, reason.as_deref(), close.as_deref());
         }
         AdminCommand::Read {
             memory,
             query,
             workspace,
             state,
-        } => (memory, query, workspace, state),
+            investigation,
+        } => (memory, query, workspace, state, investigation),
     };
     let line = |m: &Value| {
         format!(
@@ -4463,7 +4537,11 @@ fn run_admin(
         )
     };
     if let Some(memory) = memory {
-        let (_, read) = client.get(&format!("/v2/admin/memories/{}", segment(memory)?))?;
+        let (_, read) = client.get(&format!(
+            "/v2/admin/memories/{}?investigation={}",
+            segment(memory)?,
+            segment(investigation)?
+        ))?;
         if cli.json {
             print_json(&read);
         } else {
@@ -4484,7 +4562,7 @@ fn run_admin(
         }
         return Ok(ExitCode::SUCCESS);
     }
-    let mut body = json!({});
+    let mut body = json!({ "investigation": investigation });
     if let Some(q) = query {
         body["query"] = json!(q);
     }
@@ -7043,7 +7121,7 @@ fn withdrawn_queue_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
 /// out. A server before a count does not report it, and its line is then
 /// absent; a count that is no unsigned integer is named, never read as zero.
 fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
-    const LINES: [(&str, &str, &str); 2] = [
+    const LINES: [(&str, &str, &str); 3] = [
         (
             "held_successors_stranded",
             "memory.held_successor_stranded",
@@ -7053,6 +7131,11 @@ fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
             "erased_keys_live",
             "lake.erased_key_live",
             "erased version(s) still have a live data key, which the erase destroys in its own transaction; the lake writer destroys it when it drains the erase, so check that it runs",
+        ),
+        (
+            "investigations_open_long",
+            "admin.investigation_open_long",
+            "admin investigation(s) open for more than 7 days; the key that opened each closes it with oml admin investigate --close <id>",
         ),
     ];
     let report = match read {
@@ -8338,7 +8421,8 @@ mod tests {
             lifecycle_doctor(None),
             vec![
                 "memory.held_successor_stranded: not read; an admin key reads it".to_owned(),
-                "lake.erased_key_live: not read; an admin key reads it".to_owned()
+                "lake.erased_key_live: not read; an admin key reads it".to_owned(),
+                "admin.investigation_open_long: not read; an admin key reads it".to_owned()
             ]
         );
         assert_eq!(
@@ -8347,6 +8431,18 @@ mod tests {
                 "warn lake.erased_key_live: the server's erased_keys_live is \"many\", not a count"
                     .to_owned()
             ]
+        );
+    }
+
+    #[test]
+    fn the_lifecycle_doctor_warns_of_an_investigation_open_more_than_seven_days() {
+        assert_eq!(
+            lifecycle_doctor(Some(&Ok(json!({ "investigations_open_long": 1 })))),
+            vec!["warn admin.investigation_open_long: 1 admin investigation(s) open for more than 7 days; the key that opened each closes it with oml admin investigate --close <id>".to_owned()]
+        );
+        assert_eq!(
+            lifecycle_doctor(Some(&Ok(json!({ "investigations_open_long": 0 })))),
+            vec!["admin.investigation_open_long: 0".to_owned()]
         );
     }
 

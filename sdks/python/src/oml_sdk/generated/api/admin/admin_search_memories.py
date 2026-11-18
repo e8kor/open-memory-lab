@@ -83,7 +83,9 @@ def sync_detailed(
      Requires: admin key role (ADR-0045 d21); the operator and every other role answer
     access.verb_ceiling. query is the recall full-text search without the visibility filter; state and
     workspace narrow it. A POST so that the query travels in a body, never a path or query string. Each
-    answer journals one memory.admin_read event naming the admin key, the artifact_ids served and a
+    read names an open investigation of the admin key in investigation, else it is refused
+    admin.investigation_required naming /investigation (ADR-0089 d10). Each answer journals one
+    memory.admin_read event naming the admin key, the artifact_ids served, the investigation_id and a
     query_digest, never the text or the query. Served on the lead only. Records no verdict, creates no
     serve binding. Since v0.5.0.
 
@@ -129,7 +131,9 @@ def sync(
      Requires: admin key role (ADR-0045 d21); the operator and every other role answer
     access.verb_ceiling. query is the recall full-text search without the visibility filter; state and
     workspace narrow it. A POST so that the query travels in a body, never a path or query string. Each
-    answer journals one memory.admin_read event naming the admin key, the artifact_ids served and a
+    read names an open investigation of the admin key in investigation, else it is refused
+    admin.investigation_required naming /investigation (ADR-0089 d10). Each answer journals one
+    memory.admin_read event naming the admin key, the artifact_ids served, the investigation_id and a
     query_digest, never the text or the query. Served on the lead only. Records no verdict, creates no
     serve binding. Since v0.5.0.
 
@@ -170,7 +174,9 @@ async def asyncio_detailed(
      Requires: admin key role (ADR-0045 d21); the operator and every other role answer
     access.verb_ceiling. query is the recall full-text search without the visibility filter; state and
     workspace narrow it. A POST so that the query travels in a body, never a path or query string. Each
-    answer journals one memory.admin_read event naming the admin key, the artifact_ids served and a
+    read names an open investigation of the admin key in investigation, else it is refused
+    admin.investigation_required naming /investigation (ADR-0089 d10). Each answer journals one
+    memory.admin_read event naming the admin key, the artifact_ids served, the investigation_id and a
     query_digest, never the text or the query. Served on the lead only. Records no verdict, creates no
     serve binding. Since v0.5.0.
 
@@ -214,7 +220,9 @@ async def asyncio(
      Requires: admin key role (ADR-0045 d21); the operator and every other role answer
     access.verb_ceiling. query is the recall full-text search without the visibility filter; state and
     workspace narrow it. A POST so that the query travels in a body, never a path or query string. Each
-    answer journals one memory.admin_read event naming the admin key, the artifact_ids served and a
+    read names an open investigation of the admin key in investigation, else it is refused
+    admin.investigation_required naming /investigation (ADR-0089 d10). Each answer journals one
+    memory.admin_read event naming the admin key, the artifact_ids served, the investigation_id and a
     query_digest, never the text or the query. Served on the lead only. Records no verdict, creates no
     serve binding. Since v0.5.0.
 

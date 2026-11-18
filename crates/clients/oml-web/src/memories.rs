@@ -435,6 +435,7 @@ async fn admin_cards(
                 author: q.author.as_deref(),
                 limit: q.limit,
                 cursor: q.cursor.as_deref(),
+                investigation: session.investigation.as_deref(),
             },
         )
         .await?;
@@ -867,7 +868,15 @@ fn page(side: Side, session: &Session, active: &str, body: &str) -> Response {
         Side::User => session.personal(),
         Side::Admin => session.administration(),
     };
-    outcome::html(StatusCode::OK, shell("", &bar, active, None, body))
+    // An admin page that read claim text names the open investigation's
+    // close control (ADR-0089 d10).
+    let body = match side {
+        Side::Admin if session.investigation.is_some() => {
+            format!("{}{body}", crate::investigation::line(&session.csrf()))
+        }
+        _ => body.to_owned(),
+    };
+    outcome::html(StatusCode::OK, shell("", &bar, active, None, &body))
 }
 
 fn failed_page(failed: Failed, calls: &PageCalls, next: &str) -> Response {
@@ -1325,8 +1334,10 @@ async fn data(
             &calls,
         );
     };
+    let investigation =
+        cookie(headers, crate::investigation::INVESTIGATION_COOKIE).filter(|id| !id.is_empty());
     let session = match crate::session::resolve(&web, &calls, token).await {
-        Ok(session) => session,
+        Ok(session) => session.investigating(investigation),
         Err(oml_sdk::Error::Api(e)) if e.code == "auth.invalid" => {
             return json_refusal(
                 StatusCode::NOT_FOUND,

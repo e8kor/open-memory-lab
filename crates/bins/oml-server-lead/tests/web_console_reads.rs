@@ -155,7 +155,7 @@ async fn get(router: &Router, path: &str, bearer: &str, web: bool) -> Answer {
 async fn send(
     router: &Router,
     request: axum::http::request::Builder,
-    body: &'static str,
+    body: &str,
     bearer: &str,
     web: bool,
 ) -> Answer {
@@ -170,7 +170,11 @@ async fn send(
     let guard = tracing::subscriber::set_default(log_subscriber(move || sink.clone()));
     let response = router
         .clone()
-        .oneshot(request.body(Body::from(body)).expect("a request"))
+        .oneshot(
+            request
+                .body(Body::from(body.to_owned()))
+                .expect("a request"),
+        )
         .await
         .expect("the router answers");
     let status = response.status();
@@ -189,11 +193,6 @@ async fn send(
         body: serde_json::from_slice(&bytes).unwrap_or(Value::Null),
         line,
     }
-}
-
-/// `POST path` with an empty JSON object, as [`get`] sends a `GET`.
-async fn post(router: &Router, path: &str, bearer: &str, web: bool) -> Answer {
-    send(router, Request::post(path), "{}", bearer, web).await
 }
 
 fn web(token: &str, capacity: &str) -> String {
@@ -266,8 +265,43 @@ async fn a_session_keys_read_resolves_its_caller_on_the_gates_access_once_and_a_
     // key value resolves and reads its access (two calls), the session key
     // on a POST is resolved by the gate (one) and reads its access when
     // the verb runs (one more).
-    let by_value = post(&rig.router, "/v2/admin/memories/search", &rig.admin, false).await;
-    let by_session = post(&rig.router, "/v2/admin/memories/search", &admin, true).await;
+    // Each key reads under an open investigation of its own (ADR-0089 d10).
+    let search = |inv: &serde_json::Value| {
+        serde_json::json!({ "investigation": inv["investigation_id"] }).to_string()
+    };
+    let opened = |bearer: &str, web: bool| {
+        let bearer = bearer.to_owned();
+        let router = rig.router.clone();
+        async move {
+            let answer = send(
+                &router,
+                Request::post("/v2/admin/investigations"),
+                r#"{"reason":"the store calls"}"#,
+                &bearer,
+                web,
+            )
+            .await;
+            assert_eq!(answer.status, StatusCode::CREATED, "{}", answer.body);
+            answer.body
+        }
+    };
+    let (by_key, of_session) = (opened(&rig.admin, false).await, opened(&admin, true).await);
+    let by_value = send(
+        &rig.router,
+        Request::post("/v2/admin/memories/search"),
+        &search(&by_key),
+        &rig.admin,
+        false,
+    )
+    .await;
+    let by_session = send(
+        &rig.router,
+        Request::post("/v2/admin/memories/search"),
+        &search(&of_session),
+        &admin,
+        true,
+    )
+    .await;
     assert_eq!(by_value.status, StatusCode::OK, "{}", by_value.body);
     assert_eq!(by_session.status, StatusCode::OK, "{}", by_session.body);
     assert_eq!(

@@ -12,6 +12,7 @@ mod exports;
 mod federation;
 mod fixes;
 mod imports;
+mod investigations;
 mod key_limits;
 mod linked_keys;
 mod metering;
@@ -30,6 +31,7 @@ pub use fixes::{Demotion, Erasure};
 pub use imports::{
     ImportAnswer, ImportFinished, ImportJob, ImportPlan, ImportRequest, ImportStart,
 };
+pub use investigations::{INVESTIGATION_OPEN_LONG_SECONDS, INVESTIGATION_REASON_MAX_BYTES};
 pub use metering::{AccountLimits, UsageDriftReport};
 pub use pages::{
     ActClaim, ActTicket, AdminMemory, AdminPage, AdminSearchRequest, Capacity, CapacityGranted,

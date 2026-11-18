@@ -1,6 +1,7 @@
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import quote
+from uuid import UUID
 
 import httpx
 
@@ -13,6 +14,7 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     artifact_id: str,
     *,
+    investigation: UUID,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -27,11 +29,19 @@ def _get_kwargs(
     if not isinstance(traceparent, Unset):
         headers["traceparent"] = traceparent
 
+    params: dict[str, Any] = {}
+
+    json_investigation = str(investigation)
+    params["investigation"] = json_investigation
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
+
     _kwargs: dict[str, Any] = {
         "method": "get",
         "url": "/v2/admin/memories/{artifact_id}".format(
             artifact_id=quote(str(artifact_id), safe=""),
         ),
+        "params": params,
     }
 
     _kwargs["headers"] = headers
@@ -76,6 +86,7 @@ def sync_detailed(
     artifact_id: str,
     *,
     client: AuthenticatedClient | Client,
+    investigation: UUID,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -84,11 +95,13 @@ def sync_detailed(
 
      Requires: admin key role (ADR-0045 d21). The fields of the search plus derives_from, replaces, every
     verdict with its reviewing key, principal, reason and time, and plaintext_digest; ADR-0044 d9's
-    served view does not apply. Journalled as memory.admin_read with the one artifact_id. Served on the
-    lead only. Since v0.5.0.
+    served view does not apply. Requires an open investigation of the admin key in ?investigation=, else
+    admin.investigation_required naming investigation (ADR-0089 d10). Journalled as memory.admin_read
+    with the one artifact_id and the investigation_id. Served on the lead only. Since v0.5.0.
 
     Args:
         artifact_id (str):
+        investigation (UUID):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -103,6 +116,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         artifact_id=artifact_id,
+        investigation=investigation,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -119,6 +133,7 @@ def sync(
     artifact_id: str,
     *,
     client: AuthenticatedClient | Client,
+    investigation: UUID,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -127,11 +142,13 @@ def sync(
 
      Requires: admin key role (ADR-0045 d21). The fields of the search plus derives_from, replaces, every
     verdict with its reviewing key, principal, reason and time, and plaintext_digest; ADR-0044 d9's
-    served view does not apply. Journalled as memory.admin_read with the one artifact_id. Served on the
-    lead only. Since v0.5.0.
+    served view does not apply. Requires an open investigation of the admin key in ?investigation=, else
+    admin.investigation_required naming investigation (ADR-0089 d10). Journalled as memory.admin_read
+    with the one artifact_id and the investigation_id. Served on the lead only. Since v0.5.0.
 
     Args:
         artifact_id (str):
+        investigation (UUID):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -147,6 +164,7 @@ def sync(
     return sync_detailed(
         artifact_id=artifact_id,
         client=client,
+        investigation=investigation,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -157,6 +175,7 @@ async def asyncio_detailed(
     artifact_id: str,
     *,
     client: AuthenticatedClient | Client,
+    investigation: UUID,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -165,11 +184,13 @@ async def asyncio_detailed(
 
      Requires: admin key role (ADR-0045 d21). The fields of the search plus derives_from, replaces, every
     verdict with its reviewing key, principal, reason and time, and plaintext_digest; ADR-0044 d9's
-    served view does not apply. Journalled as memory.admin_read with the one artifact_id. Served on the
-    lead only. Since v0.5.0.
+    served view does not apply. Requires an open investigation of the admin key in ?investigation=, else
+    admin.investigation_required naming investigation (ADR-0089 d10). Journalled as memory.admin_read
+    with the one artifact_id and the investigation_id. Served on the lead only. Since v0.5.0.
 
     Args:
         artifact_id (str):
+        investigation (UUID):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -184,6 +205,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         artifact_id=artifact_id,
+        investigation=investigation,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -198,6 +220,7 @@ async def asyncio(
     artifact_id: str,
     *,
     client: AuthenticatedClient | Client,
+    investigation: UUID,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -206,11 +229,13 @@ async def asyncio(
 
      Requires: admin key role (ADR-0045 d21). The fields of the search plus derives_from, replaces, every
     verdict with its reviewing key, principal, reason and time, and plaintext_digest; ADR-0044 d9's
-    served view does not apply. Journalled as memory.admin_read with the one artifact_id. Served on the
-    lead only. Since v0.5.0.
+    served view does not apply. Requires an open investigation of the admin key in ?investigation=, else
+    admin.investigation_required naming investigation (ADR-0089 d10). Journalled as memory.admin_read
+    with the one artifact_id and the investigation_id. Served on the lead only. Since v0.5.0.
 
     Args:
         artifact_id (str):
+        investigation (UUID):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -227,6 +252,7 @@ async def asyncio(
         await asyncio_detailed(
             artifact_id=artifact_id,
             client=client,
+            investigation=investigation,
             x_request_id=x_request_id,
             x_correlation_id=x_correlation_id,
             traceparent=traceparent,

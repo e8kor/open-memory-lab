@@ -4324,6 +4324,63 @@ async fn apply_fold(
         MetadataFold::TenantGenesis { .. }
         | MetadataFold::VerdictRecorded { .. }
         | MetadataFold::AdminRead => {}
+        MetadataFold::AdminMemoryRead {
+            investigation_id,
+            key_id,
+        } => {
+            let counted = sqlx::query(
+                "UPDATE admin_investigations SET reads = reads + 1 \
+                  WHERE tenant_id = $1 AND id = $2 AND key_id = $3 AND closed_at IS NULL",
+            )
+            .bind(tenant_id)
+            .bind(investigation_id)
+            .bind(key_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if counted.rows_affected() != 1 {
+                return Err(StoreError::InvestigationNotOpen { investigation_id });
+            }
+        }
+        MetadataFold::InvestigationOpened {
+            investigation_id,
+            key_id,
+            reason,
+        } => {
+            sqlx::query(
+                "INSERT INTO admin_investigations (tenant_id, id, key_id, reason, opened_at, \
+                        opened_seq) VALUES ($1, $2, $3, $4, ($5)::timestamptz, $6)",
+            )
+            .bind(tenant_id)
+            .bind(investigation_id)
+            .bind(key_id)
+            .bind(reason)
+            .bind(at.as_str())
+            .bind(seq)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+        }
+        MetadataFold::InvestigationClosed {
+            investigation_id,
+            key_id,
+        } => {
+            let closed = sqlx::query(
+                "UPDATE admin_investigations SET closed_at = ($4)::timestamptz, closed_seq = $5 \
+                  WHERE tenant_id = $1 AND id = $2 AND key_id = $3 AND closed_at IS NULL",
+            )
+            .bind(tenant_id)
+            .bind(investigation_id)
+            .bind(key_id)
+            .bind(at.as_str())
+            .bind(seq)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if closed.rows_affected() != 1 {
+                return Err(StoreError::InvestigationNotOpen { investigation_id });
+            }
+        }
         MetadataFold::WorkspaceImported(ended) => {
             // The row ends done in the event's transaction, and the ledger
             // moves to the bundle's; the pin its begin wrote never moves
@@ -5921,6 +5978,9 @@ async fn meter_plan(
         | MetadataFold::WebEmailChanged { .. }
         | MetadataFold::WebEmailRemoved { .. }
         | MetadataFold::AdminRead
+        | MetadataFold::AdminMemoryRead { .. }
+        | MetadataFold::InvestigationOpened { .. }
+        | MetadataFold::InvestigationClosed { .. }
         // An import's end moves no meter: each version it wrote was
         // metered by its own commit (ADR-0084 d15).
         | MetadataFold::WorkspaceImported(_)
@@ -9973,6 +10033,27 @@ impl JournalStore for PgStore {
             .transpose()
     }
 
+    async fn investigation(
+        &self,
+        tenant_id: Uuid,
+        investigation_id: Uuid,
+    ) -> Result<Option<oml_app::types::Investigation>, StoreError> {
+        Ok(self
+            .read_investigations(tenant_id, Some(investigation_id), None, false)
+            .await?
+            .pop())
+    }
+
+    async fn investigations(
+        &self,
+        tenant_id: Uuid,
+        key_id: Option<Uuid>,
+        open_only: bool,
+    ) -> Result<Vec<oml_app::types::Investigation>, StoreError> {
+        self.read_investigations(tenant_id, None, key_id, open_only)
+            .await
+    }
+
     async fn valid_until_before(
         &self,
         tenant_id: Uuid,
@@ -11396,6 +11477,56 @@ impl PgStore {
             .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
         rows.iter().map(key_from_row).collect()
+    }
+}
+
+impl PgStore {
+    /// The tenant's admin investigations, oldest first: one by id, or
+    /// `key_id`'s, or every one, the open ones alone when `open_only`
+    /// (ADR-0089 d10, d15; 0063).
+    async fn read_investigations(
+        &self,
+        tenant_id: Uuid,
+        investigation_id: Option<Uuid>,
+        key_id: Option<Uuid>,
+        open_only: bool,
+    ) -> Result<Vec<oml_app::types::Investigation>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows: Vec<(Uuid, Uuid, String, String, i64, Option<String>)> = sqlx::query_as(
+            "SELECT id, key_id, reason, \
+                    to_char(opened_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'), \
+                    reads, \
+                    to_char(closed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+               FROM admin_investigations \
+              WHERE tenant_id = $1 AND ($2::uuid IS NULL OR id = $2) \
+                AND ($3::uuid IS NULL OR key_id = $3) AND (NOT $4 OR closed_at IS NULL) \
+              ORDER BY opened_at, id",
+        )
+        .bind(tenant_id)
+        .bind(investigation_id)
+        .bind(key_id)
+        .bind(open_only)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.into_iter()
+            .map(|(id, key_id, reason, opened, reads, closed)| {
+                Ok(oml_app::types::Investigation {
+                    investigation_id: id,
+                    key_id,
+                    reason,
+                    opened_at: EventTime::parse(&opened).map_err(backend)?,
+                    reads: u64::try_from(reads).unwrap_or(0),
+                    closed_at: closed
+                        .as_deref()
+                        .map(EventTime::parse)
+                        .transpose()
+                        .map_err(backend)?,
+                })
+            })
+            .collect()
     }
 }
 

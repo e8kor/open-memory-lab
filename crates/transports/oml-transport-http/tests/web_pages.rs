@@ -1701,15 +1701,44 @@ async fn the_admin_read_serves_text_and_attribution_and_journals_the_read() {
     let value = value_of(&page);
     let memory = agent_writes(&rig, &value, "zebra crossing secret").await;
     let admin = format!("Bearer {}", rig.boot.admin_key.value);
-    let (status, _, body) = send(
-        &rig.router,
-        Request::post("/v2/admin/memories/search")
+    let post = |path: &str, body: Value| {
+        Request::post(path)
             .header(header::AUTHORIZATION, &admin)
             .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(
-                json!({"query": "zebra", "state": "held"}).to_string(),
-            ))
-            .unwrap(),
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    };
+    // Without an open investigation the read is refused, naming the field
+    // (ADR-0089 d10).
+    let (status, _, body) = send(
+        &rig.router,
+        post(
+            "/v2/admin/memories/search",
+            json!({"query": "zebra", "state": "held"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    let refused: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(refused["error"]["code"], "admin.investigation_required");
+    assert_eq!(refused["error"]["details"]["field"], "/investigation");
+    let (status, _, body) = send(
+        &rig.router,
+        post(
+            "/v2/admin/investigations",
+            json!({"reason": "who wrote the zebra claim"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let opened: Value = serde_json::from_str(&body).unwrap();
+    let inv = opened["investigation_id"].as_str().unwrap().to_owned();
+    let (status, _, body) = send(
+        &rig.router,
+        post(
+            "/v2/admin/memories/search",
+            json!({"query": "zebra", "state": "held", "investigation": inv}),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -1720,6 +1749,15 @@ async fn the_admin_read_serves_text_and_attribution_and_journals_the_read() {
     let (status, _, body) = send(
         &rig.router,
         Request::get(format!("/v2/admin/memories/{memory}"))
+            .header(header::AUTHORIZATION, &admin)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    let (status, _, body) = send(
+        &rig.router,
+        Request::get(format!("/v2/admin/memories/{memory}?investigation={inv}"))
             .header(header::AUTHORIZATION, &admin)
             .body(Body::empty())
             .unwrap(),
@@ -1744,6 +1782,9 @@ async fn the_admin_read_serves_text_and_attribution_and_journals_the_read() {
         json!([memory.to_string()])
     );
     assert!(reads[0].envelope.payload["query_digest"].is_string());
+    for e in &reads {
+        assert_eq!(e.envelope.payload["investigation_id"], json!(inv));
+    }
     for e in &reads {
         assert!(
             !e.envelope.payload.to_string().contains("zebra"),

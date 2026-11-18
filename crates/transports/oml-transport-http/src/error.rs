@@ -1032,6 +1032,22 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
                 to.as_str()
             ),
         ),
+        AppError::InvestigationRequired { field } => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "admin.investigation_required",
+            "An admin reads claim text under one reason per investigation: open one with POST /v2/admin/investigations {reason} and name its id (ADR-0089 d10).",
+            format!("this read names no open investigation of the admin key in {field}"),
+        )
+        .with_details(json!({ "field": field })),
+        AppError::Store(StoreError::InvestigationNotOpen { .. }) => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "admin.investigation_required",
+            "An admin reads claim text under one reason per investigation: open one with POST /v2/admin/investigations {reason} and name its id (ADR-0089 d10).",
+            "the investigation was closed while the read was made",
+        )
+        .with_details(json!({ "field": "investigation" })),
+        AppError::AdminField { field, message } => ApiError::validation(format!("{field}: {message}"))
+            .with_details(json!({ "field": field })),
         AppError::WorkspaceFrozen { workspace_id, op } => ApiError::new(
             StatusCode::CONFLICT,
             "workspace.frozen",

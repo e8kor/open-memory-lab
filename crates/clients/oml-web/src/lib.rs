@@ -14,6 +14,7 @@ mod card;
 pub mod config;
 pub mod doctor;
 pub mod frame;
+pub mod investigation;
 pub mod keys;
 pub mod memories;
 pub mod memory;
@@ -88,6 +89,7 @@ pub const PAGES: &[(&str, &str)] = &[
     ("POST", ADMIN_MEMORY_PATH),
     ("GET", ADMIN_CURATE_PATH),
     ("POST", ADMIN_CURATE_PATH),
+    ("POST", investigation::INVESTIGATION_PATH),
     ("GET", start::START_PATH),
     ("POST", start::START_PATH),
     ("GET", start::STATUS_PATH),
@@ -310,6 +312,10 @@ pub fn router(web: Web) -> Router {
         .route(
             ADMIN_MEMORY_PATH,
             get(memory::admin_page).post(memory::admin_act),
+        )
+        .route(
+            investigation::INVESTIGATION_PATH,
+            axum::routing::post(investigation::act),
         )
         .route(
             ADMIN_CURATE_PATH,

@@ -3067,7 +3067,7 @@ paths:
         - { $ref: '#/components/parameters/XCorrelationId' }
         - { $ref: '#/components/parameters/Traceparent' }
       summary: Search every memory of the tenant, in every state, workspace and user root, with its text and attribution.
-      description: 'Requires: admin key role (ADR-0045 d21); the operator and every other role answer access.verb_ceiling. query is the recall full-text search without the visibility filter; state and workspace narrow it. A POST so that the query travels in a body, never a path or query string. Each answer journals one memory.admin_read event naming the admin key, the artifact_ids served and a query_digest, never the text or the query. Served on the lead only. Records no verdict, creates no serve binding. Since v0.5.0.'
+      description: 'Requires: admin key role (ADR-0045 d21); the operator and every other role answer access.verb_ceiling. query is the recall full-text search without the visibility filter; state and workspace narrow it. A POST so that the query travels in a body, never a path or query string. Each read names an open investigation of the admin key in investigation, else it is refused admin.investigation_required naming /investigation (ADR-0089 d10). Each answer journals one memory.admin_read event naming the admin key, the artifact_ids served, the investigation_id and a query_digest, never the text or the query. Served on the lead only. Records no verdict, creates no serve binding. Since v0.5.0.'
       requestBody:
         required: true
         content:
@@ -3075,6 +3075,7 @@ paths:
             example:
               query: deploy window
               state: held
+              investigation: 00000000-0000-4000-8000-0000000000c1
             schema:
               type: object
               additionalProperties: false
@@ -3086,6 +3087,7 @@ paths:
                 author: { type: string, description: "The authoring key of the tenant, by name or id (ADR-0045 d24; ADR-0070 d5). Since v0.6.4." }
                 limit: { type: integer, minimum: 1, maximum: 200, description: "At most 200, the console list's largest page (ADR-0045 d22; raised from 100 in v0.7.0)." }
                 cursor: { type: string }
+                investigation: { type: string, format: uuid, description: "An open investigation of the admin key, from POST /v2/admin/investigations; required (ADR-0089 d10). Since v0.8.3." }
       responses:
         '200':
           description: A page of memories with text and attribution.
@@ -3110,12 +3112,13 @@ paths:
       tags: [admin]
       operationId: adminReadMemory
       summary: One memory of the tenant with its text and full attribution, a universe claim with its source.
-      description: 'Requires: admin key role (ADR-0045 d21). The fields of the search plus derives_from, replaces, every verdict with its reviewing key, principal, reason and time, and plaintext_digest; ADR-0044 d9''s served view does not apply. Journalled as memory.admin_read with the one artifact_id. Served on the lead only. Since v0.5.0.'
+      description: 'Requires: admin key role (ADR-0045 d21). The fields of the search plus derives_from, replaces, every verdict with its reviewing key, principal, reason and time, and plaintext_digest; ADR-0044 d9''s served view does not apply. Requires an open investigation of the admin key in ?investigation=, else admin.investigation_required naming investigation (ADR-0089 d10). Journalled as memory.admin_read with the one artifact_id and the investigation_id. Served on the lead only. Since v0.5.0.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
         - { $ref: '#/components/parameters/Traceparent' }
         - { name: artifact_id, in: path, required: true, schema: { type: string } }
+        - { name: investigation, in: query, required: true, schema: { type: string, format: uuid }, description: 'An open investigation of the admin key (ADR-0089 d10). Since v0.8.3.' }
       responses:
         '200':
           description: The memory with its attribution.
@@ -3142,6 +3145,91 @@ paths:
                             principal: { type: [string, 'null'] }
                             reason: { type: [string, 'null'] }
                             at: { type: string, format: date-time }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/admin/investigations:
+    post:
+      tags: [admin]
+      operationId: adminOpenInvestigation
+      summary: Open an investigation, the reason the admin key's reads of claim text are made under.
+      description: 'Requires: admin key role (ADR-0089 d10, d15); every other role answers access.verb_ceiling. reason is 1 to 1,024 bytes, stored in clear and scanned as a verdict''s reason is; a veto answers submission.scan_veto. Journalled as admin.investigation_opened with the id and the reason. Not idempotent: each call opens one. The investigation stays open until its key closes it. Since v0.8.3.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              reason: ticket 41, a leaked hostname
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 1, maxLength: 1024 }
+      responses:
+        '201':
+          description: The investigation, open.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Investigation' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+    get:
+      tags: [admin]
+      operationId: adminListInvestigations
+      summary: The admin key's own investigations, open by default, each with its reason, read count and age.
+      description: 'Requires: admin key role (ADR-0089 d15). Lists only the calling key''s investigations, oldest first. Journals nothing. Since v0.8.3.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: state, in: query, required: false, schema: { type: string, enum: [open, closed], default: open } }
+      responses:
+        '200':
+          description: The investigations.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Investigation' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/admin/investigations/{investigation_id}/close:
+    post:
+      tags: [admin]
+      operationId: adminCloseInvestigation
+      summary: Close an investigation of the admin key; reads under it are refused from then on.
+      description: 'Requires: admin key role and the key that opened it (ADR-0089 d10, d17); another key''s or an unknown id answers access.not_found. Journalled as admin.investigation_closed; closing one already closed answers it and journals nothing. Since v0.8.3.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: investigation_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The investigation, closed.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Investigation' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         default: { $ref: '#/components/responses/Error' }
@@ -3760,6 +3848,18 @@ components:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
 
   schemas:
+    Investigation:
+      type: object
+      description: An admin key's investigation, the reason its reads of claim text are made under (ADR-0089 d10, d15). Since v0.8.3.
+      required: [investigation_id, reason, opened_at, reads, age_seconds, state, closed_at]
+      properties:
+        investigation_id: { type: string, format: uuid }
+        reason: { type: string }
+        opened_at: { type: string, format: date-time }
+        reads: { type: integer, minimum: 0, description: 'The admin reads made under it.' }
+        age_seconds: { type: integer, minimum: 0 }
+        state: { type: string, enum: [open, closed] }
+        closed_at: { type: [string, 'null'], format: date-time }
     AdminMemory:
       type: object
       description: 'A memory as the admin read serves it (ADR-0045 d21): its text and who wrote it, in every state.'
@@ -3924,6 +4024,7 @@ components:
         - auth.missing
         - auth.invalid
         - access.verb_ceiling
+        - admin.investigation_required
         - access.grant_refused
         - access.not_found
         - access.author_only
