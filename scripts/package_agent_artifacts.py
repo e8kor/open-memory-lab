@@ -61,7 +61,7 @@ MCP_REMOTE = "mcp-remote@0.15.2"
 # connection, which the kit's tools do not have.
 AGENTS_SECTIONS = (
     None,  # the title and the paragraph before the first section
-    "Three tools, chosen by their arguments",
+    "Four tools, chosen by their arguments",
     "Name a workspace",
     "Check what a workspace allows",
     "Recall before you act",

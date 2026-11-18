@@ -89,8 +89,8 @@ fetched 2026-11-04: "Free users are limited to one custom connector.").
 
 ## What chat and mobile get
 
-The three tools, which a client lists as Remember (`oml_write`), Recall (`oml_read`) and Workspace
-(`oml_workspace`), under the connector key's grants.
+The four tools, which a client lists as Remember (`oml_write`), Recall (`oml_read`), Workspace
+(`oml_workspace`) and Withdraw (`oml_withdraw`), under the connector key's grants.
 They get no skill, no session-start hook, no failure recall and no librarian, because those are
 parts of the Claude Code plugin. The agent searches when the server's instructions and the tools'
 descriptions lead it to. Every write is held, as from any client.

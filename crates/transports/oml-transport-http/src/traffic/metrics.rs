@@ -187,6 +187,7 @@ pub struct Metrics {
     mode_changes: Family<ModeLabels, Counter>,
     curation_acts: Family<ActLabels, Counter>,
     source_checks: Family<BulkLabels, Counter>,
+    memories_withdrawn: Counter,
     web_failures: Family<WebFailureLabels, Counter>,
     quota_refusals: Family<QuotaLabels, Counter>,
     quality: Quality,
@@ -340,6 +341,7 @@ impl Default for Metrics {
         let mode_changes = Family::<ModeLabels, Counter>::default();
         let curation_acts = Family::<ActLabels, Counter>::default();
         let source_checks = Family::<BulkLabels, Counter>::default();
+        let memories_withdrawn = Counter::default();
         let web_failures = Family::<WebFailureLabels, Counter>::default();
         let quota_refusals = Family::<QuotaLabels, Counter>::default();
         let sparse_encoded = Family::<SparseLabels, Counter>::default();
@@ -440,6 +442,12 @@ impl Default for Metrics {
             "source checks recorded, by result",
             source_checks.clone(),
         );
+        // A held version its author retracted (ADR-0083 d13).
+        registry.register(
+            "oml_memories_withdrawn",
+            "held versions withdrawn by their author",
+            memories_withdrawn.clone(),
+        );
         // Both labels are closed sets: the provider, and the exchange's
         // failure reason (ADR-0045 d18), moved off /readyz (ADR-0054 d1).
         registry.register(
@@ -500,6 +508,7 @@ impl Default for Metrics {
             mode_changes,
             curation_acts,
             source_checks,
+            memories_withdrawn,
             web_failures,
             quota_refusals,
             quality,
@@ -627,6 +636,11 @@ impl Metrics {
                 outcome: result.to_owned(),
             })
             .inc();
+    }
+
+    /// One withdrawn held version (ADR-0083 d13).
+    pub(crate) fn withdrawn(&self) {
+        self.memories_withdrawn.inc();
     }
 
     /// One recall, by the pipeline that ranked it and how its lists were

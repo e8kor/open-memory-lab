@@ -376,6 +376,13 @@ pub enum MetadataFold {
     MemoryRejected {
         memory_id: Uuid,
     },
+    /// `memory.withdrawn`: the held version's state becomes `withdrawn` and
+    /// it leaves every review queue, in the commit that journals the act;
+    /// its row and text are kept (ADR-0083 d13). The application admits
+    /// only the author's own held version.
+    MemoryWithdrawn {
+        memory_id: Uuid,
+    },
     /// `lifecycle.demote`: `memory_id`, a promoted version, becomes
     /// `demoted` and stops being the tip, and `restored`, when named,
     /// becomes the tip again. The store compare-and-sets what the demotion
@@ -1193,8 +1200,10 @@ pub trait JournalStore: Retriever + Send + Sync {
     /// The guardrail rows on `nodes` (proposed ADR-0037 d3, d4): every
     /// promoted served tip of kind `guardrail` whose workspace is one of them,
     /// never a retirement version, and every held version of kind
-    /// `guardrail` on them that `author_key_id` authored, never another
-    /// key's. Unordered: the read orders the set (d4). The state and the
+    /// `guardrail` on them that `author_key_id` authored, and on
+    /// `held_nodes`, the nodes inside an in-progress subtree, every
+    /// author's held version (ADR-0080 d10, d16), whose serving the core
+    /// judges. Unordered: the read orders the set (d4). The state and the
     /// author predicate are the store's own, as for the own held rows of
     /// [`Retriever::retrieve`].
     fn guardrail_rows(
@@ -1202,6 +1211,7 @@ pub trait JournalStore: Retriever + Send + Sync {
         tenant_id: Uuid,
         nodes: &[Uuid],
         author_key_id: Uuid,
+        held_nodes: &[Uuid],
     ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send;
 
     /// One listing page (http-api.md search; ADR-0025 d13): the rows the
@@ -2275,6 +2285,10 @@ pub struct ScanBacklog {
     /// took the tip from is not counted, and neither is a retirement tip,
     /// which recall does not serve.
     pub promoted_unapproved: u64,
+    /// Withdrawn versions still in a review queue, which the withdrawal's
+    /// own transaction rules out: doctor's `memory.withdrawn_in_queue`
+    /// (ADR-0083 d13).
+    pub withdrawn_in_queue: u64,
     /// Served instruction-class tips whose approving key was not a
     /// person's, or that carry no approval: approved before #391 made an
     /// instruction a person's to approve (ADR-0080 d16; #436). Read off the

@@ -763,8 +763,9 @@ pub const RECALL_FTS: &str = "SELECT m.id, m.body_bytes, \
      LIMIT $5";
 
 /// The own held recall statement `recall_own_held` runs, binding `$1` the
-/// tenant, `$2` the author keys (the own key set, and inside an in-progress
-/// scope the mark of the server's rule set), `$3` the readable nodes, `$4`
+/// tenant, `$2` the author keys (the own key set, and the mark of the
+/// server's rule set on each node inside an in-progress subtree,
+/// `held_authors`), `$3` the readable nodes, `$4`
 /// the query, `$5` the kinds and `$6` `k`; pruned to the tenant's partition
 /// as [`RECALL_FTS`] is (ADR-0034 d11).
 pub const RECALL_OWN_HELD: &str = "SELECT m.id, m.body_bytes, \
@@ -773,7 +774,7 @@ pub const RECALL_OWN_HELD: &str = "SELECT m.id, m.body_bytes, \
      FROM memories m \
      WHERE m.tenant_id = $1 AND m.status = 'held' \
        AND (m.author_key_id = ANY($2::uuid[]) \
-         OR (m.scan_finding IS NULL AND encode(substring(sha256(convert_to(COALESCE(m.scanned_under, ''), 'UTF8')) FROM 1 FOR 16), 'hex')::uuid = ANY($2::uuid[]))) \
+         OR (m.scan_finding IS NULL AND encode(substring(sha256(convert_to(COALESCE(m.scanned_under, '') || '/' || m.workspace_id::text, 'UTF8')) FROM 1 FOR 16), 'hex')::uuid = ANY($2::uuid[]))) \
        AND NOT m.retirement AND m.kind = ANY($5::text[]) \
        AND m.workspace_id = ANY($3::uuid[]) /*anchor*/ \
        AND to_tsvector('simple', COALESCE(m.search_text, m.claim)) @@ plainto_tsquery('simple', $4) \
@@ -850,29 +851,37 @@ const SEARCH_SCOPE: &str = "m.tenant_id = $1 AND NOT m.retirement \
          OR (m.status = 'held' AND m.workspace_id = ANY($5::uuid[]) \
              AND (m.author_key_id = ANY($4::uuid[]) \
                OR (m.scan_finding IS NULL \
-                   AND encode(substring(sha256(convert_to(COALESCE(m.scanned_under, ''), 'UTF8')) FROM 1 FOR 16), 'hex')::uuid = ANY($4::uuid[])))))";
+                   AND encode(substring(sha256(convert_to(COALESCE(m.scanned_under, '') || '/' || m.workspace_id::text, 'UTF8')) FROM 1 FOR 16), 'hex')::uuid = ANY($4::uuid[])))))";
 
 /// The author keys a held search statement binds: the own key set, and,
-/// inside an in-progress scope, the mark of the server's rule set too
-/// ([`scanner_mark`]), which admits every author's held row the scan did
-/// not hold and last read under that rule set (ADR-0030 d3; ADR-0065 d15).
-/// The statements compare a row's own mark, computed from its
-/// `scanned_under`, only beside `m.scan_finding IS NULL`, so a row the
-/// scan held, or one an older rule set passed, stays its author's.
+/// for each node inside an in-progress subtree (`any_author_nodes`), the
+/// mark of the server's rule set on that node ([`scanner_mark`]), which
+/// admits every author's held row there the scan did not hold and last
+/// read under that rule set (ADR-0030 d3; ADR-0065 d15; ADR-0080 d16). The
+/// statements compare a row's own mark, computed from its `scanned_under`
+/// and its node, only beside `m.scan_finding IS NULL`, so a row the scan
+/// held, one an older rule set passed, or one on a node outside every
+/// subtree, stays its author's: one node array serves both sets, and no
+/// statement binds a second.
 fn held_authors(own: &OwnHeldScope) -> Vec<Uuid> {
     let mut keys = own.author_key_ids.clone();
-    if own.any_author {
-        keys.push(scanner_mark(own.current_scanner.as_deref()));
-    }
+    keys.extend(
+        own.any_author_nodes
+            .iter()
+            .map(|node| scanner_mark(own.current_scanner.as_deref(), *node)),
+    );
     keys
 }
 
-/// A rule-set version as an id the held statements' author array can carry:
-/// the first 16 bytes of SHA-256 over the version, the empty string for
-/// none, as the statements compute it from `m.scanned_under`. A key id
-/// equal to one is a 2^-122 chance at most (ids are minted v4 or v7).
-fn scanner_mark(version: Option<&str>) -> Uuid {
-    let digest = Sha256Hash::digest(version.unwrap_or("").as_bytes()).0;
+/// A rule-set version on a node as an id the held statements' author array
+/// can carry: the first 16 bytes of SHA-256 over the version, the empty
+/// string for none, then `/` and the node's id in its hyphenated lower-case
+/// text, as the statements compute it from `m.scanned_under` and
+/// `m.workspace_id::text`. A key id equal to one is a 2^-122 chance at most
+/// (ids are minted v4 or v7).
+fn scanner_mark(version: Option<&str>, node: Uuid) -> Uuid {
+    let marked = format!("{}/{}", version.unwrap_or(""), node.hyphenated());
+    let digest = Sha256Hash::digest(marked.as_bytes()).0;
     let mut first = [0_u8; 16];
     first.copy_from_slice(&digest[..16]);
     Uuid::from_bytes(first)
@@ -1265,7 +1274,7 @@ const REFERENCE_EXPIRED_TOKENS: &str = "SELECT DISTINCT p.memory_id, p.token_id 
 const POSTINGS_OWN_HELD: &str = "SELECT m.id, m.search_len FROM memories m \
      WHERE m.tenant_id = $1 AND m.status = 'held' \
         AND (m.author_key_id = ANY($2::uuid[]) \
-          OR (m.scan_finding IS NULL AND encode(substring(sha256(convert_to(COALESCE(m.scanned_under, ''), 'UTF8')) FROM 1 FOR 16), 'hex')::uuid = ANY($2::uuid[]))) \
+          OR (m.scan_finding IS NULL AND encode(substring(sha256(convert_to(COALESCE(m.scanned_under, '') || '/' || m.workspace_id::text, 'UTF8')) FROM 1 FOR 16), 'hex')::uuid = ANY($2::uuid[]))) \
         AND m.workspace_id = ANY($3::uuid[]) AND m.kind = ANY($4::text[]) AND NOT m.retirement \
         AND (m.valid_until_us IS NULL OR m.valid_until_us > $5::int8)";
 
@@ -4448,6 +4457,9 @@ async fn apply_fold(
         MetadataFold::MemoryRejected { memory_id } => {
             set_memory_status(tx, tenant_id, memory_id, MemoryStatus::Rejected).await?;
         }
+        MetadataFold::MemoryWithdrawn { memory_id } => {
+            set_memory_status(tx, tenant_id, memory_id, MemoryStatus::Withdrawn).await?;
+        }
         MetadataFold::MemoryDemoted {
             memory_id,
             restored,
@@ -5184,6 +5196,7 @@ async fn meter_plan(
         }
         MetadataFold::MemoryPromoted { memory_id, .. }
         | MetadataFold::MemoryRejected { memory_id }
+        | MetadataFold::MemoryWithdrawn { memory_id }
         | MetadataFold::MemoryDemoted { memory_id, .. } => {
             plan.chain = tracked_chain_of(tx, tenant_id, *memory_id).await?;
         }
@@ -5862,10 +5875,10 @@ struct ScopeBinds<'a> {
     tenant_id: Uuid,
     nodes: &'a [Uuid],
     kinds: &'a [&'static str],
-    /// The held rows' author keys ([`held_authors`]): inside an in-progress
-    /// scope it names the server's rule-set mark too, every author's
-    /// unflagged held rows scanned under it on `held_nodes` (ADR-0030 d3;
-    /// ADR-0065 d15); empty, no held row.
+    /// The held rows' author keys ([`held_authors`]): on each node inside
+    /// an in-progress subtree it names the server's rule-set mark there
+    /// too, every author's unflagged held rows scanned under it on that
+    /// node (ADR-0030 d3; ADR-0065 d15; ADR-0080 d16); empty, no held row.
     authors: Option<&'a [Uuid]>,
     held_nodes: &'a [Uuid],
     /// How the origin filters narrow the candidates (ADR-0057 d4).
@@ -8014,24 +8027,28 @@ impl JournalStore for PgStore {
         tenant_id: Uuid,
         nodes: &[Uuid],
         author_key_id: Uuid,
+        held_nodes: &[Uuid],
     ) -> Result<Vec<MemoryRecord>, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
         // The promoted served tips of kind guardrail on the named nodes,
-        // never a retirement version, and the held versions the calling key
-        // authored there: the state and author predicates are this
-        // statement's own (proposed ADR-0037 d3, d4).
+        // never a retirement version, the held versions the calling key
+        // authored there, and every held version on the nodes inside an
+        // in-progress subtree: the state and author predicates are this
+        // statement's own (proposed ADR-0037 d3, d4; ADR-0080 d10, d16).
         let sql = format!(
             "SELECT {MEMORY_COLUMNS} FROM memories m \
              WHERE m.tenant_id = $1 AND m.kind = 'guardrail' \
                AND m.workspace_id = ANY($2::uuid[]) \
                AND ((m.status = 'promoted' AND m.is_tip AND NOT m.retirement) \
-                    OR (m.status = 'held' AND m.author_key_id = $3))"
+                    OR (m.status = 'held' AND (m.author_key_id = $3 \
+                        OR m.workspace_id = ANY($4::uuid[]))))"
         );
         let rows = sqlx::query(&sql)
             .bind(tenant_id)
             .bind(nodes)
             .bind(author_key_id)
+            .bind(held_nodes)
             .fetch_all(&mut *tx)
             .await
             .map_err(backend)?;
@@ -8078,7 +8095,7 @@ impl JournalStore for PgStore {
                 };
                 if !held.is_empty() {
                     // A version the scan held stays its author's (ADR-0065
-                    // d5, amended 2026-11-10).
+                    // d5, amended 2026-11-10); any kind else (ADR-0080 d16).
                     sql.push(" OR (");
                     if let Some(at) = &filter.as_of {
                         sql.push("m.created_at <= (")
@@ -8088,7 +8105,7 @@ impl JournalStore for PgStore {
                     sql.push(
                         "m.status = 'held' AND NOT m.retirement \
                          AND m.scan_finding IS NULL \
-                         AND m.kind IN ('memory', 'derived_fact') AND m.workspace_id = ANY(",
+                         AND m.workspace_id = ANY(",
                     )
                     .push_bind(held.clone())
                     .push("::uuid[]) AND m.scanned_under IS NOT DISTINCT FROM ")
@@ -8219,9 +8236,15 @@ impl JournalStore for PgStore {
             .filter(|k| k.class().needs_person())
             .map(|k| k.as_str())
             .collect();
-        let (held, all, unlisted, unapproved, unpersoned): (i64, i64, i64, i64, i64) =
-            sqlx::query_as(
-                "SELECT count(*) FILTER (WHERE status = 'held' \
+        let (held, all, unlisted, unapproved, withdrawn, unpersoned): (
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+        ) = sqlx::query_as(
+            "SELECT count(*) FILTER (WHERE status = 'held' \
                                        AND scanned_under IS DISTINCT FROM $2::text), \
                     count(*) FILTER (WHERE scanned_under IS DISTINCT FROM $2::text), \
                     count(*) FILTER (WHERE status = 'held' AND scan_finding IS NOT NULL \
@@ -8230,24 +8253,29 @@ impl JournalStore for PgStore {
                                                           AND f.memory_id = m.id)), \
                     count(*) FILTER (WHERE status = 'promoted' AND is_tip \
                                        AND NOT retirement AND approved_at IS NULL), \
+                    count(*) FILTER (WHERE status = 'withdrawn' \
+                                       AND EXISTS (SELECT 1 FROM review_queue q \
+                                                    WHERE q.tenant_id = m.tenant_id \
+                                                      AND q.memory_id = m.id)), \
                     count(*) FILTER (WHERE status = 'promoted' AND is_tip \
                                        AND NOT retirement AND kind = ANY($3::text[]) \
                                        AND approver_used_by IS DISTINCT FROM 'person') \
              FROM memories m \
              WHERE tenant_id = $1 AND status <> 'erased'",
-            )
-            .bind(tenant_id)
-            .bind(current)
-            .bind(&instructions)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(backend)?;
+        )
+        .bind(tenant_id)
+        .bind(current)
+        .bind(&instructions)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
         Ok(ScanBacklog {
             held_unrescanned: u64::try_from(held).map_err(backend)?,
             rescan_due: u64::try_from(all).map_err(backend)?,
             findings_unlisted: u64::try_from(unlisted).map_err(backend)?,
             promoted_unapproved: u64::try_from(unapproved).map_err(backend)?,
+            withdrawn_in_queue: u64::try_from(withdrawn).map_err(backend)?,
             instructions_without_person_approval: u64::try_from(unpersoned).map_err(backend)?,
         })
     }
@@ -9303,13 +9331,13 @@ impl JournalStore for PgStore {
                     "::uuid[]) AND ({row}.status = 'promoted' OR {row}.author_key_id = "
                 ))
                 .push_bind(selection.reader_key_id)
-                // Inside an in-progress scope, any author's held memory or
-                // derived fact the scan did not hold (ADR-0030 d3; ADR-0065
-                // d5, amended 2026-11-10).
+                // Inside an in-progress scope, any author's held version
+                // the scan did not hold (ADR-0030 d3; ADR-0065 d5, amended
+                // 2026-11-10; ADR-0080 d16).
                 .push(format!(
                     " OR ({row}.status = 'held' AND NOT {row}.retirement \
                      AND {row}.scan_finding IS NULL \
-                     AND {row}.kind IN ('memory', 'derived_fact') AND {row}.workspace_id = ANY("
+                     AND {row}.workspace_id = ANY("
                 ))
                 .push_bind(selection.held_nodes.clone())
                 .push(format!(

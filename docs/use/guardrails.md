@@ -22,6 +22,14 @@ nothing at all (`access.verb_ceiling`).
 - **Checked at the tool call.** A rule with a `rule` body is checked before each matching tool
   call and refuses or asks; it never allows.
 - **Severity.** `never`, `must` and `should`.
+- **Before approval.** A rule waiting for review loads only in the session of the key that wrote
+  it and, in a workspace a person put [in progress](workspaces.md#in-progress-workspaces), in every
+  session working there, or in a workspace below one in progress. It loads as a line of its own marked `[unreviewed]`, after
+  the approved rules, and its check asks where an approved one would refuse, so a rule nobody has
+  judged can make the agent ask but never stops it. An approved rule it would replace stays in
+  force with its own effect until a reviewer approves the change; a proposed retirement is not
+  loaded at all. Steering waiting for review follows the same rule, after the approved steering,
+  marked `[unreviewed]`.
 - **Without the plugin's hooks.** `oml guardrails export --format agents-md|claude-md --out
   <path>` writes the promoted set as a file, labeled "text, not enforcement; do not edit".
   `oml guardrails show` prints what a session would load.

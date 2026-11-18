@@ -687,15 +687,12 @@ impl Writer {
                 }
             }
         };
-        let state = if sealed.is_none() || m.status == "erased" {
+        let state = if sealed.is_none() {
             "erased"
         } else {
-            match (m.status.as_str(), m.is_tip) {
-                ("promoted", true) => "promoted",
-                ("promoted", false) => "superseded",
-                ("demoted", _) => "demoted",
-                ("held", _) => "held",
-                _ => return Ok(Err("version_state_unknown")),
+            match lake_state(&m.status, m.is_tip) {
+                Some(state) => state,
+                None => return Ok(Err("version_state_unknown")),
             }
         };
         let retracted = (state != "promoted").then(|| e.at.timestamp_micros());
@@ -1013,6 +1010,25 @@ fn collect_json(p: &std::path::Path, out: &mut Vec<std::path::PathBuf>) -> std::
         out.push(p.to_path_buf());
     }
     Ok(())
+}
+
+/// The `silver.claims` state of a version in `status`, `is_tip` telling a
+/// served promoted version from one a successor replaced: every state the
+/// server stores has one (delta-tables.md; #440), and a state this writer
+/// does not know is `None`, which the batch dead-letters as
+/// `version_state_unknown`.
+#[must_use]
+pub fn lake_state(status: &str, is_tip: bool) -> Option<&'static str> {
+    Some(match (status, is_tip) {
+        ("promoted", true) => "promoted",
+        ("promoted", false) => "superseded",
+        ("held", _) => "held",
+        ("demoted", _) => "demoted",
+        ("rejected", _) => "rejected",
+        ("withdrawn", _) => "withdrawn",
+        ("erased", _) => "erased",
+        _ => return None,
+    })
 }
 
 /// The status the writer leaves for the doctor, at

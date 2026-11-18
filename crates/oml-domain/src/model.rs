@@ -235,6 +235,42 @@ pub fn transition(from: MemoryStatus, to: MemoryStatus) -> Result<MemoryStatus, 
     }
 }
 
+/// Who withdraws a held version (ADR-0083 d13).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Withdrawer {
+    /// The version's own author key, an agent's included.
+    AuthorKey,
+    /// A person's session web key, for a version a key of that same person
+    /// wrote, read the one way `same_user` reads it (ADR-0082 d2).
+    PersonSession,
+    /// Any other key.
+    Other,
+}
+
+/// A refused withdrawal (ADR-0083 d13).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum WithdrawRefusal {
+    /// Neither the author key nor a session key of the author's person
+    /// (errors.md `access.author_only`).
+    #[error("only the version's author withdraws it (access.author_only)")]
+    AuthorOnly,
+    /// The version is not held (errors.md `memory.not_held`).
+    #[error("only a held version is withdrawn (memory.not_held)")]
+    NotHeld,
+}
+
+/// The withdraw rule (ADR-0083 d13): the author key on its own held
+/// version, or a person's session key on a held version any key of that
+/// person wrote; who comes first, so another key learns nothing of the
+/// version's state. It promotes, signs, demotes and deletes nothing (R1):
+/// the state becomes `withdrawn` and the version is kept.
+pub fn withdraw(status: MemoryStatus, by: Withdrawer) -> Result<MemoryStatus, WithdrawRefusal> {
+    if by == Withdrawer::Other {
+        return Err(WithdrawRefusal::AuthorOnly);
+    }
+    transition(status, MemoryStatus::Withdrawn).map_err(|_| WithdrawRefusal::NotHeld)
+}
+
 /// Claim text in Unicode Normalization Form C. Capture normalizes before
 /// the plaintext digest, the scan and the `body_bytes` count, so all three
 /// see one canonical byte form (admission.md, capture; ADR-0025 d6). Text

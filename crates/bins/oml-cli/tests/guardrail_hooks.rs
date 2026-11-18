@@ -553,3 +553,78 @@ async fn a_session_id_that_names_no_cache_file_blocks_the_call() {
     assert_eq!(out.status.code(), Some(2), "a blocking error");
     assert!(String::from_utf8_lossy(&out.stderr).contains("session_id"));
 }
+
+/// A held `never` rule served inside an in-progress root carries
+/// `effect_inside: ask`: the session text marks it `[unreviewed]` and the
+/// hook asks, its reason naming it unreviewed; once approved, the same
+/// version, served without the field, denies (ADR-0080 d10).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_held_deny_rule_inside_an_in_progress_root_asks() {
+    let mut held = served(
+        DENY_ID,
+        "no-push",
+        "never",
+        "Never push to main.",
+        deny_push(),
+    );
+    held["unreviewed"] = json!(true);
+    held["effect_inside"] = json!("ask");
+    held["promoted_at"] = Value::Null;
+    held["verdicts"] = json!([]);
+    let mut set = the_set();
+    set["guardrails"] = json!([held]);
+    let (url, _, _) = fixture(set).await;
+    let dir = scratch("held-asks");
+    let out = hook("guardrails", &dir, Some(&url), &start("startup"));
+    let text = context(&out);
+    assert!(
+        text.contains("[unreviewed] [never] Never push to main.")
+            && text.contains("not yet approved by a reviewer")
+            && text.contains("checked: ask shell"),
+        "{text}"
+    );
+    let out = hook("pre-tool-use", &dir, None, &bash("git push origin main"));
+    let decision = &stdout_json(&out)["hookSpecificOutput"];
+    assert_eq!(decision["permissionDecision"], "ask", "{decision}");
+    let reason = decision["permissionDecisionReason"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(reason.contains("[unreviewed]"), "{reason}");
+
+    let (url, _, _) = fixture(the_set()).await;
+    let dir = scratch("held-approved");
+    hook("guardrails", &dir, Some(&url), &start("startup"));
+    let out = hook("pre-tool-use", &dir, None, &bash("git push origin main"));
+    assert_eq!(
+        stdout_json(&out)["hookSpecificOutput"]["permissionDecision"],
+        "deny"
+    );
+}
+
+/// A served held rule whose `effect_inside` is missing still asks: the hook
+/// never denies on a held rule (ADR-0080 d10).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_held_deny_rule_served_without_effect_inside_still_asks() {
+    let mut held = served(
+        DENY_ID,
+        "no-push",
+        "never",
+        "Never push to main.",
+        deny_push(),
+    );
+    held["unreviewed"] = json!(true);
+    held["promoted_at"] = Value::Null;
+    held["verdicts"] = json!([]);
+    let mut set = the_set();
+    set["guardrails"] = json!([held]);
+    let (url, _, _) = fixture(set).await;
+    let dir = scratch("held-no-effect");
+    let out = hook("guardrails", &dir, Some(&url), &start("startup"));
+    let text = context(&out);
+    assert!(text.contains("checked: ask shell"), "{text}");
+    let out = hook("pre-tool-use", &dir, None, &bash("git push origin main"));
+    assert_eq!(
+        stdout_json(&out)["hookSpecificOutput"]["permissionDecision"],
+        "ask"
+    );
+}

@@ -803,7 +803,7 @@ async fn keyword_all_returns_exactly_the_v0_5_0_rows_and_order() {
                         promoted_nodes: vec![wa],
                         kinds: vec![MemoryKind::Memory, MemoryKind::DerivedFact],
                         own_held: Some(OwnHeldScope {
-                            any_author: false,
+                            any_author_nodes: Vec::new(),
                             author_key_ids: vec![own],
                             nodes: vec![wa],
                             current_scanner: None,
@@ -8754,7 +8754,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
                         promoted_nodes: vec![wa, Uuid::from_u128(0xE3)],
                         kinds: oml_app::types::HIT_KINDS.to_vec(),
                         own_held: Some(OwnHeldScope {
-                            any_author: false,
+                            any_author_nodes: Vec::new(),
                             author_key_ids: vec![Uuid::from_u128(0xE5)],
                             nodes: vec![wa],
                             current_scanner: None,

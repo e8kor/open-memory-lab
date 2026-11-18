@@ -634,6 +634,106 @@ pub async fn reject<S: JournalStore>(
     .await
 }
 
+/// A withdrawal (ADR-0083 d13): the fold sets the version's state to
+/// `withdrawn` in the commit that journals it and takes it out of every
+/// review queue, so no reviewer is served or listed it and doctor's
+/// `withdrawn_in_queue` reads zero; the row is kept with its text.
+pub async fn a_withdrawn_version_leaves_every_review_queue_and_is_kept<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(62);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let universe = workspace_record(t, Uuid::from_u128(0x6201), None, "universe");
+    let workspace = workspace_record(
+        t,
+        Uuid::from_u128(0x6200),
+        Some(universe.workspace_id),
+        "team",
+    );
+    for w in [universe, workspace.clone()] {
+        rig.create_workspace(store, w).await;
+    }
+    let author = key_record(t, Uuid::from_u128(0x6210), Role::Writer, None);
+    let reviewer = key_record(t, Uuid::from_u128(0x6211), Role::Reviewer, None);
+    for key in [author.clone(), reviewer.clone()] {
+        rig.issue_key(store, key).await;
+    }
+    let id = Uuid::from_u128(0x6220);
+    let memory = held_memory(
+        t,
+        workspace.workspace_id,
+        id,
+        &author.principal,
+        author.key_id,
+        "a mistaken write",
+    );
+    rig.commit(
+        store,
+        event_types::SUBMISSION_REMEMBER,
+        json!({ "artifact_id": id.to_string() }),
+        MetadataFold::MemoryHeld {
+            memory,
+            enqueue: true,
+            findings: Box::default(),
+        },
+        None,
+    )
+    .await
+    .expect("held");
+    rig.commit(
+        store,
+        event_types::MEMORY_WITHDRAWN,
+        json!({ "artifact_id": id.to_string(), "reason": null }),
+        MetadataFold::MemoryWithdrawn { memory_id: id },
+        None,
+    )
+    .await
+    .expect("the withdrawal commits");
+    let row = store
+        .memory(t, id)
+        .await
+        .expect("memory")
+        .expect("the version is kept");
+    assert_eq!(row.status, MemoryStatus::Withdrawn);
+    assert_eq!(row.body, "a mistaken write", "kept with its text");
+    let nodes = [workspace.workspace_id];
+    assert!(
+        store
+            .review_claim_next(
+                t,
+                &reviewer.principal,
+                reviewer.key_id,
+                &nodes,
+                ReviewLane::Any
+            )
+            .await
+            .expect("claim")
+            .is_none(),
+        "no queue serves it"
+    );
+    let all = HeldFilter {
+        nodes: nodes.to_vec(),
+        author_key_id: None,
+        claim_key_prefix: None,
+        lane: ReviewLane::Any,
+    };
+    assert!(
+        store
+            .review_held(t, &reviewer.principal, reviewer.key_id, &all, None, 10)
+            .await
+            .expect("review_held")
+            .is_empty(),
+        "no listing holds it"
+    );
+    assert_eq!(
+        store
+            .scan_backlog(t, None)
+            .await
+            .expect("backlog")
+            .withdrawn_in_queue,
+        0
+    );
+}
+
 /// A fixture name; one the creation grammar refuses fails the fixture
 /// (ADR-0026 d2).
 #[must_use]
@@ -1084,7 +1184,7 @@ pub trait KeywordAllReads: Retriever {
             promoted_nodes: Vec::new(),
             kinds: kinds.to_vec(),
             own_held: Some(OwnHeldScope {
-                any_author: false,
+                any_author_nodes: Vec::new(),
                 author_key_ids: author_key_ids.to_vec(),
                 nodes: readable.to_vec(),
                 current_scanner: None,
@@ -1696,8 +1796,8 @@ pub async fn held_rows_of_every_author_are_read_on_the_named_nodes_alone<S: Jour
         ],
         own_held: Some(OwnHeldScope {
             author_key_ids: Vec::new(),
+            any_author_nodes: nodes.clone(),
             nodes,
-            any_author: true,
             current_scanner: None,
         }),
         as_of: None,
@@ -2001,6 +2101,7 @@ pub async fn a_recording_rescan_adds_only_the_findings_a_held_versions_list_lack
             rescan_due: 2,
             findings_unlisted: 1,
             promoted_unapproved: 0,
+            withdrawn_in_queue: 0,
             instructions_without_person_approval: 0,
         }
     );
@@ -6884,7 +6985,7 @@ pub async fn every_row_a_creation_folds_is_named_and_a_key_with_no_name_is_liste
 /// and the held guardrails the named key authored, never another key's; no
 /// row of another kind and none off the named nodes (proposed ADR-0037 d3,
 /// d4).
-pub async fn guardrail_rows_are_the_tips_in_force_and_the_named_keys_own_held_rows<
+pub async fn guardrail_rows_are_the_tips_in_force_the_named_keys_own_held_rows_and_every_held_row_inside<
     S: JournalStore,
 >(
     store: &S,
@@ -6934,7 +7035,7 @@ pub async fn guardrail_rows_are_the_tips_in_force_and_the_named_keys_own_held_ro
     }
 
     let mut rows = store
-        .guardrail_rows(rig.tenant_id, &[wa], author)
+        .guardrail_rows(rig.tenant_id, &[wa], author, &[])
         .await
         .expect("guardrail rows");
     rows.sort_by_key(|m| m.memory_id);
@@ -6942,13 +7043,28 @@ pub async fn guardrail_rows_are_the_tips_in_force_and_the_named_keys_own_held_ro
         rows.iter().map(|m| m.memory_id).collect::<Vec<_>>(),
         vec![in_force.memory_id, own_held.memory_id]
     );
+    // On a node inside an in-progress subtree, every author's held rows
+    // too (ADR-0080 d10, d16); the core judges which it serves.
+    let mut inside = store
+        .guardrail_rows(rig.tenant_id, &[wa], author, &[wa])
+        .await
+        .expect("guardrail rows");
+    inside.sort_by_key(|m| m.memory_id);
+    assert_eq!(
+        inside.iter().map(|m| m.memory_id).collect::<Vec<_>>(),
+        vec![
+            in_force.memory_id,
+            own_held.memory_id,
+            others_held.memory_id
+        ]
+    );
     assert_eq!(
         rows[0].guardrail, in_force.guardrail,
         "the fields round-trip"
     );
     assert!(
         store
-            .guardrail_rows(rig.tenant_id, &[], author)
+            .guardrail_rows(rig.tenant_id, &[], author, &[])
             .await
             .expect("guardrail rows")
             .is_empty(),
@@ -9302,7 +9418,9 @@ where
     )
     .await;
     Box::pin(
-        guardrail_rows_are_the_tips_in_force_and_the_named_keys_own_held_rows(&new_store().await),
+        guardrail_rows_are_the_tips_in_force_the_named_keys_own_held_rows_and_every_held_row_inside(
+            &new_store().await,
+        ),
     )
     .await;
     Box::pin(recall_own_held_never_returns_another_keys_row_whatever_the_query(&new_store().await))
@@ -9317,6 +9435,10 @@ where
     .await;
     Box::pin(journal_review_claim_laws(&new_store().await)).await;
     Box::pin(journal_review_lane_laws(&new_store().await)).await;
+    Box::pin(a_withdrawn_version_leaves_every_review_queue_and_is_kept(
+        &new_store().await,
+    ))
+    .await;
     Box::pin(
         the_review_queue_serves_no_row_its_own_person_wrote_outside_their_root(&new_store().await),
     )
@@ -12323,7 +12445,7 @@ fn scope_of(wa: Uuid, own: Option<Uuid>) -> CandidateScope {
         promoted_nodes: vec![wa],
         kinds: HIT_KINDS.to_vec(),
         own_held: own.map(|key| OwnHeldScope {
-            any_author: false,
+            any_author_nodes: Vec::new(),
             author_key_ids: vec![key],
             nodes: vec![wa],
             current_scanner: None,
@@ -14178,7 +14300,7 @@ pub async fn similar_candidates_are_the_scopes_served_tips_and_own_held_rows_hol
             MemoryKind::Steering,
         ],
         own_held: Some(OwnHeldScope {
-            any_author: false,
+            any_author_nodes: Vec::new(),
             author_key_ids: keys_,
             nodes,
             current_scanner: None,

@@ -56,7 +56,7 @@ use oml_app::domain::access::Covers;
 use oml_app::domain::anchor::{self as anchor_grammar, Anchor, CheckResult};
 use oml_app::domain::budget::{Budget, COUNTER_ID, budget_tokens};
 use oml_app::domain::claim_kinds::TestShape;
-use oml_app::domain::guardrail::{GuardrailScope, Severity};
+use oml_app::domain::guardrail::{Effect, GuardrailScope, Severity};
 use oml_app::domain::in_progress::{KeyProfile, WorkspaceMode};
 use oml_app::domain::jcs::MAX_CHAIN_INTEGER;
 use oml_app::domain::name::{Name, Reference};
@@ -76,7 +76,7 @@ use oml_app::types::{
     IssuedKey, KeyDetail, KeyLimitsChange, KeyRecord, KindFields, ListRequest, MemoryRecord,
     NamedServe, OnSimilar, ProposeBriefEdge, ProposeClaimEdge, RecallRequest, ServedMemory,
     SimilarItem, SourceCheck, SourceCheckRequest, SubmitRequest, SubmitVerb, SupersedeRequest,
-    TailedEvent, Verdict, VerdictRequest, Whoami, WorkspaceInfo, WorkspaceRecord,
+    TailedEvent, Verdict, VerdictRequest, Whoami, WithdrawRequest, WorkspaceInfo, WorkspaceRecord,
 };
 use oml_app::types::{
     BulkItem, BulkVerdictRequest, HELD_PAGE_DEFAULT, HeldListingRequest, HeldPage, ReviewLane,
@@ -104,6 +104,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/v1/memories/{artifact_id}"),
     ("POST", "/v1/memories/{artifact_id}/supersede"),
     ("POST", "/v1/memories/{artifact_id}/source-check"),
+    ("POST", "/v1/memories/{artifact_id}/withdraw"),
     ("GET", "/v1/guardrails"),
     ("GET", "/v1/account/usage"),
     ("POST", "/v2/review/next"),
@@ -351,6 +352,7 @@ where
             ("GET", "/v1/memories/{artifact_id}") => get(Self::get_memory),
             ("POST", "/v1/memories/{artifact_id}/supersede") => post(Self::supersede),
             ("POST", "/v1/memories/{artifact_id}/source-check") => post(Self::source_check),
+            ("POST", "/v1/memories/{artifact_id}/withdraw") => post(Self::withdraw),
             ("GET", "/v1/guardrails") => get(Self::guardrails),
             ("POST", "/v2/review/next") => post(Self::review_next),
             ("POST", "/v2/review/verdicts") => post(Self::review_verdicts),
@@ -1189,19 +1191,30 @@ where
         let acting = acting(headers, connection)?;
         refuse_workarea_header(headers, "workspace")?;
         let mut workspace = None;
+        let mut include_own_held = None;
         for (name, value) in params {
             match name.as_str() {
                 "workspace" if workspace.is_none() => {
                     workspace = Some(reference("workspace", value)?)
                 }
-                "workspace" => {
-                    return Err(ApiError::validation(
-                        "the query parameter workspace is given more than once",
-                    ));
+                "include_own_held" if include_own_held.is_none() => {
+                    include_own_held = Some(match value.as_str() {
+                        "true" => true,
+                        "false" => false,
+                        _ => {
+                            return Err(ApiError::validation("include_own_held is true or false")
+                                .with_details(json!({ "field": "include_own_held" })));
+                        }
+                    });
+                }
+                "workspace" | "include_own_held" => {
+                    return Err(ApiError::validation(format!(
+                        "the query parameter {name} is given more than once"
+                    )));
                 }
                 other => {
                     return Err(ApiError::validation(format!(
-                        "{other} is not a parameter of this read: it takes workspace alone, and the guardrail scope is the key's, set at issuance"
+                        "{other} is not a parameter of this read: it takes workspace and include_own_held alone, and the guardrail scope is the key's, set at issuance"
                     ))
                     .with_details(json!({ "field": other })));
                 }
@@ -1209,7 +1222,13 @@ where
         }
         let set = st
             .app
-            .guardrails(acting.bearer(), &GuardrailRequest { workspace })
+            .guardrails(
+                acting.bearer(),
+                &GuardrailRequest {
+                    workspace,
+                    include_own_held: include_own_held.unwrap_or(false),
+                },
+            )
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(StatusCode::OK, &guardrail_set_json(&set)))
@@ -1278,6 +1297,66 @@ where
                 "artifact_id": receipt.memory_id,
                 "stale": stale,
                 "source_checked": check,
+                "journal_seq": receipt.journal_seq,
+            }),
+        );
+        if replayed {
+            response
+                .headers_mut()
+                .insert("idempotency-replay", HeaderValue::from_static("true"));
+        }
+        Ok(response)
+    }
+
+    async fn withdraw(
+        State(st): State<Self>,
+        rid: Rid,
+        Path(artifact_id): Path<String>,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
+        finish(
+            &rid,
+            Self::withdraw_inner(&st, &artifact_id, &headers, &body, None).await,
+        )
+    }
+
+    /// `POST /v1/memories/{artifact_id}/withdraw`: the author retracts its
+    /// own held version, kept as `withdrawn` and out of every review queue
+    /// (ADR-0083 d13). The body is closed; an empty body is no reason.
+    pub(crate) async fn withdraw_inner(
+        st: &Self,
+        artifact_id: &str,
+        headers: &HeaderMap,
+        body: &Bytes,
+        connection: Option<&Caller>,
+    ) -> Result<Response, ApiError> {
+        st.require_writes_open()?;
+        let acting = acting(headers, connection)?;
+        let idem_key = idempotency_key(headers)?;
+        let memory_id = Uuid::parse_str(artifact_id).map_err(|_| ApiError::not_found())?;
+        let req: WithdrawBody = if body.is_empty() {
+            WithdrawBody::default()
+        } else {
+            parse_json(headers, body)?
+        };
+        let app_req = WithdrawRequest {
+            idempotency_key: idem_key,
+            memory_id,
+            reason: req.reason,
+        };
+        let (receipt, replayed) = retry_chain(|| st.app.withdraw(acting.bearer(), &app_req))
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        if !replayed {
+            st.traffic.metrics().withdrawn();
+        }
+        let mut response = json_response(
+            StatusCode::OK,
+            &json!({
+                "artifact_id": receipt.memory_id,
+                "state": receipt.state,
+                "at": receipt.at,
                 "journal_seq": receipt.journal_seq,
             }),
         );
@@ -3488,6 +3567,13 @@ struct SourceCheckBody {
     fragment: Option<String>,
 }
 
+/// openapi.yaml `WithdrawRequest`, closed (ADR-0083 d13).
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WithdrawBody {
+    reason: Option<String>,
+}
+
 /// openapi.yaml `SupersedeRequest`, closed: it declares every submission
 /// field a successor can need beside its own (ADR-0025 d16).
 #[derive(Deserialize)]
@@ -5131,9 +5217,10 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
 
 /// openapi.yaml `GuardrailSet`: the applicable set at the scope node, its
 /// digest and cap flag, each served guardrail with its text, rule, depth,
-/// verdicts (attestation and time, never a reviewer key) and conflicts, and
-/// the caller's own held guardrails by key and version (proposed ADR-0037
-/// d3, d5, d7).
+/// verdicts (attestation and time, never a reviewer key) and conflicts, a
+/// held one marked `unreviewed` with `effect_inside: ask` and a null
+/// `promoted_at`, and the caller's own held guardrails by key and version
+/// (proposed ADR-0037 d3, d5, d7; ADR-0080 d10, d14).
 pub(crate) fn guardrail_set_json(set: &GuardrailSet) -> Value {
     json!({
         "scope_node": set.scope_node,
@@ -5152,7 +5239,9 @@ pub(crate) fn guardrail_set_json(set: &GuardrailSet) -> Value {
             "text": g.body,
             "rule": g.rule,
             "tokens": g.tokens,
-            "promoted_at": g.promoted_at.as_str(),
+            "promoted_at": g.promoted_at.as_ref().map(EventTime::as_str),
+            "unreviewed": g.unreviewed,
+            "effect_inside": g.effect_inside.map(Effect::as_str),
             "verdicts": g.verdicts.iter().map(|v| json!({
                 "used_by": v.used_by.as_str(),
                 "at": v.at.as_str(),

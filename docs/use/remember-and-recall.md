@@ -1,14 +1,15 @@
 ---
 status: Stable
 verified: 2026-11-06
-answers: "what an agent saves and finds with the three tools, how recall is scoped and budgeted, and how a memory is corrected, retired, linked or checked against what is already held"
+answers: "what an agent saves and finds with the four tools, how recall is scoped and budgeted, and how a memory is corrected, retired, linked or checked against what is already held"
 ---
 
 # Write and read memories
 
-An agent holds one key and three tools. `oml_write` saves, `oml_read` finds and lists,
-`oml_workspace` says where the agent works and what it may do there. People use the same calls
-through `oml write` and `oml read`. An agent can save and find memories. It cannot approve, sign,
+An agent holds one key and four tools. `oml_write` saves, `oml_read` finds and lists,
+`oml_workspace` says where the agent works and what it may do there, and `oml_withdraw` retracts
+a held write the key made by mistake, kept as `withdrawn` and never served. People use the same calls
+through `oml write`, `oml read` and `oml withdraw`. An agent can save and find memories. It cannot approve, sign,
 demote or delete them ([MCP tools](../api/mcp-plugin.md)).
 
 ## Save
