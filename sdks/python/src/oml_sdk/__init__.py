@@ -29,6 +29,7 @@ from .errors import (
     UploadError,
     VocabError,
     WorkspaceError,
+    WorkspaceImportError,
 )
 
 __all__ = [
@@ -56,6 +57,7 @@ __all__ = [
     "UploadError",
     "VocabError",
     "WorkspaceError",
+    "WorkspaceImportError",
     "Written",
     "fence_for",
 ]

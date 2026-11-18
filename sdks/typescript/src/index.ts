@@ -41,6 +41,7 @@ export {
   ExportError,
   FAMILIES,
   IdempotencyError,
+  ImportError,
   LifecycleError,
   MemoryStateError,
   LimitError,
