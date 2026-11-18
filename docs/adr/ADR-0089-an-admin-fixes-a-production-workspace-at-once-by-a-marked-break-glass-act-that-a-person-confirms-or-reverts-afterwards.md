@@ -305,6 +305,38 @@ Decided, not built.
     erased version), or an edit's or retirement's supersession and promotion. `admin.fix` names
     those events' ids, so the PostgreSQL fold and the lake writer read the lifecycle events they
     already read.
+  - **Notes of 2026-11-18, the coordinator's readings for the operator's batch (#454, #455).**
+    Each is built as stated unless it says otherwise; the operator confirms, widens or reverses it.
+    - **A restored tip gets back the end it had before the supersession.** A ratified
+      supersession whose successor declares a start ends the version it replaces there
+      (ADR-0059 d4). Demoting that successor returns the version as the tip with the end it had
+      before the ratification, an open end staying open, so recall does not hide it as expired.
+      Each store keeps that earlier end when a ratification replaces it: PostgreSQL in
+      `memories.valid_until_ratified` and `valid_until_before` (migration 0058). A version a
+      ratification ended before 0058 keeps the end it has when restored. The law
+      `a_demotion_restores_the_end_the_version_had_before_its_supersession` holds it over both
+      stores, today and at an instant before the demotion.
+    - **A retirement and a vocabulary term are not demoted.** A demotion of a retirement version
+      or of a `term`, `term_mapping` or `vocab_release` version is refused, naming
+      `lifecycle.demote_kind_unsupported`, and journals nothing: returning a retired claim to
+      service and taking a term out of a published vocabulary each need a reading of their own.
+      The operator may widen this later.
+    - **The author's read of a demoted version.** Its author keeps reading the version by id and
+      in their own listing, marked `demoted`; no other read serves it (admission.md).
+    - **Not built: a claim key whose every approved version is demoted.** The reading is that
+      `demoted` does not count as live, as `erased` does not, so the key can be written again.
+      It is not built in this change: `memories_claim_version` keeps a demoted version's ordinal,
+      so a fresh claim cannot start at version 1, and the usage meter (ADR-0071 d2,
+      `oml_chain_live` and `oml_chain_account`, migration 0045) counts a chain with a demoted
+      version as live and finds its account by its version 1. Freeing the key needs the
+      operator to choose where the fresh claim's ordinals start and how the meter counts it.
+    - **Held successors of a demoted tip.** A version held as the successor of a tip that is
+      later demoted can never be approved, since its target is no longer the served tip. `oml
+      doctor` counts held versions whose target is no longer their claim's promoted tip
+      (`memory.held_successor_stranded`), so an admin sees them; the author withdraws them or a
+      reviewer rejects them. A held first version is not counted: it replaces nothing and stays
+      approvable. The doctor also counts erased versions whose data key is still live
+      (`lake.erased_key_live`).
 
 ## Consequences
 

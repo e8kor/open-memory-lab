@@ -2295,6 +2295,15 @@ pub struct ScanBacklog {
     /// row's `approver_used_by`, so a person's key that had a crew is not
     /// counted (#460).
     pub instructions_without_person_approval: u64,
+    /// Held versions that replace a version which is no longer their
+    /// claim's promoted tip, so no verdict can approve them: a demoted
+    /// tip's successors among them. Doctor's
+    /// `memory.held_successor_stranded` (ADR-0089 d16, note of 2026-11-18).
+    pub held_successors_stranded: u64,
+    /// Erased versions whose data key is still live, which the erase's
+    /// own transaction and the lake writer's fold rule out. Doctor's
+    /// `lake.erased_key_live` (ADR-0005 d2).
+    pub erased_keys_live: u64,
 }
 
 /// What a scanner says about itself, for `/readyz` and doctor's scan line

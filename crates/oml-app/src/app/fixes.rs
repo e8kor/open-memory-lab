@@ -13,7 +13,7 @@
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use oml_domain::{MemoryStatus, Role, SignedEnvelope, event_types, transition};
+use oml_domain::{MemoryKind, MemoryStatus, Role, SignedEnvelope, event_types, transition};
 
 use super::{App, commit_request, require_role};
 use crate::ports::{Clock, IdGen, JournalStore, MetadataFold, Scanner, Signer};
@@ -65,7 +65,9 @@ where
     /// served by no read at any instant, and when it was the tip the latest
     /// earlier promoted, non-demoted version of its claim is the tip again,
     /// or none is. Journals `lifecycle.demote` under the admin's key. A
-    /// version that is not promoted is [`AppError::Transition`]; one the
+    /// version that is not promoted is [`AppError::Transition`]; a
+    /// retirement or a `term`, `term_mapping` or `vocab_release` version is
+    /// [`AppError::DemoteKindUnsupported`]; one the
     /// tenant does not hold is [`AppError::NotFound`]; a version or claim
     /// that changed since it was read is [`crate::ports::StoreError::TipMoved`].
     ///
@@ -85,6 +87,19 @@ where
             .await?
             .ok_or(AppError::NotFound)?;
         transition(memory.status, MemoryStatus::Demoted)?;
+        // A retirement and a vocabulary version are not demoted: each needs
+        // a reading of its own (ADR-0089 d16, note of 2026-11-18).
+        if memory.retirement
+            || matches!(
+                memory.kind,
+                MemoryKind::Term | MemoryKind::TermMapping | MemoryKind::VocabRelease
+            )
+        {
+            return Err(AppError::DemoteKindUnsupported {
+                kind: memory.kind,
+                retirement: memory.retirement,
+            });
+        }
         let restored = if memory.is_tip {
             self.journal
                 .claim_versions(tenant_id, memory.workspace_id, &memory.claim_key)

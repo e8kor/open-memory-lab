@@ -3273,6 +3273,16 @@ pub enum AppError {
         "a writer may supersede only the claims its own key authored (roles-and-keys.md#own, access.author_only)"
     )]
     AuthorOnly,
+    /// A demotion of a retirement or of a vocabulary version (`term`,
+    /// `term_mapping`, `vocab_release`), refused naming
+    /// `lifecycle.demote_kind_unsupported` (ADR-0089 d16, note of
+    /// 2026-11-18).
+    #[error(
+        "a {} version{} is not demoted (lifecycle.demote_kind_unsupported)",
+        kind.as_str(),
+        if *retirement { " that retires its claim" } else { "" }
+    )]
+    DemoteKindUnsupported { kind: MemoryKind, retirement: bool },
     /// A refused withdrawal: not the version's author (`access.author_only`)
     /// or not held (`memory.not_held`; ADR-0083 d13).
     #[error("{0}")]

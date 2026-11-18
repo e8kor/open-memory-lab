@@ -3042,7 +3042,9 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // (ADR-0056 d1, d4); 0044 adds the approval, null on every row
             // never promoted (ADR-0077 d6); 0048 adds a skill's, a document's
             // and a test case's fields, null on every existing row (ADR-0080
-            // d1; ADR-0081 d1; ADR-0086 d1).
+            // d1; ADR-0081 d1; ADR-0086 d1); 0058 adds the end a ratified
+            // supersession replaced, false and null on every existing row
+            // (ADR-0089 d16).
             (true, "memories") => {
                 "to_jsonb(t) - 'severity' - 'rule' - 'search_vector' - 'search_len' \
                  - 'anchor_repo' - 'anchor_uri' - 'anchor_rev' - 'anchor_path' \
@@ -3052,7 +3054,8 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
                  - 'valid_from' - 'valid_until' - 'valid_from_us' - 'valid_until_us' \
                  - 'origin_kind' - 'scanned_under' - 'format' - 'title' - 'search_text' - 'search_text_by' \
                  - 'approver_used_by' - 'approver_same_user' - 'approved_at' \
-                 - 'skill_name' - 'skill_description' - 'document_title' - 'test_shape'"
+                 - 'skill_name' - 'skill_description' - 'document_title' - 'test_shape' \
+                 - 'valid_until_ratified' - 'valid_until_before' - 'valid_until_before_us'"
             }
             (true, "key_denials") => "to_jsonb(t) - 'lifted_epoch'",
             _ => "to_jsonb(t)",
@@ -6379,7 +6382,7 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 56,
+        applied, 58,
         "every migration through 0056_serving_role_destroys_erased_keys"
     );
     drop(conn);
@@ -7836,7 +7839,7 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 56,
+        applied, 58,
         "every migration through 0056_serving_role_destroys_erased_keys"
     );
     drop(conn);
@@ -8721,7 +8724,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 56,
+        applied, 58,
         "every migration through 0056_serving_role_destroys_erased_keys"
     );
     drop(conn);
@@ -12370,13 +12373,101 @@ async fn a_demotion_returns_the_tip_and_keeps_the_text_in_postgres() {
 }
 
 #[tokio::test]
-async fn an_erase_leaves_no_clear_body_in_the_live_row() {
+async fn an_erase_leaves_no_clear_body_in_the_live_row_its_passages_queue_telemetry_or_vocabulary()
+{
     if !splits().await {
         return;
     }
     let created = Mutex::new(Vec::new());
     let store = fresh_store(&created).await;
     let (app, tenant, admin, writer, v1, v2) = two_promoted_pg(&store, "erase").await;
+    // A held successor in the review queue, a passage of v2, and a recall
+    // that served v2 with its query text kept (the tenant opted in).
+    let v3 = app
+        .supersede(
+            writer.as_str(),
+            &oml_app::types::SupersedeRequest {
+                on_similar: Default::default(),
+                anchor: None,
+                origin: None,
+                expected_version: 2,
+                idempotency_key: "fx-3".to_owned(),
+                target_id: v2,
+                body: "The canary drains, settles and waits first.".to_owned(),
+                kind: None,
+                retirement: false,
+                derives_from: Vec::new(),
+                reason: None,
+                workspace: None,
+                refuse_vocabulary_target: false,
+                severity: None,
+                rule: None,
+                kind_fields: None,
+                valid_from: None,
+                valid_until: None,
+                format: None,
+                title: None,
+            },
+        )
+        .await
+        .expect("supersede")
+        .receipt
+        .memory_id;
+    owner_exec(
+        &store,
+        tenant,
+        "INSERT INTO document_passages (tenant_id, memory_id, ordinal, start_line, end_line, fragment) \
+         VALUES ($1, $2, 0, 1, 1, 'The canary drains and settles first.')",
+        v2,
+    )
+    .await;
+    owner_exec(
+        &store,
+        tenant,
+        "UPDATE tenants SET telemetry_query_text_since = now() - interval '1 day' \
+          WHERE id = $1 AND $2::uuid IS NOT NULL",
+        v2,
+    )
+    .await;
+    owner_exec(
+        &store,
+        tenant,
+        "INSERT INTO recall_events (tenant_id, recall_id, created_at, key_id, principal, \
+                scope_workspace_id, pipeline, access, query_digest, query_text, hit_ids, hit_scores) \
+         SELECT $1, gen_random_uuid(), now(), k.id, 'rhea', m.workspace_id, 'bm25-postings', \
+                'postings', decode(repeat('ab', 32), 'hex'), 'canary settles', ARRAY[$2::uuid], \
+                ARRAY[1.0::real] \
+           FROM memories m, LATERAL (SELECT id FROM api_keys WHERE tenant_id = $1 LIMIT 1) k \
+          WHERE m.tenant_id = $1 AND m.id = $2",
+        v2,
+    )
+    .await;
+    let vocabulary = "SELECT count(*) FROM search_vocabulary \
+                       WHERE tenant_id = $1 AND $2::uuid IS NOT NULL \
+                         AND (word LIKE 'canar%' OR word LIKE 'settl%')";
+    let traces = |sql: &'static str, id: Uuid| {
+        let store = &store;
+        async move { owner_row(store, tenant, sql, id).await.get::<i64, _>(0) }
+    };
+    let passages = "SELECT count(*) FROM document_passages WHERE tenant_id = $1 AND memory_id = $2";
+    let queued = "SELECT count(*) FROM review_queue WHERE tenant_id = $1 AND memory_id = $2";
+    let texts = "SELECT count(*) FROM recall_events \
+                  WHERE tenant_id = $1 AND $2 = ANY(hit_ids) AND query_text IS NOT NULL";
+    assert_eq!(
+        traces(passages, v2).await,
+        1,
+        "control: the passage is there"
+    );
+    assert_eq!(traces(queued, v3).await, 1, "control: v3 is queued");
+    assert_eq!(
+        traces(texts, v2).await,
+        1,
+        "control: the query text is kept"
+    );
+    assert!(
+        traces(vocabulary, v2).await > 0,
+        "control: the words are offered"
+    );
     let before = owner_row(
         &store,
         tenant,
@@ -12386,8 +12477,24 @@ async fn an_erase_leaves_no_clear_body_in_the_live_row() {
     .await;
     let (digest, bytes): (Vec<u8>, i32) = (before.get(0), before.get(1));
     let erasure = app.erase_claim(admin.as_str(), v2).await.expect("erase");
-    assert_eq!(erasure.erased.len(), 2, "every version of the claim");
-    for id in [v1, v2] {
+    assert_eq!(erasure.erased.len(), 3, "every version of the claim");
+    assert_eq!(traces(passages, v2).await, 0, "no passage");
+    assert_eq!(traces(queued, v3).await, 0, "off the review queue");
+    let erased_events = "SELECT count(*) FROM recall_events \
+                          WHERE tenant_id = $1 AND $2 = ANY(hit_ids)";
+    assert_eq!(traces(erased_events, v2).await, 0, "no event names v2");
+    assert_eq!(
+        traces(
+            "SELECT count(*) FROM recall_events \
+              WHERE tenant_id = $1 AND $2::uuid IS NOT NULL AND query_text IS NOT NULL",
+            v2
+        )
+        .await,
+        0,
+        "no query text is kept"
+    );
+    assert_eq!(traces(vocabulary, v2).await, 0, "no erased word is offered");
+    for id in [v1, v2, v3] {
         let row = owner_row(
             &store,
             tenant,
@@ -12432,44 +12539,125 @@ async fn an_erase_leaves_no_clear_body_in_the_live_row() {
     drop_dbs(&created).await;
 }
 
-#[tokio::test]
-async fn an_erase_destroys_the_versions_data_key() {
-    if !splits().await {
-        return;
-    }
-    let created = Mutex::new(Vec::new());
-    let store = fresh_store(&created).await;
-    let (app, tenant, admin, _writer, v1, v2) = two_promoted_pg(&store, "erasekey").await;
-    // The lake writer keyed v1; v2 it has not reached.
-    let mut owner = owner_conn(&store).await;
+/// Runs `sql` as the owner over `tenant`'s rows, binding `tenant` and `id`.
+async fn owner_exec(store: &PgStore, tenant: Uuid, sql: &str, id: Uuid) {
+    let mut owner = owner_conn(store).await;
     let mut tx = owner.begin().await.expect("begin");
     sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
         .bind(tenant.to_string())
         .execute(&mut *tx)
         .await
         .expect("tenant");
-    sqlx::query(
+    sqlx::query(sql)
+        .bind(tenant)
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .expect("owner write");
+    tx.commit().await.expect("commit");
+}
+
+/// A live key for `artifact`, as the lake writer stores one.
+async fn live_key(store: &PgStore, tenant: Uuid, artifact: Uuid) {
+    owner_exec(
+        store,
+        tenant,
         "INSERT INTO artifact_keys (tenant_id, artifact_id, wrapped_dek, kek_id) \
          VALUES ($1, $2, '\\x0102'::bytea, 'kek-1')",
-    )
-    .bind(tenant)
-    .bind(v1)
-    .execute(&mut *tx)
-    .await
-    .expect("a live key");
-    tx.commit().await.expect("commit");
-    drop(owner);
-    app.erase_claim(admin.as_str(), v1).await.expect("erase");
-    let key = owner_row(
-        &store,
-        tenant,
-        "SELECT wrapped_dek IS NULL, destroyed_at IS NOT NULL FROM artifact_keys \
-          WHERE tenant_id = $1 AND artifact_id = $2",
-        v1,
+        artifact,
     )
     .await;
-    assert!(key.get::<bool, _>(0), "the wrapped key is gone");
-    assert!(key.get::<bool, _>(1), "and its destruction stamped");
+}
+
+/// A destroyed key row for `artifact`, as an erase leaves one.
+async fn destroyed_key(store: &PgStore, tenant: Uuid, artifact: Uuid) {
+    owner_exec(
+        store,
+        tenant,
+        "INSERT INTO artifact_keys (tenant_id, artifact_id, wrapped_dek, kek_id, destroyed_at) \
+         VALUES ($1, $2, NULL, 'kek-1', now() - interval '1 hour')",
+        artifact,
+    )
+    .await;
+}
+
+/// `(wrapped_dek IS NULL, destroyed_at as text, kek_id)` of `artifact`'s key row.
+async fn key_state(
+    store: &PgStore,
+    tenant: Uuid,
+    artifact: Uuid,
+) -> (bool, Option<String>, String) {
+    let row = owner_row(
+        store,
+        tenant,
+        "SELECT wrapped_dek IS NULL, destroyed_at::text, kek_id FROM artifact_keys \
+          WHERE tenant_id = $1 AND artifact_id = $2",
+        artifact,
+    )
+    .await;
+    (row.get(0), row.get(1), row.get(2))
+}
+
+/// `sql` run by the serving role over `tenant`'s rows, binding `tenant`
+/// and `id`: the error it is refused with, or `None` when it ran.
+async fn serving_refusal(store: &PgStore, tenant: Uuid, sql: &str, id: Uuid) -> Option<String> {
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    let out = sqlx::query(sql)
+        .bind(tenant)
+        .bind(id)
+        .execute(&mut *tx)
+        .await;
+    match out {
+        Ok(_) => {
+            tx.commit().await.expect("commit");
+            None
+        }
+        Err(e) => Some(e.to_string()),
+    }
+}
+
+#[tokio::test]
+async fn an_erase_destroys_the_versions_data_key_and_no_other() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let (app, tenant, admin, writer, v1, v2) = two_promoted_pg(&store, "erasekey").await;
+    // Another claim of the same tenant, and another tenant's version, each
+    // keyed by the lake writer: the erase reaches neither.
+    let untouched = app
+        .submit_memory(
+            writer.as_str(),
+            &kind_submit(
+                "fx-other",
+                MemoryKind::Memory,
+                "The blue pool drains last.",
+                Some("blue-pool"),
+                None,
+            ),
+        )
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    // A second tenant of the same store, through the same app; its key row
+    // names a version id of its own.
+    let other_tenant = bootstrap_pg(&app, "erasekey-other").await.tenant_id;
+    let other_v1 = Uuid::from_u128(0xE7A5_E0001);
+    // The lake writer keyed v1; v2 it has not reached.
+    live_key(&store, tenant, v1).await;
+    live_key(&store, tenant, untouched).await;
+    live_key(&store, other_tenant, other_v1).await;
+    app.erase_claim(admin.as_str(), v1).await.expect("erase");
+    let (gone, destroyed, _) = key_state(&store, tenant, v1).await;
+    assert!(gone, "the wrapped key is gone");
+    assert!(destroyed.is_some(), "and its destruction stamped");
     let unkeyed = owner_row(
         &store,
         tenant,
@@ -12482,6 +12670,16 @@ async fn an_erase_destroys_the_versions_data_key() {
         0,
         "the lake writer writes the destroyed row it never keyed"
     );
+    assert_eq!(
+        key_state(&store, tenant, untouched).await,
+        (false, None, "kek-1".to_owned()),
+        "another claim's key stays live"
+    );
+    assert_eq!(
+        key_state(&store, other_tenant, other_v1).await,
+        (false, None, "kek-1".to_owned()),
+        "another tenant's key stays live"
+    );
     drop_dbs(&created).await;
 }
 
@@ -12493,23 +12691,194 @@ async fn the_serving_role_cannot_read_a_wrapped_data_key() {
     }
     let created = Mutex::new(Vec::new());
     let store = fresh_store(&created).await;
-    let mut tx = store.pool().begin().await.expect("begin");
-    let err = sqlx::query("SELECT wrapped_dek FROM artifact_keys LIMIT 1")
-        .execute(&mut *tx)
-        .await
-        .unwrap_err();
-    assert!(err.to_string().contains("permission denied"), "{err}");
-    drop(tx);
-    let mut tx = store.pool().begin().await.expect("begin");
-    let err = sqlx::query(
+    let (_app, tenant, _admin, _writer, v1, v2) = two_promoted_pg(&store, "keyread").await;
+    live_key(&store, tenant, v1).await;
+    live_key(&store, tenant, v2).await;
+    for sql in [
+        "SELECT wrapped_dek FROM artifact_keys WHERE tenant_id = $1 AND artifact_id = $2",
+        "SELECT kek_id FROM artifact_keys WHERE tenant_id = $1 AND artifact_id = $2",
+        "SELECT created_at FROM artifact_keys WHERE tenant_id = $1 AND artifact_id = $2",
+        "SELECT artifact_keys FROM artifact_keys WHERE tenant_id = $1 AND artifact_id = $2",
+        "SELECT artifact_id FROM artifact_keys \
+          WHERE tenant_id = $1 AND artifact_id = $2 AND wrapped_dek IS NOT NULL",
+        "UPDATE artifact_keys SET wrapped_dek = NULL, destroyed_at = now() \
+          WHERE tenant_id = $1 AND artifact_id = $2 RETURNING wrapped_dek",
+        "UPDATE artifact_keys SET wrapped_dek = wrapped_dek \
+          WHERE tenant_id = $1 AND artifact_id = $2",
+        "UPDATE artifact_keys SET kek_id = 'kek-2' WHERE tenant_id = $1 AND artifact_id = $2",
         "INSERT INTO artifact_keys (tenant_id, artifact_id, wrapped_dek, kek_id) \
-         VALUES (gen_random_uuid(), gen_random_uuid(), NULL, 'k')",
+         VALUES ($1, $2, NULL, 'k') ON CONFLICT DO NOTHING",
+        "DELETE FROM artifact_keys WHERE tenant_id = $1 AND artifact_id = $2",
+    ] {
+        let err = serving_refusal(&store, tenant, sql, v1)
+            .await
+            .unwrap_or_else(|| panic!("the serving role ran: {sql}"));
+        assert!(err.contains("permission denied"), "{sql}: {err}");
+    }
+    assert_eq!(
+        key_state(&store, tenant, v1).await,
+        (false, None, "kek-1".to_owned()),
+        "nothing the serving role tried changed the key"
+    );
+    // The one write it holds: the destruction, as an erase makes it.
+    assert_eq!(
+        serving_refusal(
+            &store,
+            tenant,
+            "UPDATE artifact_keys SET wrapped_dek = NULL, destroyed_at = now() \
+              WHERE tenant_id = $1 AND artifact_id = $2 AND destroyed_at IS NULL",
+            v2,
+        )
+        .await,
+        None
+    );
+    assert!(key_state(&store, tenant, v2).await.0);
+    drop_dbs(&created).await;
+}
+
+#[tokio::test]
+async fn the_serving_role_cannot_re_key_a_live_data_key() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let (_app, tenant, _admin, _writer, v1, _v2) = two_promoted_pg(&store, "rekey").await;
+    live_key(&store, tenant, v1).await;
+    let err = serving_refusal(
+        &store,
+        tenant,
+        "UPDATE artifact_keys SET wrapped_dek = '\\x0909'::bytea \
+          WHERE tenant_id = $1 AND artifact_id = $2",
+        v1,
     )
-    .execute(&mut *tx)
     .await
-    .unwrap_err();
-    assert!(err.to_string().contains("permission denied"), "{err}");
-    drop(tx);
+    .expect("a re-key without a new KEK is refused");
+    assert!(err.contains("artifact_keys_guard"), "{err}");
+    let row = owner_row(
+        &store,
+        tenant,
+        "SELECT wrapped_dek FROM artifact_keys WHERE tenant_id = $1 AND artifact_id = $2",
+        v1,
+    )
+    .await;
+    assert_eq!(row.get::<Vec<u8>, _>(0), vec![1, 2], "the key stays");
+    drop_dbs(&created).await;
+}
+
+#[tokio::test]
+async fn the_serving_role_cannot_un_destroy_a_data_key() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let (_app, tenant, _admin, _writer, v1, _v2) = two_promoted_pg(&store, "undestroy").await;
+    destroyed_key(&store, tenant, v1).await;
+    let before = key_state(&store, tenant, v1).await;
+    let err = serving_refusal(
+        &store,
+        tenant,
+        "UPDATE artifact_keys SET wrapped_dek = '\\x0909'::bytea, destroyed_at = NULL \
+          WHERE tenant_id = $1 AND artifact_id = $2",
+        v1,
+    )
+    .await
+    .expect("an un-destroy is refused");
+    assert!(err.contains("artifact_keys_guard"), "{err}");
+    assert_eq!(key_state(&store, tenant, v1).await, before);
+    drop_dbs(&created).await;
+}
+
+#[tokio::test]
+async fn the_serving_role_cannot_backdate_a_destruction() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let (_app, tenant, _admin, _writer, v1, v2) = two_promoted_pg(&store, "backdate").await;
+    destroyed_key(&store, tenant, v1).await;
+    live_key(&store, tenant, v2).await;
+    let before = key_state(&store, tenant, v1).await;
+    // A destroyed row's time never moves.
+    let err = serving_refusal(
+        &store,
+        tenant,
+        "UPDATE artifact_keys SET destroyed_at = destroyed_at - interval '1 day' \
+          WHERE tenant_id = $1 AND artifact_id = $2",
+        v1,
+    )
+    .await
+    .expect("a backdated destruction is refused");
+    assert!(err.contains("artifact_keys_guard"), "{err}");
+    assert_eq!(key_state(&store, tenant, v1).await, before);
+    // A destruction is stamped with the time of the transaction that makes it.
+    let err = serving_refusal(
+        &store,
+        tenant,
+        "UPDATE artifact_keys SET wrapped_dek = NULL, destroyed_at = '2001-01-01T00:00:00Z' \
+          WHERE tenant_id = $1 AND artifact_id = $2",
+        v2,
+    )
+    .await
+    .expect("a destruction stamped in the past is refused");
+    assert!(err.contains("artifact_keys_guard"), "{err}");
+    assert_eq!(
+        key_state(&store, tenant, v2).await,
+        (false, None, "kek-1".to_owned())
+    );
+    drop_dbs(&created).await;
+}
+
+#[tokio::test]
+async fn the_lake_writers_re_wrap_and_its_destroy_of_a_destroyed_key_still_run() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let (_app, tenant, _admin, _writer, v1, v2) = two_promoted_pg(&store, "lakekeys").await;
+    live_key(&store, tenant, v1).await;
+    destroyed_key(&store, tenant, v2).await;
+    let before = key_state(&store, tenant, v2).await;
+    // rewrap_key's statement: a new wrapped key under a new KEK.
+    owner_exec(
+        &store,
+        tenant,
+        "UPDATE artifact_keys SET wrapped_dek = '\\x0303'::bytea, kek_id = 'kek-2' \
+          WHERE tenant_id = $1 AND artifact_id = $2 AND wrapped_dek = '\\x0102'::bytea",
+        v1,
+    )
+    .await;
+    assert_eq!(
+        key_state(&store, tenant, v1).await,
+        (false, None, "kek-2".to_owned())
+    );
+    // destroy_key's upsert over a row already destroyed writes what it holds.
+    owner_exec(
+        &store,
+        tenant,
+        "INSERT INTO artifact_keys (tenant_id, artifact_id, wrapped_dek, kek_id, destroyed_at) \
+         VALUES ($1, $2, NULL, 'kek-2', now()) \
+         ON CONFLICT (tenant_id, artifact_id) DO UPDATE \
+           SET wrapped_dek = NULL, destroyed_at = coalesce(artifact_keys.destroyed_at, now())",
+        v2,
+    )
+    .await;
+    assert_eq!(key_state(&store, tenant, v2).await, before);
+    // And over a live row it destroys it now.
+    owner_exec(
+        &store,
+        tenant,
+        "INSERT INTO artifact_keys (tenant_id, artifact_id, wrapped_dek, kek_id, destroyed_at) \
+         VALUES ($1, $2, NULL, 'kek-2', now()) \
+         ON CONFLICT (tenant_id, artifact_id) DO UPDATE \
+           SET wrapped_dek = NULL, destroyed_at = coalesce(artifact_keys.destroyed_at, now())",
+        v1,
+    )
+    .await;
+    assert!(key_state(&store, tenant, v1).await.1.is_some());
     drop_dbs(&created).await;
 }
 

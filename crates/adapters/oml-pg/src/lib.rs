@@ -3347,8 +3347,12 @@ async fn supersede_tip(
         return Err(StoreError::TipMoved { replaced });
     }
     if let Some(end) = replaced_valid_until {
+        // The end it had is kept for a demotion that restores it (0058;
+        // ADR-0089 d16, note of 2026-11-18).
         sqlx::query(
-            "UPDATE memories SET valid_until = $3, valid_until_us = $4 \
+            "UPDATE memories SET valid_until_ratified = true, \
+                    valid_until_before = valid_until, valid_until_before_us = valid_until_us, \
+                    valid_until = $3, valid_until_us = $4 \
              WHERE tenant_id = $1 AND id = $2",
         )
         .bind(tenant_id)
@@ -3407,8 +3411,16 @@ async fn demote_memory(
     if let Some(restored) = restored {
         // `memories_served_tip` admits it: the demoted version left the tip
         // in the statement above.
+        // It gets back the end it had before the supersession this undoes
+        // (0058; ADR-0089 d16, note of 2026-11-18).
         let back = sqlx::query(
-            "UPDATE memories SET is_tip = true \
+            "UPDATE memories SET is_tip = true, \
+                    valid_until = CASE WHEN valid_until_ratified \
+                                       THEN valid_until_before ELSE valid_until END, \
+                    valid_until_us = CASE WHEN valid_until_ratified \
+                                          THEN valid_until_before_us ELSE valid_until_us END, \
+                    valid_until_ratified = false, valid_until_before = NULL, \
+                    valid_until_before_us = NULL \
               WHERE tenant_id = $1 AND id = $2 AND status = 'promoted' AND NOT is_tip",
         )
         .bind(tenant_id)
@@ -3461,8 +3473,7 @@ async fn erase_claim(
     // `memories_search_vector` sets the empty lexeme set from it.
     sqlx::query(
         "UPDATE memories SET status = 'erased', is_tip = false, claim = '', terms = '{}', \
-                rule = NULL, search_text = NULL, search_text_by = NULL, \
-                skill_name = NULL, skill_description = NULL \
+                rule = NULL, search_text = NULL, search_text_by = NULL \
           WHERE tenant_id = $1 AND id = ANY($2::uuid[])",
     )
     .bind(tenant_id)
@@ -8236,7 +8247,9 @@ impl JournalStore for PgStore {
             .filter(|k| k.class().needs_person())
             .map(|k| k.as_str())
             .collect();
-        let (held, all, unlisted, unapproved, withdrawn, unpersoned): (
+        let (held, all, unlisted, unapproved, withdrawn, unpersoned, stranded, keyed): (
+            i64,
+            i64,
             i64,
             i64,
             i64,
@@ -8259,7 +8272,17 @@ impl JournalStore for PgStore {
                                                       AND q.memory_id = m.id)), \
                     count(*) FILTER (WHERE status = 'promoted' AND is_tip \
                                        AND NOT retirement AND kind = ANY($3::text[]) \
-                                       AND approver_used_by IS DISTINCT FROM 'person') \
+                                       AND approver_used_by IS DISTINCT FROM 'person'), \
+                    count(*) FILTER (WHERE status = 'held' AND replaces_artifact_id IS NOT NULL \
+                                       AND NOT EXISTS (SELECT 1 FROM memories t \
+                                                        WHERE t.tenant_id = m.tenant_id \
+                                                          AND t.id = m.replaces_artifact_id \
+                                                          AND t.status = 'promoted' AND t.is_tip)), \
+                    (SELECT count(*) FROM memories e \
+                      WHERE e.tenant_id = $1 AND e.status = 'erased' \
+                        AND EXISTS (SELECT 1 FROM artifact_keys k \
+                                     WHERE k.tenant_id = e.tenant_id \
+                                       AND k.artifact_id = e.id AND k.destroyed_at IS NULL)) \
              FROM memories m \
              WHERE tenant_id = $1 AND status <> 'erased'",
         )
@@ -8277,6 +8300,8 @@ impl JournalStore for PgStore {
             promoted_unapproved: u64::try_from(unapproved).map_err(backend)?,
             withdrawn_in_queue: u64::try_from(withdrawn).map_err(backend)?,
             instructions_without_person_approval: u64::try_from(unpersoned).map_err(backend)?,
+            held_successors_stranded: u64::try_from(stranded).map_err(backend)?,
+            erased_keys_live: u64::try_from(keyed).map_err(backend)?,
         })
     }
 

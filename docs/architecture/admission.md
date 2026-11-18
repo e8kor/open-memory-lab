@@ -33,10 +33,12 @@ stateDiagram-v2
 | `held` | Its author; the reviewer it is served to; readers of an in-progress workspace that holds it, marked unreviewed, when it is a memory or derived fact the scan raised no finding on; admin keys through the admin read |
 | `promoted` | Every key with read access to the workspace (state after approval) |
 | `rejected` | Its author, in its own listing |
-| `demoted` | Its author, in its own listing. No read serves it, at any instant |
+| `demoted` | Its author, by id and in its own listing, with its text and `state: demoted` shown: the author's own record, not served knowledge. No other read serves it, at any instant |
 | `erased` | Its author, in its own listing, with no text: the state, the digest, the title and the attribution |
 
 An admin's fix demotes any approved version or erases every version of a claim ([ADR-0089](../adr/ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) d16). The states, their folds and their journal events are built. The fix act that reaches them is designed, so no verb demotes or erases in this build.
+
+The author's read of a demoted version is a reading of 2026-11-18, for the operator to confirm: a demotion takes a version out of what is served, and its author keeps reading their own version by id and in their own listing, marked `demoted`, as they read a rejected one. A recall, a scoped listing and every other key's get serve it to no one ([ADR-0089](../adr/ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) d16).
 
 ## What happens to a write
 

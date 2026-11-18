@@ -44,7 +44,7 @@ use crate::types::{
     ClaimEdgeRecord, ClaimEdgeSelection, ClaimKeyState, ClientDescription, ClientKind,
     ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord, Credential, Crew,
     CrewRecord, DenialRecord, DocumentCaching, GrantRecord, HIT_KINDS, HeldFilter, HeldRow,
-    KeyAccess, KeyRecord, KeyReferences, KindFields, ListingFilter, ListingPosition, ListingScope,
+    KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition, ListingScope,
     MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, PersonReviewer, PinOutcome,
     ProviderAnswer, ProviderFailure, QueueDepth, RefreshFacts, RefreshOutcome, ReviewLane,
     SIMILAR_KINDS, SourceCheck, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord,
@@ -360,6 +360,11 @@ struct TenantState {
     /// The profile an admin assigned each account (`account_profiles`;
     /// ADR-0071 d5).
     account_profiles: BTreeMap<Uuid, String>,
+    /// The end each version had before a ratified supersession replaced
+    /// it, `None` for an open end, until a demotion restores it as the tip
+    /// (`memories.valid_until_ratified` and `valid_until_before`, 0058;
+    /// ADR-0089 d16, note of 2026-11-18).
+    valid_until_before: BTreeMap<Uuid, Option<oml_domain::valid_time::ValidEnd>>,
 }
 
 /// BTreeMap journal-and-metadata store with a real lock per tenant: chain
@@ -2054,6 +2059,10 @@ fn apply_fold(
                 && let Some(memory) = state.memories.get_mut(&r)
             {
                 memory.is_tip = true;
+                // The end it had before the supersession this undoes.
+                if let Some(before) = state.valid_until_before.remove(&r) {
+                    memory.valid.until = before;
+                }
             }
         }
         MetadataFold::ClaimErased { memory_ids } => {
@@ -2085,14 +2094,9 @@ fn apply_fold(
                     }
                     memory.format.search_text = None;
                     memory.format.search_text_by = None;
-                    // A skill's description is text of its own; its name
-                    // goes with it, as `memories_kind_fields` pairs them.
-                    if matches!(
-                        memory.kind_fields.as_deref(),
-                        Some(KindFields::Skill { .. })
-                    ) {
-                        memory.kind_fields = None;
-                    }
+                    // A skill's name and description and a document's
+                    // title stay, signed in the submission as the title is
+                    // (ADR-0005 d3, note of 2026-11-18).
                 }
             }
             state.queue.retain(|e| !ids.contains(&e.memory_id));
@@ -2198,6 +2202,9 @@ fn apply_fold(
             if let Some(target) = state.memories.get_mut(&replaced) {
                 target.is_tip = false;
                 if let Some(end) = replaced_valid_until {
+                    state
+                        .valid_until_before
+                        .insert(replaced, target.valid.until.clone());
                     target.valid.until = Some(*end);
                 }
             }
@@ -3691,6 +3698,21 @@ impl JournalStore for MemStore {
                 })
                 .count() as u64,
             instructions_without_person_approval: instructions as u64,
+            held_successors_stranded: state
+                .memories
+                .values()
+                .filter(|m| {
+                    m.status == MemoryStatus::Held
+                        && m.replaces.is_some_and(|r| {
+                            !state
+                                .memories
+                                .get(&r)
+                                .is_some_and(|t| t.status == MemoryStatus::Promoted && t.is_tip)
+                        })
+                })
+                .count() as u64,
+            // This store keeps no data keys.
+            erased_keys_live: 0,
         })
     }
 

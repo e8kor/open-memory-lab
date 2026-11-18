@@ -101,6 +101,7 @@ It checks, among other things:
 - usage, with an admin key: accounts whose counters differ from their rows, and accounts on a profile the configuration does not declare;
 - approvals, with an admin key: served versions with no approval (`approval_unmatched`), steering and guardrails in force on an approval that was not a person's (`instruction_approvals`), and each workspace holding steering or guardrail versions that no person's reviewer key can approve (`instructions_unreviewable`);
 - withdrawals, with an admin key: withdrawn versions still in a review queue (`memory.withdrawn_in_queue`), which fails the run;
+- lifecycle, with an admin key: held versions whose target is no longer their claim's approved tip, which no verdict can approve, such as the successors of a demoted tip (`memory.held_successor_stranded`), and erased versions whose data key is still live (`lake.erased_key_live`); each warns;
 - sign-in providers and OAuth discovery when `oauth.issuer` is set;
 - recall telemetry: dropped events, queue depth and a purge that is behind.
 
