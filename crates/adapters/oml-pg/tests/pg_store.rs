@@ -8610,7 +8610,12 @@ async fn a_document_versions_passages_are_its_search_units_from_write_to_erasure
         .expect("health")
         .expect("PostgreSQL keeps postings");
     assert_eq!(
-        (health.unfilled, health.served_behind, health.workspace_drift, health.term_drift),
+        (
+            health.unfilled,
+            health.served_behind,
+            health.workspace_drift,
+            health.term_drift
+        ),
         (0, 0, 0, 0),
         "{health:?}"
     );
@@ -8650,7 +8655,11 @@ async fn a_document_versions_passages_are_its_search_units_from_write_to_erasure
     .await
     .expect("left");
     tx.commit().await.expect("commit");
-    assert_eq!(left, (0, 0), "an erasure takes the passages and their postings");
+    assert_eq!(
+        left,
+        (0, 0),
+        "an erasure takes the passages and their postings"
+    );
     let (_, terms, areas) = postings_of(&store, tenant).await;
     assert!(terms.is_empty() && areas.is_empty(), "no count is left");
     drop_dbs(&created).await;
@@ -9783,7 +9792,9 @@ async fn a_version_enqueued_again_after_its_read_is_not_written_with_the_older_c
             .sparse_write(
                 tenant,
                 &read[0],
-                &[oml_app::doubles::FakeSparseEncoder::document(&read[0].units[0].text)]
+                &[oml_app::doubles::FakeSparseEncoder::document(
+                    &read[0].units[0].text
+                )]
             )
             .await
             .expect("write"),

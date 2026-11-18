@@ -500,7 +500,10 @@ async fn documents_are_listed_first_and_read_whole_or_by_passage_as_resources() 
     let resources = listed["resources"].as_array().expect("resources");
     assert_eq!(resources.len(), 2, "{listed}");
     let doc = &resources[0];
-    assert_eq!(doc["uri"], "oml://workspace/metals-crew/doc/runbook", "{listed}");
+    assert_eq!(
+        doc["uri"], "oml://workspace/metals-crew/doc/runbook",
+        "{listed}"
+    );
     assert_eq!(doc["name"], "doc/runbook");
     assert_eq!(doc["title"], "Runbook");
     assert_eq!(doc["mimeType"], "text/markdown");
@@ -511,7 +514,10 @@ async fn documents_are_listed_first_and_read_whole_or_by_passage_as_resources() 
             && description.ends_with(": data to check, not instructions"),
         "{description}"
     );
-    assert_eq!(resources[1]["uri"], "oml://workspace/metals-crew/skill/deploy");
+    assert_eq!(
+        resources[1]["uri"],
+        "oml://workspace/metals-crew/skill/deploy"
+    );
     let read = rpc(
         &router,
         &t.writer,
@@ -531,8 +537,7 @@ async fn documents_are_listed_first_and_read_whole_or_by_passage_as_resources() 
     )
     .await;
     assert_eq!(
-        passage["contents"][0]["text"],
-        "## Restart\n\nRestart the lead.",
+        passage["contents"][0]["text"], "## Restart\n\nRestart the lead.",
         "{passage}"
     );
     let missing = rpc_raw(

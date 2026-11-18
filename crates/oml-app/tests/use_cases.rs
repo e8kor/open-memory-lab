@@ -16152,7 +16152,11 @@ async fn recall_serves_one_hit_per_document_its_best_passage() {
         .recall(&writer.value, &recall_req("zebra quokka"))
         .await
         .expect("recall");
-    let ids: Vec<Uuid> = recall.hits.iter().map(|h| h.served.memory.memory_id).collect();
+    let ids: Vec<Uuid> = recall
+        .hits
+        .iter()
+        .map(|h| h.served.memory.memory_id)
+        .collect();
     assert_eq!(
         ids.iter().filter(|id| **id == doc).count(),
         1,
@@ -16172,7 +16176,10 @@ async fn recall_serves_one_hit_per_document_its_best_passage() {
         hit.served.memory.body,
         "## Install\n\nRun the zebra installer with quokka flags."
     );
-    assert_eq!(hit.served.memory.body_bytes, hit.served.memory.body.len() as u64);
+    assert_eq!(
+        hit.served.memory.body_bytes,
+        hit.served.memory.body.len() as u64
+    );
     assert_eq!(hit.more_passages, 1, "Rollback also says zebra");
     assert!(
         hit.uri
@@ -16191,8 +16198,7 @@ async fn recall_serves_one_hit_per_document_its_best_passage() {
 }
 
 #[tokio::test]
-async fn a_section_query_on_a_300_line_document_returns_that_passage_with_its_fragment_and_lines()
-{
+async fn a_section_query_on_a_300_line_document_returns_that_passage_with_its_fragment_and_lines() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;

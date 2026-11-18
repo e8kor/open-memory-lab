@@ -13723,7 +13723,8 @@ pub async fn a_document_is_searched_by_its_passages_and_both_bm25_lists_agree<S:
                 RetrieverKind::KeywordAny
             };
             let scan = ask(scan_kind).await.expect("scan");
-            if served.contains(&RetrieverKind::Bm25) && served.contains(&RetrieverKind::Bm25Postings)
+            if served.contains(&RetrieverKind::Bm25)
+                && served.contains(&RetrieverKind::Bm25Postings)
             {
                 let postings = ask(RetrieverKind::Bm25Postings).await.expect("postings");
                 same_list(&postings, &scan, &format!("{query:?} own {own_held:?}"));
@@ -13736,7 +13737,11 @@ pub async fn a_document_is_searched_by_its_passages_and_both_bm25_lists_agree<S:
                     assert_eq!(c.ordinal, -1, "{query:?}: a memory is one unit");
                 }
             }
-            let kangaroo: Vec<_> = scan.candidates.iter().filter(|c| c.memory_id == doc).collect();
+            let kangaroo: Vec<_> = scan
+                .candidates
+                .iter()
+                .filter(|c| c.memory_id == doc)
+                .collect();
             if query == "kangaroo" {
                 assert_eq!(
                     kangaroo.len(),
@@ -13826,14 +13831,16 @@ pub async fn an_erased_or_demoted_documents_passages_are_never_recalled<S: Journ
         RetrieverKind::Bm25,
         RetrieverKind::Bm25Postings,
     ]
-        .into_iter()
-        .filter(|k| store.retrievers().contains(k))
-        .collect();
+    .into_iter()
+    .filter(|k| store.retrievers().contains(k))
+    .collect();
     for &kind in &kinds {
         assert!(found("wombat", kind).await.contains(&demoted), "{kind:?}");
         assert!(found("quokka", kind).await.contains(&erased), "{kind:?}");
     }
-    demote(&mut rig, store, demoted, None).await.expect("demote");
+    demote(&mut rig, store, demoted, None)
+        .await
+        .expect("demote");
     erase(&mut rig, store, vec![erased]).await.expect("erase");
     for &kind in &kinds {
         assert!(
@@ -15127,7 +15134,11 @@ pub async fn a_failed_encode_stays_queued_and_a_stale_read_writes_nothing<S: Jou
     };
     assert!(
         !store
-            .sparse_write(tenant, &stale, &[FakeSparseEncoder::document("wombat notes")])
+            .sparse_write(
+                tenant,
+                &stale,
+                &[FakeSparseEncoder::document("wombat notes")]
+            )
             .await
             .expect("write"),
         "an entry read before its re-enqueue writes nothing"

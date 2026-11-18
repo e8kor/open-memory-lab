@@ -118,13 +118,13 @@ use crate::types::{
     ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord, CreatedWorkspace,
     Credential, CrewCreateRequest, CrewPage, CrewRecord, CrewUpdate, DenialRecord,
     EdgeRatification, ExchangeForm, FormatFields, GrantRecord, GuardrailFields, GuardrailRequest,
-    GuardrailSet, GuardrailVerdict, HIT_KINDS, HitPassage, IssueKeyRequest, IssuedKey, IssuedTokens, KeyAccess,
-    KeyDetail, KeyRecord, KindFields, ListRequest, ListingFilter, ListingPosition, ListingScope,
-    LiveConnectCode, MemoryPage, MemoryRecord, MintedToken, NamedRef, NamingRefusal,
-    OAuthClientRecord, OnSimilar, OwnHeldGuardrail, PROVIDER_TENANT, ProposeBriefEdge,
-    ProposeClaimEdge, RecallHit, RecallRequest, RecallResult, RefreshFacts, RefreshForm,
-    RegisteredClient, RerankOutcome, SIMILAR_KINDS, ServedGuardrail, ServedMemory, SimilarItem,
-    SourceCheck, SourceCheckReceipt, SourceCheckRequest, SubmitOutcome, SubmitReceipt,
+    GuardrailSet, GuardrailVerdict, HIT_KINDS, HitPassage, IssueKeyRequest, IssuedKey,
+    IssuedTokens, KeyAccess, KeyDetail, KeyRecord, KindFields, ListRequest, ListingFilter,
+    ListingPosition, ListingScope, LiveConnectCode, MemoryPage, MemoryRecord, MintedToken,
+    NamedRef, NamingRefusal, OAuthClientRecord, OnSimilar, OwnHeldGuardrail, PROVIDER_TENANT,
+    ProposeBriefEdge, ProposeClaimEdge, RecallHit, RecallRequest, RecallResult, RefreshFacts,
+    RefreshForm, RegisteredClient, RerankOutcome, SIMILAR_KINDS, ServedGuardrail, ServedMemory,
+    SimilarItem, SourceCheck, SourceCheckReceipt, SourceCheckRequest, SubmitOutcome, SubmitReceipt,
     SubmitRequest, SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage,
     TailedEvent, TenantRow, TokenPair, TransitionRecord, TransitionState, TransitionView, TreeNode,
     TreePage, UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami,
@@ -140,7 +140,8 @@ use oml_domain::skills::{SKILL_PAGE, SkillCandidate, offer, skill_uri};
 use crate::search::{
     Access, CandidateScope, DID_YOU_MEAN_BELOW, Fused, Fusion, MatchMode, OwnHeldScope, Pipeline,
     RetrievalQuery, RetrieverKind, SearchConfig, Stage, TIME_DEPTH, Timings, apply_floor,
-    collapse_passages, fuse_capped, order_time_list, pipeline_access, pruned_words, query_terms, rerank_order,
+    collapse_passages, fuse_capped, order_time_list, pipeline_access, pruned_words, query_terms,
+    rerank_order,
 };
 use oml_domain::valid_time::{ValidTime, Window, parse_now, parse_window, ratified_end};
 

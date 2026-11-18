@@ -42,7 +42,8 @@ use oml_app::ports::{
 };
 use oml_app::search::{
     Access, Candidate, CandidateScope, MatchMode, MatchedToken, OwnHeldScope, PostingsHealth,
-    RetrievalQuery, Retrieved, RetrieverKind, SparsePending, SparsePosting, SparseTenant, SparseUnit,
+    RetrievalQuery, Retrieved, RetrieverKind, SparsePending, SparsePosting, SparseTenant,
+    SparseUnit,
 };
 use oml_app::types::{
     AdminSearch, AdminState, Approval, AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition,
@@ -7936,10 +7937,7 @@ impl JournalStore for PgStore {
             .await
             .map_err(backend)?;
         let kinds = hit_kinds(&scope.kinds);
-        let memory_kinds: Vec<i16> = kinds
-            .iter()
-            .filter_map(|k| memory_kind_code(k))
-            .collect();
+        let memory_kinds: Vec<i16> = kinds.iter().filter_map(|k| memory_kind_code(k)).collect();
         let tokens: Vec<i64> = {
             let mut t: Vec<i64> = forms.iter().map(|(_, f)| token_id(f)).collect();
             t.sort_unstable();
@@ -8026,10 +8024,7 @@ impl JournalStore for PgStore {
         .await
         .map_err(backend)?;
         let kinds = hit_kinds(&scope.kinds);
-        let memory_kinds: Vec<i16> = kinds
-            .iter()
-            .filter_map(|k| memory_kind_code(k))
-            .collect();
+        let memory_kinds: Vec<i16> = kinds.iter().filter_map(|k| memory_kind_code(k)).collect();
         let mut rows: BTreeMap<Uuid, u64> = scope.nodes.iter().map(|n| (*n, 0)).collect();
         let mut counted: Vec<(Uuid, i64, i64)> = Vec::new();
         // Each expired version's (node, token), subtracted from the counts.

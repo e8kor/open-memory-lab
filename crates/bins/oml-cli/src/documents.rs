@@ -44,10 +44,8 @@ pub fn server_lines(answer: &Result<Value, CliError>) -> Vec<String> {
 pub fn mixed_lines(items: &[Value]) -> Vec<String> {
     let mut by_path: BTreeMap<&str, (Vec<&str>, Vec<&str>)> = BTreeMap::new();
     for item in items {
-        let (Some(path), Some(key)) = (
-            item["anchor"]["path"].as_str(),
-            item["claim_key"].as_str(),
-        ) else {
+        let (Some(path), Some(key)) = (item["anchor"]["path"].as_str(), item["claim_key"].as_str())
+        else {
             continue;
         };
         let entry = by_path.entry(path).or_default();
@@ -111,7 +109,8 @@ mod tests {
         );
         let none = Ok(json!({"error": {"code": -32601, "message": "method not found"}}));
         assert_eq!(server_lines(&none).len(), 1);
-        let new = Ok(json!({"result": {"resourceTemplates": [{"name": "document"}, {"name": "skill"}]}}));
+        let new =
+            Ok(json!({"result": {"resourceTemplates": [{"name": "document"}, {"name": "skill"}]}}));
         assert!(server_lines(&new).is_empty());
     }
 

@@ -933,18 +933,20 @@ pub fn fuse(lists: &[(RetrieverKind, Retrieved)], fusion: Fusion) -> Vec<Fused> 
                     1.0 / denominator
                 }
             };
-            let entry = by_id.entry((c.memory_id, c.ordinal)).or_insert_with(|| Fused {
-                memory_id: c.memory_id,
-                ordinal: c.ordinal,
-                body_bytes: c.body_bytes,
-                score: 0.0,
-                matched: Vec::new(),
-                via: Vec::new(),
-                tokens: Vec::new(),
-                rerank: None,
-                rank_before: None,
-                more_passages: 0,
-            });
+            let entry = by_id
+                .entry((c.memory_id, c.ordinal))
+                .or_insert_with(|| Fused {
+                    memory_id: c.memory_id,
+                    ordinal: c.ordinal,
+                    body_bytes: c.body_bytes,
+                    score: 0.0,
+                    matched: Vec::new(),
+                    via: Vec::new(),
+                    tokens: Vec::new(),
+                    rerank: None,
+                    rank_before: None,
+                    more_passages: 0,
+                });
             entry.score += contribution;
             for term in &c.matched {
                 if !entry.matched.contains(term) {
