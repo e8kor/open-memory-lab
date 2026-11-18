@@ -114,5 +114,119 @@
     "fragment": "L42-L60"
    }
   ]
+ },
+ {
+  "name": "CRLF line ends read as LF",
+  "format": "markdown",
+  "text": "# T\r\nIntro.\r\n## A\r\nBody a.\r\n",
+  "passages": [
+   {
+    "ordinal": 0,
+    "start_line": 1,
+    "end_line": 2,
+    "heading_path": [
+     "T"
+    ],
+    "fragment": "t"
+   },
+   {
+    "ordinal": 1,
+    "start_line": 3,
+    "end_line": 4,
+    "heading_path": [
+     "T",
+     "A"
+    ],
+    "fragment": "a"
+   }
+  ]
+ },
+ {
+  "name": "a byte order mark before a heading leaves the first line text",
+  "format": "markdown",
+  "text": "\ufeff# Title\nBody.\n## Next\nMore.\n",
+  "passages": [
+   {
+    "ordinal": 0,
+    "start_line": 1,
+    "end_line": 2,
+    "heading_path": [],
+    "fragment": "L1-L2"
+   },
+   {
+    "ordinal": 1,
+    "start_line": 3,
+    "end_line": 4,
+    "heading_path": [
+     "Next"
+    ],
+    "fragment": "next"
+   }
+  ]
+ },
+ {
+  "name": "a tab after the hashes opens a heading",
+  "format": "markdown",
+  "text": "# Doc\n\n##\tTab heading\nBody.\n",
+  "passages": [
+   {
+    "ordinal": 0,
+    "start_line": 3,
+    "end_line": 4,
+    "heading_path": [
+     "Doc",
+     "Tab heading"
+    ],
+    "fragment": "tab-heading"
+   }
+  ]
+ },
+ {
+  "name": "a setext underline is text",
+  "format": "markdown",
+  "text": "## Part\n\nSub\n---\nBody.\n",
+  "passages": [
+   {
+    "ordinal": 0,
+    "start_line": 1,
+    "end_line": 5,
+    "heading_path": [
+     "Part"
+    ],
+    "fragment": "part"
+   }
+  ]
+ },
+ {
+  "name": "a heading inside an HTML comment is no heading",
+  "format": "markdown",
+  "text": "## Shown\nText.\n<!--\n## Hidden\n-->\nMore.\n",
+  "passages": [
+   {
+    "ordinal": 0,
+    "start_line": 1,
+    "end_line": 6,
+    "heading_path": [
+     "Shown"
+    ],
+    "fragment": "shown"
+   }
+  ]
+ },
+ {
+  "name": "an unclosed fence runs to the end and hides the headings in it",
+  "format": "markdown",
+  "text": "## Code\n```\nx\n## After\ny\n",
+  "passages": [
+   {
+    "ordinal": 0,
+    "start_line": 1,
+    "end_line": 5,
+    "heading_path": [
+     "Code"
+    ],
+    "fragment": "code"
+   }
+  ]
  }
 ]
