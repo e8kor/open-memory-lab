@@ -713,6 +713,58 @@ async fn an_abandoned_upload_is_shredded_and_abandoning_it_again_answers_the_sam
     );
 }
 
+/// A part the store no longer holds, as after a pod lost its emptyDir, is
+/// named at completion as `upload.incomplete`, never `storage_failed`, and
+/// sending it again completes the session (ADR-0004 d3, note of
+/// 2026-11-18).
+async fn a_part_the_store_lost_is_named_incomplete_at_completion_and_sending_it_again_completes<
+    S: JournalStore + Clone,
+>(
+    store: S,
+) {
+    let rig = rig(store).await;
+    let alice = key(&rig, "alice-writer", Role::Writer).await;
+    let bytes = bundle(PART_SIZE + 4_000);
+    let id = rig
+        .app
+        .open_upload(
+            alice.as_str(),
+            UploadPurpose::Import,
+            bytes.len() as u64,
+            &sha256_hex(&bytes),
+        )
+        .await
+        .expect("open")
+        .upload_id;
+    for n in [1, 2] {
+        rig.app
+            .put_upload_part(alice.as_str(), id, n, part(&bytes, n))
+            .await
+            .expect("part");
+    }
+    let lost = rig
+        .objects
+        .names()
+        .into_iter()
+        .find(|n| n.ends_with("000002"))
+        .expect("part 2's object");
+    rig.objects.forget(&lost);
+    assert_eq!(
+        refusal(rig.app.complete_upload(alice.as_str(), id).await),
+        UploadRefusal::Incomplete { missing: vec![2] }
+    );
+    rig.app
+        .put_upload_part(alice.as_str(), id, 2, part(&bytes, 2))
+        .await
+        .expect("part 2 again");
+    let done = rig
+        .app
+        .complete_upload(alice.as_str(), id)
+        .await
+        .expect("complete");
+    assert_eq!(done.state, UploadState::Completed);
+}
+
 /// Every law of upload sessions.
 pub async fn run_upload_suite<S, F, Fut>(make: F)
 where
@@ -732,4 +784,8 @@ where
     every_upload_refusal_is_named(make().await).await;
     without_an_object_store_no_upload_opens(make().await).await;
     an_abandoned_upload_is_shredded_and_abandoning_it_again_answers_the_same(make().await).await;
+    a_part_the_store_lost_is_named_incomplete_at_completion_and_sending_it_again_completes(
+        make().await,
+    )
+    .await;
 }

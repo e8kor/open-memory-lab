@@ -184,6 +184,8 @@ The server runs new migrations at boot. `Recreate` stops the old pod first, so e
 - **The keyring claim** `oml-keyring` (`helm.sh/resource-policy: keep`). A reinstall under the same release name and namespace takes it back; under another name use `--set keyring.existingClaim=oml-keyring`.
 - **The database** and the `oml-postgres` Secret.
 
+Upload sessions' encrypted parts live in an emptyDir of at most `objects.sizeLimit` (8 GiB by default), so an uninstall, an upgrade or a replaced pod drops the parts in flight, and their sessions name them `upload.incomplete` for the client to send again. `--set objects.persistence.enabled=true` keeps them on a ReadWriteOnce claim, `oml-objects`, which an uninstall deletes ([ADR-0004](../adr/ADR-0004-bodies-and-attachments.md) d3).
+
 Deleting the claim but keeping the database fails the fork check. Any copy of the claim is a usable key copy, so guard snapshots ([back up](../operations/deployment.md#back-up-the-database-and-the-keyring-together)).
 
 Troubleshooting: [pod states and probes](../help/troubleshooting-server.md#on-kubernetes). Next: [Administer an OML server](administering.md), [Claude Code](claude-code.md), [reviewing memories](reviewing.md).

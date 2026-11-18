@@ -4441,6 +4441,7 @@ dependencies = [
  "opentelemetry_sdk",
  "prost",
  "reqwest 0.13.5",
+ "rustix",
  "rustls",
  "serde_json",
  "sha2 0.10.9",

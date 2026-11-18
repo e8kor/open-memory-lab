@@ -1998,12 +1998,12 @@ pub async fn sweep_uploads(
 
 /// The `event` field of the log line a sweep that ended stopped imports
 /// writes (ADR-0084 I11).
+pub const EVENT_IMPORTS_STOPPED: &str = "imports_stopped";
+
 /// The `event` field of the log line a lead writes at start when the
 /// directory `storage.url` names cannot be opened (ADR-0004 d3, note of
 /// 2026-11-18).
 pub const EVENT_UPLOAD_STORE_UNAVAILABLE: &str = "upload_store_unavailable";
-
-pub const EVENT_IMPORTS_STOPPED: &str = "imports_stopped";
 
 /// The deployment's imports by state, how many used `allow_older`, how
 /// many are stopped (I11) and the versions with an import's key and no

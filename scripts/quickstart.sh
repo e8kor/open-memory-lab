@@ -10,7 +10,10 @@
 # oml_write and oml_read alone: write -> held in its own work -> its held row
 # in its own recall -> approved by the reviewer, as its own work's state says ->
 # recalled (docs/api/mcp-plugin.md, "Wiring it into your agent"; ADR-0025,
-# ADR-0039 d2). Prints the environment the `oml` Claude Code plugin reads.
+# ADR-0039 d2). Then an upload session of three bytes opens, takes its part,
+# completes and is abandoned on the agent's key, which proves the server can
+# write the directory storage.url names (ADR-0004 d3). Prints the environment
+# the `oml` Claude Code plugin reads.
 #
 # Two ways to run it:
 #   docker compose up -d && scripts/quickstart.sh
@@ -122,6 +125,24 @@ approved="$(call 5 oml_read '{"state":"promoted"}')"
 [ "$(state_of items "$artifact" "$approved")" = "promoted" ] || fail "oml_read with state promoted does not list the approved write: $approved"
 recalled="$(call 6 oml_read '{"query":"quickstart wrote"}')"
 [ "$(state_of hits "$artifact" "$recalled")" = "promoted" ] || fail "the approved memory did not come back from oml_read: $recalled"
+
+# The object store: an upload that opens, stores its part and completes was
+# written to storage.url; a server that cannot write it answers 503
+# upload.storage_failed here (ADR-0004 d3, note of 2026-11-18).
+upload_call() { # method path content_type body: prints the status, then the body
+    curl -sS -X "$1" "$OML_URL$2" -H "authorization: Bearer $agent" \
+        -H "content-type: $3" --data-binary "$4" -w '\n%{http_code}'
+}
+sha="$(printf 'oml' | sha256sum | cut -d' ' -f1)"
+opened="$(upload_call POST /v2/uploads application/json "{\"purpose\":\"import\",\"size\":3,\"sha256\":\"$sha\"}")"
+[ "$(tail -n1 <<<"$opened")" = 201 ] || fail "an upload session did not open: $opened"
+upload="$(sed '$d' <<<"$opened" | jq -r .upload_id)"
+stored="$(upload_call PUT "/v2/uploads/$upload/parts/1" application/octet-stream oml)"
+[ "$(tail -n1 <<<"$stored")" = 200 ] || fail "the upload's part was not stored at storage.url: $stored"
+completed="$(upload_call POST "/v2/uploads/$upload/complete" application/json '{}')"
+[ "$(sed '$d' <<<"$completed" | jq -r .state)" = completed ] || fail "the upload did not complete: $completed"
+upload_call DELETE "/v2/uploads/$upload" application/json '' >/dev/null
+echo "quickstart: an upload of 3 bytes opened, stored its part at storage.url and completed (upload $upload)" >&2
 
 cat <<EOF
 OML is ready at $OML_URL. The MCP check passed on the agent's one key: write ->

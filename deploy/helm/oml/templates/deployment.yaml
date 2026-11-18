@@ -55,11 +55,16 @@ spec:
               drop: ["ALL"]
             seccompProfile:
               type: RuntimeDefault
-          # The image sets OML_SERVER__LISTEN=0.0.0.0:8080,
-          # OML_KMS__KEYRING_PATH=/var/lib/oml/keyring/signing.key and
-          # OML_STORAGE__URL=/var/lib/oml/objects; the port and the mounts
-          # below follow them (scripts/check_chart.py).
+          # The image sets OML_SERVER__LISTEN=0.0.0.0:8080 and
+          # OML_KMS__KEYRING_PATH=/var/lib/oml/keyring/signing.key; the port
+          # and the keyring mount below follow them (scripts/check_chart.py).
           env:
+            # A directory below the objects mount, which the lead creates
+            # owned by itself and owner-only: the mount's own root belongs
+            # to root and the lead never chmods a root it does not own
+            # (ADR-0004 d3, note of 2026-11-18).
+            - name: OML_STORAGE__URL
+              value: /var/lib/oml/objects/store
             - name: OML_POSTGRES__URL
               valueFrom:
                 secretKeyRef:
@@ -131,14 +136,21 @@ spec:
         - name: keyring
           persistentVolumeClaim:
             claimName: {{ include "oml.keyringClaim" . }}
-        # Upload sessions' encrypted parts (storage.url; ADR-0004 d3): an
-        # emptyDir, so a pod replaced mid-upload loses the parts it held and
-        # those sessions are uploaded again. With no size limit set, the
-        # kubelet never evicts the lead for an upload's bytes;
-        # uploads.tenant_max_bytes bounds them instead.
+        # Upload sessions' encrypted parts (storage.url; ADR-0004 d3). By
+        # default an emptyDir, so a pod replaced mid-upload loses the parts
+        # it held and their sessions name them at completion as
+        # upload.incomplete, to be sent again; objects.persistence keeps
+        # them on a claim instead. uploads.tenant_max_bytes bounds one
+        # tenant's parts, not the node's disk: sizeLimit does, and the
+        # kubelet evicts the lead past it.
         - name: objects
+          {{- if .Values.objects.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "oml.objectsClaim" . }}
+          {{- else }}
           emptyDir:
             {{- with .Values.objects.sizeLimit }}
             sizeLimit: {{ . | quote }}
             {{- else }} {}
             {{- end }}
+          {{- end }}

@@ -26,6 +26,7 @@ Every number has a unit and a source. Where no figure exists, the page says so i
 | Upload part | 8 MiB exactly, the last part the remainder | build constant | `422 upload.part_size` | Send the length the part number takes |
 | Upload sessions a key holds open or unbound | 4 | build constant | `409 upload.session_limit` | Complete, abandon or let one expire |
 | Upload bytes a tenant holds open or unbound | 4 GiB | `uploads.tenant_max_bytes` | `409 upload.tenant_limit` | Raise the setting, or abandon sessions |
+| Upload parts a Helm-installed lead holds | 8 GiB, the objects emptyDir's `sizeLimit`; the kubelet evicts the lead past it | `objects.sizeLimit`, or `objects.persistence` for a claim | the pod is evicted and replaced, and the parts in flight are named `409 upload.incomplete` at completion | Raise the value, or send the named parts again |
 | Upload session life | 24 hours after the last part, at most 72 hours after opening; 24 hours after an unbound completion | build constant | `410 upload.expired` | Open another session |
 | Workspace exports running at once | 1 a tenant, 2 in the process | build constant | `409 export.busy`, retryable | Retry once the running export ends |
 | Workspace export bundle size | `uploads.max_bytes`, 1 GiB by default | `uploads.max_bytes` | `413 export.too_large` | Export a smaller subtree, or raise the setting |

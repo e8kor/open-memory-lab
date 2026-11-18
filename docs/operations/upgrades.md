@@ -94,8 +94,11 @@ created. Before uploads or imports are used, set `storage.url` (`OML_STORAGE__UR
 path the server's user can write, for example `/var/lib/oml/objects` under a unit whose
 `StateDirectory=oml`. `oml doctor` warns `upload_store_unavailable` while the directory cannot be
 opened, and the next sweep, within five minutes, or the next upload opens it once it can. The release image
-already sets `/var/lib/oml/objects`, and the Compose file and the Helm chart mount a writable volume
-there.
+sets `OML_STORAGE__URL=/var/lib/oml/objects`, and an environment variable wins over the TOML file, so a
+`[storage] url` in a configuration file is ignored under the image unless the variable is set too. The
+Compose file mounts a writable volume at that directory, and the Helm chart sets
+`/var/lib/oml/objects/store`, a directory the server creates below its volume, because the volume's own
+root belongs to root and the server never changes the mode of a directory it does not own.
 
 ## Upgrading to v0.8.0: workspaces, reviewer, protected, frozen, used by
 

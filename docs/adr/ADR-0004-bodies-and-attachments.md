@@ -183,6 +183,20 @@ flowchart LR
     from a closed set and the path is the server's. The default stays the relative `oml-objects`; the release
     image sets `storage.url` to `/var/lib/oml/objects`, a directory its user owns, and the Compose
     file and the Helm chart mount a writable volume there.
+  - **Note of 2026-11-18, second (the coordinator, the review of the CI fix; for the operator's
+    batch).** The lead tightens a `storage.url` root to owner-only only when it owns it. A root it
+    does not own is never chmodded: one its group or others can write is refused, naming the owner
+    and the mode, as a volume's root owned by root is; one they cannot write is used as it is. So
+    the Helm chart sets `storage.url` to `/var/lib/oml/objects/store`, a directory below its volume
+    that the lead creates owned by itself, and `scripts/check_chart.py` refuses a storage URL that
+    is not strictly below a mounted volume. The first open, and each later try while the store is
+    closed, run off the async workers. A part the store no longer holds at completion, as after a
+    pod lost its emptyDir, is named by `upload.incomplete`, not `upload.storage_failed`, so the
+    client sends it again. The chart's objects emptyDir defaults to `sizeLimit: 8Gi`, past which the
+    kubelet evicts the lead: the per-tenant cap bounds one tenant, not the node. `objects.persistence`
+    mounts a ReadWriteOnce claim instead, off by default, so a restart or an upgrade keeps the parts
+    in flight. CI proves the write: `scripts/quickstart.sh` opens, fills and completes an upload on
+    the chart and Compose installs.
 
 - **d4 — Stored objects are ciphertext in an S3-compatible object store, encrypted per artifact,
   with both digests recorded.** The object is named by the SHA-256 of its plaintext

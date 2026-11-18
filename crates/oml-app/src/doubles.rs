@@ -6917,6 +6917,11 @@ impl MemObjects {
             .cloned()
     }
 
+    /// Removes the object under `name`, as a store that lost it would.
+    pub fn forget(&self, name: &str) {
+        self.objects.lock().expect("objects lock").remove(name);
+    }
+
     fn check(&self) -> Result<(), String> {
         if self.fail.load(Ordering::SeqCst) {
             Err("the in-memory object store is set to fail".to_owned())

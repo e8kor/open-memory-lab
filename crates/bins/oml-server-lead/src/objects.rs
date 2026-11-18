@@ -57,12 +57,33 @@ impl LocalObjects {
 
     fn open_io(root: &Path) -> std::io::Result<Self> {
         create_private_dir(root)?;
-        // A root that existed before is tightened to owner-only too
-        // (ADR-0004 d3, readings of 2026-11-18).
+        // A root that existed before is tightened to owner-only too, when
+        // the lead owns it (ADR-0004 d3, readings of 2026-11-18). One it
+        // does not own is never chmodded: others able to write it refuse it
+        // by name, as a volume's root owned by root is (second note of
+        // 2026-11-18).
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700))?;
+            use std::os::unix::fs::{MetadataExt, PermissionsExt};
+            let meta = std::fs::metadata(root)?;
+            if !meta.is_dir() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotADirectory,
+                    "not a directory",
+                ));
+            }
+            if meta.uid() == rustix::process::geteuid().as_raw() {
+                std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700))?;
+            } else if meta.mode() & 0o022 != 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!(
+                        "owned by uid {} with mode {:o}, writable by its group or others; the lead tightens only a directory it owns, so storage.url names one below this, which the lead creates",
+                        meta.uid(),
+                        meta.mode() & 0o7777
+                    ),
+                ));
+            }
         }
         Ok(Self {
             root: root.to_path_buf(),
@@ -110,24 +131,49 @@ impl LazyObjects {
     /// The directory cannot be created, or is not a directory: the closed
     /// kind of the failure and the reason naming the path and the error.
     pub fn probe(&self) -> Result<LocalObjects, StoreUnavailable> {
-        let mut opened = self
-            .opened
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(store) = opened.as_ref() {
-            return Ok(store.clone());
+        if let Some(store) = self.cached() {
+            return Ok(store);
         }
-        let store = LocalObjects::open_io(&self.root).map_err(|e| StoreUnavailable {
-            kind: failure_kind(&e),
-            reason: format!("storage.url {}: {e}", self.root.display()),
-        })?;
-        *opened = Some(store.clone());
-        Ok(store)
+        let store = try_open(&self.root)?;
+        Ok(self.keep(store))
     }
 
-    fn open(&self) -> Result<LocalObjects, String> {
-        self.probe().map_err(|e| e.reason)
+    /// [`Self::probe`] off the async workers: the first open, and each try
+    /// while the store is closed, run on the blocking pool (ADR-0004 d3,
+    /// note of 2026-11-18).
+    async fn open(&self) -> Result<LocalObjects, String> {
+        if let Some(store) = self.cached() {
+            return Ok(store);
+        }
+        let root = self.root.clone();
+        let store = tokio::task::spawn_blocking(move || try_open(&root))
+            .await
+            .map_err(|e| format!("object store task: {e}"))?
+            .map_err(|e| e.reason)?;
+        Ok(self.keep(store))
     }
+
+    fn cached(&self) -> Option<LocalObjects> {
+        self.opened
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    fn keep(&self, store: LocalObjects) -> LocalObjects {
+        self.opened
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get_or_insert(store)
+            .clone()
+    }
+}
+
+fn try_open(root: &Path) -> Result<LocalObjects, StoreUnavailable> {
+    LocalObjects::open_io(root).map_err(|e| StoreUnavailable {
+        kind: failure_kind(&e),
+        reason: format!("storage.url {}: {e}", root.display()),
+    })
 }
 
 /// Why the object store cannot be opened: `kind` is one of a closed set,
@@ -156,23 +202,23 @@ fn failure_kind(e: &std::io::Error) -> &'static str {
 
 impl ObjectStore for LazyObjects {
     fn put<'a>(&'a self, name: &'a str, bytes: Vec<u8>) -> ObjectFuture<'a, ()> {
-        Box::pin(async move { self.open()?.put(name, bytes).await })
+        Box::pin(async move { self.open().await?.put(name, bytes).await })
     }
 
     fn get<'a>(&'a self, name: &'a str) -> ObjectFuture<'a, Option<Vec<u8>>> {
-        Box::pin(async move { self.open()?.get(name).await })
+        Box::pin(async move { self.open().await?.get(name).await })
     }
 
     fn delete_prefix<'a>(&'a self, prefix: &'a str) -> ObjectFuture<'a, ()> {
-        Box::pin(async move { self.open()?.delete_prefix(prefix).await })
+        Box::pin(async move { self.open().await?.delete_prefix(prefix).await })
     }
 
     fn stored_bytes<'a>(&'a self, prefix: &'a str) -> ObjectFuture<'a, u64> {
-        Box::pin(async move { self.open()?.stored_bytes(prefix).await })
+        Box::pin(async move { self.open().await?.stored_bytes(prefix).await })
     }
 
     fn ready(&self) -> ObjectFuture<'_, ()> {
-        Box::pin(async move { self.open().map(drop) })
+        Box::pin(async move { self.open().await.map(drop) })
     }
 }
 
@@ -332,6 +378,36 @@ mod tests {
             .expect("put");
         assert_eq!(store.stored_bytes("uploads/").await.expect("bytes"), 1);
         std::fs::remove_dir_all(&blocker).expect("clean up");
+    }
+
+    /// A root the lead does not own is never chmodded: one others can
+    /// write is refused by name, as an emptyDir's root is, and one they
+    /// cannot is opened as it is (ADR-0004 d3, note of 2026-11-18).
+    #[cfg(unix)]
+    #[test]
+    fn a_root_the_lead_does_not_own_is_refused_when_others_can_write_it_and_never_chmodded() {
+        use std::os::unix::fs::MetadataExt;
+        let uid = std::fs::metadata("/proc/self").map_or(0, |m| m.uid());
+        let shared = Path::new("/tmp");
+        match std::fs::metadata(shared) {
+            Ok(meta) if uid != 0 && meta.uid() != uid && meta.mode() & 0o002 != 0 => {
+                let refused = LazyObjects::new(shared).probe().expect_err("refused");
+                assert_eq!(refused.kind, "permission_denied", "{refused:?}");
+                assert!(
+                    refused.reason.contains("writable by its group or others"),
+                    "{refused:?}"
+                );
+            }
+            _ => {}
+        }
+        let system = Path::new("/usr/share");
+        match std::fs::metadata(system) {
+            Ok(meta) if uid != 0 && meta.uid() != uid && meta.mode() & 0o022 == 0 => {
+                LocalObjects::open(system).expect("opened, never chmodded");
+                assert_eq!(std::fs::metadata(system).expect("meta").mode(), meta.mode());
+            }
+            _ => {}
+        }
     }
 
     #[tokio::test]

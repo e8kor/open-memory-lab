@@ -258,9 +258,21 @@ where
                 missing: missing.into_iter().take(MISSING_NAMED).collect(),
             }));
         }
+        // A part the store no longer holds, as after a pod lost its
+        // emptyDir, is named for the client to send again (ADR-0004 d3,
+        // note of 2026-11-18).
         let mut hash = Sha256::new();
+        let mut lost = Vec::new();
         for n in 1..=upload::part_count(session.size) {
-            hash.update(self.upload_part(&session, n).await?);
+            match self.stored_part(&session, n).await? {
+                Some(part) => hash.update(part),
+                None => lost.push(n),
+            }
+        }
+        if !lost.is_empty() {
+            return Err(AppError::Upload(UploadRefusal::Incomplete {
+                missing: lost.into_iter().take(MISSING_NAMED).collect(),
+            }));
         }
         let digest = hex(&hash.finalize());
         if digest != session.sha256 {
@@ -457,14 +469,29 @@ where
         session: &UploadSession,
         n: u64,
     ) -> Result<Vec<u8>, AppError> {
+        self.stored_part(session, n)
+            .await?
+            .ok_or(AppError::Upload(UploadRefusal::StorageFailed))
+    }
+
+    /// Part `n`'s plaintext, or `None` where the store holds no object for
+    /// it; one that does not open under the session's key, and a store that
+    /// fails, is `upload.storage_failed`.
+    async fn stored_part(
+        &self,
+        session: &UploadSession,
+        n: u64,
+    ) -> Result<Option<Vec<u8>>, AppError> {
         let failed = || AppError::Upload(UploadRefusal::StorageFailed);
         let part_key = session.part_key.ok_or_else(failed)?;
-        let sealed = self
+        let Some(sealed) = self
             .objects()?
             .get(&part_name(session.tenant_id, session.upload_id, n))
             .await
             .map_err(|_| failed())?
-            .ok_or_else(failed)?;
+        else {
+            return Ok(None);
+        };
         if sealed.len() < NONCE_LEN {
             return Err(failed());
         }
@@ -477,6 +504,7 @@ where
                     aad: &part_aad(session.upload_id, n),
                 },
             )
+            .map(Some)
             .map_err(|_| failed())
     }
 

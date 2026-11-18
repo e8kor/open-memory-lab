@@ -40,9 +40,13 @@ Run by .github/workflows/ci.yml (job chart). Renders deploy/helm/oml with
   the directory of the Dockerfile's OML_KMS__KEYRING_PATH; with
   keyring.existingClaim no claim is rendered and the pod mounts the named one
   (d3);
-- an emptyDir is mounted at the Dockerfile's OML_STORAGE__URL, so the lead,
-  whose root filesystem is read-only, can keep upload sessions' parts there
-  (ADR-0004 d3);
+- the lead's storage URL (its OML_STORAGE__URL, else the Dockerfile's) is a
+  directory strictly below an emptyDir or claim mounted in the pod: the lead's
+  root filesystem is read-only, and a mount's own root belongs to root, which
+  the lead never chmods, so it creates its own directory below it; the
+  emptyDir sets a sizeLimit by default, and with objects.persistence.enabled
+  the pod mounts a ReadWriteOnce objects claim the chart renders (ADR-0004
+  d3, notes of 2026-11-18);
 - OML_POSTGRES__URL comes from a secretKeyRef, and no env value is a
   postgres:// URL (d6);
 - OML_POSTGRES__OWNER_URL, the owner login the lead migrates under, comes
@@ -172,6 +176,26 @@ def main() -> int:
     )
     if options is not None:
         check_options(errors, options, app_version)
+
+    # The objects claim instead of the emptyDir (ADR-0004 d3, note of
+    # 2026-11-18): rendered ReadWriteOnce and mounted where the parts go.
+    kept = render(errors, "--set", "objects.persistence.enabled=true")
+    if kept is not None:
+        check_lead(errors, "objects.persistence", kept, listen_port, keyring_dir, storage_dir, args.image_user)
+        claim = next(
+            (d for d in of_kind(kept, "PersistentVolumeClaim") if d["metadata"]["name"].endswith("-objects")), None
+        )
+        if claim is None:
+            errors.append("objects.persistence: no objects claim is rendered")
+        elif claim.get("spec", {}).get("accessModes") != ["ReadWriteOnce"]:
+            errors.append("objects.persistence: the objects claim's access modes are not [ReadWriteOnce]")
+    defaults_lead = None if renders["default values"] is None else lead_deployment(errors, "default values", renders["default values"])
+    if defaults_lead is not None:
+        objects = next(
+            (v for v in defaults_lead["spec"]["template"]["spec"].get("volumes", []) if v.get("name") == "objects"), {}
+        )
+        if not (objects.get("emptyDir") or {}).get("sizeLimit"):
+            errors.append("default values: the objects emptyDir sets no sizeLimit (ADR-0004 d3, note of 2026-11-18)")
 
     # The host override the install notes print replaces the whole hosts list,
     # so it must carry its path or the Ingress routes nothing.
@@ -316,16 +340,29 @@ def check_lead(
 
     mounts = {m.get("name"): m.get("mountPath") for m in lead.get("volumeMounts", [])}
     volumes = {v.get("name"): v for v in pod.get("volumes", [])}
-    if storage_dir is not None and not any(
-        path == storage_dir and "emptyDir" in volumes.get(name, {}) for name, path in mounts.items()
-    ):
-        errors.append(
-            f"{label}: no emptyDir is mounted at {storage_dir}, the image's OML_STORAGE__URL; "
-            "the lead's root filesystem is read-only, so every upload would answer upload.storage_failed (ADR-0004 d3)"
-        )
-    keyring = [n for n, v in volumes.items() if "persistentVolumeClaim" in v]
+    storage_env = next((e for e in lead.get("env", []) if e.get("name") == "OML_STORAGE__URL"), None)
+    storage_url = (storage_env or {}).get("value") or storage_dir
+    if storage_url is not None:
+        holders = [
+            (name, path)
+            for name, path in mounts.items()
+            if path
+            and storage_url.startswith(path.rstrip("/") + "/")
+            and ("emptyDir" in volumes.get(name, {}) or "persistentVolumeClaim" in volumes.get(name, {}))
+        ]
+        if not holders:
+            errors.append(
+                f"{label}: the storage URL {storage_url} is not a directory below an emptyDir or claim the pod mounts; "
+                "the lead's root filesystem is read-only, and a mount's root belongs to root, which the lead never chmods, "
+                "so every upload would answer upload.storage_failed (ADR-0004 d3)"
+            )
+    keyring = [
+        n
+        for n, v in volumes.items()
+        if "persistentVolumeClaim" in v and (keyring_dir is None or mounts.get(n) == keyring_dir)
+    ]
     if len(keyring) != 1:
-        errors.append(f"{label}: the pod mounts {len(keyring)} volume claims, not the one keyring claim (ADR-0033 d3)")
+        errors.append(f"{label}: the pod mounts {len(keyring)} keyring claims, not the one keyring claim (ADR-0033 d3)")
         return
     if keyring_dir is not None and mounts.get(keyring[0]) != keyring_dir:
         errors.append(
