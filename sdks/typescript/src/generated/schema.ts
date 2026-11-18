@@ -48,6 +48,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/memories/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * What capture would decide for a submit's body or a supersession's, without capturing.
+         * @description Requires: the grant submit would need, or, with replaces, the grant supersede would need on that target (ADR-0082 d5). The body is submit's, or supersede's with replaces naming the version it replaces. Every check capture makes runs through the same pipeline, which stops before anything is journalled, held or metered: no version, no event, no counter moves (ADR-0071 d2), and no Idempotency-Key is read, so nothing is recorded or replayed. A refusal of authority is the HTTP error submit or supersede would answer: auth.*, limit.rate, access.verb_ceiling, every access.* grant refusal, and access.not_found for a target the key cannot read, replaces that names no row included. Every other refusal capture would make, the body's shape, size, the scan's veto, a quota's headroom, a name taken, submission.version_conflict, submission.tip_conflict, workspace.frozen and a guardrail rule that does not parse among them, answers 200 with would_capture false and refusal in the error object's shape, beside what was read before it (ADR-0082 d10). The request rate is charged once (ADR-0079). Read-shaped POST. A document's passages are not served in this release. Since v0.8.0.
+         */
+        post: operations["previewMemory"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/memories/{artifact_id}": {
         parameters: {
             query?: never;
@@ -1784,6 +1804,53 @@ export interface components {
             };
             /** @description Mirrors the X-Request-Id response header. */
             request_id: string;
+        };
+        /** @description Submit's body, or supersede's with replaces naming the version it would replace (ADR-0082 d5). */
+        PreviewRequest: components["schemas"]["SubmitRequest"] | components["schemas"]["PreviewSupersedeRequest"];
+        /** @description Supersede's body with replaces, the version the supersession would replace (ADR-0082 d5). */
+        PreviewSupersedeRequest: components["schemas"]["SupersedeRequest"] & {
+            /** @description The artifact_id of the version a supersession would replace. */
+            replaces: string;
+        };
+        /** @description What capture would decide for a previewed body (ADR-0082 d5, d10). The facts are those read before any refusal; a refusal of the body's shape answers none. */
+        MemoryPreview: {
+            would_capture: boolean;
+            /** @description The refusal capture would answer, in the error object's shape; null when it would capture. */
+            refusal: {
+                code: components["schemas"]["ErrorCode"];
+                message: string;
+                rule: string;
+                details?: {
+                    [key: string]: unknown;
+                };
+                retryable: boolean;
+            } | null;
+            /** @description The scan's findings, as a held version's list carries them; empty when the scan did not run or found nothing. */
+            findings: components["schemas"]["ScanFinding"][];
+            /** @description Whether a person's verdict is needed: an instruction kind, or a successor of one (ADR-0074 d24; ADR-0080 d16). */
+            needs_person: boolean;
+            /** @description The NFC body's UTF-8 bytes. */
+            body_bytes: number | null;
+            /** @description The body's budget tokens under oml-tc/1. */
+            budget_tokens: number | null;
+            /** @description A guardrail's rule in its canonical oml-gr/1 form. */
+            rule?: {
+                [key: string]: unknown;
+            };
+            /** @description A skill's prompt name (ADR-0080 d5). */
+            offered_as?: string;
+            /** @description A skill's same-named skills along its chain that the key reads: one on an ancestor it shadows, one on a descendant that shadows it there (ADR-0080 d5). */
+            shadows?: {
+                /** @description The workspace's path. */
+                workspace: string;
+                /** @enum {string} */
+                relation: "shadows" | "shadowed_by";
+            }[];
+            /** @description A guardrail's set size at its workspace once the version is approved, the approved rules an agent there loads, against the set cap (ADR-0037 d7). */
+            set_after?: {
+                size: number;
+                cap: number;
+            };
         };
         /** @description The target is workspace, else the key's default_workspace; neither present is refused with request.workspace_unresolved (ADR-0039 d4, d7). This body, and its nested objects, stay open: ADR-0025 d16 closes the recall, supersede, key-issuance and grant bodies only. The designed attachment, simulation and vocabulary fields are declared under x-oml-designed-fields in openapi-designed.yaml; each sent here answers its v0.3.0 code (ADR-0039 d9). */
         SubmitRequest: {
@@ -4140,6 +4207,72 @@ export interface operations {
                     "application/json": components["schemas"]["RecallResponse"];
                 };
             };
+            415: components["responses"]["UnsupportedMedia"];
+            429: components["responses"]["RateLimited"];
+            default: components["responses"]["Error"];
+        };
+    };
+    previewMemory: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "kind": "skill",
+                 *       "workspace": "alice",
+                 *       "format": "text/markdown",
+                 *       "skill": {
+                 *         "name": "release-checklist",
+                 *         "description": "Steps before a release."
+                 *       },
+                 *       "body": "Tag from main, then check the changelog."
+                 *     }
+                 */
+                "application/json": components["schemas"]["PreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description What capture would decide. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "would_capture": true,
+                     *       "refusal": null,
+                     *       "findings": [],
+                     *       "needs_person": true,
+                     *       "body_bytes": 41,
+                     *       "budget_tokens": 11,
+                     *       "offered_as": "release-checklist",
+                     *       "shadows": [
+                     *         {
+                     *           "workspace": "universe.alice",
+                     *           "relation": "shadows"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["MemoryPreview"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
             415: components["responses"]["UnsupportedMedia"];
             429: components["responses"]["RateLimited"];
             default: components["responses"]["Error"];

@@ -8029,8 +8029,8 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     );
     assert_eq!(
         declared.len(),
-        93,
-        "the source check (ADR-0057 d5), the workspace mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the four web routes the lead keeps (ADR-0045 d25; its two JSON routes are oml-web's, ADR-0070 d7 (b), and GET and POST /web/admin are deleted, ADR-0070 \"The old URLs deleted\"), open sign-up's one the lead keeps, POST /web/sign-up (ADR-0068 d10; the onboarding and users pages are oml-web's, ADR-0070 d7 (b)), the web console's ten (ADR-0070 d5), the sign-in page oml-web sends to (ADR-0070 d4) , federation's three (ADR-0072 d5), usage metering's six (ADR-0071 d5, d6), a key's limits (ADR-0079 d5), a key's link and unlink (ADR-0085 d16), the withdrawal (ADR-0083 d13), the skill read (ADR-0080 d11), the five upload routes (ADR-0004 d3), the workspace export and the import and its status (ADR-0084 d15)"
+        94,
+        "the source check (ADR-0057 d5), the workspace mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the four web routes the lead keeps (ADR-0045 d25; its two JSON routes are oml-web's, ADR-0070 d7 (b), and GET and POST /web/admin are deleted, ADR-0070 \"The old URLs deleted\"), open sign-up's one the lead keeps, POST /web/sign-up (ADR-0068 d10; the onboarding and users pages are oml-web's, ADR-0070 d7 (b)), the web console's ten (ADR-0070 d5), the sign-in page oml-web sends to (ADR-0070 d4) , federation's three (ADR-0072 d5), usage metering's six (ADR-0071 d5, d6), a key's limits (ADR-0079 d5), a key's link and unlink (ADR-0085 d16), the withdrawal (ADR-0083 d13), the skill read (ADR-0080 d11), the five upload routes (ADR-0004 d3), the workspace export and the import and its status (ADR-0084 d15), the preview (ADR-0082 d5)"
     );
     assert_eq!(oauth.len(), 6, "the six OAuth operations");
 
@@ -10149,6 +10149,81 @@ async fn the_web_key_submits_a_memory_in_its_root() {
     let (status, _, view) = send(&rig.router, "GET", "/v2/workspaces/alice", web_call(&web)).await;
     assert_eq!(status, StatusCode::OK, "{view}");
     assert_eq!(view["approved_by_kind"], json!({}), "{view}");
+    drop_db(&rig.db_name).await;
+}
+
+/// `POST /v1/memories/preview` over HTTP: a draft capture would take
+/// answers `200` with `would_capture` and its facts, a capture-time refusal
+/// answers `200` with the refusal in the error object's shape, an authority
+/// refusal is the HTTP error submit answers, and nothing is written
+/// (ADR-0082 d5, d10).
+#[tokio::test]
+async fn preview_answers_capture_refusals_in_its_body_and_authority_refusals_as_errors() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let token = rig.signed_in("alice@example.com", "alice", false).await;
+    let web = credential(&token, "web");
+    let _bob = rig.signed_in("bob@example.com", "bob", false).await;
+    let mine = |page: &Value| page["items"].as_array().map_or(0, Vec::len);
+    let (_, _, before) = send(&rig.router, "GET", "/v1/memories?mine=true", web_call(&web)).await;
+
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v1/memories/preview",
+        web_call(&web).body(json!({ "kind": "memory", "workspace": "alice", "body": "A draft." })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["would_capture"], true, "{body}");
+    assert_eq!(body["refusal"], Value::Null, "{body}");
+    assert_eq!(body["body_bytes"], 8, "{body}");
+    assert_eq!(body["needs_person"], false, "{body}");
+
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v1/memories/preview",
+        web_call(&web).body(json!({ "kind": "memory", "workspace": "alice" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["would_capture"], false, "{body}");
+    assert_eq!(body["refusal"]["code"], "request.validation", "{body}");
+
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v1/memories/preview",
+        web_call(&web).body(json!({ "kind": "memory", "workspace": "bob", "body": "Not hers." })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(body["error"]["code"], "access.not_found", "{body}");
+
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v1/memories/preview",
+        web_call(&web).body(json!({
+            "replaces": "not-an-id", "body": "An edit.", "expected_version": 1,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v1/memories/preview",
+        Call::default().body(json!({ "kind": "memory", "body": "No key." })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+
+    let (_, _, after) = send(&rig.router, "GET", "/v1/memories?mine=true", web_call(&web)).await;
+    assert_eq!(mine(&after), mine(&before), "nothing was written");
     drop_db(&rig.db_name).await;
 }
 

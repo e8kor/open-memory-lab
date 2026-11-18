@@ -188,6 +188,13 @@ from .listed_key_grants_item import ListedKeyGrantsItem
 from .listed_key_used_by import ListedKeyUsedBy
 from .memory import Memory
 from .memory_page import MemoryPage
+from .memory_preview import MemoryPreview
+from .memory_preview_refusal_type_0 import MemoryPreviewRefusalType0
+from .memory_preview_refusal_type_0_details import MemoryPreviewRefusalType0Details
+from .memory_preview_rule import MemoryPreviewRule
+from .memory_preview_set_after import MemoryPreviewSetAfter
+from .memory_preview_shadows_item import MemoryPreviewShadowsItem
+from .memory_preview_shadows_item_relation import MemoryPreviewShadowsItemRelation
 from .memory_summary import MemorySummary
 from .memory_summary_kind import MemorySummaryKind
 from .memory_summary_provenance import MemorySummaryProvenance
@@ -200,6 +207,7 @@ from .o_auth_error_error import OAuthErrorError
 from .origin import Origin
 from .origin_kind import OriginKind
 from .postings_health import PostingsHealth
+from .preview_supersede_request import PreviewSupersedeRequest
 from .protected_resource_metadata import ProtectedResourceMetadata
 from .protected_resource_metadata_bearer_methods_supported_item import (
     ProtectedResourceMetadataBearerMethodsSupportedItem,
@@ -585,6 +593,13 @@ __all__ = (
     "ListedKeyUsedBy",
     "Memory",
     "MemoryPage",
+    "MemoryPreview",
+    "MemoryPreviewRefusalType0",
+    "MemoryPreviewRefusalType0Details",
+    "MemoryPreviewRule",
+    "MemoryPreviewSetAfter",
+    "MemoryPreviewShadowsItem",
+    "MemoryPreviewShadowsItemRelation",
     "MemorySummary",
     "MemorySummaryKind",
     "MemorySummaryProvenance",
@@ -597,6 +612,7 @@ __all__ = (
     "Origin",
     "OriginKind",
     "PostingsHealth",
+    "PreviewSupersedeRequest",
     "ProtectedResourceMetadata",
     "ProtectedResourceMetadataBearerMethodsSupportedItem",
     "ProtectedResourceMetadataScopesSupportedItem",

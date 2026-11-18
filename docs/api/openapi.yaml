@@ -275,6 +275,46 @@ paths:
         '429': { $ref: '#/components/responses/RateLimited' }
         default: { $ref: '#/components/responses/Error' }
 
+  /v1/memories/preview:
+    post:
+      tags: [memories]
+      operationId: previewMemory
+      parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }]
+      summary: What capture would decide for a submit's body or a supersession's, without capturing.
+      description: 'Requires: the grant submit would need, or, with replaces, the grant supersede would need on that target (ADR-0082 d5). The body is submit''s, or supersede''s with replaces naming the version it replaces. Every check capture makes runs through the same pipeline, which stops before anything is journalled, held or metered: no version, no event, no counter moves (ADR-0071 d2), and no Idempotency-Key is read, so nothing is recorded or replayed. A refusal of authority is the HTTP error submit or supersede would answer: auth.*, limit.rate, access.verb_ceiling, every access.* grant refusal, and access.not_found for a target the key cannot read, replaces that names no row included. Every other refusal capture would make, the body''s shape, size, the scan''s veto, a quota''s headroom, a name taken, submission.version_conflict, submission.tip_conflict, workspace.frozen and a guardrail rule that does not parse among them, answers 200 with would_capture false and refusal in the error object''s shape, beside what was read before it (ADR-0082 d10). The request rate is charged once (ADR-0079). Read-shaped POST. A document''s passages are not served in this release. Since v0.8.0.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              kind: skill
+              workspace: alice
+              format: text/markdown
+              skill: { name: release-checklist, description: Steps before a release. }
+              body: Tag from main, then check the changelog.
+            schema: { $ref: '#/components/schemas/PreviewRequest' }
+      responses:
+        '200':
+          description: What capture would decide.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              example:
+                would_capture: true
+                refusal: null
+                findings: []
+                needs_person: true
+                body_bytes: 41
+                budget_tokens: 11
+                offered_as: release-checklist
+                shadows: [{ workspace: universe.alice, relation: shadows }]
+              schema: { $ref: '#/components/schemas/MemoryPreview' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        default: { $ref: '#/components/responses/Error' }
   /v1/memories/{artifact_id}:
     get:
       tags: [memories]
@@ -4054,6 +4094,62 @@ components:
             details: { type: object, additionalProperties: true }
             retryable: { type: boolean, description: True only where the identical request can succeed later (Retry-After header present). }
         request_id: { type: string, description: Mirrors the X-Request-Id response header. }
+
+    PreviewRequest:
+      description: "Submit's body, or supersede's with replaces naming the version it would replace (ADR-0082 d5)."
+      oneOf:
+        - { $ref: '#/components/schemas/SubmitRequest' }
+        - { $ref: '#/components/schemas/PreviewSupersedeRequest' }
+
+    PreviewSupersedeRequest:
+      description: "Supersede's body with replaces, the version the supersession would replace (ADR-0082 d5)."
+      allOf:
+        - { $ref: '#/components/schemas/SupersedeRequest' }
+        - type: object
+          required: [replaces]
+          properties:
+            replaces: { type: string, description: The artifact_id of the version a supersession would replace. }
+
+    MemoryPreview:
+      type: object
+      description: "What capture would decide for a previewed body (ADR-0082 d5, d10). The facts are those read before any refusal; a refusal of the body's shape answers none."
+      required: [would_capture, refusal, findings, needs_person, body_bytes, budget_tokens]
+      properties:
+        would_capture: { type: boolean }
+        refusal:
+          description: The refusal capture would answer, in the error object's shape; null when it would capture.
+          oneOf:
+            - type: object
+              required: [code, message, rule, retryable]
+              properties:
+                code: { $ref: '#/components/schemas/ErrorCode' }
+                message: { type: string }
+                rule: { type: string }
+                details: { type: object, additionalProperties: true }
+                retryable: { type: boolean }
+            - { type: 'null' }
+        findings: { type: array, items: { $ref: '#/components/schemas/ScanFinding' }, description: "The scan's findings, as a held version's list carries them; empty when the scan did not run or found nothing." }
+        needs_person: { type: boolean, description: "Whether a person's verdict is needed: an instruction kind, or a successor of one (ADR-0074 d24; ADR-0080 d16)." }
+        body_bytes: { type: [integer, 'null'], minimum: 0, description: The NFC body's UTF-8 bytes. }
+        budget_tokens: { type: [integer, 'null'], minimum: 0, description: The body's budget tokens under oml-tc/1. }
+        rule: { type: object, additionalProperties: true, description: "A guardrail's rule in its canonical oml-gr/1 form." }
+        offered_as: { type: string, description: "A skill's prompt name (ADR-0080 d5)." }
+        shadows:
+          type: array
+          description: "A skill's same-named skills along its chain that the key reads: one on an ancestor it shadows, one on a descendant that shadows it there (ADR-0080 d5)."
+          items:
+            type: object
+            required: [workspace, relation]
+            properties:
+              workspace: { type: string, description: The workspace's path. }
+              relation: { type: string, enum: [shadows, shadowed_by] }
+        set_after:
+          type: object
+          description: "A guardrail's set size at its workspace once the version is approved, the approved rules an agent there loads, against the set cap (ADR-0037 d7)."
+          required: [size, cap]
+          properties:
+            size: { type: integer, minimum: 0 }
+            cap: { type: integer, minimum: 1 }
 
     SubmitRequest:
       type: object

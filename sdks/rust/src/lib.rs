@@ -32,7 +32,7 @@ pub use transport::{HttpTransport, Sending, Transport, TransportError};
 /// and of each struct it holds, to the operation's 2xx schema;
 /// `every_method_sends_the_method_path_and_type_its_table_entry_names`
 /// holds the methods to it.
-pub const OPERATIONS: [&str; 42] = [
+pub const OPERATIONS: [&str; 43] = [
     "authorizationServerMetadata GET /.well-known/oauth-authorization-server resp:AuthorizationServerMetadata",
     "whoami GET /v2/whoami query:person resp:Whoami",
     "getGuardrails GET /v1/guardrails query:workspace resp:GuardrailSet",
@@ -62,6 +62,7 @@ pub const OPERATIONS: [&str; 42] = [
     "adminReadMemory GET /v2/admin/memories/{artifact_id} resp:AdminRead",
     "submitMemory POST /v1/memories body:verb,claim_key,body,workspace,derives_from resp:Accepted",
     "supersedeMemory POST /v1/memories/{artifact_id}/supersede body:body,expected_version,retirement resp:Accepted",
+    "previewMemory POST /v1/memories/preview body:kind,workspace,body,format,skill,document,severity,rule,replaces,expected_version,retirement resp:MemoryPreview",
     "withdrawMemory POST /v1/memories/{artifact_id}/withdraw body:reason resp:Withdrawn",
     "whoami GET /v2/whoami query:start resp:Onboarding",
     "listWebEmails GET /v2/web/emails query:limit,cursor resp:WebEmailPage",
@@ -554,6 +555,77 @@ pub struct ScanFinding {
     pub found_by: String,
     #[serde(default)]
     pub migrated_from: Option<String>,
+}
+
+/// `POST /v1/memories/preview`'s answer (openapi.yaml `MemoryPreview`;
+/// ADR-0082 d5, d10): what capture would decide, never a capture.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct MemoryPreview {
+    pub would_capture: bool,
+    /// The refusal capture would answer, in the error object's shape.
+    #[serde(default)]
+    pub refusal: Option<PreviewRefusal>,
+    #[serde(default)]
+    pub findings: Vec<ScanFinding>,
+    pub needs_person: bool,
+    #[serde(default)]
+    pub body_bytes: Option<u64>,
+    #[serde(default)]
+    pub budget_tokens: Option<u64>,
+    /// A guardrail's rule in its canonical `oml-gr/1` form.
+    #[serde(default)]
+    pub rule: Option<Value>,
+    /// A skill's prompt name.
+    #[serde(default)]
+    pub offered_as: Option<String>,
+    #[serde(default)]
+    pub shadows: Vec<SkillShadow>,
+    #[serde(default)]
+    pub set_after: Option<SetAfter>,
+}
+
+/// The refusal a preview answers inside its body (ADR-0082 d10).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct PreviewRefusal {
+    pub code: String,
+    pub message: String,
+    #[serde(default)]
+    pub details: Option<Value>,
+}
+
+/// A same-named skill along a previewed skill's chain (ADR-0080 d5).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct SkillShadow {
+    pub workspace: String,
+    /// `shadows` or `shadowed_by`.
+    pub relation: String,
+}
+
+/// A guardrail's set size after the previewed version, against the cap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct SetAfter {
+    pub size: u64,
+    pub cap: u64,
+}
+
+/// A draft the builder previews: a new item, or with `replaces` an edit or
+/// a retirement of the version it names at the version the form rendered
+/// (ADR-0082 d4, d5).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Draft<'a> {
+    pub kind: &'a str,
+    pub workspace: Option<&'a str>,
+    pub body: &'a str,
+    pub format: Option<&'a str>,
+    /// A skill's name and description.
+    pub skill: Option<(&'a str, &'a str)>,
+    /// A document's title.
+    pub document_title: Option<&'a str>,
+    pub severity: Option<&'a str>,
+    pub rule: Option<&'a Value>,
+    /// The version replaced and the version the form rendered.
+    pub replaces: Option<(&'a str, u32)>,
+    pub retirement: bool,
 }
 
 /// `GET /v1/memories`: one page of memories.
@@ -2054,6 +2126,51 @@ impl<T: Transport> Client<T> {
         }
         self.post(call, "/v1/memories".to_owned(), idempotency_key, &body)
             .await
+    }
+
+    /// `POST /v1/memories/preview`: what capture would decide for a draft,
+    /// written nowhere and metered nowhere. Read-shaped: no idempotency key.
+    ///
+    /// # Errors
+    /// The API's refusal of authority, or no usable answer; a refusal
+    /// capture would make is the answer's `refusal`.
+    pub async fn preview(
+        &self,
+        call: &Call<'_>,
+        draft: &Draft<'_>,
+    ) -> Result<MemoryPreview, Error> {
+        let mut body = serde_json::json!({ "kind": draft.kind, "body": draft.body });
+        if let Some(workspace) = draft.workspace {
+            body["workspace"] = Value::from(workspace);
+        }
+        if let Some(format) = draft.format {
+            body["format"] = Value::from(format);
+        }
+        if let Some((name, description)) = draft.skill {
+            body["skill"] = serde_json::json!({ "name": name, "description": description });
+        }
+        if let Some(title) = draft.document_title {
+            body["document"] = serde_json::json!({ "title": title });
+        }
+        if let Some(severity) = draft.severity {
+            body["severity"] = Value::from(severity);
+        }
+        if let Some(rule) = draft.rule {
+            body["rule"] = rule.clone();
+        }
+        if let Some((artifact_id, expected_version)) = draft.replaces {
+            body["replaces"] = Value::from(artifact_id);
+            body["expected_version"] = Value::from(expected_version);
+            body["retirement"] = Value::from(draft.retirement);
+        }
+        self.send(
+            Method::POST,
+            Some(call),
+            "/v1/memories/preview".to_owned(),
+            None,
+            Some(&body),
+        )
+        .await
     }
 
     /// `POST /v1/memories/{artifact_id}/supersede`: a new version of the

@@ -5792,6 +5792,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut chat_server: Vec<String> = Vec::new();
     // The skill lines from the key's offered set (ADR-0080 Consequences).
     let mut skills: Vec<String> = Vec::new();
+    // Whether the server serves the builder's preview (ADR-0082
+    // Consequences).
+    let mut builder: Vec<String> = Vec::new();
     let mut held_blocking: Option<usize> = None;
     // Every node of the tenant's tree, read by an admin key for the
     // user-root lines (ADR-0085 d17).
@@ -5809,6 +5812,20 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
                 &client
                     .get("/v1/skills?include_own_held=true")
                     .map(|(_, page)| page),
+            );
+            // An empty body: refused inside the answer by a server that
+            // serves preview, and never written by any server.
+            builder = oml_cli::builder::server_lines(
+                &client
+                    .post(
+                        "/v1/memories/preview",
+                        &serde_json::json!({}),
+                        &CallOpts {
+                            auth: true,
+                            idempotency: false,
+                        },
+                    )
+                    .map(|(_, answer)| answer),
             );
             if let Some(Ok(v)) = &me
                 && v["user"].is_object()
@@ -5982,6 +5999,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let chat_warn = chat.iter().any(|line| line.starts_with("warn"));
     skills.extend(local_skill_lines());
     let skills_warn = skills.iter().any(|line| line.starts_with("warn"));
+    let builder_warn = builder.iter().any(|line| line.starts_with("warn"));
     let sources = sources_doctor(
         server_version(ready.as_ref()).as_deref(),
         default_node.as_ref(),
@@ -6027,6 +6045,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         || sync_warn
         || chat_warn
         || skills_warn
+        || builder_warn
         || sources_warn
         || in_progress_warn
         || !user_root_status.is_empty()
@@ -6079,6 +6098,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "sync": sync,
             "chat": chat,
             "skills": skills,
+            "builder": builder,
             "telemetry": telemetry,
             "journal": journal,
             "handlers": handlers,
@@ -6254,6 +6274,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         for line in &skills {
             println!("skills      : {line}");
+        }
+        for line in &builder {
+            println!("builder     : {line}");
         }
         for line in &sources {
             println!("sources     : {line}");
