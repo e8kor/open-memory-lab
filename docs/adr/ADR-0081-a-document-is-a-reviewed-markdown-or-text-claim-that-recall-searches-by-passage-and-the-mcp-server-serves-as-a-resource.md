@@ -8,7 +8,7 @@ answers: why a document is a kind and not a memory with a markdown format; which
 # ADR-0081 — A document is a reviewed markdown or text claim that recall searches by passage and the MCP server serves as a resource
 
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, every default as
-drafted · proposed the same day, tracking #374 · amended by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) (d4, 2026-11-15) · d2 amended 2026-11-18 (the long-title cut and the one slug rule, #405) · [the build's readings of 2026-11-18](#the-builds-readings-of-2026-11-18), proposed for the operator's batch
+drafted · proposed the same day, tracking #374 · amended by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) (d4, 2026-11-15) · d2 amended 2026-11-18 (the long-title cut and the one slug rule, #405) · [the build's readings of 2026-11-18](#the-builds-readings-of-2026-11-18), proposed for the operator's batch; [the review's readings of 2026-11-18](#the-reviews-readings-of-2026-11-18-pr-475), decided by the coordinator, for the operator's batch
 
 **Release:** planned for v0.7.4
 
@@ -259,6 +259,63 @@ operator's batch, which confirms or changes them, and each line names the decisi
   it continues. Rejected: the members inside `memory`, which every read of a claim item shares;
   and two cursors, which MCP's `resources/list` does not have. Taken by the build; not yet
   confirmed by the coordinator, for the operator's batch.
+
+## The review's readings of 2026-11-18 (PR #475)
+
+Two reviews of the build returned REVISE on 2026-11-18. The coordinator decided the items below
+that same day, before the code that takes them; each is marked **for the operator's batch**, which
+confirms or changes it, and names the reading or decision it amends.
+
+- **R3 amended (d4), 2026-11-18, for the operator's batch.** `k` counts versions, never passages.
+  Every retriever's statement keeps one row per version before its own limit: the version's best
+  unit by score, then ordinal (`row_number() OVER (PARTITION BY id ORDER BY score DESC,
+  ordinal)`), carrying `count(*) OVER (PARTITION BY id) - 1` as its `more_passages`; the fused
+  list then keeps one hit per version across the lists, its `more_passages` the larger of the
+  lists' counts and the other passages fused beside it. A recall of `k` = 10 over a document whose
+  30 passages hold the word and 20 memories that hold it answers 10 hits. Rejected: collapsing
+  after the cut, which let one document's passages fill `k`.
+- **R6 amended (d4), 2026-11-18, for the operator's batch.** A document adds at most 1 to a term's
+  document frequency: df counts distinct versions, never units, and the row count N counts
+  versions; the mean length stays per unit, the mean of the units' lengths. A 4,096-passage
+  document therefore cannot flatten a word's IDF for the memories beside it. R6's sentence
+  "ranked exactly as before" holds for a scope with no document; a scope holding documents ranks
+  its memories with N and df each moved by at most one per document version. Rejected: df and N
+  per unit, under which one long document repeating a word makes it near-worthless for every
+  memory in the workspace.
+- **R10 (d6), 2026-11-18, for the operator's batch.** `resources/list` lists one entry per
+  document: its promoted version when it has one, with a held successor the reader may see
+  described beside it as an unreviewed edit; a document with only a held version is listed marked
+  held. `resources/read` of a document URI serves the promoted version. A recall hit on a held
+  version carries a `uri` with `?version=<n>`, which `resources/read` honours only for a reader
+  allowed to see that version, and reads as absent for any other. Rejected: one URI naming
+  whichever version is newest, which served a held edit and its promoted tip under one name.
+- **R11 (d4, d6), 2026-11-18, for the operator's batch.** A passage's URI uses its heading slug
+  only when the slug is non-empty and holds nothing outside `[a-z0-9_-]`; otherwise it uses its
+  lines, `L<start>-L<end>`. `?passage=` matches either form, so every hit's `uri` is a valid
+  RFC 3986 URI and every passage is readable through it, a passage under a Cyrillic, emoji or
+  `!!!` heading included. Rejected: percent-encoding the slug, a second spelling of one fragment.
+- **R12 (d1), 2026-11-18, for the operator's batch.** A sent title holding a hidden character
+  (C0 or C1 controls, bidi controls, zero-width characters: the set skills refuse) is refused;
+  a derived title has them stripped. A derived title is the first level-1 heading as
+  `oml_passage::headings` reads it, through `plain()`, so a heading inside a fence, front matter
+  or an HTML comment never names the document.
+- **R13 (d7), 2026-11-18, for the operator's batch.** For a document item, a sync rollback match
+  also requires the text digest to match, so an edit that changes whitespace alone is written as
+  a new version and not mistaken for the version it restores.
+- **R5 amended (d7), 2026-11-18, for the operator's batch.** The mixed-adapter refusal is taken per
+  loaded path, never per source: a path is refused by the document and non-document split of the
+  live claims anchored at that path, so a source loaded in two runs under two adapters is refused
+  path by path.
+- **R14 (migration 0059), 2026-11-18, for the operator's batch.** Migration 0059 takes no lock
+  that blocks a read of `memories` or `search_postings` for its run: it replaces the fold's
+  function and leaves its trigger, widens the kind check `NOT VALID`, and refills only tenants
+  holding a `document` row. Its served index is rebuilt by a second, `-- no-transaction`
+  migration under a new name, partition by partition, each build committed before the next and
+  attached to the parent, then the old index dropped. The coordinator asked for `CREATE INDEX
+  CONCURRENTLY`; PostgreSQL refuses it inside a `DO` block and inside a multi-statement string,
+  and the partitions are known only at run time, so each partition's build is a plain `CREATE
+  INDEX` under that partition's `SHARE` lock, as 0041 builds its index: reads never wait, and a
+  tenant's writes wait for its own partition's build alone.
 
 ## Consequences
 
