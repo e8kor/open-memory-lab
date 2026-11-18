@@ -9,7 +9,7 @@ answers: which kinds recall's kinds filter admits and what a recall that names n
 
 **Status:** accepted design · 2026-11-15, by the operator, before it is built: three decisions
 taken with the request (d1, d3, d6) and twelve answers the same day, every one at its
-recommendation (d11) · proposed the same day · amended 2026-11-18 (d12: three readings the
+recommendation (d11) · proposed the same day · amended 2026-11-18 (d12: the readings the
 build took, recorded before the code and marked for the operator's batch, #443)
 
 **Release:** planned for v0.8.0; not built
@@ -399,9 +399,9 @@ workspace holds across kinds has the workspace page's contents by kind for one w
         `own: true` for the key's own work. Rejected: keep `own: true` as the MCP default and serve
         the catalog with `own: false`.
 
-- **d12 — Three readings the build took** (amended 2026-11-18, #443; the coordinator's
-  decisions on the build's questions, recorded before the code and **marked for the operator's
-  batch**). Each names the alternative it rejected.
+- **d12 — The readings the build took** (amended 2026-11-18, #443; 1 to 3 are the
+  coordinator's decisions on the build's questions, 4 and 5 the build's own; each recorded before
+  the code and **marked for the operator's batch**). Each names the alternative it rejected.
     1. **How a skill's name and description enter its search text** (d3, "a skill by its name,
        description and body"). The store's search-vector fold reads the name, the description
        and the body for a version of kind `skill`, and runs again when the name or the
@@ -421,6 +421,26 @@ workspace holds across kinds has the workspace page's contents by kind for one w
        items with their text, as the own-work check does today; the catalog, the default mode,
        follows d6 and serves no body unless `include_text` asks. Rejected: one no-text rule for
        both modes, which would make an agent checking its own write send a second flag.
+
+    4. **Which rows the BM25 statistics count** (d4; the build's own reading, not one of the
+       coordinator's three, recorded before the code and flagged for the operator because it
+       narrows d4's text). The statistics count, fixed before `kinds`: the served tips and the
+       admitted held rows of the knowledge kinds (`memory`, `derived_fact`, `test`, and
+       `document` once its passages are searched) on the readable hit nodes, any vocabulary kind
+       the request names, and every offered skill and applicable guardrail, wherever it lives.
+       They do not count a readable skill or guardrail that is not offered or not applicable, nor
+       the knowledge rows of an ancestor that offers one. So a filtered answer is still the
+       unfiltered one restricted (the law holds on both stores), the scan and the postings
+       statements count the same rows, and no memory's score moves because a skill was written
+       in a descendant or an ancestor workspace. A federated recall's reference set counts its
+       knowledge rows alone. Rejected: d4's literal set, which needs per-kind node sets in every
+       statement and moves memory scores by rows the recall never serves.
+    5. **What a skill is searched by on each retriever** (d3, with reading 1). The scoring
+       retrievers that read stored lexemes (`bm25`, `bm25-postings`) search a skill's name,
+       description and body; the keyword and trigram retrievers read the text as they do for
+       every kind, its search text or claim, so on them a skill is found by its body. Rejected:
+       a second text expression for skills in the keyword statements, which would leave their
+       index.
 
     **Waiting.** `binding` (d6, d8) waits on ADR-0085's releases, which are not built: every key
     reads tips, so no catalog answer carries `binding` until they are. Document hits and the
