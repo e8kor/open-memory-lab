@@ -75,7 +75,7 @@ What exists today:
   2026-11-14).
 
 The decision has to say what a skill is, who sees which, how it is served without a local copy,
-and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md)'s R1 to R4 and restates none of them; d16 widens ADR-0001 d5's first exception, the in-progress workspace, as that exception's own text records. Decided. The class rule's person verdict is built for steering and guardrail in v0.8.0 (#391), and for skill once the kind lands (#400, #403); d16's in-progress audience is built for recall, the scoped listing and a read by id in v0.8.0 (#402), and d10's and d14's held guardrails and steering, to their author key and inside in-progress roots up the key's chain, in v0.8.0 (#407); the offered set and `GET /v1/skills` (d4, d5, d9, d11), the MCP prompts and skill resources (d5 to d7) and the session-start index, the local-skill rule and its doctor lines (d8, d15) in v0.8.0 (#403, #404, #408), under the readings of 2026-11-17 below; document resources wait for #405.
+and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md)'s R1 to R4 and restates none of them; d16 widens ADR-0001 d5's first exception, the in-progress workspace, as that exception's own text records. Decided. The class rule's person verdict is built for steering and guardrail in v0.8.0 (#391), and for skill once the kind lands (#400, #403); d16's in-progress audience is built for recall, the scoped listing and a read by id in v0.8.0 (#402), and d10's and d14's held guardrails and steering, to their author key and inside in-progress roots up the key's chain, in v0.8.0 (#407); the offered set and `GET /v1/skills` (d4, d5, d9, d11), the MCP prompts and skill resources (d5 to d7) and the session-start index, the local-skill rule and its doctor lines (d8, d15) in v0.8.0 (#403, #404, #408), under the readings of 2026-11-17 and 2026-11-18 below; document resources wait for #405.
 
 ## Decision
 
@@ -377,8 +377,10 @@ and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md
       turns the rule off; a person who keeps skills on disk answers each prompt, or removes the
       plugin's hook.
     - **What it does not cover, plainly.** A shell command that writes there (`cat >`,
-      `cp`) is not matched, nor is a skill a plugin ships; the rule is a nudge with a person's
-      override, not enforcement, as ADR-0037 d9 says of every hook.
+      `cp`) is not matched, nor is a skill a plugin ships, nor a `.claude/skills/` directory
+      nested below the project's root or under a directory added with `--add-dir` (R17); the
+      rule is a nudge with a person's override, not enforcement, as ADR-0037 d9 says of every
+      hook.
     - **Doctor.** `oml doctor` names: the plugin's `oml` older than the rule ("this oml does not
       ask before writing local skill files"), and each directory under `.claude/skills/` of the
       current project and `~/.claude/skills/` that holds a `SKILL.md`, with the count, "N skills
@@ -494,6 +496,37 @@ decision it reads.
 - **R14 (d15).** The plugin's version is the workspace version (`scripts/check_plugin.py`), so
   the plugin's version bump for the local-skill rule is the v0.8.0 release bump, not a change of
   its own.
+
+### Readings of 2026-11-18, from the review of #467
+
+- **R15 (d10, d16).** A held version only adds, across workspaces too: a workspace that holds
+  only held versions of a name never takes `<name>` while any offered workspace holds an
+  approved version of it, however near; it answers as `<name>-unreviewed` beside the approved
+  one, which keeps `<name>`. With no approved version offered anywhere, the nearest held
+  version 1 takes `<name>`, as d10 says. Two workspaces that answer `<name>-unreviewed` (two
+  held-only ones, or one and the held edit of the workspace that answers `<name>`) go to the
+  nearer by d5's rank, and the other is read by URI; a shadowed approved workspace's held edit
+  is not offered. Its resource URI names the command it answers. Held versions of one number in
+  one workspace go to the later `created_at`, then the larger artifact id.
+- **R16 (d7; ADR-0081 d6).** A URI's workspace segment resolves by the workspace's exact name
+  alone, pending ADR-0026 d4's reading of a name that is not unique in the tenant.
+- **R17 (d15).** The ask matches the project's root `.claude/skills/` (the working directory and
+  `CLAUDE_PROJECT_DIR`) and the home's, case-insensitively, after lexical normalisation; a
+  nested `.claude/skills/` and a directory added with `--add-dir` are not matched.
+- **R18 (d8, d10).** Each index line's description is cut to 160 characters, the last `…`; a
+  URI is printed whole; a held line begins `[unreviewed]` and still ends "(unreviewed)". The
+  index is fitted into what the rest of the context leaves under Claude Code's 10,000-character
+  `additionalContext` cap: a line that does not fit is counted in "and N more". The read is
+  skipped when one request timeout after the hook's elapsed time would pass its deadline.
+- **R19 (d1, d10, d11).** The offered set carries at most 50 held commands, counted in d5's
+  order after shadowing and dropped before any approved one, as held guardrails are capped. The
+  listing reads (`GET /v1/skills`, `prompts/list`, `resources/list`) load no body; `prompts/get`
+  and `resources/read` read the one body they serve. A skill's name and description refuse C0
+  and C1 controls, bidi overrides and isolates and zero-width characters at write
+  (`request.validation`, the field named), and the CLI prints any it reads escaped. A skills
+  read the store cannot serve answers MCP's `-32603` with a generic message, page one of
+  `prompts/list` then holding the guardrails prompt alone, while an unknown name or URI keeps
+  `-32602` or `-32002`.
 
 ## Consequences
 
