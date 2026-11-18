@@ -23,6 +23,10 @@ pub struct Item {
     /// The hasher that produced `hash`: `oml-md/1` unless the adapter names
     /// another of the closed set (ADR-0061 d7).
     pub hasher: &'static str,
+    /// The media type of a `document` claim's body; `None` for a claim of
+    /// kind `memory`, which every other adapter writes (ADR-0081 d7).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub format: Option<&'static str>,
 }
 
 /// One edge a document states, by claim key (ADR-0057 d10).
@@ -108,6 +112,7 @@ pub enum Kind {
     Headings,
     Lines,
     Rust,
+    Document,
 }
 
 impl Kind {
@@ -124,8 +129,9 @@ impl Kind {
                     .to_owned(),
             ),
             "rust" => Ok(Self::Rust),
+            "document" => Ok(Self::Document),
             other => Err(format!(
-                "--adapter {other:?} is invalid; choose adr, headings, lines, or rust"
+                "--adapter {other:?} is invalid; choose adr, headings, lines, rust, or document"
             )),
         }
     }
@@ -137,6 +143,7 @@ impl Kind {
             Self::Headings => "headings",
             Self::Lines => "lines",
             Self::Rust => "rust",
+            Self::Document => "document",
         }
     }
 
@@ -169,6 +176,17 @@ impl Kind {
         Some(if is_span { Self::Lines } else { Self::Headings })
     }
 
+    /// The adapter a listed claim was written by: `document` for a claim of
+    /// kind `document` under `doc/`, which no other adapter writes, else
+    /// its key's namespace ([`Kind::of_key`]; ADR-0081 d7).
+    #[must_use]
+    pub fn of_claim(key: &str, kind: &str) -> Option<Self> {
+        if kind == "document" {
+            return key.starts_with("doc/").then_some(Self::Document);
+        }
+        Self::of_key(key)
+    }
+
     #[must_use]
     pub fn adapter(self) -> Box<dyn Adapter> {
         match self {
@@ -176,6 +194,7 @@ impl Kind {
             Self::Headings => Box::new(super::headings::HeadingsAdapter),
             Self::Lines => Box::new(super::lines::LinesAdapter),
             Self::Rust => Box::new(super::rust::RustAdapter),
+            Self::Document => Box::new(super::document::DocumentAdapter),
         }
     }
 
@@ -218,6 +237,7 @@ pub fn item(
         lines,
         hash: md_hash(span),
         hasher: HASHER,
+        format: None,
     }
 }
 
@@ -243,7 +263,13 @@ pub fn fit_key(key: &str) -> String {
 /// path's SHA-256, so two paths never share a key prefix.
 #[must_use]
 pub fn doc_key_prefix(path: &str) -> String {
-    let stem = path.strip_suffix(".md").unwrap_or(path);
+    doc_key_of(path, path.strip_suffix(".md").unwrap_or(path))
+}
+
+/// `doc/` and `stem` mapped as [`doc_key_prefix`] maps a path without
+/// `.md`, the hash suffix taken over the whole `path`.
+#[must_use]
+pub fn doc_key_of(path: &str, stem: &str) -> String {
     let lossless = stem.chars().all(|c| {
         c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '/' | '-')
     });

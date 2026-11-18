@@ -24,6 +24,7 @@ fn rev(n: u8) -> String {
 struct Version {
     artifact_id: String,
     claim_key: String,
+    kind: String,
     version: u64,
     state: String,
     retirement: bool,
@@ -144,7 +145,7 @@ impl Fake {
 
     fn served(&self, v: &Version) -> Value {
         json!({
-            "artifact_id": v.artifact_id, "claim_key": v.claim_key, "version": v.version,
+            "artifact_id": v.artifact_id, "claim_key": v.claim_key, "kind": v.kind, "version": v.version,
             "tip": v.state == "promoted" && v.version == self.tip_version(&v.claim_key, &v.workspace_id),
             "state": v.state, "retirement": v.retirement, "workspace_id": v.workspace_id,
             "plaintext_digest": v.digest, "anchor": v.anchor,
@@ -174,6 +175,7 @@ impl Fake {
         self.versions.borrow_mut().push(Version {
             artifact_id: artifact_id.clone(),
             claim_key: claim_key.to_owned(),
+            kind: body["kind"].as_str().unwrap_or("memory").to_owned(),
             version,
             state: "held".into(),
             retirement: body["retirement"] == true,
@@ -192,6 +194,7 @@ impl Fake {
         self.versions.borrow_mut().push(Version {
             artifact_id: format!("art-{claim_key}-{workspace}-v{version}"),
             claim_key: claim_key.into(),
+            kind: "memory".into(),
             version,
             state: "promoted".into(),
             retirement: false,
@@ -1945,4 +1948,87 @@ fn an_adr_or_headings_run_over_a_workspace_holding_only_rust_claims_never_touche
             "{kind:?} wrote {keys:?}"
         );
     }
+}
+
+const NOTES: &str = "First line.\n\nSecond line.\n";
+
+/// ADR-0081 d7, the build's reading R4: one `document` claim per `.md` or
+/// `.txt` file, keyed `doc/` and the path without its extension, anchored
+/// to the whole file, and a run with no change writes nothing.
+#[test]
+fn sync_document_writes_one_claim_per_file_keyed_doc_path() {
+    let fake = Fake::new();
+    let files = [("docs/guide.md", GUIDE_V1), ("docs/notes.txt", NOTES)];
+    let first = run(&fake, &loaded(&files, Kind::Document, &rev(1)), &opts());
+    assert_eq!(first.json["source"]["adapter"], "document");
+    let writes = fake.writes();
+    let keys: Vec<&str> = writes
+        .iter()
+        .map(|(_, b)| b["claim_key"].as_str().unwrap())
+        .collect();
+    assert_eq!(keys, ["doc/docs/guide", "doc/docs/notes"]);
+    for ((_, body), (text, format)) in writes
+        .iter()
+        .zip([(GUIDE_V1, "text/markdown"), (NOTES, "text/plain")])
+    {
+        assert_eq!(body["kind"], "document");
+        assert_eq!(body["format"], format);
+        assert_eq!(body["body"], text);
+        assert!(body["anchor"]["fragment"].is_null(), "{body}");
+        assert_eq!(
+            body["anchor"]["hash"],
+            oml_cli::sync::hash::md_hash(text).as_str()
+        );
+    }
+    fake.promote_all();
+    let again = run(&fake, &loaded(&files, Kind::Document, &rev(1)), &opts());
+    assert!(fake.writes().is_empty(), "{}", again.json);
+    assert_eq!(again.json["summary"]["unchanged"], 2, "{}", again.json);
+}
+
+/// ADR-0081 d2 and the build's reading R4: a path whose key breaks the
+/// document key grammar is unreadable and nothing is written for it.
+#[test]
+fn sync_document_reports_a_path_outside_the_key_grammar_unreadable() {
+    let fake = Fake::new();
+    let long = format!("docs/{}.md", "a".repeat(70));
+    let files = [(long.as_str(), NOTES), ("docs/guide.md", GUIDE_V1)];
+    let report = run(&fake, &loaded(&files, Kind::Document, &rev(1)), &opts());
+    assert_eq!(report.exit, 1);
+    let keys: Vec<String> = fake
+        .writes()
+        .iter()
+        .map(|(_, b)| b["claim_key"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(keys, ["doc/docs/guide"]);
+}
+
+/// ADR-0081 d7, the build's reading R5: one path is loaded one way; a run
+/// with another adapter is refused naming both and the keys it would leave.
+#[test]
+fn sync_refuses_a_path_loaded_by_another_adapter_naming_both() {
+    let fake = Fake::new();
+    let files = [("docs/guide.md", GUIDE_V1)];
+    run(&fake, &loaded(&files, Kind::Headings, &rev(1)), &opts());
+    fake.promote_all();
+    let err = try_run(&fake, &loaded(&files, Kind::Document, &rev(1)), &opts()).unwrap_err();
+    for word in [
+        "headings",
+        "document",
+        "doc/docs/guide/alpha",
+        "--change-adapter",
+    ] {
+        assert!(err.contains(word), "{word}: {err}");
+    }
+    assert!(fake.writes().is_empty());
+
+    // The other way round: a document, then headings.
+    let fake = Fake::new();
+    run(&fake, &loaded(&files, Kind::Document, &rev(1)), &opts());
+    fake.promote_all();
+    let err = try_run(&fake, &loaded(&files, Kind::Headings, &rev(1)), &opts()).unwrap_err();
+    for word in ["headings", "document", "doc/docs/guide"] {
+        assert!(err.contains(word), "{word}: {err}");
+    }
+    assert!(fake.writes().is_empty());
 }

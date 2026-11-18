@@ -519,6 +519,7 @@ fn extract_set(files: &[(String, Vec<u8>)]) -> SetExtraction {
             lines: (1, 1),
             hash: crate_hash(&facts),
             hasher: HASHER_CRATE,
+            format: None,
         });
     }
 
@@ -572,6 +573,7 @@ fn extract_set(files: &[(String, Vec<u8>)]) -> SetExtraction {
                     lines: (d.first, d.last),
                     hash: rustdoc_hash(&d.lines),
                     hasher: HASHER_RUSTDOC,
+                    format: None,
                 });
             }
         }

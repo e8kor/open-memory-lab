@@ -3,7 +3,7 @@
 //! d6–d11, d14). Every call goes through [`SyncApi`], so a run is tested
 //! against a fake.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -466,9 +466,16 @@ pub fn execute(
 }
 
 /// The adapters whose claims this workspace holds under the source, by
-/// their keys' namespaces (ADR-0057 d7).
-fn recorded_adapters(ctx: &Context, own: &[Listed], served: &[Listed]) -> BTreeSet<Kind> {
-    own.iter()
+/// their keys' namespaces and, for `document`, their kind (ADR-0057 d7;
+/// ADR-0081 d7), each with the keys of its live claims.
+fn recorded_claims(
+    ctx: &Context,
+    own: &[Listed],
+    served: &[Listed],
+) -> BTreeMap<Kind, BTreeSet<String>> {
+    let mut out: BTreeMap<Kind, BTreeSet<String>> = BTreeMap::new();
+    for v in own
+        .iter()
         .chain(served)
         .filter(|v| v.workspace_id.as_deref() == Some(ctx.workspace_id.as_str()))
         .filter(|v| {
@@ -477,12 +484,23 @@ fn recorded_adapters(ctx: &Context, own: &[Listed], served: &[Listed]) -> BTreeS
                     && a.path.as_deref().is_some_and(|p| ctx.scope.contains(p))
             })
         })
-        .filter_map(|v| Kind::of_key(&v.claim_key))
+    {
         // The rust adapter's namespace is its own: another adapter's run
         // never answers for it, and it never answers for another's
         // (ADR-0061 d10).
-        .filter(|k| *k != Kind::Rust)
-        .collect()
+        if let Some(k) = v.adapter().filter(|k| *k != Kind::Rust) {
+            let entry = out.entry(k).or_default();
+            if matches!(v.state.as_str(), "held" | "promoted") && !v.retirement {
+                entry.insert(v.claim_key.clone());
+            }
+        }
+    }
+    out
+}
+
+/// The adapters whose claims this workspace holds under the source.
+fn recorded_adapters(ctx: &Context, own: &[Listed], served: &[Listed]) -> BTreeSet<Kind> {
+    recorded_claims(ctx, own, served).into_keys().collect()
 }
 
 /// The adapter of this run and the namespaces it answers for. The adapter
@@ -512,6 +530,27 @@ fn resolve_adapter(
             let mut all: Vec<Kind> = recorded.iter().copied().collect();
             all.push(k);
             Ok((k, all))
+        }
+        Some(k) if k == Kind::Document || recorded.contains(&Kind::Document) => {
+            // One path is loaded one way (ADR-0081 d7, R5): name both
+            // adapters and the claims the run would leave beside its own.
+            let left: Vec<String> = recorded_claims(ctx, own, served)
+                .into_values()
+                .flatten()
+                .collect();
+            Err(CliError::local(format!(
+                "this source's paths are loaded by the {} adapter; loading them with {} would \
+                 leave {} beside its own, and one path is loaded one way. To switch to {} and \
+                 retire them, pass --change-adapter",
+                names(),
+                k.name(),
+                if left.is_empty() {
+                    "their claims".to_owned()
+                } else {
+                    left.join(", ")
+                },
+                k.name()
+            )))
         }
         Some(k) => Err(CliError::local(format!(
             "this source uses the {} adapter; to switch to {} and retire its existing claims, \
@@ -549,13 +588,11 @@ fn guard_exclude(
     if opts.change_exclude || ctx.exclude.is_empty() {
         return Ok(());
     }
-    let ours = |k: &str| Kind::of_key(k).is_some_and(|k| ctx.namespaces.contains(&k));
+    let ours = |v: &Listed| v.adapter().is_some_and(|k| ctx.namespaces.contains(&k));
     let hidden: BTreeSet<String> = own
         .iter()
         .chain(served)
-        .filter(|v| {
-            v.workspace_id.as_deref() == Some(ctx.workspace_id.as_str()) && ours(&v.claim_key)
-        })
+        .filter(|v| v.workspace_id.as_deref() == Some(ctx.workspace_id.as_str()) && ours(v))
         .filter_map(|v| v.anchor.as_ref())
         .filter(|a| a.repo.as_deref() == Some(ctx.repo.as_str()))
         .filter_map(|a| a.path.clone())
@@ -589,12 +626,12 @@ fn guard_rev(
         return Ok(());
     }
     let git = Git::at(root).map_err(CliError::Local)?;
-    let ours = |k: &str| Kind::of_key(k).is_some_and(|k| ctx.namespaces.contains(&k));
+    let ours = |v: &Listed| v.adapter().is_some_and(|k| ctx.namespaces.contains(&k));
     let revs: BTreeSet<String> = own
         .iter()
         .chain(served)
         .filter(|v| v.workspace_id.as_deref() == Some(ctx.workspace_id.as_str()))
-        .filter(|v| ours(&v.claim_key))
+        .filter(|v| ours(v))
         .filter(|v| {
             v.anchor
                 .as_ref()

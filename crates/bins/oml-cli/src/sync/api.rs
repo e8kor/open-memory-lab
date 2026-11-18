@@ -12,6 +12,9 @@ use crate::client::{CliError, Client, encode, segment};
 pub struct Listed {
     pub artifact_id: String,
     pub claim_key: String,
+    /// The claim kind as listed: `document` for the `document` adapter's
+    /// claims, `memory` for every other adapter's (ADR-0081 d7).
+    pub kind: String,
     pub version: u64,
     pub tip: bool,
     pub state: String,
@@ -42,6 +45,12 @@ pub struct Checked {
 }
 
 impl Listed {
+    /// The sync adapter that wrote this claim ([`Kind::of_claim`]).
+    #[must_use]
+    pub fn adapter(&self) -> Option<super::adapter::Kind> {
+        super::adapter::Kind::of_claim(&self.claim_key, &self.kind)
+    }
+
     /// A listing item, read leniently: an absent field is its empty value.
     #[must_use]
     pub fn of(v: &Value) -> Self {
@@ -74,6 +83,7 @@ impl Listed {
         Self {
             artifact_id: s("artifact_id"),
             claim_key: s("claim_key"),
+            kind: s("kind"),
             version: v["version"].as_u64().unwrap_or(0),
             tip: v["tip"].as_bool().unwrap_or(false),
             state: s("state"),
