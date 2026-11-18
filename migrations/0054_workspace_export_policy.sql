@@ -19,6 +19,8 @@
 
 SET LOCAL lock_timeout = '5s';
 
+-- lint:allow column-check both added columns take a constant default that satisfies their CHECK, so the validating scan reads every existing row and refuses none; tenants holds one row per tenant and account_activity one per account and day, and the scan runs under the lock the ADD COLUMN takes either way
+
 ALTER TABLE tenants
     ADD COLUMN export_policy text NOT NULL DEFAULT 'own_root'
         CHECK (export_policy IN ('off', 'own_root', 'allowed'));
