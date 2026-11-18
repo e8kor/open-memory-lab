@@ -143,6 +143,7 @@ use crate::types::{
     BULK_VERDICT_MAX, BulkItem, BulkVerdictRequest, FindingVerdict, FoundBy, HELD_PAGE_MAX,
     HeldFilter, HeldItem, HeldListingRequest, HeldPage, ReviewLane, VersionFinding,
 };
+use crate::types::{Preview, PreviewFacts, PreviewRequest, SkillShadow};
 use crate::types::{ServedSkill, SkillBody, SkillRead, SkillRequest, SkillSet};
 use oml_domain::skills::{SKILL_PAGE, SkillCandidate, offer, skill_uri};
 
@@ -5635,6 +5636,24 @@ where
         req: &SubmitRequest,
         imported: Option<&crate::types::ImportedWrite>,
     ) -> Result<SubmitOutcome, AppError> {
+        self.submit_pipeline(bearer, req, imported, None)
+            .await?
+            .ok_or_else(|| {
+                StoreError::Backend("a capture stopped at its decision".to_owned()).into()
+            })
+    }
+
+    /// The submit pipeline: every check capture makes, then the capture.
+    /// With `preview` it takes no idempotency record and replays none, sets
+    /// what it decides on `preview` as it goes, and stops before anything is
+    /// sealed, committed or metered, answering `None` (ADR-0082 d5, d10).
+    async fn submit_pipeline(
+        &self,
+        bearer: Bearer<'_>,
+        req: &SubmitRequest,
+        imported: Option<&crate::types::ImportedWrite>,
+        mut preview: Option<&mut PreviewFacts>,
+    ) -> Result<Option<SubmitOutcome>, AppError> {
         let caller = self.authenticate_bearer(bearer).await?;
         let key = &caller.key;
         // A person's reviewer session key starts a claim where it holds
@@ -5732,8 +5751,15 @@ where
             workspace_id,
             idem_key: req.idempotency_key.clone(),
         };
+        if let Some(facts) = preview.as_deref_mut() {
+            facts.workspace_id = Some(workspace_id);
+            facts.kind = Some(req.kind);
+        }
         let request_digest = submit_request_digest(req, &claim_key, verb, workspace_id);
-        if let Some(record) = self.journal.idempotency_get(&scope).await? {
+        // A preview takes no record and replays none (ADR-0082 d10).
+        if preview.is_none()
+            && let Some(record) = self.journal.idempotency_get(&scope).await?
+        {
             if record.request_digest != request_digest {
                 return Err(AppError::IdempotencyDigestMismatch);
             }
@@ -5742,10 +5768,10 @@ where
             receipt.similar = self
                 .still_readable(&caller, std::mem::take(&mut receipt.similar))
                 .await?;
-            return Ok(SubmitOutcome {
+            return Ok(Some(SubmitOutcome {
                 receipt,
                 replayed: true,
-            });
+            }));
         }
 
         // The account's limits, read once and before the head: the check
@@ -5816,6 +5842,9 @@ where
             &mut scan_finding,
             &mut findings,
         )?;
+        if let Some(facts) = preview.as_deref_mut() {
+            facts.findings.clone_from(&findings);
+        }
 
         // The lineage closure: the author plus every declared ancestor's
         // closure — R2 runs over the whole of it (roles-and-keys.md). An
@@ -5887,6 +5916,10 @@ where
             )
             .await?;
 
+        // A preview stops here: nothing is sealed, committed or metered.
+        if preview.is_some() {
+            return Ok(None);
+        }
         let memory_id = self.ids.new_id();
         let body_digest = sha256_digest_string(body.as_bytes());
         let body_bytes = body.len() as u64;
@@ -6019,10 +6052,10 @@ where
         if key.profile == Some(KeyProfile::Curator) {
             self.observer.curation(CuratorAct::Write.as_str());
         }
-        Ok(SubmitOutcome {
+        Ok(Some(SubmitOutcome {
             receipt,
             replayed: false,
-        })
+        }))
     }
 
     /// Serve the next reviewable held item to this reviewer, claiming it,
@@ -8919,6 +8952,190 @@ where
         self.supersede_as(bearer.into(), req, None).await
     }
 
+    /// `POST /v1/memories/preview` (ADR-0082 d5, d10): what capture would
+    /// decide for a submit's body, or a supersession's, deciding it through
+    /// the same pipeline and stopping before anything is sealed, committed,
+    /// held, replayed or metered (ADR-0071 d2). The key is authenticated
+    /// once, so the request rate is charged once (ADR-0079). Every refusal
+    /// the pipeline makes is the answer's `refusal`, beside what it read
+    /// before it; which of them a transport answers as its error is the
+    /// transport's (d10). On a version capture would take, a skill answers
+    /// its prompt name and the same-named skills along its chain, and a
+    /// guardrail its canonical rule and the set size it leaves.
+    pub async fn preview(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        req: &PreviewRequest,
+    ) -> Result<Preview, AppError> {
+        let caller = self.authenticate_bearer(bearer.into()).await?;
+        let mut facts = PreviewFacts::default();
+        let (decided, body, rule, kind_fields) = match req {
+            PreviewRequest::Submit(r) => (
+                self.submit_pipeline(Bearer::Session(&caller), r, None, Some(&mut facts))
+                    .await
+                    .map(|_| ()),
+                &r.body,
+                r.rule.as_ref(),
+                r.kind_fields.as_ref(),
+            ),
+            PreviewRequest::Supersede(r) => (
+                self.supersede_pipeline(Bearer::Session(&caller), r, None, Some(&mut facts))
+                    .await
+                    .map(|_| ()),
+                &r.body,
+                r.rule.as_ref(),
+                r.kind_fields.as_ref(),
+            ),
+        };
+        let body_bytes = nfc(body).len() as u64;
+        let kind = facts.kind.unwrap_or(match req {
+            PreviewRequest::Submit(r) => r.kind,
+            PreviewRequest::Supersede(r) => r.kind.unwrap_or(MemoryKind::Memory),
+        });
+        let retirement = matches!(req, PreviewRequest::Supersede(r) if r.retirement);
+        let needs_person = kind.class().needs_person()
+            || facts
+                .replaces
+                .as_ref()
+                .is_some_and(|t| t.kind.class().needs_person());
+        let mut preview = Preview {
+            refusal: decided.err(),
+            findings: std::mem::take(&mut facts.findings),
+            needs_person,
+            body_bytes,
+            budget_tokens: budget_tokens(body_bytes),
+            rule: None,
+            offered_as: None,
+            shadows: Vec::new(),
+            set_after: None,
+        };
+        let Some(workspace_id) = facts.workspace_id.filter(|_| preview.refusal.is_none()) else {
+            return Ok(preview);
+        };
+        match kind {
+            MemoryKind::Skill if !retirement => {
+                let name = match (kind_fields, facts.replaces.as_ref()) {
+                    (Some(KindFields::Skill { name, .. }), _) => Some(name.clone()),
+                    (_, Some(target)) => match target.kind_fields.as_deref() {
+                        Some(KindFields::Skill { name, .. }) => Some(name.clone()),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                if let Some(name) = name {
+                    preview.shadows = self.skill_shadows(&caller, workspace_id, &name).await?;
+                    preview.offered_as = Some(name);
+                }
+            }
+            MemoryKind::Guardrail => {
+                preview.rule = rule
+                    .and_then(|r| guardrail::Rule::parse(r).ok())
+                    .map(|r| r.to_value());
+                preview.set_after = self
+                    .guardrail_set_after(&caller, workspace_id, facts.replaces.as_ref(), retirement)
+                    .await?;
+            }
+            _ => {}
+        }
+        Ok(preview)
+    }
+
+    /// The same-named promoted skills along `workspace_id`'s chain that the
+    /// caller reads: an ancestor's, which a skill there shadows, and a
+    /// descendant's, which shadows it below (ADR-0080 d5). A workspace the
+    /// caller cannot read names nothing.
+    async fn skill_shadows(
+        &self,
+        caller: &Caller,
+        workspace_id: Uuid,
+        name: &str,
+    ) -> Result<Vec<SkillShadow>, AppError> {
+        let tenant_id = caller.key.tenant_id;
+        let chain = self
+            .journal
+            .workspace_ancestry(tenant_id, workspace_id)
+            .await?
+            .unwrap_or_default();
+        let ids: Vec<Uuid> = chain.iter().map(|w| w.workspace_id).collect();
+        let mut paths: BTreeMap<Uuid, (String, bool)> = BTreeMap::new();
+        for i in 1..ids.len() {
+            if caller.effective(&ids[i..]).contains(&Role::Reader) {
+                paths.insert(ids[i], (derived_path(&chain[i..]), false));
+            }
+        }
+        let mut walked = BTreeMap::new();
+        for node in self
+            .nodes_walked(caller, workspace_id, Role::Reader, Some(&mut walked))
+            .await?
+        {
+            if node == workspace_id {
+                continue;
+            }
+            if let Some(ancestry) = ancestry_of(&walked, node) {
+                paths.insert(node, (derived_path(&ancestry), true));
+            }
+        }
+        let nodes: Vec<Uuid> = paths.keys().copied().collect();
+        let rows = self
+            .journal
+            .instruction_rows(
+                tenant_id,
+                MemoryKind::Skill,
+                &nodes,
+                caller.key.key_id,
+                &[],
+                false,
+            )
+            .await?;
+        let mut shadows: Vec<SkillShadow> = rows
+            .iter()
+            .filter(|m| m.status == MemoryStatus::Promoted && m.is_tip && !m.retirement)
+            .filter(|m| {
+                matches!(m.kind_fields.as_deref(), Some(KindFields::Skill { name: n, .. }) if n == name)
+            })
+            .filter_map(|m| {
+                paths.get(&m.workspace_id).map(|(path, below)| SkillShadow {
+                    workspace_path: path.clone(),
+                    shadowed_by: *below,
+                })
+            })
+            .collect();
+        shadows.sort_by(|a, b| {
+            (a.shadowed_by, &a.workspace_path).cmp(&(b.shadowed_by, &b.workspace_path))
+        });
+        shadows.dedup();
+        Ok(shadows)
+    }
+
+    /// The promoted guardrails an agent at `workspace_id` would load after
+    /// the previewed version is approved: the set in force under the
+    /// caller's own guardrail scope, one more for a new rule, one fewer for
+    /// the retirement of a rule in it (ADR-0037 d7; ADR-0082 d5).
+    async fn guardrail_set_after(
+        &self,
+        caller: &Caller,
+        workspace_id: Uuid,
+        replaces: Option<&MemoryRecord>,
+        retirement: bool,
+    ) -> Result<Option<usize>, AppError> {
+        let set = self
+            .guardrails(
+                Bearer::Session(caller),
+                &GuardrailRequest {
+                    workspace: Some(Reference::Id(workspace_id)),
+                    include_own_held: false,
+                },
+            )
+            .await?;
+        let in_force = set.guardrails.iter().filter(|g| !g.unreviewed).count();
+        let replaced_in_force = replaces.is_some_and(|t| set.served_ids.contains(&t.memory_id));
+        Ok(Some(match (replaced_in_force, retirement) {
+            (true, true) => in_force.saturating_sub(1),
+            (true, false) | (false, true) => in_force,
+            (false, false) => in_force + 1,
+        }))
+    }
+
     /// [`Self::supersede`], with an import's record of the write stored in
     /// its own commit (ADR-0084 I14).
     pub(crate) async fn supersede_as(
@@ -8927,6 +9144,25 @@ where
         req: &SupersedeRequest,
         imported: Option<&crate::types::ImportedWrite>,
     ) -> Result<SupersedeOutcome, AppError> {
+        self.supersede_pipeline(bearer, req, imported, None)
+            .await?
+            .ok_or_else(|| {
+                StoreError::Backend("a capture stopped at its decision".to_owned()).into()
+            })
+    }
+
+    /// The supersede pipeline: every check a supersession makes, then the
+    /// capture. With `preview` it takes no idempotency record and replays
+    /// none, sets what it decides on `preview` as it goes, and stops before
+    /// anything is sealed, committed or metered, answering `None` (ADR-0082
+    /// d5, d10).
+    async fn supersede_pipeline(
+        &self,
+        bearer: Bearer<'_>,
+        req: &SupersedeRequest,
+        imported: Option<&crate::types::ImportedWrite>,
+        mut preview: Option<&mut PreviewFacts>,
+    ) -> Result<Option<SupersedeOutcome>, AppError> {
         let caller = self.authenticate_bearer(bearer).await?;
         let key = &caller.key;
         let admissible = admissible_grant_roles(key.role);
@@ -8955,11 +9191,14 @@ where
             idem_key: req.idempotency_key.clone(),
         };
         let request_digest = supersede_request_digest(req)?;
-        if let Some(receipt) = self.recorded(&scope, &request_digest).await? {
-            return Ok(SupersedeOutcome {
+        // A preview takes no record and replays none (ADR-0082 d10).
+        if preview.is_none()
+            && let Some(receipt) = self.recorded(&scope, &request_digest).await?
+        {
+            return Ok(Some(SupersedeOutcome {
                 receipt: self.replayed_supersede(&caller, receipt).await?,
                 replayed: true,
-            });
+            }));
         }
         // The account's limits, read once and before the head, as a
         // submit's are (ADR-0071 d3).
@@ -9058,11 +9297,13 @@ where
             // An attempt under the same key that committed since the lookup
             // above made the claim move on: its record answers this one, as
             // it answers any replay (http-api.md idempotency).
-            if let Some(receipt) = self.recorded(&scope, &request_digest).await? {
-                return Ok(SupersedeOutcome {
+            if preview.is_none()
+                && let Some(receipt) = self.recorded(&scope, &request_digest).await?
+            {
+                return Ok(Some(SupersedeOutcome {
                     receipt: self.replayed_supersede(&caller, receipt).await?,
                     replayed: true,
-                });
+                }));
             }
             return Err(AppError::VersionConflict { current: latest });
         }
@@ -9074,6 +9315,11 @@ where
             });
         }
         let kind = successor_kind(target.kind, req.kind, req.retirement)?;
+        if let Some(facts) = preview.as_deref_mut() {
+            facts.workspace_id = Some(target.workspace_id);
+            facts.kind = Some(kind);
+            facts.replaces = Some(target.clone());
+        }
         if req.refuse_vocabulary_target
             && matches!(
                 target.kind,
@@ -9164,6 +9410,9 @@ where
             &mut scan_finding,
             &mut findings,
         )?;
+        if let Some(facts) = preview.as_deref_mut() {
+            facts.findings.clone_from(&findings);
+        }
         // derives_from ⊇ {target}; the lineage closure is the proposer plus
         // every ancestor's closure, the target's included (roles-and-keys.md).
         let mut derives_from = vec![target.memory_id];
@@ -9239,6 +9488,10 @@ where
             .await?
         };
 
+        // A preview stops here: nothing is sealed, committed or metered.
+        if preview.is_some() {
+            return Ok(None);
+        }
         let successor_id = self.ids.new_id();
         let body_digest = sha256_digest_string(body.as_bytes());
         let body_bytes = body.len() as u64;
@@ -9369,10 +9622,10 @@ where
                 .recorded(&scope, &request_digest)
                 .await?
                 .ok_or(AppError::Store(StoreError::IdempotencyRecorded))?;
-            return Ok(SupersedeOutcome {
+            return Ok(Some(SupersedeOutcome {
                 receipt: self.replayed_supersede(&caller, receipt).await?,
                 replayed: true,
-            });
+            }));
         }
         committed?;
         // A supersession labels the key's recall that served the target,
@@ -9393,10 +9646,10 @@ where
                 CuratorAct::Write.as_str()
             });
         }
-        Ok(SupersedeOutcome {
+        Ok(Some(SupersedeOutcome {
             receipt,
             replayed: false,
-        })
+        }))
     }
 
     /// Propose a claim edge `from_artifact_id -> to_artifact_id` carrying

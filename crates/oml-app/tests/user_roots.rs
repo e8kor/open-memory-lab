@@ -3630,3 +3630,314 @@ async fn approved_by_kind_counts_each_approved_claim_once_and_no_retired_or_held
         vec![(MemoryKind::Memory, 1), (MemoryKind::Steering, 1)]
     );
 }
+
+// -- preview (ADR-0082 d5, d8 item 1, d10; #409) -----------------------------
+
+/// The journal's length, the account's meters and the person's own rows:
+/// what a write would move.
+async fn written_state(
+    app: &TestApp,
+    store: &MemStore,
+    tenant: Uuid,
+    root: Uuid,
+    web: &oml_app::app::Caller,
+) -> (
+    usize,
+    oml_app::types::UserUsage,
+    std::collections::BTreeSet<Uuid>,
+) {
+    let events = store
+        .events_range(tenant, 1, 100_000)
+        .await
+        .expect("journal")
+        .len();
+    let usage = store
+        .user_usage(
+            tenant,
+            root,
+            &EventTime::parse("2026-10-29T13:00:00.000000Z").expect("an instant"),
+        )
+        .await
+        .expect("usage");
+    let rows = listed_ids(app, web, &mine_listing(Vec::new(), Vec::new(), None)).await;
+    (events, usage, rows)
+}
+
+/// A preview of a submit and of a supersession answers what capture would
+/// decide, the scan's findings, the budget and whether a person must
+/// approve, and journals, holds, records and meters nothing: the journal,
+/// the meters and the rows are unchanged, and the same idempotency key
+/// then captures a new version rather than replaying (ADR-0082 d5, d10;
+/// ADR-0071 d2).
+#[tokio::test]
+async fn preview_writes_nothing_and_meters_nothing() {
+    use oml_app::types::PreviewRequest;
+    let (app, store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", false).await;
+    let agent = user_writer(&app, admin, "alice", "alice/laptop").await;
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let review = app
+        .web_caller(&alice, Capacity::Review)
+        .await
+        .expect("alice-review");
+    let served = written(
+        &app,
+        &agent.value,
+        &submit("a", "Builds run on push.", None),
+    )
+    .await;
+    app.post_verdict(Bearer::Session(&review), served, Verdict::Approve, None)
+        .await
+        .expect("approved");
+    let root = app
+        .workspace_info(agent.value.as_str(), Some(by_name("alice")))
+        .await
+        .expect("the root")
+        .workspace
+        .workspace_id;
+    let before = written_state(&app, &store, boot.tenant_id, root, &web).await;
+
+    let body = "Deploys wait for [needs-person] a green build.";
+    let new = submit("p1", body, None);
+    let preview = app
+        .preview(Bearer::Session(&web), &PreviewRequest::Submit(new.clone()))
+        .await
+        .expect("a preview");
+    assert!(preview.refusal.is_none(), "{:?}", preview.refusal);
+    assert!(!preview.findings.is_empty(), "the scan's hold is a finding");
+    assert!(!preview.needs_person);
+    assert_eq!(preview.body_bytes, body.len() as u64);
+    assert_eq!(
+        preview.budget_tokens,
+        oml_app::domain::budget::budget_tokens(body.len() as u64)
+    );
+    let preview = app
+        .preview(
+            Bearer::Session(&web),
+            &PreviewRequest::Supersede(supersede_req("p2", served, "Builds run on every push.")),
+        )
+        .await
+        .expect("a preview");
+    assert!(preview.refusal.is_none(), "{:?}", preview.refusal);
+
+    assert_eq!(
+        written_state(&app, &store, boot.tenant_id, root, &web).await,
+        before,
+        "no event, no meter, no row"
+    );
+    let outcome = app
+        .submit_memory(Bearer::Session(&web), &new)
+        .await
+        .expect("the write the preview described");
+    assert!(!outcome.replayed, "the preview recorded no idempotency key");
+}
+
+/// Preview answers, as its refusal, the refusal submit or supersede would
+/// answer, the same error for the same body: a validation, the scan's
+/// veto, a version conflict, and an authority refusal, which a transport
+/// answers as its error (ADR-0082 d10).
+#[tokio::test]
+async fn preview_answers_the_refusal_submit_would_answer() {
+    use oml_app::types::PreviewRequest;
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    signed_in(&app, admin, "alice", false).await;
+    let agent = user_writer(&app, admin, "alice", "alice/laptop").await;
+    let bob = user_writer(&app, admin, "bob", "bob/laptop").await;
+    let review = user_reviewer(&app, admin, "alice", "alice/review").await;
+    let served = written(
+        &app,
+        &agent.value,
+        &submit("a", "Builds run on push.", None),
+    )
+    .await;
+    approve(&app, &review.value, served).await;
+
+    let submits = [
+        (
+            agent.value.as_str(),
+            SubmitRequest {
+                claim_key: Some("auto-mine".to_owned()),
+                ..submit("v1", "A sent derived key.", None)
+            },
+        ),
+        (
+            agent.value.as_str(),
+            submit("v2", "-----BEGIN PRIVATE KEY----- abc", None),
+        ),
+        (
+            bob.value.as_str(),
+            submit("v3", "Into another root.", Some("alice")),
+        ),
+    ];
+    for (key, req) in submits {
+        let preview = app
+            .preview(key, &PreviewRequest::Submit(req.clone()))
+            .await
+            .expect("a preview");
+        let submitted = app.submit_memory(key, &req).await.unwrap_err();
+        assert_eq!(
+            format!("{:?}", preview.refusal.expect("a refusal")),
+            format!("{submitted:?}")
+        );
+    }
+    let conflict = SupersedeRequest {
+        expected_version: 2,
+        ..supersede_req("c1", served, "Builds run on every push.")
+    };
+    let preview = app
+        .preview(
+            agent.value.as_str(),
+            &PreviewRequest::Supersede(conflict.clone()),
+        )
+        .await
+        .expect("a preview");
+    let superseded = app
+        .supersede(agent.value.as_str(), &conflict)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(superseded, AppError::VersionConflict { current: 1 }),
+        "{superseded:?}"
+    );
+    assert_eq!(
+        format!("{:?}", preview.refusal.expect("a refusal")),
+        format!("{superseded:?}")
+    );
+}
+
+/// A skill's preview names the command it would be offered as and the
+/// same-named skill it shadows along its chain (ADR-0080 d5; ADR-0082 d5).
+#[tokio::test]
+async fn a_skill_preview_with_a_shadowing_name_answers_offered_as_and_shadows() {
+    use oml_app::types::PreviewRequest;
+    let (app, store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", false).await;
+    let agent = user_writer(&app, admin, "alice", "alice/laptop").await;
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let review = app
+        .web_caller(&alice, Capacity::Review)
+        .await
+        .expect("alice-review");
+    app.create_workspace(agent.value.as_str(), &name("proj"), None, None)
+        .await
+        .expect("a workspace under alice's root");
+    let skill = |idem: &str, workspace: &str| SubmitRequest {
+        kind: MemoryKind::Skill,
+        claim_key: None,
+        format: Some("text/markdown".to_owned()),
+        kind_fields: Some(oml_app::types::KindFields::Skill {
+            name: "cite".to_owned(),
+            description: "Cite every source.".to_owned(),
+        }),
+        ..submit(idem, "Cite every source, then check each.", Some(workspace))
+    };
+    let root_skill = written(&app, &agent.value, &skill("s1", "alice")).await;
+    app.post_verdict(Bearer::Session(&review), root_skill, Verdict::Approve, None)
+        .await
+        .expect("alice approves her skill");
+    let head = store
+        .events_range(boot.tenant_id, 1, 100_000)
+        .await
+        .expect("journal")
+        .len();
+    let preview = app
+        .preview(
+            Bearer::Session(&web),
+            &PreviewRequest::Submit(skill("s2", "proj")),
+        )
+        .await
+        .expect("a preview");
+    assert!(preview.refusal.is_none(), "{:?}", preview.refusal);
+    assert_eq!(preview.offered_as.as_deref(), Some("cite"));
+    assert!(preview.needs_person, "a skill needs a person's verdict");
+    assert_eq!(
+        preview.shadows,
+        vec![oml_app::types::SkillShadow {
+            workspace_path: "universe.alice".to_owned(),
+            shadowed_by: false,
+        }]
+    );
+    assert_eq!(
+        store
+            .events_range(boot.tenant_id, 1, 100_000)
+            .await
+            .expect("journal")
+            .len(),
+        head,
+        "the preview journalled nothing"
+    );
+}
+
+/// A guardrail's preview answers its rule in canonical form and the set
+/// size an agent at its workspace loads once it is approved: one more for
+/// a new rule, one fewer for the retirement of a rule in force (ADR-0037
+/// d7; ADR-0082 d5).
+#[tokio::test]
+async fn a_guardrail_preview_answers_its_canonical_rule_and_the_set_size_after_it() {
+    use oml_app::types::PreviewRequest;
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", false).await;
+    let agent = user_writer(&app, admin, "alice", "alice/laptop").await;
+    let review = app
+        .web_caller(&alice, Capacity::Review)
+        .await
+        .expect("alice-review");
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let in_force = written(
+        &app,
+        &agent.value,
+        &guardrail("g1", "Never force-push.", Some("alice")),
+    )
+    .await;
+    app.post_verdict(Bearer::Session(&review), in_force, Verdict::Approve, None)
+        .await
+        .expect("alice approves her guardrail");
+    let rule = serde_json::json!({
+        "effect": "deny", "tool": "shell", "command": ["git", "push", "*"], "rule": "oml-gr/1",
+    });
+    let preview = app
+        .preview(
+            Bearer::Session(&web),
+            &PreviewRequest::Submit(SubmitRequest {
+                rule: Some(rule),
+                ..guardrail("g2", "Never push without review.", Some("alice"))
+            }),
+        )
+        .await
+        .expect("a preview");
+    assert!(preview.refusal.is_none(), "{:?}", preview.refusal);
+    let canonical = preview.rule.expect("the canonical rule");
+    assert_eq!(canonical["rule"], "oml-gr/1");
+    assert_eq!(canonical["tool"], "shell");
+    assert_eq!(preview.set_after, Some(2));
+    assert!(preview.needs_person);
+    let retire = app
+        .preview(
+            Bearer::Session(&web),
+            &PreviewRequest::Supersede(SupersedeRequest {
+                retirement: true,
+                ..supersede_req("g3", in_force, "No longer needed.")
+            }),
+        )
+        .await
+        .expect("a preview");
+    assert!(retire.refusal.is_none(), "{:?}", retire.refusal);
+    assert_eq!(retire.set_after, Some(0));
+}

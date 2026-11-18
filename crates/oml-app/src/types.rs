@@ -1873,6 +1873,59 @@ pub struct SubmitReceipt {
     pub similar: Vec<SimilarItem>,
 }
 
+/// `POST /v1/memories/preview`'s request: a submit's body, or a
+/// supersession's with the version it replaces (ADR-0082 d5).
+#[derive(Debug, Clone)]
+pub enum PreviewRequest {
+    Submit(SubmitRequest),
+    Supersede(SupersedeRequest),
+}
+
+/// What a capture's decision gathered on the way, which a preview reads
+/// back: the workspace, the kind and the scan's findings, set as each is
+/// decided, so a refusal after them still answers them (ADR-0082 d5, d10).
+#[derive(Debug, Clone, Default)]
+pub struct PreviewFacts {
+    pub workspace_id: Option<Uuid>,
+    pub kind: Option<MemoryKind>,
+    /// The version a supersession replaces, and whether it is in force.
+    pub replaces: Option<MemoryRecord>,
+    pub findings: Vec<VersionFinding>,
+}
+
+/// A skill of the same name on another workspace of the chain: the
+/// previewed one `shadows` it at the previewed workspace and below it, or is
+/// `shadowed_by` it at that workspace and below it (ADR-0080 d5; ADR-0082
+/// d5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillShadow {
+    pub workspace_path: String,
+    pub shadowed_by: bool,
+}
+
+/// What capture would decide, deciding it without capturing (ADR-0082 d5,
+/// d10): the capture-time refusal, if any, and what the decision read on
+/// the way. Nothing is journalled, held, replayed or metered.
+#[derive(Debug)]
+pub struct Preview {
+    /// The refusal capture would answer; `None` when it would capture.
+    pub refusal: Option<AppError>,
+    pub findings: Vec<VersionFinding>,
+    /// Whether a person's verdict is needed (ADR-0074 d24; ADR-0080 d16).
+    pub needs_person: bool,
+    pub body_bytes: u64,
+    /// The body's budget tokens under `oml-tc/1`.
+    pub budget_tokens: u64,
+    /// A guardrail's rule in its canonical `oml-gr/1` form.
+    pub rule: Option<serde_json::Value>,
+    /// A skill's prompt name.
+    pub offered_as: Option<String>,
+    pub shadows: Vec<SkillShadow>,
+    /// A guardrail's set size at its workspace after it, the promoted
+    /// rules alone, as the set cap counts them (ADR-0037 d7).
+    pub set_after: Option<usize>,
+}
+
 #[derive(Debug, Clone)]
 pub struct SubmitOutcome {
     pub receipt: SubmitReceipt,
