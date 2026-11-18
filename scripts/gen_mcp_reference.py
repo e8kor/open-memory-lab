@@ -65,6 +65,25 @@ DESIGNED = (
 )
 
 
+# The prompts and resources the server serves beside the tools (ADR-0037 d11; ADR-0080 d5 to d7):
+# not in the tool catalog, so written here.
+PROMPTS = (
+    "## Prompts and resources\n\n"
+    "`prompts/list` names the `guardrails` prompt first, then each skill offered at the key's scope, 50 a page with MCP's "
+    "`cursor` and `nextCursor`; Claude Code lists them as `/oml:<name> (MCP)`. Each skill prompt takes one optional argument, "
+    "`input`. `prompts/get` of a skill answers one user message: a header line naming its workspace, version and approval, "
+    "or beginning `UNREVIEWED` for a version no reviewer has approved, then the body, then a line `Input:` and the input when "
+    "one is sent. A name not offered here answers `-32602`, \"no skill <name> is offered here\", whatever the reason.\n\n"
+    "`resources/list` serves the same skills as resources at `oml://workspace/<workspace>/skill/<name>`, `text/markdown`; "
+    "`resources/templates/list` serves that template; `resources/read` answers the header and body as one text content, with "
+    "the artifact id, version, approval and `unreviewed` in `_meta.oml`. A URI segment holding `%` or a reserved character is "
+    "`-32602`; any other URI not served, a skill shadowed out of reach and a document URI among them, answers `-32002`, "
+    "\"Resource not found\". Serving a prompt or a resource is a read, not a recall. When the server cannot read the "
+    "skills, page one of `prompts/list` holds the `guardrails` prompt alone, and `resources/list`, `prompts/get` and "
+    "`resources/read` answer `-32603`, \"the skills could not be read; retry later\".\n"
+)
+
+
 def render(doc: dict) -> str:
     meta = doc["_meta"]
     tools = doc["tools"]
@@ -93,6 +112,7 @@ def render(doc: dict) -> str:
         else:
             out.append("It takes no arguments.")
         out.append("")
+    out.append(PROMPTS)
     return "\n".join(out)
 
 

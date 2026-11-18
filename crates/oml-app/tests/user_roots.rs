@@ -3092,3 +3092,70 @@ async fn held_steering_reaches_the_authoring_key_and_no_other_key_of_its_person(
         "the calling key's own row, not alice-curate's {held}"
     );
 }
+
+/// A held skill is offered to the key that wrote it and to no other key of
+/// its person, the person's admin capacity included (ADR-0080 d14, d16).
+#[tokio::test]
+async fn a_held_skill_is_offered_to_its_authoring_key_and_no_other_key_of_its_person() {
+    let (app, _) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", true).await;
+    let alice_admin = app
+        .web_caller(&alice, Capacity::Admin)
+        .await
+        .expect("alice-admin");
+    app.grant_curation_capacity(&alice_admin, &name("alice"), by_name("alice"))
+        .await
+        .expect("the curation designation");
+    let curate = app
+        .web_caller(&alice, Capacity::Curate)
+        .await
+        .expect("alice-curate");
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let skill = |idem: &str, name: &str, workspace: &str| SubmitRequest {
+        on_similar: Default::default(),
+        kind: MemoryKind::Skill,
+        claim_key: None,
+        format: Some("text/markdown".to_owned()),
+        kind_fields: Some(oml_app::types::KindFields::Skill {
+            name: name.to_owned(),
+            description: "Cite every source.".to_owned(),
+        }),
+        ..submit(idem, "Cite every source, then check each.", Some(workspace))
+    };
+    app.submit_memory(Bearer::Session(&curate), &skill("s1", "cite", "universe"))
+        .await
+        .expect("alice-curate's held skill");
+    app.submit_memory(Bearer::Session(&web), &skill("s2", "own", "alice"))
+        .await
+        .expect("alice-web's own held skill");
+    let asked = oml_app::types::SkillRequest {
+        workspace: Some(by_name("alice")),
+        include_own_held: true,
+        cursor: None,
+    };
+    let offered = app
+        .skills(Bearer::Session(&web), &asked)
+        .await
+        .expect("the web key's skills");
+    let names: Vec<&str> = offered.skills.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, ["own"], "the calling key's own, not alice-curate's");
+    match app.skills(Bearer::Session(&alice_admin), &asked).await {
+        Ok(set) => assert!(
+            set.skills.iter().all(|s| s.skill_name != "cite"),
+            "{:?}",
+            set.skills
+        ),
+        Err(e) => assert!(
+            matches!(
+                e,
+                AppError::VerbCeiling { .. } | AppError::SessionKeyDenied { .. }
+            ),
+            "{e:?}"
+        ),
+    }
+}

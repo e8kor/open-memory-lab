@@ -273,6 +273,23 @@ an instruction to Claude, not a guarantee, and a checked rule holds only where t
 run. See the
 [CLI reference](../../docs/cli/reference.md#oml-hook-guardrails-and-oml-hook-pre-tool-use).
 
+## Skills
+
+*Since v0.8.0 · [releases](https://e8kor.github.io/open-memory-lab/changelog/)*
+
+A skill is a reviewed set of markdown instructions stored in OML and offered as a command:
+Claude Code lists each skill offered at the key's workspace as `/oml:<name> (MCP)`, and the model
+can read one without a person running it, at `oml://workspace/<workspace>/skill/<name>`. Save a
+skill with `oml_write`, `kind: "skill"` and its `skill` object `{name, description}`, and update
+it with `replaces`; every version waits for a person's approval, and the key that wrote it is
+offered it at once, marked unreviewed. The session-start hook lists up to 20 offered skills,
+names and descriptions only. Before a `Write` or an edit under the project's or the home's
+`.claude/skills/`, the PreToolUse hook asks with the reason "OML keeps skills", since a file there
+reaches one machine; allow the call to keep the file anyway. A guardrail that denies the call
+still denies it, and a shell command that writes there is not matched. `oml skills list` prints
+the offered set, and `oml doctor` counts the skills kept on disk. See
+[Keep agent skills in OML](../../docs/use/skills.md).
+
 ## The librarian
 
 *Available since v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/changelog/)*

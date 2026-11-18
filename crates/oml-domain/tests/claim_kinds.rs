@@ -50,6 +50,33 @@ fn a_skill_description_is_one_line_of_1_to_1024_characters() {
     }
 }
 
+/// A description or name holding a C0 or C1 control, a bidi override or
+/// isolate, or a zero-width character is refused naming its field and the
+/// reason, so no index line or listing can hide or reorder text (ADR-0080
+/// d1, d8).
+#[test]
+fn a_skill_description_or_name_with_a_control_bidi_or_zero_width_character_is_refused() {
+    for c in [
+        '\u{0}', '\u{7}', '\u{1B}', '\u{7F}', '\u{85}', '\u{9B}', '\u{202A}', '\u{202E}',
+        '\u{2066}', '\u{2069}', '\u{200B}', '\u{200D}', '\u{FEFF}', '\u{2060}', '\t',
+    ] {
+        let text = format!("Deploy{c} the service.");
+        let err = check_skill_description(&text).unwrap_err();
+        assert_eq!(err.field, "/skill/description", "{c:?}");
+        assert_eq!(
+            err.reason,
+            "a skill description holds no control, bidi override or zero-width character",
+            "{c:?}"
+        );
+        assert_eq!(
+            check_skill_name(&format!("deploy{c}x")).map_err(|e| e.field),
+            Err("/skill/name"),
+            "{c:?}"
+        );
+    }
+    assert!(check_skill_description("Déployer le service \u{2014} vite.").is_ok());
+}
+
 #[test]
 fn a_skill_body_opening_with_front_matter_is_refused_naming_body() {
     let err = check_skill_body("---\nname: deploy\n---\nRun it.").unwrap_err();

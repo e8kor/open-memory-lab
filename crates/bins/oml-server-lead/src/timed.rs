@@ -17,7 +17,7 @@ use uuid::Uuid;
 use oml_app::domain::name::{Name, NamedKind};
 use oml_app::domain::oauth::{RefreshDecision, TokenKind};
 use oml_app::domain::web::Provider;
-use oml_app::domain::{ChainHead, EventTime, Sha256Hash, SignedEnvelope};
+use oml_app::domain::{ChainHead, EventTime, MemoryKind, Sha256Hash, SignedEnvelope};
 use oml_app::ports::{
     CommitReceipt, CommitRequest, ConnectionStore, IdempotencyClaim, IdempotencyPut,
     IdempotencyRecord, IdempotencyScope, JournalStore, Retriever, SessionKeyName, StoreError,
@@ -416,17 +416,26 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         )
     }
 
-    fn guardrail_rows(
+    fn instruction_rows(
         &self,
         tenant_id: Uuid,
+        kind: MemoryKind,
         nodes: &[Uuid],
         author_key_id: Uuid,
         held_nodes: &[Uuid],
+        bodies: bool,
     ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send {
+        // One series per kind, so the guardrail read and the skill read
+        // are told apart.
+        let method = match kind {
+            MemoryKind::Guardrail => "instruction_rows.guardrail",
+            MemoryKind::Skill => "instruction_rows.skill",
+            _ => "instruction_rows",
+        };
         timed(
-            "guardrail_rows",
+            method,
             self.inner
-                .guardrail_rows(tenant_id, nodes, author_key_id, held_nodes),
+                .instruction_rows(tenant_id, kind, nodes, author_key_id, held_nodes, bodies),
         )
     }
 

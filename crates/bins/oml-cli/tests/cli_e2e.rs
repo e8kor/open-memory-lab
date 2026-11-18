@@ -3359,7 +3359,7 @@ async fn the_hook_never_uses_the_stored_admin_credentials() {
     assert_eq!(code, 0, "{stderr}");
     assert!(context_of(&stdout).contains(FRAMING), "{stdout}");
     let seen = crew.lab.take_requests();
-    assert_eq!(seen.len(), 4, "{:?}", routes(&seen));
+    assert_eq!(seen.len(), 5, "{:?}", routes(&seen));
     let bearer = format!("Bearer {}", crew.agent);
     for s in &seen {
         assert_eq!(
@@ -4396,6 +4396,8 @@ async fn doctor_with_a_whole_pair_reads_whoami_and_the_events_tail_under_that_so
             "/v2/whoami",
             // Whether the server takes origin_kinds (ADR-0063 d13).
             "/v1/memories",
+            // The offered skills, for the skill lines (ADR-0080).
+            "/v1/skills",
             "/v2/workspaces/w1",
             "/v2/edges",
             "/v2/events"
@@ -6596,6 +6598,7 @@ async fn the_session_start_hook_prints_the_default_workspaces_brief_before_the_s
             "POST /v1/memories/recall".to_owned(),
             "GET /v2/whoami".to_owned(),
             format!("GET /v2/workspaces/{}", crew.wa),
+            "GET /v1/skills".to_owned(),
         ]
     );
     let context = context_of(&stdout);
@@ -6616,14 +6619,16 @@ async fn the_session_start_hook_prints_the_default_workspaces_brief_before_the_s
 }
 
 /// The requests one session start sends under the crew's agent key: the
-/// own listing, the recall, then whoami and the default workspace's read for
-/// its brief (ADR-0029 d2; ADR-0046 d9).
+/// own listing, the recall, whoami and the default workspace's read for
+/// its brief, then the offered skills for the index (ADR-0029 d2; ADR-0046
+/// d9; ADR-0080 d8).
 fn session_start_routes(crew: &Crew) -> Vec<String> {
     vec![
         "GET /v1/memories".to_owned(),
         "POST /v1/memories/recall".to_owned(),
         "GET /v2/whoami".to_owned(),
         format!("GET /v2/workspaces/{}", crew.wa),
+        "GET /v1/skills".to_owned(),
     ]
 }
 

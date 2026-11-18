@@ -485,11 +485,18 @@ async fn oml_write_refuses_kind_guardrail_and_a_guardrail_target() {
     );
 }
 
+/// `oml_write` refuses the document and test kinds naming `kind`, and
+/// admits a skill only with its `skill` object, naming `/skill` without one
+/// (ADR-0080 d1, d3; #405, #419).
 #[tokio::test]
-async fn oml_write_refuses_the_skill_document_and_test_kinds_naming_kind() {
+async fn oml_write_refuses_the_document_and_test_kinds_and_a_skill_without_its_object() {
     let router = doubles_router();
     let t = tenant(&router).await;
-    for kind in ["skill", "document", "test"] {
+    for (kind, field) in [
+        ("document", "/kind"),
+        ("test", "/kind"),
+        ("skill", "/skill"),
+    ] {
         let result = call_tool(
             &router,
             &t.writer,
@@ -499,7 +506,7 @@ async fn oml_write_refuses_the_skill_document_and_test_kinds_naming_kind() {
         .await;
         assert_eq!(
             tool_refusal_field(&result),
-            ("request.validation".to_owned(), "/kind".to_owned()),
+            ("request.validation".to_owned(), field.to_owned()),
             "{kind}"
         );
     }
@@ -531,8 +538,10 @@ async fn oml_write_with_replaces_naming_a_document_is_refused_naming_kind() {
     );
 }
 
+/// A skill is retired as every claim is, by a held retirement over
+/// `oml_write` with `replaces` (ADR-0080 d2, d3).
 #[tokio::test]
-async fn oml_write_retiring_a_skill_is_refused_naming_kind() {
+async fn oml_write_proposes_retiring_a_skill_as_a_held_retirement() {
     let router = doubles_router();
     let t = tenant(&router).await;
     let skill = submit_guardrail(
@@ -552,10 +561,11 @@ async fn oml_write_retiring_a_skill_is_refused_naming_kind() {
                "retirement": true, "idempotency_key": "w-retire"}),
     )
     .await;
-    assert_eq!(
-        tool_refusal_field(&result),
-        ("request.validation".to_owned(), "/kind".to_owned())
-    );
+    assert_ne!(result["isError"], true, "{result}");
+    let receipt = &result["structuredContent"];
+    assert_eq!(receipt["retirement"], true, "{receipt}");
+    assert_eq!(receipt["state"], "held", "{receipt}");
+    assert_eq!(receipt["claim_key"], "skill/deploy", "{receipt}");
 }
 
 #[tokio::test]

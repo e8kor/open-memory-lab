@@ -98,6 +98,7 @@ use oml_domain::{
     sha256_digest_string, transition, withdraw,
 };
 
+use crate::cursor::SkillCursor;
 use crate::cursor::{ClaimEdgeCursor, ListingCursor, NameCursor, PathCursor};
 use crate::ports::{
     AdmissionEnvelope, ClientDocumentFetcher, Clock, CommitReceipt, CommitRequest, ConnectionStore,
@@ -133,6 +134,8 @@ use crate::types::{
     BULK_VERDICT_MAX, BulkItem, BulkVerdictRequest, FindingVerdict, FoundBy, HELD_PAGE_MAX,
     HeldFilter, HeldItem, HeldListingRequest, HeldPage, ReviewLane, VersionFinding,
 };
+use crate::types::{ServedSkill, SkillBody, SkillRead, SkillRequest, SkillSet};
+use oml_domain::skills::{SKILL_PAGE, SkillCandidate, offer, skill_uri};
 
 use crate::search::{
     Access, CandidateScope, DID_YOU_MEAN_BELOW, Fused, Fusion, MatchMode, OwnHeldScope, Pipeline,
@@ -399,6 +402,56 @@ impl Caller {
 struct ServedNodes {
     nodes: Vec<Uuid>,
     inside: Vec<Uuid>,
+}
+
+/// The scope of an offered skill set: the node, its path, the key's
+/// guardrail scope, and the name of each workspace a candidate lives in,
+/// which a resource URI carries (ADR-0081 d6).
+struct SkillScope {
+    scope_node: Uuid,
+    scope_path: String,
+    guardrail_scope: GuardrailScope,
+    names: BTreeMap<Uuid, String>,
+}
+
+/// An offered command as the read serves it, without its body (ADR-0080
+/// d11); `None` for a row with no skill fields, which no candidate has.
+fn served_skill(
+    scope: &SkillScope,
+    offered: &oml_domain::skills::OfferedSkill,
+    row: &MemoryRecord,
+) -> Option<ServedSkill> {
+    let Some(KindFields::Skill { name, description }) = row.kind_fields.as_deref() else {
+        return None;
+    };
+    let workspace_name = scope.names.get(&row.workspace_id)?.clone();
+    let held = offered.candidate.held;
+    Some(ServedSkill {
+        artifact_id: row.memory_id,
+        claim_key: row.claim_key.clone(),
+        name: offered.command.clone(),
+        skill_name: name.clone(),
+        description: description.clone(),
+        version: row.version,
+        workspace_id: row.workspace_id,
+        uri: skill_uri(&workspace_name, &offered.command),
+        workspace_name,
+        workspace_path: offered.candidate.path.clone(),
+        depth: offered.candidate.distance,
+        overrides: offered.overrides.clone(),
+        approved_at: if held {
+            None
+        } else {
+            row.approval.as_ref().map(|a| a.at.clone())
+        },
+        approver: if held {
+            None
+        } else {
+            row.approval.as_deref().cloned()
+        },
+        unreviewed: held,
+        body_bytes: row.body_bytes,
+    })
 }
 
 /// One text a version's scan reads: the envelope kind it is scanned as, the
@@ -2343,9 +2396,11 @@ where
             // (ADR-0077 d4).
             memory.approval = None;
         }
-        let load_warning = (memory.kind == MemoryKind::Guardrail
-            && memory.status == MemoryStatus::Held)
-            .then_some(LOAD_WARNING);
+        let load_warning = match (memory.kind, memory.status) {
+            (MemoryKind::Guardrail, MemoryStatus::Held) => Some(LOAD_WARNING),
+            (MemoryKind::Skill, MemoryStatus::Held) => Some(oml_domain::skills::SKILL_LOAD_WARNING),
+            _ => None,
+        };
         Ok(ServedMemory {
             memory,
             replaces,
@@ -7410,7 +7465,14 @@ where
             .collect();
         let rows = self
             .journal
-            .guardrail_rows(tenant_id, &listed, key.key_id, &inside)
+            .instruction_rows(
+                tenant_id,
+                MemoryKind::Guardrail,
+                &listed,
+                key.key_id,
+                &inside,
+                true,
+            )
             .await?;
 
         // R3 defense in depth: a served rule is a readable promoted tip in
@@ -7553,6 +7615,283 @@ where
             own_held,
             served_ids,
         })
+    }
+
+    /// The offered skill set at the scope node, before paging (ADR-0080 d4,
+    /// d5, d10, d14, d16): reader on the scope node by the refusal order, as
+    /// the guardrail read is. Its candidates are the skill tips on the scope
+    /// node and, under the key's `guardrail_scope` `ancestors`, on each
+    /// ancestor it reads and on each node below it that lies inside an
+    /// in-progress subtree, where reach goes down as well as up; `workspace`
+    /// keeps the scope node alone, in both directions. A held version is a
+    /// candidate for its author key under `include_own_held`, and for every
+    /// reader on a node inside an in-progress subtree; never a retirement,
+    /// never one the scan held or has not scanned (ADR-0074 d20). Each
+    /// candidate keeps its row, which a prompt or a resource read serves.
+    async fn offered_skills(
+        &self,
+        caller: &Caller,
+        workspace: Option<&Reference>,
+        include_own_held: bool,
+    ) -> Result<
+        (
+            SkillScope,
+            oml_domain::skills::Offer,
+            BTreeMap<Uuid, MemoryRecord>,
+        ),
+        AppError,
+    > {
+        let key = &caller.key;
+        require_admissible(key, Role::Reader, "skills")?;
+        let scope_node = self.target_workspace(key, workspace).await?;
+        self.require_access(caller, scope_node, Role::Reader, "skills")
+            .await?;
+        let tenant_id = key.tenant_id;
+        let guardrail_scope = key.guardrail_scope;
+        let chain = self
+            .journal
+            .workspace_ancestry(tenant_id, scope_node)
+            .await?
+            .unwrap_or_default();
+        let ids: Vec<Uuid> = chain.iter().map(|w| w.workspace_id).collect();
+        let scope_path = derived_path(&chain);
+        let bound = match guardrail_scope {
+            GuardrailScope::Workspace => ids.len().min(1),
+            GuardrailScope::Ancestors => ids.len(),
+        };
+        // node -> (distance, ancestor, name, path); `inside` holds the
+        // nodes of an in-progress subtree, where every reader is offered
+        // every author's held skill (ADR-0080 d10, d16).
+        let mut nodes: BTreeMap<Uuid, (u32, bool, String, String)> = BTreeMap::new();
+        let mut inside: Vec<Uuid> = Vec::new();
+        for i in 0..bound {
+            if !caller.effective(&ids[i..]).contains(&Role::Reader) {
+                continue;
+            }
+            let distance = u32::try_from(i).unwrap_or(u32::MAX);
+            nodes.insert(
+                ids[i],
+                (
+                    distance,
+                    true,
+                    chain[i].name.as_str().to_owned(),
+                    derived_path(&chain[i..]),
+                ),
+            );
+            if in_progress_root_in(&chain[i..]).is_some() {
+                inside.push(ids[i]);
+            }
+        }
+        if guardrail_scope == GuardrailScope::Ancestors {
+            let mut walked = BTreeMap::new();
+            let below = self
+                .nodes_walked(caller, scope_node, Role::Reader, Some(&mut walked))
+                .await?;
+            let roots = self.subtree_roots(tenant_id, scope_node).await?;
+            for node in below {
+                if node == scope_node || roots.get(&node).copied().flatten().is_none() {
+                    continue;
+                }
+                let Some(ancestry) = ancestry_of(&walked, node) else {
+                    continue;
+                };
+                let Some(distance) = ancestry.iter().position(|w| w.workspace_id == scope_node)
+                else {
+                    continue;
+                };
+                nodes.insert(
+                    node,
+                    (
+                        u32::try_from(distance).unwrap_or(u32::MAX),
+                        false,
+                        ancestry[0].name.as_str().to_owned(),
+                        derived_path(&ancestry),
+                    ),
+                );
+                inside.push(node);
+            }
+        }
+        let listed: Vec<Uuid> = nodes.keys().copied().collect();
+        let rows = self
+            .journal
+            .instruction_rows(
+                tenant_id,
+                MemoryKind::Skill,
+                &listed,
+                key.key_id,
+                &inside,
+                false,
+            )
+            .await?;
+        let mut candidates = Vec::new();
+        let mut kept = BTreeMap::new();
+        let mut names = BTreeMap::new();
+        for m in rows {
+            let Some(&(distance, ancestor, ref name, ref path)) = nodes.get(&m.workspace_id) else {
+                continue;
+            };
+            let Some(KindFields::Skill {
+                name: skill_name, ..
+            }) = m.kind_fields.as_deref()
+            else {
+                continue;
+            };
+            let held = match m.status {
+                MemoryStatus::Promoted if m.is_tip && !m.retirement => false,
+                MemoryStatus::Held
+                    if served_unreviewed(&m, self.scanner.version())
+                        && ((m.author_key_id == key.key_id && include_own_held)
+                            || inside.contains(&m.workspace_id)) =>
+                {
+                    true
+                }
+                _ => continue,
+            };
+            candidates.push(SkillCandidate {
+                artifact_id: m.memory_id,
+                name: skill_name.clone(),
+                node: m.workspace_id,
+                path: path.clone(),
+                distance,
+                ancestor,
+                held,
+                version: m.version,
+                created_at: m.created_at.as_str().to_owned(),
+            });
+            names.insert(m.workspace_id, name.clone());
+            kept.insert(m.memory_id, m);
+        }
+        Ok((
+            SkillScope {
+                scope_node,
+                scope_path,
+                guardrail_scope,
+                names,
+            },
+            offer(candidates),
+            kept,
+        ))
+    }
+
+    /// The skills offered at the scope node, one page of them without
+    /// bodies (ADR-0080 d11): the set `offered_skills` computes, in
+    /// d5's order, 50 a page after the cursor's position, with the digest
+    /// of the whole set. Serving one is a read, not a recall: nothing here
+    /// counts in `recalls` (d12).
+    pub async fn skills(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        req: &SkillRequest,
+    ) -> Result<SkillSet, AppError> {
+        let caller = self.authenticate_bearer(bearer.into()).await?;
+        let now = self.clock.now();
+        let after = req
+            .cursor
+            .as_deref()
+            .map(|cursor| SkillCursor::resume(cursor, caller.key.key_id, &now))
+            .transpose()?;
+        let (scope, offer, rows) = self
+            .offered_skills(&caller, req.workspace.as_ref(), req.include_own_held)
+            .await?;
+        let versions: Vec<(Uuid, u32)> = offer
+            .offered
+            .iter()
+            .map(|o| (o.candidate.artifact_id, o.candidate.version))
+            .collect();
+        let mut page: Vec<ServedSkill> = offer
+            .offered
+            .iter()
+            .filter(|o| {
+                after
+                    .as_ref()
+                    .is_none_or(|a| (o.candidate.distance, o.command.clone()) > *a)
+            })
+            .filter_map(|o| served_skill(&scope, o, rows.get(&o.candidate.artifact_id)?))
+            .take(SKILL_PAGE.saturating_add(1))
+            .collect();
+        let more = page.len() > SKILL_PAGE;
+        page.truncate(SKILL_PAGE);
+        let next_cursor = more.then(|| {
+            let last = page.last().expect("a page past the cap holds rows");
+            SkillCursor {
+                key_id: caller.key.key_id,
+                after: (last.depth, last.name.clone()),
+                issued_at: now.clone(),
+            }
+            .encode()
+        });
+        Ok(SkillSet {
+            scope_node: scope.scope_node,
+            scope_path: scope.scope_path,
+            guardrail_scope: scope.guardrail_scope,
+            set_digest: oml_domain::guardrail::set_digest(&versions),
+            served_ids: page.iter().map(|s| s.artifact_id).collect(),
+            skills: page,
+            next_cursor,
+        })
+    }
+
+    /// One offered skill with its body, as a prompt or a resource serves it
+    /// whole (ADR-0080 d6, d7, d9): a prompt names a command offered at the
+    /// scope node; a resource names a workspace and a command of that
+    /// workspace's own skills the scope offers, a shadowed one included.
+    /// `None` for anything else: an unknown name, one not offered here, a
+    /// rejected or retired skill, a held one outside its audience, so the
+    /// caller answers every case with one error and discloses no row (d6).
+    pub async fn skill(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        workspace: Option<&Reference>,
+        req: &SkillRead,
+    ) -> Result<Option<SkillBody>, AppError> {
+        let caller = self.authenticate_bearer(bearer.into()).await?;
+        let (scope, offer, mut rows) = self
+            .offered_skills(&caller, workspace, req.include_own_held)
+            .await?;
+        let found = match &req.workspace_name {
+            None => offer.offered.iter().find(|o| o.command == req.command),
+            Some(name) => offer.all.iter().find(|o| {
+                o.command == req.command
+                    && scope
+                        .names
+                        .get(&o.candidate.node)
+                        .is_some_and(|n| n == name)
+            }),
+        };
+        let Some(found) = found else {
+            return Ok(None);
+        };
+        // The winner's own entry carries its overrides; a shadowed one, read
+        // by URI, carries none.
+        let offered = offer
+            .offered
+            .iter()
+            .find(|o| o.candidate.artifact_id == found.candidate.artifact_id)
+            .unwrap_or(found);
+        let Some(row) = rows.remove(&found.candidate.artifact_id) else {
+            return Ok(None);
+        };
+        let Some(skill) = served_skill(&scope, offered, &row) else {
+            return Ok(None);
+        };
+        // The set was read without bodies; the one served is read here
+        // (ADR-0080 d11). A row gone since, or one whose state, tip or
+        // version moved between the two reads, is not served: the header
+        // would describe a version other than the body's.
+        let Some(full) = self
+            .journal
+            .memory(caller.key.tenant_id, row.memory_id)
+            .await?
+            .filter(|f| {
+                f.status == row.status && f.is_tip == row.is_tip && f.version == row.version
+            })
+        else {
+            return Ok(None);
+        };
+        Ok(Some(SkillBody {
+            skill,
+            body: full.body,
+        }))
     }
 
     /// The held steering a recall's steering list carries after the
@@ -8610,18 +8949,16 @@ where
         if req.refuse_vocabulary_target && target.kind == MemoryKind::Guardrail {
             return Err(AppError::GuardrailTarget);
         }
-        // Nor a skill, a document or a test case, which are written on the
-        // HTTP API with their objects until their serving lands (ADR-0080
-        // d3; #403, #405, #419): a successor of one takes its kind.
+        // Nor a document or a test case, which are written on the HTTP API
+        // with their objects until their serving lands (#405, #419): a
+        // successor of one takes its kind. A skill is superseded over
+        // `oml_write` with its object (ADR-0080 d3).
         if req.refuse_vocabulary_target
-            && matches!(
-                target.kind,
-                MemoryKind::Skill | MemoryKind::Document | MemoryKind::Test
-            )
+            && matches!(target.kind, MemoryKind::Document | MemoryKind::Test)
         {
             return Err(AppError::KindField(oml_domain::claim_kinds::FieldRefusal {
                 field: "/kind",
-                reason: "a skill, a document or a test case is superseded and retired on the HTTP API in this release, with its object",
+                reason: "a document or a test case is superseded and retired on the HTTP API in this release, with its object",
             }));
         }
         // Step 5's last check, after the head read above: a ratification
