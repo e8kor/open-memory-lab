@@ -146,6 +146,59 @@ async fn an_imported_version_carrying_an_age_secret_key_is_refused_by_the_scan_a
     finish(rig).await;
 }
 
+/// A document travels as its body and its kind object, never its
+/// passages, which are derived: the import writes it through the one write
+/// path, which cuts its passages again by the one rule (ADR-0081 d3;
+/// ADR-0084 d6).
+#[tokio::test]
+async fn an_imported_document_is_cut_into_its_passages_again_on_the_target() {
+    let Some(rig) = rig().await else { return };
+    let r = &rig.router;
+    let (admin, tenant) = bootstrap(r).await;
+    let ada = ada_key(r, &admin, "ada-laptop", "person").await;
+    let fingerprint = oml_bundle::key_fingerprint(&source_key().verifying_key());
+    let text = "# Runbook\n\nWhat it covers.\n\n## Restart\n\nRestart the lead.\n";
+    let mut doc = line("art-d", "doc/runbook", text);
+    doc.kind = "document".to_owned();
+    doc.format = Some("text/markdown".to_owned());
+    doc.document = Some(json!({"title": "Runbook"}));
+    let up = upload(r, &ada, &bundle_with(vec![doc])).await;
+    let (status, body) = json_call(
+        r,
+        "POST",
+        "/v2/imports",
+        Some(&ada),
+        json!({ "upload_id": up, "target": "notes", "expect_key": fingerprint }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let id = body["import"]["import_id"]
+        .as_str()
+        .expect("an id")
+        .to_owned();
+    let import = ended(r, &ada, &id).await;
+    assert_eq!(import["state"], "done", "{import}");
+    assert_eq!(import["counts"]["new"], 1, "{import}");
+    let mut tx = rig.store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    let fragments: Vec<String> = sqlx::query_scalar(
+        "SELECT d.fragment FROM document_passages d JOIN memories m \
+           ON m.tenant_id = d.tenant_id AND m.id = d.memory_id \
+          WHERE d.tenant_id = $1 AND m.claim_key = 'doc/runbook' ORDER BY d.ordinal",
+    )
+    .bind(tenant)
+    .fetch_all(&mut *tx)
+    .await
+    .expect("passages");
+    tx.rollback().await.expect("rollback");
+    assert_eq!(fragments, vec!["runbook", "restart"], "cut again on import");
+    finish(rig).await;
+}
+
 async fn finish(rig: Rig) {
     drop(rig.router);
     rig.store.pool().close().await;
