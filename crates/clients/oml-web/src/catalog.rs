@@ -21,7 +21,7 @@ use oml_page::web::{
     TODO_JUDGE_PATH, USER_CATALOG_PATH, USER_MEMORY_PATH, USER_WORKSPACES_PATH, attr, glyph_svg,
     hidden, input, select, shell, state_tag, text,
 };
-use oml_sdk::{CatalogCount, CatalogEntry, CatalogPage, CatalogQuery};
+use oml_sdk::{CatalogCount, CatalogEntry, CatalogPage, CatalogQuery, encode};
 
 use crate::keys::instant;
 use crate::memories::{Failed, Primary, Side, failed_page, picker_reads, settle, with_status};
@@ -315,7 +315,7 @@ fn state_cell(e: &CatalogEntry, judge: bool) -> String {
                 let _ = write!(
                     out,
                     r#" <a href="{TODO_JUDGE_PATH}?memory={}">Judge it</a>"#,
-                    attr(&e.artifact_id)
+                    attr(&encode(&e.artifact_id))
                 );
             }
         }
@@ -649,6 +649,19 @@ mod tests {
         assert!(
             alone.contains("needs a person") && !alone.contains("Judge it"),
             "{alone}"
+        );
+        // The id is percent-encoded into the query, then escaped as an
+        // attribute, as every other link to a memory is.
+        let odd: CatalogEntry = serde_json::from_value(serde_json::json!({
+            "artifact_id": "a&b c\"", "claim_key": "skill/deploy", "kind": "skill",
+            "version": 1, "workspace_path": "universe.alice.proj", "state": "held",
+            "unreviewed": true, "needs_person": true, "created_at": "2026-11-19T10:00:00Z"
+        }))
+        .expect("an entry");
+        let cell = super::state_cell(&odd, true);
+        assert!(
+            cell.contains(r#"<a href="/web/todo/judge?memory=a%26b%20c%22">Judge it</a>"#),
+            "{cell}"
         );
     }
     use super::*;

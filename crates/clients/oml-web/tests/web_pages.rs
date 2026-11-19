@@ -9600,7 +9600,7 @@ async fn an_edit_previews_its_change_and_then_waits_for_review() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{previewed}");
-    assert!(previewed.contains("Change against v1 <span class=\"n\">baseline: v1, the served tip · 0 words removed, 1 added</span>"), "{previewed}");
+    assert!(previewed.contains("Change against v1 <span class=\"n\">baseline: v1, the served tip · 0 words removed, 1 word added</span>"), "{previewed}");
     assert!(
         previewed.contains(r#"<p class="label">Name <span class="n">unchanged</span></p>"#),
         "{previewed}"

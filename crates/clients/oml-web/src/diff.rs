@@ -282,10 +282,21 @@ pub(crate) fn labelled(was_version: u32, was: Parts<'_>, now: Parts<'_>) -> Stri
     }
     // A part too long to compare draws no counts for the whole change.
     let counted = counts
-        .map(|(removed, added)| format!(" · {removed} words removed, {added} added"))
+        .map(|(removed, added)| format!(" · {}", counted(removed, added)))
         .unwrap_or_default();
     format!(
         r#"<details class="oml-diff" open><summary>Change against v{was_version} <span class="n">baseline: v{was_version}, the served tip{counted}</span></summary><div class="sides">{blocks}</div></details>"#
+    )
+}
+
+/// A change's counts, "1 word removed, 2 words added": one word is one
+/// word, any other count words.
+fn counted(removed: usize, added: usize) -> String {
+    let words = |n: usize| if n == 1 { "word" } else { "words" };
+    format!(
+        "{removed} {} removed, {added} {} added",
+        words(removed),
+        words(added)
     )
 }
 
@@ -309,9 +320,7 @@ pub(crate) fn change(
     }
     let c = compare(was, now);
     let found = match c.outcome {
-        Outcome::Changed { removed, added } => {
-            format!("{removed} words removed, {added} added")
-        }
+        Outcome::Changed { removed, added } => counted(removed, added),
         other => other.label().unwrap_or_default(),
     };
     format!(
@@ -441,6 +450,15 @@ mod tests {
             },
         );
         assert!(!memory.contains(">Name") && memory.contains(">Body</p>"));
+        // One word is one word; any other count is words.
+        assert!(
+            memory.contains("the served tip · 1 word removed, 1 word added"),
+            "{memory}"
+        );
+        assert!(
+            block.contains("the served tip · 1 word removed, 2 words added"),
+            "{block}"
+        );
     }
 
     #[test]
@@ -451,7 +469,9 @@ mod tests {
             block.contains("<ins>ci-medium</ins> <ins>now</ins>"),
             "{block}"
         );
-        assert!(block.contains("1 words removed, 2 added"), "{block}");
+        assert!(block.contains("1 word removed, 2 words added"), "{block}");
+        let one = change(1, "a b", 2, "a c", false);
+        assert!(one.contains("1 word removed, 1 word added"), "{one}");
         assert!(block.contains("Was · v2") && block.contains("Now · v3, this version"));
         let retired = change(1, "the old wiki", 2, "shut down", true);
         assert!(retired.contains("Stops being served · v1"), "{retired}");
