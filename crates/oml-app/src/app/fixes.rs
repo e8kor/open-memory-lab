@@ -1001,7 +1001,7 @@ where
     /// `confirmed: true` from then on (ADR-0089 d7, d8).
     ///
     /// # Errors
-    /// See [`Self::settle_checks`]; and the store's.
+    /// See `settle_checks`; and the store's.
     pub async fn confirm_fix(
         &self,
         bearer: impl Into<Bearer<'_>>,
@@ -1055,7 +1055,7 @@ where
     /// version's lineage, the admin's principal included.
     ///
     /// # Errors
-    /// The refusals above, [`Self::settle_checks`]'s, and the store's.
+    /// The refusals above, `settle_checks`'s, and the store's.
     pub async fn revert_fix(
         &self,
         bearer: impl Into<Bearer<'_>>,
