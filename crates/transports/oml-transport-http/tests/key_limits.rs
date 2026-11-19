@@ -607,7 +607,7 @@ async fn an_agent_key_changes_no_limits_and_an_admin_key_never_its_own() {
     let agent = w
         .issue(
             "agent",
-            "contributor",
+            "submitter",
             json!({ "expiry": EXPIRY_SENT, "requests_per_minute": 30 }),
         )
         .await;
@@ -872,7 +872,7 @@ async fn each_item_of_the_keys_listing_serves_the_keys_expiry_whether_it_has_com
         ("ada-plain", json!({})),
     ] {
         let mut body = json!({
-            "role": "contributor",
+            "role": "submitter",
             "name": name,
             "user": "ada",
             "grants": [{ "workspace": "ada", "role": "submitter" }],

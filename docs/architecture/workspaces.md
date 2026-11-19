@@ -97,7 +97,7 @@ A `node` grant covers its node and no descendant. Every user key carries one as 
 
 ### Who may write
 
-Effective access decides. A key with writer access on a node may submit there. A status never recomputes or edits a grant. A `frozen` workspace refuses new writes with a typed error that every writer receives alike.
+Effective access decides. A key with submitter access on a node may submit there. A status never recomputes or edits a grant. A `frozen` workspace refuses new writes with a typed error that every writer receives alike.
 
 ## Links and the brief
 

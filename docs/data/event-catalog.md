@@ -150,7 +150,7 @@ Events signed before v0.8.3 keep the names they were signed with, and every read
 lake writer's projection, the events tail and its visibility, `oml events`) reads them through
 one map, after the stored bytes are verified as they stand
 ([ADR-0091](../adr/ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md)
-d4). The map is the identity on every event v0.8.3 writes. A `workarea.*` type outside the first
+d4). Events signed before v0.8.4 keep the role `writer` and are read through the map's rule 7 ([ADR-0093](../adr/ADR-0093-contributor-and-submitter-replace-writer.md) d4). The map is the identity on every event v0.8.3 and v0.8.4 write. A `workarea.*` type outside the first
 table fails the reader closed, named `journal_unmapped_former_name`, as does an object that holds a
 former key beside its successor. This table is the only place
 the catalog spells the former names.
@@ -172,6 +172,8 @@ the catalog spells the former names.
 | a payload key holding `workarea` or `workareas`, at any depth | every event | the same key with `workspace` or `workspaces` |
 | `workarea` | `kind` of each row of `system.names_assigned`'s `names`; `guardrail_scope` of `key.issued` and of any event that records it | `workspace` |
 | `dreamer` | `role` of `key.issued` and `grant.issued`; each of `required_roles` inside a `policy_snapshot`, and inside the `policy` of `lifecycle.promote` and `lifecycle.supersede` | `reviewer` |
+| `writer` (rule 7, [ADR-0093](../adr/ADR-0093-contributor-and-submitter-replace-writer.md) d4) | `role` of `key.issued` | `contributor` |
+| `writer` (rule 7) | `role` of `grant.issued`; each of `required_roles` inside a `policy_snapshot`, and inside the `policy` of `lifecycle.promote` and `lifecycle.supersede` | `submitter` |
 | `committed`, `validated` | `status` of `workspace.create`; `from` and `to` of `workspace.status_proposed` and `workspace.status_transition` | `protected`, `frozen` |
 | `children_all_validated` | a key of `workspace.status_transition`'s `policy_snapshot` | `children_all_frozen` |
 | `held_by`, valued `human` | a key of `key.issued` | `used_by`, valued `person` |

@@ -113,7 +113,7 @@ text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Aria
 <text class="it" x="394" y="140">memory v2 · published</text>
 <path class="e dash" d="M334 232 H360" marker-end="url(#a)"/>
 <rect class="reach " x="36" y="62" width="306" height="302" rx="18"/>
-<text class="acct" x="48" y="382">key A · agent, writer, tip: writes here</text>
+<text class="acct" x="48" y="382">key A · agent, contributor, tip: writes here</text>
 <rect class="reach b" x="28" y="54" width="322" height="318" rx="18"/>
 <rect class="reach b plan" x="354" y="54" width="180" height="318" rx="18"/>
 <rect class="tag" x="460" y="364" width="64" height="16" rx="3"/><text class="tagt" x="492" y="376" text-anchor="middle">designed</text>

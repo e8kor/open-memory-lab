@@ -33,9 +33,9 @@ info:
     resolved server-side by substituting the id before any check that reads state, so an unknown or
     unreadable name answers exactly what its id would; responses carry ids, and each of the four
     objects carries its name (docs/api/http-api.md, Names and ids). Authorization model: bearer API
-    keys carrying one role (reader, writer, reviewer, admin, operator); tenant is derived server-side
+    keys carrying one role (reader, contributor, submitter, reviewer, admin, operator); tenant is derived server-side
     from the key, never from the request. Roles do not nest. Read verbs require reader effective
-    access on the named workspace; write verbs writer; propose/review verbs reviewer (two capability
+    access on the named workspace; write verbs submitter; propose/review verbs reviewer (two capability
     classes, one role); admin and operator verbs require that key role itself — the per-operation
     description states the ceiling ("Requires: ..."). A key's role admits a fixed set of grant
     roles, and every workspace-scoped verb refuses in one order (verb_ceiling, grant_refused on a
@@ -88,7 +88,7 @@ paths:
       tags: [memories]
       operationId: submitMemory
       summary: Submit a memory (remember or learn); held on arrival, scanned same-call.
-      description: 'Requires: writer effective access on the resolved workspace, or, for a person''s session key whose role is reviewer, reviewer and reader effective access there: the version is held and its lineage excludes that key, and every other reviewer key is access.verb_ceiling (ADR-0082 d2, d10); every derives_from ancestor must be readable by the key — promoted within its reader effective access, or its own row in any state — else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is attribution, not a verb of its own. The target workspace is the body''s workspace, by id or name, honoured only within the key''s grants, else the key''s default_workspace; request.workspace_unresolved with neither, and an X-OML-Workarea header is request.validation naming /workspace in details.renamed_to (ADR-0039 d7). A workspace in a user''s root takes a new memory from that user''s keys alone: from any other key that reads the workspace it is 409 submission.user_root_refused, answered in place of access.grant_refused, and a key that reads nothing of it gets 404 access.not_found (ADR-0044 d16). Journals submission.remember or submission.learn; verb learn with an empty or omitted derives_from is refused (submission.lineage_required).'
+      description: 'Requires: submitter effective access on the resolved workspace, or, for a person''s session key whose role is reviewer, reviewer and reader effective access there: the version is held and its lineage excludes that key, and every other reviewer key is access.verb_ceiling (ADR-0082 d2, d10); every derives_from ancestor must be readable by the key — promoted within its reader effective access, or its own row in any state — else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is attribution, not a verb of its own. The target workspace is the body''s workspace, by id or name, honoured only within the key''s grants, else the key''s default_workspace; request.workspace_unresolved with neither, and an X-OML-Workarea header is request.validation naming /workspace in details.renamed_to (ADR-0039 d7). A workspace in a user''s root takes a new memory from that user''s keys alone: from any other key that reads the workspace it is 409 submission.user_root_refused, answered in place of access.grant_refused, and a key that reads nothing of it gets 404 access.not_found (ADR-0044 d16). Journals submission.remember or submission.learn; verb learn with an empty or omitted derives_from is refused (submission.lineage_required).'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -369,7 +369,7 @@ paths:
       tags: [memories]
       operationId: supersedeMemory
       summary: Propose a replacement version, or with retirement true propose retiring the claim; a new attributed submission, held like any write.
-      description: 'Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order) — a writer on a target version it authored, a person''s session web key on one any key of its person authored, read as same_user reads it (ADR-0082 d2), a reviewer through edit-as-proposal. A target that is a ratified retirement in a user''s root takes a successor, which would put the claim back in service, from that user''s keys alone: any other key that reads the target is 409 submission.user_root_refused, answered after step 2 of that rule and ahead of access.author_only and access.grant_refused; every other successor there is under the supersede rule (ADR-0044 d16). The target must be the current served tip: submission.tip_conflict, with details.current_tip when the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-ordinal, competing-successor, retirement and retired-claim rules are declared in docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). The body''s workspace, if sent, must equal the target''s workspace (request.validation, details.field /workspace, otherwise), and an X-OML-Workarea header is request.validation naming /workspace in details.renamed_to (ADR-0039 d7); that check, the tip, the kind and retirement checks and workspace.frozen are answered only after the target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to the key with a nil workspace; the record is looked up after step 1 of that rule and before step 2, so a committed supersession replays its stored response whatever the target''s state or the key''s access now, and it is claimed only after step 2 passes. Only kind is inherited from the target; a successor declares its own anchor or has none (ADR-0057 d2). expected_version is required: the claim''s latest version the caller can read (its promoted versions where the caller reads the workspace, and the versions its own keys wrote; never another author''s held version) as the caller last read it; any other is 409 submission.version_conflict with details.current_version, answered after the target is known readable and before the tip check, with nothing captured (ADR-0057 d19). The designed attachment, simulation and vocabulary fields of a successor are declared in openapi-designed.yaml (ADR-0039 d9).'
+      description: 'Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order) — a key with submitter effective access on a target version it authored, a person''s session web key on one any key of its person authored, read as same_user reads it (ADR-0082 d2), a reviewer through edit-as-proposal. A target that is a ratified retirement in a user''s root takes a successor, which would put the claim back in service, from that user''s keys alone: any other key that reads the target is 409 submission.user_root_refused, answered after step 2 of that rule and ahead of access.author_only and access.grant_refused; every other successor there is under the supersede rule (ADR-0044 d16). The target must be the current served tip: submission.tip_conflict, with details.current_tip when the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-ordinal, competing-successor, retirement and retired-claim rules are declared in docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). The body''s workspace, if sent, must equal the target''s workspace (request.validation, details.field /workspace, otherwise), and an X-OML-Workarea header is request.validation naming /workspace in details.renamed_to (ADR-0039 d7); that check, the tip, the kind and retirement checks and workspace.frozen are answered only after the target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to the key with a nil workspace; the record is looked up after step 1 of that rule and before step 2, so a committed supersession replays its stored response whatever the target''s state or the key''s access now, and it is claimed only after step 2 passes. Only kind is inherited from the target; a successor declares its own anchor or has none (ADR-0057 d2). expected_version is required: the claim''s latest version the caller can read (its promoted versions where the caller reads the workspace, and the versions its own keys wrote; never another author''s held version) as the caller last read it; any other is 409 submission.version_conflict with details.current_version, answered after the target is known readable and before the tip check, with nothing captured (ADR-0057 d19). The designed attachment, simulation and vocabulary fields of a successor are declared in openapi-designed.yaml (ADR-0039 d9).'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -422,7 +422,7 @@ paths:
       tags: [memories]
       operationId: sourceCheckMemory
       summary: Record that a promoted version's anchored span was compared with its source at a commit (ADR-0057 d5, d18).
-      description: 'Requires: the version''s author key (writer), or a reviewer with reviewer effective access on its workspace; any other writer that can read the version is 403 access.author_only, and a key that cannot read it is 404 access.not_found. The version must be a promoted, anchored served tip: a held, unanchored or superseded one is request.validation, details.field /artifact_id. Journals source.checked {artifact_id, rev, result, hash, path, fragment}; changes no text and no anchor and moves nothing through review. The answer is the version''s new stale and source_checked: stale is changed or removed from the latest check, else null, and it is computed from checks of served versions alone, never from a held one (R3). result moved names the span''s new path (required) and fragment, and reads not stale; path and fragment are refused with any other result. Idempotency-Key required, scoped to the key with a nil workspace.'
+      description: 'Requires: the version''s author key (a contributor or a submitter), or a reviewer with reviewer effective access on its workspace; any other key without the reviewer role that can read the version is 403 access.author_only, and a key that cannot read it is 404 access.not_found. The version must be a promoted, anchored served tip: a held, unanchored or superseded one is request.validation, details.field /artifact_id. Journals source.checked {artifact_id, rev, result, hash, path, fragment}; changes no text and no anchor and moves nothing through review. The answer is the version''s new stale and source_checked: stale is changed or removed from the latest check, else null, and it is computed from checks of served versions alone, never from a held one (R3). result moved names the span''s new path (required) and fragment, and reads not stale; path and fragment are refused with any other result. Idempotency-Key required, scoped to the key with a nil workspace.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -1621,7 +1621,7 @@ paths:
                 items:
                 - id: d405428e-4c99-426d-8826-76d28436e423
                   name: alice-laptop
-                  role: writer
+                  role: contributor
                   used_by: agent
                   credential: bearer
                   user_root_id: fbbb41c5-9630-4274-ae53-166f562f5286
@@ -1631,7 +1631,7 @@ paths:
                   expired: false
                   requests_per_minute: null
                   grants:
-                  - { role: writer, workspace_id: fbbb41c5-9630-4274-ae53-166f562f5286, path: universe.alice }
+                  - { role: submitter, workspace_id: fbbb41c5-9630-4274-ae53-166f562f5286, path: universe.alice }
                 next_cursor: null
               schema:
                 type: object
@@ -1646,18 +1646,18 @@ paths:
       tags: [keys]
       operationId: issueKey
       summary: Issue a key under the issuer ceiling; the value appears exactly once, here.
-      description: 'A person''s web session key (<user>-web, through its capacity credential) issues their own key: send name (<user>-<name>), role (reader or writer) and connect_code, and expiry to end the key on a date, under the rule for expiry below; the key names their user and holds writer or reader on their root alone, any other field, requests_per_minute included, is request.validation naming it, the date is changed or cleared afterwards only by the admin key role (POST /v2/keys/{key}/limits; ADR-0079 d1, d5; since v0.7.3), and any other capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). The session key''s access is read when the issuance runs, and a session key that carries a denial, on any workspace, issues nothing: access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070 d2; since v0.7.3). Otherwise requires: admin key role; operator key role only for an operator key, sent without tenant, or a tenant''s first admin key, sent with tenant (step 0 of the issuance order). tenant is a designed field (openapi-designed.yaml x-oml-designed-fields), refused with request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9). expiry is the instant from which the key authenticates nothing, later than the server''s clock, and requests_per_minute the key''s own rate, from 1 to 1000000; either outside that is request.validation naming it in details.field, and nothing is journalled. An admin key carries neither: role admin with expiry or requests_per_minute is request.validation naming the member in details.field, with details.reason admin_key (ADR-0079 d1, d4; since v0.7.3). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workspace, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workspace, crew and tenant reference takes an id or a name, and the response carries ids under their v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant''s workarea_node_id, a deny entry''s subtree_node_id) is refused with request.validation naming its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201 carries connect_code, shown once, in the value''s place; an admin or operator role, used_by service and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason. The Idempotency-Key is claimed for the calling key before the issuance: a resubmission under the same key and body answers the first 201 with Idempotency-Replay: true and issues nothing again, without value and without connect_code.code, which the first answer alone carries; the same key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0).'
+      description: 'A person''s web session key (<user>-web, through its capacity credential) issues their own key: send name (<user>-<name>), role (contributor or reader) and connect_code, and expiry to end the key on a date, under the rule for expiry below; the key names their user and holds submitter and reader, or reader, on their root alone, any other field, requests_per_minute included, is request.validation naming it, the date is changed or cleared afterwards only by the admin key role (POST /v2/keys/{key}/limits; ADR-0079 d1, d5; since v0.7.3), and any other capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). The session key''s access is read when the issuance runs, and a session key that carries a denial, on any workspace, issues nothing: access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070 d2; since v0.7.3). Otherwise requires: admin key role; operator key role only for an operator key, sent without tenant, or a tenant''s first admin key, sent with tenant (step 0 of the issuance order). tenant is a designed field (openapi-designed.yaml x-oml-designed-fields), refused with request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9). expiry is the instant from which the key authenticates nothing, later than the server''s clock, and requests_per_minute the key''s own rate, from 1 to 1000000; either outside that is request.validation naming it in details.field, and nothing is journalled. An admin key carries neither: role admin with expiry or requests_per_minute is request.validation naming the member in details.field, with details.reason admin_key (ADR-0079 d1, d4; since v0.7.3). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workspace, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workspace, crew and tenant reference takes an id or a name, and the response carries ids under their v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant''s workarea_node_id, a deny entry''s subtree_node_id) is refused with request.validation naming its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201 carries connect_code, shown once, in the value''s place; an admin or operator role, used_by service and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason. The Idempotency-Key is claimed for the calling key before the issuance: a resubmission under the same key and body answers the first 201 with Idempotency-Replay: true and issues nothing again, without value and without connect_code.code, which the first answer alone carries; the same key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0).'
       parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }, { $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
         content:
           application/json:
             example:
-              role: writer
+              role: contributor
               name: procure-agent-7
               grants:
               - workspace: metals-crew
-                role: writer
+                role: submitter
               - workspace: metals-crew
                 role: reader
               default_workspace: metals-crew
@@ -1677,7 +1677,7 @@ paths:
               example:
                 key_id: 4b155359-710a-4417-811c-904cc3959fcc
                 name: procure-agent-7
-                role: writer
+                role: contributor
                 principal: crew-procure/agent-7
                 crew_id: d10bcbe9-032d-4080-aa0c-cc06f8acd89f
                 default_workspace_id: fbbb41c5-9630-4274-ae53-166f562f5286
@@ -1688,7 +1688,7 @@ paths:
                 rotated_from: null
                 grants:
                 - workspace_node_id: fbbb41c5-9630-4274-ae53-166f562f5286
-                  role: writer
+                  role: submitter
                   grant_id: gr_01JB2YQ6R8TA1CW3EY5G7J9LN2
                   epoch: 814
                 - workspace_node_id: fbbb41c5-9630-4274-ae53-166f562f5286
@@ -1741,7 +1741,7 @@ paths:
               example:
                 key_id: d405428e-4c99-426d-8826-76d28436e423
                 name: claude-laptop
-                role: writer
+                role: submitter
                 principal: claude/laptop
                 used_by: agent
                 tenant: { id: 6f1c2a3e-0b7d-4e59-9a41-2c8d5e7f9b10, name: acme }
@@ -1752,7 +1752,7 @@ paths:
                 crew: { id: 0d2e4f6a-8b1c-4d3e-9f5a-7b9c1d3e5f70, name: metals-crew }
                 grants:
                 - workspace_node_id: 3a5c7e9b-1d2f-4a6c-8e0b-2d4f6a8c0e1b
-                  role: writer
+                  role: submitter
                   grant_id: 9c1e3a5b-7d9f-4b2d-8a4c-6e8a0c2e4a6c
                   epoch: 41
               schema: { $ref: '#/components/schemas/Whoami' }
@@ -2524,7 +2524,7 @@ paths:
       tags: [web]
       operationId: grantWebCapacities
       summary: Give a person's session key a capacity on workspaces, review or curation.
-      description: 'Requires: admin key role (ADR-0045 d10; ADR-0044 d7; ADR-0070 d5). review: <user>-review gains reviewer and reader on each workspace; curate: <user>-curate, a tenant writer key with writer on the universe node alone, is created at the first designation, and gains reader on each workspace. Each grant is one grant.issued; a grant the key holds already is not added again, so a repeat adds none and journal_seq is null. A user with no session key of that capacity answers access.not_found. This is the one path that creates a session key; POST /v2/keys never mints one. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the key claimed before the act and its outcome recorded after the act''s last commit, so a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.'
+      description: 'Requires: admin key role (ADR-0045 d10; ADR-0044 d7; ADR-0070 d5). review: <user>-review gains reviewer and reader on each workspace; curate: <user>-curate, a tenant contributor key with submitter on the universe node alone, is created at the first designation, and gains reader on each workspace. Each grant is one grant.issued; a grant the key holds already is not added again, so a repeat adds none and journal_seq is null. A user with no session key of that capacity answers access.not_found. This is the one path that creates a session key; POST /v2/keys never mints one. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the key claimed before the act and its outcome recorded after the act''s last commit, so a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -2953,7 +2953,7 @@ paths:
       tags: [usage]
       operationId: usageEvents
       summary: The tenant's recalls of the last 30 days, with what their readers did next, newest first.
-      description: 'Requires: admin key role (ADR-0054 d2). No agent, writer, reader or reviewer key reads an event, on any transport. query_text is present only for a recall made while the tenant kept text. A row past the 30 days is never served, purged or not. Each read is journalled as telemetry.events_read with counts and the page''s bounds. system.unavailable with reason telemetry_off where the server records no recall. Since v0.5.7.'
+      description: 'Requires: admin key role (ADR-0054 d2). No agent, contributor, submitter, reader or reviewer key reads an event, on any transport. query_text is present only for a recall made while the tenant kept text. A row past the 30 days is never served, purged or not. Each read is journalled as telemetry.events_read with counts and the page''s bounds. system.unavailable with reason telemetry_off where the server records no recall. Since v0.5.7.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -3402,7 +3402,7 @@ paths:
       tags: [uploads]
       operationId: openUpload
       summary: Open a resumable upload session for bytes of a declared size and SHA-256.
-      description: 'Requires: a writer key; any other role is access.verb_ceiling (ADR-0004 d3, as amended 2026-11-17). purpose is import, the one purpose built; size is 1 byte to uploads.max_bytes (1 GiB by default), or 413 upload.too_large; sha256 is the plaintext''s SHA-256 as 64 lowercase hex digits. A key holding 4 sessions that are open, or completed and unbound, is upload.session_limit; a tenant whose open and unbound sessions would declare more than uploads.tenant_max_bytes (4 GiB by default) is upload.tenant_limit; an object store that fails is 503 upload.storage_failed. The session takes parts of 8 MiB, the last the remainder, and expires 24 hours after its opening or its last part and never later than 72 hours after it opened. Only this key is ever served it. Nothing is journalled, and no Idempotency-Key is taken: a repeated open opens another session. Since v0.8.3.'
+      description: 'Requires: a contributor or a submitter key; any other role is access.verb_ceiling (ADR-0004 d3, as amended 2026-11-17; ADR-0093 d6). purpose is import, the one purpose built; size is 1 byte to uploads.max_bytes (1 GiB by default), or 413 upload.too_large; sha256 is the plaintext''s SHA-256 as 64 lowercase hex digits. A key holding 4 sessions that are open, or completed and unbound, is upload.session_limit; a tenant whose open and unbound sessions would declare more than uploads.tenant_max_bytes (4 GiB by default) is upload.tenant_limit; an object store that fails is 503 upload.storage_failed. The session takes parts of 8 MiB, the last the remainder, and expires 24 hours after its opening or its last part and never later than 72 hours after it opened. Only this key is ever served it. Nothing is journalled, and no Idempotency-Key is taken: a repeated open opens another session. Since v0.8.3.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -3541,7 +3541,7 @@ paths:
       tags: [imports]
       operationId: importBundle
       summary: Plan or run an import of a completed upload into an in-progress workspace; every version lands held.
-      description: 'Requires: a writer key used by a person; any other key is access.verb_ceiling with details.reason import_person_only (ADR-0084 d11). upload_id is a completed upload session of purpose import that this key opened (ADR-0004 d3), holding the decrypted bundle; another key''s is access.not_found, one in another state upload.session_invalid, one past its expiry 410 upload.expired. target is a development workspace in progress the key writes, or a bare name this key may create, which the import creates in progress; any other target is 409 import.target_not_in_progress, and a taken name name.taken (ADR-0084 d6, d9). The bundle is verified before anything is written, each check under its own bundle.* code (d7). expect_key is the source key''s fingerprint, 64 hex digits; the first import from a source requires it (request.validation, details.field /expect_key, details.reason first_import) and pins it, and a later bundle under another key, or with none named, is 409 import.source_key_changed (R11). A bundle older than the last imported from its source is 409 import.bundle_older unless allow_older (d8). A plan that does not fit the account''s meters is 429 import.over_quota and writes nothing. dry_run answers the plan and binds nothing. Otherwise the upload binds once, each claim key is written as the plan says, held by this key with the source''s origin kind and its import_provenance, under the idempotency key import:<target>:<source server>:<source tenant>:<artifact>:<version>, so the same bundle again writes nothing; a version the target''s scan or rules refuse is skipped and named in refusals. A claim edge whose two ends the target carries is proposed by this key where its verb ceiling allows, which a writer key''s does not; every edge not proposed is counted in edges_reported, and a refused proposal is named in refusals as edge:<src>:<dst>. One import or dry run per tenant runs at a time, and two in the server; another is 409 import.busy, retryable. A dry run answers 200 with the plan. Otherwise the upload binds, the source key is pinned, and the answer is 202 with the import running; the run goes on after the answer, and GET /v2/imports/{id} answers its state until it is done or failed. The import journals workspace.imported, listing each version it wrote, and the upload''s key is nulled when it ends; an import running for more than an hour that the server is not running ends failed at the next sweep. No Idempotency-Key is taken: the upload binds once. Since v0.8.3.'
+      description: 'Requires: a contributor key used by a person; any other key, a submitter key included, is access.verb_ceiling with details.reason import_person_only (ADR-0084 d11; ADR-0093 d6). upload_id is a completed upload session of purpose import that this key opened (ADR-0004 d3), holding the decrypted bundle; another key''s is access.not_found, one in another state upload.session_invalid, one past its expiry 410 upload.expired. target is a development workspace in progress the key writes, or a bare name this key may create, which the import creates in progress; any other target is 409 import.target_not_in_progress, and a taken name name.taken (ADR-0084 d6, d9). The bundle is verified before anything is written, each check under its own bundle.* code (d7). expect_key is the source key''s fingerprint, 64 hex digits; the first import from a source requires it (request.validation, details.field /expect_key, details.reason first_import) and pins it, and a later bundle under another key, or with none named, is 409 import.source_key_changed (R11). A bundle older than the last imported from its source is 409 import.bundle_older unless allow_older (d8). A plan that does not fit the account''s meters is 429 import.over_quota and writes nothing. dry_run answers the plan and binds nothing. Otherwise the upload binds once, each claim key is written as the plan says, held by this key with the source''s origin kind and its import_provenance, under the idempotency key import:<target>:<source server>:<source tenant>:<artifact>:<version>, so the same bundle again writes nothing; a version the target''s scan or rules refuse is skipped and named in refusals. A claim edge whose two ends the target carries is proposed by this key where its verb ceiling allows, which a contributor key''s does not; every edge not proposed is counted in edges_reported, and a refused proposal is named in refusals as edge:<src>:<dst>. One import or dry run per tenant runs at a time, and two in the server; another is 409 import.busy, retryable. A dry run answers 200 with the plan. Otherwise the upload binds, the source key is pinned, and the answer is 202 with the import running; the run goes on after the answer, and GET /v2/imports/{id} answers its state until it is done or failed. The import journals workspace.imported, listing each version it wrote, and the upload''s key is nulled when it ends; an import running for more than an hour that the server is not running ends failed at the next sweep. No Idempotency-Key is taken: the upload binds once. Since v0.8.3.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -3664,7 +3664,7 @@ components:
       scheme: bearer
       bearerFormat: OML API key
       description: >-
-        One key, one role (reader | writer | reviewer | admin | operator), grants scoping it to
+        One key, one role (reader | contributor | submitter | reviewer | admin | operator), grants scoping it to
         workspace subtrees. Tenant derives from the key server-side. Each operation's description
         states its ceiling; refusals are typed (access.verb_ceiling, access.grant_refused,
         access.not_found) per docs/api/errors.md. Key wire format: "oml_" followed by 43
@@ -4022,7 +4022,7 @@ components:
 
     Role:
       type: string
-      enum: [reader, writer, reviewer, admin, operator]
+      enum: [reader, contributor, submitter, reviewer, admin, operator]
 
     ErrorCode:
       type: string
@@ -4239,7 +4239,7 @@ components:
       required: [body]
       properties:
         verb: { type: string, enum: [remember, learn], description: "Omitted, learn when derives_from is non-empty and remember otherwise (ADR-0039 d3); a sent verb is honoured. learn requires non-empty derives_from — refused with submission.lineage_required otherwise; a derived conclusion without nameable lineage is remember with kind derived_fact." }
-        claim_key: { type: string, description: "Groups versions of one claim; one live claim per (tenant, workspace): a new claim collides with a held, promoted or demoted version (submission.claim_key_conflict), and a claim whose every version is rejected, withdrawn or erased releases the key (docs/architecture/audit-and-lineage.md). Omitted, the server derives auto- plus the first 16 lowercase hex digits of SHA-256(the key's id, a zero byte, the NFC body), so a conflict only ever names the writer's own rows; a sent claim_key starting auto- is refused with request.validation, details.field /claim_key (ADR-0039 d6)." }
+        claim_key: { type: string, description: "Groups versions of one claim; one live claim per (tenant, workspace): a new claim collides with a held, promoted or demoted version (submission.claim_key_conflict), and a claim whose every version is rejected, withdrawn or erased releases the key (docs/architecture/audit-and-lineage.md). Omitted, the server derives auto- plus the first 16 lowercase hex digits of SHA-256(the key's id, a zero byte, the NFC body), so a conflict only ever names the writing key's own rows; a sent claim_key starting auto- is refused with request.validation, details.field /claim_key (ADR-0039 d6)." }
         kind: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release, guardrail, skill, document, test], default: memory, description: "guardrail requires severity and admits rule (ADR-0037 d10; since v0.5.1). skill requires skill and format text/markdown, its default, and derives claim_key skill/<name>; a sent claim_key other than that, a body opening with a --- line and a body past 32,768 bytes are refused (request.validation naming the field; request.payload_too_large naming /body) (ADR-0080 d1, d9). document takes text/markdown, its default, or text/plain and an optional document; its claim_key is doc/ and segments of a-z 0-9 . _ -, or derived from its title (ADR-0081 d1, d2). test requires test and a claim_key test/<name> (ADR-0086 d1), and is written over this API only: oml_write refuses it until #419. skill and document are also written through oml_write, with their skill and document objects." }
         valid_from: { $ref: '#/components/schemas/ValidEnd', description: "When the memory begins to hold in the world, as its author declares it: a period names its first instant, so 2015 begins on 1 January 2015. Signed with the submission; only memory and derived_fact take it, anything else is request.validation with details.field /valid_from (ADR-0059 d2)." }
         valid_until: { $ref: '#/components/schemas/ValidEnd', description: "When it stops holding: a period names its whole span, so 2015 holds through 31 December 2015 and a day through that day; an instant is exclusive. Must end after valid_from begins. A recall hides a memory whose valid_until has passed unless include_expired is true (ADR-0059 d2, d3)." }
@@ -5189,7 +5189,7 @@ components:
                   state: { type: string, enum: [pending, ratified] }
             my_effective_verbs:
               type: array
-              description: The effective-verbs table of docs/architecture/roles-and-keys.md, unioned over the grant roles effective on the node and listed in table order (the reader, writer and reviewer rows, each left to right) without duplicates; the access conferred, not what this server build serves.
+              description: The effective-verbs table of docs/architecture/roles-and-keys.md, unioned over the grant roles effective on the node and listed in table order (the reader, submitter and reviewer rows, each left to right) without duplicates; the access conferred, not what this server build serves.
               items: { type: string, enum: [recall, read, graph_read, events_tail, remember, learn, attach, supersede, propose, review] }
             permission_epoch: { type: integer, description: 'The calling key''s permission epoch as declared in docs/architecture/workspaces.md (ADR-0025 d14).' }
             policy: { $ref: '#/components/schemas/ReviewPolicy' }
@@ -5320,7 +5320,7 @@ components:
       additionalProperties: false
       required: [name]
       properties:
-        parent: { $ref: '#/components/schemas/WorkspaceRef', description: "The parent. Omitted, a user key's own root; every other key sends it (request.workspace_unresolved otherwise). A writer user key creates under a parent inside its root where its effective access confers writer (ADR-0044 d6)." }
+        parent: { $ref: '#/components/schemas/WorkspaceRef', description: "The parent. Omitted, a user key's own root; every other key sends it (request.workspace_unresolved otherwise). A contributor user key creates under a parent inside its root where its effective access confers submitter; a submitter user key is access.verb_ceiling (ADR-0044 d6; ADR-0093 d6)." }
         name: { $ref: '#/components/schemas/Name' }
         crew: { $ref: '#/components/schemas/CrewRef' }
 
@@ -5460,7 +5460,7 @@ components:
       required: [workspace, role]
       properties:
         workspace: { $ref: '#/components/schemas/WorkspaceRef', description: "The node, by id or name, never a path; stored as the id." }
-        role: { type: string, enum: [reader, writer, reviewer], description: "A grant role, admissible under the key's role (the admissibility table in docs/architecture/roles-and-keys.md); never admin or operator." }
+        role: { type: string, enum: [reader, submitter, reviewer], description: "A grant role, admissible under the key's role (the admissibility table in docs/architecture/roles-and-keys.md); never contributor, admin or operator. A contributor key carries at least one reader and one submitter grant, else request.validation with details.reason contributor_grants (ADR-0093 d2)." }
         deny:
           type: array
           items:
@@ -5479,7 +5479,7 @@ components:
       properties:
         grant_id: { type: string }
         workspace_node_id: { type: string, description: "Node id, never a path." }
-        role: { type: string, enum: [reader, writer, reviewer] }
+        role: { type: string, enum: [reader, submitter, reviewer] }
         deny:
           type: array
           items:
@@ -5513,7 +5513,7 @@ components:
       properties:
         role: { $ref: '#/components/schemas/Role' }
         name: { $ref: '#/components/schemas/Name', description: "The key's name: unique in its namespace (409 name.taken), never changed, never released; distinct from principal and label (ADR-0026 d9)." }
-        grants: { type: array, items: { $ref: '#/components/schemas/GrantRequest' }, description: "Taken exactly as sent, except that a user key also gets a reader grant on the universe node alone (ADR-0025 d2; ADR-0044 d3). The CLI's reader grant beside a writer grant is sent here like any other (ADR-0028 d2)." }
+        grants: { type: array, items: { $ref: '#/components/schemas/GrantRequest' }, description: "Taken exactly as sent, except that a user key also gets a reader grant on the universe node alone (ADR-0025 d2; ADR-0044 d3). The CLI's reader grant beside a contributor key's submitter grant is sent here like any other (ADR-0028 d2; ADR-0093 d6). A contributor key without a reader or a submitter grant is request.validation, details.field /grants, details.reason contributor_grants, and nothing is journalled; the server adds no grant (ADR-0093 d2)." }
         user: { $ref: '#/components/schemas/Name', description: "The person the key acts for, by the user's name: a user key, whose every grant must lie in its user root universe.<user> (403 access.issuer_ceiling, details user) and whose workspace references resolve in that root's namespace. The first key naming a user creates the root; a name a shared workspace holds is 409 name.taken. Refused on admin and operator keys, on used_by service and for universe (request.validation, details.field /user) (ADR-0044 d2, d3)." }
         default_workspace: { $ref: '#/components/schemas/WorkspaceRef', description: "The provider-ring target (ADR-0022 d4), by id or name; its validation and its default when omitted are declared in the issuance order of docs/architecture/roles-and-keys.md." }
         used_by: { type: string, enum: [agent, person, service], description: "The issuing admin's journalled attestation (ADR-0021); never verified as fact." }
@@ -5919,7 +5919,7 @@ components:
       properties:
         grant_id: { type: string }
         workspace_node_id: { type: string, description: "Node id, never a path." }
-        role: { type: string, enum: [reader, writer, reviewer] }
+        role: { type: string, enum: [reader, submitter, reviewer] }
         covers: { type: string, enum: [subtree, node], description: "The node's subtree, or the node alone (ADR-0044 d4)." }
         epoch: { type: integer, description: "The journal seq of this grant's grant.issued event." }
 

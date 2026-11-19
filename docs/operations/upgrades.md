@@ -1,7 +1,7 @@
 ---
 status: Stable
 verified: 2026-11-19
-answers: "how to upgrade an OML server: how migrations run, the upgrade steps in order, what rollback does and does not mean, the upgrade from a pre-0.3.1 install, the v0.5.4 fix, how to move from v0.3, the v0.8.3 rename that clients take before the server, what the v0.8.3 migrations cost and what waits during them, and the storage.url to set before v0.8.3's uploads"
+answers: "how to upgrade an OML server: how migrations run, the upgrade steps in order, what rollback does and does not mean, the upgrade from a pre-0.3.1 install, the v0.5.4 fix, how to move from v0.3, the v0.8.4 role rename and the v0.8.3 rename that clients take before the server, what the v0.8.3 migrations cost and what waits during them, and the storage.url to set before v0.8.3's uploads"
 ---
 
 # Upgrade OML
@@ -82,6 +82,41 @@ spellings that a new server refuses, and each refusal names the new spelling.
 
 Update the plugin with `claude plugin update oml@open-memory-lab`. Then set its `url` and `api_key` with
 `/plugin configure oml@open-memory-lab`. The plugin serves no tools until both are set.
+
+## Upgrading to v0.8.4
+
+v0.8.4 renames the writer role on every surface in one cut, with no alias
+([ADR-0093](../adr/ADR-0093-contributor-and-submitter-replace-writer.md)). A key that recalls and
+writes is a `contributor`, a key that writes without recall is a `submitter`, and the grant role
+that confers writing is `submitter`. A v0.8.4 server reads `writer` as unknown input: as a role on
+HTTP, MCP, the SDKs or the CLI it is `request.validation`, with no `details.renamed_to`, because it
+has two successors. `oml keys issue-agent --write-only` is retired; `--role submitter` replaces it.
+
+**Clients upgrade before the server.** A v0.8.3 CLI, plugin or SDK that sends `writer`, or that
+sent `--write-only`, is refused and issues nothing. The notice to send before the date:
+
+> OML v0.8.4 renames the writer role. A key that recalls and writes is a **contributor**. A key
+> that writes without recall is a **submitter**. The grant that confers writing is `submitter`.
+> Upgrade the CLI, plugins and SDKs before the server is upgraded. A v0.8.3 client that names
+> `writer` is refused and issues nothing. Existing writer keys become contributor keys. One issued
+> with `--write-only` keeps working, and `oml doctor` names it a contributor without recall. Issue a
+> submitter key with `--role submitter` and cut the old one off. Memories, key values, grants and
+> names are otherwise unchanged.
+
+**The upgrade is not rolling** (ADR-0093 d8, following ADR-0091 d12's runbook):
+
+1. Announce the window with the notice above.
+2. Back up and verify that the backup restores ([restore](restore.md)): migration 0066 has no
+   reverse.
+3. Stop `oml-web`, the lead and the lake writer, and start v0.8.4 of all three from one tag.
+   Migration 0066 rewrites `api_keys.role` from `writer` to `contributor` and `grants.role` from
+   `writer` to `submitter` under each tenant's row security, and replaces the two role checks. It
+   reads two small tables, and the stopped server leaves its locks free.
+4. Check `oml doctor` and `oml verify`. Signed events keep `writer` and are read through the
+   former-name map's rule 7; a `writer` the map does not cover fails `journal_unmapped_former_name`.
+5. Upgrade the operator's own clients, and reissue any key `oml doctor` names under
+   `key_contributor_without_recall`: issue a submitter key with
+   `oml keys issue-agent <name> --role submitter` and cut the old one off.
 
 ## Upgrading to v0.8.3
 

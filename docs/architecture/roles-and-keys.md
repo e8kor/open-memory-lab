@@ -1,7 +1,7 @@
 ---
 status: Stable
 verified: 2026-11-14
-answers: "which verbs each of the five roles may perform; how a key is issued, scoped and denied; how the reviewer is kept from being the author; what a connector key, a connect code and a connection are, and why a connection is never more than its key"
+answers: "which verbs each of the six roles may perform; how a key is issued, scoped and denied; how the reviewer is kept from being the author; what a connector key, a connect code and a connection are, and why a connection is never more than its key"
 ---
 
 # Roles and keys
@@ -10,17 +10,18 @@ An agent holds a key with one role. Grants give that key access to workspace sub
 
 The four rules, R1 to R4, are declared once, in [the constitution](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md). This page holds the role matrix that R1's verb ceiling refers to and the independence check that enforces R2.
 
-## The five roles
+## The six roles
 
 | Role | What it does |
 |---|---|
 | `reader` | Recalls, reads, searches and reads the graph within its scope. Each recall is recorded in recall telemetry for 30 days. |
-| `writer` | Writes memories, held on arrival, and proposes a new version of its own. Never gives a verdict. |
+| `contributor` | Recalls and writes: carries at least one `reader` and one `submitter` grant. Writes memories, held on arrival, and proposes a new version of its own. Never gives a verdict. Called `writer` before v0.8.4. |
+| `submitter` | Writes without recall: carries `submitter` grants only. Reads its own memories in every state and recalls nothing else. Never gives a verdict. |
 | `reviewer` | Proposes edits and connections and reviews other identities' writes, never on a lineage it proposed in: gives verdicts and ratifies connection proposals. Called `dreamer` before v0.8.3. |
 | `admin` | Governs a tenant: keys, workspaces, crews, grants and denials. Its verdicts on content are refused. |
 | `operator` | Designed and not built: would run the provider level, create tenants and issue each tenant's first admin key, and never write, read or review content. No path issues an operator key. |
 
-Roles do not imply one another: a crew member who writes and recalls holds a writer key with a reader grant beside the writer grant. The grant decides, not the role name.
+Roles do not imply one another: a crew member who writes and recalls holds a contributor key, whose recall is a `reader` grant beside its `submitter` grant in the journal, never implied by the role. The grant roles are `reader`, `submitter` and `reviewer`; `contributor` is a key role only. A key issued before v0.8.4 as a writer without a reader grant is a contributor without recall: it works as before, `oml doctor` names it (`key_contributor_without_recall`) and the console marks it "no recall"; its holder replaces it with a submitter key ([ADR-0093](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0093-contributor-and-submitter-replace-writer.md) d3).
 
 `used_by` records who holds a key: `agent`, `person` or `service`. The issuing admin attests it; the server cannot check. A `service` key is for infrastructure and is refused every review verb.
 
@@ -28,7 +29,7 @@ Roles do not imply one another: a crew member who writes and recalls holds a wri
 
 A dash means OML refuses the verb with a typed error. For content verbs, the column names the grant role effective access must confer on the workspace. For key-level verbs, it names the key's own role.
 
-| Verb | reader | writer | reviewer | admin | operator |
+| Verb | reader | submitter | reviewer | admin | operator |
 |---|---|---|---|---|---|
 | Recall, search, read, graph read, events tail | yes | — | — | — | — |
 | Workspace info, tree and edges | yes | — | — | yes (see below) | — |
@@ -42,13 +43,13 @@ A dash means OML refuses the verb with a typed error. For content verbs, the col
 | Propose or ratify a workspace status change | — | — | yes | yes | — |
 | Issue keys, set grants and denials | — | `<user>-web` only, see below | — | yes | designed, not built |
 | Mint a connect code, revoke a connection | — | `<user>-web` only, see below | — | yes | — |
-| Create workspaces | — | writer in its own user root only | — | yes | — |
+| Create workspaces | — | a contributor key in its own user root only | — | yes | — |
 | Create crews | — | — | — | yes | — |
 | Create a tenant, issue its first admin key | — | — | — | — | designed, not built |
 | Read any memory's text and attribution ([admin read](#the-admin-read)) | — | — | — | yes, journalled | — |
 | Read, write or review content | — | — | — | — | refused |
 
-The `<user>-web` [session key](#session-keys), a writer key, also issues reader and writer keys in its person's root, mints their connect codes and cuts them off with a denial.
+The `<user>-web` [session key](#session-keys), a contributor key, also issues contributor and reader keys in its person's root, mints their connect codes and cuts them off with a denial.
 
 Approve, sign and delete appear in no column: approval is an effect of review, `oml-server` signs, and deletion does not exist.
 
@@ -61,21 +62,22 @@ Self-signing was retired on 2026-11-14 ([ADR-0001](https://github.com/e8kor/open
 
 ## Issuing keys
 
-A key is issued with a role no higher than its issuer's. Admin keys issue, and the `<user>-web` session key issues reader and writer keys in its person's root.
+A key is issued with a role no higher than its issuer's. Admin keys issue, and the `<user>-web` session key issues contributor and reader keys in its person's root.
 
-- A tenant admin issues reader, writer, reviewer and admin keys inside its own tenant. No tenant key can mint an operator key.
+- A tenant admin issues reader, contributor, submitter, reviewer and admin keys inside its own tenant. No tenant key can mint an operator key.
 - The operator tier is designed and not built: no route creates a tenant and no path issues an operator key.
 
 | Key role | Grant roles it may carry |
 |---|---|
 | `reader` | `reader` |
-| `writer` | `reader`, `writer` |
-| `reviewer` | `reader`, `reviewer`; an agent-held `curator` profile may also carry `writer` inside an in-progress scope ([ADR-0030](../adr/ADR-0030-an-in-progress-workspace-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) d8) |
+| `contributor` | `reader`, `submitter`: at least one of each |
+| `submitter` | `submitter` |
+| `reviewer` | `reader`, `reviewer`; an agent-held `curator` profile may also carry `submitter` inside an in-progress scope ([ADR-0030](../adr/ADR-0030-an-in-progress-workspace-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) d8) |
 | `admin`, `operator` | none |
 
-A grant outside that set is refused with `access.issuer_ceiling`. An admin key with a reviewer grant is refused with `access.role_exclusive`: the two-key rule. A person who administers and reviews holds two keys, so the journal shows which capacity acted.
+A grant outside that set is refused with `access.issuer_ceiling`. A contributor key without a reader or without a submitter grant is refused with `request.validation`, `details.field: /grants`, `details.reason: contributor_grants`, and nothing is journalled: the server takes exactly the grants it is sent and never adds the missing one. Grants added to an issued key are held to the same set. An admin key with a reviewer grant is refused with `access.role_exclusive`: the two-key rule. A person who administers and reviews holds two keys, so the journal shows which capacity acted.
 
-After the request's names resolve and its limits are checked, checks run in this order, first failure answers: role exclusivity, issuer ceiling, grant admissibility, node and crew existence, deny containment, coverage of the default workspace, connection eligibility (with `--connect-code`), name free (`name.taken`).
+After the request's names resolve and its limits are checked, checks run in this order, first failure answers: role exclusivity, issuer ceiling, grant admissibility, node and crew existence, deny containment, coverage of the default workspace, a contributor's reader and submitter grants, connection eligibility (with `--connect-code`), name free (`name.taken`).
 
 `oml keys issue` and `oml keys issue-agent` print the key value once. OML stores a SHA-256 hash only, so there is no "show me the key again". `oml keys show` displays grants, denials, crew and connections, never the value.
 
@@ -83,7 +85,7 @@ Not available: revoking or rotating a key. To cut a key off today, add a global 
 
 ### Expiry and rate
 
-A reader, writer or reviewer key can carry two limits, each set when it is issued (`--expires`, `--requests-per-minute`) and neither required:
+A reader, contributor, submitter or reviewer key can carry two limits, each set when it is issued (`--expires`, `--requests-per-minute`) and neither required:
 
 - **An expiry**, an instant. From it on the key authenticates nothing: its request answers `auth.invalid` with `details.reason: expired`, where an unknown or revoked key answers `unknown`. Only the holder of the key's own credential is told. The key's row, grants and name stay, and `oml keys show` says it has expired. A connector key's expiry is its connection's: the access token is refused the same way, a refresh answers `invalid_grant`, and no connect code is minted for it.
 - **A rate**, in requests per UTC minute. The request past it answers `429 limit.rate` with `Retry-After`. A key of an account under a quota is held to both rates. Each server process counts alone, so n processes admit up to n times the rate ([settings](../operations/configuration.md#limits-counted-per-process)).
@@ -113,12 +115,12 @@ For a verb that needs a grant role on a workspace:
 
 OML works this out again on every request and caches nothing. The permission epoch labels the grant state each answer used.
 
-A writer supersedes only its own memory; a person's session web key also supersedes a memory any key of its person wrote, read the one way `same_user` reads it ([ADR-0082](../adr/ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) d2). Another key's readable memory answers `access.author_only`. A reviewer edit also needs reader on the node.
+A contributor or submitter key supersedes only its own memory; a person's session web key also supersedes a memory any key of its person wrote, read the one way `same_user` reads it ([ADR-0082](../adr/ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) d2). Another key's readable memory answers `access.author_only`. A reviewer edit also needs reader on the node.
 
 | Effective grant role | Verbs (`my_effective_verbs`) |
 |---|---|
 | `reader` | `recall`, `read`, `graph_read`, `events_tail` |
-| `writer` | `remember`, `learn`, `attach`, `supersede` |
+| `submitter` | `remember`, `learn`, `attach`, `supersede` |
 | `reviewer` | `propose`, `review`, `supersede`; a person's session reviewer key with reader beside it also `remember`, outside its person's own root |
 
 A `service` key omits `review`.
@@ -141,7 +143,7 @@ An admin key reads any memory of its tenant with its text and attribution: every
 
 ## Admin limits
 
-An admin key gives no verdict and writes no memory. An admin who needs to write uses a separate writer key; the write is held and reviewed like any other.
+An admin key gives no verdict and writes no memory. An admin who needs to write uses a separate contributor key; the write is held and reviewed like any other.
 
 Demotion ([ADR-0010](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0010-roles-and-keys.md) d6) and erasure by crypto-shredding ([ADR-0005](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0005-erasure-by-crypto-shredding.md)) are designed and not built: no key can demote or erase a memory in this build. A memory leaves recall only by an approved [retirement](audit-and-lineage.md#which-version-is-current), which keeps every version. Bans and reassignment between workspaces are not built either.
 
@@ -153,11 +155,11 @@ The operator tier is designed and not built. A single-use enrollment token start
 
 A key with the field `user` (the person an admin attests it acts for) is a **user key**; one without is a **tenant key**.
 
-- **Who may carry it:** reader, writer and reviewer keys, connector keys included. Admin, operator and `service` keys cannot. OML never derives it from principal, name or label.
+- **Who may carry it:** reader, contributor, submitter and reviewer keys, connector keys included. Admin, operator and `service` keys cannot. OML never derives it from principal, name or label.
 - The first key naming a user creates that user's root, `universe.<user>`.
 - **Grants stay inside the user's root.** Any other grant is refused with `access.issuer_ceiling`. Issuance adds one reader grant on the `universe` node only.
 - A user key's bare workspace names resolve in its root; tenant keys use `<user>.<name>`.
-- **Writes into `universe` are refused** (`submission.universe_refused`). Only a curator writes there: a tenant writer key granted writer on `universe`, reviewed by a reviewer outside the memory's lineage and, for a person's `<user>-curate`, outside that person: no key of the same person judges it in `universe` ([ADR-0082](../adr/ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) d7).
+- **Writes into `universe` are refused** (`submission.universe_refused`). Only a curator writes there: a tenant contributor key granted submitter on the `universe` node, reviewed by a reviewer outside the memory's lineage and, for a person's `<user>-curate`, outside that person: no key of the same person judges it in `universe` ([ADR-0082](../adr/ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) d7).
 - **A memory is started in a user's root by that user's keys only.** Any other key's new memory in `universe.<user>` or below it is refused with `submission.user_root_refused`, whatever grant it holds there. So is its successor of a ratified retirement, which would put the claim back in service. A person's keys are their user keys and the [session keys](#session-keys) that serve them: `<user>-review` and `<user>-curate` carry no `user` field and are read as that person's by their session, in that person's root and in no one else's. A reviewer granted there still proposes a successor or a retirement of a served memory, and its reads, recall and verdicts are unchanged. `my_effective_verbs` still lists what its grants confer. A key that cannot read the workspace gets `access.not_found`.
 
 ### Linked tenant keys
@@ -172,9 +174,9 @@ A **session key** has the credential `session`: no value, no connection. It acts
 
 | Key | Role and grants |
 |---|---|
-| `<user>-web` | User key: writer and reader on `universe.<user>`, node read on `universe` |
+| `<user>-web` | User contributor key: submitter and reader on `universe.<user>`, node read on `universe` |
 | `<user>-review` | Reviewer key: reviewer and reader on `universe.<user>` |
-| `<user>-curate` | Tenant writer key: writer on the `universe` node alone, and reader on each workspace it is designated to curate from |
+| `<user>-curate` | Tenant contributor key: submitter on the `universe` node alone, and reader on each workspace it is designated to curate from |
 | `<user>-admin` | Tenant admin key, no grants |
 
 `<user>-web` and `<user>-review` are created at first sign-in, and `<user>-admin` too for an admin entry; `<user>-curate` is created when an admin designates the person a curator. Each session key's principal is its own name. `<user>-admin` reads memory text through the journaled [admin read](#the-admin-read) and gives no verdicts.

@@ -83,7 +83,7 @@ async fn world() -> World {
 
 fn agent(name: &str, connect_code: bool) -> Value {
     json!({
-        "role": "contributor",
+        "role": "submitter",
         "name": name,
         "principal": format!("crew/{name}"),
         "grants": [{"workspace": "universe", "role": "submitter"}],
