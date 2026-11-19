@@ -8111,6 +8111,7 @@ where
                 rule: fields.rule,
                 unreviewed: m.status == MemoryStatus::Held,
                 effect_inside: (m.status == MemoryStatus::Held).then_some(Effect::Ask),
+                fix: m.approval.as_ref().and_then(|a| a.fix),
                 promoted_at: m.promoted_at,
                 conflict,
             })

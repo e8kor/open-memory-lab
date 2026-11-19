@@ -1050,7 +1050,7 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             StatusCode::FORBIDDEN,
             "admin.fix_requires_person",
             "A fix is break-glass: it is taken by an admin key used by a person and linked to that person (ADR-0089 d1, the operator's decision of 2026-11-19).",
-            if *reason == "unlinked" {
+            if *reason == *"unlinked" {
                 "this admin key is linked to no person: a console admin links it, or the bootstrap claim names its person"
             } else {
                 "this admin key is not used by a person"
@@ -1095,6 +1095,13 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "A fix is confirmed or reverted once (ADR-0089 d8).",
             "the fix was settled while this request was made",
         ),
+        AppError::Store(StoreError::FixVersionMissing { .. }) => ApiError::new(
+            StatusCode::CONFLICT,
+            "admin.fix_superseded",
+            "A fix marks the version it serves; that version was not found as the fix named it, so nothing was written (ADR-0089 d7).",
+            "the version the fix serves was not found",
+        )
+        .with_details(json!({ "reason": "served_version_missing" })),
         AppError::AdminField { field, message } => ApiError::validation(format!("{field}: {message}"))
             .with_details(json!({ "field": field })),
         AppError::WorkspaceFrozen { workspace_id, op } => ApiError::new(

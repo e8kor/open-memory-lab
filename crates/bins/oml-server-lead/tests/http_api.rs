@@ -324,13 +324,6 @@ async fn bootstrap(router: &Router) -> (String, Uuid, Uuid) {
     bootstrap_claim(router, None).await
 }
 
-/// [`bootstrap`], the claim naming the admin key's person, `platform`, so
-/// the key may take an admin fix (ADR-0089, the operator's decision of
-/// 2026-11-19).
-async fn bootstrap_linked(router: &Router) -> (String, Uuid, Uuid) {
-    bootstrap_claim(router, Some("platform")).await
-}
-
 async fn bootstrap_claim(router: &Router, person: Option<&str>) -> (String, Uuid, Uuid) {
     let mut claim = json!({
         "enrollment_token": ENROLLMENT,
@@ -11847,24 +11840,12 @@ async fn the_author_withdraws_its_held_version_over_http_and_the_route_refuses_b
 /// `admin.fix_settled` (ADR-0089 d3, d7, d8, d15).
 #[tokio::test]
 async fn an_admin_fix_serves_marked_and_a_person_confirms_it_over_http() {
-    let Some(rig) = fresh_rig().await else {
+    let Some(fx) = fix_rig().await else {
         return;
     };
-    let router = &rig.router;
-    let (admin, _tenant, root) = bootstrap_linked(router).await;
-    let crew = create_workspace(router, &admin, root, "fixes").await;
-    let writer = issue_key(router, &admin, "writer", "fx/agent", crew).await;
-    let reviewer = issue_key_with(
-        router,
-        &admin,
-        "reviewer",
-        "fx/dana",
-        json!([{ "workspace": crew, "role": "reviewer" }, { "workspace": crew, "role": "reader" }]),
-    )
-    .await["value"]
-        .as_str()
-        .expect("value")
-        .to_owned();
+    let router = &fx.rig.router;
+    let admin = fx.rig.admin.clone();
+    let (writer, reviewer) = (fx.writer.clone(), fx.reviewer.clone());
     let id = promoted_over_http(
         router,
         &writer,
@@ -11873,6 +11854,22 @@ async fn an_admin_fix_serves_marked_and_a_person_confirms_it_over_http() {
         "the canary drains first",
     )
     .await;
+    // Only an admin key takes a fix: a writer, a reviewer and an agent's
+    // key are refused at the verb (ADR-0089 d1, d11).
+    let agent = issue_key(router, &admin, "writer", "fx/bot", fx.crew).await;
+    for key in [&writer, &reviewer, &agent] {
+        let (status, _, refused) = send(
+            router,
+            "POST",
+            "/v2/admin/fixes",
+            Call::auth(key).body(json!({
+                "act": "demote", "target": id, "reason": "ticket 40",
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+        assert_envelope(&refused, "access.verb_ceiling");
+    }
     let (status, _, fix) = send(
         router,
         "POST",
@@ -11900,6 +11897,34 @@ async fn an_admin_fix_serves_marked_and_a_person_confirms_it_over_http() {
     assert_eq!(status, StatusCode::OK, "{got}");
     assert_eq!(got["approver"]["act"], "admin_fix", "{got}");
     assert_eq!(got["approver"]["confirmed"], false, "{got}");
+    let mcp_reader = issue_key(router, &admin, "reader", "fx/reader", fx.crew).await;
+    // No reader learns which admin wrote the fixed version (ADR-0089 d7).
+    assert_eq!(got["principal"], Value::Null, "{got}");
+    assert_eq!(got["author_key_id"], Value::Null, "{got}");
+    assert_eq!(got["provenance"], "admin_fix", "{got}");
+    let (status, _, rpc) = send(
+        router,
+        "POST",
+        "/mcp",
+        Call::auth(&mcp_reader).body(json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "oml_read", "arguments": {"query": "canary settles"}},
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{rpc}");
+    let hits = rpc["result"]["structuredContent"]["hits"]
+        .as_array()
+        .unwrap_or_else(|| panic!("hits: {rpc}"))
+        .clone();
+    let hit = hits
+        .iter()
+        .find(|h| h["artifact_id"] == served.as_str())
+        .unwrap_or_else(|| panic!("the fixed version is recalled: {rpc}"));
+    // MCP serves no author of the fixed version either.
+    assert_eq!(hit["principal"], Value::Null, "{hit}");
+    assert_eq!(hit["author_key_id"], Value::Null, "{hit}");
+    assert_eq!(hit["approver"]["act"], "admin_fix", "{hit}");
     let (status, _, listed) = send(router, "GET", "/v2/review/fixes", Call::auth(&reviewer)).await;
     assert_eq!(status, StatusCode::OK, "{listed}");
     assert_eq!(
@@ -11943,5 +11968,221 @@ async fn an_admin_fix_serves_marked_and_a_person_confirms_it_over_http() {
     .await;
     assert_eq!(status, StatusCode::OK, "{all}");
     assert_eq!(all["items"].as_array().map(Vec::len), Some(1), "{all}");
+    drop_db(&fx.rig.db_name).await;
+}
+
+/// A console-linked fix rig on PostgreSQL (ADR-0089, the operator's
+/// decision of 2026-11-19): the admin key linked to `platform` through the
+/// console, a workspace `fixes`, an agent writer there, and dana's reviewer
+/// key linked to dana.
+struct FixRig {
+    rig: WebRig,
+    crew: Uuid,
+    writer: String,
+    reviewer: String,
+}
+
+async fn fix_rig() -> Option<FixRig> {
+    let rig = web_rig().await?;
+    rig.signed_in("platform@example.com", "platform", false)
+        .await;
+    rig.signed_in("dana@example.com", "dana", false).await;
+    let ops = credential(
+        &rig.signed_in("ops@example.com", "ops", true).await,
+        "admin",
+    );
+    let (status, linked) = link_key(&rig, &ops, "root-admin", Some("platform")).await;
+    assert_eq!(status, StatusCode::OK, "the admin key links: {linked}");
+    let crew = create_workspace(&rig.router, &rig.admin, rig.root, "fixes").await;
+    let writer = issue_key(&rig.router, &rig.admin, "writer", "fx/agent", crew).await;
+    let dana = issue_key_with(
+        &rig.router,
+        &rig.admin,
+        "reviewer",
+        "fx/dana",
+        json!([{ "workspace": crew, "role": "reviewer" }, { "workspace": crew, "role": "reader" }]),
+    )
+    .await;
+    let name = dana["name"].as_str().expect("name").to_owned();
+    let (status, linked) = link_key(&rig, &ops, &name, Some("dana")).await;
+    assert_eq!(status, StatusCode::OK, "{linked}");
+    Some(FixRig {
+        rig,
+        crew,
+        writer,
+        reviewer: dana["value"].as_str().expect("value").to_owned(),
+    })
+}
+
+/// Takes `act` on `target` under the rig's admin key; the fix as answered.
+async fn fixed(fx: &FixRig, act: &str, target: &str, body: Option<&str>) -> Value {
+    let mut request = json!({ "act": act, "target": target, "reason": "ticket 43" });
+    if let Some(body) = body {
+        request["body"] = json!(body);
+    }
+    let (status, _, fix) = send(
+        &fx.rig.router,
+        "POST",
+        "/v2/admin/fixes",
+        Call::auth(&fx.rig.admin).body(request),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{fix}");
+    fix
+}
+
+/// Reverts `fix` under dana's key; the restored version's id.
+async fn reverted(fx: &FixRig, fix: &Value) -> String {
+    let fix_id = fix["fix_id"].as_str().expect("id");
+    let (status, _, settled) = send(
+        &fx.rig.router,
+        "POST",
+        &format!("/v2/review/fixes/{fix_id}/revert"),
+        Call::auth(&fx.reviewer).body(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{settled}");
+    assert_eq!(settled["state"], "reverted", "{settled}");
+    settled["restored_artifact_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a restored version: {settled}"))
+        .to_owned()
+}
+
+/// On PostgreSQL, a revert of a demotion serves the demoted text again as
+/// the claim's tip, a server-authored version dana's verdict approved
+/// (ADR-0089 d8, d17).
+#[tokio::test]
+async fn a_revert_of_a_demotion_restores_the_claims_tip_on_postgres() {
+    let Some(fx) = fix_rig().await else {
+        return;
+    };
+    let router = &fx.rig.router;
+    let id = promoted_over_http(
+        router,
+        &fx.writer,
+        &fx.reviewer,
+        "fx-d",
+        "the cache holds a day",
+    )
+    .await;
+    let fix = fixed(&fx, "demote", &id.to_string(), None).await;
+    let restored = reverted(&fx, &fix).await;
+    let (status, _, got) = send(
+        router,
+        "GET",
+        &format!("/v1/memories/{restored}"),
+        Call::auth(&fx.reviewer),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{got}");
+    assert_eq!(got["tip"], true, "{got}");
+    assert_eq!(got["text"], "the cache holds a day", "{got}");
+    assert_eq!(got["approver"]["act"], "verdict", "{got}");
+    // Authored by the reserved server key, never by the reverter
+    // (ADR-0089 d17 c5).
+    assert_eq!(got["principal"], "oml:server", "{got}");
+    drop_db(&fx.rig.db_name).await;
+}
+
+/// On PostgreSQL, a revert of an edit serves the earlier text again, and
+/// the edit's version keeps its mark, read reverted (ADR-0089 d7, d8,
+/// d17).
+#[tokio::test]
+async fn a_revert_of_an_edit_serves_the_earlier_text_and_marks_the_edit_reverted_on_postgres() {
+    let Some(fx) = fix_rig().await else {
+        return;
+    };
+    let router = &fx.rig.router;
+    let id = promoted_over_http(
+        router,
+        &fx.writer,
+        &fx.reviewer,
+        "fx-e",
+        "the queue drains nightly",
+    )
+    .await;
+    let fix = fixed(
+        &fx,
+        "edit",
+        &id.to_string(),
+        Some("the queue drains hourly"),
+    )
+    .await;
+    let edited = fix["served_artifact_id"]
+        .as_str()
+        .expect("served")
+        .to_owned();
+    let restored = reverted(&fx, &fix).await;
+    let read = |artifact: String| {
+        let reviewer = fx.reviewer.clone();
+        async move {
+            let (status, _, got) = send(
+                router,
+                "GET",
+                &format!("/v1/memories/{artifact}"),
+                Call::auth(&reviewer),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{got}");
+            got
+        }
+    };
+    let got = read(restored).await;
+    assert_eq!(got["tip"], true, "{got}");
+    assert_eq!(got["text"], "the queue drains nightly", "{got}");
+    let got = read(edited).await;
+    assert_eq!(got["tip"], false, "{got}");
+    assert_eq!(got["approver"]["act"], "admin_fix", "{got}");
+    assert_eq!(got["approver"]["confirmed"], false, "{got}");
+    assert_eq!(got["approver"]["reverted"], true, "{got}");
+    drop_db(&fx.rig.db_name).await;
+}
+
+/// The bootstrap claim that names a person links the first admin key to
+/// that person's user root, so the key may take an admin fix (ADR-0089,
+/// the operator's decision of 2026-11-19; ADR-0085 d16).
+#[tokio::test]
+async fn the_bootstrap_claim_naming_a_person_links_the_first_admin_key() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let (admin, _tenant, _root) = bootstrap_claim(&rig.router, Some("platform")).await;
+    // A linked admin key passes the person check and meets the target's
+    // absence; an unlinked one would answer admin.fix_requires_person.
+    let (status, _, fix) = send(
+        &rig.router,
+        "POST",
+        "/v2/admin/fixes",
+        Call::auth(&admin).body(json!({
+            "act": "demote", "target": Uuid::nil(), "reason": "ticket 44",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{fix}");
+    drop_db(&rig.db_name).await;
+}
+
+/// A bootstrap claim that names no person leaves the first admin key
+/// unlinked, and its fix is refused by name (ADR-0089, the operator's
+/// decision of 2026-11-19).
+#[tokio::test]
+async fn an_unlinked_admin_keys_fix_answers_fix_requires_person_unlinked() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let (admin, _tenant, _root) = bootstrap(&rig.router).await;
+    let (status, _, fix) = send(
+        &rig.router,
+        "POST",
+        "/v2/admin/fixes",
+        Call::auth(&admin).body(json!({
+            "act": "demote", "target": Uuid::nil(), "reason": "ticket 45",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{fix}");
+    assert_envelope(&fix, "admin.fix_requires_person");
+    assert_eq!(fix["error"]["details"]["reason"], "unlinked", "{fix}");
     drop_db(&rig.db_name).await;
 }

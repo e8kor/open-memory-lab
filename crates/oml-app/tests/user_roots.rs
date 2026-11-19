@@ -3743,3 +3743,53 @@ async fn a_console_admin_links_an_admin_key_to_another_person_and_never_to_its_o
         .expect("an admin key used by a person is linkable");
     assert!(linked.linked_user.is_some());
 }
+
+/// Who settles a fix is judged at the settlement, the target's place then
+/// (ADR-0089 d17 c8): a shared workspace moved to protected between the fix
+/// and the confirm still refuses the admin's own person and admits another.
+#[tokio::test]
+async fn a_workspace_moved_to_protected_after_the_fix_is_judged_at_the_confirm() {
+    let r = fix_rig().await;
+    let fix = r
+        .app
+        .admin_fix(
+            &r.boot.admin_key.value,
+            &edit(r.claim, "The queue drains hourly."),
+        )
+        .await
+        .expect("fix");
+    let team = r
+        .store
+        .memory(r.boot.tenant_id, r.claim)
+        .await
+        .expect("read")
+        .expect("the claim")
+        .workspace_id;
+    let proposed = r
+        .app
+        .propose_transition(
+            &r.alice_review.value,
+            team.into(),
+            oml_app::domain::WorkspaceStatus::Protected,
+        )
+        .await
+        .expect("proposed");
+    let moved = r
+        .app
+        .ratify_transition(&r.bob_review.value, team.into(), proposed.transition_id)
+        .await
+        .expect("ratified");
+    assert_eq!(moved.status, oml_app::domain::WorkspaceStatus::Protected);
+    let err = r
+        .app
+        .confirm_fix(&r.alice_review.value, fix.fix_id)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::SamePerson), "{err:?}");
+    let confirmed = r
+        .app
+        .confirm_fix(&r.bob_review.value, fix.fix_id)
+        .await
+        .expect("another person confirms in a protected workspace");
+    assert_eq!(confirmed.settled_same_user, Some(false));
+}

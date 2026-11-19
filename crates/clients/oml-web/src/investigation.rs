@@ -118,11 +118,55 @@ pub async fn act(
         }
         _ => {
             if let Some(id) = session.investigation.as_deref() {
-                // A close of one closed already, or of none, leaves the
-                // cookie to clear alone.
-                let _ = web.api.close_investigation(&call(&admin, &ids), id).await;
+                // A close of one the lead does not hold leaves the cookie
+                // to clear alone; any other failure keeps the cookie and
+                // shows the refusal, so the investigation is not taken
+                // for closed (ADR-0089 d17).
+                match web.api.close_investigation(&call(&admin, &ids), id).await {
+                    Err(e) if close_keeps_cookie(&e) => {
+                        return outcome::page(&e, &calls, "/web/admin/memories");
+                    }
+                    _ => {}
+                }
             }
             acts::see_other("/web/admin/memories", &[clear_cookie()])
         }
+    }
+}
+
+/// Whether a failed close keeps the investigation cookie: every failure
+/// but an investigation the lead does not hold, which clears it alone
+/// (ADR-0089 d17).
+fn close_keeps_cookie(e: &oml_sdk::Error) -> bool {
+    !crate::picker::is_not_found(e)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::close_keeps_cookie;
+
+    fn api(code: &str, status: u16) -> oml_sdk::Error {
+        oml_sdk::Error::Api(Box::new(oml_sdk::ApiError {
+            status,
+            code: code.to_owned(),
+            message: String::new(),
+            details: serde_json::Value::Null,
+            request_id: None,
+            retry_after: None,
+        }))
+    }
+
+    /// A close the lead could not run keeps the cookie, so the console does
+    /// not take the investigation for closed; one the lead does not hold
+    /// clears it (ADR-0089 d17).
+    #[test]
+    fn a_failed_close_keeps_the_cookie_unless_the_lead_holds_no_such_investigation() {
+        assert!(close_keeps_cookie(&api("service.unavailable", 503)));
+        assert!(close_keeps_cookie(&api("auth.invalid", 401)));
+        assert!(close_keeps_cookie(&oml_sdk::Error::Decode {
+            status: 502,
+            why: "no envelope".to_owned(),
+        }));
+        assert!(!close_keeps_cookie(&api("access.not_found", 404)));
     }
 }

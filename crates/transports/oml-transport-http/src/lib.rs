@@ -5509,6 +5509,10 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
     let approval = (m.status == MemoryStatus::Promoted && !served.anonymous)
         .then_some(m.approval.as_deref())
         .flatten();
+    // A version an admin fix wrote names no author to a reader: no reader
+    // learns which admin (ADR-0089 d7).
+    let fix_written = m.approval.as_deref().is_some_and(|a| a.fix_written());
+    let hidden = served.anonymous || fix_written;
     let mut value = json!({
         "artifact_id": m.memory_id,
         "claim_key": m.claim_key,
@@ -5522,7 +5526,7 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
         "unreviewed": m.status == MemoryStatus::Held,
         // A universe claim names no author outside its authoring key set
         // (ADR-0044 d9).
-        "principal": if served.anonymous {
+        "principal": if hidden {
             Value::Null
         } else {
             Value::from(m.author_principal.clone())
@@ -5530,7 +5534,7 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
         // The authoring key's id, null wherever principal is (ADR-0044 d9;
         // ADR-0070 d5): the user page names the kind of its person's own
         // keys and filters a search by one of them.
-        "author_key_id": if served.anonymous {
+        "author_key_id": if hidden {
             Value::Null
         } else {
             Value::from(m.author_key_id.to_string())
@@ -5544,7 +5548,7 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
         } else {
             Value::from(m.scan_finding.clone())
         },
-        "provenance": "agent",
+        "provenance": if fix_written { "admin_fix" } else { "agent" },
         "simulation_id": Value::Null,
         "self_signed": false,
         "plaintext_digest": m.body_digest,
@@ -5571,6 +5575,7 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
             "same_user": a.same_user,
             "act": a.act(),
             "confirmed": a.confirmed(),
+            "reverted": a.reverted(),
         })),
         // When the version says it holds, as signed (proposed ADR-0059 d2).
         "valid_from": m.valid.from.as_ref().map(ValidEnd::as_str),
@@ -5663,6 +5668,11 @@ pub(crate) fn guardrail_set_json(set: &GuardrailSet) -> Value {
                 "at": v.at.as_str(),
             })).collect::<Vec<_>>(),
             "conflict": g.conflict,
+            // The mark of a guardrail an admin fix serves (ADR-0089 d7).
+            "admin_fix": g.fix.map(|f| json!({
+                "confirmed": f.confirmed,
+                "reverted": f.reverted,
+            })),
         })).collect::<Vec<_>>(),
         "own_held": set.own_held.iter().map(|h| json!({
             "claim_key": h.claim_key,
@@ -5703,6 +5713,7 @@ pub(crate) fn served_skill_json(s: &oml_app::types::ServedSkill) -> Value {
             "same_user": a.same_user,
             "act": a.act(),
             "confirmed": a.confirmed(),
+            "reverted": a.reverted(),
         })),
         "uri": s.uri,
         "unreviewed": s.unreviewed,
