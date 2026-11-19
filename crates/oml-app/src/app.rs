@@ -637,11 +637,17 @@ fn require_role(key: &KeyRecord, role: Role, verb: &'static str) -> Result<(), A
 /// (roles-and-keys.md grant admissibility and refusal order; ADR-0025 d1).
 /// The verbs a key lists on a node: the verbs table over its effective
 /// roles, and `remember` for a person's session reviewer key where it
-/// holds reviewer and reader, the grants under which its submit is held
-/// (ADR-0082 d10, d11), so the verbs it lists are the verbs it may use.
-fn listed_verbs(key: &KeyRecord, effective: &BTreeSet<Role>) -> Vec<&'static str> {
+/// holds reviewer and reader, the grants under which its submit is held,
+/// outside its person's own root (ADR-0082 d10, d11, and d10's note of
+/// 2026-11-19), so the verbs it lists are the verbs it may use.
+fn listed_verbs(
+    key: &KeyRecord,
+    effective: &BTreeSet<Role>,
+    in_own_root: bool,
+) -> Vec<&'static str> {
     let mut verbs = effective_verbs(effective, key.used_by);
     if session_reviewer_starts_claims(key)
+        && !in_own_root
         && effective.contains(&Role::Reviewer)
         && effective.contains(&Role::Reader)
         && !verbs.contains(&"remember")
@@ -4065,7 +4071,9 @@ where
             my_effective_verbs: if structure {
                 Vec::new()
             } else {
-                listed_verbs(&caller.key, &effective)
+                let in_own_root = session_reviewer_starts_claims(&caller.key)
+                    && self.in_own_root(&caller.key, node).await?;
+                listed_verbs(&caller.key, &effective, in_own_root)
             },
             permission_epoch: caller.permission_epoch,
         })
@@ -5733,6 +5741,12 @@ where
         // (ADR-0044 d16).
         if matches!(access, Ok(()) | Err(AppError::GrantRefused { .. })) {
             self.refuse_another_users_root(key, workspace_id).await?;
+        }
+        // Inside the person's own root their web key starts a claim, so
+        // every write there counts on their account; the review key starts
+        // one only outside it (ADR-0082 d2; d10, note of 2026-11-19).
+        if session_reviewer && access.is_ok() && self.in_own_root(key, workspace_id).await? {
+            return Err(AppError::ReviewKeyInOwnRoot);
         }
         if let Err(refusal) = access {
             // A user key reads `universe` and never writes it: it is told

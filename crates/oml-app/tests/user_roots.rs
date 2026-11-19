@@ -4157,8 +4157,10 @@ async fn a_skill_preview_never_names_a_skill_the_key_cannot_read() {
 
 /// The verbs a key lists on a workspace are the verbs it may use there: a
 /// person's session reviewer key lists `remember` where it holds reviewer
-/// and reader, and its submit is held; a tenant reviewer key lists no
-/// `remember`, and its submit is `access.verb_ceiling` (ADR-0082 d11).
+/// and reader outside its person's root, and its submit is held, and none
+/// in that root, where its submit is refused; a tenant reviewer key lists
+/// no `remember`, and its submit is `access.verb_ceiling` (ADR-0082 d11;
+/// d10, note of 2026-11-19).
 #[tokio::test]
 async fn a_session_reviewer_lists_remember_where_it_may_submit_and_a_tenant_reviewer_does_not() {
     let (app, _store) = rig();
@@ -4190,6 +4192,15 @@ async fn a_session_reviewer_lists_remember_where_it_may_submit_and_a_tenant_revi
         .await
         .expect("its submit is held");
     assert_eq!(written.receipt.state, "held");
+    let verbs = app
+        .workspace_info(Bearer::Session(&review), Some(by_name("alice")))
+        .await
+        .expect("the workspace read")
+        .my_effective_verbs;
+    assert!(
+        !verbs.contains(&"remember"),
+        "not in alice's root: {verbs:?}"
+    );
 
     let verbs = app
         .workspace_info(tenant_reviewer.value.as_str(), Some(by_name("team")))
