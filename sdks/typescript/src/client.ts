@@ -34,8 +34,12 @@ export type Serve = Schemas["Serve"];
 export type VerdictResult = Schemas["VerdictResult"];
 export type WorkspaceView = Schemas["WorkspaceView"];
 export type EventsPage = Schemas["EventsPage"];
+export type SkillSet = Schemas["SkillSet"];
+export type ServedSkill = Schemas["ServedSkill"];
 export type ListQuery = NonNullable<operations["listMemories"]["parameters"]["query"]>;
 export type EventsQuery = NonNullable<operations["tailEvents"]["parameters"]["query"]>;
+/** `skills`' fields: the scope node, whether the key's own held skills are offered too, and a page's cursor. */
+export type SkillsQuery = NonNullable<operations["getSkills"]["parameters"]["query"]>;
 
 /**
  * `write`'s one flat field set (ADR-0039 d3): without `replaces` a submission, the server deriving
@@ -63,6 +67,13 @@ export interface WriteInput {
   origin?: SubmitRequest["origin"];
   retirement?: SupersedeRequest["retirement"];
   reason?: SupersedeRequest["reason"];
+  /**
+   * A skill's name and description: required on kind `skill`, refused on every other kind
+   * (ADR-0080 d1). A supersession of a skill sends them again, as every version carries its own.
+   */
+  skill?: SubmitRequest["skill"];
+  /** A document's title: optional on kind `document`, refused on every other kind (ADR-0081 d1). */
+  document?: SubmitRequest["document"];
 }
 
 /**
@@ -466,6 +477,29 @@ export class OmlClient {
   /** Every row of `read`'s listing, across pages; see `pages`. */
   async *memories(query: Omit<ListingInput, "cursor"> = {}): AsyncGenerator<MemorySummary> {
     for await (const page of this.pages(query)) yield* page.items;
+  }
+
+  /**
+   * One page of the skills offered at `workspace`, else the key's default workspace: names,
+   * descriptions and resource URIs, 50 a page, without bodies (ADR-0080 d11). `include_own_held`
+   * offers the key's own held skills too, each marked unreviewed. A body is `read` with the skill's
+   * `artifact_id`. `set_digest` is the same on every page of one set, so a caller compares it to
+   * tell the set changed. Only the fields given are sent.
+   */
+  async skills(query: SkillsQuery = {}): Promise<SkillSet> {
+    const answer = await this.#send((signal) => this.#api.GET("/v1/skills", { params: { query }, signal }));
+    return answer.data as SkillSet;
+  }
+
+  /** Every skill of the offered set, across pages, following `next_cursor` until it is null; see `skills`. */
+  async *iterSkills(query: Omit<SkillsQuery, "cursor"> = {}): AsyncGenerator<ServedSkill> {
+    let cursor: string | undefined;
+    for (;;) {
+      const page = await this.skills({ ...query, ...(cursor ? { cursor } : {}) });
+      yield* page.skills;
+      if (!page.next_cursor) return;
+      cursor = page.next_cursor;
+    }
   }
 
   // -- workspaces and the journal (/v2) ----------------------------------------
