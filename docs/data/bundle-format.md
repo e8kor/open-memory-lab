@@ -1,6 +1,6 @@
 ---
 status: Stable
-verified: 2026-11-17
+verified: 2026-11-19
 answers: "the workspace bundle file oml-bundle/1: its layout, manifest, signature, encryption, the records it carries and never carries, every refusal a reader names, and how an import is planned; which parts are built and which are designed"
 ---
 
@@ -17,7 +17,7 @@ with [age](https://age-encryption.org) to one or more named recipients.
 | `POST /v2/workspaces/{workspace}/exports` in `history` mode | built ([#425](https://github.com/e8kor/open-memory-lab/issues/425)) |
 | `release` mode and `since` | designed, not built: refused `request.validation`, `details.reason` `releases_unbuilt`, until releases are built |
 | `oml workspaces export` | built |
-| `POST /v2/imports`, `GET /v2/imports/{id}`, `oml workspaces import` | designed, not built ([#426](https://github.com/e8kor/open-memory-lab/issues/426)) |
+| `POST /v2/imports`, `GET /v2/imports/{id}`, `oml workspaces import` | built, into an in-progress workspace ([#426](https://github.com/e8kor/open-memory-lab/issues/426)) |
 | Export and Import on the console's personal side | designed, not built |
 
 ## Layout

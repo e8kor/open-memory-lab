@@ -1,7 +1,7 @@
 ---
 status: Stable
-verified: 2026-11-06
-answers: "what an agent saves and finds with the four tools, how recall is scoped and budgeted, and how a memory is corrected, retired, linked or checked against what is already held"
+verified: 2026-11-19
+answers: "what an agent saves and finds with the four tools, how recall is scoped and budgeted, and how a memory is corrected, withdrawn, retired, linked or checked against what is already held"
 ---
 
 # Write and read memories
@@ -58,12 +58,19 @@ carries a count per kind. `own: true` lists the key's own work instead, in every
 text. On the CLI, `oml read` without `--query` prints the counts line, then the catalog;
 `--own` lists the key's own work, `--kinds` and `--prefix` filter, and `--text` prints each
 entry's text.
-`oml read --state` accepts `held`, `promoted`, `demoted`, `rejected` and `erased`.
+`oml read --state` accepts `held`, `promoted`, `demoted`, `rejected`, `erased` and `withdrawn`.
 
-## Correct, retire and link
+## Correct, withdraw, retire and link
 
 - **Correct.** Write the new text naming the memory it replaces and the version read
   (`expected_version`). The new version is held, and others keep the old one until it is approved.
+- **Withdraw.** A held write the key made by mistake is taken back with `oml_withdraw` and its
+  `artifact_id`, or `oml withdraw <artifact_id> --reason <why>`. The version is kept as
+  `withdrawn` with its text, leaves every review queue and is never served; no reviewer is
+  involved. Over MCP and the CLI only the author key withdraws, and only a held version: an approved one answers
+  `memory.not_held`, another key's `access.author_only`. A person withdraws a held write of any of
+  their keys from the [web console](console.md#withdraw-a-mistaken-write)
+  ([ADR-0083](../adr/ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) d13).
 - **Retire.** Mark the write a retirement with a reason. Approval removes the memory from recall.
   Every version stays fetchable as history.
 - **Link.** A labeled link between two memories (`supports`, `contradicts` and others) is

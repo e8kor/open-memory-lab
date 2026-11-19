@@ -27,6 +27,7 @@ from .generated.api.events import tail_events
 from .generated.api.keys import whoami
 from .generated.api.memories import (
     get_memory,
+    get_skills,
     list_memories,
     recall_memories,
     submit_memory,
@@ -39,6 +40,7 @@ from .generated.client import Client
 from .generated.models import (
     Anchor,
     ClaimKind,
+    DocumentFields,
     EventsPage,
     Memory,
     MemoryPage,
@@ -51,6 +53,9 @@ from .generated.models import (
     RecallRequestSourcesType0,
     RecallResponse,
     Serve,
+    ServedSkill,
+    SkillFields,
+    SkillSet,
     SubmitAccepted,
     SubmitRequest,
     SubmitRequestKind,
@@ -313,6 +318,8 @@ class OmlClient:
         format: str | None = None,
         title: str | None = None,
         origin_kind: str | None = None,
+        skill: Mapping[str, str] | None = None,
+        document: Mapping[str, str] | None = None,
         idempotency_key: str | None = None,
     ) -> Written[SubmitAccepted]:
         """Write a claim, held on arrival; the fields set choose the route
@@ -328,8 +335,16 @@ class OmlClient:
         `origin_kind` what kind of source the text came from, recorded
         `manual` when omitted (ADR-0063 d1, d2), `format` the media type of
         `text`, `text/plain` when omitted, and `title` the one line a claim
-        that is not prose requires (ADR-0056).
+        that is not prose requires (ADR-0056). `skill`, `{"name",
+        "description"}`, is required on kind `skill` and refused on every
+        other kind (ADR-0080 d1); `document`, `{"title"}`, is optional on kind
+        `document` (ADR-0081 d1). A supersession of a skill or a document
+        sends them again, as every version carries its own.
         """
+        skill_fields = SkillFields.from_dict(dict(skill)) if skill is not None else UNSET
+        document_fields = (
+            DocumentFields.from_dict(dict(document)) if document is not None else UNSET
+        )
         if replaces is None:
             for field, value in (
                 ("retirement", retirement),
@@ -352,6 +367,8 @@ class OmlClient:
                 format_=_opt(format),
                 title=_opt(title),
                 origin=Origin(kind=OriginKind(origin_kind)) if origin_kind is not None else UNSET,
+                skill=skill_fields,
+                document=document_fields,
             )
             return self._write(
                 idempotency_key,
@@ -382,6 +399,8 @@ class OmlClient:
             reason=_opt(reason),
             format_=_opt(format),
             title=_opt(title),
+            skill=skill_fields,
+            document=document_fields,
         )
         return self._write(
             idempotency_key,
@@ -589,6 +608,41 @@ class OmlClient:
         """Every row of `read`'s listing, across pages; see `pages`."""
         for page in self.pages(**filters):
             yield from page.items
+
+    def skills(
+        self,
+        workspace: str | None = None,
+        *,
+        include_own_held: bool | None = None,
+        cursor: str | None = None,
+    ) -> SkillSet:
+        """One page of the skills offered at `workspace`, else the key's
+        default workspace: names, descriptions and resource URIs, 50 a page,
+        without bodies (ADR-0080 d11). `include_own_held` offers the key's own
+        held skills too, each marked unreviewed. A body is `read` with the
+        skill's `artifact_id`. `set_digest` is the same on every page of one
+        set, so a caller compares it to tell the set changed."""
+        return self._send(
+            lambda: get_skills.sync_detailed(
+                client=self._api,
+                workspace=_opt(workspace),
+                include_own_held=_opt(include_own_held),
+                cursor=_opt(cursor),
+            )
+        ).parsed
+
+    def iter_skills(
+        self, workspace: str | None = None, *, include_own_held: bool | None = None
+    ) -> Iterator[ServedSkill]:
+        """Every skill of the offered set, across pages, following
+        `next_cursor` until it is null; see `skills`."""
+        cursor = None
+        while True:
+            page = self.skills(workspace, include_own_held=include_own_held, cursor=cursor)
+            yield from page.skills
+            if not page.next_cursor:
+                return
+            cursor = page.next_cursor
 
     # -- workspaces and the journal (/v2) -------------------------------------
 

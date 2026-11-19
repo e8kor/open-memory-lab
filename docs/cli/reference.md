@@ -797,7 +797,7 @@ oml admin read [OPTIONS] [MEMORY]
 |---|---|
 | `--query <QUERY>` | Full-text search using recall matching |
 | `--workspace <WORKSPACE>` | Limit to this workspace subtree (id, name, or qualified name) |
-| `--state <STATE>` | held, promoted, rejected, superseded or demoted |
+| `--state <STATE>` | held, promoted, rejected, superseded, demoted or withdrawn; an erased version is listed as demoted |
 
 ### `oml admin rescan`
 
@@ -869,7 +869,7 @@ oml read [OPTIONS] [ARTIFACT_ID]
 | `--sources <SOURCES>` | Where to search: scope (default), wide (also the protected workspaces this key reads elsewhere), or comma-separated workspace names searched alone. Needs federation on (`oml search federation`) |
 | `--workspace <WORKSPACE>` | Subtree (id or name) to read; defaults to the key's workspace, or all workspaces this key wrote in for --own |
 | `--own` | List this key's own rows in every state, with their text, instead of the catalog |
-| `--state <STATE>` | Filter by state: held, promoted, demoted, rejected, or erased |
+| `--state <STATE>` | Filter by state: held, promoted, demoted, rejected, erased or withdrawn |
 | `--prefix <PREFIX>` | Only claim keys starting with this prefix, such as skill/ or doc/runbooks/ |
 | `--text` | Print each catalog entry's text |
 | `--since <SINCE>` | List versions written at or after this RFC 3339 instant |
