@@ -10,7 +10,7 @@ answers: what the views of the Memories cockpit show and which API call serves e
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with the screen
 choices settled from the approved design system v18 mockups (d2, d3, d5 to d9, d11, d12), the withdraw act (d13) decided the same day, and every
 other default as drafted · proposed the same day, tracking #374, with the operator's answers
-(d10) · aligned with ADR-0089 (admins fix production at once, a person confirms or reverts) · amended by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) (d12, 2026-11-15) · amendments of d11 and the workspace page proposed 2026-11-18 for the operator's batch (the "approved, not in a release" row and the stage tabs; #429)
+(d10) · aligned with ADR-0089 (admins fix production at once, a person confirms or reverts) · amended by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) (d12, 2026-11-15) · amendments of d11 and the workspace page of 2026-11-18, from the operator's batch (the "approved, not in a release" row and the stage tabs; #429), accepted 2026-11-19 by the operator
 
 **Release:** planned for v0.7.4
 
@@ -358,11 +358,12 @@ Decided, not built.
 | **Admin fixes confirmed on the admin side** | In a production scope a fix is confirmed by a person other than the admin's own, and in a development scope by any person holding reviewer there, through that person's reviewer key (ADR-0089 d8); the admin side acts as the admin key. |
 | **Search over held rows in To review and Submitted by recall** | Recall's shared index never serves another author's held text (ADR-0025 d5); a held row is matched only through a read fenced to its author. |
 
-## Proposed amendments of 2026-11-18 (the lifecycle review; for the operator's batch, #429)
+## Amendments of 2026-11-18 (the lifecycle review; the operator's batch, accepted 2026-11-19, #429)
 
 The lifecycle review's model proposed these with the operator's answers D1 to D4 (ADR-0085 and
-ADR-0084, amendments of 2026-11-18), and the operator approved the reviewed proposal. Each is
-proposed and marked **[operator batch]**.
+ADR-0084, amendments of 2026-11-18), and the operator approved the reviewed proposal. Each was
+proposed and marked **[operator batch]**, and the operator accepted every one on 2026-11-19
+("Accept all").
 
 - **To do gains "Approved, not in a release · N" (amends d11) [operator batch].** For each
   workspace with at least one published release where the person's reviewer key holds reviewer,
