@@ -2146,7 +2146,7 @@ fn apply_fold(
                 f.event_seq = Some(seq);
                 state.findings.push((memory.memory_id, f));
             }
-            if let Some(root) = key_account(&state, &memory.author_key_id) {
+            if let Some(root) = key_account(state, &memory.author_key_id) {
                 // Counted on the day of the row's own clock read, which
                 // the month's stored versions are read by (ADR-0071 d2).
                 let day = oml_domain::usage::day_of(&memory.created_at).to_owned();
