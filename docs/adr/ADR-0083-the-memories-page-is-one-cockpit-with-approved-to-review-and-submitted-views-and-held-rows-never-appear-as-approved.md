@@ -12,7 +12,7 @@ choices settled from the approved design system v18 mockups (d2, d3, d5 to d9, d
 other default as drafted · proposed the same day, tracking #374, with the operator's answers
 (d10) · aligned with ADR-0089 (admins fix production at once, a person confirms or reverts) · amended by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) (d12, 2026-11-15) · amendments of d11 and the workspace page of 2026-11-18, from the operator's batch (the "approved, not in a release" row and the stage tabs; #429), accepted 2026-11-19 by the operator
 
-**Release:** planned for v0.7.4
+**Release:** built in v0.8.3, except the To do groups of unbuilt features (d11, d14) and the 2026-11-18 amendments, which wait for ADR-0085 and ADR-0089
 
 **Amends:** ADR-0045 (d9 and d11: the user page's Memories view gains Submitted, and its Review
 view becomes the To do page with Judge at `/web/todo/judge`; d10: the admin page's Memories and
@@ -68,7 +68,10 @@ What serves each part today:
 Two gaps follow: the person's own rows cannot be listed alone across all their keys (the merged
 listing always adds the scoped part, and `author` names one key), and To review has no count.
 
-Decided, not built.
+Decided; built in v0.8.3: the withdraw act (d13) in #401, the own listings in #409, and the
+cockpit, To do, Judge and the admin pages in #410 to #413. Not built: the To do groups whose
+features are not built (d11, d14), and the amendments of 2026-11-18 (the "approved, not in a
+release" row and the stage tabs), which wait for releases (ADR-0085).
 
 ## Decision
 

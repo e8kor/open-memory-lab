@@ -12,7 +12,7 @@ choices settled from the approved design system v18 mockups (d1's layout on the 
 d5's preview on the form's own page, d6's diff on the form and on Judge) and every other default
 as drafted · proposed the same day, tracking #374, with the operator's answers (d7, d9)
 
-**Release:** planned for v0.7.4
+**Release:** built in v0.8.3
 
 **Amends:** ADR-0045 (d9: the user page writes skills, guardrails and documents through the
 builder; d12: a person's web key supersedes rows any of the person's keys wrote), ADR-0037 (d17:
@@ -65,7 +65,7 @@ What the console does today:
 - **One card, one picker.** Every memory is drawn by one card function (`card.rs`), and one
   workspace picker serves Memories, the Atlas, Review and Guardrails (`picker.rs`).
 
-Decided; built in v0.8.0: the API in #409, the console in #410 (the workspace page, its forms, In force here and the admin workspace page).
+Decided; built in v0.8.3: the API in #409, the console in #410 (the workspace page, its forms, In force here and the admin workspace page).
 
 ## Decision
 

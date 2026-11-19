@@ -777,7 +777,8 @@ enum AdminCommand {
         /// Limit to this workspace subtree (id, name, or qualified name).
         #[arg(long)]
         workspace: Option<String>,
-        /// held, promoted, rejected, superseded or demoted.
+        /// held, promoted, rejected, superseded, demoted or withdrawn; an
+        /// erased version is listed as demoted.
         #[arg(long)]
         state: Option<String>,
         /// The open investigation the read is made under (`oml admin
@@ -1156,7 +1157,8 @@ struct ReadArgs {
     /// of the catalog.
     #[arg(long, conflicts_with_all = ["artifact_id", "query"])]
     own: bool,
-    /// Filter by state: held, promoted, demoted, rejected, or erased.
+    /// Filter by state: held, promoted, demoted, rejected, erased or
+    /// withdrawn.
     #[arg(long, conflicts_with_all = ["artifact_id", "query"])]
     state: Option<String>,
     /// Only claim keys starting with this prefix, such as skill/ or

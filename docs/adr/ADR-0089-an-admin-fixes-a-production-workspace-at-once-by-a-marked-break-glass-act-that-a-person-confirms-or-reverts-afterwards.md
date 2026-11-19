@@ -12,7 +12,7 @@ recommendations and every other default as drafted, and its amendment of ADR-000
 it · proposed the same day · amended 2026-11-17 by the operator (d16: demote's targets, the
 fix route as the one surface for demote and erase, erase's claim-wide scope, a fix's events; as-of reads skip a demoted version) · readings of 2026-11-18 recorded for the operator's batch (d17) · amendments of d8 of 2026-11-18, from the operator's batch (strict confirmation wherever the fixed version is served to production and for any target outside the admin's own root; a cut refuses a `same_user`-only member; #429), accepted 2026-11-19 by the operator · amended 2026-11-19 by the operator (d16, O8: a claim whose approved versions are all demoted is written again, continuing its numbers; #474) · amended 2026-11-19 by the operator after the review of #498 (an admin key is linked to its person; the settlement fails closed; a revert checks R2 by person; proposed for the record, see the decision at the end)
 
-**Release:** not scheduled; with ADR-0085, whose releases a fix overlays
+**Release:** built in v0.8.3, except the release overlays (d5), which wait for ADR-0085
 
 **Twin parts** (ADR-0090 d18, PR #388): an `admin.fix` and its reason, its confirmation or
 revert, and an investigation's reason are journal or part, never excluded. A release's overlay

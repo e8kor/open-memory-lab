@@ -1,7 +1,7 @@
 ---
 status: Stable
-verified: 2026-11-14
-answers: "how to upgrade an OML server: how migrations run, the upgrade steps in order, what rollback does and does not mean, the upgrade from a pre-0.3.1 install, the v0.5.4 fix, how to move from v0.3, the v0.8.0 rename that clients take before the server, and the storage.url to set before v0.8.2's uploads"
+verified: 2026-11-19
+answers: "how to upgrade an OML server: how migrations run, the upgrade steps in order, what rollback does and does not mean, the upgrade from a pre-0.3.1 install, the v0.5.4 fix, how to move from v0.3, the v0.8.0 rename that clients take before the server, what the v0.8.3 migrations cost and what waits during them, and the storage.url to set before v0.8.2's uploads"
 ---
 
 # Upgrade OML
@@ -85,6 +85,8 @@ Update the plugin with `claude plugin update oml@open-memory-lab`. Then set its 
 
 ## Upgrading to v0.8.2: set `storage.url` before using uploads
 
+v0.8.0 to v0.8.2 were never released: this section applies to an upgrade from v0.7.3 to v0.8.3.
+
 v0.8.2 adds upload sessions, which keep their encrypted parts in the directory `storage.url` names
 ([ADR-0004](../adr/ADR-0004-bodies-and-attachments.md) d3). The default, `oml-objects`, is relative to
 the server's working directory, which a systemd unit or a container often cannot write. The server
@@ -101,6 +103,8 @@ Compose file mounts a writable volume at that directory, and the Helm chart sets
 root belongs to root and the server never changes the mode of a directory it does not own.
 
 ## Upgrading to v0.8.0: workspaces, reviewer, protected, frozen, used by
+
+v0.8.0 to v0.8.2 were never released: this section applies to an upgrade from v0.7.3 to v0.8.3.
 
 v0.8.0 renames five names on every surface in one cut, with no alias
 ([ADR-0091](../adr/ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md)):
@@ -158,6 +162,37 @@ supersede every reviewed steering, guardrail or skill whose text names a former 
 held version reviewed as usual. Bookmarks of the pages `use/workareas/` and
 `architecture/workareas/` answer 404; the pages are now [workspaces](../use/workspaces.md) and
 [how workspaces grant access](../architecture/workspaces.md).
+
+## Upgrading to v0.8.3: what the migrations cost
+
+v0.8.0 to v0.8.2 were never released: this section applies to an upgrade from v0.7.3 to v0.8.3.
+
+The server runs the migrations from 0047 on at boot, before it serves, so their time adds to the
+outage of [Upgrade in order](#upgrade-in-order). The rest change the catalog, add empty tables or
+columns with constant defaults, or touch a few small tables; the ones below read or write rows in
+proportion to the stored data. Each waits at most 5 s for a lock, and 0060, 0061 and 0062 commit
+after each step, so a run that fails resumes where it stopped.
+
+- **0047**, the rename ([ADR-0091](../adr/ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md)), updates the stored roles, holders and statuses tenant by tenant, every promoted version that carries an approver among them, in one transaction.
+- **0049** runs `VALIDATE CONSTRAINT` twice on `memories`, a full scan of every version, under a lock that lets reads and writes run.
+
+| Migration | What it does to each tenant | What waits, and for how long |
+|---|---|---|
+| 0060 | Builds the postings index that carries a document passage's ordinal on the tenant's partition, then refills the postings and counts of a tenant that holds a document | Reads never wait. Every claim write of that tenant waits for the whole build of its partition: a write, a verdict, a promotion and an erasure alike, because a write's postings are written in the same transaction as the version. The review of PR #475 measured about 5 s per 1.8M postings. Other tenants' writes do not wait. |
+| 0061 | Records the author's person on every version written by a key that acts for a person | Reads never wait; writes wait only for the rows the update touches. Not measured. |
+| 0062 | Builds the catalog index on the tenant's partition, then, for a tenant that holds a skill, a guardrail or a vocabulary kind, rewrites every posting and count of that tenant, not only the new kinds' | Measured at about 4.5 s for a tenant of 20,000 versions, about 225 s per million versions, during which that tenant's writes wait on the rows the refill rewrites. A tenant with none of those kinds is read by one probe and left as it is. |
+| 0063 | Creates the empty `admin_investigations` table with its policy, its update guard and column grants | Catalog changes only; nothing waits beyond the 5 s lock bound. |
+| 0064 | Creates the empty `admin_fixes` table, adds four nullable columns to `memories` with no default, and replaces the `api_keys_linked_user` check with a looser one, validated in the same transaction | One scan of `api_keys`, a row per key, under the ACCESS EXCLUSIVE lock the check swap takes until 0064 commits, so key lookups wait for that scan; no memory row is rewritten. Not measured. |
+| 0065 | Recomputes each account's `text_bytes` from its stored versions, so the proposals a person's review key wrote before the upgrade are charged to that person and the drift report finds none | One transaction for every tenant. It reads every version of each tenant twice, as 0045's fill read them once, which took 550 to 634 ms over 100,000 stored versions; 0065 itself is not measured. No version is rewritten, only one meter row per account. |
+
+**Link the admin key before a fix.** From v0.8.3 an admin fix (ADR-0089) is taken only by an admin key linked to its person; an unlinked one is refused `admin.fix_requires_person` with `details.reason: unlinked`. A new server links its first admin key at setup: `oml bootstrap claim <key-name> --token-stdin --tenant-name <tenant> --principal <you> --person <you>` creates that person's user root and links the key. An upgraded server's admin keys are unlinked: a console admin links each on the admin Keys page (`/web/admin/keys`): show the person, then name the key in the **Link key** form; the person is one other than the console admin's own, since a self-link is refused. A console admin session key acts for its own person and needs no link.
+
+On one server nothing else writes while the migrations run, so these waits lengthen the outage
+rather than stall requests. The work of 0060 and 0062 grows with each tenant's postings and
+versions: rehearse on a copy ([step 3](#upgrade-in-order)) and time both on the data before the
+window is announced. Before the window, also read [the rename](#upgrading-to-v080-workspaces-reviewer-protected-frozen-used-by),
+and set `storage.url` before uploads or imports are used:
+see [set `storage.url` before using uploads](#upgrading-to-v082-set-storageurl-before-using-uploads).
 
 ## Upgrading from v0.3
 

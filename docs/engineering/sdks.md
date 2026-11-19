@@ -1,7 +1,7 @@
 ---
 status: Stable
-verified: 2026-11-06
-answers: "how to install and use the Python and TypeScript clients: package names, what the hand-written wrapper does (URL and key, idempotency, retries, pagination, errors), the seven verbs, and an example"
+verified: 2026-11-19
+answers: "how to install and use the Python and TypeScript clients: package names, what the hand-written wrapper does (URL and key, idempotency, retries, pagination, errors), the seven verbs and withdraw, the skill set, skills and documents written in code, and an example"
 ---
 
 # Use the client SDKs
@@ -58,7 +58,7 @@ pass `replaces` with its artifact id. Replacing a held version raises `submissio
 | Verb | What it does |
 |---|---|
 | `write` | Saves a memory. With `replaces`, supersedes one; with `retirement`, retires it. |
-| `read` | With `artifact_id`, fetches. With `query`, recalls. With neither, lists the key's own rows. |
+| `read` | With `artifact_id`, fetches. With `query`, recalls. With neither, lists the catalog of what the key reads, or with `own` the key's own rows. |
 | `workspace` | Reads one workspace; omitted, the key's default. |
 | `events` | Tails the journal from `after_seq`. |
 | `review_next` (`reviewNext`) | Serves one held memory to a reviewer key. |
@@ -66,6 +66,43 @@ pass `replaces` with its artifact id. Replacing a held version raises `submissio
 
 `write` takes the same fields as `oml_write`, and `read` the same as `oml_read`. Administration
 (bootstrap, workspaces, keys) stays in the `oml` CLI. The SDK adds no second administration surface.
+
+## Withdraw, skills and documents
+
+| Helper | Python | TypeScript | What it does |
+|---|---|---|---|
+| Withdraw | `withdraw(artifact_id, reason=)` | `withdraw(artifact_id, { reason })` | Retracts a held version the key wrote. It is kept as `withdrawn`, leaves every review queue and is never served; no reviewer is involved. Another state is `memory.not_held`, another author's version `access.author_only` ([ADR-0083](../adr/ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) d13). |
+| The skill set, one page | `skills(workspace, include_own_held=, cursor=)` | `skills({ workspace, include_own_held, cursor })` | The skills offered at the workspace, else the key's default: name, description, resource URI and approval, 50 a page, without bodies. `include_own_held` (Python `include_own_held=`, TypeScript `{ include_own_held }`), as the [HTTP API](../api/http-api.md) names it, offers the key's own held skills too, each marked unreviewed. A body is `read` with the skill's `artifact_id`. `set_digest` is the same on every page of one set ([ADR-0080](../adr/ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) d11). |
+| The skill set, every page | `iter_skills(workspace, include_own_held=)` | `iterSkills({ workspace, include_own_held })` | Follows `next_cursor` until it is null. |
+| A skill or a document | `write(text, kind="skill", skill={"name", "description"})`, `write(text, kind="document", document={"title"})` | `write({ text, kind: "skill", skill })`, `write({ text, kind: "document", document })` | Writes a held skill or document; with `replaces`, its next version, which sends `skill` or `document` again. A skill needs a person's approval ([ADR-0080](../adr/ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) d1, d16). |
+
+A recall with `kinds=["document"]` answers each matching document once, by its best passage: the
+hit's `passage` names its fragment, lines and headings, `more_passages` counts the other passages
+that matched, and `uri` is the passage's MCP resource
+([ADR-0081](../adr/ADR-0081-a-document-is-a-reviewed-markdown-or-text-claim-that-recall-searches-by-passage-and-the-mcp-server-serves-as-a-resource.md) d4).
+The guides for [skills](../use/skills.md) and [documents](../use/documents.md) cover review and
+offering.
+
+```python
+with OmlClient() as oml:
+    oml.write(
+        "Run the tests, tag the commit, then push the tag.",
+        kind="skill",
+        skill={"name": "release", "description": "Cut a release."},
+    )
+    for skill in oml.iter_skills():
+        print(skill.name, skill.unreviewed, skill.uri)
+```
+
+The repository's Rust client, `oml-sdk`, which the web console uses, reads the same skill set
+(`Client::skills`) and a recall's document passages (`RecallQuery::kinds`, `RecallHit::passage`).
+A `RecallQuery` whose `kinds` is `None` sends no `kinds`, so the server's default applies: every hit
+kind but steering, test and the vocabulary kinds, with the steering list served
+([ADR-0092](../adr/ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) d1).
+
+Helpers for releases and bindings wait for them to be built
+([ADR-0085](../adr/ADR-0085-a-workspace-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md) d12):
+no server serves `/v2/workspaces/{workspace}/releases` or `/v2/keys/{key}/binding` yet.
 
 ## What the wrapper does
 
@@ -80,8 +117,9 @@ pass `replaces` with its artifact id. Replacing a held version raises `submissio
   per attempt. Each attempt times out at 10 seconds. A refusal with `retryable: false`, such as
   `idempotency.digest_mismatch`, is raised at once.
 - **Only the fields set.** A `write` without `claim_key` sends none, and the server derives one.
-- **Pagination.** `read` returns one page with its `next_cursor`. The iterators (`iter_memories`
-  and `pages` in Python, `memories` and `pages` in TypeScript) follow `next_cursor` to the end.
+- **Pagination.** `read` and `skills` return one page with its `next_cursor`. The iterators
+  (`iter_memories`, `pages` and `iter_skills` in Python, `memories`, `pages` and `iterSkills` in
+  TypeScript) follow `next_cursor` to the end.
   Cursors are positions, not snapshots: a row that changes between pages can be missed or repeated
   ([pagination](../api/http-api.md)).
 - **Errors.** Every refusal raises `ApiError` with the envelope of [errors](../api/errors.md):
@@ -91,4 +129,5 @@ pass `replaces` with its artifact id. Replacing a held version raises `submissio
 - **Validation before sending.** Fields outside the chosen mode raise `request.validation`,
   with `details.field` naming the field, before anything reaches the network.
 
-Uploads are not available, because the server serves no upload sessions.
+The wrappers have no upload helper: the upload sessions of `/v2/uploads` are in the generated layer
+alone ([HTTP API](../api/http-api.md)).

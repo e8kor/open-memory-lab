@@ -14,6 +14,7 @@ import {
   OmlClient,
   type ReadInput,
   RequestError,
+  type SkillSet,
   SubmissionError,
   USER_AGENT,
   WorkspaceImportError,
@@ -321,6 +322,94 @@ test("withdraw posts the reason under an idempotency key", async () => {
   assert.deepEqual(await requests[0]?.json(), { reason: "written by mistake" });
   assert.equal(requests[0]?.headers.get("idempotency-key"), written.idempotencyKey);
   assert.equal(written.value.state, "withdrawn");
+});
+
+/** One offered skill as `GET /v1/skills` serves it (openapi.yaml `ServedSkill`). */
+function servedSkill(name: string) {
+  return {
+    artifact_id: `art_${name}`,
+    claim_key: `skill/${name}`,
+    name,
+    description: `The ${name} routine.`,
+    version: 1,
+    workspace_path: "universe.alice",
+    depth: 0,
+    overrides: [],
+    approved_at: "2026-11-17T18:00:00Z",
+    approver: { used_by: "person", same_user: false },
+    uri: `oml://workspace/universe.alice/skill/${name}`,
+    unreviewed: false,
+  };
+}
+
+function skillPage(names: string[], next_cursor: string | null) {
+  return {
+    scope_node: "ws_1",
+    scope_path: "universe.alice",
+    guardrail_scope: "ancestors",
+    set_digest: "sd_1",
+    skills: names.map(servedSkill),
+    next_cursor,
+  };
+}
+
+test("skills reads one page of the offered set and sends only the fields given", async () => {
+  const { requests, fetcher } = recorder(200, skillPage(["deploy"], "c2"));
+  const oml = client(fetcher);
+  const page: SkillSet = await oml.skills();
+  await oml.skills({ workspace: "universe.alice", include_own_held: true, cursor: "c 1" });
+  assert.deepEqual(
+    requests.map((r) => [r.method, new URL(r.url).pathname, Object.fromEntries(new URL(r.url).searchParams)]),
+    [
+      ["GET", "/v1/skills", {}],
+      ["GET", "/v1/skills", { workspace: "universe.alice", include_own_held: "true", cursor: "c 1" }],
+    ],
+  );
+  assert.deepEqual(page.skills.map((s) => s.name), ["deploy"]);
+  assert.equal(page.next_cursor, "c2");
+});
+
+test("skills list pages by cursor", async () => {
+  const answers = [skillPage(["cite", "deploy"], "c2"), skillPage(["triage"], null)];
+  const requests: Request[] = [];
+  const fetcher = async (request: Request): Promise<Response> => {
+    requests.push(request.clone());
+    return Response.json(answers[requests.length - 1], { status: 200 });
+  };
+  const names: string[] = [];
+  for await (const skill of client(fetcher).iterSkills({ workspace: "universe.alice", include_own_held: true })) {
+    names.push(skill.name);
+  }
+  assert.deepEqual(names, ["cite", "deploy", "triage"]);
+  assert.deepEqual(
+    requests.map((r) => Object.fromEntries(new URL(r.url).searchParams)),
+    [
+      { workspace: "universe.alice", include_own_held: "true" },
+      { workspace: "universe.alice", include_own_held: "true", cursor: "c2" },
+    ],
+  );
+});
+
+test("write sends a skill's name and description and a document's title", async () => {
+  const { requests, fetcher } = recorder(202, ACCEPTED);
+  const oml = client(fetcher);
+  const skill = { name: "release", description: "Cut a release." };
+  await oml.write({ text: "Run the tests, then tag.", kind: "skill", skill });
+  await oml.write({ text: "# Runbook\n\nRestart the lead.", kind: "document", document: { title: "Runbook" } });
+  await oml.write({ text: "Run the tests twice, then tag.", replaces: "art_1", expected_version: 1, skill });
+  assert.deepEqual(
+    requests.map((r) => [r.method, new URL(r.url).pathname]),
+    [
+      ["POST", "/v1/memories"],
+      ["POST", "/v1/memories"],
+      ["POST", "/v1/memories/art_1/supersede"],
+    ],
+  );
+  assert.deepEqual(await Promise.all(requests.map((r) => r.json())), [
+    { body: "Run the tests, then tag.", kind: "skill", skill },
+    { body: "# Runbook\n\nRestart the lead.", kind: "document", document: { title: "Runbook" } },
+    { body: "Run the tests twice, then tag.", expected_version: 1, skill },
+  ]);
 });
 
 test("a refusal raises the envelope's code and details", async () => {

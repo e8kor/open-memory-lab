@@ -184,6 +184,106 @@ def test_withdraw_posts_the_reason_under_an_idempotency_key():
     assert written.value.state == "withdrawn"
 
 
+def served_skill(name: str, depth: int = 0) -> dict:
+    """One offered skill as `GET /v1/skills` serves it (openapi.yaml `ServedSkill`)."""
+    return {
+        "artifact_id": f"art_{name}",
+        "claim_key": f"skill/{name}",
+        "name": name,
+        "description": f"The {name} routine.",
+        "version": 1,
+        "workspace_path": "universe.alice",
+        "depth": depth,
+        "overrides": [],
+        "approved_at": "2026-11-17T18:00:00Z",
+        "approver": {"used_by": "person", "same_user": False},
+        "uri": f"oml://workspace/universe.alice/skill/{name}",
+        "unreviewed": False,
+    }
+
+
+def skill_page(names: list[str], next_cursor: str | None) -> dict:
+    return {
+        "scope_node": "ws_1",
+        "scope_path": "universe.alice",
+        "guardrail_scope": "ancestors",
+        "set_digest": "sd_1",
+        "skills": [served_skill(name) for name in names],
+        "next_cursor": next_cursor,
+    }
+
+
+def test_skills_reads_one_page_of_the_offered_set_and_sends_only_the_fields_given():
+    requests, transport = recording(200, skill_page(["deploy"], "c2"))
+    with client(transport) as oml:
+        page = oml.skills()
+        oml.skills("universe.alice", include_own_held=True, cursor="c 1")
+    assert [(r.method, r.url.path) for r in requests] == [("GET", "/v1/skills")] * 2
+    assert [dict(r.url.params) for r in requests] == [
+        {},
+        {"workspace": "universe.alice", "include_own_held": "true", "cursor": "c 1"},
+    ]
+    assert [s.name for s in page.skills] == ["deploy"]
+    assert page.next_cursor == "c2"
+    assert page.skills[0].uri == "oml://workspace/universe.alice/skill/deploy"
+
+
+def test_iter_skills_follows_next_cursor_across_pages_until_it_is_null():
+    answers = [skill_page(["cite", "deploy"], "c2"), skill_page(["triage"], None)]
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=answers[len(requests) - 1])
+
+    with client(httpx.MockTransport(handler)) as oml:
+        names = [s.name for s in oml.iter_skills("universe.alice", include_own_held=True)]
+    assert names == ["cite", "deploy", "triage"]
+    assert [dict(r.url.params) for r in requests] == [
+        {"workspace": "universe.alice", "include_own_held": "true"},
+        {"workspace": "universe.alice", "include_own_held": "true", "cursor": "c2"},
+    ]
+
+
+def test_write_sends_a_skills_name_and_description_and_a_documents_title():
+    requests, transport = recording(202, ACCEPTED)
+    with client(transport) as oml:
+        oml.write(
+            "Run the tests, then tag.",
+            kind="skill",
+            skill={"name": "release", "description": "Cut a release."},
+        )
+        oml.write("# Runbook\n\nRestart the lead.", kind="document", document={"title": "Runbook"})
+        oml.write(
+            "Run the tests twice, then tag.",
+            replaces="art_1",
+            expected_version=1,
+            skill={"name": "release", "description": "Cut a release."},
+        )
+    assert [(r.method, r.url.path) for r in requests] == [
+        ("POST", "/v1/memories"),
+        ("POST", "/v1/memories"),
+        ("POST", "/v1/memories/art_1/supersede"),
+    ]
+    assert [json.loads(r.content) for r in requests] == [
+        {
+            "body": "Run the tests, then tag.",
+            "kind": "skill",
+            "skill": {"name": "release", "description": "Cut a release."},
+        },
+        {
+            "body": "# Runbook\n\nRestart the lead.",
+            "kind": "document",
+            "document": {"title": "Runbook"},
+        },
+        {
+            "body": "Run the tests twice, then tag.",
+            "expected_version": 1,
+            "skill": {"name": "release", "description": "Cut a release."},
+        },
+    ]
+
+
 def test_a_refusal_raises_the_envelopes_code_and_details():
     envelope = {
         "error": {

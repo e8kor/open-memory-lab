@@ -5,7 +5,10 @@
 //! method, path or field names differ from `docs/api/openapi.yaml`, so a
 //! contract change that forgets this client fails where the generated
 //! Python and TypeScript layers already do. Its one consumer today is
-//! `oml-web`.
+//! `oml-web`; the skill set ([`Client::skills`]) and a recall's kinds and
+//! document passages ([`RecallQuery::kinds`], [`RecallHit::passage`]) are
+//! there for any Rust caller, as the Python and TypeScript SDKs serve them
+//! (#427).
 //!
 //! Every call names its credential and the ids it is made under
 //! ([`Call`]); a refusal is the API's envelope as [`ApiError`]; a field the
@@ -32,7 +35,7 @@ pub use transport::{HttpTransport, Sending, Transport, TransportError};
 /// and of each struct it holds, to the operation's 2xx schema;
 /// `every_method_sends_the_method_path_and_type_its_table_entry_names`
 /// holds the methods to it.
-pub const OPERATIONS: [&str; 46] = [
+pub const OPERATIONS: [&str; 47] = [
     "authorizationServerMetadata GET /.well-known/oauth-authorization-server resp:AuthorizationServerMetadata",
     "whoami GET /v2/whoami query:person resp:Whoami",
     "getGuardrails GET /v1/guardrails query:workspace resp:GuardrailSet",
@@ -79,6 +82,7 @@ pub const OPERATIONS: [&str; 46] = [
     "requestWebDeletion POST /v2/web/deletion-requests resp:DeletionRequested",
     "whoami GET /v2/whoami resp:Onboarding",
     "listMemories GET /v1/memories query:workspace,kinds,prefix,state,limit,cursor resp:CatalogPage",
+    "getSkills GET /v1/skills query:workspace,include_own_held,cursor resp:SkillSet",
 ];
 
 /// The request id header (ADR-0042 d4).
@@ -821,6 +825,74 @@ pub struct CatalogPage {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct RecallHit {
     pub memory: Memory,
+    /// A document's hit only: the passage it serves, whose lines are the
+    /// memory's text (ADR-0081 d4).
+    #[serde(default)]
+    pub passage: Option<RecallPassage>,
+    /// A document's hit only: how many of its other passages were in the
+    /// fused list before the `k` cut, a lower bound (ADR-0081 d4).
+    #[serde(default)]
+    pub more_passages: Option<u32>,
+    /// A document's hit only: the passage's MCP resource,
+    /// `oml://workspace/<workspace>/doc/<path>?passage=<fragment>`
+    /// (ADR-0081 d6).
+    #[serde(default)]
+    pub uri: Option<String>,
+}
+
+/// The passage a document's recall hit serves (openapi.yaml
+/// `RecallPassage`; ADR-0081 d3, d4).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct RecallPassage {
+    /// The heading's slug for a whole section, else `L<n>-L<m>`.
+    pub fragment: String,
+    /// Its place in the document, from 0.
+    pub ordinal: u32,
+    pub start_line: u32,
+    pub end_line: u32,
+    /// The headings of level 1 to 4 above it, outermost first.
+    pub heading_path: Vec<String>,
+}
+
+/// `GET /v1/skills`: one page of the skills offered at the scope node,
+/// without bodies (openapi.yaml `SkillSet`; ADR-0080 d11).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct SkillSet {
+    pub scope_node: String,
+    pub scope_path: String,
+    pub guardrail_scope: String,
+    /// Opaque, the same on every page of one set: a caller only compares it.
+    pub set_digest: String,
+    /// Ordered by depth from the scope node, then name.
+    pub skills: Vec<ServedSkill>,
+    pub next_cursor: Option<String>,
+}
+
+/// One offered skill (openapi.yaml `ServedSkill`): its body is
+/// [`Client::get_memory`] of its `artifact_id`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ServedSkill {
+    pub artifact_id: String,
+    pub claim_key: String,
+    /// The command: the skill's name, or `<name>-unreviewed` for a held edit
+    /// of an approved skill (ADR-0080 d10).
+    pub name: String,
+    pub description: String,
+    pub version: u32,
+    pub workspace_path: String,
+    /// The tree distance from the scope node, up or down.
+    pub depth: u32,
+    /// The farther workspaces' paths whose skill of this name it shadows,
+    /// nearest first.
+    pub overrides: Vec<String>,
+    /// `None` for a held version.
+    pub approved_at: Option<String>,
+    pub approver: Option<Approver>,
+    /// The skill's MCP resource, `oml://workspace/<workspace>/skill/<name>`.
+    pub uri: String,
+    /// A held version, offered to its author key or inside an in-progress
+    /// workspace (ADR-0080 d10, d14).
+    pub unreviewed: bool,
 }
 
 /// `POST /v1/memories/recall`: steering first, then the ranked hits.
@@ -1555,6 +1627,12 @@ pub struct CatalogQuery<'a> {
 pub struct RecallQuery<'a> {
     pub query: &'a str,
     pub k: u32,
+    /// A comma list of kinds, sent as the body's `kinds` array; `None`
+    /// sends no `kinds`, so the server serves every hit kind but steering,
+    /// test and the vocabulary kinds, with the steering list (ADR-0092 d1).
+    /// `document` serves each document's best passage (ADR-0081 d4;
+    /// ADR-0092 d6).
+    pub kinds: Option<&'a str>,
     pub workspace: Option<&'a str>,
     pub origin: Option<&'a str>,
     /// Sent as `include_unreviewed`, always, so an in-progress scope's
@@ -1828,6 +1906,38 @@ impl<T: Transport> Client<T> {
         self.get(Some(call), path).await
     }
 
+    /// `GET /v1/skills`: one page of the skills offered at `workspace` (an id
+    /// or a name) or at the key's default workspace, the key's own held
+    /// skills too where `include_own_held` asks; pass the page's
+    /// `next_cursor` back as `cursor` for the next (ADR-0080 d10, d11).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn skills(
+        &self,
+        call: &Call<'_>,
+        workspace: Option<&str>,
+        include_own_held: bool,
+        cursor: Option<&str>,
+    ) -> Result<SkillSet, Error> {
+        let mut query = Vec::new();
+        if let Some(workspace) = workspace {
+            query.push(format!("workspace={}", encode(workspace)));
+        }
+        if include_own_held {
+            query.push("include_own_held=true".to_owned());
+        }
+        if let Some(cursor) = cursor {
+            query.push(format!("cursor={}", encode(cursor)));
+        }
+        let path = if query.is_empty() {
+            "/v1/skills".to_owned()
+        } else {
+            format!("/v1/skills?{}", query.join("&"))
+        };
+        self.get(Some(call), path).await
+    }
+
     /// `GET /v2/workspaces/{workspace}/tree`: one page of `limit` nodes
     /// after `cursor`.
     ///
@@ -2002,9 +2112,9 @@ impl<T: Transport> Client<T> {
         self.get(Some(call), path).await
     }
 
-    /// `POST /v1/memories/recall`: memories and derived facts with their
-    /// text, held ones only where `include_unreviewed` asks for them.
-    /// Read-shaped: no idempotency key.
+    /// `POST /v1/memories/recall`: the server's default kinds with their
+    /// text, or the kinds `kinds` names, held ones only where
+    /// `include_unreviewed` asks for them. Read-shaped: no idempotency key.
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
@@ -2016,10 +2126,12 @@ impl<T: Transport> Client<T> {
         let mut body = serde_json::json!({
             "query": query.query,
             "k": query.k,
-            "kinds": ["memory", "derived_fact"],
             "include_text": true,
             "include_unreviewed": query.include_unreviewed,
         });
+        if let Some(kinds) = query.kinds {
+            body["kinds"] = serde_json::json!(kinds.split(',').collect::<Vec<_>>());
+        }
         if let Some(workspace) = query.workspace {
             body["workspace"] = serde_json::json!(workspace);
         }
@@ -3157,6 +3269,11 @@ mod tests {
                     )
                     .await,
             ),
+            decodes(
+                &client
+                    .skills(&CALL, Some("alice.proj"), true, Some("c 1"))
+                    .await,
+            ),
         ];
         let seen = seen.lock().unwrap();
         let table = table();
@@ -3178,7 +3295,7 @@ mod tests {
         // The record alone, for a caller that needs no person block.
         assert_eq!(seen[1].uri(), "/v2/whoami?person=false");
         // The person block is asked for by name, on the one method that reads it.
-        assert_eq!(seen[seen.len() - 2].uri(), "/v2/whoami");
+        assert_eq!(seen[seen.len() - 3].uri(), "/v2/whoami");
         assert_eq!(seen[2].uri(), "/v1/guardrails?workspace=alice.proj");
         assert_eq!(
             seen[3].uri(),
@@ -3256,6 +3373,109 @@ mod tests {
         assert_eq!(page.items[0].name.as_deref(), Some("deploy"));
         assert_eq!(page.items[0].prompt, None);
         assert_eq!(page.next_cursor.as_deref(), Some("c2"));
+    }
+
+    /// The skill set is read one page at a time, at the key's default
+    /// workspace unless one is named, the key's own held skills only where
+    /// asked for, and each skill carries its resource and its approval
+    /// (ADR-0080 d10, d11).
+    #[tokio::test]
+    async fn the_skill_set_is_read_one_page_at_a_time_with_only_the_fields_given() {
+        const BODY: &str = r#"{"scope_node":"ws_1","scope_path":"universe.alice","guardrail_scope":"ancestors","set_digest":"sd_1","skills":[{"artifact_id":"a1","claim_key":"skill/deploy","name":"deploy","description":"Deploy, then check.","version":2,"workspace_path":"universe.alice","depth":0,"overrides":["universe"],"approved_at":"2026-11-15T10:01:00Z","approver":{"used_by":"person","same_user":false},"uri":"oml://workspace/universe.alice/skill/deploy","unreviewed":false}],"next_cursor":"c2"}"#;
+        let (client, seen) = recording(200, BODY);
+        let page = client.skills(&CALL, None, false, None).await.unwrap();
+        client
+            .skills(&CALL, Some("universe.alice"), true, Some("c 1"))
+            .await
+            .unwrap();
+        let uris: Vec<String> = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|r| r.uri().to_string())
+            .collect();
+        assert_eq!(
+            uris,
+            [
+                "/v1/skills",
+                "/v1/skills?workspace=universe.alice&include_own_held=true&cursor=c%201"
+            ]
+        );
+        assert_eq!(page.set_digest, "sd_1");
+        assert_eq!(page.next_cursor.as_deref(), Some("c2"));
+        let deploy = &page.skills[0];
+        assert_eq!(
+            (deploy.name.as_str(), deploy.depth, deploy.unreviewed),
+            ("deploy", 0, false)
+        );
+        assert_eq!(deploy.overrides, ["universe"]);
+        assert_eq!(deploy.uri, "oml://workspace/universe.alice/skill/deploy");
+    }
+
+    /// A recall that names no kinds sends no `kinds`, so the server's
+    /// default applies: every hit kind but steering, test and the vocabulary
+    /// kinds, with the steering list served (ADR-0092 d1).
+    #[tokio::test]
+    async fn a_recall_that_names_no_kinds_sends_no_kinds() {
+        let (client, seen) = recording(200, r#"{"steering":[],"hits":[]}"#);
+        client
+            .recall(
+                &CALL,
+                &RecallQuery {
+                    query: "restart",
+                    k: 5,
+                    ..RecallQuery::default()
+                },
+            )
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_slice(seen.lock().unwrap()[0].body()).unwrap();
+        assert_eq!(body.get("kinds"), None, "{body}");
+    }
+
+    /// A recall names the kinds it asks for, and a document's hit carries
+    /// the passage it serves, how many more matched and the passage's
+    /// resource (ADR-0081 d4, d6).
+    #[tokio::test]
+    async fn a_document_hit_carries_its_passage_and_the_recall_names_its_kinds() {
+        const BODY: &str = r#"{"steering":"not_requested","hits":[{"memory":{"artifact_id":"d1","claim_key":"doc/runbook","version":1,"tip":true,"workspace_path":"universe.alice","state":"promoted","principal":null,"created_at":"2026-11-15T10:00:00Z","promoted_at":"2026-11-15T10:01:00Z","kind":"document","text":"Restart the lead."},"score":0.5,"matched":{"terms":["restart"],"of":1,"via":["bm25"]},"passage":{"fragment":"restart","ordinal":1,"start_line":3,"end_line":3,"heading_path":["Runbook","Restart"]},"more_passages":2,"uri":"oml://workspace/universe.alice/doc/runbook?passage=restart"}]}"#;
+        let (client, seen) = recording(200, BODY);
+        let answer = client
+            .recall(
+                &CALL,
+                &RecallQuery {
+                    query: "restart",
+                    k: 5,
+                    kinds: Some("document"),
+                    ..RecallQuery::default()
+                },
+            )
+            .await
+            .unwrap();
+        let kinds: Vec<Value> = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|r| serde_json::from_slice::<Value>(r.body()).unwrap()["kinds"].clone())
+            .collect();
+        assert_eq!(kinds, [serde_json::json!(["document"])]);
+        let hit = &answer.hits[0];
+        let passage = hit.passage.as_ref().expect("a document hit's passage");
+        assert_eq!(
+            (
+                passage.fragment.as_str(),
+                passage.ordinal,
+                passage.start_line,
+                passage.end_line
+            ),
+            ("restart", 1, 3, 3)
+        );
+        assert_eq!(passage.heading_path, ["Runbook", "Restart"]);
+        assert_eq!(hit.more_passages, Some(2));
+        assert_eq!(
+            hit.uri.as_deref(),
+            Some("oml://workspace/universe.alice/doc/runbook?passage=restart")
+        );
     }
 
     /// The admin search sends its kinds as the body's `kinds` array, as

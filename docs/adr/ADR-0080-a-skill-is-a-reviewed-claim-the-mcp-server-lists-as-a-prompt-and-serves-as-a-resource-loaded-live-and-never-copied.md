@@ -14,7 +14,7 @@ d16 added so that a skill follows the rules of every claim of its class with no 
 own (the operator: "Skills is another type of claim it should obey same rules as others") · proposed the same day, tracking
 #374, with the operator's answers (d13) · aligned with ADR-0089 (PR #377) · amended by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) (d10, d16, 2026-11-15)
 
-**Release:** planned for v0.7.4
+**Release:** built in v0.8.3, except offering held guardrails and steering down (d4, d10; #458)
 
 **Twin parts** (ADR-0090 d18, PR #388): a skill is a `memories` row, so its body and search text
 are parts and its fold is the journal's; the offered set, the index and the prompts are read from
@@ -75,7 +75,7 @@ What exists today:
   2026-11-14).
 
 The decision has to say what a skill is, who sees which, how it is served without a local copy,
-and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md)'s R1 to R4 and restates none of them; d16 widens ADR-0001 d5's first exception, the in-progress workspace, as that exception's own text records. Decided. The class rule's person verdict is built for steering and guardrail in v0.8.0 (#391), and for skill once the kind lands (#400, #403); d16's in-progress audience is built for recall, the scoped listing and a read by id in v0.8.0 (#402), and d10's and d14's held guardrails and steering, to their author key and inside in-progress roots up the key's chain, in v0.8.0 (#407); the offered set and `GET /v1/skills` (d4, d5, d9, d11), the MCP prompts and skill resources (d5 to d7) and the session-start index, the local-skill rule and its doctor lines (d8, d15) in v0.8.0 (#403, #404, #408), under the readings of 2026-11-17 and 2026-11-18 below; document resources wait for #405.
+and how it stays reviewed text. It cites [ADR-0001](ADR-0001-the-constitution.md)'s R1 to R4 and restates none of them; d16 widens ADR-0001 d5's first exception, the in-progress workspace, as that exception's own text records. Decided. The class rule's person verdict is built for steering and guardrail in v0.8.3 (#391), and for skill once the kind lands (#400, #403); d16's in-progress audience is built for recall, the scoped listing and a read by id in v0.8.3 (#402), and d10's and d14's held guardrails and steering, to their author key and inside in-progress roots up the key's chain, in v0.8.3 (#407); the offered set and `GET /v1/skills` (d4, d5, d9, d11), the MCP prompts and skill resources (d5 to d7) and the session-start index, the local-skill rule and its doctor lines (d8, d15) in v0.8.3 (#403, #404, #408), under the readings of 2026-11-17 and 2026-11-18 below; document resources in v0.8.3 (#405). Not built: offering held guardrails and steering down (d4, d10; #458).
 
 ## Decision
 
