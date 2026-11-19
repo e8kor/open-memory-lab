@@ -427,11 +427,18 @@ async fn the_session_gates_rows_read_in_one_transaction_are_the_rows_its_separat
                 Some(format!("{}-{capacity}", rows.session.user.as_str()).as_str())
             );
             assert!(key.access.is_some(), "{capacity}");
-            // Only the web key names the person's root, and owns its keys.
+            // Only the web key names the person's root; every session key
+            // reads its person's keys, itself and the web key among them
+            // (ADR-0083 d14).
             assert_eq!(key.user_root.is_some(), capacity == "web", "{capacity}");
-            assert_eq!(
+            assert!(
                 key.own_keys.iter().any(|k| k.key_id == key.key.key_id),
-                capacity == "web",
+                "{capacity}"
+            );
+            assert!(
+                key.own_keys.iter().any(|k| k.user.is_some()
+                    && k.name.as_ref().map(Name::as_str)
+                        == Some(format!("{}-web", rows.session.user.as_str()).as_str())),
                 "{capacity}"
             );
         }

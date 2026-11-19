@@ -4184,9 +4184,12 @@ pub struct WebCredentialRows {
 
 /// The session key's rows of [`WebCredentialRows`]: its row, a revoked
 /// key's included; its access, `None` for a key the tenant does not hold;
-/// and, for a key that names a user root, that root's row, `None` when
-/// the tenant holds no such node, and the keys naming it, revoked ones
-/// included, in name order. A key that names no root has neither.
+/// for a key that names a user root, that root's row, `None` when the
+/// tenant holds no such node; and its person's keys, revoked ones
+/// included: the keys naming the root the person's session key names, in
+/// name order, then the person's session keys not among them, in name
+/// order, never a linked tenant key
+/// ([`crate::ports::person_keys_read_apart`]; ADR-0083 d14).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebCredentialKey {
     pub key: KeyRecord,

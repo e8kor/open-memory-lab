@@ -412,13 +412,11 @@ where
         let rows = match key.filter(|k| serves_session(k, session, &name)) {
             Some(key) => {
                 let access = self.journal.key_access(tenant_id, key.key_id).await?;
-                let (user_root, own_keys) = match key.user {
-                    Some(root) => (
-                        self.journal.workspace(tenant_id, root).await?,
-                        self.journal.web_user_keys(tenant_id, root).await?,
-                    ),
-                    None => (None, Vec::new()),
+                let user_root = match key.user {
+                    Some(root) => self.journal.workspace(tenant_id, root).await?,
+                    None => None,
                 };
+                let own_keys = crate::ports::person_keys_read_apart(&self.journal, &key).await?;
                 Some(WebCredentialKey {
                     key,
                     access,
@@ -438,8 +436,8 @@ where
     /// capacity only for an admin's entry; the key the one holding the
     /// capacity's name, a session key serving the session's user, not
     /// revoked; its access held by its tenant; a user key's root a user
-    /// root (ADR-0044 d14); and the web key's own set every key naming its
-    /// user (ADR-0045 d16). The request line names the key once it is
+    /// root (ADR-0044 d14); and the own set of every capacity but admin
+    /// every key of its person (ADR-0045 d16; ADR-0083 d14). The request line names the key once it is
     /// found.
     fn session_key_caller(
         &self,
@@ -476,8 +474,18 @@ where
             Some(access)
         };
         let mut caller = Caller::of(rows.key, access.clone());
-        if capacity == Capacity::Web && caller.key.user.is_some() {
-            caller.own_keys = rows.own_keys.iter().map(|k| k.key_id).collect();
+        // Every session key of the person but the admin capacity's owns the
+        // rows of every key of the person: the keys naming their root and
+        // their web, review and curate session keys, never a linked tenant
+        // key (ADR-0045 d16; ADR-0083 d3, d14; the review of PR #494, M1).
+        if capacity != Capacity::Admin {
+            let admin = key_name(&session.user, Capacity::Admin.suffix()).ok();
+            caller.own_keys = rows
+                .own_keys
+                .iter()
+                .filter(|k| admin.is_none() || k.name != admin)
+                .map(|k| k.key_id)
+                .collect();
             if !caller.own_keys.contains(&caller.key.key_id) {
                 caller.own_keys.push(caller.key.key_id);
             }

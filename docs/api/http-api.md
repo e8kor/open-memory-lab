@@ -106,8 +106,8 @@ Requires: reader effective access; own=true admits any tenant role except operat
 | `state` | query | string | no | One of held, promoted, demoted, rejected, erased or withdrawn. |
 | `kind` | query | string | no | One of memory, derived_fact, steering, guardrail, term, term_mapping, vocab_release, skill, document or test. |
 | `own` | query | boolean | no |  |
-| `with_own` | query | boolean | no | true: the scoped listing (at workspace, else universe) and the caller's own rows, every key naming its user's for a person's web session key, merged newest first under one cursor, a row in both once. |
-| `mine` | query | boolean | no | true: the caller's own rows alone, with no scoped part, under one cursor: every key of the person for a person's session key, the key alone for any other key, in every state, off the subtrees the key's global denials cover. |
+| `with_own` | query | boolean | no | true: the scoped listing (at workspace, else universe) and the caller's own rows, every key of the person for a person's session key (as for `mine`), merged newest first under one cursor, a row in both once. |
+| `mine` | query | boolean | no | true: the caller's own rows alone, with no scoped part, under one cursor: every key of the person for a person's session key (the keys naming their root and their web, review and curate session keys, never a linked tenant key), the key alone for any other key, in every state, off the subtrees the key's global denials cover. |
 | `promoted_since` | query | string | no | With with_own, `mine` or author: only the promoted rows approved at or after this instant, the rows of every other state left whole; with no state, every state is listed. |
 | `author` | query | string | no | One of the caller's own keys, by name: the caller's rows by that key alone, the scoped part dropped; a key that is not the caller's is access.not_found. |
 | `include_text` | query | boolean | no | With with_own or author alone: true serves each item with its text, as the web console's Memories list shows it; false or absent, summaries. |

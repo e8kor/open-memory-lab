@@ -11664,36 +11664,62 @@ impl WebStore for PgStore {
         let key = match key {
             Some(key) => {
                 let access = key_access_in(&mut tx, tenant_id, key.key_id).await?;
-                let (user_root, own_keys) = match key.user {
-                    Some(root) => {
-                        // As `workspace` and `web_user_keys`.
-                        let node = sqlx::query(&format!(
-                            "SELECT {WORKSPACE_COLUMNS} FROM workspaces \
-                             WHERE tenant_id = $1 AND id = $2"
-                        ))
-                        .bind(tenant_id)
-                        .bind(root)
-                        .fetch_optional(&mut *tx)
-                        .await
-                        .map_err(backend)?;
-                        let keys = sqlx::query(&format!(
-                            "SELECT {KEY_COLUMNS} FROM api_keys \
-                             WHERE tenant_id = $1 AND user_root_id = $2 ORDER BY name"
-                        ))
-                        .bind(tenant_id)
-                        .bind(root)
-                        .fetch_all(&mut *tx)
-                        .await
-                        .map_err(backend)?;
-                        (
-                            node.as_ref().map(workspace_from_row).transpose()?,
-                            keys.iter()
-                                .map(key_from_row)
-                                .collect::<Result<Vec<_>, StoreError>>()?,
-                        )
-                    }
-                    None => (None, Vec::new()),
+                let user_root = match key.user {
+                    // As `workspace`.
+                    Some(root) => sqlx::query(&format!(
+                        "SELECT {WORKSPACE_COLUMNS} FROM workspaces \
+                         WHERE tenant_id = $1 AND id = $2"
+                    ))
+                    .bind(tenant_id)
+                    .bind(root)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(backend)?
+                    .as_ref()
+                    .map(workspace_from_row)
+                    .transpose()?,
+                    None => None,
                 };
+                // As `person_keys_read_apart`: the person's session keys,
+                // as `web_session_keys`, then the keys naming the root,
+                // as `web_user_keys`.
+                let session_keys = match &key.session_user {
+                    Some(user) => sqlx::query(&format!(
+                        "SELECT {KEY_COLUMNS} FROM api_keys \
+                         WHERE tenant_id = $1 AND session_for = $2 ORDER BY name"
+                    ))
+                    .bind(tenant_id)
+                    .bind(user.as_str())
+                    .fetch_all(&mut *tx)
+                    .await
+                    .map_err(backend)?
+                    .iter()
+                    .map(key_from_row)
+                    .collect::<Result<Vec<_>, StoreError>>()?,
+                    None => Vec::new(),
+                };
+                let root = match &key.session_user {
+                    Some(_) => key
+                        .user
+                        .or_else(|| session_keys.iter().find_map(|k| k.user)),
+                    None => key.user,
+                };
+                let user_keys = match root {
+                    Some(root) => sqlx::query(&format!(
+                        "SELECT {KEY_COLUMNS} FROM api_keys \
+                         WHERE tenant_id = $1 AND user_root_id = $2 ORDER BY name"
+                    ))
+                    .bind(tenant_id)
+                    .bind(root)
+                    .fetch_all(&mut *tx)
+                    .await
+                    .map_err(backend)?
+                    .iter()
+                    .map(key_from_row)
+                    .collect::<Result<Vec<_>, StoreError>>()?,
+                    None => Vec::new(),
+                };
+                let own_keys = oml_app::ports::person_key_set(user_keys, session_keys);
                 Some(WebCredentialKey {
                     key,
                     access,
