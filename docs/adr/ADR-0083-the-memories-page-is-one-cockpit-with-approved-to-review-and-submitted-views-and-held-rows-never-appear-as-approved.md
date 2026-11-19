@@ -356,6 +356,36 @@ Decided, not built.
       no number, current or not, until a count read serves them. Rejected: counting a fetched page,
       wrong past its first page.
 
+- **d16 — Six readings the To do build took, 2026-11-19** (T1 to T6 of #412; confirmed by the
+  operator's coordinator 2026-11-19 for the operator's batch).
+    - **T1 (d2, To review rows).** No read serves the author's key kind (person or agent) or the
+      workspace's approval count, so rows name the author's key alone and leave out "approvals
+      asked"; the fix is a later addition to the held listing. Rejected: guessing from
+      `provenance`.
+    - **T2 (d2, d11).** There is one To review group. A row that only a person may approve says
+      "needs a person". The old Review page's split into two lanes (person / any) is gone.
+    - **T3 (d6).** A `POST` to the old `/web/review` or `/web/admin/review` gets a `404`, not a
+      `308`, because a `308` would carry the verdict form to a page with no such act.
+    - **T4 (d6, the badge).** When the counts read fails, or on a refusal page, the badge reads
+      "To do" with no number. Past the cap it reads "To do · 1000+". It never shows a number the
+      API did not serve.
+    - **T5 (d11).** The counts read with an unknown or unreadable workspace answers 0, not a
+      refusal. A key other than `<user>-web` gets `access.verb_ceiling` with `details.reason:
+      session_key_only`.
+    - **T6 (d6, one store call per page).** A To do page filtered to a workspace makes a second
+      counts call (with the workspace) for its group number, so that page costs two counts calls;
+      every other page makes one. Rejected: drawing the group number unfiltered on a filtered
+      page, which would be wrong. When acting as a linked key (`as`), the group number is not
+      drawn, since the counts are the person's own. Next on Judge posts with `after=<id>`, so it
+      skips the item left unjudged.
+    - **The scan's bound (d11; the review of PR #494, L4; proposed 2026-11-19 for the operator's
+      batch, not yet confirmed).** A count also stops after reading 2,000 held rows, counted or
+      not (twice the cap, chosen, not measured), and answers what it counted with `truncated`
+      set, so rows the store answers and the core's own check drops (the listing's checks in
+      depth, R2 and R3) cannot make the badge's read unbounded; both stores already leave out
+      the person's own writes outside their root, so the bound is a guard, not a path taken. The badge then reads "To do · N+" with the count
+      served. Rejected: no bound, where every page view could scan the tenant's whole queue.
+
 ## Consequences
 
 - API changes: `mine=true`, `promoted_since` and a comma-list `state` with `withdrawn` on

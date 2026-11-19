@@ -159,6 +159,13 @@ Decided; built in v0.8.0: the API in #409, the console in #410 (the workspace pa
     - Every form has an optional claim-key field only for documents (ADR-0081 d2), and a free
       "why" line the person may fill, sent as the version's `sources` citation where the API
       admits it and otherwise kept out of the write.
+    - *Amended 2026-11-19 by the operator's decision (B2 of the #410 readings), recorded for the
+      operator's batch:* a guardrail form also carries an optional **Name**, from which the
+      console derives the guardrail's claim key by the slug rule documents use (ADR-0081 d2) and
+      sends it as `claim_key` on `POST /v1/memories`, which already admits a claim key for a
+      guardrail; with no name the server derives its `auto-…` key as before (ADR-0039 d6). The
+      name is fixed on an edit, since a supersession keeps the claim's key. Rejected: keeping
+      only derived keys, which read as noise in In force here and on To do.
 
 - **d5 — Preview is an API call that writes nothing: `POST /v1/memories/preview`.** It takes the
   body of submit, or of supersede with `replaces`, and answers what capture would decide without
@@ -182,7 +189,13 @@ Decided; built in v0.8.0: the API in #409, the console in #410 (the workspace pa
   the code. When the tip moved (`submission.tip_conflict`), the one primary is **Edit from v3 with
   this text** (`step=rebase`), the console's own step, which re-reads the tip and redraws the form
   with the typed text and the change against it; no API change. The cost is one more route and a
-  second pass of the scan per previewed edit.
+  second pass of the scan per previewed edit. *(Cost noted 2026-11-19, the review of PR #494, L1:
+  "name taken" makes preview a free probe of the claim keys and skill names held in a workspace
+  the key may write, another author's held, author-only version included. Submit already answers
+  the same refusal, but a free name there writes a version, which is journalled and metered;
+  preview writes nothing, so the probe is limited by the key's request rate alone (ADR-0079).
+  Accepted as the price of telling the author before they write that the name is taken; the
+  answer names no author, text or state of the row that holds the name.)*
 
 - **d6 — An edit is judged by what changed, drawn on the edit form and on the Judge page** (the
   operator, 2026-11-14, as drawn). The change is the console's own word comparison (longest
@@ -310,6 +323,26 @@ Decided; built in v0.8.0: the API in #409, the console in #410 (the workspace pa
       where it holds reviewer and reader, so the verbs it lists are the verbs it may use; the
       verbs table of [roles and keys](../architecture/roles-and-keys.md) says so. Rejected: leaving
       it out, which lists less than the key may do.
+
+- **d12 — Readings the console build took, 2026-11-19** (B1, B3 to B8 of #410; confirmed by the
+  operator's coordinator 2026-11-19 for the operator's batch).
+    - **B1 (d4, the "why" line).** Neither submit nor supersede admits `sources`, so the form draws
+      no "why" field until the API admits a citation. Rejected: a field whose value goes nowhere.
+    - **B3 (d1, the default kind).** With no `kind`, the workspace page opens on Skills.
+    - **B4 (d1; ADR-0083 d12, which key reads).** Inside the root the page reads as `<user>-web`,
+      outside it as `<user>-review`, because the web key cannot read shared workspaces; ADR-0083
+      d12 names `<user>-web` for the In force set, which holds inside the root. A shared
+      workspace the review key only reads opens read-only rather than refusing, built by the
+      console step of this round.
+    - **B5 (d1, the person's own held rows for Withdraw).** One extra `mine` read on the page, now
+      with `state=held`. Rejected: `with_own`, which inside an in-progress workspace also returns
+      other authors' held rows.
+    - **B6 (d4, the rule fields).** Tool, Match and Effect, as the mockup draws them. A shell match
+      is split on whitespace into `oml-gr/1` word globs.
+    - **B7 (d1, the admin page).** Read-only, with no status act. Lineage reads "follows vN" from
+      the claim ordinals, because the admin search serves no `replaces`.
+    - **B8 (d5, rebase).** The API answers `submission.version_conflict` before
+      `submission.tip_conflict`, so both open the rebase frame.
 
 ## Consequences
 
