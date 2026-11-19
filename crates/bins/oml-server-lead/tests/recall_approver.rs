@@ -578,19 +578,19 @@ async fn a_hit_says_when_it_was_approved_and_whether_a_crew_a_person_or_the_auth
     // A crew's reviewer and a person, each as what it is.
     assert_eq!(
         hit(&answer, &w.by_crew)["approver"],
-        json!({ "used_by": "agent", "same_user": false }),
+        json!({ "used_by": "agent", "same_user": false, "act": "verdict", "confirmed": null }),
         "{answer}"
     );
     assert_eq!(
         hit(&answer, &w.by_person)["approver"],
-        json!({ "used_by": "person", "same_user": false }),
+        json!({ "used_by": "person", "same_user": false, "act": "verdict", "confirmed": null }),
         "{answer}"
     );
     // A person approving their own agent's write is a self-review.
     let own = recall(r, &w.eve_agent, json!({ "query": "gantry crane" })).await;
     assert_eq!(
         hit(&own, &w.by_self)["approver"],
-        json!({ "used_by": "person", "same_user": true }),
+        json!({ "used_by": "person", "same_user": true, "act": "verdict", "confirmed": null }),
         "{own}"
     );
 
@@ -758,7 +758,7 @@ async fn no_read_of_a_memory_names_its_reviewer() {
         .expect("an approver");
     let mut members: Vec<&str> = approver.keys().map(String::as_str).collect();
     members.sort_unstable();
-    assert_eq!(members, ["same_user", "used_by"]);
+    assert_eq!(members, ["act", "confirmed", "same_user", "used_by"]);
     drop_db(&w.rig.db_name).await;
 }
 
@@ -785,7 +785,7 @@ async fn a_universe_hit_carries_no_approval_for_any_key_but_its_authors() {
     let authors = get(r, &w.ann, &w.in_universe).await;
     assert_eq!(
         authors["approver"],
-        json!({ "used_by": "person", "same_user": false }),
+        json!({ "used_by": "person", "same_user": false, "act": "verdict", "confirmed": null }),
         "{authors}"
     );
     drop_db(&w.rig.db_name).await;
@@ -810,7 +810,7 @@ async fn an_unreviewed_hit_carries_no_approval_and_gains_one_when_it_is_approved
     assert_eq!(memory["unreviewed"], false, "{memory}");
     assert_eq!(
         memory["approver"],
-        json!({ "used_by": "person", "same_user": false }),
+        json!({ "used_by": "person", "same_user": false, "act": "verdict", "confirmed": null }),
         "{memory}"
     );
     drop_db(&w.rig.db_name).await;
@@ -847,14 +847,14 @@ async fn a_successor_carries_its_own_approval_and_the_version_it_replaced_keeps_
     .await;
     assert_eq!(
         hit(&answer, &successor)["approver"],
-        json!({ "used_by": "person", "same_user": false }),
+        json!({ "used_by": "person", "same_user": false, "act": "verdict", "confirmed": null }),
         "{answer}"
     );
     let replaced = get(r, &w.reader, &w.by_crew).await;
     assert_eq!(replaced["tip"], false, "{replaced}");
     assert_eq!(
         replaced["approver"],
-        json!({ "used_by": "agent", "same_user": false }),
+        json!({ "used_by": "agent", "same_user": false, "act": "verdict", "confirmed": null }),
         "{replaced}"
     );
     drop_db(&w.rig.db_name).await;

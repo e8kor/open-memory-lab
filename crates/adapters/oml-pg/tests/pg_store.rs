@@ -3050,7 +3050,8 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // d1; ADR-0081 d1; ADR-0086 d1); 0055 adds the import provenance,
             // null on every version not imported (ADR-0084 d4); 0058 adds the
             // end a ratified supersession replaced, false and null on every
-            // existing row (ADR-0089 d16).
+            // existing row (ADR-0089 d16); 0064 adds the fix mark, null on
+            // every existing row (ADR-0089 d7).
             (true, "memories") => {
                 "to_jsonb(t) - 'severity' - 'rule' - 'search_vector' - 'search_len' \
                  - 'anchor_repo' - 'anchor_uri' - 'anchor_rev' - 'anchor_path' \
@@ -3062,7 +3063,8 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
                  - 'approver_used_by' - 'approver_same_user' - 'approved_at' \
                  - 'skill_name' - 'skill_description' - 'document_title' - 'test_shape' \
                  - 'import_provenance' \
-                 - 'valid_until_ratified' - 'valid_until_before' - 'valid_until_before_us'"
+                 - 'valid_until_ratified' - 'valid_until_before' - 'valid_until_before_us' \
+                 - 'admin_fix_id' - 'admin_fix_confirmed' - 'admin_fix_same_user'"
             }
             (true, "key_denials") => "to_jsonb(t) - 'lifted_epoch'",
             _ => "to_jsonb(t)",

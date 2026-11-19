@@ -3439,7 +3439,19 @@ async fn the_hook_output_never_contains_the_key_value() {
     assert_eq!(hit["action"], "veto");
     assert_eq!(hit["at"], "/body line 1");
     assert!(!log.contains(&crew.agent), "no key in the rescan: {log}");
-    let (code, read, log) = crew.lab.json(None, &["admin", "read", &seeded]);
+    let (code, opened, log) = crew.lab.json(
+        None,
+        &["admin", "investigate", "--reason", "the rescan's finding"],
+    );
+    assert_eq!(code, 0, "{log}");
+    let investigation = opened["investigation_id"]
+        .as_str()
+        .expect("an investigation id")
+        .to_owned();
+    let (code, read, log) = crew.lab.json(
+        None,
+        &["admin", "read", "--investigation", &investigation, &seeded],
+    );
     assert_eq!(code, 0, "{log}");
     assert_eq!(read["state"], "held", "the rescan changed nothing: {log}");
 
