@@ -1,6 +1,6 @@
 ---
 status: Stable
-verified: 2026-11-14
+verified: 2026-11-19
 answers: "who approved this memory, what the journal records and never records, how lineage and supersession chains work, and what the signature does and does not prove"
 ---
 
@@ -64,7 +64,7 @@ A `claim_key` names the versions of one claim. The server serves one **tip** per
 - A supersession is a held successor that names the version it replaces. The replaced version stays the tip, and everyone keeps reading it, until a reviewer approves the successor. Only approval moves the tip.
 - If two successors compete, the first approval wins. The other is refused with `submission.tip_conflict`, nothing is journaled, and that successor stays held until a reviewer rejects it. Its author can propose again against the new tip.
 - A new claim whose `claim_key` collides with a held, promoted or demoted version in the workspace is refused with `submission.claim_key_conflict`. A rejected or withdrawn first version releases the key.
-- A **withdrawn** version is a held version its author retracted before any verdict. It is kept with its text as history, is never served, and is in no review queue; it records no verdict ([ADR-0083](../adr/ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) d13). The state exists in the schema; the author's act that sets it is designed (#401).
+- A **withdrawn** version is a held version its author retracted before any verdict. It is kept with its text as history, is never served, and is in no review queue; it records no verdict ([ADR-0083](../adr/ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) d13). The author key withdraws it with `oml_withdraw`, `oml withdraw` or `POST /v1/memories/{artifact_id}/withdraw`, and a person from the console's Submitted view, for a held version a key of theirs wrote; the act is journalled as `memory.withdrawn`.
 - A **retirement** is a supersession with `retirement: true`. Once approved, recall serves nothing of the claim. Every version stays readable by id as history, and nothing is demoted. A later approved supersession of the retirement returns the claim to service.
 
 A superseded version is never deleted. It stays readable as history, with its own decision trail.

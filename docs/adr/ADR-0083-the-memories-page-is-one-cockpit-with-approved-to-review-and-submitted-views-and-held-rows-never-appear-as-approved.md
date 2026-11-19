@@ -68,7 +68,10 @@ What serves each part today:
 Two gaps follow: the person's own rows cannot be listed alone across all their keys (the merged
 listing always adds the scoped part, and `author` names one key), and To review has no count.
 
-Decided, not built.
+Decided; built in v0.8.0: the withdraw act (d13) in #401, the own listings in #409, and the
+cockpit, To do, Judge and the admin pages in #410 to #413. Not built: the To do groups whose
+features are not built (d11, d14), and the amendments of 2026-11-18 (the "approved, not in a
+release" row and the stage tabs), which wait for releases (ADR-0085).
 
 ## Decision
 

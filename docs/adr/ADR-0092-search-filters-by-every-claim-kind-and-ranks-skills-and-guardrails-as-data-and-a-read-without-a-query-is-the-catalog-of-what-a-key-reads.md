@@ -79,14 +79,15 @@ What exists today (2026-11-15, `main` at a5eb6876):
   are summaries without text unless `include_text` asks, which today combines only with
   `with_own` or `author`; MCP's listing mode answers claim items with their text (ADR-0039 d4).
   Neither answers counts.
-- **Built in v0.8.0:** passages (ADR-0081 d3, d4, #405). **Not built:** `GET /v1/skills`, the MCP `prompts` beyond
-  `guardrails` and the `resources` capability (ADR-0080 d5 to d11, ADR-0081 d6), releases and
-  bindings (ADR-0085).
+- **Built in v0.8.0:** passages (ADR-0081 d3, d4, #405), `GET /v1/skills`, the MCP `prompts`
+  and the `resources` capability (ADR-0080 d5 to d11, ADR-0081 d6; #403, #404, #405). **Not
+  built:** releases and bindings (ADR-0085).
 
 An agent that wants "the skill that fits this task" or "the runbook for this error" has no search
 for it: recall refuses the kinds, and the listing has no query. A person who wants to see what a
 workspace holds across kinds has the workspace page's contents by kind for one workspace
-(ADR-0082 d1) and no view over a subtree. Decided, not built.
+(ADR-0082 d1) and no view over a subtree. Decided; built in v0.8.0 (#443, the Catalog page in
+#494).
 
 ## Decision
 

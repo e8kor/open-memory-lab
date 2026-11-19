@@ -1,6 +1,6 @@
 ---
 status: Beta
-verified: 2026-11-14
+verified: 2026-11-19
 answers: "how a workspace moves from development to production, where loose rules turn strict, which key binding reads which stage, where an admin fix enters, how held work is shared vertically and promoted work horizontally, and which parts are built today"
 ---
 
@@ -35,12 +35,12 @@ Much of this is designed and not built. Each figure draws a built element solid 
 ## Sharing: vertical and horizontal
 
 <figure markdown="span">
-  [![Sharing view: payments.dev is an in-progress root with two children. tip keys inside it read held work, marked; tip keys at the ancestor payments read the subtree's held items too (designed). The sibling payments.ops reads nothing of the subtree until its drafts return to the writing key or a release is published. Another branch, risk, reads promoted rows of protected or frozen workspaces through federation, and a published release of the subtree (designed). A latest key at payments reads the release, never a held item (designed).](img/sharing-light.svg#only-light)](img/sharing.svg)
-  [![Sharing view: payments.dev is an in-progress root with two children. tip keys inside it read held work, marked; tip keys at the ancestor payments read the subtree's held items too (designed). The sibling payments.ops reads nothing of the subtree until its drafts return to the writing key or a release is published. Another branch, risk, reads promoted rows of protected or frozen workspaces through federation, and a published release of the subtree (designed). A latest key at payments reads the release, never a held item (designed).](img/sharing-dark.svg#only-dark)](img/sharing.svg)
-  <figcaption>Built today: held work shared inside the in-progress subtree, a sibling that reads nothing of it, and federation over protected and frozen workspaces. Designed: the ancestor chain as part of the audience (ADR-0080 d16), federation of a published release (ADR-0085 d15), and the <code>latest</code> binding (ADR-0085 d6).</figcaption>
+  [![Sharing view: payments.dev is an in-progress root with two children. tip keys inside it read held work, marked; tip keys at the ancestor payments read the subtree's held items too. The sibling payments.ops reads nothing of the subtree until its drafts return to the writing key or a release is published. Another branch, risk, reads promoted rows of protected or frozen workspaces through federation, and a published release of the subtree (designed). A latest key at payments reads the release, never a held item (designed).](img/sharing-light.svg#only-light)](img/sharing.svg)
+  [![Sharing view: payments.dev is an in-progress root with two children. tip keys inside it read held work, marked; tip keys at the ancestor payments read the subtree's held items too. The sibling payments.ops reads nothing of the subtree until its drafts return to the writing key or a release is published. Another branch, risk, reads promoted rows of protected or frozen workspaces through federation, and a published release of the subtree (designed). A latest key at payments reads the release, never a held item (designed).](img/sharing-dark.svg#only-dark)](img/sharing.svg)
+  <figcaption>Built today: held work shared inside the in-progress subtree and up its ancestor chain (ADR-0080 d16), a sibling that reads nothing of it, and federation over protected and frozen workspaces. Designed: federation of a published release (ADR-0085 d15) and the <code>latest</code> binding (ADR-0085 d6).</figcaption>
 </figure>
 
-- **Vertical.** Held items of every kind move only inside an in-progress subtree and, once ADR-0080 d16 is built, up its ancestor chain to `tip` keys. Instructions are offered down as well: a `tip` key at an in-progress root, inside it or at one of its ancestors is offered the subtree's skills, guardrails and steering below its scope node; on a name clash the nearer item by tree distance wins, an ancestor winning a tie. Never a held retirement, never a version the scan held or has not scanned.
+- **Vertical.** Held items of every kind move only inside an in-progress subtree and up its ancestor chain to `tip` keys (ADR-0080 d16). Instructions are offered down as well: a `tip` key at an in-progress root, inside it or at one of its ancestors is offered the subtree's skills, guardrails and steering below its scope node; on a name clash the nearer item by tree distance wins, an ancestor winning a tie. Never a held retirement, never a version the scan held or has not scanned.
 - **Horizontal.** Siblings, other branches, federation and wide sources read promoted rows of protected or frozen workspaces, or a published release. Held work never crosses.
 - **Binding wins.** A key bound to `latest` or a pin reads the release wherever it sits, and never a held item.
 
