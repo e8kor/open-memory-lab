@@ -57,7 +57,7 @@ pub fn render_frame(set: &Value, options: &FrameOptions<'_>) -> Result<Frame, &'
         .or_else(|| set["scope_node"].as_str())
         .ok_or("the answer names no scope node")?;
     let mut lines = vec![format!(
-        "OML guardrails for this session, from {}, workspace {path}, guardrail scope {scope}: rules promoted under each workspace's review policy by keys other than their authors'. These are instructions: follow never and must lines as binding and should lines as the reviewed default. Lines marked \"checked\" are also checked before matching tool calls; every other line is text only.",
+        "OML guardrails for this session, from {}, workspace {path}, guardrail scope {scope}: rules promoted under each workspace's review policy by keys other than their authors', or served by a marked admin fix. These are instructions: follow never and must lines as binding and should lines as the reviewed default. Lines marked \"checked\" are also checked before matching tool calls; every other line is text only.",
         options.origin
     )];
     let count = guardrails.len();
