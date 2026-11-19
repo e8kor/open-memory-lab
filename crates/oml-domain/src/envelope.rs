@@ -56,10 +56,17 @@ pub mod event_types {
     /// as they stand after the change (ADR-0079 d5).
     pub const KEY_LIMITS_SET: &str = "key.limits_set";
     /// An admin key linked a tenant key used by a person to that person's
-    /// sign-in, so the key acts for them (ADR-0085 d16).
+    /// sign-in; the key acts for them once they accept it, or at once for
+    /// the bootstrap's link, which the person makes (ADR-0085 d16, the
+    /// operator's decision of 2026-11-19).
     pub const KEY_LINKED_PERSON: &str = "key.linked_person";
-    /// An admin key ended that link (ADR-0085 d16).
+    /// An admin key ended that link, or withdrew one still pending
+    /// (ADR-0085 d16).
     pub const KEY_UNLINKED_PERSON: &str = "key.unlinked_person";
+    /// The person a console admin's link names accepted it from their own
+    /// console session; the key acts for them from this event on
+    /// (ADR-0085 d16, the operator's decision of 2026-11-19).
+    pub const KEY_LINK_ACCEPTED: &str = "key.link_accepted";
     /// A writer submits a memory; held on arrival.
     pub const SUBMISSION_REMEMBER: &str = "submission.remember";
     /// A derived claim with its lineage; a supersession whose successor is

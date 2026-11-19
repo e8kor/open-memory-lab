@@ -129,6 +129,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/keys/{key}/limits"),
     ("POST", "/v2/keys/{key}/link"),
     ("POST", "/v2/keys/{key}/unlink"),
+    ("POST", "/v2/keys/{key}/accept_link"),
     ("POST", "/v2/keys/{key}/connect-codes"),
     ("POST", "/v2/keys/{key}/connections/{connection_id}/revoke"),
     ("GET", "/v2/whoami"),
@@ -396,6 +397,7 @@ where
             ("POST", "/v2/keys/{key}/limits") => post(Self::set_key_limits),
             ("POST", "/v2/keys/{key}/link") => post(Self::link_key),
             ("POST", "/v2/keys/{key}/unlink") => post(Self::unlink_key),
+            ("POST", "/v2/keys/{key}/accept_link") => post(Self::accept_key_link),
             ("POST", "/v2/keys/{key}/connect-codes") => post(Self::mint_connect_code),
             ("POST", "/v2/keys/{key}/connections/{connection_id}/revoke") => {
                 post(Self::revoke_connection)
@@ -2291,7 +2293,8 @@ where
 
     /// `POST /v2/keys/{key}/link {user}`: an admin key links a live tenant
     /// key a person holds to that person, journalled as `key.linked_person`
-    /// (ADR-0085 d16, amended 2026-11-17).
+    /// and pending until the person accepts it (ADR-0085 d16, amended
+    /// 2026-11-17 and by the operator's decision of 2026-11-19).
     async fn link_key_inner(
         st: &Self,
         key_id: &str,
@@ -2319,7 +2322,7 @@ where
         .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(
             StatusCode::OK,
-            &linked_key_json(&linked, Some(&user)),
+            &linked_key_json(&linked, Some(&user), true),
         ))
     }
 
@@ -2348,7 +2351,41 @@ where
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(
             StatusCode::OK,
-            &linked_key_json(&unlinked, None),
+            &linked_key_json(&unlinked, None, false),
+        ))
+    }
+
+    async fn accept_key_link(
+        State(st): State<Self>,
+        rid: Rid,
+        Path(key_id): Path<String>,
+        headers: HeaderMap,
+    ) -> Response {
+        finish(
+            &rid,
+            Self::accept_key_link_inner(&st, &key_id, &headers).await,
+        )
+    }
+
+    /// `POST /v2/keys/{key}/accept_link`: the person a pending link names
+    /// accepts it from their own console session, journalled as
+    /// `key.link_accepted` (ADR-0085 d16, the operator's decision of
+    /// 2026-11-19).
+    async fn accept_key_link_inner(
+        st: &Self,
+        key_id: &str,
+        headers: &HeaderMap,
+    ) -> Result<Response, ApiError> {
+        st.require_writes_open()?;
+        let acting = acting(headers, None)?;
+        idempotency_key(headers)?;
+        let key = reference("key", key_id)?;
+        let (accepted, user) = retry_chain(|| st.app.accept_key_link(acting.bearer(), key.clone()))
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(
+            StatusCode::OK,
+            &linked_key_json(&accepted, Some(&user), false),
         ))
     }
 
@@ -4855,6 +4892,11 @@ fn person_json(person: &oml_app::app::Person) -> Value {
             .iter()
             .map(|k| json!({ "id": k.id, "name": k.name.as_str() }))
             .collect::<Vec<_>>(),
+        "pending_links": person
+            .pending_links
+            .iter()
+            .map(|k| json!({ "id": k.id, "name": k.name.as_str() }))
+            .collect::<Vec<_>>(),
     });
     // The onboarding status, only when asked (`start=true`): every page's
     // session check calls whoami (ADR-0070 d5, d8).
@@ -6011,13 +6053,15 @@ fn crew_json(crew: &CrewRecord) -> Value {
     })
 }
 
-/// openapi.yaml `KeyLink`: the key and the user it acts for, or `null`
-/// once unlinked (ADR-0085 d16).
-fn linked_key_json(key: &KeyRecord, user: Option<&Name>) -> Value {
+/// openapi.yaml `KeyLink`: the key and the user its link names, or `null`
+/// once unlinked, and whether that user has yet to accept it (ADR-0085
+/// d16, the operator's decision of 2026-11-19).
+fn linked_key_json(key: &KeyRecord, user: Option<&Name>, pending: bool) -> Value {
     json!({
         "key_id": key.key_id,
         "name": key.name.as_ref().map(Name::as_str),
         "linked_user": user.map(Name::as_str),
+        "pending": pending,
     })
 }
 

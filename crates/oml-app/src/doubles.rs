@@ -1147,6 +1147,7 @@ fn fold_poc_event(
                     expiry: None,
                     requests_per_minute: None,
                     linked_user: None,
+                    link_pending: None,
                 },
             );
         }
@@ -1608,6 +1609,26 @@ fn apply_fold(
             // by a person, never naming which admin (ADR-0089 d7).
             // The mark names a version the store holds, else nothing
             // commits (ADR-0089 d7), as the store's one-row update.
+            // An unconfirmed fix whose mark this one takes over is settled
+            // `superseded` by it, as the store's update before the mark
+            // (ADR-0089 d17, the reading of 2026-11-19).
+            let earlier = fix
+                .served_id
+                .and_then(|id| state.memories.get(&id))
+                .and_then(|m| m.approval.as_ref())
+                .and_then(|a| a.fix)
+                .map(|mark| mark.fix_id)
+                .filter(|id| *id != fix.fix_id);
+            if let Some(earlier) = earlier
+                && let Some(f) = state
+                    .fixes
+                    .get_mut(&earlier)
+                    .filter(|f| f.state == crate::types::FixState::Unconfirmed)
+            {
+                f.state = crate::types::FixState::Superseded;
+                f.superseded_by = Some(fix.fix_id);
+                f.settled_at = Some(at.clone());
+            }
             let served = match fix.served_id {
                 Some(id) => Some(
                     state
@@ -2002,9 +2023,15 @@ fn apply_fold(
         // refused (an admin key used by a person is linkable, the operator's
         // decision of 2026-11-19), as the store's guarded update refuses them
         // (ADR-0085 d16).
-        MetadataFold::KeyLinked { key_id, user_root } => {
-            // As the Postgres guard: a link names a live unlinked tenant
-            // key and a user root; an unlink any linked key (ADR-0085 d16).
+        MetadataFold::KeyLinked {
+            key_id,
+            user_root,
+            accepted,
+        } => {
+            // As the Postgres guard: a link names a live tenant key that
+            // holds no link and none pending, and a user root; an unlink
+            // ends a link or a pending one (ADR-0085 d16, the operator's
+            // decision of 2026-11-19).
             let root_ok =
                 user_root.is_none_or(|r| state.workspaces.get(&r).is_some_and(|w| w.user_root));
             let Some(key) = state.keys.get_mut(&key_id).filter(|k| match user_root {
@@ -2015,14 +2042,35 @@ fn apply_fold(
                         && k.used_by == oml_domain::UsedBy::Person
                         && k.user.is_none()
                         && k.linked_user.is_none()
+                        && k.link_pending.is_none()
                 }
-                None => k.linked_user.is_some(),
+                None => k.linked_user.is_some() || k.link_pending.is_some(),
             }) else {
                 return Err(StoreError::Backend(format!(
                     "key {key_id} cannot take this link: not a live unlinked tenant key used by a person, the root is not a user root, or there is no link to end"
                 )));
             };
-            key.linked_user = user_root;
+            if accepted || user_root.is_none() {
+                key.linked_user = user_root;
+                key.link_pending = None;
+            } else {
+                key.link_pending = user_root;
+            }
+        }
+        MetadataFold::KeyLinkAccepted { key_id, user_root } => {
+            // As the Postgres guard: the pending link names this root and
+            // the key is live (ADR-0085 d16).
+            let Some(key) = state.keys.get_mut(&key_id).filter(|k| {
+                k.revoked_at.is_none()
+                    && k.link_pending == Some(user_root)
+                    && k.linked_user.is_none()
+            }) else {
+                return Err(StoreError::Backend(format!(
+                    "key {key_id} has no live link pending to this root"
+                )));
+            };
+            key.linked_user = Some(user_root);
+            key.link_pending = None;
         }
         MetadataFold::KeyLimitsSet {
             key_id,
@@ -6045,7 +6093,15 @@ impl WebStore for MemStore {
         tenant_id: Uuid,
         user_root: Uuid,
     ) -> Result<Vec<KeyRecord>, StoreError> {
-        Ok(self.tenant_keys(tenant_id, |k| k.linked_user == Some(user_root)))
+        Ok(self.tenant_keys(tenant_id, |k| {
+            k.linked_user == Some(user_root) || k.link_pending == Some(user_root)
+        }))
+    }
+
+    async fn web_pending_links(&self, tenant_id: Uuid) -> Result<Vec<KeyRecord>, StoreError> {
+        Ok(self.tenant_keys(tenant_id, |k| {
+            k.revoked_at.is_none() && k.link_pending.is_some()
+        }))
     }
 
     async fn web_session_keys(

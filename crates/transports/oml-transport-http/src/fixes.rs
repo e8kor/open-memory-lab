@@ -31,8 +31,9 @@ struct FixBody {
     title: Option<String>,
 }
 
-/// A fix as served. The admin's own view names the admin key; a person's
-/// reviewer view never names the admin key, principal or user (d15).
+/// A fix as served. The admin's own view names the admin key and the
+/// person it acted for at the fix; a person's reviewer view never names the
+/// admin key, principal or user (d15).
 fn fix_json(f: &FixRecord, now_us: i64, admin_view: bool) -> Value {
     let mut v = json!({
         "fix_id": f.fix_id,
@@ -50,9 +51,11 @@ fn fix_json(f: &FixRecord, now_us: i64, admin_view: bool) -> Value {
         "settled_at": f.settled_at.as_ref().map(EventTime::as_str),
         "same_user": f.settled_same_user,
         "restored_artifact_id": f.restored_id,
+        "superseded_by": f.superseded_by,
     });
     if admin_view && let Some(obj) = v.as_object_mut() {
         obj.insert("admin_key_id".to_owned(), json!(f.admin_key_id));
+        obj.insert("admin_person".to_owned(), json!(f.admin_person.as_str()));
     }
     v
 }

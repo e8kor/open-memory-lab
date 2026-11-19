@@ -8691,6 +8691,33 @@ async fn the_console_judges_in_a_shared_workspace_with_the_linked_key() {
     );
     let as_linked = format!("/web/todo?as={}", linked.key_id);
 
+    // The link waits on alice: her Keys page offers it to accept, and lists
+    // it under no linked key until she does (the operator's decision of
+    // 2026-11-19).
+    let (status, _, keys) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{keys}");
+    assert!(keys.contains("<h2>Links to accept</h2>"), "{keys}");
+    assert!(keys.contains(">Accept link</button>"), "{keys}");
+    assert!(!keys.contains("<h2>Linked keys</h2>"), "{keys}");
+    let (status, _, page) = send(&rig.router, get(&as_linked, Some(&cookie))).await;
+    assert_ne!(
+        status,
+        StatusCode::OK,
+        "a pending link acts for no one: {page}"
+    );
+    let (status, headers, body) = act(
+        &rig,
+        &cookie,
+        "/web/keys",
+        &[("action", "accept_link"), ("key", "alice-team")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    assert_eq!(
+        headers[header::LOCATION].to_str().unwrap(),
+        "/web/keys?done=accepted"
+    );
+
     let (status, _, keys) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
     assert_eq!(status, StatusCode::OK, "{keys}");
     assert!(keys.contains("<h2>Linked keys</h2>"), "{keys}");

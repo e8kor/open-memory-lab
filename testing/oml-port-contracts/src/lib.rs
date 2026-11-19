@@ -812,6 +812,7 @@ pub fn key_record(tenant_id: Uuid, key_id: Uuid, role: Role, issued_by: Option<U
         expiry: None,
         requests_per_minute: None,
         linked_user: None,
+        link_pending: None,
     }
 }
 
@@ -2409,6 +2410,7 @@ pub async fn the_review_queue_serves_no_row_its_own_person_wrote_outside_their_r
             MetadataFold::KeyLinked {
                 key_id,
                 user_root: Some(alice.workspace_id),
+                accepted: true,
             },
         )
     };
@@ -3077,6 +3079,7 @@ pub async fn journal_key_lookup_by_hash<S: JournalStore>(store: &S) {
         expiry: None,
         requests_per_minute: None,
         linked_user: None,
+        link_pending: None,
     };
     rig.commit(
         store,
@@ -3175,6 +3178,7 @@ pub async fn a_keys_limits_fold_with_its_issuance_and_are_replaced_by_key_limits
         expiry: Some(lapsed.clone()),
         requests_per_minute: Some(30),
         linked_user: None,
+        link_pending: None,
         ..key_record(rig.tenant_id, Uuid::from_u128(0xE0), Role::Reader, None)
     };
     rig.issue_key(store, key.clone()).await;
@@ -5839,6 +5843,7 @@ pub async fn a_fix_marks_its_served_version_and_settles_once<S: JournalStore>(st
         reason: "ticket 41".to_owned(),
         loosens_guardrail: false,
         admin_key_id: Uuid::from_u128(0x489F),
+        admin_person: name("ada"),
         lifecycle_event_id: Uuid::from_u128(0x48A0),
         state: FixState::Unconfirmed,
         fixed_at: EventTime::parse("2026-11-19T10:00:00.000000Z").expect("time"),
@@ -5846,6 +5851,7 @@ pub async fn a_fix_marks_its_served_version_and_settles_once<S: JournalStore>(st
         settled_same_user: None,
         settled_at: None,
         restored_id: None,
+        superseded_by: None,
     };
     rig.commit(
         store,
@@ -6108,6 +6114,7 @@ pub async fn a_fix_marks_a_legacy_row_with_no_approval_at_the_fixs_time<S, F>(
         reason: "ticket 42".to_owned(),
         loosens_guardrail: false,
         admin_key_id: Uuid::from_u128(0x490F),
+        admin_person: name("ada"),
         lifecycle_event_id: Uuid::from_u128(0x4910),
         state: FixState::Unconfirmed,
         fixed_at: EventTime::parse("2026-11-19T11:00:00.000000Z").expect("time"),
@@ -6115,6 +6122,7 @@ pub async fn a_fix_marks_a_legacy_row_with_no_approval_at_the_fixs_time<S, F>(
         settled_same_user: None,
         settled_at: None,
         restored_id: None,
+        superseded_by: None,
     };
     rig.commit(
         store,
@@ -10503,6 +10511,244 @@ pub async fn a_commit_under_a_recorded_idempotency_key_moves_no_meter_and_is_ref
     );
 }
 
+/// A later fix that takes over the mark on the version an earlier,
+/// unconfirmed fix served settles that earlier fix `superseded` by it, in
+/// the same commit: no person could settle it any more, so it leaves the
+/// unconfirmed list (ADR-0089 d17, the reading of 2026-11-19). A fix
+/// already confirmed keeps its state.
+pub async fn a_fix_that_takes_over_a_mark_supersedes_the_earlier_unconfirmed_fix<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    use oml_app::types::{FixAct, FixRecord, FixState};
+    let mut rig = ChainRig::new(498);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0x498A);
+    let v1 = held_memory(
+        tenant,
+        wa,
+        Uuid::from_u128(0x498B),
+        "wanda",
+        Uuid::from_u128(0x498C),
+        "v1",
+    );
+    hold(&mut rig, store, v1.clone()).await.expect("hold");
+    promote(&mut rig, store, v1.memory_id)
+        .await
+        .expect("promote");
+    let first = FixRecord {
+        fix_id: Uuid::from_u128(0x498D),
+        act: FixAct::Demote,
+        target_id: Uuid::from_u128(0x498E),
+        workspace_id: wa,
+        claim_key: v1.claim_key.clone(),
+        replaced_id: Some(Uuid::from_u128(0x498E)),
+        served_id: Some(v1.memory_id),
+        reason: "ticket 51".to_owned(),
+        loosens_guardrail: false,
+        admin_key_id: Uuid::from_u128(0x498F),
+        admin_person: name("ada"),
+        lifecycle_event_id: Uuid::from_u128(0x4990),
+        state: FixState::Unconfirmed,
+        fixed_at: EventTime::parse("2026-11-19T10:00:00.000000Z").expect("time"),
+        settled_by_key_id: None,
+        settled_same_user: None,
+        settled_at: None,
+        restored_id: None,
+        superseded_by: None,
+    };
+    let second = FixRecord {
+        fix_id: Uuid::from_u128(0x4991),
+        target_id: Uuid::from_u128(0x4992),
+        replaced_id: Some(Uuid::from_u128(0x4992)),
+        lifecycle_event_id: Uuid::from_u128(0x4993),
+        fixed_at: EventTime::parse("2026-11-19T11:00:00.000000Z").expect("time"),
+        ..first.clone()
+    };
+    for fix in [&first, &second] {
+        rig.commit(
+            store,
+            event_types::ADMIN_FIX,
+            json!({ "fix_id": fix.fix_id.to_string() }),
+            MetadataFold::AdminFixRecorded(Box::new(fix.clone())),
+            None,
+        )
+        .await
+        .expect("record the fix");
+    }
+    let earlier = store
+        .fix(tenant, first.fix_id)
+        .await
+        .expect("read")
+        .expect("the first fix");
+    assert_eq!(earlier.state, FixState::Superseded);
+    assert_eq!(earlier.superseded_by, Some(second.fix_id));
+    assert!(earlier.settled_at.is_some());
+    assert_eq!(earlier.settled_by_key_id, None);
+    let open: Vec<Uuid> = store
+        .fixes(tenant, true)
+        .await
+        .expect("list")
+        .iter()
+        .map(|f| f.fix_id)
+        .collect();
+    assert_eq!(open, vec![second.fix_id], "only the later fix waits");
+    let served = store
+        .memory(tenant, v1.memory_id)
+        .await
+        .expect("read")
+        .expect("v1")
+        .approval
+        .expect("approved");
+    assert_eq!(served.fix.map(|f| f.fix_id), Some(second.fix_id));
+    assert_eq!(
+        store
+            .fix(tenant, second.fix_id)
+            .await
+            .expect("read")
+            .expect("the second fix")
+            .admin_person,
+        name("ada"),
+        "the admin's person reads back as the fix recorded it"
+    );
+}
+
+/// A console admin's link waits on its person (ADR-0085 d16, the
+/// operator's decision of 2026-11-19): `key.linked_person` not accepted
+/// leaves the key linked to no one and its link pending; a second link is
+/// refused while it pends; an acceptance naming another root commits
+/// nothing; the acceptance naming its root makes it the link; an unlink
+/// ends a link or a pending one. An accepted link (the bootstrap's) is the
+/// link at once.
+pub async fn a_console_link_waits_on_its_persons_acceptance<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(499);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let universe = workspace_record(t, Uuid::from_u128(0x4A00), None, "universe");
+    let bob = WorkspaceRecord {
+        user_root: true,
+        ..workspace_record(
+            t,
+            Uuid::from_u128(0x4A01),
+            Some(universe.workspace_id),
+            "bob",
+        )
+    };
+    let carol = WorkspaceRecord {
+        user_root: true,
+        ..workspace_record(
+            t,
+            Uuid::from_u128(0x4A02),
+            Some(universe.workspace_id),
+            "carol",
+        )
+    };
+    for w in [universe, bob.clone(), carol.clone()] {
+        rig.create_workspace(store, w).await;
+    }
+    let key = KeyRecord {
+        used_by: UsedBy::Person,
+        ..key_record(t, Uuid::from_u128(0x4A10), Role::Reviewer, None)
+    };
+    rig.issue_key(store, key.clone()).await;
+    let read = || async {
+        let k = store.key(t, key.key_id).await.expect("read").expect("key");
+        (k.linked_user, k.link_pending)
+    };
+    let link = |root: Uuid, accepted: bool| MetadataFold::KeyLinked {
+        key_id: key.key_id,
+        user_root: Some(root),
+        accepted,
+    };
+    let payload = || json!({ "key_id": key.key_id.to_string() });
+    rig.commit(
+        store,
+        event_types::KEY_LINKED_PERSON,
+        payload(),
+        link(bob.workspace_id, false),
+        None,
+    )
+    .await
+    .expect("the link commits pending");
+    assert_eq!(read().await, (None, Some(bob.workspace_id)));
+    let head = store.chain_head(t).await.expect("head");
+    for fold in [
+        link(carol.workspace_id, false),
+        MetadataFold::KeyLinkAccepted {
+            key_id: key.key_id,
+            user_root: carol.workspace_id,
+        },
+    ] {
+        assert!(
+            rig.commit(store, event_types::KEY_LINK_ACCEPTED, payload(), fold, None)
+                .await
+                .is_err(),
+            "a second link, or an acceptance of another root, commits nothing"
+        );
+    }
+    assert_eq!(store.chain_head(t).await.expect("head"), head);
+    assert_eq!(read().await, (None, Some(bob.workspace_id)));
+    rig.commit(
+        store,
+        event_types::KEY_LINK_ACCEPTED,
+        payload(),
+        MetadataFold::KeyLinkAccepted {
+            key_id: key.key_id,
+            user_root: bob.workspace_id,
+        },
+        None,
+    )
+    .await
+    .expect("bob accepts");
+    assert_eq!(read().await, (Some(bob.workspace_id), None));
+    let unlink = || MetadataFold::KeyLinked {
+        key_id: key.key_id,
+        user_root: None,
+        accepted: false,
+    };
+    rig.commit(
+        store,
+        event_types::KEY_UNLINKED_PERSON,
+        payload(),
+        unlink(),
+        None,
+    )
+    .await
+    .expect("unlink");
+    assert_eq!(read().await, (None, None));
+    rig.commit(
+        store,
+        event_types::KEY_LINKED_PERSON,
+        payload(),
+        link(carol.workspace_id, false),
+        None,
+    )
+    .await
+    .expect("linked again, pending");
+    rig.commit(
+        store,
+        event_types::KEY_UNLINKED_PERSON,
+        payload(),
+        unlink(),
+        None,
+    )
+    .await
+    .expect("a pending link is withdrawn");
+    assert_eq!(read().await, (None, None));
+    rig.commit(
+        store,
+        event_types::KEY_LINKED_PERSON,
+        payload(),
+        link(carol.workspace_id, true),
+        None,
+    )
+    .await
+    .expect("an accepted link");
+    assert_eq!(read().await, (Some(carol.workspace_id), None));
+}
+
 pub async fn run_journal_store_suite<S, F, Fut>(new_store: F)
 where
     S: JournalStore,
@@ -10522,6 +10768,14 @@ where
     ))
     .await;
     Box::pin(a_fix_marks_its_served_version_and_settles_once(
+        &new_store().await,
+    ))
+    .await;
+    Box::pin(
+        a_fix_that_takes_over_a_mark_supersedes_the_earlier_unconfirmed_fix(&new_store().await),
+    )
+    .await;
+    Box::pin(a_console_link_waits_on_its_persons_acceptance(
         &new_store().await,
     ))
     .await;

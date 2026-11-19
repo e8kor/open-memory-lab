@@ -128,6 +128,11 @@ pub struct Person {
     /// The live tenant keys an admin linked to the person, by id and name,
     /// with which the console acts in shared workspaces (ADR-0085 d16).
     pub linked_keys: Vec<NamedRef>,
+    /// The live tenant keys an admin linked to the person that wait on
+    /// their acceptance, by id and name; each acts for no one until the
+    /// person accepts it (ADR-0085 d16, the operator's decision of
+    /// 2026-11-19).
+    pub pending_links: Vec<NamedRef>,
 }
 
 /// The least per-minute request rate a person's session keys get, whatever
@@ -670,25 +675,31 @@ where
         } else {
             None
         };
-        let linked_keys = match key.user {
-            Some(root) => self
-                .journal
-                .web_linked_keys(key.tenant_id, root)
-                .await?
-                .into_iter()
-                .filter(|k| {
-                    k.revoked_at.is_none() && !self.key_expired(k) && k.used_by == UsedBy::Person
-                })
-                .filter_map(|k| k.name.map(|name| NamedRef { id: k.key_id, name }))
-                .collect(),
-            None => Vec::new(),
-        };
+        // One read serves both lists: the keys linked to the person and
+        // those whose link waits on them (ADR-0085 d16, the operator's
+        // decision of 2026-11-19).
+        let (mut linked_keys, mut pending_links) = (Vec::new(), Vec::new());
+        if let Some(root) = key.user {
+            for k in self.journal.web_linked_keys(key.tenant_id, root).await? {
+                if k.revoked_at.is_some() || self.key_expired(&k) || k.used_by != UsedBy::Person {
+                    continue;
+                }
+                let Some(name) = k.name else { continue };
+                let named = NamedRef { id: k.key_id, name };
+                if k.linked_user == Some(root) {
+                    linked_keys.push(named);
+                } else {
+                    pending_links.push(named);
+                }
+            }
+        }
         Ok(Person {
             user,
             limits,
             deletion_requested_at,
             start,
             linked_keys,
+            pending_links,
         })
     }
 

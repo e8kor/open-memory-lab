@@ -50,7 +50,8 @@ CREATE POLICY tenant_isolation ON admin_investigations
 -- The serving role opens an investigation, counts its reads and closes it
 -- once; it never rewrites the key, the reason or when it opened (ADR-0089
 -- d10, d17). Column grants keep those out of its reach, and the guard below
--- refuses a second close, owner-owned and SECURITY INVOKER as 0057's guard is.
+-- refuses a second close and a read count that goes down, owner-owned and
+-- SECURITY INVOKER as 0057's guard is.
 CREATE OR REPLACE FUNCTION oml_admin_investigations_guard() RETURNS trigger
     LANGUAGE plpgsql SECURITY INVOKER SET search_path = public, pg_temp AS $$
 BEGIN
@@ -61,6 +62,12 @@ BEGIN
         RAISE EXCEPTION 'admin_investigations_guard: an investigation closes once and is read no more'
             USING ERRCODE = 'check_violation';
     END IF;
+    -- An open investigation's count only grows: the reads made under it
+    -- are never reset or taken back.
+    IF NEW.reads < OLD.reads THEN
+        RAISE EXCEPTION 'admin_investigations_guard: an investigation''s read count never goes down'
+            USING ERRCODE = 'check_violation';
+    END IF;
     RETURN NEW;
 END $$;
 
@@ -69,8 +76,9 @@ CREATE TRIGGER admin_investigations_guard
     FOR EACH ROW EXECUTE FUNCTION oml_admin_investigations_guard();
 
 COMMENT ON FUNCTION oml_admin_investigations_guard() IS
-    'Refuses an update of admin_investigations that changes a closed investigation: it closes '
-    'once and counts no read after (0063; ADR-0089 d10).';
+    'Refuses an update of admin_investigations that changes a closed investigation, or lowers '
+    'an open one''s read count: it closes once, counts no read after, and never uncounts one '
+    '(0063; ADR-0089 d10).';
 
 DO $$
 BEGIN

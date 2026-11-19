@@ -425,11 +425,14 @@ where
             });
         }
         // The admin's person is known, so the settlement rule compares a
-        // person and never an absence of one (ADR-0089, the operator's
-        // decision of 2026-11-19).
-        if self.person_of(&admin).await?.is_none() {
+        // person and never an absence of one; it is recorded on the fix and
+        // compared at the settlement, never the key's link as it stands
+        // then. A link still pending acts for no one (ADR-0089 and ADR-0085
+        // d16, the operator's decisions of 2026-11-19).
+        let Some(admin_person) = self.person_of(&admin).await? else {
             return Err(AppError::FixRequiresPerson { reason: "unlinked" });
-        }
+        };
+        let admin_person = &admin_person;
         let reason = req.reason.trim();
         if reason.is_empty() || reason.len() > FIX_REASON_MAX_BYTES {
             return Err(AppError::AdminField {
@@ -456,8 +459,15 @@ where
         let prev = self.head_event(admin.tenant_id).await?;
         let (links, fix) = match req.act {
             FixAct::Demote => {
-                self.demote_fix(&admin, req.target, prev.as_ref(), fix_id, reason)
-                    .await?
+                self.demote_fix(
+                    &admin,
+                    admin_person,
+                    req.target,
+                    prev.as_ref(),
+                    fix_id,
+                    reason,
+                )
+                .await?
             }
             FixAct::Erase => {
                 let (event, fold, _, named) = self
@@ -474,6 +484,7 @@ where
                     reason: reason.to_owned(),
                     loosens_guardrail: instruction(&named),
                     admin_key_id: admin.key_id,
+                    admin_person: admin_person.clone(),
                     lifecycle_event_id: event.envelope.event_id,
                     state: FixState::Unconfirmed,
                     fixed_at: event.envelope.at.clone(),
@@ -481,11 +492,12 @@ where
                     settled_same_user: None,
                     settled_at: None,
                     restored_id: None,
+                    superseded_by: None,
                 };
                 (vec![commit_request(event, fold, None)], fix)
             }
             FixAct::Edit | FixAct::Retire => {
-                self.rewrite_fix(&admin, req, prev.as_ref(), fix_id, reason)
+                self.rewrite_fix(&admin, admin_person, req, prev.as_ref(), fix_id, reason)
                     .await?
             }
         };
@@ -507,6 +519,7 @@ where
                 "reason": fix.reason,
                 "loosens_guardrail": fix.loosens_guardrail,
                 "lifecycle_event_id": fix.lifecycle_event_id.to_string(),
+                "admin_person": fix.admin_person.as_str(),
             }),
         )?;
         let fix = FixRecord {
@@ -543,6 +556,7 @@ where
     async fn demote_fix(
         &self,
         admin: &KeyRecord,
+        admin_person: &Name,
         target: Uuid,
         prev: Option<&SignedEnvelope>,
         fix_id: Uuid,
@@ -575,6 +589,7 @@ where
             // (ADR-0089 d17 c7).
             loosens_guardrail: m.is_tip && instruction(m),
             admin_key_id: admin.key_id,
+            admin_person: admin_person.clone(),
             lifecycle_event_id: planned.event.envelope.event_id,
             state: FixState::Unconfirmed,
             fixed_at: planned.event.envelope.at.clone(),
@@ -582,6 +597,7 @@ where
             settled_same_user: None,
             settled_at: None,
             restored_id: None,
+            superseded_by: None,
         };
         Ok((vec![commit_request(planned.event, planned.fold, None)], fix))
     }
@@ -592,6 +608,7 @@ where
     async fn rewrite_fix(
         &self,
         admin: &KeyRecord,
+        admin_person: &Name,
         req: &FixRequest,
         prev: Option<&SignedEnvelope>,
         fix_id: Uuid,
@@ -735,6 +752,7 @@ where
             reason: reason.to_owned(),
             loosens_guardrail: loosens,
             admin_key_id: admin.key_id,
+            admin_person: admin_person.clone(),
             lifecycle_event_id: promoted.0.envelope.event_id,
             state: FixState::Unconfirmed,
             fixed_at: promoted.0.envelope.at.clone(),
@@ -742,6 +760,7 @@ where
             settled_same_user: None,
             settled_at: None,
             restored_id: None,
+            superseded_by: None,
         };
         let mut held = commit_request(
             submitted,
@@ -1309,6 +1328,7 @@ where
             expiry: None,
             requests_per_minute: None,
             linked_user: None,
+            link_pending: None,
         }
     }
 
@@ -1396,16 +1416,17 @@ where
         key: &KeyRecord,
         fix: &FixRecord,
     ) -> Result<Option<bool>, AppError> {
-        let admin_person = match self.journal.key(key.tenant_id, fix.admin_key_id).await? {
-            Some(admin) => self.person_of(&admin).await?,
-            None => None,
-        };
-        let (Some(admin_person), Some(person)) = (admin_person, self.person_of(key).await?) else {
-            // Fails closed: a person unknown on either side settles nothing
-            // (ADR-0089, the operator's decision of 2026-11-19).
+        // The admin's person as recorded at the fix, never the admin key's
+        // link as it stands now: a relink after the fix moves nothing
+        // (ADR-0089, the operator's decision of 2026-11-19).
+        let Some(person) = self.person_of(key).await? else {
+            // Fails closed: a person unknown on the settling side, a key
+            // whose link is still pending included, settles nothing
+            // (ADR-0089 and ADR-0085 d16, the operator's decisions of
+            // 2026-11-19).
             return Ok(None);
         };
-        if admin_person != person {
+        if fix.admin_person != person {
             return Ok(Some(false));
         }
         let development = self
@@ -1494,6 +1515,10 @@ pub struct FixStats {
     /// reviewer, so no one may confirm it outside that person's own root.
     pub admin_person_only: u64,
     pub reverted: u64,
+    /// Live keys whose link to a person waits on that person's
+    /// acceptance; each acts for no one, so an admin key among them takes
+    /// no fix (ADR-0085 d16, the operator's decision of 2026-11-19).
+    pub links_pending: u64,
 }
 
 impl<J, S, C, I, Sc> App<J, S, C, I, Sc>
@@ -1505,17 +1530,25 @@ where
     Sc: Scanner,
 {
     /// The tenant's fix counts for `oml doctor` and the fix gauges
-    /// (ADR-0089 d15). Reads no claim text and journals nothing.
+    /// (ADR-0089 d15), with its links pending acceptance (ADR-0085 d16).
+    /// Reads no claim text and journals nothing.
     ///
     /// # Errors
     /// The store's.
     pub async fn fix_stats(&self, tenant_id: Uuid) -> Result<FixStats, AppError> {
         let all = self.journal.fixes(tenant_id, false).await?;
         let mut stats = FixStats::default();
+        let now = self.clock.now();
+        stats.links_pending = self
+            .journal
+            .web_pending_links(tenant_id)
+            .await?
+            .iter()
+            .filter(|k| !k.expired_at(&now))
+            .count() as u64;
         if all.is_empty() {
             return Ok(stats);
         }
-        let now = self.clock.now();
         let reviewers: Vec<_> = self
             .journal
             .web_person_reviewers(tenant_id)
@@ -1526,7 +1559,7 @@ where
         for fix in &all {
             match fix.state {
                 FixState::Reverted => stats.reverted += 1,
-                FixState::Confirmed => {}
+                FixState::Confirmed | FixState::Superseded => {}
                 FixState::Unconfirmed => {
                     stats.unconfirmed += 1;
                     let age = (now.unix_micros() - fix.fixed_at.unix_micros()).max(0) / 1_000_000;
@@ -1549,10 +1582,9 @@ where
                     for r in &reviewers {
                         if effective_roles(&r.grants, &r.denials, &ids).contains(&Role::Reviewer) {
                             any = true;
-                            if !self
-                                .same_person(tenant_id, fix.admin_key_id, &r.key)
-                                .await?
-                            {
+                            // Against the admin's person recorded at
+                            // the fix, as the settlement compares it.
+                            if self.person_of(&r.key).await?.as_ref() != Some(&fix.admin_person) {
                                 other = true;
                             }
                         }

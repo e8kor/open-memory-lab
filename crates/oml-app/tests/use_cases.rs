@@ -6334,6 +6334,7 @@ async fn operator_key(store: &MemStore, tenant: Uuid) -> String {
         expiry: None,
         requests_per_minute: None,
         linked_user: None,
+        link_pending: None,
     };
     seal_onto(
         store,
@@ -18861,7 +18862,16 @@ async fn link_person(app: &TestApp, admin: &str, key_id: Uuid, person: &str) {
         .expect("the console admin");
     app.link_key_to_person(Bearer::Session(&ops), key_id.into(), &name(person))
         .await
-        .expect("linked");
+        .expect("linked, pending");
+    // The named person accepts it from their own console session (ADR-0085
+    // d16, the operator's decision of 2026-11-19).
+    let own = app
+        .web_caller(&sessions[1], Capacity::Web)
+        .await
+        .expect("the person's console");
+    app.accept_key_link(Bearer::Session(&own), key_id.into())
+        .await
+        .expect("accepted");
 }
 
 fn fix_req(

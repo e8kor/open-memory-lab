@@ -1113,15 +1113,24 @@ pub struct Person {
     /// API before v0.8.0 (ADR-0085 d16).
     #[serde(default)]
     pub linked_keys: Vec<LinkedKey>,
+    /// The live tenant keys an admin linked to the person that wait on
+    /// their acceptance; empty from an API before v0.8.3 (ADR-0085 d16,
+    /// the operator's decision of 2026-11-19).
+    #[serde(default)]
+    pub pending_links: Vec<LinkedKey>,
 }
 
-/// `POST /v2/keys/{key}/link` and `/unlink`: the key and the user it acts
-/// for, `None` once unlinked (ADR-0085 d16).
+/// `POST /v2/keys/{key}/link`, `/unlink` and `/accept_link`: the key and
+/// the user its link names, `None` once unlinked, and whether that user
+/// has yet to accept it (ADR-0085 d16, the operator's decision of
+/// 2026-11-19).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct KeyLink {
     pub key_id: String,
     pub name: Option<String>,
     pub linked_user: Option<String>,
+    #[serde(default)]
+    pub pending: bool,
 }
 
 /// A tenant key linked to a person, by id and name (ADR-0085 d16).
@@ -2501,6 +2510,27 @@ impl<T: Transport> Client<T> {
             format!("/v2/keys/{}/{verb}", encode(key)),
             idempotency_key,
             &body,
+        )
+        .await
+    }
+
+    /// `POST /v2/keys/{key}/accept_link`: the signed-in person accepts the
+    /// link an admin made of `key` to them, so it acts for them (ADR-0085
+    /// d16, the operator's decision of 2026-11-19).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn accept_key_link(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        key: &str,
+    ) -> Result<KeyLink, Error> {
+        self.post(
+            call,
+            format!("/v2/keys/{}/accept_link", encode(key)),
+            idempotency_key,
+            &serde_json::json!({}),
         )
         .await
     }

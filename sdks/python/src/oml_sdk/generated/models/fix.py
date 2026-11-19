@@ -18,8 +18,9 @@ T = TypeVar("T", bound="Fix")
 
 @_attrs_define
 class Fix:
-    """An admin's marked break-glass fix (ADR-0089 d3, d8, d15). admin_key_id is served on the admin routes alone; a
-    person's review read never names the admin. acts is served on GET /v2/review/fixes alone. Since v0.8.3.
+    """An admin's marked break-glass fix (ADR-0089 d3, d8, d15). admin_key_id and admin_person are served on the admin
+    routes alone; a person's review read never names the admin. acts is served on GET /v2/review/fixes alone. Since
+    v0.8.3.
 
         Attributes:
             fix_id (UUID):
@@ -31,14 +32,18 @@ class Fix:
             served_artifact_id (None | UUID): The version the fix made the claim's served tip, or null.
             reason (str):
             loosens_guardrail (bool):
-            state (FixState):
+            state (FixState): superseded: a later fix took over the mark on the version this one served, so no person
+                settles it (ADR-0089 d17, the reading of 2026-11-19).
             fixed_at (datetime.datetime):
             age_seconds (int):
             settled_at (datetime.datetime | None):
             same_user (bool | None): Whether the confirmation or revert was by the admin's own person; null while
                 unconfirmed.
             restored_artifact_id (None | UUID): The version a revert wrote and promoted.
+            superseded_by (None | UUID): The later fix that took over this one's mark, for a superseded fix; null otherwise.
             admin_key_id (UUID | Unset):
+            admin_person (str | Unset): The person the admin key acted for when it fixed, recorded then; the settlement
+                compares it, never the key's link as it stands (ADR-0089, the operator's decision of 2026-11-19).
             acts (list[FixActsItem] | Unset):
     """
 
@@ -57,7 +62,9 @@ class Fix:
     settled_at: datetime.datetime | None
     same_user: bool | None
     restored_artifact_id: None | UUID
+    superseded_by: None | UUID
     admin_key_id: UUID | Unset = UNSET
+    admin_person: str | Unset = UNSET
     acts: list[FixActsItem] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -109,9 +116,17 @@ class Fix:
         else:
             restored_artifact_id = self.restored_artifact_id
 
+        superseded_by: None | str
+        if isinstance(self.superseded_by, UUID):
+            superseded_by = str(self.superseded_by)
+        else:
+            superseded_by = self.superseded_by
+
         admin_key_id: str | Unset = UNSET
         if not isinstance(self.admin_key_id, Unset):
             admin_key_id = str(self.admin_key_id)
+
+        admin_person = self.admin_person
 
         acts: list[str] | Unset = UNSET
         if not isinstance(self.acts, Unset):
@@ -139,10 +154,13 @@ class Fix:
                 "settled_at": settled_at,
                 "same_user": same_user,
                 "restored_artifact_id": restored_artifact_id,
+                "superseded_by": superseded_by,
             }
         )
         if admin_key_id is not UNSET:
             field_dict["admin_key_id"] = admin_key_id
+        if admin_person is not UNSET:
+            field_dict["admin_person"] = admin_person
         if acts is not UNSET:
             field_dict["acts"] = acts
 
@@ -242,12 +260,29 @@ class Fix:
             d.pop("restored_artifact_id")
         )
 
+        def _parse_superseded_by(data: object) -> None | UUID:
+            if data is None:
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                superseded_by_type_0 = UUID(data)
+
+                return superseded_by_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | UUID, data)
+
+        superseded_by = _parse_superseded_by(d.pop("superseded_by"))
+
         _admin_key_id = d.pop("admin_key_id", UNSET)
         admin_key_id: UUID | Unset
         if isinstance(_admin_key_id, Unset):
             admin_key_id = UNSET
         else:
             admin_key_id = UUID(_admin_key_id)
+
+        admin_person = d.pop("admin_person", UNSET)
 
         _acts = d.pop("acts", UNSET)
         acts: list[FixActsItem] | Unset = UNSET
@@ -274,7 +309,9 @@ class Fix:
             settled_at=settled_at,
             same_user=same_user,
             restored_artifact_id=restored_artifact_id,
+            superseded_by=superseded_by,
             admin_key_id=admin_key_id,
+            admin_person=admin_person,
             acts=acts,
         )
 

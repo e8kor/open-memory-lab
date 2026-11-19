@@ -396,8 +396,8 @@ def seed_after_migrations(conn: psycopg.Connection, t: Tenant) -> None:
         )
         seed_insert(
             conn, "INSERT INTO admin_fixes (tenant_id, id, act, target_id, workspace_id, claim_key, "
-            "reason, loosens_guardrail, admin_key_id, lifecycle_event_id, fixed_at, fixed_seq) "
-            "VALUES (%s, %s, 'demote', %s, %s, 'deploy-runbook', %s, false, %s, %s, now(), 9)",
+            "reason, loosens_guardrail, admin_key_id, lifecycle_event_id, fixed_at, fixed_seq, admin_person) "
+            "VALUES (%s, %s, 'demote', %s, %s, 'deploy-runbook', %s, false, %s, %s, now(), 9, 'ada')",
             [t.id, uid(t.letter, "fix"), t.m1, t.child, f"{t.marker} fix", t.reviewer, t.events[9]],
         )
 
@@ -655,7 +655,7 @@ KEYS_DESTROY = f"UPDATE {KEYS} SET wrapped_dek = NULL, destroyed_at = now() WHER
 # nothing either recorded; these are its only UPDATE columns on the two tables (ADR-0089 d3, d8, d10).
 UPDATE_COLUMN_GRANTS = {
     "admin_fixes": sorted(["restored_id", "settled_at", "settled_by_key_id", "settled_same_user",
-                           "settled_seq", "state"]),
+                           "settled_seq", "state", "superseded_by"]),
     "admin_investigations": sorted(["closed_at", "closed_seq", "reads"]),
 }
 
@@ -1181,6 +1181,15 @@ def index_shapes(b: Tenant) -> list[tuple[str, str, list, list[str]]]:
         ("memories_claim_version", "SELECT * FROM memories WHERE tenant_id = %s AND workspace_id = %s AND "
                                    "claim_key = 'deploy-runbook' AND version = 2 AND status = 'held'", [b.id, b.child], BTREE),
         ("memories_pkey", "SELECT * FROM memories WHERE id = %s", [b.m1], BTREE),
+        # 0063, 0064: the seeded investigation and fix of tenant B (ADR-0089 d10, d3).
+        ("admin_fixes_pkey", "SELECT * FROM admin_fixes WHERE tenant_id = %s AND id = %s",
+         [b.id, uid(b.letter, "fix")], BTREE),
+        ("admin_fixes_unconfirmed", "SELECT * FROM admin_fixes WHERE tenant_id = %s AND state = 'unconfirmed' "
+                                    "ORDER BY fixed_at", [b.id], BTREE),
+        ("admin_investigations_pkey", "SELECT * FROM admin_investigations WHERE tenant_id = %s AND id = %s",
+         [b.id, uid(b.letter, "investigation")], BTREE),
+        ("admin_investigations_open", "SELECT * FROM admin_investigations WHERE tenant_id = %s AND key_id = %s "
+                                      "AND closed_at IS NULL", [b.id, b.reviewer], BTREE),
         ("grants_key", "SELECT * FROM grants WHERE tenant_id = %s AND key_id = %s", [b.id, b.writer], BTREE),
         ("grants_pkey", "SELECT * FROM grants WHERE id = %s", [b.grant_w], BTREE),
         ("key_denials_key", "SELECT * FROM key_denials WHERE tenant_id = %s AND key_id = %s", [b.id, b.writer], BTREE),

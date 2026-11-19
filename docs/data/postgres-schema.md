@@ -26,7 +26,7 @@ Three roles reach the database. The owner role owns every table and runs the mig
 | [`account_activity`](#account_activity) | owns | SELECT, INSERT, UPDATE, DELETE |  |
 | [`account_meters`](#account_meters) | owns | SELECT, INSERT, UPDATE |  |
 | [`account_profiles`](#account_profiles) | owns | SELECT, INSERT, UPDATE, DELETE |  |
-| [`admin_fixes`](#admin_fixes) | owns | SELECT, INSERT, UPDATE (restored_id, settled_at, settled_by_key_id, settled_same_user, settled_seq, state) |  |
+| [`admin_fixes`](#admin_fixes) | owns | SELECT, INSERT, UPDATE (restored_id, settled_at, settled_by_key_id, settled_same_user, settled_seq, state, superseded_by) |  |
 | [`admin_investigations`](#admin_investigations) | owns | SELECT, INSERT, UPDATE (closed_at, closed_seq, reads) |  |
 | [`api_keys`](#api_keys) | owns | SELECT, INSERT, UPDATE |  |
 | [`artifact_keys`](#artifact_keys) | owns | SELECT (artifact_id, destroyed_at, tenant_id), UPDATE (destroyed_at, wrapped_dek) | SELECT, INSERT, UPDATE |
@@ -220,6 +220,7 @@ Kind: table.
 | `reason` | `text` | not null |  |  |
 | `loosens_guardrail` | `boolean` | not null |  |  |
 | `admin_key_id` | `uuid` | not null |  |  |
+| `admin_person` | `text` | not null |  |  |
 | `lifecycle_event_id` | `uuid` | not null |  |  |
 | `state` | `text` | not null | `'unconfirmed'::text` |  |
 | `fixed_at` | `timestamp with time zone` | not null |  |  |
@@ -229,16 +230,19 @@ Kind: table.
 | `settled_at` | `timestamp with time zone` | null |  |  |
 | `settled_seq` | `bigint` | null |  |  |
 | `restored_id` | `uuid` | null |  |  |
+| `superseded_by` | `uuid` | null |  |  |
 
 Checks:
 
 - `admin_fixes_act_check`: `CHECK (act = ANY (ARRAY['demote'::text, 'edit'::text, 'retire'::text, 'erase'::text]))`
+- `admin_fixes_admin_person_check`: `CHECK (admin_person <> ''::text)`
 - `admin_fixes_check`: `CHECK ((state = 'unconfirmed'::text) = (settled_at IS NULL))`
 - `admin_fixes_check1`: `CHECK ((settled_at IS NULL) = (settled_seq IS NULL))`
-- `admin_fixes_check2`: `CHECK ((settled_at IS NULL) = (settled_by_key_id IS NULL))`
-- `admin_fixes_check3`: `CHECK (act <> 'erase'::text OR state <> 'reverted'::text)`
+- `admin_fixes_check2`: `CHECK ((state = ANY (ARRAY['unconfirmed'::text, 'superseded'::text])) = (settled_by_key_id IS NULL))`
+- `admin_fixes_check3`: `CHECK ((state = 'superseded'::text) = (superseded_by IS NOT NULL))`
+- `admin_fixes_check4`: `CHECK (act <> 'erase'::text OR state <> 'reverted'::text)`
 - `admin_fixes_reason_check`: `CHECK (reason <> ''::text)`
-- `admin_fixes_state_check`: `CHECK (state = ANY (ARRAY['unconfirmed'::text, 'confirmed'::text, 'reverted'::text]))`
+- `admin_fixes_state_check`: `CHECK (state = ANY (ARRAY['unconfirmed'::text, 'confirmed'::text, 'reverted'::text, 'superseded'::text]))`
 
 Keys:
 
@@ -251,7 +255,7 @@ Row-level security: enabled and forced, so the owner is bound too.
     - using `tenant_id = NULLIF(current_setting('oml.tenant_id'::text, true), ''::text)::uuid`
     - with check `tenant_id = NULLIF(current_setting('oml.tenant_id'::text, true), ''::text)::uuid`
 
-Grants: serving: SELECT, INSERT, UPDATE (restored_id, settled_at, settled_by_key_id, settled_same_user, settled_seq, state).
+Grants: serving: SELECT, INSERT, UPDATE (restored_id, settled_at, settled_by_key_id, settled_same_user, settled_seq, state, superseded_by).
 
 ### admin_investigations
 
@@ -320,6 +324,7 @@ Kind: table.
 | `expires_at` | `timestamp(6) with time zone` | null |  | The instant from which the key authenticates nothing; NULL never. |
 | `requests_per_minute` | `integer` | null |  | The key's own requests per UTC minute; NULL none of its own. |
 | `linked_user_id` | `uuid` | null |  |  |
+| `link_pending_user_id` | `uuid` | null |  | The user root a console admin linked this key to, until that person accepts the link; the key acts for no one meanwhile (the operator's decision of 2026-11-19). |
 
 Checks:
 
@@ -327,6 +332,7 @@ Checks:
 - `api_keys_connector_has_no_hash`: `CHECK (credential = 'bearer'::text OR hash IS NULL)`
 - `api_keys_credential_check`: `CHECK (credential = ANY (ARRAY['bearer'::text, 'connection'::text, 'session'::text]))`
 - `api_keys_guardrail_scope_check`: `CHECK (guardrail_scope = ANY (ARRAY['workspace'::text, 'ancestors'::text]))`
+- `api_keys_link_pending`: `CHECK (link_pending_user_id IS NULL OR linked_user_id IS NULL AND user_root_id IS NULL AND credential <> 'session'::text)`
 - `api_keys_linked_user`: `CHECK (linked_user_id IS NULL OR user_root_id IS NULL AND credential <> 'session'::text)`
 - `api_keys_profile`: `CHECK (profile IS NULL OR profile = 'curator'::text AND role = 'reviewer'::text AND used_by = 'agent'::text)`
 - `api_keys_requests_per_minute_check`: `CHECK (requests_per_minute >= 1 AND requests_per_minute <= 1000000)`

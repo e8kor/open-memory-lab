@@ -294,14 +294,28 @@ pub enum MetadataFold {
         expiry: Option<EventTime>,
         requests_per_minute: Option<u32>,
     },
-    /// `key.linked_person` (`Some`) or `key.unlinked_person` (`None`): the
-    /// tenant key acts for the person whose user root is named from this
-    /// commit on, or for no one. The store refuses a key it does not hold,
-    /// a revoked key, a key that is not a tenant bearer key used by a
-    /// person, and a root that is not a user root (ADR-0085 d16).
+    /// `key.linked_person` (`Some`) or `key.unlinked_person` (`None`). A
+    /// link `accepted` (the bootstrap's, made by the person who runs it)
+    /// makes the tenant key act for the person whose user root is named
+    /// from this commit on; one not accepted (a console admin's) leaves it
+    /// pending, acting for no one, until [`Self::KeyLinkAccepted`]. An
+    /// unlink ends a link or a pending one. The store refuses a key it does
+    /// not hold, a revoked key, a key that is not a tenant bearer key used
+    /// by a person, a key that holds a link or a pending one, and a root
+    /// that is not a user root (ADR-0085 d16, the operator's decision of
+    /// 2026-11-19).
     KeyLinked {
         key_id: Uuid,
         user_root: Option<Uuid>,
+        accepted: bool,
+    },
+    /// `key.link_accepted`: the named person accepted the link pending to
+    /// `user_root`, so the key acts for them from this commit on. The store
+    /// refuses a key whose pending link names another root, or a revoked
+    /// key (ADR-0085 d16, the operator's decision of 2026-11-19).
+    KeyLinkAccepted {
+        key_id: Uuid,
+        user_root: Uuid,
     },
     /// `connection.code_issued`: the code's row, its `issued_seq` this
     /// commit's seq. The commit voids every code of the key from which no
@@ -2152,12 +2166,21 @@ pub trait WebStore: JournalStore {
         user_root: Uuid,
     ) -> impl Future<Output = Result<Vec<KeyRecord>, StoreError>> + Send;
 
-    /// The tenant's keys linked to the person whose root is `user_root`,
-    /// revoked ones included, in name order (ADR-0085 d16).
+    /// The tenant's keys linked to the person whose root is `user_root`, and
+    /// those whose link to them waits on their acceptance (`link_pending`),
+    /// revoked ones included, in name order (ADR-0085 d16, the operator's
+    /// decision of 2026-11-19).
     fn web_linked_keys(
         &self,
         tenant_id: Uuid,
         user_root: Uuid,
+    ) -> impl Future<Output = Result<Vec<KeyRecord>, StoreError>> + Send;
+
+    /// The tenant's live keys whose link waits on its person's acceptance,
+    /// in name order (ADR-0085 d16, the operator's decision of 2026-11-19).
+    fn web_pending_links(
+        &self,
+        tenant_id: Uuid,
     ) -> impl Future<Output = Result<Vec<KeyRecord>, StoreError>> + Send;
 
     /// The tenant's session keys serving `session_user` (ADR-0045 d6).

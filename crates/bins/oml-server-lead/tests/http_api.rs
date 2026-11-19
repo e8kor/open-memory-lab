@@ -8134,8 +8134,8 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     );
     assert_eq!(
         declared.len(),
-        104,
-        "the source check (ADR-0057 d5), the workspace mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the four web routes the lead keeps (ADR-0045 d25; its two JSON routes are oml-web's, ADR-0070 d7 (b), and GET and POST /web/admin are deleted, ADR-0070 \"The old URLs deleted\"), open sign-up's one the lead keeps, POST /web/sign-up (ADR-0068 d10; the onboarding and users pages are oml-web's, ADR-0070 d7 (b)), the web console's ten (ADR-0070 d5), the sign-in page oml-web sends to (ADR-0070 d4) , federation's three (ADR-0072 d5), usage metering's six (ADR-0071 d5, d6), a key's limits (ADR-0079 d5), a key's link and unlink (ADR-0085 d16), the withdrawal (ADR-0083 d13), the skill read (ADR-0080 d11), the five upload routes (ADR-0004 d3), the workspace export and the import and its status (ADR-0084 d15), the admin investigation's open, list and close (ADR-0089 d10, d15), and the five fix routes, the admin's fix and list and a person's list, confirm and revert (ADR-0089 d15)"
+        105,
+        "the source check (ADR-0057 d5), the workspace mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the four web routes the lead keeps (ADR-0045 d25; its two JSON routes are oml-web's, ADR-0070 d7 (b), and GET and POST /web/admin are deleted, ADR-0070 \"The old URLs deleted\"), open sign-up's one the lead keeps, POST /web/sign-up (ADR-0068 d10; the onboarding and users pages are oml-web's, ADR-0070 d7 (b)), the web console's ten (ADR-0070 d5), the sign-in page oml-web sends to (ADR-0070 d4) , federation's three (ADR-0072 d5), usage metering's six (ADR-0071 d5, d6), a key's limits (ADR-0079 d5), a key's link, unlink and acceptance (ADR-0085 d16), the withdrawal (ADR-0083 d13), the skill read (ADR-0080 d11), the five upload routes (ADR-0004 d3), the workspace export and the import and its status (ADR-0084 d15), the admin investigation's open, list and close (ADR-0089 d10, d15), and the five fix routes, the admin's fix and list and a person's list, confirm and revert (ADR-0089 d15)"
     );
     assert_eq!(oauth.len(), 6, "the six OAuth operations");
 
@@ -10450,6 +10450,20 @@ async fn link_key(rig: &WebRig, admin: &str, key: &str, user: Option<&str>) -> (
     (status, body)
 }
 
+/// `POST /v2/keys/{key}/accept_link` under the person's console
+/// credential `web`; the status and the body (ADR-0085 d16, the operator's
+/// decision of 2026-11-19).
+async fn accept_link(rig: &WebRig, web: &str, key: &str) -> (StatusCode, Value) {
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        &format!("/v2/keys/{key}/accept_link"),
+        web_call(web).idem(&format!("accept-{key}")),
+    )
+    .await;
+    (status, body)
+}
+
 /// A console request beside a person's capacity credential runs as the
 /// tenant key an admin linked to that person, named in `OML-Acting-Key`,
 /// with that key's grants; the header is refused, `auth.invalid`
@@ -10463,7 +10477,7 @@ async fn a_console_request_acts_as_the_key_linked_to_its_person_and_no_other() {
         return;
     };
     let token = rig.signed_in("alice@example.com", "alice", false).await;
-    rig.signed_in("bob@example.com", "bob", false).await;
+    let bob_web = credential(&rig.signed_in("bob@example.com", "bob", false).await, "web");
     let ops = credential(
         &rig.signed_in("ops@example.com", "ops", true).await,
         "admin",
@@ -10496,8 +10510,54 @@ async fn a_console_request_acts_as_the_key_linked_to_its_person_and_no_other() {
     let (status, linked) = link_key(&rig, &ops, "reviewer-alice", Some("alice")).await;
     assert_eq!(status, StatusCode::OK, "{linked}");
     assert_eq!(linked["linked_user"], "alice");
+    assert_eq!(linked["pending"], true);
+    // The link waits on alice (the operator's decision of 2026-11-19): her
+    // block lists it as pending, the console cannot act with it, and only
+    // her own console session accepts it.
+    let (_, _, me) = send(&rig.router, "GET", "/v2/whoami", web_call(&web)).await;
+    assert_eq!(
+        me["person"]["pending_links"],
+        json!([{ "id": id(&alices), "name": "reviewer-alice" }]),
+        "{me}"
+    );
+    assert_eq!(me["person"]["linked_keys"], json!([]), "{me}");
+    let (status, _, body) = send(
+        &rig.router,
+        "GET",
+        "/v2/whoami",
+        web_call(&web).header("oml-acting-key", &id(&alices)),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a pending link acts for no one: {body}"
+    );
+    for (caller, reason) in [
+        (bob_web.as_str(), "not_named_person"),
+        (ops.as_str(), "not_named_person"),
+    ] {
+        let (status, refused) = accept_link(&rig, caller, "reviewer-alice").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+        assert_eq!(refused["error"]["details"]["reason"], reason);
+    }
+    let (status, _, refused) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/reviewer-alice/accept_link",
+        Call::auth(&rig.admin).idem("bearer-accept"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    assert_eq!(refused["error"]["details"]["reason"], "session_only");
+    let (status, accepted) = accept_link(&rig, &web, "reviewer-alice").await;
+    assert_eq!(status, StatusCode::OK, "{accepted}");
+    assert_eq!(accepted["linked_user"], "alice");
+    assert_eq!(accepted["pending"], false);
     let (status, linked) = link_key(&rig, &ops, "reviewer-bob", Some("bob")).await;
     assert_eq!(status, StatusCode::OK, "{linked}");
+    let (status, accepted) = accept_link(&rig, &bob_web, "reviewer-bob").await;
+    assert_eq!(status, StatusCode::OK, "{accepted}");
     // A bearer admin key names no person, so it links nothing (the
     // operator, 2026-11-17: "Console only").
     let (status, _, refused) = send(
@@ -12371,15 +12431,23 @@ struct FixRig {
 
 async fn fix_rig() -> Option<FixRig> {
     let rig = web_rig().await?;
-    rig.signed_in("platform@example.com", "platform", false)
-        .await;
-    rig.signed_in("dana@example.com", "dana", false).await;
+    let platform = credential(
+        &rig.signed_in("platform@example.com", "platform", false)
+            .await,
+        "web",
+    );
+    let dana_web = credential(
+        &rig.signed_in("dana@example.com", "dana", false).await,
+        "web",
+    );
     let ops = credential(
         &rig.signed_in("ops@example.com", "ops", true).await,
         "admin",
     );
     let (status, linked) = link_key(&rig, &ops, "root-admin", Some("platform")).await;
     assert_eq!(status, StatusCode::OK, "the admin key links: {linked}");
+    let (status, accepted) = accept_link(&rig, &platform, "root-admin").await;
+    assert_eq!(status, StatusCode::OK, "platform accepts: {accepted}");
     let crew = create_workspace(&rig.router, &rig.admin, rig.root, "fixes").await;
     let writer = issue_key(&rig.router, &rig.admin, "writer", "fx/agent", crew).await;
     let dana = issue_key_with(
@@ -12393,6 +12461,8 @@ async fn fix_rig() -> Option<FixRig> {
     let name = dana["name"].as_str().expect("name").to_owned();
     let (status, linked) = link_key(&rig, &ops, &name, Some("dana")).await;
     assert_eq!(status, StatusCode::OK, "{linked}");
+    let (status, accepted) = accept_link(&rig, &dana_web, &name).await;
+    assert_eq!(status, StatusCode::OK, "dana accepts: {accepted}");
     Some(FixRig {
         rig,
         crew,

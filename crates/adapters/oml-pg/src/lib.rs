@@ -3285,7 +3285,7 @@ fn workspace_from_row(row: &PgRow) -> Result<WorkspaceRecord, StoreError> {
 /// as a memory's `promoted_at` does, so `EventTime` round-trips exactly.
 const KEY_COLUMNS: &str = "id, tenant_id, role, principal, used_by, default_workspace_id, \
      issued_by, hash, credential, name, crew_id, user_root_id, session_for, guardrail_scope, \
-     profile, requests_per_minute, linked_user_id, \
+     profile, requests_per_minute, linked_user_id, link_pending_user_id, \
      to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS revoked_at_signed, \
      to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
@@ -3415,6 +3415,7 @@ fn key_from_row(row: &PgRow) -> Result<KeyRecord, StoreError> {
             .map_err(backend)?,
         requests_per_minute: rate.map(u32::try_from).transpose().map_err(backend)?,
         linked_user: row.try_get("linked_user_id").map_err(backend)?,
+        link_pending: row.try_get("link_pending_user_id").map_err(backend)?,
     })
 }
 
@@ -4596,9 +4597,9 @@ async fn apply_fold(
             sqlx::query(
                 "INSERT INTO admin_fixes (tenant_id, id, act, target_id, workspace_id, \
                         claim_key, replaced_id, served_id, reason, loosens_guardrail, \
-                        admin_key_id, lifecycle_event_id, fixed_at, fixed_seq) \
+                        admin_key_id, lifecycle_event_id, fixed_at, fixed_seq, admin_person) \
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, \
-                        ($13)::timestamptz, $14)",
+                        ($13)::timestamptz, $14, $15)",
             )
             .bind(tenant_id)
             .bind(fix.fix_id)
@@ -4614,10 +4615,32 @@ async fn apply_fold(
             .bind(fix.lifecycle_event_id)
             .bind(at.as_str())
             .bind(seq)
+            .bind(fix.admin_person.as_str())
             .execute(&mut **tx)
             .await
             .map_err(backend)?;
             if let Some(served) = fix.served_id {
+                // An unconfirmed fix whose mark this one takes over leaves
+                // the queue: settled `superseded` by this fix, at its seq,
+                // since no person could settle it any more (ADR-0089 d17,
+                // the reading of 2026-11-19).
+                sqlx::query(
+                    "UPDATE admin_fixes f SET state = 'superseded', superseded_by = $3, \
+                            settled_at = ($4)::timestamptz, settled_seq = $5 \
+                       FROM memories m \
+                      WHERE m.tenant_id = $1 AND m.id = $2 AND m.admin_fix_id IS NOT NULL \
+                        AND m.admin_fix_id <> $3 \
+                        AND f.tenant_id = $1 AND f.id = m.admin_fix_id \
+                        AND f.state = 'unconfirmed'",
+                )
+                .bind(tenant_id)
+                .bind(served)
+                .bind(fix.fix_id)
+                .bind(at.as_str())
+                .bind(seq)
+                .execute(&mut **tx)
+                .await
+                .map_err(backend)?;
                 let marked = sqlx::query(
                     "UPDATE memories SET admin_fix_id = $3, admin_fix_confirmed = false, \
                             admin_fix_same_user = false, admin_fix_reverted = false \
@@ -5413,27 +5436,42 @@ async fn apply_fold(
                 )));
             }
         }
-        MetadataFold::KeyLinked { key_id, user_root } => {
+        MetadataFold::KeyLinked {
+            key_id,
+            user_root,
+            accepted,
+        } => {
             // A link's guard matches only a live tenant bearer key used by
-            // a person, an admin key's included (0064), that holds no link, and a
-            // root that is a user root of this tenant; an unlink's matches
-            // any linked key of the tenant, a revoked one included. Anything
-            // else aborts the commit (ADR-0085 d16).
+            // a person, an admin key's included (0064), that holds no link
+            // and none pending, and a root that is a user root of this
+            // tenant; an accepted link (the bootstrap's) sets the link, a
+            // console admin's sets it pending (0064). An unlink's matches
+            // any key of the tenant with a link or a pending one, a revoked
+            // one included. Anything else aborts the commit (ADR-0085 d16,
+            // the operator's decision of 2026-11-19).
+            let sql = if accepted {
+                "UPDATE api_keys SET linked_user_id = $3 \
+                 WHERE tenant_id = $1 AND id = $2 AND revoked_at IS NULL \
+                 AND credential = 'bearer' AND used_by = 'person' \
+                 AND user_root_id IS NULL AND linked_user_id IS NULL \
+                 AND link_pending_user_id IS NULL \
+                 AND EXISTS (SELECT 1 FROM workspaces w \
+                      WHERE w.tenant_id = $1 AND w.id = $3 AND w.user_root)"
+            } else {
+                "UPDATE api_keys SET link_pending_user_id = $3 \
+                 WHERE tenant_id = $1 AND id = $2 AND revoked_at IS NULL \
+                 AND credential = 'bearer' AND used_by = 'person' \
+                 AND user_root_id IS NULL AND linked_user_id IS NULL \
+                 AND link_pending_user_id IS NULL \
+                 AND EXISTS (SELECT 1 FROM workspaces w \
+                      WHERE w.tenant_id = $1 AND w.id = $3 AND w.user_root)"
+            };
             let set = match user_root {
-                Some(root) => sqlx::query(
-                    "UPDATE api_keys SET linked_user_id = $3 \
-                     WHERE tenant_id = $1 AND id = $2 AND revoked_at IS NULL \
-                     AND credential = 'bearer' AND used_by = 'person' \
-                     AND user_root_id IS NULL AND linked_user_id IS NULL \
-                     AND EXISTS (SELECT 1 FROM workspaces w \
-                          WHERE w.tenant_id = $1 AND w.id = $3 AND w.user_root)",
-                )
-                .bind(tenant_id)
-                .bind(key_id)
-                .bind(root),
+                Some(root) => sqlx::query(sql).bind(tenant_id).bind(key_id).bind(root),
                 None => sqlx::query(
-                    "UPDATE api_keys SET linked_user_id = NULL \
-                     WHERE tenant_id = $1 AND id = $2 AND linked_user_id IS NOT NULL",
+                    "UPDATE api_keys SET linked_user_id = NULL, link_pending_user_id = NULL \
+                     WHERE tenant_id = $1 AND id = $2 \
+                     AND (linked_user_id IS NOT NULL OR link_pending_user_id IS NOT NULL)",
                 )
                 .bind(tenant_id)
                 .bind(key_id),
@@ -5444,6 +5482,28 @@ async fn apply_fold(
             if set.rows_affected() != 1 {
                 return Err(StoreError::Backend(format!(
                     "key {key_id} cannot take this link: not a live unlinked tenant key used by a person, the root is not a user root, or there is no link to end"
+                )));
+            }
+        }
+        MetadataFold::KeyLinkAccepted { key_id, user_root } => {
+            // The pending link to this root becomes the link, on a live key
+            // only; anything else aborts the commit (ADR-0085 d16, the
+            // operator's decision of 2026-11-19).
+            let set = sqlx::query(
+                "UPDATE api_keys SET linked_user_id = link_pending_user_id, \
+                        link_pending_user_id = NULL \
+                 WHERE tenant_id = $1 AND id = $2 AND revoked_at IS NULL \
+                 AND link_pending_user_id = $3 AND linked_user_id IS NULL",
+            )
+            .bind(tenant_id)
+            .bind(key_id)
+            .bind(user_root)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if set.rows_affected() != 1 {
+                return Err(StoreError::Backend(format!(
+                    "key {key_id} has no live link pending to this root"
                 )));
             }
         }
@@ -6337,6 +6397,7 @@ async fn meter_plan(
         // be moved later (ADR-0079 d3).
         | MetadataFold::KeyLimitsSet { .. }
         | MetadataFold::KeyLinked { .. }
+        | MetadataFold::KeyLinkAccepted { .. }
         | MetadataFold::ConnectCodeIssued { .. }
         | MetadataFold::VerdictRecorded { .. }
         | MetadataFold::SourceChecked { .. }
@@ -12010,7 +12071,7 @@ impl PgStore {
                     to_char(fixed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
                     AS fixed_at_s, settled_by_key_id, settled_same_user, \
                     to_char(settled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
-                    AS settled_at_s, restored_id \
+                    AS settled_at_s, restored_id, admin_person, superseded_by \
                FROM admin_fixes \
               WHERE tenant_id = $1 AND ($2::uuid IS NULL OR id = $2) \
                 AND (NOT $3 OR state = 'unconfirmed') \
@@ -12041,6 +12102,10 @@ impl PgStore {
                     reason: row.try_get("reason").map_err(backend)?,
                     loosens_guardrail: row.try_get("loosens_guardrail").map_err(backend)?,
                     admin_key_id: row.try_get("admin_key_id").map_err(backend)?,
+                    admin_person: {
+                        let person: String = row.try_get("admin_person").map_err(backend)?;
+                        Name::parse_reference(&person).map_err(backend)?
+                    },
                     lifecycle_event_id: row.try_get("lifecycle_event_id").map_err(backend)?,
                     state: oml_app::types::FixState::parse(&state).ok_or_else(|| {
                         StoreError::Backend(format!("unknown fix state {state:?}"))
@@ -12054,6 +12119,7 @@ impl PgStore {
                         .transpose()
                         .map_err(backend)?,
                     restored_id: row.try_get("restored_id").map_err(backend)?,
+                    superseded_by: row.try_get("superseded_by").map_err(backend)?,
                 })
             })
             .collect()
@@ -12469,8 +12535,21 @@ impl WebStore for PgStore {
         tenant_id: Uuid,
         user_root: Uuid,
     ) -> Result<Vec<KeyRecord>, StoreError> {
-        self.keys_where(tenant_id, "linked_user_id = $2", |q| q.bind(user_root))
-            .await
+        self.keys_where(
+            tenant_id,
+            "(linked_user_id = $2 OR link_pending_user_id = $2)",
+            |q| q.bind(user_root),
+        )
+        .await
+    }
+
+    async fn web_pending_links(&self, tenant_id: Uuid) -> Result<Vec<KeyRecord>, StoreError> {
+        self.keys_where(
+            tenant_id,
+            "revoked_at IS NULL AND link_pending_user_id IS NOT NULL",
+            |q| q,
+        )
+        .await
     }
 
     async fn web_session_keys(

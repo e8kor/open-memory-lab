@@ -791,7 +791,7 @@ export interface paths {
         put?: never;
         /**
          * Link a person's tenant key to the user who signs in, so the console acts with it in shared workspaces.
-         * @description Requires: a console admin session, <user>-admin through its capacity credential, in the key's own tenant; another role is access.verb_ceiling, a bearer admin key, which names no person, is request.validation with details.field key and details.reason session_admin_only, and no MCP tool or CLI command reaches the route (the operator, 2026-11-17: "Console only"). user names a user of the tenant with a user root and a web entry, none of it disabled, and never the calling admin's own person; otherwise request.validation with details.field /user and details.reason user_unknown, user_disabled or self_link. The key is a live tenant bearer key used_by person that holds no link; otherwise request.validation with details.field key and details.reason revoked (a key past its expiry too), already_linked (unlink it first), admin_key, not_a_tenant_key (a user key, a session key or a connector key) or not_used_by_person. Journalled as key.linked_person. From then on the key writes into that user's root as their key wherever its grants allow, and oml-web may name it in OML-Acting-Key beside that user's capacity credential on the console's acting routes (GET /v2/whoami, GET /v2/review/held, GET /v1/memories/{artifact_id}, POST /v2/review/verdicts/bulk): the request runs as the key, with its grants and verb ceilings. The header sent twice, on another route, without a capacity credential, or naming a key the link no longer admits answers auth.invalid with details.reason acting_key_not_linked and runs nothing (ADR-0085 d16, amended 2026-11-17). The Idempotency-Key is required and not replayed. Since v0.8.0.
+         * @description Requires: a console admin session, <user>-admin through its capacity credential, in the key's own tenant; another role is access.verb_ceiling, a bearer admin key, which names no person, is request.validation with details.field key and details.reason session_admin_only, and no MCP tool or CLI command reaches the route (the operator, 2026-11-17: "Console only"). user names a user of the tenant with a user root and a web entry, none of it disabled, and never the calling admin's own person; otherwise request.validation with details.field /user and details.reason user_unknown, user_disabled or self_link. The key is a live tenant bearer key used_by person that holds no link; otherwise request.validation with details.field key and details.reason revoked (a key past its expiry too), already_linked (unlink it first), admin_key, not_a_tenant_key (a user key, a session key or a connector key) or not_used_by_person. Journalled as key.linked_person, with accepted false: the link is pending, and the key acts for no one, until that user accepts it from their own console session with POST /v2/keys/{key}/accept_link (the operator's decision of 2026-11-19). The key is refused already_linked while a link pends too. From the acceptance on, the key writes into that user's root as their key wherever its grants allow, and oml-web may name it in OML-Acting-Key beside that user's capacity credential on the console's acting routes (GET /v2/whoami, GET /v2/review/held, GET /v1/memories/{artifact_id}, POST /v2/review/verdicts/bulk): the request runs as the key, with its grants and verb ceilings. The header sent twice, on another route, without a capacity credential, or naming a key the link no longer admits answers auth.invalid with details.reason acting_key_not_linked and runs nothing (ADR-0085 d16, amended 2026-11-17). The Idempotency-Key is required and not replayed. Since v0.8.0.
          */
         post: operations["linkKey"];
         delete?: never;
@@ -811,9 +811,29 @@ export interface paths {
         put?: never;
         /**
          * End a key's link to a person.
-         * @description Requires: a console admin session, <user>-admin through its capacity credential, in the key's own tenant; another role is access.verb_ceiling, a bearer admin key, which names no person, is request.validation with details.field key and details.reason session_admin_only, and no MCP tool or CLI command reaches the route (the operator, 2026-11-17: "Console only"). A key without a link is request.validation with details.field key and details.reason not_linked. Journalled as key.unlinked_person; the console's next act with the key answers auth.invalid with details.reason acting_key_not_linked, and the key no longer writes into the user's root. A revoked key is unlinked too. The Idempotency-Key is required and not replayed (ADR-0085 d16). Since v0.8.0.
+         * @description Requires: a console admin session, <user>-admin through its capacity credential, in the key's own tenant; another role is access.verb_ceiling, a bearer admin key, which names no person, is request.validation with details.field key and details.reason session_admin_only, and no MCP tool or CLI command reaches the route (the operator, 2026-11-17: "Console only"). A key without a link or a pending one is request.validation with details.field key and details.reason not_linked. Journalled as key.unlinked_person, which also withdraws a link still pending; the console's next act with the key answers auth.invalid with details.reason acting_key_not_linked, and the key no longer writes into the user's root. A revoked key is unlinked too. The Idempotency-Key is required and not replayed (ADR-0085 d16). Since v0.8.0.
          */
         post: operations["unlinkKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/keys/{key}/accept_link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept a link an admin made of a key to the signed-in person, so the key acts for them.
+         * @description Requires: the console session of the person the pending link names, through its capacity credential (the operator's decision of 2026-11-19: a link takes effect only once the named person accepts it from their own console session). A bearer key or any other caller that is not a console session is request.validation with details.field key and details.reason session_only; another person's session, the linking admin's included, is not_named_person; a key with no link pending is not_pending; a key revoked or past its expiry is revoked, and one no longer used_by person is not_used_by_person. A refusal journals nothing. Journalled as key.link_accepted; from then on the key acts for the person as ADR-0085 d16 says: it writes into their root wherever its grants allow, its fix and its settlement read the person, and oml-web may name it in OML-Acting-Key. No MCP tool or CLI command reaches the route. The Idempotency-Key is required and not replayed. Since v0.8.3.
+         */
+        post: operations["acceptKeyLink"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1857,7 +1877,7 @@ export interface components {
             /** Format: date-time */
             closed_at: string | null;
         };
-        /** @description An admin's marked break-glass fix (ADR-0089 d3, d8, d15). admin_key_id is served on the admin routes alone; a person's review read never names the admin. acts is served on GET /v2/review/fixes alone. Since v0.8.3. */
+        /** @description An admin's marked break-glass fix (ADR-0089 d3, d8, d15). admin_key_id and admin_person are served on the admin routes alone; a person's review read never names the admin. acts is served on GET /v2/review/fixes alone. Since v0.8.3. */
         Fix: {
             /** Format: uuid */
             fix_id: string;
@@ -1880,8 +1900,11 @@ export interface components {
             served_artifact_id: string | null;
             reason: string;
             loosens_guardrail: boolean;
-            /** @enum {string} */
-            state: "unconfirmed" | "confirmed" | "reverted";
+            /**
+             * @description superseded: a later fix took over the mark on the version this one served, so no person settles it (ADR-0089 d17, the reading of 2026-11-19).
+             * @enum {string}
+             */
+            state: "unconfirmed" | "confirmed" | "reverted" | "superseded";
             /** Format: date-time */
             fixed_at: string;
             age_seconds: number;
@@ -1894,8 +1917,15 @@ export interface components {
              * @description The version a revert wrote and promoted.
              */
             restored_artifact_id: string | null;
+            /**
+             * Format: uuid
+             * @description The later fix that took over this one's mark, for a superseded fix; null otherwise.
+             */
+            superseded_by: string | null;
             /** Format: uuid */
             admin_key_id?: string;
+            /** @description The person the admin key acted for when it fixed, recorded then; the settlement compares it, never the key's link as it stands (ADR-0089, the operator's decision of 2026-11-19). */
+            admin_person?: string;
             acts?: ("confirm" | "revert")[];
         };
         /** @description A memory as the admin read serves it (ADR-0045 d21): its text and who wrote it, in every state. */
@@ -3439,11 +3469,13 @@ export interface components {
             created_at: string;
             ended_at: string | null;
         };
-        /** @description A key and the user the console acts with it for, null when unlinked (ADR-0085 d16). */
+        /** @description A key and the user its link names, null when unlinked, and whether that user has yet to accept it (ADR-0085 d16, the operator's decision of 2026-11-19). */
         KeyLink: {
             key_id: string;
             name: string | null;
             linked_user: string | null;
+            /** @description True from a console admin's link until the named user accepts it; the key acts for no one meanwhile. Since v0.8.3. */
+            pending: boolean;
         };
         Key: {
             key_id: string;
@@ -3739,6 +3771,8 @@ export interface components {
             deletion_requested_at: string | null;
             /** @description The live tenant keys an admin linked to the person (not revoked, not past their expiry, used_by person), by id and name, in name order: the keys oml-web may name in OML-Acting-Key for this person (ADR-0085 d16). Since v0.8.0. */
             linked_keys?: components["schemas"]["WhoamiRef"][];
+            /** @description The live tenant keys an admin linked to the person that wait on the person's acceptance, by id and name, in name order; each acts for no one until the person accepts it with POST /v2/keys/{key}/accept_link (ADR-0085 d16, the operator's decision of 2026-11-19). Since v0.8.3. */
+            pending_links?: components["schemas"]["WhoamiRef"][];
             /** @description With start=true, what the onboarding page waits for: whether one of the person's agent keys has connected, and the state of the newest memory of their root, held or promoted, else null (ADR-0068 d10; ADR-0070 d5). Absent otherwise. Since v0.7.0. */
             start?: {
                 connected?: boolean;
@@ -6794,7 +6828,8 @@ export interface operations {
                      * @example {
                      *       "key_id": "d405428e-4c99-426d-8826-76d28436e423",
                      *       "name": "alice-payments",
-                     *       "linked_user": "alice"
+                     *       "linked_user": "alice",
+                     *       "pending": true
                      *     }
                      */
                     "application/json": components["schemas"]["KeyLink"];
@@ -6838,7 +6873,52 @@ export interface operations {
                      * @example {
                      *       "key_id": "d405428e-4c99-426d-8826-76d28436e423",
                      *       "name": "alice-payments",
-                     *       "linked_user": null
+                     *       "linked_user": null,
+                     *       "pending": false
+                     *     }
+                     */
+                    "application/json": components["schemas"]["KeyLink"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    acceptKeyLink: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                key: components["parameters"]["KeyId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The key, now linked to the person. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "key_id": "d405428e-4c99-426d-8826-76d28436e423",
+                     *       "name": "alice-payments",
+                     *       "linked_user": "alice",
+                     *       "pending": false
                      *     }
                      */
                     "application/json": components["schemas"]["KeyLink"];

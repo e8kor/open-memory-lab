@@ -10,9 +10,14 @@
 -- claim's served tip, where it made one (a demotion's restored version, an
 -- edit's version, a retirement); replaced_id the version it took out of
 -- service. The reason is stored in clear, as the signed event carries it
--- (ADR-0005 d3 as amended by ADR-0090 d7). state moves once, from
--- unconfirmed to confirmed or reverted, by admin.fix_confirmed or
--- admin.fix_reverted (d8); an erasure is never reverted.
+-- (ADR-0005 d3 as amended by ADR-0090 d7). admin_person is the person the
+-- admin key acted for at the fix, which the settlement compares, never the
+-- key's link as it stands then (the operator's decision of 2026-11-19).
+-- state moves once, from unconfirmed to confirmed or reverted, by
+-- admin.fix_confirmed or admin.fix_reverted (d8), or to superseded when a
+-- later fix takes over the mark on the version it served, superseded_by
+-- naming that fix (d17, the reading of 2026-11-19); an erasure is never
+-- reverted.
 --
 -- memories.admin_fix_id names the fix a version is served because of, and
 -- memories.admin_fix_confirmed and admin_fix_same_user carry what a reader
@@ -26,16 +31,24 @@
 --
 -- An admin key is linkable to its person (ADR-0085 d16, the operator's
 -- decision of 2026-11-19): api_keys_linked_user drops its role <> 'admin'
--- clause. memories.admin_fix_reverted marks a version a reverted fix served
--- (ADR-0089 d17).
+-- clause. A console admin's link waits on its person's acceptance (the
+-- operator's decision of 2026-11-19 on key-to-person links):
+-- api_keys.link_pending_user_id names the user root until the person
+-- accepts it from their own console session, key.link_accepted, which
+-- moves it to linked_user_id. memories.admin_fix_reverted marks a version a
+-- reverted fix served (ADR-0089 d17).
 --
 -- What it costs a live database: one new, empty table with one index, its
--- policy and its update guard, four nullable columns on memories with no
--- default, which rewrite no row, and the api_keys check replaced and
--- validated, one scan of api_keys under its SHARE UPDATE EXCLUSIVE lock. ALTER TABLE memories takes ACCESS EXCLUSIVE on memories
--- and its partitions for the catalog change only; the foreign key to
--- tenants takes SHARE ROW EXCLUSIVE on tenants until the commit. A lock is
--- waited for at most 5 s.
+-- policy and its update guard, four nullable columns on memories and one
+-- on api_keys with no default, which rewrite no row, and the api_keys
+-- checks replaced and added NOT VALID, then validated. ALTER TABLE memories
+-- takes ACCESS EXCLUSIVE on memories and its partitions for the catalog
+-- change only. The DROP CONSTRAINT on api_keys takes ACCESS EXCLUSIVE on
+-- api_keys and holds it to the commit, so both VALIDATEs scan api_keys
+-- under it: measured at 1,000,000 keys, about 120 ms of scan, during which
+-- a key lookup waits about 150 ms; a tenant holds hundreds of keys. The
+-- foreign key to tenants takes SHARE ROW EXCLUSIVE on tenants until the
+-- commit. A lock is waited for at most 5 s.
 
 SET LOCAL lock_timeout = '5s';
 
@@ -51,9 +64,11 @@ CREATE TABLE admin_fixes (
     reason             text        NOT NULL CHECK (reason <> ''),
     loosens_guardrail  boolean     NOT NULL,
     admin_key_id       uuid        NOT NULL,
+    admin_person       text        NOT NULL CHECK (admin_person <> ''),
     lifecycle_event_id uuid        NOT NULL,
     state              text        NOT NULL DEFAULT 'unconfirmed'
-                                   CHECK (state IN ('unconfirmed', 'confirmed', 'reverted')),
+                                   CHECK (state IN ('unconfirmed', 'confirmed', 'reverted',
+                                                    'superseded')),
     fixed_at           timestamptz NOT NULL,
     fixed_seq          bigint      NOT NULL,
     settled_by_key_id  uuid,
@@ -61,10 +76,12 @@ CREATE TABLE admin_fixes (
     settled_at         timestamptz,
     settled_seq        bigint,
     restored_id        uuid,
+    superseded_by      uuid,
     PRIMARY KEY (tenant_id, id),
     CHECK ((state = 'unconfirmed') = (settled_at IS NULL)),
     CHECK ((settled_at IS NULL) = (settled_seq IS NULL)),
-    CHECK ((settled_at IS NULL) = (settled_by_key_id IS NULL)),
+    CHECK ((state IN ('unconfirmed', 'superseded')) = (settled_by_key_id IS NULL)),
+    CHECK ((state = 'superseded') = (superseded_by IS NOT NULL)),
     CHECK (act <> 'erase' OR state <> 'reverted')
 );
 COMMENT ON TABLE admin_fixes IS
@@ -97,13 +114,14 @@ COMMENT ON COLUMN memories.admin_fix_reverted IS
 -- The serving role inserts a fix and settles it once; it never rewrites what
 -- the fix recorded (ADR-0089 d3, d8). Column grants keep the recorded
 -- columns out of its reach, and the guard below keeps the state moving once,
--- from unconfirmed to confirmed or reverted, owner-owned and SECURITY
--- INVOKER as 0057's guard is.
+-- from unconfirmed to confirmed, reverted or superseded, owner-owned and
+-- SECURITY INVOKER as 0057's guard is.
 CREATE OR REPLACE FUNCTION oml_admin_fixes_guard() RETURNS trigger
     LANGUAGE plpgsql SECURITY INVOKER SET search_path = public, pg_temp AS $$
 BEGIN
-    IF OLD.state <> 'unconfirmed' OR NEW.state NOT IN ('confirmed', 'reverted') THEN
-        RAISE EXCEPTION 'admin_fixes_guard: a fix moves once, from unconfirmed to confirmed or reverted'
+    IF OLD.state <> 'unconfirmed'
+       OR NEW.state NOT IN ('confirmed', 'reverted', 'superseded') THEN
+        RAISE EXCEPTION 'admin_fixes_guard: a fix moves once, from unconfirmed to confirmed, reverted or superseded'
             USING ERRCODE = 'check_violation';
     END IF;
     RETURN NEW;
@@ -115,13 +133,14 @@ CREATE TRIGGER admin_fixes_guard
 
 COMMENT ON FUNCTION oml_admin_fixes_guard() IS
     'Refuses an update of admin_fixes that does not move state once, from unconfirmed to '
-    'confirmed or reverted (0064; ADR-0089 d8).';
+    'confirmed, reverted or superseded (0064; ADR-0089 d8, d17).';
 
 -- An admin key is linked to its person (ADR-0085 d16, the operator's decision
 -- of 2026-11-19): the check keeps the link off session keys and user keys
 -- only. The new check is looser than 0050's, so every stored row meets it;
--- it is added NOT VALID and validated in this transaction, a scan of
--- api_keys, which holds one row per key.
+-- it is added NOT VALID and validated in this transaction. The DROP
+-- CONSTRAINT holds ACCESS EXCLUSIVE on api_keys to the commit, so the
+-- VALIDATE scans api_keys, which holds one row per key, under that lock.
 ALTER TABLE api_keys DROP CONSTRAINT api_keys_linked_user;
 ALTER TABLE api_keys
     ADD CONSTRAINT api_keys_linked_user CHECK (
@@ -131,11 +150,28 @@ ALTER TABLE api_keys
 -- lint:allow validate the new check is looser than the one it replaces, so no stored row fails it, and api_keys holds one row per key
 ALTER TABLE api_keys VALIDATE CONSTRAINT api_keys_linked_user;
 
+-- A console admin's link waits on its person (the operator's decision of
+-- 2026-11-19 on key-to-person links): the user root it names, until that
+-- person accepts it. A key holds a link or a pending one, never both, and
+-- neither on a session key or a user key. Every stored row has the new
+-- column NULL, so it meets the check, validated under the same lock.
+ALTER TABLE api_keys ADD COLUMN link_pending_user_id uuid;
+COMMENT ON COLUMN api_keys.link_pending_user_id IS
+    'The user root a console admin linked this key to, until that person accepts the link; the '
+    'key acts for no one meanwhile (ADR-0085 d16, the operator''s decision of 2026-11-19).';
+ALTER TABLE api_keys
+    ADD CONSTRAINT api_keys_link_pending CHECK (
+        link_pending_user_id IS NULL
+        OR (linked_user_id IS NULL AND user_root_id IS NULL AND credential <> 'session')
+    ) NOT VALID;
+-- lint:allow validate the column is new and NULL on every stored row, so no row fails it, and api_keys holds one row per key
+ALTER TABLE api_keys VALIDATE CONSTRAINT api_keys_link_pending;
+
 DO $$
 BEGIN
     EXECUTE format('GRANT SELECT, INSERT ON admin_fixes TO %I',
                    current_setting('oml.serving_role'));
     EXECUTE format('GRANT UPDATE (state, settled_by_key_id, settled_same_user, settled_at, '
-                   'settled_seq, restored_id) ON admin_fixes TO %I',
+                   'settled_seq, restored_id, superseded_by) ON admin_fixes TO %I',
                    current_setting('oml.serving_role'));
 END $$;

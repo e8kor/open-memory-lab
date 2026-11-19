@@ -3058,12 +3058,13 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // as ancestors (proposed ADR-0037 d4); 0028 adds profile, null
             // for every key it finds (ADR-0030 d14); 0046 adds expires_at
             // and requests_per_minute, null for every key it finds
-            // (ADR-0079); 0050 adds linked_user_id, null for every key it
-            // finds (ADR-0085 d16).
+            // (ADR-0079); 0050 adds linked_user_id and 0064
+            // link_pending_user_id, null for every key they find (ADR-0085
+            // d16).
             (true, "api_keys") => {
                 "to_jsonb(t) - 'name' - 'crew_id' - 'credential' - 'user_root_id' \
                  - 'session_for' - 'guardrail_scope' - 'profile' - 'expires_at' \
-                 - 'requests_per_minute' - 'linked_user_id'"
+                 - 'requests_per_minute' - 'linked_user_id' - 'link_pending_user_id'"
             }
             // 0014 adds covers, subtree for every grant it finds (ADR-0044
             // d12).
@@ -13838,6 +13839,44 @@ async fn a_documents_passages_postings_words_and_sparse_entries_go_with_its_eras
     drop_dbs(&created).await;
 }
 
+/// An open investigation's read count only grows: the serving role may
+/// count a read and may never reset or lower the count, which the guard of
+/// 0063 refuses (ADR-0089 d10).
+#[tokio::test]
+async fn an_open_investigations_read_count_never_goes_down() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let (_app, tenant, _admin, _writer, _v1, _v2) = two_promoted_pg(&store, "readsguard").await;
+    let investigation = Uuid::from_u128(0x4981);
+    owner_exec(
+        &store,
+        tenant,
+        "INSERT INTO admin_investigations (tenant_id, id, key_id, reason, opened_at, opened_seq) \
+         VALUES ($1, $2, $2, 'ticket', now(), 1)",
+        investigation,
+    )
+    .await;
+    let count =
+        "UPDATE admin_investigations SET reads = reads + 2 WHERE tenant_id = $1 AND id = $2";
+    assert_eq!(
+        serving_refusal(&store, tenant, count, investigation).await,
+        None
+    );
+    for sql in [
+        "UPDATE admin_investigations SET reads = 0 WHERE tenant_id = $1 AND id = $2",
+        "UPDATE admin_investigations SET reads = reads - 1 WHERE tenant_id = $1 AND id = $2",
+    ] {
+        let err = serving_refusal(&store, tenant, sql, investigation)
+            .await
+            .unwrap_or_else(|| panic!("an open investigation's count went down: {sql}"));
+        assert!(err.contains("admin_investigations_guard"), "{sql}: {err}");
+    }
+    drop_dbs(&created).await;
+}
+
 /// The serving role settles a fix once and closes an investigation once,
 /// and rewrites nothing either recorded: column grants keep the recorded
 /// columns out of its reach, and the guards of 0063 and 0064 refuse a
@@ -13855,8 +13894,9 @@ async fn the_serving_role_settles_a_fix_once_and_closes_an_investigation_once() 
         &store,
         tenant,
         "INSERT INTO admin_fixes (tenant_id, id, act, target_id, workspace_id, claim_key, \
-                reason, loosens_guardrail, admin_key_id, lifecycle_event_id, fixed_at, fixed_seq) \
-         VALUES ($1, $2, 'demote', $2, $2, 'k', 'ticket', false, $2, $2, now(), 1)",
+                reason, loosens_guardrail, admin_key_id, lifecycle_event_id, fixed_at, fixed_seq, \
+                admin_person) \
+         VALUES ($1, $2, 'demote', $2, $2, 'k', 'ticket', false, $2, $2, now(), 1, 'ada')",
         fix,
     )
     .await;
@@ -13872,6 +13912,7 @@ async fn the_serving_role_settles_a_fix_once_and_closes_an_investigation_once() 
         "UPDATE admin_fixes SET reason = 'other' WHERE tenant_id = $1 AND id = $2",
         "UPDATE admin_fixes SET admin_key_id = $2 WHERE tenant_id = $1 AND id = $2",
         "UPDATE admin_fixes SET served_id = $2 WHERE tenant_id = $1 AND id = $2",
+        "UPDATE admin_fixes SET admin_person = 'bob' WHERE tenant_id = $1 AND id = $2",
         "DELETE FROM admin_fixes WHERE tenant_id = $1 AND id = $2",
         "UPDATE admin_investigations SET reason = 'other' WHERE tenant_id = $1 AND id = $2",
         "UPDATE admin_investigations SET key_id = $2 WHERE tenant_id = $1 AND id = $2",

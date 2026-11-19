@@ -2932,6 +2932,7 @@ where
             expiry: req.expiry.clone(),
             requests_per_minute: req.requests_per_minute,
             linked_user: None,
+            link_pending: None,
         };
         (record, value)
     }
@@ -3407,7 +3408,10 @@ where
     /// The ceremony's link of its admin key to `person` (ADR-0085 d16;
     /// ADR-0089, the operator's decision of 2026-11-19): that person's user
     /// root under `universe`, then `key.linked_person`, both by the
-    /// operator, chained after the key's issuance.
+    /// operator, chained after the key's issuance. The person runs the
+    /// ceremony themselves, so the link is accepted at its creation and
+    /// needs no `key.link_accepted` (the operator's decision of 2026-11-19
+    /// on key-to-person links).
     async fn link_bootstrap_admin(
         &self,
         tenant_id: Uuid,
@@ -3448,6 +3452,7 @@ where
                 "user": person.as_str(),
                 "user_root_id": root_id.to_string(),
                 "linked_by_key_id": Value::Null,
+                "accepted": true,
             }),
         )?;
         self.commit_requests(vec![
@@ -3457,6 +3462,7 @@ where
                 MetadataFold::KeyLinked {
                     key_id,
                     user_root: Some(root_id),
+                    accepted: true,
                 },
                 None,
             ),
@@ -4854,6 +4860,7 @@ where
         }
         let unlinked = KeyRecord {
             linked_user: None,
+            link_pending: None,
             ..key.clone()
         };
         self.person_root_of(&unlinked).await

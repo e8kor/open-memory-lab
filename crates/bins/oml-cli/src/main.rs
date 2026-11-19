@@ -7344,7 +7344,8 @@ fn withdrawn_queue_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
     }]
 }
 
-/// Doctor's lifecycle lines (ADR-0089 d16, notes of 2026-11-18), from the
+/// Doctor's lifecycle lines (ADR-0089 d16, notes of 2026-11-18; ADR-0085
+/// d16's pending links, the operator's decision of 2026-11-19), from the
 /// same admin rescan window: `memory.held_successor_stranded` warns of held
 /// versions whose target is no longer its claim's promoted tip, which no
 /// verdict can approve (a demoted tip's successors among them), and
@@ -7353,7 +7354,7 @@ fn withdrawn_queue_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
 /// out. A server before a count does not report it, and its line is then
 /// absent; a count that is no unsigned integer is named, never read as zero.
 fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
-    const LINES: [(&str, &str, &str); 8] = [
+    const LINES: [(&str, &str, &str); 9] = [
         (
             "held_successors_stranded",
             "memory.held_successor_stranded",
@@ -7393,6 +7394,11 @@ fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
             "fixes_reverted",
             "admin.fix_reverted",
             "admin fix(es) a person reverted; read each with oml admin fixes --all",
+        ),
+        (
+            "key_links_pending",
+            "key.link_pending",
+            "key link(s) wait on their person's acceptance; each key acts for no one, and an admin key among them takes no fix, until that person accepts the link on the console's Keys page",
         ),
     ];
     let report = match read {
@@ -8691,7 +8697,8 @@ mod tests {
                 "admin.fix_loosens_guardrail: not read; an admin key reads it".to_owned(),
                 "admin.fix_without_person_reviewer: not read; an admin key reads it".to_owned(),
                 "admin.fix_admin_person_only: not read; an admin key reads it".to_owned(),
-                "admin.fix_reverted: not read; an admin key reads it".to_owned()
+                "admin.fix_reverted: not read; an admin key reads it".to_owned(),
+                "key.link_pending: not read; an admin key reads it".to_owned()
             ]
         );
         assert_eq!(
@@ -8734,6 +8741,18 @@ mod tests {
                 "warn admin.fix_admin_person_only: 1 unconfirmed admin fix(es) sit on a workspace where only the admin's own person holds reviewer; another person confirms them".to_owned(),
                 "admin.fix_reverted: 0".to_owned(),
             ]
+        );
+    }
+
+    #[test]
+    fn the_lifecycle_doctor_warns_of_key_links_waiting_on_their_persons_acceptance() {
+        assert_eq!(
+            lifecycle_doctor(Some(&Ok(json!({ "key_links_pending": 2 })))),
+            vec!["warn key.link_pending: 2 key link(s) wait on their person's acceptance; each key acts for no one, and an admin key among them takes no fix, until that person accepts the link on the console's Keys page".to_owned()]
+        );
+        assert_eq!(
+            lifecycle_doctor(Some(&Ok(json!({ "key_links_pending": 0 })))),
+            vec!["key.link_pending: 0".to_owned()]
         );
     }
 

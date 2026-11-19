@@ -34,7 +34,13 @@ use crate::session::{PageCalls, Session, call, cookie};
 use crate::{Capacity, Web, acts, outcome, usage};
 
 /// The user page's acts, each the act of one documented operation.
-pub const USER_ACTIONS: &[&str] = &["issue_key", "connect_key", "connect_code", "cut_off"];
+pub const USER_ACTIONS: &[&str] = &[
+    "issue_key",
+    "connect_key",
+    "connect_code",
+    "cut_off",
+    "accept_link",
+];
 
 /// The admin page's acts: the cut-off, and a tenant key's link to the
 /// listed person and its end (ADR-0085 d16).
@@ -131,7 +137,8 @@ const EXPIRES_NOTE: &str = "A key's expiry date is optional; only an admin can c
 fn notice(done: Option<&str>) -> Option<&'static str> {
     match done? {
         "cut off" => Some("cut off"),
-        "linked" => Some("linked: the console acts with the key for this person"),
+        "linked" => Some("linked: the key acts for this person once they accept the link"),
+        "accepted" => Some("accepted: the console acts with the key for this account"),
         "unlinked" => Some("unlinked: the console no longer acts with the key"),
         _ => None,
     }
@@ -533,26 +540,31 @@ async fn user_view(
     let (card, linked) = match person {
         Ok(found) => (
             found.person.as_ref().and_then(usage::card),
-            found.person.map(|p| p.linked_keys).unwrap_or_default(),
+            found
+                .person
+                .map(|p| (p.linked_keys, p.pending_links))
+                .unwrap_or_default(),
         ),
         Err(_) => (
             Some(usage::unavailable(
                 usage_ids.request_id.as_deref().unwrap_or_default(),
             )),
-            Vec::new(),
+            (Vec::new(), Vec::new()),
         ),
     };
+    let (linked, pending) = linked;
     let csrf = session.csrf();
     // For a session whose key carries a denial the page opens on the
     // sentence, above the table, and draws none of the three forms: the API
     // refuses each one for this session's key, now and for good.
     let denied = denied(session).then_some(session.whoami.key_id.as_str());
     let mut body = format!(
-        r#"<h1>Keys</h1><p class="desc">Keys acting for <code>{}</code>.</p>{}{}{}{}"#,
+        r#"<h1>Keys</h1><p class="desc">Keys acting for <code>{}</code>.</p>{}{}{}{}{}"#,
         short(&user),
         denied.map(|_| denied_notice()).unwrap_or_default(),
         card.unwrap_or_default(),
         table(&listed, Side::User, &csrf, "", denied),
+        pending_section(&pending, &csrf),
         linked_section(&linked)
     );
     if denied.is_some() {
@@ -603,6 +615,36 @@ fn linked_section(linked: &[oml_sdk::LinkedKey]) -> String {
             r#"<li><code>{}</code> · <a href="{TODO_PATH}?as={}">Judge as this key in To do</a></li>"#,
             short(&key.name),
             attr(&encode(&key.id))
+        );
+    }
+    out.push_str("</ul>");
+    out
+}
+
+/// The links an admin made of tenant keys to this account that wait on its
+/// acceptance, each with its **Accept link** act; nothing where none waits.
+/// Until accepted, a key acts for no one (ADR-0085 d16, the operator's
+/// decision of 2026-11-19).
+fn pending_section(pending: &[oml_sdk::LinkedKey], csrf: &str) -> String {
+    if pending.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from(
+        r#"<h2>Links to accept</h2><p class="desc">An admin linked these tenant keys to this account. A key acts for this account only once the link is accepted here; until then it acts for no one.</p><ul>"#,
+    );
+    for key in pending {
+        let _ = write!(
+            out,
+            "<li><code>{}</code> {}</li>",
+            short(&key.name),
+            form(
+                USER_KEYS_PATH,
+                "accept_link",
+                csrf,
+                &format!("{}{}", hidden("key", &key.name), acts::nonce_field()),
+                "Accept link",
+                false
+            )
         );
     }
     out.push_str("</ul>");
@@ -684,7 +726,8 @@ fn link_forms(csrf: &str, user: &str) -> String {
         )
     };
     format!(
-        r#"<h2>Linked tenant key</h2><p class="desc">A live tenant key used by a person, not an admin key, that {} works with in shared workspaces. Linked, the console judges with it for them.</p>{}{}"#,
+        r#"<h2>Linked tenant key</h2><p class="desc">A live tenant key used by a person that {} works with in shared workspaces. The link waits until {} accepts it on their own Keys page; accepted, the key acts for them.</p>{}{}"#,
+        short(user),
         short(user),
         form(
             ADMIN_KEYS_PATH,
@@ -897,6 +940,13 @@ async fn act(
                 Ok(_) => return no_secret(&calls),
                 Err(e) => return outcome::page(&e, &calls, page),
             }
+        }
+        "accept_link" => {
+            let name = fields.given("key").unwrap_or_default();
+            return match web.api.accept_key_link(&call, &key, name).await {
+                Ok(_) => acts::see_other(&format!("{page}?done=accepted"), &[]),
+                Err(e) => outcome::page(&e, &calls, page),
+            };
         }
         "link_key" | "unlink_key" => {
             let name = fields.given("key").unwrap_or_default();

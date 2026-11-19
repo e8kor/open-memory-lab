@@ -135,8 +135,16 @@ pub struct KeyRecord {
     /// The user root of the person a tenant key is linked to, set by
     /// `key.linked_person` and cleared by `key.unlinked_person`; the key
     /// then acts for that person as a user key does (ADR-0085 d16; ADR-0082
-    /// d7). `None` for every other key.
+    /// d7). `None` for every other key, and for a key whose link waits on
+    /// its person's acceptance (`link_pending`).
     pub linked_user: Option<Uuid>,
+    /// The user root a link names that its person has not accepted yet,
+    /// set by `key.linked_person` from a console admin and moved to
+    /// `linked_user` by `key.link_accepted` from that person's own console
+    /// session; cleared by `key.unlinked_person`. A key with a pending link
+    /// acts for no one (ADR-0085 d16, the operator's decision of
+    /// 2026-11-19). `None` for every other key.
+    pub link_pending: Option<Uuid>,
 }
 
 impl KeyRecord {
@@ -3605,6 +3613,10 @@ pub enum FixState {
     Unconfirmed,
     Confirmed,
     Reverted,
+    /// A later fix took over the mark on the version this one served, so
+    /// no person settles this one any more (ADR-0089 d17, the reading of
+    /// 2026-11-19).
+    Superseded,
 }
 
 impl FixState {
@@ -3614,6 +3626,7 @@ impl FixState {
             Self::Unconfirmed => "unconfirmed",
             Self::Confirmed => "confirmed",
             Self::Reverted => "reverted",
+            Self::Superseded => "superseded",
         }
     }
 
@@ -3623,6 +3636,7 @@ impl FixState {
             "unconfirmed" => Some(Self::Unconfirmed),
             "confirmed" => Some(Self::Confirmed),
             "reverted" => Some(Self::Reverted),
+            "superseded" => Some(Self::Superseded),
             _ => None,
         }
     }
@@ -3644,6 +3658,10 @@ pub struct FixRecord {
     pub reason: String,
     pub loosens_guardrail: bool,
     pub admin_key_id: Uuid,
+    /// The person the admin key acted for when it fixed, recorded then:
+    /// who may settle the fix is judged against this, never the key's
+    /// link as it stands (ADR-0089, the operator's decision of 2026-11-19).
+    pub admin_person: Name,
     /// The lifecycle event the fix caused, which `admin.fix` names.
     pub lifecycle_event_id: Uuid,
     pub state: FixState,
@@ -3654,6 +3672,9 @@ pub struct FixRecord {
     /// The version a revert wrote and promoted, carrying the text the fix
     /// took out of service (ADR-0089 d8).
     pub restored_id: Option<Uuid>,
+    /// The later fix that took over this one's mark, for a fix
+    /// [`FixState::Superseded`] (ADR-0089 d17).
+    pub superseded_by: Option<Uuid>,
 }
 
 /// An admin key's investigation: the reason its reads of claim text are
