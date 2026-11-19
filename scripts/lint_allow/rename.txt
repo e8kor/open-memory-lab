@@ -49,8 +49,8 @@ crates/bins/oml-server-lead/tests/recall_approver.rs  # runs migration 0044's fi
 # Docs: quotations keep their words, branch names are instance names, and the "former name" notes name what was renamed (d10, d11).
 docs/adr/ADR-0010-roles-and-keys.md | **Dreamer as two separate roles  # the rejected alternative keeps the role's name when it was weighed (d11)
 docs/adr/ADR-0018-the-documentation-set.md | (former name, ADR-0091)  # the vocabulary table's never column names the former words (d1, d13)
-docs/reference/glossary.md | before v0.8.0  # the glossary row names the former word once (d1, d13, d15)
-docs/architecture/roles-and-keys.md | before v0.8.0  # the roles table names the former role once (d13)
+docs/reference/glossary.md | before v0.8.3  # the glossary row names the former word once (d1, d13, d15)
+docs/architecture/roles-and-keys.md | before v0.8.3  # the roles table names the former role once (d13)
 docs/reference/design-records.md  # generated: the register's list of renamed records names the former files (d10)
 scripts/tests/test_adr_links_on_the_site_point_at_github.py  # a link to a former record name must fail the strict build (d10)
 docs/adr/ADR-0037-*.md | "from workarea or from workarea and all workareas parents  # quoted operator text (d11)

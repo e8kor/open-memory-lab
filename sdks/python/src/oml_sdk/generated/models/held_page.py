@@ -23,7 +23,7 @@ class HeldPage:
         items (list[HeldPageItemsItem]):
         next_cursor (None | str):
         lane_authors (list[HeldPageLaneAuthorsType0Item] | None | Unset): With needs=person, the lane's rows per author
-            key, in author key id order; null otherwise (ADR-0074 d19). Since v0.8.0.
+            key, in author key id order; null otherwise (ADR-0074 d19). Since v0.8.3.
     """
 
     items: list[HeldPageItemsItem]

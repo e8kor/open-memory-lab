@@ -79,7 +79,7 @@ def sync_detailed(
 
      Requires: the key that opened the session; any other key, and an id no session has, answers
     access.not_found (ADR-0004 d3, as amended 2026-11-17). A session past its expiry that no sweep has
-    reached yet reads expired. The session's key is never answered. Since v0.8.2.
+    reached yet reads expired. The session's key is never answered. Since v0.8.3.
 
     Args:
         upload_id (str):
@@ -121,7 +121,7 @@ def sync(
 
      Requires: the key that opened the session; any other key, and an id no session has, answers
     access.not_found (ADR-0004 d3, as amended 2026-11-17). A session past its expiry that no sweep has
-    reached yet reads expired. The session's key is never answered. Since v0.8.2.
+    reached yet reads expired. The session's key is never answered. Since v0.8.3.
 
     Args:
         upload_id (str):
@@ -158,7 +158,7 @@ async def asyncio_detailed(
 
      Requires: the key that opened the session; any other key, and an id no session has, answers
     access.not_found (ADR-0004 d3, as amended 2026-11-17). A session past its expiry that no sweep has
-    reached yet reads expired. The session's key is never answered. Since v0.8.2.
+    reached yet reads expired. The session's key is never answered. Since v0.8.3.
 
     Args:
         upload_id (str):
@@ -198,7 +198,7 @@ async def asyncio(
 
      Requires: the key that opened the session; any other key, and an id no session has, answers
     access.not_found (ADR-0004 d3, as amended 2026-11-17). A session past its expiry that no sweep has
-    reached yet reads expired. The session's key is never answered. Since v0.8.2.
+    reached yet reads expired. The session's key is never answered. Since v0.8.3.
 
     Args:
         upload_id (str):

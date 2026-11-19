@@ -1,7 +1,7 @@
 ---
 status: Stable
 verified: 2026-11-19
-answers: "how to upgrade an OML server: how migrations run, the upgrade steps in order, what rollback does and does not mean, the upgrade from a pre-0.3.1 install, the v0.5.4 fix, how to move from v0.3, the v0.8.0 rename that clients take before the server, what the v0.8.3 migrations cost and what waits during them, and the storage.url to set before v0.8.2's uploads"
+answers: "how to upgrade an OML server: how migrations run, the upgrade steps in order, what rollback does and does not mean, the upgrade from a pre-0.3.1 install, the v0.5.4 fix, how to move from v0.3, the v0.8.3 rename that clients take before the server, what the v0.8.3 migrations cost and what waits during them, and the storage.url to set before v0.8.3's uploads"
 ---
 
 # Upgrade OML
@@ -83,57 +83,47 @@ spellings that a new server refuses, and each refusal names the new spelling.
 Update the plugin with `claude plugin update oml@open-memory-lab`. Then set its `url` and `api_key` with
 `/plugin configure oml@open-memory-lab`. The plugin serves no tools until both are set.
 
-## Upgrading to v0.8.2: set `storage.url` before using uploads
+## Upgrading to v0.8.3
 
 v0.8.0 to v0.8.2 were never released: this section applies to an upgrade from v0.7.3 to v0.8.3.
 
-v0.8.2 adds upload sessions, which keep their encrypted parts in the directory `storage.url` names
-([ADR-0004](../adr/ADR-0004-bodies-and-attachments.md) d3). The default, `oml-objects`, is relative to
-the server's working directory, which a systemd unit or a container often cannot write. The server
-starts without it: it logs `upload_store_unavailable` once with the reason, serves every other route,
-and refuses each upload and import with `upload.storage_failed` (503) until the directory can be
-created. Before uploads or imports are used, set `storage.url` (`OML_STORAGE__URL`) to an absolute
-path the server's user can write, for example `/var/lib/oml/objects` under a unit whose
-`StateDirectory=oml`. `oml doctor` warns `upload_store_unavailable` while the directory cannot be
-opened, and the next sweep, within five minutes, or the next upload opens it once it can. The release image
-sets `OML_STORAGE__URL=/var/lib/oml/objects`, and an environment variable wins over the TOML file, so a
-`[storage] url` in a configuration file is ignored under the image unless the variable is set too. The
-Compose file mounts a writable volume at that directory, and the Helm chart sets
-`/var/lib/oml/objects/store`, a directory the server creates below its volume, because the volume's own
-root belongs to root and the server never changes the mode of a directory it does not own.
+v0.8.3 is one upgrade with four parts, each below: the rename that clients take in the same window
+as the server, the migrations whose time adds to the outage, the `storage.url` to set before uploads
+and imports are used (an export writes no file on the server), and the rescan the new scanner rule
+set asks for. Read all four before the window is announced.
 
-## Upgrading to v0.8.0: workspaces, reviewer, protected, frozen, used by
+### Workspaces, reviewer, protected, frozen, used by: clients upgrade with the server
 
-v0.8.0 to v0.8.2 were never released: this section applies to an upgrade from v0.7.3 to v0.8.3.
-
-v0.8.0 renames five names on every surface in one cut, with no alias
+v0.8.3 renames five names on every surface in one cut, with no alias
 ([ADR-0091](../adr/ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md)):
 workareas become workspaces, the role `dreamer` becomes `reviewer`, the statuses `committed` and
 `validated` become `protected` and `frozen`, and a key's `held_by` becomes `used_by`, its value
-`human` becoming `person`. A v0.8.0 server reads a former name as unknown input: a former path
+`human` becoming `person`. A v0.8.3 server reads a former name as unknown input: a former path
 answers 404, a former field or enum value is `request.validation`, and a former query parameter or
 environment variable is ignored. A v0.7 client that names its workspace only by the former query
 parameter is therefore not refused, and its write lands, held, in its key's default workspace. The
 header that v0.4.0 already retired is still refused naming its successor.
 
 **Clients and the server upgrade in one window.** The cut breaks both ways: a v0.7 client fails
-against a v0.8.0 server, and a v0.8.0 client fails against a v0.7 server. Announce one window to
+against a v0.8.3 server, and a v0.8.3 client fails against a v0.7 server. Announce one window to
 every key holder, upgrade the server in it, and have every key holder upgrade the CLI, the plugins
 and the SDKs in the same window. The notice to send before the date:
 
-> OML v0.8.0 renames workareas to workspaces. A v0.7 CLI, plugin, SDK or console bookmark stops
-> working against a v0.8.0 server, and a v0.8.0 one does not work against a v0.7 server: paths,
+> OML v0.8.3 renames workareas to workspaces. A v0.7 CLI, plugin, SDK or console bookmark stops
+> working against a v0.8.3 server, and a v0.8.3 one does not work against a v0.7 server: paths,
 > fields, the MCP tool `oml_workarea` (now `oml_workspace`), the CLI noun, `OML_CHAT_WORKAREA` and
 > the plugin setting `chat_workarea` all change. Upgrade the CLI, plugins and SDKs in the announced
-> window: v0.8.0 ignores an old client's workarea query parameter, so a write it sends can land in
+> window: v0.8.3 ignores an old client's workarea query parameter, so a write it sends can land in
 > the key's default workspace. Set `chat_workspace`, and update saved permission rules that name
 > `oml_workarea`. Memories, keys, grants and workspace names are unchanged. The role `dreamer` is
 > now `reviewer`: `--role reviewer` and grants such as `dev:reviewer`. The statuses `committed`
 > and `validated` are now `protected` and `frozen`, and a key's `held_by` is now `used_by`, with
 > `human` now `person`. Existing keys, grants and workspaces are converted by the upgrade. A read
 > without a query now lists the catalog of what the key reads (`oml_read`'s `own` defaults to
-> `false`, `oml read` with no flags, the SDKs' iterators), `kind` is now `kinds`, and a recall
-> with no `kinds` also returns skill and guardrail hits.
+> `false`, so an agent asks for its own work with `own: true`; `oml read` with no flags; the SDKs'
+> iterators), `kind` is now `kinds` on recall, the listing and the admin search, `oml read --all`
+> and `--kind` are removed, and a recall with no `kinds` also returns skill, guardrail and document
+> hits; a test is never a recall hit. The Rust SDK's `RecallResponse.steering` is now an `Option`.
 
 **Before the server.** Take a backup and verify that it restores
 ([restore](restore.md)): migration 0047 has no reverse, and only that verified dump undoes it.
@@ -163,9 +153,7 @@ held version reviewed as usual. Bookmarks of the pages `use/workareas/` and
 `architecture/workareas/` answer 404; the pages are now [workspaces](../use/workspaces.md) and
 [how workspaces grant access](../architecture/workspaces.md).
 
-## Upgrading to v0.8.3: what the migrations cost
-
-v0.8.0 to v0.8.2 were never released: this section applies to an upgrade from v0.7.3 to v0.8.3.
+### What the migrations cost
 
 The server runs the migrations from 0047 on at boot, before it serves, so their time adds to the
 outage of [Upgrade in order](#upgrade-in-order). The rest change the catalog, add empty tables or
@@ -186,9 +174,36 @@ after each step, so a run that fails resumes where it stopped.
 On one server nothing else writes while the migrations run, so these waits lengthen the outage
 rather than stall requests. The work of 0060 and 0062 grows with each tenant's postings and
 versions: rehearse on a copy ([step 3](#upgrade-in-order)) and time both on the data before the
-window is announced. Before the window, also read [the rename](#upgrading-to-v080-workspaces-reviewer-protected-frozen-used-by),
+window is announced. Before the window, also read [the rename](#workspaces-reviewer-protected-frozen-used-by-clients-upgrade-with-the-server),
 and set `storage.url` before uploads or imports are used:
-see [set `storage.url` before using uploads](#upgrading-to-v082-set-storageurl-before-using-uploads).
+see [set `storage.url` before using uploads](#set-storageurl-before-using-uploads).
+
+### Set `storage.url` before using uploads
+
+v0.8.3 adds upload sessions, which keep their encrypted parts in the directory `storage.url` names
+([ADR-0004](../adr/ADR-0004-bodies-and-attachments.md) d3). The default, `oml-objects`, is relative to
+the server's working directory, which a systemd unit or a container often cannot write. The server
+starts without it: it logs `upload_store_unavailable` once with the reason, serves every other route,
+and refuses each upload and import with `upload.storage_failed` (503) until the directory can be
+created. Before uploads or imports are used, set `storage.url` (`OML_STORAGE__URL`) to an absolute
+path the server's user can write, for example `/var/lib/oml/objects` under a unit whose
+`StateDirectory=oml`. `oml doctor` warns `upload_store_unavailable` while the directory cannot be
+opened, and the next sweep, within five minutes, or the next upload opens it once it can. The release image
+sets `OML_STORAGE__URL=/var/lib/oml/objects`, and an environment variable wins over the TOML file, so a
+`[storage] url` in a configuration file is ignored under the image unless the variable is set too. The
+Compose file mounts a writable volume at that directory, and the Helm chart sets
+`/var/lib/oml/objects/store`, a directory the server creates below its volume, because the volume's own
+root belongs to root and the server never changes the mode of a directory it does not own.
+
+### Rescan held versions under `oml-scan/1.3`
+
+v0.8.3 moves the scanner's rule set from `oml-scan/1.2` to `oml-scan/1.3`, which vetoes an age identity
+([ADR-0065](../adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md) d1, d2),
+so the release notes carry the marker `<!-- oml-deployer: post-step admin-rescan-record-held -->`,
+which an installer may read. After the server is up, run
+`oml admin rescan --record-held` under an admin key. Until it has run, `oml doctor` warns
+`scan_held_unrescanned` and `scan_rescan_due` for the versions scanned under `oml-scan/1.2`; nothing is
+demoted or deleted meanwhile.
 
 ## Upgrading from v0.3
 

@@ -14,7 +14,7 @@ profile, is refused `review.person_required`, and the rule stays held. A service
 nothing at all (`access.verb_ceiling`).
 
 - **Where it applies.** From the agent's workspace and, as an administrator sets on its key, the
-  workspaces above it. Each rule is shown with where it was set, when it was approved and whose key approved it; a rule approved before v0.8.0 may show an agent's key. On the web,
+  workspaces above it. Each rule is shown with where it was set, when it was approved and whose key approved it; a rule approved before v0.8.3 may show an agent's key. On the web,
   Guardrails offers a workspace choice and shows whether the key reads that workspace alone or its
   readable parents too.
 - **Loaded at the start.** The plugin's session-start hook puts the rules in front of the agent

@@ -117,7 +117,7 @@ def sync_detailed(
     upload.expired. The part is stored as XChaCha20-Poly1305 ciphertext under the session's own key, and
     the session's expiry moves to 24 hours on, never past 72 hours after it opened. A part is addressed
     by its number, so no Idempotency-Key is taken: a retry after an interruption sends the parts GET
-    /v2/uploads/{upload_id} names missing. Since v0.8.2.
+    /v2/uploads/{upload_id} names missing. Since v0.8.3.
 
     Args:
         upload_id (str):
@@ -170,7 +170,7 @@ def sync(
     upload.expired. The part is stored as XChaCha20-Poly1305 ciphertext under the session's own key, and
     the session's expiry moves to 24 hours on, never past 72 hours after it opened. A part is addressed
     by its number, so no Idempotency-Key is taken: a retry after an interruption sends the parts GET
-    /v2/uploads/{upload_id} names missing. Since v0.8.2.
+    /v2/uploads/{upload_id} names missing. Since v0.8.3.
 
     Args:
         upload_id (str):
@@ -218,7 +218,7 @@ async def asyncio_detailed(
     upload.expired. The part is stored as XChaCha20-Poly1305 ciphertext under the session's own key, and
     the session's expiry moves to 24 hours on, never past 72 hours after it opened. A part is addressed
     by its number, so no Idempotency-Key is taken: a retry after an interruption sends the parts GET
-    /v2/uploads/{upload_id} names missing. Since v0.8.2.
+    /v2/uploads/{upload_id} names missing. Since v0.8.3.
 
     Args:
         upload_id (str):
@@ -269,7 +269,7 @@ async def asyncio(
     upload.expired. The part is stored as XChaCha20-Poly1305 ciphertext under the session's own key, and
     the session's expiry moves to 24 hours on, never past 72 hours after it opened. A part is addressed
     by its number, so no Idempotency-Key is taken: a retry after an interruption sends the parts GET
-    /v2/uploads/{upload_id} names missing. Since v0.8.2.
+    /v2/uploads/{upload_id} names missing. Since v0.8.3.
 
     Args:
         upload_id (str):

@@ -80,7 +80,7 @@ def sync_detailed(
      Requires: the key that ran the import; any other key, and an id no import has, answers
     access.not_found (ADR-0084 d15). state is running, done or failed; a running import outlives no
     request, so one read running stopped when the server did, and position is the versions it recorded.
-    Since v0.8.2.
+    Since v0.8.3.
 
     Args:
         import_id (str):
@@ -123,7 +123,7 @@ def sync(
      Requires: the key that ran the import; any other key, and an id no import has, answers
     access.not_found (ADR-0084 d15). state is running, done or failed; a running import outlives no
     request, so one read running stopped when the server did, and position is the versions it recorded.
-    Since v0.8.2.
+    Since v0.8.3.
 
     Args:
         import_id (str):
@@ -161,7 +161,7 @@ async def asyncio_detailed(
      Requires: the key that ran the import; any other key, and an id no import has, answers
     access.not_found (ADR-0084 d15). state is running, done or failed; a running import outlives no
     request, so one read running stopped when the server did, and position is the versions it recorded.
-    Since v0.8.2.
+    Since v0.8.3.
 
     Args:
         import_id (str):
@@ -202,7 +202,7 @@ async def asyncio(
      Requires: the key that ran the import; any other key, and an id no import has, answers
     access.not_found (ADR-0084 d15). state is running, done or failed; a running import outlives no
     request, so one read running stopped when the server did, and position is the versions it recorded.
-    Since v0.8.2.
+    Since v0.8.3.
 
     Args:
         import_id (str):

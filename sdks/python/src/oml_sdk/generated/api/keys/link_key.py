@@ -115,7 +115,7 @@ def sync_detailed(
     runs as the key, with its grants and verb ceilings. The header sent twice, on another route, without
     a capacity credential, or naming a key the link no longer admits answers auth.invalid with
     details.reason acting_key_not_linked and runs nothing (ADR-0085 d16, amended 2026-11-17). The
-    Idempotency-Key is required and not replayed. Since v0.8.0.
+    Idempotency-Key is required and not replayed. Since v0.8.3.
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -179,7 +179,7 @@ def sync(
     runs as the key, with its grants and verb ceilings. The header sent twice, on another route, without
     a capacity credential, or naming a key the link no longer admits answers auth.invalid with
     details.reason acting_key_not_linked and runs nothing (ADR-0085 d16, amended 2026-11-17). The
-    Idempotency-Key is required and not replayed. Since v0.8.0.
+    Idempotency-Key is required and not replayed. Since v0.8.3.
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -238,7 +238,7 @@ async def asyncio_detailed(
     runs as the key, with its grants and verb ceilings. The header sent twice, on another route, without
     a capacity credential, or naming a key the link no longer admits answers auth.invalid with
     details.reason acting_key_not_linked and runs nothing (ADR-0085 d16, amended 2026-11-17). The
-    Idempotency-Key is required and not replayed. Since v0.8.0.
+    Idempotency-Key is required and not replayed. Since v0.8.3.
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -300,7 +300,7 @@ async def asyncio(
     runs as the key, with its grants and verb ceilings. The header sent twice, on another route, without
     a capacity credential, or naming a key the link no longer admits answers auth.invalid with
     details.reason acting_key_not_linked and runs nothing (ADR-0085 d16, amended 2026-11-17). The
-    Idempotency-Key is required and not replayed. Since v0.8.0.
+    Idempotency-Key is required and not replayed. Since v0.8.3.
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a

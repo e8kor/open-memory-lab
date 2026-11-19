@@ -20,7 +20,7 @@ class HeldNamedItemsItem:
     Attributes:
         id (UUID):
         needs_person (bool): true when only a person's reviewer key approves the row: it, or the version it replaces, is
-            steering or a guardrail (ADR-0080 d16); false when item is null. Since v0.8.0.
+            steering or a guardrail (ADR-0080 d16); false when item is null. Since v0.8.3.
         item (Memory | None): The row as the held listing serves its text, or null when it is no longer held or no
             longer the key's to judge.
     """

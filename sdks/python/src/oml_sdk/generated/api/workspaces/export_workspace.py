@@ -97,7 +97,7 @@ def sync_detailed(
     refuses with export.disabled; a subtree node the key cannot read refuses the whole export with
     export.not_readable. Journals workspace.exported with the manifest digest, the counts and the
     recipients' fingerprints, and counts the bytes on the exports meter. Each call exports again under a
-    new salt, so it takes no Idempotency-Key. Since v0.8.2.
+    new salt, so it takes no Idempotency-Key. Since v0.8.3.
 
     Args:
         workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
@@ -158,7 +158,7 @@ def sync(
     refuses with export.disabled; a subtree node the key cannot read refuses the whole export with
     export.not_readable. Journals workspace.exported with the manifest digest, the counts and the
     recipients' fingerprints, and counts the bytes on the exports meter. Each call exports again under a
-    new salt, so it takes no Idempotency-Key. Since v0.8.2.
+    new salt, so it takes no Idempotency-Key. Since v0.8.3.
 
     Args:
         workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
@@ -214,7 +214,7 @@ async def asyncio_detailed(
     refuses with export.disabled; a subtree node the key cannot read refuses the whole export with
     export.not_readable. Journals workspace.exported with the manifest digest, the counts and the
     recipients' fingerprints, and counts the bytes on the exports meter. Each call exports again under a
-    new salt, so it takes no Idempotency-Key. Since v0.8.2.
+    new salt, so it takes no Idempotency-Key. Since v0.8.3.
 
     Args:
         workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
@@ -273,7 +273,7 @@ async def asyncio(
     refuses with export.disabled; a subtree node the key cannot read refuses the whole export with
     export.not_readable. Journals workspace.exported with the manifest digest, the counts and the
     recipients' fingerprints, and counts the bytes on the exports meter. Each call exports again under a
-    new salt, so it takes no Idempotency-Key. Since v0.8.2.
+    new salt, so it takes no Idempotency-Key. Since v0.8.3.
 
     Args:
         workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
