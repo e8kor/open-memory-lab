@@ -3668,6 +3668,101 @@ async fn a_persons_review_key_past_their_quota_is_refused_limit_quota_for_a_clai
     );
 }
 
+/// `mine=true` from a person's web key lists the claim their review key
+/// started in a shared workspace and the proposal it made there, the web
+/// key reads and withdraws that claim, and the review key's own set holds
+/// the web key's held row; a linked tenant key's row stays out of both
+/// (ADR-0083 d3, d13, d14; ADR-0084 I6).
+#[tokio::test]
+async fn mine_lists_the_rows_a_persons_review_key_wrote_and_the_web_key_withdraws_them() {
+    use oml_app::types::AdminState;
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let (alice, review, linked, bob) = team_with_alices_session_and_bobs_writer(&app, admin).await;
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let started = app
+        .submit_memory(
+            Bearer::Session(&review),
+            &submit("r1", "Releases freeze on Thursdays.", Some("team")),
+        )
+        .await
+        .expect("alice's review key starts a claim in team")
+        .receipt
+        .memory_id;
+    let team = written(
+        &app,
+        &bob.value,
+        &submit("b1", "Team ships on Fridays.", Some("team")),
+    )
+    .await;
+    app.post_verdict(Bearer::Session(&review), team, Verdict::Approve, None)
+        .await
+        .expect("alice approves bob's row");
+    let proposed = app
+        .supersede(
+            Bearer::Session(&review),
+            &supersede_req("r2", team, "Team ships on Thursdays."),
+        )
+        .await
+        .expect("alice's review key proposes")
+        .receipt
+        .memory_id;
+    let by_linked = written(
+        &app,
+        &linked.value,
+        &submit("l1", "A linked write.", Some("team")),
+    )
+    .await;
+    let own = app
+        .submit_memory(
+            Bearer::Session(&web),
+            &submit("w1", "Typed in the console.", Some("alice")),
+        )
+        .await
+        .expect("the web key writes in its root")
+        .receipt
+        .memory_id;
+    let mine = listed_ids(
+        &app,
+        &web,
+        &mine_listing(vec![AdminState::Held], Vec::new(), None),
+    )
+    .await;
+    assert!(mine.contains(&started), "the review key's claim: {mine:?}");
+    assert!(
+        mine.contains(&proposed),
+        "the review key's proposal: {mine:?}"
+    );
+    assert!(mine.contains(&own));
+    assert!(
+        !mine.contains(&by_linked),
+        "never a linked tenant key's row"
+    );
+    let reviews = listed_ids(
+        &app,
+        &review,
+        &mine_listing(vec![AdminState::Held], Vec::new(), None),
+    )
+    .await;
+    assert!(
+        reviews.contains(&own),
+        "the review key's own set holds the web key's"
+    );
+    assert!(!reviews.contains(&by_linked));
+    app.get_memory(Bearer::Session(&web), started)
+        .await
+        .expect("the web key reads its person's held claim");
+    let (receipt, _) = app
+        .withdraw(Bearer::Session(&web), &withdraw_req("x1", started))
+        .await
+        .expect("the web key withdraws it");
+    assert_eq!(receipt.state, "withdrawn");
+}
+
 /// The claim a person's session reviewer key started is judged by no key of
 /// that person outside their root: the key itself is in its lineage, and
 /// the person's linked reviewer key is refused `same_person`; another
