@@ -115,7 +115,7 @@ is optional and is journaled as the verdict's reason. Both answer
 `verdict recorded — <artifact_id> is <state> (journal seq <n>)`.
 
 A rejection is journaled, never silent. The author sees `rejected` in its own listing
-(`oml read --state rejected`). The reason is in the journal, and `oml read` does not show it.
+(`oml read --own --state rejected`). The reason is in the journal, and `oml read` does not show it.
 Reopening a rejection is not available.
 
 After approval the memory is `promoted`. Any key with `reader` on its workspace or an ancestor finds

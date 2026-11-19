@@ -12,7 +12,7 @@ A recall returns promoted memories that the key can read, ranked by the chosen s
 
 A recall returns promoted memories inside the key's effective access ([workspaces](workspaces.md)). It hides two kinds of row:
 
-- **Held memories** are visible to their author (`oml read`, and recall with `--include-unreviewed`), to the reviewer a memory is served to, to an admin through the journaled admin read, and, inside an in-progress workspace, to its readers and to readers of the workspaces above it, when the scan raised no finding.
+- **Held memories** are visible to their author (`oml read --own`, and recall with `--include-unreviewed`), to the reviewer a memory is served to, to an admin through the journaled admin read, and, inside an in-progress workspace, to its readers and to readers of the workspaces above it, when the scan raised no finding.
 - **Demoted and erased memories** are not served.
 
 Superseded versions stay readable by id as history. They are never hits.

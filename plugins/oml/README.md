@@ -348,7 +348,7 @@ written for the 0.3 read tools, `oml_recall`, `oml_get`, `oml_my_work`, `oml_wor
 `oml_events_tail`, allow nothing any more: replace them with the two rules above, or with
 `mcp__plugin_oml_oml`. Run `claude plugin update oml@open-memory-lab` and install the 0.4.0
 CLI, so the skill and the session-start hook name the new tools. The events tail is no longer a
-tool: an agent learns what became of its writes with `oml_read` and `state`, and an auditor reads
+tool: an agent learns what became of its writes with `oml_read`, `own: true` and `state`, and an auditor reads
 `GET /v2/events`.
 
 ## What is served today
