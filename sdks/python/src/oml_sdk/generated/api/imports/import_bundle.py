@@ -130,32 +130,33 @@ def sync_detailed(
 ) -> Response[ErrorEnvelope | ImportAnswer | ImportStatus]:
     """Plan or run an import of a completed upload into an in-progress workspace; every version lands held.
 
-     Requires: a writer key used by a person; any other key is access.verb_ceiling with details.reason
-    import_person_only (ADR-0084 d11). upload_id is a completed upload session of purpose import that
-    this key opened (ADR-0004 d3), holding the decrypted bundle; another key's is access.not_found, one
-    in another state upload.session_invalid, one past its expiry 410 upload.expired. target is a
-    development workspace in progress the key writes, or a bare name this key may create, which the
-    import creates in progress; any other target is 409 import.target_not_in_progress, and a taken name
-    name.taken (ADR-0084 d6, d9). The bundle is verified before anything is written, each check under
-    its own bundle.* code (d7). expect_key is the source key's fingerprint, 64 hex digits; the first
-    import from a source requires it (request.validation, details.field /expect_key, details.reason
-    first_import) and pins it, and a later bundle under another key, or with none named, is 409
-    import.source_key_changed (R11). A bundle older than the last imported from its source is 409
-    import.bundle_older unless allow_older (d8). A plan that does not fit the account's meters is 429
-    import.over_quota and writes nothing. dry_run answers the plan and binds nothing. Otherwise the
-    upload binds once, each claim key is written as the plan says, held by this key with the source's
-    origin kind and its import_provenance, under the idempotency key import:<target>:<source
-    server>:<source tenant>:<artifact>:<version>, so the same bundle again writes nothing; a version the
-    target's scan or rules refuse is skipped and named in refusals. A claim edge whose two ends the
-    target carries is proposed by this key where its verb ceiling allows, which a writer key's does not;
-    every edge not proposed is counted in edges_reported, and a refused proposal is named in refusals as
-    edge:<src>:<dst>. One import or dry run per tenant runs at a time, and two in the server; another is
-    409 import.busy, retryable. A dry run answers 200 with the plan. Otherwise the upload binds, the
-    source key is pinned, and the answer is 202 with the import running; the run goes on after the
-    answer, and GET /v2/imports/{id} answers its state until it is done or failed. The import journals
-    workspace.imported, listing each version it wrote, and the upload's key is nulled when it ends; an
-    import running for more than an hour that the server is not running ends failed at the next sweep.
-    No Idempotency-Key is taken: the upload binds once. Since v0.8.3.
+     Requires: a contributor key used by a person; any other key, a submitter key included, is
+    access.verb_ceiling with details.reason import_person_only (ADR-0084 d11; ADR-0093 d6). upload_id is
+    a completed upload session of purpose import that this key opened (ADR-0004 d3), holding the
+    decrypted bundle; another key's is access.not_found, one in another state upload.session_invalid,
+    one past its expiry 410 upload.expired. target is a development workspace in progress the key
+    writes, or a bare name this key may create, which the import creates in progress; any other target
+    is 409 import.target_not_in_progress, and a taken name name.taken (ADR-0084 d6, d9). The bundle is
+    verified before anything is written, each check under its own bundle.* code (d7). expect_key is the
+    source key's fingerprint, 64 hex digits; the first import from a source requires it
+    (request.validation, details.field /expect_key, details.reason first_import) and pins it, and a
+    later bundle under another key, or with none named, is 409 import.source_key_changed (R11). A bundle
+    older than the last imported from its source is 409 import.bundle_older unless allow_older (d8). A
+    plan that does not fit the account's meters is 429 import.over_quota and writes nothing. dry_run
+    answers the plan and binds nothing. Otherwise the upload binds once, each claim key is written as
+    the plan says, held by this key with the source's origin kind and its import_provenance, under the
+    idempotency key import:<target>:<source server>:<source tenant>:<artifact>:<version>, so the same
+    bundle again writes nothing; a version the target's scan or rules refuse is skipped and named in
+    refusals. A claim edge whose two ends the target carries is proposed by this key where its verb
+    ceiling allows, which a contributor key's does not; every edge not proposed is counted in
+    edges_reported, and a refused proposal is named in refusals as edge:<src>:<dst>. One import or dry
+    run per tenant runs at a time, and two in the server; another is 409 import.busy, retryable. A dry
+    run answers 200 with the plan. Otherwise the upload binds, the source key is pinned, and the answer
+    is 202 with the import running; the run goes on after the answer, and GET /v2/imports/{id} answers
+    its state until it is done or failed. The import journals workspace.imported, listing each version
+    it wrote, and the upload's key is nulled when it ends; an import running for more than an hour that
+    the server is not running ends failed at the next sweep. No Idempotency-Key is taken: the upload
+    binds once. Since v0.8.3.
 
     Args:
         x_request_id (str | Unset):
@@ -195,32 +196,33 @@ def sync(
 ) -> ErrorEnvelope | ImportAnswer | ImportStatus | None:
     """Plan or run an import of a completed upload into an in-progress workspace; every version lands held.
 
-     Requires: a writer key used by a person; any other key is access.verb_ceiling with details.reason
-    import_person_only (ADR-0084 d11). upload_id is a completed upload session of purpose import that
-    this key opened (ADR-0004 d3), holding the decrypted bundle; another key's is access.not_found, one
-    in another state upload.session_invalid, one past its expiry 410 upload.expired. target is a
-    development workspace in progress the key writes, or a bare name this key may create, which the
-    import creates in progress; any other target is 409 import.target_not_in_progress, and a taken name
-    name.taken (ADR-0084 d6, d9). The bundle is verified before anything is written, each check under
-    its own bundle.* code (d7). expect_key is the source key's fingerprint, 64 hex digits; the first
-    import from a source requires it (request.validation, details.field /expect_key, details.reason
-    first_import) and pins it, and a later bundle under another key, or with none named, is 409
-    import.source_key_changed (R11). A bundle older than the last imported from its source is 409
-    import.bundle_older unless allow_older (d8). A plan that does not fit the account's meters is 429
-    import.over_quota and writes nothing. dry_run answers the plan and binds nothing. Otherwise the
-    upload binds once, each claim key is written as the plan says, held by this key with the source's
-    origin kind and its import_provenance, under the idempotency key import:<target>:<source
-    server>:<source tenant>:<artifact>:<version>, so the same bundle again writes nothing; a version the
-    target's scan or rules refuse is skipped and named in refusals. A claim edge whose two ends the
-    target carries is proposed by this key where its verb ceiling allows, which a writer key's does not;
-    every edge not proposed is counted in edges_reported, and a refused proposal is named in refusals as
-    edge:<src>:<dst>. One import or dry run per tenant runs at a time, and two in the server; another is
-    409 import.busy, retryable. A dry run answers 200 with the plan. Otherwise the upload binds, the
-    source key is pinned, and the answer is 202 with the import running; the run goes on after the
-    answer, and GET /v2/imports/{id} answers its state until it is done or failed. The import journals
-    workspace.imported, listing each version it wrote, and the upload's key is nulled when it ends; an
-    import running for more than an hour that the server is not running ends failed at the next sweep.
-    No Idempotency-Key is taken: the upload binds once. Since v0.8.3.
+     Requires: a contributor key used by a person; any other key, a submitter key included, is
+    access.verb_ceiling with details.reason import_person_only (ADR-0084 d11; ADR-0093 d6). upload_id is
+    a completed upload session of purpose import that this key opened (ADR-0004 d3), holding the
+    decrypted bundle; another key's is access.not_found, one in another state upload.session_invalid,
+    one past its expiry 410 upload.expired. target is a development workspace in progress the key
+    writes, or a bare name this key may create, which the import creates in progress; any other target
+    is 409 import.target_not_in_progress, and a taken name name.taken (ADR-0084 d6, d9). The bundle is
+    verified before anything is written, each check under its own bundle.* code (d7). expect_key is the
+    source key's fingerprint, 64 hex digits; the first import from a source requires it
+    (request.validation, details.field /expect_key, details.reason first_import) and pins it, and a
+    later bundle under another key, or with none named, is 409 import.source_key_changed (R11). A bundle
+    older than the last imported from its source is 409 import.bundle_older unless allow_older (d8). A
+    plan that does not fit the account's meters is 429 import.over_quota and writes nothing. dry_run
+    answers the plan and binds nothing. Otherwise the upload binds once, each claim key is written as
+    the plan says, held by this key with the source's origin kind and its import_provenance, under the
+    idempotency key import:<target>:<source server>:<source tenant>:<artifact>:<version>, so the same
+    bundle again writes nothing; a version the target's scan or rules refuse is skipped and named in
+    refusals. A claim edge whose two ends the target carries is proposed by this key where its verb
+    ceiling allows, which a contributor key's does not; every edge not proposed is counted in
+    edges_reported, and a refused proposal is named in refusals as edge:<src>:<dst>. One import or dry
+    run per tenant runs at a time, and two in the server; another is 409 import.busy, retryable. A dry
+    run answers 200 with the plan. Otherwise the upload binds, the source key is pinned, and the answer
+    is 202 with the import running; the run goes on after the answer, and GET /v2/imports/{id} answers
+    its state until it is done or failed. The import journals workspace.imported, listing each version
+    it wrote, and the upload's key is nulled when it ends; an import running for more than an hour that
+    the server is not running ends failed at the next sweep. No Idempotency-Key is taken: the upload
+    binds once. Since v0.8.3.
 
     Args:
         x_request_id (str | Unset):
@@ -255,32 +257,33 @@ async def asyncio_detailed(
 ) -> Response[ErrorEnvelope | ImportAnswer | ImportStatus]:
     """Plan or run an import of a completed upload into an in-progress workspace; every version lands held.
 
-     Requires: a writer key used by a person; any other key is access.verb_ceiling with details.reason
-    import_person_only (ADR-0084 d11). upload_id is a completed upload session of purpose import that
-    this key opened (ADR-0004 d3), holding the decrypted bundle; another key's is access.not_found, one
-    in another state upload.session_invalid, one past its expiry 410 upload.expired. target is a
-    development workspace in progress the key writes, or a bare name this key may create, which the
-    import creates in progress; any other target is 409 import.target_not_in_progress, and a taken name
-    name.taken (ADR-0084 d6, d9). The bundle is verified before anything is written, each check under
-    its own bundle.* code (d7). expect_key is the source key's fingerprint, 64 hex digits; the first
-    import from a source requires it (request.validation, details.field /expect_key, details.reason
-    first_import) and pins it, and a later bundle under another key, or with none named, is 409
-    import.source_key_changed (R11). A bundle older than the last imported from its source is 409
-    import.bundle_older unless allow_older (d8). A plan that does not fit the account's meters is 429
-    import.over_quota and writes nothing. dry_run answers the plan and binds nothing. Otherwise the
-    upload binds once, each claim key is written as the plan says, held by this key with the source's
-    origin kind and its import_provenance, under the idempotency key import:<target>:<source
-    server>:<source tenant>:<artifact>:<version>, so the same bundle again writes nothing; a version the
-    target's scan or rules refuse is skipped and named in refusals. A claim edge whose two ends the
-    target carries is proposed by this key where its verb ceiling allows, which a writer key's does not;
-    every edge not proposed is counted in edges_reported, and a refused proposal is named in refusals as
-    edge:<src>:<dst>. One import or dry run per tenant runs at a time, and two in the server; another is
-    409 import.busy, retryable. A dry run answers 200 with the plan. Otherwise the upload binds, the
-    source key is pinned, and the answer is 202 with the import running; the run goes on after the
-    answer, and GET /v2/imports/{id} answers its state until it is done or failed. The import journals
-    workspace.imported, listing each version it wrote, and the upload's key is nulled when it ends; an
-    import running for more than an hour that the server is not running ends failed at the next sweep.
-    No Idempotency-Key is taken: the upload binds once. Since v0.8.3.
+     Requires: a contributor key used by a person; any other key, a submitter key included, is
+    access.verb_ceiling with details.reason import_person_only (ADR-0084 d11; ADR-0093 d6). upload_id is
+    a completed upload session of purpose import that this key opened (ADR-0004 d3), holding the
+    decrypted bundle; another key's is access.not_found, one in another state upload.session_invalid,
+    one past its expiry 410 upload.expired. target is a development workspace in progress the key
+    writes, or a bare name this key may create, which the import creates in progress; any other target
+    is 409 import.target_not_in_progress, and a taken name name.taken (ADR-0084 d6, d9). The bundle is
+    verified before anything is written, each check under its own bundle.* code (d7). expect_key is the
+    source key's fingerprint, 64 hex digits; the first import from a source requires it
+    (request.validation, details.field /expect_key, details.reason first_import) and pins it, and a
+    later bundle under another key, or with none named, is 409 import.source_key_changed (R11). A bundle
+    older than the last imported from its source is 409 import.bundle_older unless allow_older (d8). A
+    plan that does not fit the account's meters is 429 import.over_quota and writes nothing. dry_run
+    answers the plan and binds nothing. Otherwise the upload binds once, each claim key is written as
+    the plan says, held by this key with the source's origin kind and its import_provenance, under the
+    idempotency key import:<target>:<source server>:<source tenant>:<artifact>:<version>, so the same
+    bundle again writes nothing; a version the target's scan or rules refuse is skipped and named in
+    refusals. A claim edge whose two ends the target carries is proposed by this key where its verb
+    ceiling allows, which a contributor key's does not; every edge not proposed is counted in
+    edges_reported, and a refused proposal is named in refusals as edge:<src>:<dst>. One import or dry
+    run per tenant runs at a time, and two in the server; another is 409 import.busy, retryable. A dry
+    run answers 200 with the plan. Otherwise the upload binds, the source key is pinned, and the answer
+    is 202 with the import running; the run goes on after the answer, and GET /v2/imports/{id} answers
+    its state until it is done or failed. The import journals workspace.imported, listing each version
+    it wrote, and the upload's key is nulled when it ends; an import running for more than an hour that
+    the server is not running ends failed at the next sweep. No Idempotency-Key is taken: the upload
+    binds once. Since v0.8.3.
 
     Args:
         x_request_id (str | Unset):
@@ -318,32 +321,33 @@ async def asyncio(
 ) -> ErrorEnvelope | ImportAnswer | ImportStatus | None:
     """Plan or run an import of a completed upload into an in-progress workspace; every version lands held.
 
-     Requires: a writer key used by a person; any other key is access.verb_ceiling with details.reason
-    import_person_only (ADR-0084 d11). upload_id is a completed upload session of purpose import that
-    this key opened (ADR-0004 d3), holding the decrypted bundle; another key's is access.not_found, one
-    in another state upload.session_invalid, one past its expiry 410 upload.expired. target is a
-    development workspace in progress the key writes, or a bare name this key may create, which the
-    import creates in progress; any other target is 409 import.target_not_in_progress, and a taken name
-    name.taken (ADR-0084 d6, d9). The bundle is verified before anything is written, each check under
-    its own bundle.* code (d7). expect_key is the source key's fingerprint, 64 hex digits; the first
-    import from a source requires it (request.validation, details.field /expect_key, details.reason
-    first_import) and pins it, and a later bundle under another key, or with none named, is 409
-    import.source_key_changed (R11). A bundle older than the last imported from its source is 409
-    import.bundle_older unless allow_older (d8). A plan that does not fit the account's meters is 429
-    import.over_quota and writes nothing. dry_run answers the plan and binds nothing. Otherwise the
-    upload binds once, each claim key is written as the plan says, held by this key with the source's
-    origin kind and its import_provenance, under the idempotency key import:<target>:<source
-    server>:<source tenant>:<artifact>:<version>, so the same bundle again writes nothing; a version the
-    target's scan or rules refuse is skipped and named in refusals. A claim edge whose two ends the
-    target carries is proposed by this key where its verb ceiling allows, which a writer key's does not;
-    every edge not proposed is counted in edges_reported, and a refused proposal is named in refusals as
-    edge:<src>:<dst>. One import or dry run per tenant runs at a time, and two in the server; another is
-    409 import.busy, retryable. A dry run answers 200 with the plan. Otherwise the upload binds, the
-    source key is pinned, and the answer is 202 with the import running; the run goes on after the
-    answer, and GET /v2/imports/{id} answers its state until it is done or failed. The import journals
-    workspace.imported, listing each version it wrote, and the upload's key is nulled when it ends; an
-    import running for more than an hour that the server is not running ends failed at the next sweep.
-    No Idempotency-Key is taken: the upload binds once. Since v0.8.3.
+     Requires: a contributor key used by a person; any other key, a submitter key included, is
+    access.verb_ceiling with details.reason import_person_only (ADR-0084 d11; ADR-0093 d6). upload_id is
+    a completed upload session of purpose import that this key opened (ADR-0004 d3), holding the
+    decrypted bundle; another key's is access.not_found, one in another state upload.session_invalid,
+    one past its expiry 410 upload.expired. target is a development workspace in progress the key
+    writes, or a bare name this key may create, which the import creates in progress; any other target
+    is 409 import.target_not_in_progress, and a taken name name.taken (ADR-0084 d6, d9). The bundle is
+    verified before anything is written, each check under its own bundle.* code (d7). expect_key is the
+    source key's fingerprint, 64 hex digits; the first import from a source requires it
+    (request.validation, details.field /expect_key, details.reason first_import) and pins it, and a
+    later bundle under another key, or with none named, is 409 import.source_key_changed (R11). A bundle
+    older than the last imported from its source is 409 import.bundle_older unless allow_older (d8). A
+    plan that does not fit the account's meters is 429 import.over_quota and writes nothing. dry_run
+    answers the plan and binds nothing. Otherwise the upload binds once, each claim key is written as
+    the plan says, held by this key with the source's origin kind and its import_provenance, under the
+    idempotency key import:<target>:<source server>:<source tenant>:<artifact>:<version>, so the same
+    bundle again writes nothing; a version the target's scan or rules refuse is skipped and named in
+    refusals. A claim edge whose two ends the target carries is proposed by this key where its verb
+    ceiling allows, which a contributor key's does not; every edge not proposed is counted in
+    edges_reported, and a refused proposal is named in refusals as edge:<src>:<dst>. One import or dry
+    run per tenant runs at a time, and two in the server; another is 409 import.busy, retryable. A dry
+    run answers 200 with the plan. Otherwise the upload binds, the source key is pinned, and the answer
+    is 202 with the import running; the run goes on after the answer, and GET /v2/imports/{id} answers
+    its state until it is done or failed. The import journals workspace.imported, listing each version
+    it wrote, and the upload's key is nulled when it ends; an import running for more than an hour that
+    the server is not running ends failed at the next sweep. No Idempotency-Key is taken: the upload
+    binds once. Since v0.8.3.
 
     Args:
         x_request_id (str | Unset):

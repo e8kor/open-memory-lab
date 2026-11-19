@@ -70,9 +70,9 @@ A crew is a record (name, charter URI, external manager) OML stores and does not
 
 ## Issue keys by role
 
-A key's role fixes its grants: `writer` takes `reader` and `writer`, `reviewer` takes `reader` and `reviewer`, `reader` takes `reader`, `admin` takes none ([roles and keys](../architecture/roles-and-keys.md)). The server shows each key value once.
+A key's role fixes its grants: `contributor` takes `reader` and `submitter`, at least one of each, `submitter` takes `submitter`, `reviewer` takes `reader` and `reviewer`, `reader` takes `reader`, `admin` takes none ([roles and keys](../architecture/roles-and-keys.md)). The server shows each key value once.
 
-**An agent.** `oml keys issue-agent` issues a writer key with a writer grant on the workspace, a reader grant unless `--write-only`, and the workspace as default. Give each agent its own principal. With `--out` the CLI creates the file owner-only first, refuses a path that exists, and prints lines that read the file, none carrying the value; without it, the verb prints `export` lines. The `oml-admin` plugin runs this from Claude Code with `--out`.
+**An agent.** `oml keys issue-agent` issues a contributor key with a submitter and a reader grant on the workspace, or with `--role submitter` a submitter key with the submitter grant alone, and the workspace as default. Give each agent its own principal. With `--out` the CLI creates the file owner-only first, refuses a path that exists, and prints lines that read the file, none carrying the value; without it, the verb prints `export` lines. The `oml-admin` plugin runs this from Claude Code with `--out`.
 
 **A claude.ai or phone connection.** Add `--connect-code`: the key gets no value; the verb prints the connector URL and a single-use code. It needs `oauth.issuer`, else `oauth.connect_refused`. `oml keys connect-code <key>` mints a fresh code, voiding earlier ones; `--ttl 14d` makes it live up to 30 days, for a key confined to one workspace other than the universe ([claude.ai and mobile](claude-ai-and-mobile.md)).
 

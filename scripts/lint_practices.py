@@ -22,7 +22,10 @@ vocabulary  no former name of ADR-0091 in a tracked file: the words workarea and
             and its value human, and human in an identifier in the holder sense (mode_is_human_only,
             the [needs-human] marker). A hit is allowed only in a path lint_allow/rename.txt lists with a
             reason from ADR-0091 d11 (signed bytes, the former-name map, applied migrations,
-            released history, measured results, dated fixtures, quoted text, this lint).
+            released history, measured results, dated fixtures, quoted text, this lint). It also
+            flags the role writer that ADR-0093 retired (Role::Writer, a "writer" literal,
+            <workspace>:writer, --role writer, --write-only), allowed only where
+            lint_allow/roles.txt says why (ADR-0093 d7).
 
 An escape is a reasoned line comment: `-- lint:allow <rule> <why>` in SQL,
 `// lint:allow-like <why>` in Rust, `lint:allow-5432 <why>` anywhere on the line,
@@ -417,10 +420,23 @@ FORMER = re.compile(
 )
 
 
-def rename_allowed(root: Path, use: bool) -> list[tuple[str, str]]:
-    """The entries of lint_allow/rename.txt: `<glob>  # <reason>` allows a whole path, and
+# ADR-0093 d7: the role writer, retired in v0.8.4, as a role: Role::Writer, a quoted or
+# backquoted "writer" literal (a roles table's cell among them), a `<workspace>:writer` grant,
+# `--role writer`, and the retired `--write-only` flag. The plain word keeps its other senses (the
+# lake writer, its crate and database role, Delta writers, "the writing key"), so it is not read.
+FORMER_ROLE = re.compile(
+    r"\bRole::Writer\b"
+    r"|[\"'`]writer[\"'`]"
+    r"|(?<![\w.])[\w-]*:writer\b"
+    r"|--role[ =]writer\b"
+    r"|--write-only\b|\bwrite_only\b"
+)
+
+
+def rename_allowed(root: Path, use: bool, name: str = "rename.txt") -> list[tuple[str, str]]:
+    """The entries of lint_allow/<name>: `<glob>  # <reason>` allows a whole path, and
     `<glob> | <text>  # <reason>` only the lines of that path holding the text."""
-    f = root / "scripts" / "lint_allow" / "rename.txt"
+    f = root / "scripts" / "lint_allow" / name
     if not use or not f.exists():
         return []
     entries = []
@@ -429,7 +445,7 @@ def rename_allowed(root: Path, use: bool) -> list[tuple[str, str]]:
         if line.lstrip().startswith("#") or not entry.strip():
             continue
         if not reason.strip():
-            raise SystemExit(f"lint_allow/rename.txt: {entry.strip()} names no reason")
+            raise SystemExit(f"lint_allow/{name}: {entry.strip()} names no reason")
         glob, _, needle = entry.partition(" | ")
         entries.append((glob.strip(), needle.strip()))
     return entries
@@ -482,6 +498,29 @@ def lint_vocabulary(root: Path, use_allow: bool = True) -> list[str]:
                      None)
             if m:
                 problems.append(f"{rel}:{i}: former name {m.group(0)!r} (ADR-0091 d11)")
+    problems.extend(lint_former_role(root, use_allow))
+    return problems
+
+
+def lint_former_role(root: Path, use_allow: bool = True) -> list[str]:
+    """ADR-0093 d7: the role writer, as FORMER_ROLE spells it, outside lint_allow/roles.txt."""
+    import fnmatch
+    allow = rename_allowed(root, use_allow, "roles.txt")
+    problems = []
+    for rel in tracked(root):
+        if any(fnmatch.fnmatch(rel, g) and not n for g, n in allow):
+            continue
+        needles = [n for g, n in allow if n and fnmatch.fnmatch(rel, g)]
+        try:
+            text = (root / rel).read_text()
+        except (UnicodeDecodeError, OSError):
+            continue
+        for i, line in enumerate(text.splitlines(), 1):
+            if any(n in line for n in needles):
+                continue
+            m = FORMER_ROLE.search(line)
+            if m:
+                problems.append(f"{rel}:{i}: former role {m.group(0)!r} (ADR-0093 d7)")
     return problems
 
 

@@ -19,7 +19,7 @@ An agent key lets one agent write and recall in one workspace. Every client in t
 The server's address and an email address on its allowlist are required, unless its operator opened sign-up. The page shows the address beside each key it issues.
 
 1. Open the server's address in a browser and sign in with Google or GitHub.
-2. Open the Keys tab. Under "Issue a key for an agent", enter a name and choose `writer`. Choose `reader` for an agent that only recalls. To end the key on a date, set "Key expires": the key stops working when that day ends in UTC, and only an administrator can change the date later.
+2. Open the Keys tab. Under "Issue a key for an agent", enter a name and choose `contributor`, a key that recalls and writes. Choose `reader` for an agent that only recalls. To end the key on a date, set "Key expires": the key stops working when that day ends in UTC, and only an administrator can change the date later.
 3. Select "Issue key". The page shows the value once. Copy it into a file only the owner can read, for example `~/.config/oml/keys/agent`, with mode `0600`.
 
 The key reads and writes in the user's own workspace and nowhere else. The Connect tab lists the next step for each client.

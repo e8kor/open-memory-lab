@@ -54,8 +54,8 @@ class WorkspaceView:
                 read, in either direction, ordered by edge_id ascending; edge_id is the id the events tail reports.
             my_effective_verbs (list[WorkspaceViewMyEffectiveVerbsItem]): The effective-verbs table of
                 docs/architecture/roles-and-keys.md, unioned over the grant roles effective on the node and listed in table
-                order (the reader, writer and reviewer rows, each left to right) without duplicates; the access conferred, not
-                what this server build serves.
+                order (the reader, submitter and reviewer rows, each left to right) without duplicates; the access conferred,
+                not what this server build serves.
             permission_epoch (int): The calling key's permission epoch as declared in docs/architecture/workspaces.md
                 (ADR-0025 d14).
             policy (ReviewPolicy): The review policy in force, the one a transition's policy_snapshot records (ADR-0009 d3).

@@ -115,8 +115,8 @@ def load_descriptors(state, url, queries):
     """One protected workspace per descriptor under eval-desc, the adversary's beside them."""
     oml("workspaces", "create", "universe", DESC_PARENT)
     os.environ["EVAL_URL"] = url
-    writer = issue("desc-writer", "writer", "agent",
-                   [f"{DESC_PARENT}:writer", f"{DESC_PARENT}:reader"], state)
+    writer = issue("desc-writer", "contributor", "agent",
+                   [f"{DESC_PARENT}:submitter", f"{DESC_PARENT}:reader"], state)
     reviewer = issue("desc-reviewer", "reviewer", "person",
                      [f"{DESC_PARENT}:reviewer", f"{DESC_PARENT}:reader"], state)
     reader = issue("desc-reader", "reader", "agent", [f"{DESC_PARENT}:reader"], state)

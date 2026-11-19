@@ -7,8 +7,8 @@ from oml_sdk.generated.types import UNSET
 
 OLDER = {
     "key_id": "key_w",
-    "name": "writer",
-    "role": "writer",
+    "name": "agent-w",
+    "role": "contributor",
     "principal": "p",
     "used_by": "agent",
     "tenant": {"id": "t1", "name": "oml"},

@@ -89,16 +89,16 @@ def sync_detailed(
     """Issue a key under the issuer ceiling; the value appears exactly once, here.
 
      A person's web session key (<user>-web, through its capacity credential) issues their own key: send
-    name (<user>-<name>), role (reader or writer) and connect_code, and expiry to end the key on a date,
-    under the rule for expiry below; the key names their user and holds writer or reader on their root
-    alone, any other field, requests_per_minute included, is request.validation naming it, the date is
-    changed or cleared afterwards only by the admin key role (POST /v2/keys/{key}/limits; ADR-0079 d1,
-    d5; since v0.7.3), and any other capacity is access.verb_ceiling with details.reason
-    session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). The session key's access is read when the
-    issuance runs, and a session key that carries a denial, on any workspace, issues nothing:
-    access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070 d2; since
-    v0.7.3). Otherwise requires: admin key role; operator key role only for an operator key, sent
-    without tenant, or a tenant's first admin key, sent with tenant (step 0 of the issuance order).
+    name (<user>-<name>), role (contributor or reader) and connect_code, and expiry to end the key on a
+    date, under the rule for expiry below; the key names their user and holds submitter and reader, or
+    reader, on their root alone, any other field, requests_per_minute included, is request.validation
+    naming it, the date is changed or cleared afterwards only by the admin key role (POST
+    /v2/keys/{key}/limits; ADR-0079 d1, d5; since v0.7.3), and any other capacity is access.verb_ceiling
+    with details.reason session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). The session key's access
+    is read when the issuance runs, and a session key that carries a denial, on any workspace, issues
+    nothing: access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070
+    d2; since v0.7.3). Otherwise requires: admin key role; operator key role only for an operator key,
+    sent without tenant, or a tenant's first admin key, sent with tenant (step 0 of the issuance order).
     tenant is a designed field (openapi-designed.yaml x-oml-designed-fields), refused with
     request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9).
     expiry is the instant from which the key authenticates nothing, later than the server's clock, and
@@ -167,16 +167,16 @@ def sync(
     """Issue a key under the issuer ceiling; the value appears exactly once, here.
 
      A person's web session key (<user>-web, through its capacity credential) issues their own key: send
-    name (<user>-<name>), role (reader or writer) and connect_code, and expiry to end the key on a date,
-    under the rule for expiry below; the key names their user and holds writer or reader on their root
-    alone, any other field, requests_per_minute included, is request.validation naming it, the date is
-    changed or cleared afterwards only by the admin key role (POST /v2/keys/{key}/limits; ADR-0079 d1,
-    d5; since v0.7.3), and any other capacity is access.verb_ceiling with details.reason
-    session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). The session key's access is read when the
-    issuance runs, and a session key that carries a denial, on any workspace, issues nothing:
-    access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070 d2; since
-    v0.7.3). Otherwise requires: admin key role; operator key role only for an operator key, sent
-    without tenant, or a tenant's first admin key, sent with tenant (step 0 of the issuance order).
+    name (<user>-<name>), role (contributor or reader) and connect_code, and expiry to end the key on a
+    date, under the rule for expiry below; the key names their user and holds submitter and reader, or
+    reader, on their root alone, any other field, requests_per_minute included, is request.validation
+    naming it, the date is changed or cleared afterwards only by the admin key role (POST
+    /v2/keys/{key}/limits; ADR-0079 d1, d5; since v0.7.3), and any other capacity is access.verb_ceiling
+    with details.reason session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). The session key's access
+    is read when the issuance runs, and a session key that carries a denial, on any workspace, issues
+    nothing: access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070
+    d2; since v0.7.3). Otherwise requires: admin key role; operator key role only for an operator key,
+    sent without tenant, or a tenant's first admin key, sent with tenant (step 0 of the issuance order).
     tenant is a designed field (openapi-designed.yaml x-oml-designed-fields), refused with
     request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9).
     expiry is the instant from which the key authenticates nothing, later than the server's clock, and
@@ -240,16 +240,16 @@ async def asyncio_detailed(
     """Issue a key under the issuer ceiling; the value appears exactly once, here.
 
      A person's web session key (<user>-web, through its capacity credential) issues their own key: send
-    name (<user>-<name>), role (reader or writer) and connect_code, and expiry to end the key on a date,
-    under the rule for expiry below; the key names their user and holds writer or reader on their root
-    alone, any other field, requests_per_minute included, is request.validation naming it, the date is
-    changed or cleared afterwards only by the admin key role (POST /v2/keys/{key}/limits; ADR-0079 d1,
-    d5; since v0.7.3), and any other capacity is access.verb_ceiling with details.reason
-    session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). The session key's access is read when the
-    issuance runs, and a session key that carries a denial, on any workspace, issues nothing:
-    access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070 d2; since
-    v0.7.3). Otherwise requires: admin key role; operator key role only for an operator key, sent
-    without tenant, or a tenant's first admin key, sent with tenant (step 0 of the issuance order).
+    name (<user>-<name>), role (contributor or reader) and connect_code, and expiry to end the key on a
+    date, under the rule for expiry below; the key names their user and holds submitter and reader, or
+    reader, on their root alone, any other field, requests_per_minute included, is request.validation
+    naming it, the date is changed or cleared afterwards only by the admin key role (POST
+    /v2/keys/{key}/limits; ADR-0079 d1, d5; since v0.7.3), and any other capacity is access.verb_ceiling
+    with details.reason session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). The session key's access
+    is read when the issuance runs, and a session key that carries a denial, on any workspace, issues
+    nothing: access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070
+    d2; since v0.7.3). Otherwise requires: admin key role; operator key role only for an operator key,
+    sent without tenant, or a tenant's first admin key, sent with tenant (step 0 of the issuance order).
     tenant is a designed field (openapi-designed.yaml x-oml-designed-fields), refused with
     request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9).
     expiry is the instant from which the key authenticates nothing, later than the server's clock, and
@@ -316,16 +316,16 @@ async def asyncio(
     """Issue a key under the issuer ceiling; the value appears exactly once, here.
 
      A person's web session key (<user>-web, through its capacity credential) issues their own key: send
-    name (<user>-<name>), role (reader or writer) and connect_code, and expiry to end the key on a date,
-    under the rule for expiry below; the key names their user and holds writer or reader on their root
-    alone, any other field, requests_per_minute included, is request.validation naming it, the date is
-    changed or cleared afterwards only by the admin key role (POST /v2/keys/{key}/limits; ADR-0079 d1,
-    d5; since v0.7.3), and any other capacity is access.verb_ceiling with details.reason
-    session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). The session key's access is read when the
-    issuance runs, and a session key that carries a denial, on any workspace, issues nothing:
-    access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070 d2; since
-    v0.7.3). Otherwise requires: admin key role; operator key role only for an operator key, sent
-    without tenant, or a tenant's first admin key, sent with tenant (step 0 of the issuance order).
+    name (<user>-<name>), role (contributor or reader) and connect_code, and expiry to end the key on a
+    date, under the rule for expiry below; the key names their user and holds submitter and reader, or
+    reader, on their root alone, any other field, requests_per_minute included, is request.validation
+    naming it, the date is changed or cleared afterwards only by the admin key role (POST
+    /v2/keys/{key}/limits; ADR-0079 d1, d5; since v0.7.3), and any other capacity is access.verb_ceiling
+    with details.reason session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). The session key's access
+    is read when the issuance runs, and a session key that carries a denial, on any workspace, issues
+    nothing: access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070
+    d2; since v0.7.3). Otherwise requires: admin key role; operator key role only for an operator key,
+    sent without tenant, or a tenant's first admin key, sent with tenant (step 0 of the issuance order).
     tenant is a designed field (openapi-designed.yaml x-oml-designed-fields), refused with
     request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9).
     expiry is the instant from which the key authenticates nothing, later than the server's clock, and

@@ -66,7 +66,7 @@ def test_a_bad_key_is_an_auth_error_with_its_code_rule_message_and_retryable(oml
     assert "oml_not_a_key" not in str(error) and "oml_not_a_key" not in repr(error)
 
 
-def test_a_writer_key_asking_for_review_is_an_access_error(agent):
+def test_a_contributor_key_asking_for_review_is_an_access_error(agent):
     with pytest.raises(AccessError) as caught:
         agent.review_next()
     assert (caught.value.code, caught.value.status) == ("access.verb_ceiling", 403)

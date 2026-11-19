@@ -104,15 +104,16 @@ def sync_detailed(
 ) -> Response[ErrorEnvelope | UploadSession]:
     """Open a resumable upload session for bytes of a declared size and SHA-256.
 
-     Requires: a writer key; any other role is access.verb_ceiling (ADR-0004 d3, as amended 2026-11-17).
-    purpose is import, the one purpose built; size is 1 byte to uploads.max_bytes (1 GiB by default), or
-    413 upload.too_large; sha256 is the plaintext's SHA-256 as 64 lowercase hex digits. A key holding 4
-    sessions that are open, or completed and unbound, is upload.session_limit; a tenant whose open and
-    unbound sessions would declare more than uploads.tenant_max_bytes (4 GiB by default) is
-    upload.tenant_limit; an object store that fails is 503 upload.storage_failed. The session takes
-    parts of 8 MiB, the last the remainder, and expires 24 hours after its opening or its last part and
-    never later than 72 hours after it opened. Only this key is ever served it. Nothing is journalled,
-    and no Idempotency-Key is taken: a repeated open opens another session. Since v0.8.3.
+     Requires: a contributor or a submitter key; any other role is access.verb_ceiling (ADR-0004 d3, as
+    amended 2026-11-17; ADR-0093 d6). purpose is import, the one purpose built; size is 1 byte to
+    uploads.max_bytes (1 GiB by default), or 413 upload.too_large; sha256 is the plaintext's SHA-256 as
+    64 lowercase hex digits. A key holding 4 sessions that are open, or completed and unbound, is
+    upload.session_limit; a tenant whose open and unbound sessions would declare more than
+    uploads.tenant_max_bytes (4 GiB by default) is upload.tenant_limit; an object store that fails is
+    503 upload.storage_failed. The session takes parts of 8 MiB, the last the remainder, and expires 24
+    hours after its opening or its last part and never later than 72 hours after it opened. Only this
+    key is ever served it. Nothing is journalled, and no Idempotency-Key is taken: a repeated open opens
+    another session. Since v0.8.3.
 
     Args:
         x_request_id (str | Unset):
@@ -152,15 +153,16 @@ def sync(
 ) -> ErrorEnvelope | UploadSession | None:
     """Open a resumable upload session for bytes of a declared size and SHA-256.
 
-     Requires: a writer key; any other role is access.verb_ceiling (ADR-0004 d3, as amended 2026-11-17).
-    purpose is import, the one purpose built; size is 1 byte to uploads.max_bytes (1 GiB by default), or
-    413 upload.too_large; sha256 is the plaintext's SHA-256 as 64 lowercase hex digits. A key holding 4
-    sessions that are open, or completed and unbound, is upload.session_limit; a tenant whose open and
-    unbound sessions would declare more than uploads.tenant_max_bytes (4 GiB by default) is
-    upload.tenant_limit; an object store that fails is 503 upload.storage_failed. The session takes
-    parts of 8 MiB, the last the remainder, and expires 24 hours after its opening or its last part and
-    never later than 72 hours after it opened. Only this key is ever served it. Nothing is journalled,
-    and no Idempotency-Key is taken: a repeated open opens another session. Since v0.8.3.
+     Requires: a contributor or a submitter key; any other role is access.verb_ceiling (ADR-0004 d3, as
+    amended 2026-11-17; ADR-0093 d6). purpose is import, the one purpose built; size is 1 byte to
+    uploads.max_bytes (1 GiB by default), or 413 upload.too_large; sha256 is the plaintext's SHA-256 as
+    64 lowercase hex digits. A key holding 4 sessions that are open, or completed and unbound, is
+    upload.session_limit; a tenant whose open and unbound sessions would declare more than
+    uploads.tenant_max_bytes (4 GiB by default) is upload.tenant_limit; an object store that fails is
+    503 upload.storage_failed. The session takes parts of 8 MiB, the last the remainder, and expires 24
+    hours after its opening or its last part and never later than 72 hours after it opened. Only this
+    key is ever served it. Nothing is journalled, and no Idempotency-Key is taken: a repeated open opens
+    another session. Since v0.8.3.
 
     Args:
         x_request_id (str | Unset):
@@ -195,15 +197,16 @@ async def asyncio_detailed(
 ) -> Response[ErrorEnvelope | UploadSession]:
     """Open a resumable upload session for bytes of a declared size and SHA-256.
 
-     Requires: a writer key; any other role is access.verb_ceiling (ADR-0004 d3, as amended 2026-11-17).
-    purpose is import, the one purpose built; size is 1 byte to uploads.max_bytes (1 GiB by default), or
-    413 upload.too_large; sha256 is the plaintext's SHA-256 as 64 lowercase hex digits. A key holding 4
-    sessions that are open, or completed and unbound, is upload.session_limit; a tenant whose open and
-    unbound sessions would declare more than uploads.tenant_max_bytes (4 GiB by default) is
-    upload.tenant_limit; an object store that fails is 503 upload.storage_failed. The session takes
-    parts of 8 MiB, the last the remainder, and expires 24 hours after its opening or its last part and
-    never later than 72 hours after it opened. Only this key is ever served it. Nothing is journalled,
-    and no Idempotency-Key is taken: a repeated open opens another session. Since v0.8.3.
+     Requires: a contributor or a submitter key; any other role is access.verb_ceiling (ADR-0004 d3, as
+    amended 2026-11-17; ADR-0093 d6). purpose is import, the one purpose built; size is 1 byte to
+    uploads.max_bytes (1 GiB by default), or 413 upload.too_large; sha256 is the plaintext's SHA-256 as
+    64 lowercase hex digits. A key holding 4 sessions that are open, or completed and unbound, is
+    upload.session_limit; a tenant whose open and unbound sessions would declare more than
+    uploads.tenant_max_bytes (4 GiB by default) is upload.tenant_limit; an object store that fails is
+    503 upload.storage_failed. The session takes parts of 8 MiB, the last the remainder, and expires 24
+    hours after its opening or its last part and never later than 72 hours after it opened. Only this
+    key is ever served it. Nothing is journalled, and no Idempotency-Key is taken: a repeated open opens
+    another session. Since v0.8.3.
 
     Args:
         x_request_id (str | Unset):
@@ -241,15 +244,16 @@ async def asyncio(
 ) -> ErrorEnvelope | UploadSession | None:
     """Open a resumable upload session for bytes of a declared size and SHA-256.
 
-     Requires: a writer key; any other role is access.verb_ceiling (ADR-0004 d3, as amended 2026-11-17).
-    purpose is import, the one purpose built; size is 1 byte to uploads.max_bytes (1 GiB by default), or
-    413 upload.too_large; sha256 is the plaintext's SHA-256 as 64 lowercase hex digits. A key holding 4
-    sessions that are open, or completed and unbound, is upload.session_limit; a tenant whose open and
-    unbound sessions would declare more than uploads.tenant_max_bytes (4 GiB by default) is
-    upload.tenant_limit; an object store that fails is 503 upload.storage_failed. The session takes
-    parts of 8 MiB, the last the remainder, and expires 24 hours after its opening or its last part and
-    never later than 72 hours after it opened. Only this key is ever served it. Nothing is journalled,
-    and no Idempotency-Key is taken: a repeated open opens another session. Since v0.8.3.
+     Requires: a contributor or a submitter key; any other role is access.verb_ceiling (ADR-0004 d3, as
+    amended 2026-11-17; ADR-0093 d6). purpose is import, the one purpose built; size is 1 byte to
+    uploads.max_bytes (1 GiB by default), or 413 upload.too_large; sha256 is the plaintext's SHA-256 as
+    64 lowercase hex digits. A key holding 4 sessions that are open, or completed and unbound, is
+    upload.session_limit; a tenant whose open and unbound sessions would declare more than
+    uploads.tenant_max_bytes (4 GiB by default) is upload.tenant_limit; an object store that fails is
+    503 upload.storage_failed. The session takes parts of 8 MiB, the last the remainder, and expires 24
+    hours after its opening or its last part and never later than 72 hours after it opened. Only this
+    key is ever served it. Nothing is journalled, and no Idempotency-Key is taken: a repeated open opens
+    another session. Since v0.8.3.
 
     Args:
         x_request_id (str | Unset):

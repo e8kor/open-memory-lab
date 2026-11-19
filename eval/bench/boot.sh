@@ -112,8 +112,8 @@ for wa in "$@"; do
     "$OML" --json workspaces create bench "$wa" >/dev/null || fail "workspace $wa"
 done
 (umask 077
- "$OML" --json keys issue bench-writer --role writer --used-by agent --principal bench/writer \
-     --default-workspace bench --grant bench:writer --grant bench:reader \
+ "$OML" --json keys issue bench-writer --role contributor --used-by agent --principal bench/writer \
+     --default-workspace bench --grant bench:submitter --grant bench:reader \
      | jq -r .value >"$STATE/writer.key"
  for i in $(seq 1 "$REVIEWERS"); do
      "$OML" --json keys issue "bench-reviewer-$i" --role reviewer --used-by person \

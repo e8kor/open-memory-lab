@@ -181,8 +181,8 @@ such as a release's. The steps below are what the script does, by hand.
 
    ```sh
    oml workspaces create universe eval-crew
-   oml --json keys issue eval-writer --role writer --used-by agent --principal crew/writer \
-       --default-workspace eval-crew --grant eval-crew:writer --grant eval-crew:reader | jq -r .value > writer.key
+   oml --json keys issue eval-writer --role contributor --used-by agent --principal crew/writer \
+       --default-workspace eval-crew --grant eval-crew:submitter --grant eval-crew:reader | jq -r .value > writer.key
    oml --json keys issue eval-reviewer --role reviewer --used-by person --principal crew/reviewer \
        --default-workspace eval-crew --grant eval-crew:reviewer | jq -r .value > reviewer.key
    ```

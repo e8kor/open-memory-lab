@@ -388,3 +388,33 @@ class Vocabulary(unittest.TestCase):
                      "scripts/ok.sh": 'issue r reviewer person crew/r reviewer\n'})
         flagged = {p.split(":")[0] for p in L.lint_vocabulary(root, False)}
         self.assertEqual(flagged, {"scripts/q.sh"})
+
+
+class FormerRole(unittest.TestCase):
+    """ADR-0093 d7: the role writer survives only where lint_allow/roles.txt says why, and the
+    plain word keeps its other senses."""
+
+    def test_the_writer_role_is_flagged_and_the_lake_writer_is_not(self):
+        root = tree({
+            "a.rs": "let r = Role::Writer;\n",
+            "b.json": '{"role": "writer"}\n',
+            "c.sh": "oml keys issue k --grant metals:writer\n",
+            "d.md": "oml keys issue k --role writer\n",
+            "e.md": "oml keys issue-agent k --write-only\n",
+            "f.md": "| `writer` | writes |\n",
+            "ok.md": "the lake writer drains the outbox; writer_identity is the writing key\n",
+            "ok.rs": "let writer = Client::new(url, key); oml_lakewriter::run(writer);\n",
+        })
+        flagged = {p.split(":")[0] for p in L.lint_former_role(root, False)}
+        self.assertEqual(flagged, {"a.rs", "b.json", "c.sh", "d.md", "e.md", "f.md"})
+
+    def test_a_roles_entry_allows_its_path_or_its_lines_and_names_a_reason(self):
+        files = {"migrations/0001_init.sql": "CHECK (role IN ('reader', 'writer'))\n",
+                 "docs/x.md": "Called `writer` before v0.8.4\nthe `writer` role\n"}
+        root = tree({**files, "scripts/lint_allow/roles.txt":
+                     "migrations/*.sql  # applied\ndocs/x.md | Called `writer`  # names it once\n"})
+        flagged = [":".join(p.split(":")[:2]) for p in L.lint_former_role(root, True)]
+        self.assertEqual(["docs/x.md:2"], [p for p in flagged if not p.startswith("scripts/")])
+        bare = tree({**files, "scripts/lint_allow/roles.txt": "migrations/*.sql\n"})
+        with self.assertRaises(SystemExit):
+            L.lint_former_role(bare, True)
