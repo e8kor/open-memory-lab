@@ -49,7 +49,7 @@ Role::Writer`) and the curator's ceiling (`ceiling_role`, `app.rs:712`). It is s
 OpenAPI, the MCP tool texts, the SDKs, the CLI's `--role` and `<workspace>:writer` grants, the
 console form, error details (`needed_role`), the docs and the plugins' key skills.
 [ADR-0091](ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md)
-made the same kind of cut for `dreamer` → `reviewer`; this record follows its rules and states
+made the same kind of cut when it renamed the reviewer role (d13); this record follows its rules and states
 only where a split word differs from a renamed one.
 
 Decided, not built.
