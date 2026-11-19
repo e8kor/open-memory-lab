@@ -1212,7 +1212,7 @@ async fn the_allowlist_routes_take_an_admin_key_and_the_email_only_in_a_body() {
             &rig.boot.admin_key.value,
             &IssueKeyRequest {
                 profile: None,
-                role: Role::Contributor,
+                role: Role::Submitter,
                 name: Name::parse("agent-7").expect("a name"),
                 principal: "crew/agent-7".to_owned(),
                 used_by: Some(UsedBy::Agent),

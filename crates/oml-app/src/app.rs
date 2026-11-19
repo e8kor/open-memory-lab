@@ -59,7 +59,7 @@ use uuid::Uuid;
 
 use oml_domain::access::{
     AccessRefusal, Covers, Grant, IssuanceRefusal, KeyDenial, LabelledGrant, TailCaller,
-    TailSubject, Verb, VerbRefusal, admissible_grant_roles, check_issuance, effective_access,
+    TailSubject, Verb, VerbRefusal, admissible_grant_roles, check_contributor_grants, check_issuance, effective_access,
     effective_roles, effective_verbs, resolve, resolve_verb, tail_visible,
 };
 use oml_domain::anchor::{self as anchor_grammar, Anchor, SourceCheckBody};
@@ -3571,6 +3571,12 @@ where
             }
             _ => grants.first().map(|g| g.node),
         };
+
+        // Then a contributor key's shape, over the grants the request sent: a
+        // reader and a submitter grant, which the server never adds (ADR-0093
+        // d2; request.validation, reason contributor_grants).
+        let sent_roles: Vec<Role> = req.grants.iter().map(|g| g.role).collect();
+        check_contributor_grants(req.role, &sent_roles).map_err(issuance_refusal)?;
 
         // Step 7: with `connect_code`, the key can hold a connection — a
         // role other than admin or operator, `used_by` other than service,
@@ -9079,7 +9085,12 @@ where
         as_of: Option<&EventTime>,
     ) -> Result<ServedMemory, AppError> {
         let caller = self.authenticate_bearer(bearer.into()).await?;
-        require_admissible(&caller.key, Role::Reader, "get")?;
+        // A submitter key recalls nothing but reads its own rows in every
+        // state (ADR-0025 d3; ADR-0093 d2), so its role passes step 1 here
+        // and `readable` admits its own rows alone.
+        if caller.key.role != Role::Submitter {
+            require_admissible(&caller.key, Role::Reader, "get")?;
+        }
         if let Some(at) = as_of {
             self.refuse_future(at, "as_of")?;
         }

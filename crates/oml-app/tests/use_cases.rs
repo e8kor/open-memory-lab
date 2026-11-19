@@ -337,7 +337,7 @@ async fn happy_path_end_to_end() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let writer = issue(&app, admin, Role::Contributor, "wanda-writer", crew).await;
+    let writer = issue(&app, admin, Role::Submitter, "wanda-writer", crew).await;
     let reviewer = issue(&app, admin, Role::Reviewer, "dana-reviewer", crew).await;
     let reader = issue(&app, admin, Role::Reader, "rhea-reader", crew).await;
 
@@ -463,7 +463,7 @@ async fn a_ratified_successor_is_the_one_hit_and_the_version_it_replaced_stays_p
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let writer = issue(&app, admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, admin, Role::Submitter, "wanda", crew).await;
     let reader = issue(&app, admin, Role::Reader, "rita", crew).await;
     let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
 
@@ -509,7 +509,7 @@ async fn r2_author_cannot_verdict_its_own_work() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let writer = issue(&app, admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, admin, Role::Submitter, "wanda", crew).await;
     // A reviewer key used by the SAME principal as the author.
     let same_principal_reviewer = issue(&app, admin, Role::Reviewer, "wanda", crew).await;
     let other_reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
@@ -528,7 +528,7 @@ async fn r2_author_cannot_verdict_its_own_work() {
     assert!(matches!(
         err,
         AppError::VerbCeiling {
-            role: Role::Contributor,
+            role: Role::Submitter,
             ..
         }
     ));
@@ -567,7 +567,7 @@ async fn role_ceilings_are_refused_with_typed_errors() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let writer = issue(&app, admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, admin, Role::Submitter, "wanda", crew).await;
     let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
 
@@ -600,7 +600,7 @@ async fn role_ceilings_are_refused_with_typed_errors() {
     assert!(matches!(
         err,
         AppError::VerbCeiling {
-            role: Role::Contributor,
+            role: Role::Submitter,
             ..
         }
     ));
@@ -609,7 +609,7 @@ async fn role_ceilings_are_refused_with_typed_errors() {
     assert!(matches!(
         err,
         AppError::VerbCeiling {
-            role: Role::Contributor,
+            role: Role::Submitter,
             ..
         }
     ));
@@ -657,7 +657,7 @@ async fn role_ceilings_are_refused_with_typed_errors() {
 async fn idempotent_submit_replays_the_first_result() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
-    let writer = issue(&app, &boot.admin_key.value, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, &boot.admin_key.value, Role::Submitter, "wanda", crew).await;
 
     let first = app
         .submit_memory(&writer.value, &submit_req("idem-7", "fact body"))
@@ -695,7 +695,7 @@ async fn a_scan_veto_journals_nothing_and_leaves_no_row() {
     let store = MemStore::new();
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
-    let writer = issue(&app, &boot.admin_key.value, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, &boot.admin_key.value, Role::Submitter, "wanda", crew).await;
     let reviewer = issue(&app, &boot.admin_key.value, Role::Reviewer, "dana", crew).await;
     let before = journal(&store, boot.tenant_id).await.len();
     let outbox = store.outbox_len(boot.tenant_id);
@@ -732,9 +732,9 @@ async fn supersede_is_author_only_and_tip_only() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let writer = issue(&app, admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, admin, Role::Submitter, "wanda", crew).await;
     let other_writer = agent(&app, admin, "walt", crew).await;
-    let writer_only = issue(&app, admin, Role::Contributor, "wren", crew).await;
+    let writer_only = issue(&app, admin, Role::Submitter, "wren", crew).await;
     let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
 
     let submitted = app
@@ -802,7 +802,7 @@ async fn a_second_version_one_on_a_live_claim_key_is_claim_key_conflict() {
     let writer = issue_with(
         &app,
         admin,
-        Role::Contributor,
+        Role::Submitter,
         "wanda",
         vec![grant(crew, Role::Submitter), grant(library, Role::Submitter)],
     )
@@ -855,7 +855,7 @@ async fn a_rejected_first_version_releases_its_claim_key() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let writer = issue(&app, admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, admin, Role::Submitter, "wanda", crew).await;
     let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let fleet = |idem: &str| SubmitRequest {
         on_similar: Default::default(),
@@ -905,7 +905,7 @@ async fn submission_digests_nfc_text() {
     let store = MemStore::new();
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
-    let writer = issue(&app, &boot.admin_key.value, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, &boot.admin_key.value, Role::Submitter, "wanda", crew).await;
 
     let first = app
         .submit_memory(
@@ -976,7 +976,7 @@ async fn submission_digests_nfc_text() {
     let writer = issue(
         &scanning,
         &boot.admin_key.value,
-        Role::Contributor,
+        Role::Submitter,
         "wanda",
         crew,
     )
@@ -993,7 +993,7 @@ async fn a_successor_takes_the_next_version_and_the_targets_kind() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let writer = issue(&app, admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, admin, Role::Submitter, "wanda", crew).await;
     let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
 
     let first = promoted(
@@ -1037,7 +1037,7 @@ async fn replaces_names_the_replaced_version_only_to_a_key_that_can_read_it() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let writer = issue(&app, admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, admin, Role::Submitter, "wanda", crew).await;
     let approver = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     // Reviewer only: it reviews on crew but reads nothing there.
     let blind = issue(&app, admin, Role::Reviewer, "dora", crew).await;
@@ -1148,19 +1148,41 @@ async fn one_writer_key_with_writer_and_reader_grants_remembers_and_recalls() {
 }
 
 #[tokio::test]
-async fn a_writer_without_a_reader_grant_is_told_not_found_on_recall() {
+async fn a_contributor_without_a_reader_grant_there_is_told_not_found_and_a_submitter_is_refused_recall_at_its_ceiling()
+ {
     let app = app();
     let (boot, crew) = tenant(&app).await;
-    let writer = issue(&app, &boot.admin_key.value, Role::Contributor, "wanda", crew).await;
+    let admin = &boot.admin_key.value;
+    let library = workspace(&app, admin, "library", boot.root_workspace_id).await;
+    let contributor = issue_with(
+        &app,
+        admin,
+        Role::Contributor,
+        "wanda",
+        vec![grant(crew, Role::Submitter), grant(library, Role::Reader)],
+    )
+    .await;
 
-    // Reader is admissible under the writer role, so step 1 passes; the
-    // scope holds writer only, so the node is not readable (refusal order
-    // step 4).
+    // Reader is admissible under the contributor role, so step 1 passes;
+    // the scope holds submitter only, so the node is not readable (refusal
+    // order step 4).
     let err = app
-        .recall(&writer.value, &recall_req("x"))
+        .recall(&contributor.value, &recall_req("x"))
         .await
         .unwrap_err();
     assert!(matches!(err, AppError::NotFound), "{err:?}");
+
+    // A submitter key never recalls: reader is outside its role, refused
+    // at step 1 before any node is read (ADR-0093 d2).
+    let submitter = issue(&app, admin, Role::Submitter, "sam", crew).await;
+    let err = app
+        .recall(&submitter.value, &recall_req("x"))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::VerbCeiling { role: Role::Submitter, verb: "recall" }),
+        "{err:?}"
+    );
 }
 
 #[tokio::test]
@@ -1187,7 +1209,7 @@ async fn a_submit_on_a_node_the_key_only_reads_is_grant_refused() {
             err,
             AppError::GrantRefused {
                 workspace_id,
-                needed_role: Role::Contributor,
+                needed_role: Role::Submitter,
             } if workspace_id == library
         ),
         "{err:?}"
@@ -1270,7 +1292,7 @@ async fn a_global_denial_takes_a_granted_subtree_out_of_recall() {
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let quarantine = workspace(&app, admin, "quarantine", crew).await;
-    let writer = issue(&app, admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, admin, Role::Submitter, "wanda", crew).await;
     let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
 
@@ -1352,7 +1374,7 @@ async fn a_global_denial_takes_a_granted_subtree_out_of_recall() {
         matches!(
             err,
             AppError::VerbCeiling {
-                role: Role::Contributor,
+                role: Role::Submitter,
                 ..
             }
         ),
@@ -1380,7 +1402,7 @@ async fn a_reviewer_is_served_only_held_rows_inside_its_reviewer_grants() {
     let writer = issue_with(
         &app,
         admin,
-        Role::Contributor,
+        Role::Submitter,
         "wanda",
         vec![grant(crew, Role::Submitter), grant(other, Role::Submitter)],
     )
@@ -1435,7 +1457,7 @@ async fn a_verdict_on_a_row_outside_reviewer_access_is_not_found() {
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let other = workspace(&app, admin, "other-crew", boot.root_workspace_id).await;
-    let writer = issue(&app, admin, Role::Contributor, "wanda", other).await;
+    let writer = issue(&app, admin, Role::Submitter, "wanda", other).await;
     let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let reading_reviewer = issue_with(
         &app,
@@ -1481,7 +1503,7 @@ async fn r2_refuses_the_author_whatever_grants_its_reviewer_key_holds() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let writer = issue(&app, admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, admin, Role::Submitter, "wanda", crew).await;
     let author_reviewer = issue_with(
         &app,
         admin,
@@ -1520,7 +1542,7 @@ async fn a_service_key_is_refused_review_before_any_lookup() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let writer = issue(&app, admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, admin, Role::Submitter, "wanda", crew).await;
     let repair = app
         .issue_key(
             admin,
@@ -1602,7 +1624,7 @@ async fn an_unreadable_derives_from_target_is_not_found() {
     let admin = &boot.admin_key.value;
     let first = agent(&app, admin, "crew/agent-7", crew).await;
     let second = agent(&app, admin, "crew/agent-8", crew).await;
-    let writer_only = issue(&app, admin, Role::Contributor, "wren", crew).await;
+    let writer_only = issue(&app, admin, Role::Submitter, "wren", crew).await;
     let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
 
     let held = app
@@ -1739,7 +1761,7 @@ async fn a_promoted_steering_row_precedes_hits_unranked() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let writer = issue(&app, admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, admin, Role::Submitter, "wanda", crew).await;
     let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
     let promote = |req: SubmitRequest| {
@@ -1803,7 +1825,7 @@ async fn ancestor_steering_applies_to_a_child_scope() {
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let quotes = workspace(&app, admin, "quotes", crew).await;
-    let writer = issue(&app, admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, admin, Role::Submitter, "wanda", crew).await;
     let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
 
@@ -1843,7 +1865,7 @@ async fn child_steering_does_not_apply_to_the_parent() {
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let quotes = workspace(&app, admin, "quotes", crew).await;
-    let writer = issue(&app, admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, admin, Role::Submitter, "wanda", crew).await;
     let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
     for (idem, kind, body) in [
@@ -1875,7 +1897,7 @@ async fn steering_on_an_unreadable_ancestor_is_not_served() {
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let quotes = workspace(&app, admin, "quotes", crew).await;
-    let writer = issue(&app, admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, admin, Role::Submitter, "wanda", crew).await;
     let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let standing = promoted(
         &app,
@@ -1911,7 +1933,7 @@ async fn kinds_decides_whether_the_steering_list_is_served_and_narrows_the_hits(
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let writer = issue(&app, admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, admin, Role::Submitter, "wanda", crew).await;
     let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
     let mut ids = Vec::new();
@@ -1986,7 +2008,7 @@ async fn issuance_never_inherits_the_issuers_default() {
     let sub = workspace(&app, admin, "sub", crew).await;
 
     // The issuer's default is the root; no issued key ever takes it.
-    let zero = issue_with(&app, admin, Role::Contributor, "w0", Vec::new()).await;
+    let zero = issue_with(&app, admin, Role::Submitter, "w0", Vec::new()).await;
     assert_eq!(zero.default_workspace, None, "a zero-grant key has none");
     let first = issue_with(
         &app,
@@ -2060,7 +2082,7 @@ async fn a_default_no_grant_covers_is_refused() {
                 admin,
                 &IssueKeyRequest {
                     default_workspace: Some(default.into()),
-                    ..issue_req(Role::Contributor, "w", vec![masking.clone()])
+                    ..issue_req(Role::Submitter, "w", vec![masking.clone()])
                 },
             )
             .await
@@ -2074,6 +2096,84 @@ async fn a_default_no_grant_covers_is_refused() {
         app.verify_chain(admin).await.expect("verify").seq,
         head,
         "a refused issuance journals nothing"
+    );
+}
+
+/// A contributor key carries at least one reader and one submitter grant:
+/// one issued without either is refused as `contributor_grants`, after the
+/// grants' nodes are found, and the server adds no grant and journals
+/// nothing (ADR-0093 d2). A submitter key with a reader grant is refused at
+/// step 3, as any inadmissible grant is.
+#[tokio::test]
+async fn a_contributor_key_without_a_reader_or_a_submitter_grant_is_refused_and_journals_nothing()
+ {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let head = app.verify_chain(admin).await.expect("verify").seq;
+    for grants in [
+        vec![],
+        vec![grant(crew, Role::Reader)],
+        vec![grant(crew, Role::Submitter)],
+    ] {
+        let err = app
+            .issue_key(admin, &issue_req(Role::Contributor, "c", grants.clone()))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::ContributorGrants), "{grants:?}: {err:?}");
+    }
+    // A node the tenant does not hold is told first (step 4).
+    let err = app
+        .issue_key(
+            admin,
+            &issue_req(
+                Role::Contributor,
+                "c",
+                vec![grant(Uuid::from_u128(0xDEAD), Role::Submitter)],
+            ),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::NotFound), "{err:?}");
+    let err = app
+        .issue_key(
+            admin,
+            &issue_req(
+                Role::Submitter,
+                "s",
+                vec![grant(crew, Role::Submitter), grant(crew, Role::Reader)],
+            ),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AppError::IssuerCeiling {
+                role: Role::Reader,
+                grant_index: Some(1),
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+    assert_eq!(
+        app.verify_chain(admin).await.expect("verify").seq,
+        head,
+        "a refused issuance journals nothing"
+    );
+    let issued = issue_with(
+        &app,
+        admin,
+        Role::Contributor,
+        "c",
+        vec![grant(crew, Role::Submitter), grant(crew, Role::Reader)],
+    )
+    .await;
+    assert_eq!(
+        issued.access.grants.len(),
+        2,
+        "the server takes exactly the grants it is sent"
     );
 }
 
@@ -2113,7 +2213,7 @@ async fn issuance_refuses_in_the_issuance_order_and_journals_nothing() {
                 role: Role::Reviewer,
                 admissible,
                 grant_index: Some(1),
-            } if admissible == admissible_grant_roles(Role::Submitter)
+            } if admissible == admissible_grant_roles(Role::Contributor)
         ),
         "{err:?}"
     );
@@ -2177,7 +2277,7 @@ async fn key_issued_journals_the_keys_credential() {
     let issued = issue_with(
         &app,
         &boot.admin_key.value,
-        Role::Contributor,
+        Role::Reader,
         "crew/agent-credential",
         vec![grant(crew, Role::Reader)],
     )
@@ -2244,7 +2344,7 @@ async fn issuance_journals_the_key_then_each_grant_with_its_own_seq_as_its_epoch
         key_issued.payload,
         serde_json::json!({
             "key_id": issued.key_id.to_string(),
-            "role": "writer",
+            "role": "contributor",
             "principal": "crew/agent-7",
             "issued_by_key_id": boot.admin_key.key_id.to_string(),
             "expiry": null,
@@ -2357,7 +2457,7 @@ async fn a_key_whose_issuance_failed_part_way_reads_back_by_name_revoked_at_its_
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let req = issue_req(
-        Role::Contributor,
+        Role::Submitter,
         "crew/agent-7",
         vec![grant(crew, Role::Submitter)],
     );
@@ -2521,7 +2621,14 @@ async fn an_unreadable_workspace_is_not_found() {
     let sibling = workspace(&app, admin, "sibling", boot.root_workspace_id).await;
     let quarantine = workspace(&app, admin, "quarantine", crew).await;
     let agent = agent(&app, admin, "crew/agent-7", crew).await;
-    let writer = issue(&app, admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue_with(
+        &app,
+        admin,
+        Role::Contributor,
+        "wanda",
+        vec![grant(crew, Role::Submitter), grant(sibling, Role::Reader)],
+    )
+    .await;
     app.deny_key(admin, agent.key_id.into(), quarantine.into())
         .await
         .expect("deny");
@@ -3471,7 +3578,7 @@ async fn tip_conflict_names_the_current_tip_when_readable() {
     let admin = &boot.admin_key.value;
     let (writer, _reader, reviewer) = crew_keys(&app, admin, crew).await;
     // Writer only: it reads its own rows and nothing else on crew.
-    let blind = issue(&app, admin, Role::Contributor, "wren", crew).await;
+    let blind = issue(&app, admin, Role::Submitter, "wren", crew).await;
     let approver = issue(&app, admin, Role::Reviewer, "dora", crew).await;
 
     // The reading writer's claim moves to a version it can read.
@@ -5181,7 +5288,7 @@ async fn bootstrap_names_its_admin_key_and_no_key_this_build_issues_is_left_for_
     let writer = issue(
         &app,
         &boot.admin_key.value,
-        Role::Contributor,
+        Role::Submitter,
         "crew/agent-7",
         crew,
     )
@@ -5277,7 +5384,7 @@ async fn issuing_a_key_with_a_crew_name_journals_the_crews_id() {
                     name: name("claude-desktop"),
                     crew: Some(crew_ref),
                     ..issue_req(
-                        Role::Contributor,
+                        Role::Submitter,
                         "claude/desktop",
                         vec![grant(crew_wa, Role::Submitter)],
                     )
@@ -5295,7 +5402,7 @@ async fn issuing_a_key_with_a_crew_name_journals_the_crews_id() {
             &IssueKeyRequest {
                 name: name("claude-laptop"),
                 ..issue_req(
-                    Role::Contributor,
+                    Role::Submitter,
                     "claude/other",
                     vec![grant(crew_wa, Role::Submitter)],
                 )
@@ -5998,7 +6105,7 @@ async fn whoami_returns_the_calling_keys_own_record_and_no_other() {
             .iter()
             .map(|g| (g.grant.node, g.grant.role))
             .collect::<Vec<_>>(),
-        vec![(crew, Role::Contributor), (crew, Role::Reader)]
+        vec![(crew, Role::Submitter), (crew, Role::Reader)]
     );
 
     // Another key answers its own record, never the first key's.
@@ -6227,10 +6334,19 @@ fn oauth_app_over(store: MemStore) -> TestApp {
 }
 
 /// A writer connector key's issuance: `connect_code: true` (ADR-0031 d7).
+/// A connector key in the role its grants fit (ADR-0093 d2): a contributor
+/// where they read and write, a submitter where they only write, a reader
+/// where they only read.
 fn connector_req(principal: &str, grants: Vec<GrantRequest>) -> IssueKeyRequest {
+    let holds = |role: Role| grants.iter().any(|g| g.role == role);
+    let role = match (holds(Role::Reader), holds(Role::Submitter)) {
+        (true, true) => Role::Contributor,
+        (false, true) => Role::Submitter,
+        _ => Role::Reader,
+    };
     IssueKeyRequest {
         connect_code: true,
-        ..issue_req(Role::Contributor, principal, grants)
+        ..issue_req(role, principal, grants)
     }
 }
 
@@ -6586,7 +6702,7 @@ async fn a_connector_key_is_refused_when_oauth_issuer_is_unset() {
         "{err:?}"
     );
     assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
-    let bearer = issue(&app, &boot.admin_key.value, Role::Contributor, "wanda", crew).await;
+    let bearer = issue(&app, &boot.admin_key.value, Role::Submitter, "wanda", crew).await;
     assert!(bearer.value.starts_with("oml_"));
     assert!(bearer.connect_code.is_none());
 }
@@ -6685,7 +6801,7 @@ async fn minting_a_code_for_a_bearer_key_is_refused() {
     let app = oauth_app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let bearer = issue(&app, admin, Role::Contributor, "wanda", crew).await;
+    let bearer = issue(&app, admin, Role::Submitter, "wanda", crew).await;
     let head = journal(&store, boot.tenant_id).await.len();
     let err = app
         .mint_connect_code(admin, bearer.key_id.into())
@@ -7238,7 +7354,7 @@ async fn a_correct_code_shows_the_keys_tenant_name_role_and_granted_workspaces()
     assert_eq!(
         grants,
         [
-            (crew, name("crew"), Role::Contributor),
+            (crew, name("crew"), Role::Submitter),
             (notes, name("notes"), Role::Reader)
         ]
     );
@@ -9002,7 +9118,7 @@ async fn a_key_authenticates_until_its_expiry_and_from_it_on_is_refused_as_expir
         .issue_key(
             boot.admin_key.value.as_str(),
             &limited_req(
-                Role::Contributor,
+                Role::Submitter,
                 "reviewer",
                 vec![grant(crew, Role::Submitter)],
                 Some(KEY_EXPIRY),
@@ -9205,7 +9321,7 @@ async fn a_key_of_an_account_under_a_quota_is_held_to_both_rates_and_the_lower_r
                     user: Some(name("ada")),
                     requests_per_minute: Some(own),
                     ..issue_req(
-                        Role::Contributor,
+                        Role::Submitter,
                         "ada-agent",
                         vec![GrantRequest {
                             node: by_name("ada"),
@@ -9401,7 +9517,7 @@ async fn no_key_extends_its_own_expiry_or_raises_its_own_rate() {
         requests_per_minute: Some(Some(1_000)),
     };
     let mut agents = Vec::new();
-    for role in [Role::Reader, Role::Contributor, Role::Reviewer] {
+    for role in [Role::Reader, Role::Submitter, Role::Reviewer] {
         agents.push(
             app.issue_key(
                 admin,
@@ -9845,7 +9961,7 @@ async fn a_guardrail_without_a_severity_is_refused() {
     let store = MemStore::new();
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
-    let writer = issue(&app, &boot.admin_key.value, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, &boot.admin_key.value, Role::Submitter, "wanda", crew).await;
     let err = app
         .submit_memory(
             &writer.value,
@@ -9904,7 +10020,7 @@ async fn a_guardrail_target_admits_only_kind_guardrail() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let writer = issue(&app, admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, admin, Role::Submitter, "wanda", crew).await;
     let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let rail = promoted(
         &app,
@@ -10012,7 +10128,7 @@ async fn a_guardrail_target_admits_only_kind_guardrail() {
 async fn a_rule_outside_oml_gr_1_or_with_allow_is_vetoed_as_guardrail_rule_unparsable() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
-    let writer = issue(&app, &boot.admin_key.value, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, &boot.admin_key.value, Role::Submitter, "wanda", crew).await;
     let refused = [
         (
             Severity::Must,
@@ -10061,7 +10177,7 @@ async fn a_rule_outside_oml_gr_1_or_with_allow_is_vetoed_as_guardrail_rule_unpar
 async fn a_body_over_300_bytes_is_vetoed_as_guardrail_too_long() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
-    let writer = issue(&app, &boot.admin_key.value, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, &boot.admin_key.value, Role::Submitter, "wanda", crew).await;
     let err = app
         .submit_memory(
             &writer.value,
@@ -10086,7 +10202,7 @@ async fn a_guardrail_promotes_under_its_workspace_policy_and_no_author_verdict_c
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let writer = issue(&app, admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, admin, Role::Submitter, "wanda", crew).await;
     let author_reviewer = issue(&app, admin, Role::Reviewer, "wanda", crew).await;
     let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let id = app
@@ -10130,7 +10246,7 @@ async fn a_guardrail_is_never_self_signed_whatever_the_tenant_policy() {
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let writer = issue(&app, admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, admin, Role::Submitter, "wanda", crew).await;
     let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let id = promoted(
         &app,
@@ -10165,7 +10281,7 @@ async fn the_serve_of_a_held_guardrail_carries_the_load_warning() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let writer = issue(&app, admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, admin, Role::Submitter, "wanda", crew).await;
     let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let rail = app
         .submit_memory(
@@ -10213,7 +10329,7 @@ async fn oml_write_supersession_refuses_a_guardrail_target() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let writer = issue(&app, admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, admin, Role::Submitter, "wanda", crew).await;
     let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let rail = promoted(
         &app,
@@ -10323,7 +10439,7 @@ async fn guardrail_tenant(app: &TestApp) -> (BootstrapResult, Uuid, Uuid, Issued
     let (boot, crew) = tenant(app).await;
     let admin = boot.admin_key.value.clone();
     let team = workspace(app, &admin, "team", crew).await;
-    let writer = issue(app, &admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(app, &admin, Role::Submitter, "wanda", crew).await;
     let reviewer = issue(app, &admin, Role::Reviewer, "dana", crew).await;
     (boot, crew, team, writer, reviewer)
 }
@@ -11868,7 +11984,7 @@ async fn a_key_without_access_to_a_validated_workspace_still_gets_its_access_ref
     assert!(
         matches!(
             err,
-            AppError::GrantRefused { workspace_id, needed_role: Role::Contributor } if workspace_id == crew
+            AppError::GrantRefused { workspace_id, needed_role: Role::Submitter } if workspace_id == crew
         ),
         "{err:?}"
     );
@@ -12545,8 +12661,8 @@ async fn a_claim_edge_proposed_between_a_verdicts_reviewer_check_and_its_commit_
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let alice = issue(&app, admin, Role::Contributor, "alice", crew).await;
-    let bob_writer = issue(&app, admin, Role::Contributor, "bob", crew).await;
+    let alice = issue(&app, admin, Role::Submitter, "alice", crew).await;
+    let bob_writer = issue(&app, admin, Role::Submitter, "bob", crew).await;
     let bob_reviewer = issue(&app, admin, Role::Reviewer, "bob", crew).await;
     let pat = issue(&app, admin, Role::Reviewer, "pat", crew).await;
     let a = app
@@ -12591,8 +12707,8 @@ async fn a_claim_edge_proposed_on_an_ancestor_between_a_captures_ancestor_read_a
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let alice = issue(&app, admin, Role::Contributor, "alice", crew).await;
-    let bob = issue(&app, admin, Role::Contributor, "bob", crew).await;
+    let alice = issue(&app, admin, Role::Submitter, "alice", crew).await;
+    let bob = issue(&app, admin, Role::Submitter, "bob", crew).await;
     let carol = agent(&app, admin, "carol", crew).await;
     let dana = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let pat = issue(&app, admin, Role::Reviewer, "pat", crew).await;
@@ -12639,7 +12755,7 @@ async fn a_claim_edge_proposed_on_a_target_between_a_supersedes_target_read_and_
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
     let carol = agent(&app, admin, "carol", crew).await;
-    let bob = issue(&app, admin, Role::Contributor, "bob", crew).await;
+    let bob = issue(&app, admin, Role::Submitter, "bob", crew).await;
     let dana = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let pat = issue(&app, admin, Role::Reviewer, "pat", crew).await;
     let target = promoted(
@@ -14070,7 +14186,16 @@ async fn a_named_workspace_the_key_holds_no_reader_on_answers_access_not_found()
     // Wes holds writer on crew and no reader anywhere: a node without
     // reader is unreadable, so the refusal order stops at access.not_found
     // before access.grant_refused (roles-and-keys.md refusal order).
-    let wes = issue(&f.app, admin, Role::Contributor, "wes", f.crew).await;
+    // A contributor without recall on crew: it writes there and reads only
+    // elsewhere (ADR-0093 d3).
+    let wes = issue_with(
+        &f.app,
+        admin,
+        Role::Contributor,
+        "wes",
+        vec![grant(f.crew, Role::Submitter), grant(elsewhere, Role::Reader)],
+    )
+    .await;
 
     for (key, reference) in [
         (&rory, Reference::from(elsewhere)),
@@ -14630,7 +14755,7 @@ async fn keyword_any_matches_any_word_where_keyword_all_needs_every_word() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let writer = issue(&app, admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, admin, Role::Submitter, "wanda", crew).await;
     let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
     let both = promoted(
@@ -14682,7 +14807,7 @@ async fn match_all_falls_back_to_any_word_and_says_so() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let writer = issue(&app, admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, admin, Role::Submitter, "wanda", crew).await;
     let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
     let both = promoted(
@@ -14772,7 +14897,7 @@ async fn an_admin_sets_the_tenants_default_pipeline_journalled_and_recall_follow
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let writer = issue(&app, admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, admin, Role::Submitter, "wanda", crew).await;
     let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
     promoted(
@@ -14864,7 +14989,7 @@ async fn narrowed_under_a_chosen_default() -> (TestApp, String, Uuid) {
     let wide = app_over(store.clone());
     let (boot, crew) = tenant(&wide).await;
     let admin = &boot.admin_key.value;
-    let writer = issue(&wide, admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&wide, admin, Role::Submitter, "wanda", crew).await;
     let reviewer = issue(&wide, admin, Role::Reviewer, "dana", crew).await;
     let reader = issue(&wide, admin, Role::Reader, "rhea", crew).await;
     let steer = promoted(
@@ -14994,7 +15119,7 @@ async fn steering_stays_first_and_unranked_under_every_pipeline() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let writer = issue(&app, admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, admin, Role::Submitter, "wanda", crew).await;
     let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
     let steer = promoted(
@@ -15032,7 +15157,7 @@ async fn a_recall_reads_each_served_workspaces_ancestry_once_however_many_hits_i
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let writer = issue(&app, admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, admin, Role::Submitter, "wanda", crew).await;
     let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     for i in 0..6 {
         promoted(
@@ -15093,7 +15218,7 @@ async fn a_rescan_reports_a_stored_version_by_rule_and_changes_nothing() {
     );
     let (boot, crew) = tenant(&before).await;
     let admin = boot.admin_key.value.clone();
-    let writer = issue(&before, &admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&before, &admin, Role::Submitter, "wanda", crew).await;
     let stored = before
         .submit_memory(
             &writer.value,
@@ -15152,7 +15277,7 @@ async fn rescan_record_held_records_findings_on_held_versions_and_touches_no_pro
     );
     let (boot, crew) = tenant(&before).await;
     let admin = boot.admin_key.value.clone();
-    let writer = issue(&before, &admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&before, &admin, Role::Submitter, "wanda", crew).await;
     let reviewer = issue(&before, &admin, Role::Reviewer, "dana", crew).await;
     let held = before
         .submit_memory(&writer.value, &submit_req("held", "[needs-person] held"))
@@ -15236,7 +15361,7 @@ async fn a_claim_key_or_a_verdict_reason_carrying_a_finding_is_refused() {
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let writer = issue(&app, admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, admin, Role::Submitter, "wanda", crew).await;
     let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let err = app
         .submit_memory(
@@ -15382,7 +15507,7 @@ async fn account_keys(app: &TestApp, admin: &str) -> (IssuedKey, IssuedKey) {
                 ..issue_req(
                     Role::Contributor,
                     "ada-agent",
-                    vec![on_root(Role::Contributor), on_root(Role::Reader)],
+                    vec![on_root(Role::Submitter), on_root(Role::Reader)],
                 )
             },
         )
@@ -17315,7 +17440,7 @@ async fn demoting_a_steering_tip_serves_the_steering_version_below_it() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let writer = issue(&app, admin, Role::Contributor, "wanda", crew).await;
+    let writer = issue(&app, admin, Role::Submitter, "wanda", crew).await;
     let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
     let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
     let v1 = promoted(
@@ -18470,7 +18595,7 @@ async fn the_queue_counts_held_instructions_and_the_person_reviewers_that_may_ap
     let (boot, crew, team, writer, _dana) = guardrail_tenant(&app).await;
     let admin = &boot.admin_key.value;
     let bots = workspace(&app, admin, "bots", boot.root_workspace_id).await;
-    let bot_writer = issue(&app, admin, Role::Contributor, "bot-writer", bots).await;
+    let bot_writer = issue(&app, admin, Role::Submitter, "bot-writer", bots).await;
     agent_reviewer(&app, admin, "bot-reviewer", bots).await;
     for (writer, req) in [
         (

@@ -834,6 +834,8 @@ where
                 covers: g.covers,
             });
         }
+        // Step 3 applies to added grants; a contributor's shape was checked
+        // when it was issued, and adding a grant cannot undo it (ADR-0093 d2).
         check_issuance(Role::Admin, key.role, &resolved).map_err(issuance_refusal)?;
         let mut added = Vec::with_capacity(resolved.len());
         for grant in resolved {

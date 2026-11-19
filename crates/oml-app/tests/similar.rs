@@ -109,7 +109,7 @@ async fn world_on(store: MemStore) -> World {
     }
     let (crew, other) = (nodes[0], nodes[1]);
     let both = |role| vec![grant(crew, role), grant(other, role)];
-    let mut alice_grants = both(Role::Contributor);
+    let mut alice_grants = both(Role::Submitter);
     alice_grants.extend(both(Role::Reader));
     let alice = issue(&app, &admin, Role::Contributor, alice_grants).await;
     let bob = issue(

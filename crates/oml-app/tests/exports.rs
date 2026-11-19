@@ -912,7 +912,7 @@ async fn a_linked_key_exports_none_of_its_persons_other_keys_held_rows() {
     let bob = issue(
         &app,
         admin,
-        Role::Contributor,
+        Role::Reader,
         UsedBy::Person,
         None,
         "bob/laptop",

@@ -3428,7 +3428,7 @@ async fn access_refusals_carry_their_recovery_details() {
     assert_envelope(&body, "access.grant_refused");
     assert_eq!(
         body["error"]["details"],
-        json!({ "workspace_id": crew.to_string(), "needed_role": "contributor" })
+        json!({ "workspace_id": crew.to_string(), "needed_role": "submitter" })
     );
 
     drop_db(&rig.db_name).await;

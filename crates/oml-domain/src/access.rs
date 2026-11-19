@@ -121,12 +121,25 @@ pub fn contributor_without_recall(key_role: Role, grants: &[Grant]) -> bool {
     key_role == Role::Contributor && !grants.iter().any(|g| g.role == Role::Reader)
 }
 
-/// Whether `grants` fit a contributor key: at least one reader and one
-/// submitter grant (ADR-0093 d2). Every other key role is shaped by
-/// [`admissible_grant_roles`] alone.
-#[must_use]
-pub fn contributor_grants_fit(grants: &[Grant]) -> bool {
-    grants.iter().any(|g| g.role == Role::Reader) && grants.iter().any(|g| g.role == Role::Submitter)
+/// A contributor key's shape (ADR-0093 d2): issued with at least one reader
+/// and one submitter grant among `grant_roles`, else
+/// [`IssuanceRefusal::ContributorGrants`]. Every other key role is shaped by
+/// [`admissible_grant_roles`] alone. The issuance checks it after the grants'
+/// nodes, denies and default (steps 4-6), so a request that names a node the
+/// tenant does not hold is told so first; adding grants to an issued key
+/// never checks it, since a grant added cannot take one away.
+///
+/// # Errors
+///
+/// [`IssuanceRefusal::ContributorGrants`] for a contributor key without
+/// either grant.
+pub fn check_contributor_grants(key_role: Role, grant_roles: &[Role]) -> Result<(), IssuanceRefusal> {
+    if key_role == Role::Contributor
+        && !(grant_roles.contains(&Role::Reader) && grant_roles.contains(&Role::Submitter))
+    {
+        return Err(IssuanceRefusal::ContributorGrants);
+    }
+    Ok(())
 }
 
 /// The key roles a key of `issuer_role` may issue (roles-and-keys.md,
@@ -171,7 +184,7 @@ pub enum IssuanceRefusal {
         admissible: &'static [Role],
         grant_index: Option<usize>,
     },
-    /// After step 3, `request.validation` with `details.field: /grants` and
+    /// After step 6, `request.validation` with `details.field: /grants` and
     /// `details.reason: contributor_grants`: a contributor key lacks a reader
     /// or a submitter grant (ADR-0093 d2). The server never adds the missing
     /// grant (ADR-0025 d2).
@@ -183,8 +196,8 @@ pub enum IssuanceRefusal {
 
 /// Steps 1–3 of the issuance validation order (roles-and-keys.md; ADR-0025
 /// d2): the two-key rule, the issuer ceiling on the key role, then grant
-/// admissibility, first failure answering; then a contributor key's shape,
-/// a reader and a submitter grant (ADR-0093 d2). The caller has already refused an
+/// admissibility, first failure answering. A contributor key's shape is
+/// [`check_contributor_grants`], checked after steps 4-6. The caller has already refused an
 /// issuer outside the issue verb (`access.verb_ceiling`) and checked
 /// `tenant_id` (step 0); node existence, deny containment and the default's
 /// coverage (steps 4–6) need the store and follow this check.
@@ -215,9 +228,6 @@ pub fn check_issuance(
             admissible,
             grant_index: Some(index),
         });
-    }
-    if key_role == Role::Contributor && !contributor_grants_fit(grants) {
-        return Err(IssuanceRefusal::ContributorGrants);
     }
     Ok(())
 }

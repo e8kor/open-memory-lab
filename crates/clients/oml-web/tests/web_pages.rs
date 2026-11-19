@@ -6670,7 +6670,7 @@ async fn other_tenant_writes(rig: &Rig, body: &str) {
             &boot.admin_key.value,
             &IssueKeyRequest {
                 profile: None,
-                role: Role::Contributor,
+                role: Role::Submitter,
                 name: Name::parse("rival-agent").expect("a name"),
                 principal: "rival-agent".to_owned(),
                 used_by: Some(UsedBy::Agent),

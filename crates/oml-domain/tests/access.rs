@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use oml_domain::access::{
     AccessRefusal, Covers, Grant, IssuanceRefusal, KeyDenial, TailCaller, TailSubject,
-    admissible_grant_roles, check_issuance, effective_roles, effective_verbs, resolve,
+    admissible_grant_roles, check_contributor_grants, check_issuance, effective_roles, effective_verbs, resolve,
     tail_visible,
 };
 use oml_domain::{Role, UsedBy};
@@ -168,6 +168,7 @@ fn a_contributor_key_without_a_reader_or_a_submitter_grant_is_refused_as_contrib
     let tree = Tree::new();
     let reader = grant(1, tree.research_crew, Role::Reader, &[]);
     let submitter = grant(2, tree.research_crew, Role::Submitter, &[]);
+    let roles = |grants: &[Grant]| grants.iter().map(|g| g.role).collect::<Vec<_>>();
     for grants in [
         vec![],
         vec![reader.clone()],
@@ -176,21 +177,28 @@ fn a_contributor_key_without_a_reader_or_a_submitter_grant_is_refused_as_contrib
     ] {
         assert_eq!(
             check_issuance(Role::Admin, Role::Contributor, &grants),
+            Ok(()),
+            "steps 1-3 pass: {grants:?}"
+        );
+        assert_eq!(
+            check_contributor_grants(Role::Contributor, &roles(&grants)),
             Err(IssuanceRefusal::ContributorGrants),
             "{grants:?}"
         );
     }
+    // Only a contributor key is shaped so.
+    for key_role in [Role::Reader, Role::Submitter, Role::Reviewer, Role::Admin] {
+        assert_eq!(check_contributor_grants(key_role, &[]), Ok(()), "{key_role:?}");
+    }
     // The reader grant need not sit on the submitter grant's node
     // (ADR-0093 d2: `<user>-curate` writes on one node and reads elsewhere).
+    let curate = [
+        node_grant(3, tree.universe, Role::Submitter),
+        grant(4, tree.ops_crew, Role::Reader, &[]),
+    ];
+    assert_eq!(check_issuance(Role::Admin, Role::Contributor, &curate), Ok(()));
     assert_eq!(
-        check_issuance(
-            Role::Admin,
-            Role::Contributor,
-            &[
-                node_grant(3, tree.universe, Role::Submitter),
-                grant(4, tree.ops_crew, Role::Reader, &[]),
-            ],
-        ),
+        check_contributor_grants(Role::Contributor, &roles(&curate)),
         Ok(())
     );
     // An inadmissible grant answers first, at step 3.

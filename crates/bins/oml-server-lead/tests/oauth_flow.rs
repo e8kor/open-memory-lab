@@ -213,7 +213,7 @@ async fn run_flow(db: &str) -> Option<Flow> {
             &boot.admin_key.value,
             &IssueKeyRequest {
                 profile: None,
-                role: Role::Contributor,
+                role: Role::Submitter,
                 name: Name::parse("claude-mobile").expect("a name"),
                 principal: "crew/claude-mobile".to_owned(),
                 used_by: Some(UsedBy::Agent),
