@@ -50,8 +50,9 @@ class SubmitRequest:
                 other than that, a body opening with a --- line and a body past 32,768 bytes are refused (request.validation
                 naming the field; request.payload_too_large naming /body) (ADR-0080 d1, d9). document takes text/markdown, its
                 default, or text/plain and an optional document; its claim_key is doc/ and segments of a-z 0-9 . _ -, or derived
-                from its title (ADR-0081 d1, d2). test requires test and a claim_key test/<name> (ADR-0086 d1). The three are
-                written over this API only: oml_write refuses them (since v0.8.0). Default: SubmitRequestKind.MEMORY.
+                from its title (ADR-0081 d1, d2). test requires test and a claim_key test/<name> (ADR-0086 d1), and is written
+                over this API only: oml_write refuses it until #419. skill and document are also written through oml_write, with
+                their skill and document objects. Default: SubmitRequestKind.MEMORY.
             valid_from (str | Unset): YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six
                 fractional digits. A period is read in UTC: 2026-11-05 runs from 00:00 to 24:00 UTC (ADR-0059 d2).
             valid_until (str | Unset): YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six

@@ -196,14 +196,15 @@ def sync_detailed(
     returns promoted served tips within reader effective access in the workspace's subtree, defaulting
     to the key's default_workspace (ADR-0039 d4) — a self_signed version only when the scope node is its
     own workspace; a retired claim's tip, its retirement version, among them, flagged retirement true;
-    others' held rows are never returned (R3). workspace is the subtree read (see the parameter);
-    v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workspace in
-    details.renamed_to (ADR-0039 d7). Without own the read is the catalog (ADR-0092 d6): every kind the
-    key reads in the subtree, each entry with the projection of its kind and no text unless
-    include_text, and on the first page `counts`, each kind's entries under every filter but kinds,
-    capped at catalog.count_cap and served as {"at_least": cap} above it. Ordered created_at descending,
-    then artifact_id descending; the cursor is bound to the calling key and expires under
-    api.cursor_ttl.
+    others' held rows are never returned (R3), except inside an in-progress subtree, where the scoped
+    listing serves every author's held rows, marked (ADR-0080 status, #402). workspace is the subtree
+    read (see the parameter); v0.3.0's workarea_id parameter and X-OML-Workarea header are
+    request.validation naming workspace in details.renamed_to (ADR-0039 d7). Without own the read is the
+    catalog (ADR-0092 d6): every kind the key reads in the subtree, each entry with the projection of
+    its kind and no text unless include_text, and on the first page `counts`, each kind's entries under
+    every filter but kinds, capped at catalog.count_cap and served as {"at_least": cap} above it.
+    Ordered created_at descending, then artifact_id descending; the cursor is bound to the calling key
+    and expires under api.cursor_ttl.
 
     Args:
         workspace (str | Unset): A workspace, by its node id, its name or its qualified name.
@@ -313,14 +314,15 @@ def sync(
     returns promoted served tips within reader effective access in the workspace's subtree, defaulting
     to the key's default_workspace (ADR-0039 d4) — a self_signed version only when the scope node is its
     own workspace; a retired claim's tip, its retirement version, among them, flagged retirement true;
-    others' held rows are never returned (R3). workspace is the subtree read (see the parameter);
-    v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workspace in
-    details.renamed_to (ADR-0039 d7). Without own the read is the catalog (ADR-0092 d6): every kind the
-    key reads in the subtree, each entry with the projection of its kind and no text unless
-    include_text, and on the first page `counts`, each kind's entries under every filter but kinds,
-    capped at catalog.count_cap and served as {"at_least": cap} above it. Ordered created_at descending,
-    then artifact_id descending; the cursor is bound to the calling key and expires under
-    api.cursor_ttl.
+    others' held rows are never returned (R3), except inside an in-progress subtree, where the scoped
+    listing serves every author's held rows, marked (ADR-0080 status, #402). workspace is the subtree
+    read (see the parameter); v0.3.0's workarea_id parameter and X-OML-Workarea header are
+    request.validation naming workspace in details.renamed_to (ADR-0039 d7). Without own the read is the
+    catalog (ADR-0092 d6): every kind the key reads in the subtree, each entry with the projection of
+    its kind and no text unless include_text, and on the first page `counts`, each kind's entries under
+    every filter but kinds, capped at catalog.count_cap and served as {"at_least": cap} above it.
+    Ordered created_at descending, then artifact_id descending; the cursor is bound to the calling key
+    and expires under api.cursor_ttl.
 
     Args:
         workspace (str | Unset): A workspace, by its node id, its name or its qualified name.
@@ -425,14 +427,15 @@ async def asyncio_detailed(
     returns promoted served tips within reader effective access in the workspace's subtree, defaulting
     to the key's default_workspace (ADR-0039 d4) — a self_signed version only when the scope node is its
     own workspace; a retired claim's tip, its retirement version, among them, flagged retirement true;
-    others' held rows are never returned (R3). workspace is the subtree read (see the parameter);
-    v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workspace in
-    details.renamed_to (ADR-0039 d7). Without own the read is the catalog (ADR-0092 d6): every kind the
-    key reads in the subtree, each entry with the projection of its kind and no text unless
-    include_text, and on the first page `counts`, each kind's entries under every filter but kinds,
-    capped at catalog.count_cap and served as {"at_least": cap} above it. Ordered created_at descending,
-    then artifact_id descending; the cursor is bound to the calling key and expires under
-    api.cursor_ttl.
+    others' held rows are never returned (R3), except inside an in-progress subtree, where the scoped
+    listing serves every author's held rows, marked (ADR-0080 status, #402). workspace is the subtree
+    read (see the parameter); v0.3.0's workarea_id parameter and X-OML-Workarea header are
+    request.validation naming workspace in details.renamed_to (ADR-0039 d7). Without own the read is the
+    catalog (ADR-0092 d6): every kind the key reads in the subtree, each entry with the projection of
+    its kind and no text unless include_text, and on the first page `counts`, each kind's entries under
+    every filter but kinds, capped at catalog.count_cap and served as {"at_least": cap} above it.
+    Ordered created_at descending, then artifact_id descending; the cursor is bound to the calling key
+    and expires under api.cursor_ttl.
 
     Args:
         workspace (str | Unset): A workspace, by its node id, its name or its qualified name.
@@ -540,14 +543,15 @@ async def asyncio(
     returns promoted served tips within reader effective access in the workspace's subtree, defaulting
     to the key's default_workspace (ADR-0039 d4) — a self_signed version only when the scope node is its
     own workspace; a retired claim's tip, its retirement version, among them, flagged retirement true;
-    others' held rows are never returned (R3). workspace is the subtree read (see the parameter);
-    v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workspace in
-    details.renamed_to (ADR-0039 d7). Without own the read is the catalog (ADR-0092 d6): every kind the
-    key reads in the subtree, each entry with the projection of its kind and no text unless
-    include_text, and on the first page `counts`, each kind's entries under every filter but kinds,
-    capped at catalog.count_cap and served as {"at_least": cap} above it. Ordered created_at descending,
-    then artifact_id descending; the cursor is bound to the calling key and expires under
-    api.cursor_ttl.
+    others' held rows are never returned (R3), except inside an in-progress subtree, where the scoped
+    listing serves every author's held rows, marked (ADR-0080 status, #402). workspace is the subtree
+    read (see the parameter); v0.3.0's workarea_id parameter and X-OML-Workarea header are
+    request.validation naming workspace in details.renamed_to (ADR-0039 d7). Without own the read is the
+    catalog (ADR-0092 d6): every kind the key reads in the subtree, each entry with the projection of
+    its kind and no text unless include_text, and on the first page `counts`, each kind's entries under
+    every filter but kinds, capped at catalog.count_cap and served as {"at_least": cap} above it.
+    Ordered created_at descending, then artifact_id descending; the cursor is bound to the calling key
+    and expires under api.cursor_ttl.
 
     Args:
         workspace (str | Unset): A workspace, by its node id, its name or its qualified name.
