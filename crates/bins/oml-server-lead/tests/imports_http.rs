@@ -526,14 +526,25 @@ async fn a_person_plans_then_imports_a_bundle_over_http_and_each_refusal_carries
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
 
     // The upload bound once: a second import of it is the session's state.
-    let (status, body) = json_call(
-        r,
-        "POST",
-        "/v2/imports",
-        Some(&ada),
-        json!({ "upload_id": up, "target": "notes", "expect_key": fingerprint }),
-    )
-    .await;
+    // The finished import's task releases the tenant's slot just after it
+    // records `done`, so a start in between is `import.busy`, which is
+    // retryable (ADR-0084 I13); the test retries it as a client would.
+    let mut tries = 0;
+    let (status, body) = loop {
+        let (status, body) = json_call(
+            r,
+            "POST",
+            "/v2/imports",
+            Some(&ada),
+            json!({ "upload_id": up, "target": "notes", "expect_key": fingerprint }),
+        )
+        .await;
+        tries += 1;
+        if code(&body) != "import.busy" || tries == 250 {
+            break (status, body);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    };
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert_eq!(code(&body), "upload.session_invalid");
     assert_eq!(body["error"]["details"]["state"], "bound");
