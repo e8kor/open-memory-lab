@@ -37,8 +37,8 @@ from .generated.api.review import post_verdict, review_next
 from .generated.api.workspaces import get_workspace
 from .generated.client import Client
 from .generated.models import (
-    ClaimKind,
     Anchor,
+    ClaimKind,
     EventsPage,
     ListMemoriesState,
     Memory,
@@ -478,9 +478,7 @@ class OmlClient:
                 query=query,
                 workspace=_opt(workspace),
                 k=_opt(k),
-                kinds=[ClaimKind(kind) for kind in kinds]
-                if kinds is not None
-                else UNSET,
+                kinds=[ClaimKind(kind) for kind in kinds] if kinds is not None else UNSET,
                 include_text=_opt(include_text),
                 include_unreviewed=_opt(include_unreviewed),
                 max_tokens=_opt(max_tokens),

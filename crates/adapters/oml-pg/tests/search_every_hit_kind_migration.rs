@@ -78,6 +78,17 @@ async fn partition_for(conn: &mut PgConnection, tenant: Uuid) {
 /// no tenant named on the connection, as a deployment runs it, enumerates
 /// the tenants under 0003's startup policy and refills them: the skill
 /// posts under code 5 with its name's lexeme, the guardrail under code 6.
+/// A seeded version: id, kind, claim, skill name, skill description and
+/// guardrail severity.
+type SeededRow = (
+    u128,
+    &'static str,
+    &'static str,
+    Option<&'static str>,
+    Option<&'static str>,
+    Option<&'static str>,
+);
+
 #[tokio::test]
 async fn migration_0062_gives_the_owners_skills_and_guardrails_postings_and_folds_the_skills_name()
 {
@@ -129,7 +140,7 @@ async fn migration_0062_gives_the_owners_skills_and_guardrails_postings_and_fold
     .await
     .expect("key");
     // (id, kind, claim, skill name, skill description, severity)
-    let rows: [(u128, &str, &str, Option<&str>, Option<&str>, Option<&str>); 3] = [
+    let rows: [SeededRow; 3] = [
         (
             0xD062,
             "skill",
