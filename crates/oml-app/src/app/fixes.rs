@@ -109,21 +109,21 @@ where
     ) -> Result<Demotion, AppError> {
         let admin = self.authenticate_bearer(bearer.into()).await?.key;
         require_role(&admin, Role::Admin, "demote")?;
-        let prev = self.head_event(admin.tenant_id).await?;
-        let planned = self.plan_demotion(&admin, memory_id, prev.as_ref()).await?;
+        let planned = self.plan_demotion(&admin, memory_id, None).await?;
         self.commit_requests(vec![commit_request(planned.event, planned.fold, None)])
             .await?;
         Ok(planned.demotion)
     }
 
-    /// A demotion of `memory_id` read and sealed on `prev`, not committed:
-    /// [`Self::demote_version`] commits it alone and the fix act commits it
-    /// with its `admin.fix` (ADR-0089 d16).
+    /// A demotion of `memory_id` read and sealed, not committed:
+    /// [`Self::demote_version`] commits it alone, sealed on the head read
+    /// after its reads (`prev` `None`), and the fix act commits it with its
+    /// `admin.fix`, sealed on the head it read first (ADR-0089 d16).
     async fn plan_demotion(
         &self,
         admin: &KeyRecord,
         memory_id: Uuid,
-        prev: Option<&SignedEnvelope>,
+        prev: Option<Option<SignedEnvelope>>,
     ) -> Result<PlannedDemotion, AppError> {
         let tenant_id = admin.tenant_id;
         let memory = self
@@ -176,8 +176,17 @@ where
             }
             _ => None,
         };
-        let event =
-            self.demote_event(prev, admin, &memory, restored.as_ref(), reopened.as_ref())?;
+        let prev = match prev {
+            Some(prev) => prev,
+            None => self.head_event(tenant_id).await?,
+        };
+        let event = self.demote_event(
+            prev.as_ref(),
+            admin,
+            &memory,
+            restored.as_ref(),
+            reopened.as_ref(),
+        )?;
         let demotion = Demotion {
             demoted: version_ref(&memory),
             restored: restored.as_ref().map(version_ref),
@@ -218,20 +227,19 @@ where
     ) -> Result<Erasure, AppError> {
         let admin = self.authenticate_bearer(bearer.into()).await?.key;
         require_role(&admin, Role::Admin, "erase")?;
-        let prev = self.head_event(admin.tenant_id).await?;
-        let (event, fold, erasure, _) = self.plan_erasure(&admin, memory_id, prev.as_ref()).await?;
+        let (event, fold, erasure, _) = self.plan_erasure(&admin, memory_id, None).await?;
         self.commit_requests(vec![commit_request(event, fold, None)])
             .await?;
         Ok(erasure)
     }
 
-    /// An erasure of the claim `memory_id` is a version of, read and sealed
-    /// on `prev`, not committed (ADR-0089 d16).
+    /// An erasure of the claim `memory_id` is a version of, read and sealed,
+    /// not committed; `prev` as [`Self::plan_demotion`]'s (ADR-0089 d16).
     async fn plan_erasure(
         &self,
         admin: &KeyRecord,
         memory_id: Uuid,
-        prev: Option<&SignedEnvelope>,
+        prev: Option<Option<SignedEnvelope>>,
     ) -> Result<(SignedEnvelope, MetadataFold, Erasure, MemoryRecord), AppError> {
         let tenant_id = admin.tenant_id;
         let named = self
@@ -245,7 +253,11 @@ where
             .await?;
         // An erase takes every version, so a claim is erased once.
         transition(named.status, MemoryStatus::Erased)?;
-        let event = self.erase_event(prev, admin, &named, &versions)?;
+        let prev = match prev {
+            Some(prev) => prev,
+            None => self.head_event(tenant_id).await?,
+        };
+        let event = self.erase_event(prev.as_ref(), admin, &named, &versions)?;
         let erasure = Erasure {
             erased: versions.iter().map(version_ref).collect(),
             journal_seq: event.envelope.seq,
@@ -442,8 +454,9 @@ where
                     .await?
             }
             FixAct::Erase => {
-                let (event, fold, _, named) =
-                    self.plan_erasure(&admin, req.target, prev.as_ref()).await?;
+                let (event, fold, _, named) = self
+                    .plan_erasure(&admin, req.target, Some(prev.clone()))
+                    .await?;
                 let fix = FixRecord {
                     fix_id,
                     act: FixAct::Erase,
@@ -539,7 +552,9 @@ where
                 status: memory.status,
             });
         }
-        let planned = self.plan_demotion(admin, target, prev).await?;
+        let planned = self
+            .plan_demotion(admin, target, Some(prev.cloned()))
+            .await?;
         let m = &planned.memory;
         let fix = FixRecord {
             fix_id,
