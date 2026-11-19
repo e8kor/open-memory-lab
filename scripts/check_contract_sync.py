@@ -44,7 +44,8 @@ This script extracts each surface and fails with a diff on any disagreement:
     (ADR-0039 d15)
   * a v0.3.0 spelling from d10's table on a start page: the eight tool names
     (V0_3_0_TOOLS below, removed in v0.5.1),
-    `X-OML-Workarea`, `include_own_held`, `OML_CLI_SERVER`, `OML_CLI_KEY`, the
+    `X-OML-Workarea`, `include_own_held` (but on a line naming the skill set, whose flag of
+    that name ADR-0080 d11 brought back), `OML_CLI_SERVER`, `OML_CLI_KEY`, the
     `--token`, `--server` and `--key` flags, the verbs `oml submit`, `oml recall`,
     `oml supersede` and `oml review verdict`, or the release 0.3.2 or v0.3.2,
     the pattern first checked against probe lines it must catch and pass, on a
@@ -142,6 +143,17 @@ RETIRED_NAME_RE = re.compile(
     r"|(?<![\w.])v?0\.3\.2(?!\.?\w)"
 )
 MIGRATION_HEADING_RE = re.compile(r"^(#+) Upgrading from ")
+# The skill set's include_own_held (GET /v1/skills, ADR-0080 d11) is a live flag that shares
+# v0.3.0's recall spelling; a line naming the skill set may name it.
+SKILL_SET_RE = re.compile(r"\bskills\(|\biter_skills\b|\biterSkills\b|/v1/skills\b")
+
+
+def retired_names(line: str) -> list[str]:
+    """The v0.3.0 spellings RETIRED_NAME_RE finds on one line, but the skill set's flag."""
+    names = RETIRED_NAME_RE.findall(line)
+    if SKILL_SET_RE.search(line):
+        names = [name for name in names if name != "include_own_held"]
+    return names
 
 CODE_RE = re.compile(r"`([a-z_]+\.[a-z_]+)`")
 SPAN_RE = re.compile(r"`([^`]+)`")
@@ -451,6 +463,7 @@ RETIRED_NAME_PASSES = [
     "oml review approve", "oml --url https://x --api-key k", "--token-stdin", "--key-file k",
     "--server-url x", "OML_URL and OML_API_KEY", "include_unreviewed", "tag v0.3.1",
     "0.3.20", "10.3.2", "0.3.2.1", "oml recalls", "oml submitted",
+    "skills(workspace, include_own_held=)", "GET /v1/skills?include_own_held=true",
 ]
 
 
@@ -458,9 +471,9 @@ def retired_name_pattern_problems() -> list[str]:
     """Each probe line RETIRED_NAME_RE misreads: a retired spelling it misses or
     a v0.4.0 spelling it fails."""
     missed = [f"misses {line!r}" for line in RETIRED_NAME_CATCHES
-              if not RETIRED_NAME_RE.search(line)]
+              if not retired_names(line)]
     return missed + [f"fails {line!r}" for line in RETIRED_NAME_PASSES
-                     if RETIRED_NAME_RE.search(line)]
+                     if retired_names(line)]
 
 
 def retired_name_problems() -> list[str]:
@@ -479,7 +492,7 @@ def retired_name_problems() -> list[str]:
                     migration_level = level
             if migration_level:
                 continue
-            for name in RETIRED_NAME_RE.findall(line):
+            for name in retired_names(line):
                 problems.append(f"{path.relative_to(ROOT)}:{number}: {name}")
     return problems
 

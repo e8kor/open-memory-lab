@@ -72,8 +72,8 @@ pass `replaces` with its artifact id. Replacing a held version raises `submissio
 | Helper | Python | TypeScript | What it does |
 |---|---|---|---|
 | Withdraw | `withdraw(artifact_id, reason=)` | `withdraw(artifact_id, { reason })` | Retracts a held version the key wrote. It is kept as `withdrawn`, leaves every review queue and is never served; no reviewer is involved. Another state is `memory.not_held`, another author's version `access.author_only` ([ADR-0083](../adr/ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) d13). |
-| The skill set, one page | `skills(workspace, cursor=)` | `skills({ workspace, cursor })` | The skills offered at the workspace, else the key's default: name, description, resource URI and approval, 50 a page, without bodies. An optional flag, named as in the [HTTP API](../api/http-api.md), offers the key's own held skills too, each marked unreviewed. A body is `read` with the skill's `artifact_id`. `set_digest` is the same on every page of one set ([ADR-0080](../adr/ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) d11). |
-| The skill set, every page | `iter_skills(workspace)` | `iterSkills({ workspace })` | Follows `next_cursor` until it is null. |
+| The skill set, one page | `skills(workspace, include_own_held=, cursor=)` | `skills({ workspace, include_own_held, cursor })` | The skills offered at the workspace, else the key's default: name, description, resource URI and approval, 50 a page, without bodies. `include_own_held` (Python `include_own_held=`, TypeScript `{ include_own_held }`), as the [HTTP API](../api/http-api.md) names it, offers the key's own held skills too, each marked unreviewed. A body is `read` with the skill's `artifact_id`. `set_digest` is the same on every page of one set ([ADR-0080](../adr/ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) d11). |
+| The skill set, every page | `iter_skills(workspace, include_own_held=)` | `iterSkills({ workspace, include_own_held })` | Follows `next_cursor` until it is null. |
 | A skill or a document | `write(text, kind="skill", skill={"name", "description"})`, `write(text, kind="document", document={"title"})` | `write({ text, kind: "skill", skill })`, `write({ text, kind: "document", document })` | Writes a held skill or document; with `replaces`, its next version, which sends `skill` or `document` again. A skill needs a person's approval ([ADR-0080](../adr/ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) d1, d16). |
 
 A recall with `kinds=["document"]` answers each matching document once, by its best passage: the
@@ -96,6 +96,9 @@ with OmlClient() as oml:
 
 The repository's Rust client, `oml-sdk`, which the web console uses, reads the same skill set
 (`Client::skills`) and a recall's document passages (`RecallQuery::kinds`, `RecallHit::passage`).
+A `RecallQuery` whose `kinds` is `None` sends no `kinds`, so the server's default applies: every hit
+kind but steering, test and the vocabulary kinds, with the steering list served
+([ADR-0092](../adr/ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) d1).
 
 Helpers for releases and bindings wait for them to be built
 ([ADR-0085](../adr/ADR-0085-a-workspace-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md) d12):
