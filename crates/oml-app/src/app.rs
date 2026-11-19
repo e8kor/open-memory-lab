@@ -9433,7 +9433,8 @@ where
     /// The promoted guardrails an agent at `workspace_id` would load after
     /// the previewed version is approved: the set in force under the
     /// caller's own guardrail scope, one more for a new rule, one fewer for
-    /// the retirement of a rule in it (ADR-0037 d7; ADR-0082 d5).
+    /// the retirement of a rule in it (ADR-0037 d7; ADR-0082 d5); `None`
+    /// for a caller that does not read the workspace.
     async fn guardrail_set_after(
         &self,
         caller: &Caller,
@@ -9441,6 +9442,13 @@ where
         replaces: Option<&MemoryRecord>,
         retirement: bool,
     ) -> Result<Option<usize>, AppError> {
+        // A key that writes the workspace but does not read it is told no
+        // set it may not read, and the preview still answers what capture
+        // would decide (the review of PR #494, L3).
+        let ancestry = self.ancestry(caller.key.tenant_id, workspace_id).await?;
+        if caller.denied(&ancestry) || !caller.effective(&ancestry).contains(&Role::Reader) {
+            return Ok(None);
+        }
         let set = self
             .guardrails(
                 Bearer::Session(caller),

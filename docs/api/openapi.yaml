@@ -4209,7 +4209,7 @@ components:
               relation: { type: string, enum: [shadows, shadowed_by] }
         set_after:
           type: object
-          description: "A guardrail's set size at its workspace once the version is approved, the approved rules an agent there loads, against the set cap (ADR-0037 d7)."
+          description: "A guardrail's set size at its workspace once the version is approved, the approved rules an agent there loads, against the set cap (ADR-0037 d7); absent for a key that does not read the workspace."
           required: [size, cap]
           properties:
             size: { type: integer, minimum: 0 }
