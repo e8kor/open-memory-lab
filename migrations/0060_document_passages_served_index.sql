@@ -11,14 +11,9 @@
 -- 1. The new index, search_postings_served_units, is created ON ONLY the
 --    parent (a catalog change), then built on each partition in name order
 --    and attached, each build committed before the next. A partition's
---    build holds its SHARE lock, so reads never wait. Every claim write of
---    that one tenant waits for the whole build of its partition: an insert,
---    a verdict, a promotion and an erasure alike, because the fold writes
---    the version's postings in the same transaction as the version. Other
---    tenants' writes do not wait. The review of PR #475 measured about 5 s
---    per 1.8M postings on one partition, so a tenant's write stall grows
---    with its postings; 0041 builds its index the same way. CREATE INDEX
---    CONCURRENTLY would let writes run, but PostgreSQL
+--    build holds its SHARE lock, so reads never wait and that one tenant's
+--    postings writes wait for its own build alone, as 0041 builds its
+--    index. CREATE INDEX CONCURRENTLY would let writes run, but PostgreSQL
 --    refuses it inside a DO block and inside a multi-statement string, and
 --    the partitions are known only at run time.
 -- 2. The old index is dropped and the new one takes its name: an ACCESS
