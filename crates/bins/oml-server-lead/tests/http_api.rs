@@ -4476,6 +4476,78 @@ async fn kinds_narrows_the_hits_and_decides_whether_the_steering_list_is_served(
     drop_db(&rig.db_name).await;
 }
 
+/// A test case is never a recall hit: `kinds` naming `test` is refused by
+/// name on `/kinds`, alone or beside a hit kind, and the catalog still
+/// lists by it (ADR-0086 d1; ADR-0092 d1, d6).
+#[tokio::test]
+async fn recall_refuses_kinds_test_by_name_and_the_catalog_lists_by_it() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
+    for kinds in [json!(["test"]), json!(["memory", "test"])] {
+        let (status, refused) = recall_over_http(
+            router,
+            &reader,
+            None,
+            json!({"query": "aluminium price", "kinds": kinds.clone()}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{kinds}: {refused}");
+        assert_envelope(&refused, "request.validation");
+        assert_eq!(refused["error"]["details"]["field"], "/kinds", "{refused}");
+        let message = refused["error"]["message"].as_str().expect("message");
+        assert!(message.contains("never a recall hit"), "{refused}");
+    }
+    let (status, _, page) = send(
+        router,
+        "GET",
+        "/v1/memories?kinds=test",
+        Call::auth(&reader),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+
+    drop_db(&rig.db_name).await;
+}
+
+/// The catalog's `prefix` is a claim key's start: one holding NUL or
+/// another control character, or longer than 1,024 bytes, is refused naming
+/// `prefix`; an ordinary one, multi-byte included, is served (ADR-0092 d6;
+/// d12 reading 6).
+#[tokio::test]
+async fn the_catalog_refuses_a_prefix_with_a_control_character_or_past_its_cap() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
+    let long = "a".repeat(1025);
+    for prefix in [
+        "skill%00",
+        "doc%0Arun",
+        "notes%1B",
+        "notes%7F",
+        long.as_str(),
+    ] {
+        let (status, refused) =
+            list(router, Call::auth(&reader), &format!("prefix={prefix}")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{prefix}: {refused}");
+        assert_envelope(&refused, "request.validation");
+        assert_eq!(refused["error"]["details"]["field"], "prefix", "{refused}");
+    }
+    let at_cap = "a".repeat(1024);
+    for prefix in ["skill/", "doc/r%C3%A9sum%C3%A9", at_cap.as_str()] {
+        let (status, page) = list(router, Call::auth(&reader), &format!("prefix={prefix}")).await;
+        assert_eq!(status, StatusCode::OK, "{prefix}: {page}");
+    }
+
+    drop_db(&rig.db_name).await;
+}
+
 #[tokio::test]
 async fn an_unknown_recall_field_is_request_validation() {
     let Some(rig) = fresh_rig().await else {

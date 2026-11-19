@@ -3375,6 +3375,59 @@ async fn a_read_argument_outside_its_mode_is_refused_naming_it() {
     drop_db(&db).await;
 }
 
+/// The listing's single `kind` is refused in every mode naming its
+/// successor, `details.renamed_to: /kinds`, a `null` one too; an empty
+/// `kinds` is refused in the listing as recall refuses it, and `kinds:
+/// ["test"]` is refused in recall naming that a test is never a hit
+/// (ADR-0092 d6; ADR-0039 d11; ADR-0086 d1).
+#[tokio::test]
+async fn oml_read_refuses_kind_naming_kinds_an_empty_kinds_in_every_mode_and_a_test_hit() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let (agent, _, _, _) = agent_crew(&router).await;
+    for (id, args) in [
+        (1, json!({"kind": "memory"})),
+        (2, json!({"kind": null})),
+        (3, json!({"query": "aluminium", "kind": "memory"})),
+        (4, json!({"query": "aluminium", "kind": null})),
+    ] {
+        let refused = call_tool(&router, &agent, id, "oml_read", args.clone()).await;
+        refused_naming(&refused, "/kind");
+        assert_eq!(
+            refused["structuredContent"]["error"]["details"]["renamed_to"], "/kinds",
+            "{args}: {refused}"
+        );
+    }
+    let mut messages = Vec::new();
+    for (id, args) in [
+        (5, json!({"kinds": []})),
+        (6, json!({"query": "aluminium", "kinds": []})),
+    ] {
+        let refused = call_tool(&router, &agent, id, "oml_read", args.clone()).await;
+        refused_naming(&refused, "/kinds");
+        messages.push(refused["structuredContent"]["error"]["message"].clone());
+    }
+    assert_eq!(messages[0], messages[1], "one refusal for an empty kinds");
+    let refused = call_tool(
+        &router,
+        &agent,
+        7,
+        "oml_read",
+        json!({"query": "aluminium", "kinds": ["test"]}),
+    )
+    .await;
+    refused_naming(&refused, "/kinds");
+    let message = refused["structuredContent"]["error"]["message"]
+        .as_str()
+        .expect("message");
+    assert!(message.contains("never a recall hit"), "{refused}");
+    // The catalog lists tests by kind.
+    read(&router, &agent, 8, json!({"kinds": ["test"]})).await;
+
+    drop_db(&db).await;
+}
+
 #[tokio::test]
 async fn oml_read_refuses_artifact_id_and_query_together() {
     let Some((router, db)) = fresh_router().await else {

@@ -837,6 +837,45 @@ async fn recall_ranks_kind_guardrail_as_an_in_force_hit_and_the_catalog_lists_th
     assert_eq!(items[0]["severity"], "must");
 }
 
+/// The catalog marks `needs_person` on a held instruction alone: once a
+/// person approves the guardrail, its row no longer needs one (ADR-0092 d6;
+/// ADR-0080 d16).
+#[tokio::test]
+async fn the_catalog_marks_needs_person_on_a_held_instruction_and_not_on_an_approved_one() {
+    let router = doubles_router();
+    let t = tenant(&router).await;
+    let id = submit_guardrail(
+        &router,
+        &t,
+        "g-1",
+        json!({"kind": "guardrail", "severity": "must", "body": "Run the tests.", "workspace": t.crew}),
+    )
+    .await;
+    let listed = |token: String| {
+        let router = router.clone();
+        async move {
+            let (status, page) = send(
+                &router,
+                "GET",
+                "/v1/memories?own=true&kinds=guardrail",
+                Some(&token),
+                None,
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{page}");
+            page["items"][0].clone()
+        }
+    };
+    let held = listed(t.writer.clone()).await;
+    assert_eq!(held["artifact_id"], id.as_str(), "{held}");
+    assert_eq!(held["needs_person"], true, "{held}");
+    approve_next(&router, &t, 1).await;
+    let approved = listed(t.writer.clone()).await;
+    assert_eq!(approved["artifact_id"], id.as_str(), "{approved}");
+    assert_eq!(approved["needs_person"], false, "{approved}");
+}
+
 /// One JSON-RPC request to `/mcp`; its `result`.
 async fn rpc(router: &Router, token: &str, method: &str, params: Value) -> Value {
     let (status, body) = send(

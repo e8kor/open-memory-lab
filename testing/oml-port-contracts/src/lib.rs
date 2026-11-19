@@ -13229,7 +13229,6 @@ fn kinds_scope(wa: Uuid, offered: &[(Uuid, MemoryKind)], kinds: &[MemoryKind]) -
             MemoryKind::Memory,
             MemoryKind::DerivedFact,
             MemoryKind::Document,
-            MemoryKind::Test,
         ],
         ..scope_of(wa, None)
     }
@@ -13252,7 +13251,6 @@ pub async fn a_kinds_filter_inside_the_reference_set_restricts_the_unfiltered_an
         MemoryKind::Memory,
         MemoryKind::DerivedFact,
         MemoryKind::Document,
-        MemoryKind::Test,
         MemoryKind::Skill,
         MemoryKind::Guardrail,
     ];
@@ -13262,7 +13260,7 @@ pub async fn a_kinds_filter_inside_the_reference_set_restricts_the_unfiltered_an
         &[MemoryKind::Document, MemoryKind::Skill],
         &[MemoryKind::Skill],
         &[MemoryKind::Guardrail, MemoryKind::DerivedFact],
-        &[MemoryKind::Test, MemoryKind::Memory],
+        &[MemoryKind::DerivedFact, MemoryKind::Memory],
         &[MemoryKind::Skill, MemoryKind::Guardrail],
     ];
     for kind in store.retrievers() {
@@ -13297,6 +13295,53 @@ pub async fn a_kinds_filter_inside_the_reference_set_restricts_the_unfiltered_an
                     "{kind:?} {query:?} {filter:?}: the filtered list is the whole one restricted"
                 );
             }
+        }
+    }
+}
+
+/// A test case is never a hit and never counts in the statistics, even when
+/// a scope names its kind among those asked and those counted: the store
+/// answers exactly what it answers without it, the same rows with the same
+/// scores, and no row of kind `test` (ADR-0086 d1; ADR-0092 d12 reading 4).
+pub async fn a_test_is_never_a_hit_and_never_counts_even_when_the_scope_names_its_kind<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(406);
+    rig.seed_chain(store, 0).await;
+    let (_, _, wa, _) = retriever_fixture(&mut rig, store, false).await;
+    let offered = instruction_fixture(&mut rig, store, wa).await;
+    let asked = [
+        MemoryKind::Memory,
+        MemoryKind::DerivedFact,
+        MemoryKind::Document,
+        MemoryKind::Skill,
+        MemoryKind::Guardrail,
+    ];
+    let with_test: Vec<MemoryKind> = asked.iter().copied().chain([MemoryKind::Test]).collect();
+    for kind in store.retrievers() {
+        for query in LAW_QUERIES.iter().copied().chain(["rollback test"]) {
+            let without = run(
+                store,
+                rig.tenant_id,
+                kind,
+                &kinds_scope(wa, &offered, &asked),
+                query,
+                MatchMode::Any,
+            )
+            .await;
+            let mut naming = kinds_scope(wa, &offered, &with_test);
+            naming.counted_kinds.push(MemoryKind::Test);
+            let named = run(store, rig.tenant_id, kind, &naming, query, MatchMode::Any).await;
+            assert!(
+                named.candidates.iter().all(|c| c.kind != MemoryKind::Test),
+                "{kind:?} {query:?}: a test was a hit"
+            );
+            assert_eq!(
+                named.candidates, without.candidates,
+                "{kind:?} {query:?}: naming test moved the answer"
+            );
         }
     }
 }
@@ -15428,6 +15473,8 @@ where
     )
     .await;
     an_instruction_outside_the_offered_set_is_never_a_hit(&new_store().await).await;
+    a_test_is_never_a_hit_and_never_counts_even_when_the_scope_names_its_kind(&new_store().await)
+        .await;
     the_keyword_retrievers_match_all_or_any_word_on_every_store(&new_store().await).await;
     bm25_finds_an_identifier_by_its_parts_and_a_word_by_its_stem(&new_store().await).await;
     bm25_reads_a_query_without_its_english_stop_words_unless_it_has_no_other(&new_store().await)

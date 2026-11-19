@@ -3176,13 +3176,13 @@ fn kind_narrowing(scope: &CandidateScope) -> String {
 }
 
 /// A kind's code in the postings and their counts, as
-/// `oml_search_memory_kind` stores it (migrations 0021, 0062; ADR-0092 d4).
+/// `oml_search_memory_kind` stores it (migrations 0021, 0062; ADR-0092 d4);
+/// a test has none, since it is never a hit (ADR-0086 d1).
 fn memory_kind_code(kind: &str) -> Option<i16> {
     match kind {
         "memory" => Some(1),
         "derived_fact" => Some(2),
         "document" => Some(3),
-        "test" => Some(4),
         "skill" => Some(5),
         "guardrail" => Some(6),
         "term" => Some(7),
@@ -3756,6 +3756,15 @@ async fn insert_memory(
     } else {
         (String::new(), String::new())
     };
+    // The author's person, recorded once at the write (ADR-0085 d16,
+    // amended 2026-11-18; migration 0061), named last and only when the key
+    // acts for one.
+    let person_n = scanner_n + usize::from(m.scanned_under.is_some());
+    let (person_column, person_value) = if m.author_person.is_some() {
+        (", author_person".to_owned(), format!(", ${person_n}"))
+    } else {
+        (String::new(), String::new())
+    };
     // A document version's passages before its row, so the row's insert
     // fold finds them and writes its postings and counts one unit per
     // passage (ADR-0081 d3, d4; migration 0059).
@@ -3765,10 +3774,10 @@ async fn insert_memory(
          created_event_id, created_at, claim_key, author_principal, \
          author_key_id, derives_from, lineage_principals, lineage_key_ids, scan_finding, \
          version, kind, body_bytes, is_tip, promoted_at, retirement, replaces_artifact_id, \
-         severity, rule{columns}{origin_column}{scanner_column}) \
+         severity, rule{columns}{origin_column}{scanner_column}{person_column}) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, ($8)::timestamptz, $9, $10, $11, $12, $13, $14, \
          $15, $16, $17, $18, $19, ($20)::timestamptz, $21, $22, $23, $24{values}{origin_value}\
-         {scanner_value})"
+         {scanner_value}{person_value})"
     );
     let mut insert = sqlx::query(&sql)
         .bind(m.memory_id)
@@ -3817,18 +3826,10 @@ async fn insert_memory(
     if let Some(scanner) = m.scanned_under.as_deref() {
         insert = insert.bind(scanner);
     }
-    insert.execute(&mut **tx).await.map_err(backend)?;
-    // The author's person, recorded once at the write (ADR-0085 d16, amended
-    // 2026-11-18; migration 0061), only when the key acts for one.
     if let Some(person) = &m.author_person {
-        sqlx::query("UPDATE memories SET author_person = $3 WHERE tenant_id = $1 AND id = $2")
-            .bind(m.tenant_id)
-            .bind(m.memory_id)
-            .bind(person.as_str())
-            .execute(&mut **tx)
-            .await
-            .map_err(backend)?;
+        insert = insert.bind(person.as_str());
     }
+    insert.execute(&mut **tx).await.map_err(backend)?;
     // A skill's, a document's or a test case's fields in the same
     // transaction, only when the version carries any (migration 0048).
     if let Some(fields) = m.kind_fields.as_deref() {
@@ -6846,12 +6847,19 @@ impl PgStore {
         .map_err(backend)?
         .into_iter()
         .collect();
+        // The list and this read share the transaction's snapshot, so a
+        // candidate with no row is a store fault, refused by name rather
+        // than counted as a memory.
         for c in &mut candidates {
-            if let Some(kind) = kinds.get(&c.memory_id) {
-                c.kind = MemoryKind::parse(kind).ok_or_else(|| {
-                    StoreError::Backend(format!("a stored row names an unknown kind {kind:?}"))
-                })?;
-            }
+            let kind = kinds.get(&c.memory_id).ok_or_else(|| {
+                StoreError::Backend(format!(
+                    "candidate {} has no row in its own list's snapshot",
+                    c.memory_id
+                ))
+            })?;
+            c.kind = MemoryKind::parse(kind).ok_or_else(|| {
+                StoreError::Backend(format!("a stored row names an unknown kind {kind:?}"))
+            })?;
         }
         Ok(candidates)
     }
@@ -12976,5 +12984,41 @@ impl ConnectionStore for PgStore {
         .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
         row.as_ref().map(connection_from_row).transpose()
+    }
+}
+
+#[cfg(test)]
+mod prefix_upper_tests {
+    use super::prefix_upper;
+
+    /// The bound is the prefix with its last character stepped to the next
+    /// scalar value, across multi-byte characters, over the surrogate gap
+    /// after U+D7FF, and past a last character of U+10FFFF, which has none
+    /// and is dropped first; every key that starts with the prefix sorts
+    /// below it.
+    #[test]
+    fn prefix_upper_steps_the_last_scalar_value_over_the_surrogates_and_past_the_last_one() {
+        for (prefix, upper) in [
+            ("skill/", Some("skill0")),
+            ("doc/r\u{e9}", Some("doc/r\u{ea}")),
+            ("\u{65e5}\u{672c}", Some("\u{65e5}\u{672d}")),
+            ("a\u{d7ff}", Some("a\u{e000}")),
+            ("a\u{10ffff}", Some("b")),
+            ("a\u{10ffff}\u{10ffff}", Some("b")),
+            ("\u{10ffff}", None),
+        ] {
+            assert_eq!(prefix_upper(prefix).as_deref(), upper, "{prefix:?}");
+        }
+        for (prefix, key) in [
+            ("a\u{d7ff}", "a\u{d7ff}\u{10ffff}"),
+            ("a\u{10ffff}", "a\u{10ffff}\u{10ffff}z"),
+            ("doc/r\u{e9}", "doc/r\u{e9}sum\u{e9}"),
+        ] {
+            let upper = prefix_upper(prefix).expect("a bound");
+            assert!(
+                key.starts_with(prefix) && key < upper.as_str(),
+                "{key:?} < {upper:?}"
+            );
+        }
     }
 }

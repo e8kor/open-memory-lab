@@ -732,18 +732,25 @@ impl CandidateScope {
         self.kinds
             .iter()
             .copied()
-            .filter(|k| !crate::types::INSTRUCTION_HIT_KINDS.contains(k))
+            .filter(|k| {
+                crate::types::HIT_KINDS.contains(k)
+                    && !crate::types::INSTRUCTION_HIT_KINDS.contains(k)
+            })
             .collect()
     }
 
     /// The kinds BM25's statistics count by node: `counted_kinds` less the
-    /// instruction kinds, which count by id (ADR-0092 d4).
+    /// instruction kinds, which count by id, and less any kind that is never
+    /// a hit, a test (ADR-0092 d4; ADR-0086 d1).
     #[must_use]
     pub fn counted_node_kinds(&self) -> Vec<MemoryKind> {
         self.counted_kinds
             .iter()
             .copied()
-            .filter(|k| !crate::types::INSTRUCTION_HIT_KINDS.contains(k))
+            .filter(|k| {
+                crate::types::HIT_KINDS.contains(k)
+                    && !crate::types::INSTRUCTION_HIT_KINDS.contains(k)
+            })
             .collect()
     }
 

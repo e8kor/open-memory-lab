@@ -8,9 +8,11 @@
 -- postings (ADR-0052)".
 --
 -- Codes. The postings and counts store a version's kind as a small code:
--- 1 memory, 2 derived_fact, 3 document, 4 test, 5 skill, 6 guardrail,
--- 7 term, 8 term_mapping, 9 vocab_release. Steering has none: it is never
--- ranked (ADR-0092 d2), so it holds no postings, as before. Every other
+-- 1 memory, 2 derived_fact, 3 document, 5 skill, 6 guardrail, 7 term,
+-- 8 term_mapping, 9 vocab_release; 4 is left unused. Steering has none: it
+-- is never ranked (ADR-0092 d2), so it holds no postings, as before. A test
+-- has none either: a test case is never a hit and never counts in the
+-- statistics (ADR-0086 d1, which ADR-0092 does not amend). Every other
 -- kind has postings in every state a memory has; which kinds a recall
 -- counts and reads is the recall's choice (d4), so the vocabulary kinds
 -- have postings before ADR-0021 d9's opt-in reads them (d12 reading 2).
@@ -37,7 +39,7 @@
 -- 3. The kind check is validated under SHARE UPDATE EXCLUSIVE, which lets
 --    reads and writes run while it reads the postings.
 -- 4. Each tenant holding a row of a kind that had no postings before
---    (test, skill, guardrail and the vocabulary kinds) has its skills'
+--    (skill, guardrail and the vocabulary kinds) has its skills'
 --    lexemes recomputed and its postings and counts refilled under its row
 --    security, alone in its own transaction; a tenant with none is read by
 --    one probe and left as it is. A refill rewrites every posting and count
@@ -59,7 +61,7 @@ BEGIN
         LANGUAGE sql IMMUTABLE PARALLEL SAFE
         RETURN CASE
             WHEN retirement OR kind IS NULL
-                 OR kind NOT IN ('memory', 'derived_fact', 'document', 'test', 'skill',
+                 OR kind NOT IN ('memory', 'derived_fact', 'document', 'skill',
                                  'guardrail', 'term', 'term_mapping', 'vocab_release')
                 THEN NULL
             WHEN status = 'held' THEN 0
@@ -72,7 +74,7 @@ BEGIN
         LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
         RETURN CASE kind
             WHEN 'memory' THEN 1 WHEN 'derived_fact' THEN 2 WHEN 'document' THEN 3
-            WHEN 'test' THEN 4 WHEN 'skill' THEN 5 WHEN 'guardrail' THEN 6
+            WHEN 'skill' THEN 5 WHEN 'guardrail' THEN 6
             WHEN 'term' THEN 7 WHEN 'term_mapping' THEN 8 WHEN 'vocab_release' THEN 9
         END;
 
@@ -111,7 +113,7 @@ BEGIN
     ALTER TABLE search_postings DROP CONSTRAINT IF EXISTS search_postings_memory_kind;
     ALTER TABLE search_postings
         ADD CONSTRAINT search_postings_memory_kind
-        CHECK (memory_kind >= 1 AND memory_kind <= 9) NOT VALID;
+        CHECK (memory_kind IN (1, 2, 3, 5, 6, 7, 8, 9)) NOT VALID;
     COMMIT;
 
     SET LOCAL lock_timeout = '5s';
@@ -153,7 +155,7 @@ BEGIN
         PERFORM set_config('oml.tenant_id', t::text, true);
         IF EXISTS (SELECT 1 FROM memories m
                     WHERE m.tenant_id = t
-                      AND m.kind IN ('test', 'skill', 'guardrail', 'term', 'term_mapping',
+                      AND m.kind IN ('skill', 'guardrail', 'term', 'term_mapping',
                                      'vocab_release')) THEN
             UPDATE memories m SET search_vector = NULL
              WHERE m.tenant_id = t AND m.kind = 'skill';

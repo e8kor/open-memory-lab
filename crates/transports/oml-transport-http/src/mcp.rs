@@ -427,7 +427,8 @@ struct ReadArgs {
     claim_key: Option<String>,
     state: Option<String>,
     /// The listing's single kind, renamed `kinds` (ADR-0092 d6): refused
-    /// naming its successor.
+    /// naming its successor whenever it is sent, `null` included.
+    #[serde(default, deserialize_with = "sent")]
     kind: Option<Value>,
     /// The catalog's claim key prefix and its body switch (ADR-0092 d6).
     prefix: Option<String>,
@@ -454,6 +455,12 @@ struct ReadArgs {
     sources: Option<Value>,
     /// The transaction-time instant every mode reads at (ADR-0059 d14).
     as_of: Option<String>,
+}
+
+/// An argument that is `Some` whenever it is sent, a JSON `null` included,
+/// so a refusal by name reaches a `null` too.
+fn sent<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(d).map(Some)
 }
 
 /// `oml_read`'s modes and the arguments each takes (ADR-0039 d4).
@@ -1380,9 +1387,14 @@ where
         // The listing's single kind is now `kinds`, on every mode (ADR-0092
         // d6; ADR-0039 d7).
         if args.kind.is_some() {
+            return Err(refusal(ApiError::renamed("/kind", "/kinds")));
+        }
+        // An empty `kinds` is refused in every mode as recall refuses it,
+        // never read as no filter (ADR-0092 d1, d6).
+        if args.kinds.as_ref().is_some_and(Vec::is_empty) {
             return Err(field_refusal(
-                "/kind",
-                "kind is renamed kinds: send kinds, a list of kinds, in recall and listing modes",
+                "/kinds",
+                "an empty kinds is refused: omit kinds for no filter",
             ));
         }
         if args.artifact_id.is_some() && args.query.is_some() {

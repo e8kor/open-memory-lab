@@ -643,16 +643,17 @@ pub struct RecallHit {
 /// `POST /v1/memories/recall`: steering first, then the ranked hits.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct RecallResponse {
-    /// The steering list; empty when the recall's `kinds` does not name
-    /// steering, which the server answers as `"not_requested"` (ADR-0092
-    /// d2).
+    /// The steering list, `Some` and possibly empty, "none in force"; `None`
+    /// when the recall's `kinds` does not name steering, which the server
+    /// answers as `"not_requested"`, so an unasked list is never read as
+    /// none in force (ADR-0092 d2).
     #[serde(deserialize_with = "steering_list")]
-    pub steering: Vec<Memory>,
+    pub steering: Option<Vec<Memory>>,
     pub hits: Vec<RecallHit>,
 }
 
-/// A recall's `steering`: the list, or `"not_requested"` read as none.
-fn steering_list<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<Memory>, D::Error> {
+/// A recall's `steering`: the list, or `None` for `"not_requested"`.
+fn steering_list<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Vec<Memory>>, D::Error> {
     #[derive(Deserialize)]
     #[serde(untagged)]
     enum Steering {
@@ -660,8 +661,8 @@ fn steering_list<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<Memory>, 
         NotRequested(String),
     }
     match Steering::deserialize(d)? {
-        Steering::List(items) => Ok(items),
-        Steering::NotRequested(s) if s == "not_requested" => Ok(Vec::new()),
+        Steering::List(items) => Ok(Some(items)),
+        Steering::NotRequested(s) if s == "not_requested" => Ok(None),
         Steering::NotRequested(other) => Err(serde::de::Error::custom(format!(
             "steering is a list or \"not_requested\", not {other:?}"
         ))),

@@ -2090,13 +2090,14 @@ pub struct VerdictRequest {
 }
 
 /// The kinds recall may serve as hits: every kind but steering, which is
-/// served first and never ranked (ADR-0092 d1, d2). `document` joins them
-/// with its passages (ADR-0081 d4).
-pub const HIT_KINDS: [MemoryKind; 9] = [
+/// served first and never ranked (ADR-0092 d1, d2), and test, which is
+/// never a hit, a prompt or a resource and never counts in the statistics
+/// (ADR-0086 d1, which ADR-0092 does not amend). `document` joins them with
+/// its passages (ADR-0081 d4).
+pub const HIT_KINDS: [MemoryKind; 8] = [
     MemoryKind::Memory,
     MemoryKind::DerivedFact,
     MemoryKind::Document,
-    MemoryKind::Test,
     MemoryKind::Skill,
     MemoryKind::Guardrail,
     MemoryKind::Term,
@@ -2108,11 +2109,10 @@ pub const HIT_KINDS: [MemoryKind; 9] = [
 /// vocabulary kinds, which join only by a workspace's journalled opt-in;
 /// that opt-in is unbuilt, so none does (ADR-0092 d1, d12 reading 2;
 /// ADR-0021 d9).
-pub const DEFAULT_HIT_KINDS: [MemoryKind; 6] = [
+pub const DEFAULT_HIT_KINDS: [MemoryKind; 5] = [
     MemoryKind::Memory,
     MemoryKind::DerivedFact,
     MemoryKind::Document,
-    MemoryKind::Test,
     MemoryKind::Skill,
     MemoryKind::Guardrail,
 ];

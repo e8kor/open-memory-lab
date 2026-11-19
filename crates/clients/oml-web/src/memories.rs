@@ -343,6 +343,7 @@ async fn user_cards(
     let rows: Vec<Memory> = result
         .steering
         .iter()
+        .flatten()
         .chain(result.hits.iter().map(|h| &h.memory))
         .filter(|m| {
             q.state

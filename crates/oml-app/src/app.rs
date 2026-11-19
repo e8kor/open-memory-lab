@@ -587,6 +587,20 @@ fn served_unreviewed(m: &MemoryRecord, current: Option<&str>) -> bool {
         && m.scanned_under.as_deref() == current
 }
 
+/// Whether an offered instruction's row, as the recall hydrated it, is still
+/// served: a promoted tip, or a held version its read serves (unscanned
+/// rows and scan holds never). `recall_instructions` admitted the offered
+/// set by state, and a verdict, a withdrawal or a supersession can land
+/// before the pipeline reads the row again, so the state is read again
+/// here (ADR-0092 d3; ADR-0080 d10, d14).
+fn offered_instruction_still_served(m: &MemoryRecord, current_scanner: Option<&str>) -> bool {
+    match m.status {
+        MemoryStatus::Promoted => m.is_tip,
+        MemoryStatus::Held => served_unreviewed(m, current_scanner),
+        _ => false,
+    }
+}
+
 /// The most held steering versions a recall's steering list carries after
 /// its promoted rows (ADR-0080 d10, d14): a bound on the two listing reads
 /// that find them, beside the steering budget that cuts the list.
@@ -7400,13 +7414,6 @@ where
         };
         let mut lap = std::time::Instant::now();
         let (mut candidates, terms, fallback) = (ran.fused, ran.terms, ran.fallback);
-        // Per kind, the candidates of the fused list before the `k` cut
-        // (ADR-0092 d4).
-        let matched_by_kind: Vec<(MemoryKind, u64)> = HIT_KINDS
-            .into_iter()
-            .map(|k| (k, candidates.iter().filter(|c| c.kind == k).count() as u64))
-            .filter(|(_, n)| *n > 0)
-            .collect();
         // The core's re-check at an instant: which candidates were their
         // claim's tip then, read once for the list (ADR-0059 d15, d16).
         let tips_then: BTreeSet<Uuid> = match &req.as_of {
@@ -7442,9 +7449,12 @@ where
         let instruction_ids: BTreeSet<Uuid> = offered.ids.iter().map(|(id, _)| *id).collect();
         let admits = |m: &MemoryRecord| {
             // An instruction is a hit only as one of the offered set, which
-            // `recall_instructions` admitted by state (ADR-0092 d3).
+            // `recall_instructions` admitted by state; a verdict landing
+            // before the pipeline hydrates the row is read again here
+            // (ADR-0092 d3).
             if INSTRUCTION_HIT_KINDS.contains(&m.kind) {
                 return instruction_ids.contains(&m.memory_id)
+                    && offered_instruction_still_served(m, self.scanner.version())
                     && !m.retirement
                     && kinds.contains(&m.kind)
                     && (req.include_expired || !m.valid.expired_at(now_us));
@@ -7492,6 +7502,14 @@ where
             candidates.retain(|c| rows.contains_key(&c.memory_id));
             lap = timings.lap(Stage::Hydrate, lap);
         }
+        // Per kind, the candidates of the fused list before the `k` cut,
+        // counted after a reference set's list is restricted to the searched
+        // nodes, so no row outside them is counted (ADR-0092 d4).
+        let matched_by_kind: Vec<(MemoryKind, u64)> = HIT_KINDS
+            .into_iter()
+            .map(|k| (k, candidates.iter().filter(|c| c.kind == k).count() as u64))
+            .filter(|(_, n)| *n > 0)
+            .collect();
         let mut rerank = RerankOutcome::NotRun;
         if pipeline.reranks()
             && let Some(reranker) = self.reranker.as_deref()
@@ -12058,4 +12076,72 @@ fn served_payload(envelope: &Envelope, claim: bool, names_actor: bool, names_nod
         }
     }
     payload
+}
+
+#[cfg(test)]
+mod offered_instruction_tests {
+    use super::*;
+
+    fn skill(status: MemoryStatus, is_tip: bool) -> MemoryRecord {
+        MemoryRecord {
+            memory_id: Uuid::from_u128(1),
+            tenant_id: Uuid::from_u128(2),
+            workspace_id: Uuid::from_u128(3),
+            claim_key: "skill/deploy".to_owned(),
+            version: 1,
+            kind: MemoryKind::Skill,
+            body: "deploy".to_owned(),
+            body_digest: String::new(),
+            body_bytes: 6,
+            status,
+            is_tip,
+            promoted_at: None,
+            retirement: false,
+            replaces: None,
+            author_principal: "acme/agent".to_owned(),
+            author_key_id: Uuid::from_u128(4),
+            author_person: None,
+            derives_from: Vec::new(),
+            lineage_principals: Vec::new(),
+            lineage_key_ids: Vec::new(),
+            scan_finding: None,
+            scanned_under: Some("rules-1".to_owned()),
+            created_at: EventTime::parse("2026-11-19T10:00:00.000000Z").expect("time"),
+            guardrail: None,
+            kind_fields: None,
+            valid: Box::default(),
+            anchor: None,
+            origin_kind: None,
+            source_check: None,
+            approval: None,
+            format: Box::default(),
+        }
+    }
+
+    /// A held skill offered at the instructions read and rejected, withdrawn
+    /// or replaced before the pipeline hydrates it is no hit; a promoted tip
+    /// and a scanned held version still are.
+    #[test]
+    fn an_offered_instruction_decided_before_the_pipeline_reads_it_is_no_hit() {
+        let scanner = Some("rules-1");
+        for (status, is_tip, served) in [
+            (MemoryStatus::Promoted, true, true),
+            (MemoryStatus::Held, false, true),
+            (MemoryStatus::Rejected, false, false),
+            (MemoryStatus::Withdrawn, false, false),
+            (MemoryStatus::Demoted, false, false),
+            (MemoryStatus::Promoted, false, false),
+        ] {
+            assert_eq!(
+                offered_instruction_still_served(&skill(status, is_tip), scanner),
+                served,
+                "{status:?} tip {is_tip}"
+            );
+        }
+        let held_unscanned = MemoryRecord {
+            scanned_under: None,
+            ..skill(MemoryStatus::Held, false)
+        };
+        assert!(!offered_instruction_still_served(&held_unscanned, scanner));
+    }
 }

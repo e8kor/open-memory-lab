@@ -129,7 +129,7 @@ async fn migration_0062_gives_the_owners_skills_and_guardrails_postings_and_fold
     .await
     .expect("key");
     // (id, kind, claim, skill name, skill description, severity)
-    let rows: [(u128, &str, &str, Option<&str>, Option<&str>, Option<&str>); 2] = [
+    let rows: [(u128, &str, &str, Option<&str>, Option<&str>, Option<&str>); 3] = [
         (
             0xD062,
             "skill",
@@ -145,6 +145,14 @@ async fn migration_0062_gives_the_owners_skills_and_guardrails_postings_and_fold
             None,
             None,
             Some("never"),
+        ),
+        (
+            0xD064,
+            "test",
+            "kangaroo release rollback",
+            None,
+            None,
+            None,
         ),
     ];
     for (n, (id, kind, claim, name, description, severity)) in rows.iter().enumerate() {
@@ -210,6 +218,16 @@ async fn migration_0062_gives_the_owners_skills_and_guardrails_postings_and_fold
         .expect("postings");
         assert!(postings > 0, "memory_kind {code} has postings after 0062");
     }
+    let test_postings: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM search_postings WHERE memory_id = $1")
+            .bind(Uuid::from_u128(0xD064))
+            .fetch_one(&mut conn)
+            .await
+            .expect("postings");
+    assert_eq!(
+        test_postings, 0,
+        "a test is never a hit, so it has no postings"
+    );
     let name_posted: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM search_postings p JOIN memories m ON m.id = p.memory_id \
           CROSS JOIN LATERAL unnest(m.search_vector) l \

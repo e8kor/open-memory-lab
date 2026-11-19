@@ -785,15 +785,14 @@ where
     }
 
     /// `GET /v1/memories`: the own-work listing with `own=true`, else the
-    /// scoped listing, as memory summaries without text, newest first
-    /// (http-api.md search; ADR-0025 d13). The query's `workspace` is the
-    /// subtree either reads (ADR-0039 d4, d7). The `include_text` argument
-    /// is the agent plugin's: `oml_read`'s listing mode returns each item
-    /// with its text, as every `oml_read` mode does, from the same rows
-    /// and access the listing reads (ADR-0039 d4). On the HTTP route the
-    /// scoped listing serves summaries; the query's `include_text` is
-    /// taken only beside `with_own` or `author`, the web console's list
-    /// (ADR-0070 d5), and is an unknown parameter without them.
+    /// catalog, the scoped listing with its counts on the first page, each
+    /// item a catalog entry without text, newest first (http-api.md search;
+    /// ADR-0025 d13; ADR-0092 d6). The query's `workspace` is the subtree
+    /// either reads (ADR-0039 d4, d7). The `include_text` argument is the
+    /// caller's default, `oml_read`'s own-work mode passing true (ADR-0092
+    /// d12 reading 3); the query's `include_text`, when sent, wins over it
+    /// on every listing. `with_own` or `author` read the web console's
+    /// merged list instead (ADR-0070 d5).
     async fn list_memories_inner(
         st: &Self,
         params: &[(String, String)],
@@ -4941,6 +4940,23 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
                             .with_details(json!({ "field": "prefix" })),
                     );
                 }
+                // A claim key's start holds no NUL or other control
+                // character and is at most CATALOG_PREFIX_MAX bytes, so a
+                // read never carries bytes the store refuses (ADR-0092 d6;
+                // d12 reading 6).
+                if value.chars().any(char::is_control) {
+                    return Err(ApiError::validation(
+                        "prefix holds a control character: a claim key prefix is printable text",
+                    )
+                    .with_details(json!({ "field": "prefix" })));
+                }
+                if value.len() > CATALOG_PREFIX_MAX {
+                    return Err(ApiError::validation(format!(
+                        "prefix is {} bytes: a claim key prefix is at most {CATALOG_PREFIX_MAX}",
+                        value.len()
+                    ))
+                    .with_details(json!({ "field": "prefix" })));
+                }
                 req.prefix = Some(value.clone());
             }
             // Whether each entry carries its text; parsed here and read by
@@ -5195,9 +5211,14 @@ fn parse_guardrail_scope(scope: Option<&str>) -> Result<Option<GuardrailScope>, 
         .transpose()
 }
 
-/// The recall `kinds` filter: absent is no filter, a sent one names any of
-/// the ten kinds, repeated or not, and an empty or unknown one is refused
-/// naming the field (openapi.yaml `RecallRequest.kinds`; ADR-0092 d1).
+/// The longest catalog `prefix`, in bytes (ADR-0092 d12 reading 6): the
+/// server sets no claim key maximum, so this bounds the read alone.
+const CATALOG_PREFIX_MAX: usize = 1024;
+
+/// The recall `kinds` filter: absent is no filter, a sent one names any
+/// kind but `test`, repeated or not, and an empty or unknown one, or one
+/// naming `test`, is refused naming the field: a test case is never a hit
+/// (openapi.yaml `RecallRequest.kinds`; ADR-0092 d1; ADR-0086 d1).
 fn parse_hit_kinds(kinds: Option<&[String]>) -> Result<Vec<MemoryKind>, ApiError> {
     let Some(kinds) = kinds else {
         return Ok(Vec::new());
@@ -5214,6 +5235,12 @@ fn parse_hit_kinds(kinds: Option<&[String]>) -> Result<Vec<MemoryKind>, ApiError
             ApiError::validation(format!("kinds names an unknown kind {name:?}"))
                 .with_details(json!({ "field": "/kinds" }))
         })?;
+        if kind == MemoryKind::Test {
+            return Err(ApiError::validation(
+                "kinds names test: a test case is never a recall hit; the catalog lists tests (a read without a query, kinds test)",
+            )
+            .with_details(json!({ "field": "/kinds" })));
+        }
         if !parsed.contains(&kind) {
             parsed.push(kind);
         }
@@ -5333,8 +5360,8 @@ fn counts_json(counts: &[(MemoryKind, oml_app::types::KindCount)]) -> Value {
 }
 
 /// A catalog entry (ADR-0092 d6): [`memory_json`], with `text` only under
-/// `include_text`, and the projection of its kind: `needs_person` on a
-/// held instruction; a skill's `name`, `description`, `uri` and `prompt`
+/// `include_text`, and the projection of its kind: `needs_person`, true
+/// on a held instruction alone; a skill's `name`, `description`, `uri` and `prompt`
 /// (null when the scope does not offer it); a guardrail's `in_force`; a
 /// document's `title`, `uri` and `size`; a steering row's `applies_here`;
 /// and for a memory or a derived fact a description the server cut, at
@@ -5350,7 +5377,12 @@ pub fn catalog_item_json(
     let Some(obj) = value.as_object_mut() else {
         return value;
     };
-    obj.insert("needs_person".to_owned(), json!(served.needs_person()));
+    // Only a held instruction still waits for a person's verdict (ADR-0092
+    // d6; ADR-0080 d16).
+    obj.insert(
+        "needs_person".to_owned(),
+        json!(m.status == MemoryStatus::Held && served.needs_person()),
+    );
     // The workspace's own name, the last segment of its path, which a
     // resource URI carries (ADR-0080 d7; ADR-0081 d6).
     let workspace_name = served
