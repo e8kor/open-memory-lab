@@ -165,13 +165,13 @@ fn the_proposer_check_answers_before_the_lineage_check() {
 }
 
 #[test]
-fn a_writer_ratifier_is_refused_by_role_before_any_r2_check() {
+fn a_contributor_ratifier_is_refused_by_role_before_any_r2_check() {
     let mut closure = LineageClosure::new();
     closure.add_principal(PROPOSER);
     closure.add_key_id(id(PROPOSER_KEY));
-    let r = ratifier(Role::Writer, PROPOSER, PROPOSER_KEY);
+    let r = ratifier(Role::Contributor, PROPOSER, PROPOSER_KEY);
     let refusal = ratify(&r, &closure).unwrap_err();
-    assert_eq!(refusal, RatifyRefusal::NotReviewer(Role::Writer));
+    assert_eq!(refusal, RatifyRefusal::NotReviewer(Role::Contributor));
     assert_eq!(refusal.code(), "access.verb_ceiling");
 }
 

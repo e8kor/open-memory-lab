@@ -60,7 +60,7 @@ pub mod event_types {
     pub const KEY_LINKED_PERSON: &str = "key.linked_person";
     /// An admin key ended that link (ADR-0085 d16).
     pub const KEY_UNLINKED_PERSON: &str = "key.unlinked_person";
-    /// A writer submits a memory; held on arrival.
+    /// A key with a submitter grant submits a memory; held on arrival.
     pub const SUBMISSION_REMEMBER: &str = "submission.remember";
     /// A derived claim with its lineage; a supersession whose successor is
     /// a `derived_fact` journals it too (ADR-0025 d10).
