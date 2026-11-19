@@ -10,7 +10,7 @@ answers: which acts an admin key may take on a workspace's content, on which tar
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its five questions decided at their
 recommendations and every other default as drafted, and its amendment of ADR-0001 d5 accepted with
 it · proposed the same day · amended 2026-11-17 by the operator (d16: demote's targets, the
-fix route as the one surface for demote and erase, erase's claim-wide scope, a fix's events; as-of reads skip a demoted version) · readings of 2026-11-18 recorded for the operator's batch (d17) · amendments of d8 of 2026-11-18, from the operator's batch (strict confirmation wherever the fixed version is served to production and for any target outside the admin's own root; a cut refuses a `same_user`-only member; #429), accepted 2026-11-19 by the operator · amended 2026-11-19 by the operator (d16, O8: a claim whose approved versions are all demoted is written again, continuing its numbers; #474) · amended 2026-11-19 by the operator after the review of #498 (an admin key is linked to its person; the settlement fails closed; a revert checks R2 by person; proposed for the record, see the decision at the end)
+fix route as the one surface for demote and erase, erase's claim-wide scope, a fix's events; as-of reads skip a demoted version) · readings of 2026-11-18 recorded for the operator's batch (d17) · amendments of d8 of 2026-11-18, from the operator's batch (strict confirmation wherever the fixed version is served to production and for any target outside the admin's own root; a cut refuses a `same_user`-only member; #429), accepted 2026-11-19 by the operator · amended 2026-11-19 by the operator (d16, O8: a claim whose approved versions are all demoted is written again, continuing its numbers; #474) · amended 2026-11-19 by the operator after the review of #498 (an admin key is linked to its person; the settlement fails closed; a revert checks R2 by person; proposed for the record, see the decision at the end) · amended 2026-11-19 by the operator after the second review of #498 (a link of an admin or reviewer key takes effect only once its person accepts it; each fix records its admin's person, which the settlement compares; see the second decision at the end) · reading of 2026-11-19 in d17 (a fix whose mark a later fix takes over is settled `superseded`)
 
 **Release:** built in v0.8.3, except the release overlays (d5), which wait for ADR-0085
 
@@ -447,6 +447,19 @@ Decided, not built.
       report. The two gauges are set by the lead's upload sweep, as the import gauges are.
     - **Not built here:** d13's `universe` mark and d5's release overlays, which wait for
       releases (R3).
+  - **A fix whose mark a later fix takes over is settled `superseded` (the build's reading of
+    2026-11-19, the second review of #498).** A version carries one fix mark. When a later fix F2
+    serves a version an earlier, unconfirmed fix F1 serves (F1 demotes v2 and serves v1; v3 then
+    replaces v1 by review; F2 demotes v3 and serves v1 again), F2's mark replaces F1's, and F1
+    could no longer be confirmed or reverted. In F2's own commit the store settles F1 as state
+    `superseded`, `superseded_by` naming F2, at F2's seq and time, with no settling key
+    (`admin_fixes.superseded_by`, migration 0064). F1 leaves `GET /v2/review/fixes` and the
+    `admin.fix_unconfirmed` count; a confirm or revert of it answers `admin.fix_settled` with
+    `state: superseded`; the admin's `GET /v2/admin/fixes?state=all` lists it. A confirmed or
+    reverted F1 keeps its state. The fold derives it from `admin.fix` alone, so a rebuild that
+    replays the fix events reproduces it. Rejected: settling F1 as confirmed by F2, which would
+    record a confirmation no person made; leaving F1 unconfirmed, which keeps an act no one can
+    take on the person's list and in the doctor count.
   - **A demotion's reopened end is compare-and-set (#474).** `MetadataFold::MemoryDemoted`
     carries the reopened version and its earlier end, and both stores refuse a stale pair as a
     moved tip (d16's note of 2026-11-18).
@@ -557,3 +570,35 @@ and never an absence of one. It amends d1, d8 and d17 (c5, c8) as follows.
 - **A non-admin reader never learns which admin fixed a version (d7, the build's reading of A5).**
   On a version written by a fix (an edit or retirement), every non-admin read serves `principal`
   and `author_key_id` as null and `provenance: admin_fix`; an admin read serves them as stored.
+
+## Operator decision of 2026-11-19, second: a link waits on its person, and a fix records its admin's person (#498 second review)
+
+The operator decided on 2026-11-19, after the second review of #498, how a key comes to act for a
+person, since one console admin could otherwise link any key to any other person alone. Three
+attacks followed: (A) an admin links their bearer admin key to another person, fixes, and confirms
+with their own reviewer key as "another person"; (B) after a fair fix the admin relinks the admin
+key to another person and confirms; (C) an admin links their own reviewer key to another person and
+confirms with it. It amends d1, d8 and the first decision of that day.
+
+- **A link of an admin key or a reviewer key takes effect only once the named person accepts it
+  from their own console session (ADR-0085 d16, amended the same day).** Until then the link is
+  pending and the key counts as unlinked. An admin key with no link or a pending one is refused a
+  fix, `admin.fix_requires_person` with `details.reason: unlinked`, and nothing is journalled. A
+  reviewer key whose link is pending acts for no person, so the settlement rule finds its person
+  unknown and fails closed: its confirm or revert answers `review.author_in_lineage` with
+  `details.reason: same_person`, and the person-side read marks the fix `acts: []` for it. The
+  build applies acceptance to every link, a writer key's included (ADR-0085 d16's reading).
+- **Each fix records its admin's person at fix time (amends d3 and d8).** `admin_fixes.admin_person`
+  and the `admin.fix` payload's `admin_person` hold the person the admin key acted for when it
+  fixed, its accepted link's or its console session's. The settlement compares that recorded
+  person with the settling key's person as it stands, never the admin key's link as it stands at
+  the settlement, so a relink after the fix (B) changes nothing. The doctor's
+  `admin.fix_admin_person_only` reads the same recorded person. The admin's own view of a fix
+  serves `admin_person`; a person's reviewer view never does (d15).
+- **The bootstrap's link is accepted at creation.** The person `oml bootstrap claim --person`
+  names runs the ceremony, so its link is theirs and takes effect at once; the quickstart, the PoC
+  demo and the CI stack jobs keep working unchanged.
+- **What the decision admits, and why it is correct.** Once the named person accepts an admin key's
+  link, that key's fixes are theirs, recorded as theirs, and any other person may confirm them,
+  the linking admin's own reviewer key included: the person consented to act through that key.
+- A fix that a later fix's mark supersedes is d17's reading of the same day.
