@@ -1,13 +1,17 @@
 <!--
 id: adr/ADR-0093-contributor-and-submitter-replace-writer
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-19
 answers: what the key that recalls and writes and the key that writes without recall are called from v0.8.4; whether the grant role writer is renamed and to what; which grants each key role admits and what issuance refuses; what an existing writer key becomes and what a key whose grants do not fit its role is called; how the database is migrated and how signed events that say writer are read; whether a retired writer is refused by name; which doctor line, upgrade note and client notice the cut carries; which release ships it
 -->
 
 # ADR-0093 — Contributor and submitter replace writer
 
-**Status:** proposed · 2026-11-19, requested by the operator on 2026-11-19 ("Let's improve
+**Status:** accepted design · 2026-11-19, by the operator, who took the recommended answer to each
+open question: imports and the user-root workspace create admit contributors only (d6); the
+console's issue form offers `contributor` and `reader` only (d6); an existing write-only key is
+named by the doctor and reissued, with no act that changes a key's role (d3) · proposed the same
+day, requested by the operator ("Let's improve
 naming to represent writer role correctly"), who chose a full rename over console labels: a
 **contributor** recalls and writes, a **submitter** writes without recall, a **reader** is
 unchanged; and decided the release, v0.8.4 with #498 (d8).
@@ -92,7 +96,7 @@ Decided, not built.
   every key, so the twin's equality holds. Such a key works as before. `oml doctor` reports
   `key_contributor_without_recall` (warn) with each key's name, and the console marks its row
   "no recall". The remedy is a new submitter key and a cut-off of the old one. No act changes a
-  key's role, and the upgrade writes no journal event.
+  key's role, and the upgrade writes no journal event (decided by the operator, 2026-11-19).
 
 - **d4 — Signed events keep `writer` and are read through ADR-0091 d4's map, rule 7.** The map
   gains rule 7. The `role` of `key.issued` that holds `writer` becomes `contributor`. The `role`
@@ -143,15 +147,16 @@ Decided, not built.
     `--role submitter`, and grants are written `<workspace>:submitter`. A contributor key gains
     a reader grant beside each submitter grant. `--write-only` is retired; clap refuses it as an
     unknown flag.
-  - **Console.** The issue form offers `contributor` (the default) and `reader`. The listings
-    print the role word, with d3's mark.
+  - **Console.** The issue form offers `contributor` (the default) and `reader`, and no
+    `submitter`, which stays an act of the CLI and the admin (decided by the operator,
+    2026-11-19). The listings print the role word, with d3's mark.
   - **MCP and docs.** The MCP tool texts, the docs, and the plugins' `issue-agent-key` skill and
     README change with the rest.
 
   Key-role checks follow the meaning of each site:
   - uploads admit contributor and submitter;
   - the user-root workspace create (ADR-0044 d6) and imports (ADR-0084 d11) admit contributor
-    alone, because both act on a tree the key must read;
+    alone, because both act on a tree the key must read (decided by the operator, 2026-11-19);
   - the curator's ceiling reads `submitter`.
 
   A failed request fails closed. A v0.8.3 CLI that sends `writer` is refused, and one that sent
