@@ -4253,6 +4253,40 @@ async fn a_stale_guardrail_edit_preview_says_it_needs_a_person_beside_its_confli
     assert!(preview.needs_person, "a guardrail needs a person's verdict");
 }
 
+/// A key that writes a workspace but does not read it previews a
+/// guardrail as submit would capture it, with no set size, which it may
+/// not read (ADR-0082 d5, d11; the review of PR #494, L3).
+#[tokio::test]
+async fn a_writer_that_cannot_read_its_workspace_previews_a_guardrail_with_no_set_size() {
+    use oml_app::types::PreviewRequest;
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    app.create_workspace(admin, &name("team"), Some(by_name("universe")), None)
+        .await
+        .expect("a shared workspace");
+    let writer = tenant_key(
+        &app,
+        admin,
+        Role::Writer,
+        "team-writer",
+        vec![grant(by_name("team"), Role::Writer)],
+    )
+    .await;
+    let req = guardrail("g1", "Never force-push.", Some("team"));
+    let preview = app
+        .preview(writer.value.as_str(), &PreviewRequest::Submit(req.clone()))
+        .await
+        .expect("a preview");
+    assert!(preview.refusal.is_none(), "{:?}", preview.refusal);
+    assert_eq!(preview.set_after, None);
+    let written = app
+        .submit_memory(writer.value.as_str(), &req)
+        .await
+        .expect("submit captures it");
+    assert_eq!(written.receipt.state, "held");
+}
+
 /// Alice's web and review session keys, with one approved guardrail in
 /// force in her root: (app, web, the guardrail's id).
 async fn one_guardrail_in_force() -> (TestApp, oml_app::app::Caller, Uuid) {
