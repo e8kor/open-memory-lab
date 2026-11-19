@@ -85,6 +85,8 @@ Update the plugin with `claude plugin update oml@open-memory-lab`. Then set its 
 
 ## Upgrading to v0.8.2: set `storage.url` before using uploads
 
+v0.8.0 to v0.8.2 were never released: this section applies to an upgrade from v0.7.3 to v0.8.3.
+
 v0.8.2 adds upload sessions, which keep their encrypted parts in the directory `storage.url` names
 ([ADR-0004](../adr/ADR-0004-bodies-and-attachments.md) d3). The default, `oml-objects`, is relative to
 the server's working directory, which a systemd unit or a container often cannot write. The server
@@ -101,6 +103,8 @@ Compose file mounts a writable volume at that directory, and the Helm chart sets
 root belongs to root and the server never changes the mode of a directory it does not own.
 
 ## Upgrading to v0.8.0: workspaces, reviewer, protected, frozen, used by
+
+v0.8.0 to v0.8.2 were never released: this section applies to an upgrade from v0.7.3 to v0.8.3.
 
 v0.8.0 renames five names on every surface in one cut, with no alias
 ([ADR-0091](../adr/ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md)):
@@ -160,6 +164,8 @@ held version reviewed as usual. Bookmarks of the pages `use/workareas/` and
 [how workspaces grant access](../architecture/workspaces.md).
 
 ## Upgrading to v0.8.3: what the migrations cost
+
+v0.8.0 to v0.8.2 were never released: this section applies to an upgrade from v0.7.3 to v0.8.3.
 
 The server runs the migrations from 0047 on at boot, before it serves, so their time adds to the
 outage of [Upgrade in order](#upgrade-in-order). The rest change the catalog, add empty tables or
