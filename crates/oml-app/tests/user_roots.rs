@@ -3611,6 +3611,60 @@ async fn a_persons_review_key_write_moves_their_usage() {
     );
 }
 
+/// A person's curate key's write is charged to no person: at their
+/// memories quota of one, the curate key still starts a claim in
+/// `universe`, and their account's meters stay where their own write left
+/// them (ADR-0071 d1, operator's decision of 2026-11-19).
+#[tokio::test]
+async fn a_curate_key_write_moves_no_persons_usage_and_is_not_refused_by_their_quota() {
+    use oml_app::domain::signup::{Quota, Quotas};
+    let (probe, _store) = rig();
+    let boot = bootstrap(&probe).await;
+    let app = metered(
+        probe,
+        boot.tenant_id,
+        Quotas::default().with(Quota::Memories, 1),
+    );
+    let admin = boot.admin_key.value.as_str();
+    let (alice, _review, _writer, _bob) =
+        team_with_alices_session_and_bobs_writer(&app, admin).await;
+    let alice_admin = app
+        .web_caller(&alice, Capacity::Admin)
+        .await
+        .expect("alice-admin");
+    app.grant_curation_capacity(&alice_admin, &name("alice"), by_name("team"))
+        .await
+        .expect("the curate designation");
+    let curate = app
+        .web_caller(&alice, Capacity::Curate)
+        .await
+        .expect("alice-curate");
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let root = web.key().user.expect("alice-web is of alice's account");
+    app.submit_memory(
+        Bearer::Session(&web),
+        &submit("w1", "Builds run on push.", Some("alice")),
+    )
+    .await
+    .expect("alice's one memory");
+    let before = app.usage_of(boot.tenant_id, root).await.expect("usage");
+    app.submit_memory(
+        Bearer::Session(&curate),
+        &submit("c1", "Quartz resonators drift with heat.", Some("universe")),
+    )
+    .await
+    .expect("the curate key's claim is no write of alice's account");
+    let after = app.usage_of(boot.tenant_id, root).await.expect("usage");
+    assert_eq!(
+        format!("{:?}", after.meters),
+        format!("{:?}", before.meters),
+        "curation moves no meter of alice's"
+    );
+}
+
 /// A person's review key is held to that person's limits wherever it
 /// writes: past their memories quota its new claim in a shared workspace
 /// is refused `limit.quota`, and past their monthly writes its proposal is
