@@ -6495,7 +6495,7 @@ where
     /// session key, `review`, the number of rows the held listing would
     /// serve the person's reviewer key, `<user>-review`, at `workspace` and
     /// below it or across every workspace without one, counted under the
-    /// listing's own store read and [`Self::held_admits`], so it counts no
+    /// listing's own store read and the listing's own check (`held_admits`), so it counts no
     /// row that listing would not serve; up to [`TODO_COUNT_CAP`], with
     /// `truncated` set past it. It reads no text out and journals nothing.
     /// A person with no live reviewer key, no reviewer grant or a
