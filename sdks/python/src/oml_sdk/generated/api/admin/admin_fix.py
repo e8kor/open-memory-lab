@@ -99,7 +99,7 @@ def sync_detailed(
     edit's body is scanned as its kind requires: a veto answers submission.scan_veto and a hold
     admin.fix_held_by_scan. In a frozen workspace an edit or retirement answers workspace.frozen. A
     demotion of a version that is not approved answers admin.fix_target_not_promoted. Not idempotent.
-    Since v0.8.3.
+    Since v0.8.4.
 
     Args:
         x_request_id (str | Unset):
@@ -149,7 +149,7 @@ def sync(
     edit's body is scanned as its kind requires: a veto answers submission.scan_veto and a hold
     admin.fix_held_by_scan. In a frozen workspace an edit or retirement answers workspace.frozen. A
     demotion of a version that is not approved answers admin.fix_target_not_promoted. Not idempotent.
-    Since v0.8.3.
+    Since v0.8.4.
 
     Args:
         x_request_id (str | Unset):
@@ -194,7 +194,7 @@ async def asyncio_detailed(
     edit's body is scanned as its kind requires: a veto answers submission.scan_veto and a hold
     admin.fix_held_by_scan. In a frozen workspace an edit or retirement answers workspace.frozen. A
     demotion of a version that is not approved answers admin.fix_target_not_promoted. Not idempotent.
-    Since v0.8.3.
+    Since v0.8.4.
 
     Args:
         x_request_id (str | Unset):
@@ -242,7 +242,7 @@ async def asyncio(
     edit's body is scanned as its kind requires: a veto answers submission.scan_veto and a hold
     admin.fix_held_by_scan. In a frozen workspace an edit or retirement answers workspace.frozen. A
     demotion of a version that is not approved answers admin.fix_target_not_promoted. Not idempotent.
-    Since v0.8.3.
+    Since v0.8.4.
 
     Args:
         x_request_id (str | Unset):

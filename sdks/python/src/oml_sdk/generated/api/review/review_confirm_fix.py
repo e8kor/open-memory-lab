@@ -92,7 +92,7 @@ def sync_detailed(
     the admin's own person confirms, marked same_user, only a fix whose target lies inside that person's
     own root, in a workspace neither protected nor frozen, and is a member of no release; anywhere else
     it answers review.author_in_lineage with details.reason same_person (amendment of 2026-11-18). A fix
-    already settled answers admin.fix_settled. Journalled as admin.fix_confirmed. Since v0.8.3.
+    already settled answers admin.fix_settled. Journalled as admin.fix_confirmed. Since v0.8.4.
 
     Args:
         fix_id (UUID):
@@ -136,7 +136,7 @@ def sync(
     the admin's own person confirms, marked same_user, only a fix whose target lies inside that person's
     own root, in a workspace neither protected nor frozen, and is a member of no release; anywhere else
     it answers review.author_in_lineage with details.reason same_person (amendment of 2026-11-18). A fix
-    already settled answers admin.fix_settled. Journalled as admin.fix_confirmed. Since v0.8.3.
+    already settled answers admin.fix_settled. Journalled as admin.fix_confirmed. Since v0.8.4.
 
     Args:
         fix_id (UUID):
@@ -175,7 +175,7 @@ async def asyncio_detailed(
     the admin's own person confirms, marked same_user, only a fix whose target lies inside that person's
     own root, in a workspace neither protected nor frozen, and is a member of no release; anywhere else
     it answers review.author_in_lineage with details.reason same_person (amendment of 2026-11-18). A fix
-    already settled answers admin.fix_settled. Journalled as admin.fix_confirmed. Since v0.8.3.
+    already settled answers admin.fix_settled. Journalled as admin.fix_confirmed. Since v0.8.4.
 
     Args:
         fix_id (UUID):
@@ -217,7 +217,7 @@ async def asyncio(
     the admin's own person confirms, marked same_user, only a fix whose target lies inside that person's
     own root, in a workspace neither protected nor frozen, and is a member of no release; anywhere else
     it answers review.author_in_lineage with details.reason same_person (amendment of 2026-11-18). A fix
-    already settled answers admin.fix_settled. Journalled as admin.fix_confirmed. Since v0.8.3.
+    already settled answers admin.fix_settled. Journalled as admin.fix_confirmed. Since v0.8.4.
 
     Args:
         fix_id (UUID):

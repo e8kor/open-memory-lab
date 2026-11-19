@@ -95,7 +95,7 @@ def sync_detailed(
     refusal journals nothing. Journalled as key.link_accepted; from then on the key acts for the person
     as ADR-0085 d16 says: it writes into their root wherever its grants allow, its fix and its
     settlement read the person, and oml-web may name it in OML-Acting-Key. No MCP tool or CLI command
-    reaches the route. The Idempotency-Key is required and not replayed. Since v0.8.3.
+    reaches the route. The Idempotency-Key is required and not replayed. Since v0.8.4.
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -148,7 +148,7 @@ def sync(
     refusal journals nothing. Journalled as key.link_accepted; from then on the key acts for the person
     as ADR-0085 d16 says: it writes into their root wherever its grants allow, its fix and its
     settlement read the person, and oml-web may name it in OML-Acting-Key. No MCP tool or CLI command
-    reaches the route. The Idempotency-Key is required and not replayed. Since v0.8.3.
+    reaches the route. The Idempotency-Key is required and not replayed. Since v0.8.4.
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -196,7 +196,7 @@ async def asyncio_detailed(
     refusal journals nothing. Journalled as key.link_accepted; from then on the key acts for the person
     as ADR-0085 d16 says: it writes into their root wherever its grants allow, its fix and its
     settlement read the person, and oml-web may name it in OML-Acting-Key. No MCP tool or CLI command
-    reaches the route. The Idempotency-Key is required and not replayed. Since v0.8.3.
+    reaches the route. The Idempotency-Key is required and not replayed. Since v0.8.4.
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -247,7 +247,7 @@ async def asyncio(
     refusal journals nothing. Journalled as key.link_accepted; from then on the key acts for the person
     as ADR-0085 d16 says: it writes into their root wherever its grants allow, its fix and its
     settlement read the person, and oml-web may name it in OML-Acting-Key. No MCP tool or CLI command
-    reaches the route. The Idempotency-Key is required and not replayed. Since v0.8.3.
+    reaches the route. The Idempotency-Key is required and not replayed. Since v0.8.4.
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a

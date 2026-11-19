@@ -163,6 +163,17 @@ held version reviewed as usual. Bookmarks of the pages `use/workareas/` and
 `architecture/workareas/` answer 404; the pages are now [workspaces](../use/workspaces.md) and
 [how workspaces grant access](../architecture/workspaces.md).
 
+## Upgrading to v0.8.4: admin fixes and linked admin keys
+
+The server runs 0063 and 0064 at boot, before it serves, as [Upgrade in order](#upgrade-in-order) says. Each waits at most 5 s for a lock.
+
+| Migration | What it does to each tenant | What waits, and for how long |
+|---|---|---|
+| 0063 | Creates the empty `admin_investigations` table with its policy, its update guard and column grants | Catalog changes only; nothing waits beyond the 5 s lock bound. |
+| 0064 | Creates the empty `admin_fixes` table, adds four nullable columns to `memories` and `link_pending_user_id` to `api_keys`, all with no default, replaces the `api_keys_linked_user` check with a looser one and adds `api_keys_link_pending`, both validated in the same transaction | The scans of `api_keys`, a row per key, run under the ACCESS EXCLUSIVE lock the check swap takes until 0064 commits, so key lookups wait for them; no memory row is rewritten. Measured at 1,000,000 keys: about 120 ms of scan, with key lookups waiting about 150 ms. A tenant holds hundreds of keys. |
+
+**Link the admin key before a fix, and have its person accept the link.** From v0.8.4 an admin fix (ADR-0089) is taken only by an admin key that acts for its person; one with no link, or with a link its person has not accepted, is refused `admin.fix_requires_person` with `details.reason: unlinked`. A new server links its first admin key at setup: `oml bootstrap claim <key-name> --token-stdin --tenant-name <tenant> --principal <you> --person <you>` creates that person's user root and links the key, accepted at once because that person runs the setup. An upgraded server's admin keys are unlinked: a console admin links each on the admin Keys page (`/web/admin/keys`): show the person, then name the key in the **Link key** form; the person is one other than the console admin's own, since a self-link is refused. The link then waits until that person signs in and chooses **Accept link** on their own Keys page (`/web/keys`); any key's link waits the same way (ADR-0085 d16). A console admin session key acts for its own person and needs no link.
+
 ## Upgrading to v0.8.3: what the migrations cost
 
 v0.8.0 to v0.8.2 were never released: this section applies to an upgrade from v0.7.3 to v0.8.3.
@@ -181,11 +192,7 @@ after each step, so a run that fails resumes where it stopped.
 | 0060 | Builds the postings index that carries a document passage's ordinal on the tenant's partition, then refills the postings and counts of a tenant that holds a document | Reads never wait. Every claim write of that tenant waits for the whole build of its partition: a write, a verdict, a promotion and an erasure alike, because a write's postings are written in the same transaction as the version. The review of PR #475 measured about 5 s per 1.8M postings. Other tenants' writes do not wait. |
 | 0061 | Records the author's person on every version written by a key that acts for a person | Reads never wait; writes wait only for the rows the update touches. Not measured. |
 | 0062 | Builds the catalog index on the tenant's partition, then, for a tenant that holds a skill, a guardrail or a vocabulary kind, rewrites every posting and count of that tenant, not only the new kinds' | Measured at about 4.5 s for a tenant of 20,000 versions, about 225 s per million versions, during which that tenant's writes wait on the rows the refill rewrites. A tenant with none of those kinds is read by one probe and left as it is. |
-| 0063 | Creates the empty `admin_investigations` table with its policy, its update guard and column grants | Catalog changes only; nothing waits beyond the 5 s lock bound. |
-| 0064 | Creates the empty `admin_fixes` table, adds four nullable columns to `memories` and `link_pending_user_id` to `api_keys`, all with no default, replaces the `api_keys_linked_user` check with a looser one and adds `api_keys_link_pending`, both validated in the same transaction | The scans of `api_keys`, a row per key, run under the ACCESS EXCLUSIVE lock the check swap takes until 0064 commits, so key lookups wait for them; no memory row is rewritten. Measured at 1,000,000 keys: about 120 ms of scan, with key lookups waiting about 150 ms. A tenant holds hundreds of keys. |
 | 0065 | Recomputes each account's `text_bytes` from its stored versions, so the proposals a person's review key wrote before the upgrade are charged to that person and the drift report finds none | One transaction for every tenant. It reads every version of each tenant twice, as 0045's fill read them once, which took 550 to 634 ms over 100,000 stored versions; 0065 itself is not measured. No version is rewritten, only one meter row per account. |
-
-**Link the admin key before a fix.** From v0.8.3 an admin fix (ADR-0089) is taken only by an admin key linked to its person; an unlinked one is refused `admin.fix_requires_person` with `details.reason: unlinked`. A new server links its first admin key at setup: `oml bootstrap claim <key-name> --token-stdin --tenant-name <tenant> --principal <you> --person <you>` creates that person's user root and links the key. An upgraded server's admin keys are unlinked: a console admin links each on the admin Keys page (`/web/admin/keys`): show the person, then name the key in the **Link key** form; the person is one other than the console admin's own, since a self-link is refused. A console admin session key acts for its own person and needs no link.
 
 On one server nothing else writes while the migrations run, so these waits lengthen the outage
 rather than stall requests. The work of 0060 and 0062 grows with each tenant's postings and

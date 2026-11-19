@@ -77,7 +77,7 @@ def sync_detailed(
     d15). Never names the admin key, principal or user. acts is [confirm, revert], [confirm] for an
     erasure, or [] when this key acts for the admin's own person and the fix's target lies outside that
     person's own root, sits in a protected or frozen workspace, or is a member of a release (ADR-0089,
-    amendment of 2026-11-18). Journals nothing. Since v0.8.3.
+    amendment of 2026-11-18). Journals nothing. Since v0.8.4.
 
     Args:
         x_request_id (str | Unset):
@@ -119,7 +119,7 @@ def sync(
     d15). Never names the admin key, principal or user. acts is [confirm, revert], [confirm] for an
     erasure, or [] when this key acts for the admin's own person and the fix's target lies outside that
     person's own root, sits in a protected or frozen workspace, or is a member of a release (ADR-0089,
-    amendment of 2026-11-18). Journals nothing. Since v0.8.3.
+    amendment of 2026-11-18). Journals nothing. Since v0.8.4.
 
     Args:
         x_request_id (str | Unset):
@@ -156,7 +156,7 @@ async def asyncio_detailed(
     d15). Never names the admin key, principal or user. acts is [confirm, revert], [confirm] for an
     erasure, or [] when this key acts for the admin's own person and the fix's target lies outside that
     person's own root, sits in a protected or frozen workspace, or is a member of a release (ADR-0089,
-    amendment of 2026-11-18). Journals nothing. Since v0.8.3.
+    amendment of 2026-11-18). Journals nothing. Since v0.8.4.
 
     Args:
         x_request_id (str | Unset):
@@ -196,7 +196,7 @@ async def asyncio(
     d15). Never names the admin key, principal or user. acts is [confirm, revert], [confirm] for an
     erasure, or [] when this key acts for the admin's own person and the fix's target lies outside that
     person's own root, sits in a protected or frozen workspace, or is a member of a release (ADR-0089,
-    amendment of 2026-11-18). Journals nothing. Since v0.8.3.
+    amendment of 2026-11-18). Journals nothing. Since v0.8.4.
 
     Args:
         x_request_id (str | Unset):

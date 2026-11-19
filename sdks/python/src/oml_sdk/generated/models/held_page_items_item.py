@@ -95,7 +95,7 @@ class HeldPageItemsItem:
             ADR-0070 d5). Since v0.7.0.
         provenance (MemorySummaryProvenance | Unset): admin_fix for a version an admin fix wrote (an edit or a
             retirement), whose principal and author_key_id are then null: no reader learns which admin (ADR-0089 d7). Since
-            v0.8.3 for admin_fix.
+            v0.8.4 for admin_fix.
         simulation_id (None | str | Unset):
         self_signed (bool | Unset): Marked rows under the bounded development exception; never promote beyond their
             workspace.

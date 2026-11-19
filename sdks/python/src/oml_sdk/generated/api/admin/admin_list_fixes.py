@@ -86,7 +86,7 @@ def sync_detailed(
 ) -> Response[AdminListFixesResponse200 | ErrorEnvelope]:
     """The tenant's admin fixes, the unconfirmed ones by default.
 
-     Requires: admin key role (ADR-0089 d15). Oldest first. Journals nothing. Since v0.8.3.
+     Requires: admin key role (ADR-0089 d15). Oldest first. Journals nothing. Since v0.8.4.
 
     Args:
         state (AdminListFixesState | Unset):  Default: AdminListFixesState.UNCONFIRMED.
@@ -126,7 +126,7 @@ def sync(
 ) -> AdminListFixesResponse200 | ErrorEnvelope | None:
     """The tenant's admin fixes, the unconfirmed ones by default.
 
-     Requires: admin key role (ADR-0089 d15). Oldest first. Journals nothing. Since v0.8.3.
+     Requires: admin key role (ADR-0089 d15). Oldest first. Journals nothing. Since v0.8.4.
 
     Args:
         state (AdminListFixesState | Unset):  Default: AdminListFixesState.UNCONFIRMED.
@@ -161,7 +161,7 @@ async def asyncio_detailed(
 ) -> Response[AdminListFixesResponse200 | ErrorEnvelope]:
     """The tenant's admin fixes, the unconfirmed ones by default.
 
-     Requires: admin key role (ADR-0089 d15). Oldest first. Journals nothing. Since v0.8.3.
+     Requires: admin key role (ADR-0089 d15). Oldest first. Journals nothing. Since v0.8.4.
 
     Args:
         state (AdminListFixesState | Unset):  Default: AdminListFixesState.UNCONFIRMED.
@@ -199,7 +199,7 @@ async def asyncio(
 ) -> AdminListFixesResponse200 | ErrorEnvelope | None:
     """The tenant's admin fixes, the unconfirmed ones by default.
 
-     Requires: admin key role (ADR-0089 d15). Oldest first. Journals nothing. Since v0.8.3.
+     Requires: admin key role (ADR-0089 d15). Oldest first. Journals nothing. Since v0.8.4.
 
     Args:
         state (AdminListFixesState | Unset):  Default: AdminListFixesState.UNCONFIRMED.

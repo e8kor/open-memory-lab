@@ -12,7 +12,7 @@ recommendations and every other default as drafted, and its amendment of ADR-000
 it · proposed the same day · amended 2026-11-17 by the operator (d16: demote's targets, the
 fix route as the one surface for demote and erase, erase's claim-wide scope, a fix's events; as-of reads skip a demoted version) · readings of 2026-11-18 recorded for the operator's batch (d17) · amendments of d8 of 2026-11-18, from the operator's batch (strict confirmation wherever the fixed version is served to production and for any target outside the admin's own root; a cut refuses a `same_user`-only member; #429), accepted 2026-11-19 by the operator · amended 2026-11-19 by the operator (d16, O8: a claim whose approved versions are all demoted is written again, continuing its numbers; #474) · amended 2026-11-19 by the operator after the review of #498 (an admin key is linked to its person; the settlement fails closed; a revert checks R2 by person; proposed for the record, see the decision at the end) · amended 2026-11-19 by the operator after the second review of #498 (a link of an admin or reviewer key takes effect only once its person accepts it; each fix records its admin's person, which the settlement compares; see the second decision at the end) · reading of 2026-11-19 in d17 (a fix whose mark a later fix takes over is settled `superseded`)
 
-**Release:** built in v0.8.3, except the release overlays (d5), which wait for ADR-0085
+**Release:** built in v0.8.4, except the release overlays (d5), which wait for ADR-0085
 
 **Twin parts** (ADR-0090 d18, PR #388): an `admin.fix` and its reason, its confirmation or
 revert, and an investigation's reason are journal or part, never excluded. A release's overlay
@@ -448,7 +448,7 @@ Decided, not built.
     - **Not built here:** d13's `universe` mark and d5's release overlays, which wait for
       releases (R3).
   - **A fix whose mark a later fix takes over is settled `superseded` (the build's reading of
-    2026-11-19, the second review of #498).** A version carries one fix mark. When a later fix F2
+    2026-11-19, the second review of #498; built in v0.8.4).** A version carries one fix mark. When a later fix F2
     serves a version an earlier, unconfirmed fix F1 serves (F1 demotes v2 and serves v1; v3 then
     replaces v1 by review; F2 demotes v3 and serves v1 again), F2's mark replaces F1's, and F1
     could no longer be confirmed or reverted. In F2's own commit the store settles F1 as state
@@ -572,6 +572,8 @@ and never an absence of one. It amends d1, d8 and d17 (c5, c8) as follows.
   and `author_key_id` as null and `provenance: admin_fix`; an admin read serves them as stored.
 
 ## Operator decision of 2026-11-19, second: a link waits on its person, and a fix records its admin's person (#498 second review)
+
+Built in v0.8.4, with the rest of this record's build.
 
 The operator decided on 2026-11-19, after the second review of #498, how a key comes to act for a
 person, since one console admin could otherwise link any key to any other person alone. Three

@@ -82,7 +82,7 @@ def sync_detailed(
      Requires: admin key role (ADR-0089 d10, d15); every other role answers access.verb_ceiling. reason
     is 1 to 1,024 bytes, stored in clear and scanned as a verdict's reason is; a veto answers
     submission.scan_veto. Journalled as admin.investigation_opened with the id and the reason. Not
-    idempotent: each call opens one. The investigation stays open until its key closes it. Since v0.8.3.
+    idempotent: each call opens one. The investigation stays open until its key closes it. Since v0.8.4.
 
     Args:
         x_request_id (str | Unset):
@@ -125,7 +125,7 @@ def sync(
      Requires: admin key role (ADR-0089 d10, d15); every other role answers access.verb_ceiling. reason
     is 1 to 1,024 bytes, stored in clear and scanned as a verdict's reason is; a veto answers
     submission.scan_veto. Journalled as admin.investigation_opened with the id and the reason. Not
-    idempotent: each call opens one. The investigation stays open until its key closes it. Since v0.8.3.
+    idempotent: each call opens one. The investigation stays open until its key closes it. Since v0.8.4.
 
     Args:
         x_request_id (str | Unset):
@@ -163,7 +163,7 @@ async def asyncio_detailed(
      Requires: admin key role (ADR-0089 d10, d15); every other role answers access.verb_ceiling. reason
     is 1 to 1,024 bytes, stored in clear and scanned as a verdict's reason is; a veto answers
     submission.scan_veto. Journalled as admin.investigation_opened with the id and the reason. Not
-    idempotent: each call opens one. The investigation stays open until its key closes it. Since v0.8.3.
+    idempotent: each call opens one. The investigation stays open until its key closes it. Since v0.8.4.
 
     Args:
         x_request_id (str | Unset):
@@ -204,7 +204,7 @@ async def asyncio(
      Requires: admin key role (ADR-0089 d10, d15); every other role answers access.verb_ceiling. reason
     is 1 to 1,024 bytes, stored in clear and scanned as a verdict's reason is; a veto answers
     submission.scan_veto. Journalled as admin.investigation_opened with the id and the reason. Not
-    idempotent: each call opens one. The investigation stays open until its key closes it. Since v0.8.3.
+    idempotent: each call opens one. The investigation stays open until its key closes it. Since v0.8.4.
 
     Args:
         x_request_id (str | Unset):

@@ -20,7 +20,7 @@ T = TypeVar("T", bound="Fix")
 class Fix:
     """An admin's marked break-glass fix (ADR-0089 d3, d8, d15). admin_key_id and admin_person are served on the admin
     routes alone; a person's review read never names the admin. acts is served on GET /v2/review/fixes alone. Since
-    v0.8.3.
+    v0.8.4.
 
         Attributes:
             fix_id (UUID):

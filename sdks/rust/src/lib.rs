@@ -569,7 +569,7 @@ pub struct Approver {
     pub used_by: String,
     pub same_user: bool,
     /// `verdict`, or `admin_fix` for a version served because of an
-    /// admin's fix (ADR-0089 d7); absent from a server before v0.8.3.
+    /// admin's fix (ADR-0089 d7); absent from a server before v0.8.4.
     #[serde(default)]
     pub act: Option<String>,
     /// Whether a person confirmed the fix; null for a verdict (ADR-0089 d7).
@@ -1114,7 +1114,7 @@ pub struct Person {
     #[serde(default)]
     pub linked_keys: Vec<LinkedKey>,
     /// The live tenant keys an admin linked to the person that wait on
-    /// their acceptance; empty from an API before v0.8.3 (ADR-0085 d16,
+    /// their acceptance; empty from an API before v0.8.4 (ADR-0085 d16,
     /// the operator's decision of 2026-11-19).
     #[serde(default)]
     pub pending_links: Vec<LinkedKey>,

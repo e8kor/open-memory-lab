@@ -85,7 +85,7 @@ def sync_detailed(
 
      Requires: admin key role and the key that opened it (ADR-0089 d10, d17); another key's or an unknown
     id answers access.not_found. Journalled as admin.investigation_closed; closing one already closed
-    answers it and journals nothing. Since v0.8.3.
+    answers it and journals nothing. Since v0.8.4.
 
     Args:
         investigation_id (UUID):
@@ -127,7 +127,7 @@ def sync(
 
      Requires: admin key role and the key that opened it (ADR-0089 d10, d17); another key's or an unknown
     id answers access.not_found. Journalled as admin.investigation_closed; closing one already closed
-    answers it and journals nothing. Since v0.8.3.
+    answers it and journals nothing. Since v0.8.4.
 
     Args:
         investigation_id (UUID):
@@ -164,7 +164,7 @@ async def asyncio_detailed(
 
      Requires: admin key role and the key that opened it (ADR-0089 d10, d17); another key's or an unknown
     id answers access.not_found. Journalled as admin.investigation_closed; closing one already closed
-    answers it and journals nothing. Since v0.8.3.
+    answers it and journals nothing. Since v0.8.4.
 
     Args:
         investigation_id (UUID):
@@ -204,7 +204,7 @@ async def asyncio(
 
      Requires: admin key role and the key that opened it (ADR-0089 d10, d17); another key's or an unknown
     id answers access.not_found. Journalled as admin.investigation_closed; closing one already closed
-    answers it and journals nothing. Since v0.8.3.
+    answers it and journals nothing. Since v0.8.4.
 
     Args:
         investigation_id (UUID):

@@ -18,7 +18,7 @@ class KeyLink:
             name (None | str):
             linked_user (None | str):
             pending (bool): True from a console admin's link until the named user accepts it; the key acts for no one
-                meanwhile. Since v0.8.3.
+                meanwhile. Since v0.8.4.
     """
 
     key_id: str

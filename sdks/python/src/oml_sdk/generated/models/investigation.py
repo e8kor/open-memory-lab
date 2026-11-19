@@ -15,7 +15,7 @@ T = TypeVar("T", bound="Investigation")
 
 @_attrs_define
 class Investigation:
-    """An admin key's investigation, the reason its reads of claim text are made under (ADR-0089 d10, d15). Since v0.8.3.
+    """An admin key's investigation, the reason its reads of claim text are made under (ADR-0089 d10, d15). Since v0.8.4.
 
     Attributes:
         investigation_id (UUID):

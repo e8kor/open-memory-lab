@@ -375,7 +375,7 @@ Decided, not built.
       routes still refuse an admin key. The `api_keys_linked_user` check drops its `role <> 'admin'`
       clause (migration 0064).
     - *A link waits on its person's acceptance* (the operator, 2026-11-19, after the second
-      review of #498). Three attacks followed from one console admin linking any key to any
+      review of #498; built in v0.8.4). Three attacks followed from one console admin linking any key to any
       other person alone: (A) an admin links their own bearer admin key to another person,
       fixes, and confirms with their own reviewer key as "another person"; (B) after a fair fix
       the admin relinks the admin key to another person and then confirms; (C) an admin links

@@ -831,7 +831,7 @@ export interface paths {
         put?: never;
         /**
          * Accept a link an admin made of a key to the signed-in person, so the key acts for them.
-         * @description Requires: the console session of the person the pending link names, through its capacity credential (the operator's decision of 2026-11-19: a link takes effect only once the named person accepts it from their own console session). A bearer key or any other caller that is not a console session is request.validation with details.field key and details.reason session_only; another person's session, the linking admin's included, is not_named_person; a key with no link pending is not_pending; a key revoked or past its expiry is revoked, and one no longer used_by person is not_used_by_person. A refusal journals nothing. Journalled as key.link_accepted; from then on the key acts for the person as ADR-0085 d16 says: it writes into their root wherever its grants allow, its fix and its settlement read the person, and oml-web may name it in OML-Acting-Key. No MCP tool or CLI command reaches the route. The Idempotency-Key is required and not replayed. Since v0.8.3.
+         * @description Requires: the console session of the person the pending link names, through its capacity credential (the operator's decision of 2026-11-19: a link takes effect only once the named person accepts it from their own console session). A bearer key or any other caller that is not a console session is request.validation with details.field key and details.reason session_only; another person's session, the linking admin's included, is not_named_person; a key with no link pending is not_pending; a key revoked or past its expiry is revoked, and one no longer used_by person is not_used_by_person. A refusal journals nothing. Journalled as key.link_accepted; from then on the key acts for the person as ADR-0085 d16 says: it writes into their root wherever its grants allow, its fix and its settlement read the person, and oml-web may name it in OML-Acting-Key. No MCP tool or CLI command reaches the route. The Idempotency-Key is required and not replayed. Since v0.8.4.
          */
         post: operations["acceptKeyLink"];
         delete?: never;
@@ -1507,13 +1507,13 @@ export interface paths {
         };
         /**
          * The admin key's own investigations, open by default, each with its reason, read count and age.
-         * @description Requires: admin key role (ADR-0089 d15). Lists only the calling key's investigations, oldest first. Journals nothing. Since v0.8.3.
+         * @description Requires: admin key role (ADR-0089 d15). Lists only the calling key's investigations, oldest first. Journals nothing. Since v0.8.4.
          */
         get: operations["adminListInvestigations"];
         put?: never;
         /**
          * Open an investigation, the reason the admin key's reads of claim text are made under.
-         * @description Requires: admin key role (ADR-0089 d10, d15); every other role answers access.verb_ceiling. reason is 1 to 1,024 bytes, stored in clear and scanned as a verdict's reason is; a veto answers submission.scan_veto. Journalled as admin.investigation_opened with the id and the reason. Not idempotent: each call opens one. The investigation stays open until its key closes it. Since v0.8.3.
+         * @description Requires: admin key role (ADR-0089 d10, d15); every other role answers access.verb_ceiling. reason is 1 to 1,024 bytes, stored in clear and scanned as a verdict's reason is; a veto answers submission.scan_veto. Journalled as admin.investigation_opened with the id and the reason. Not idempotent: each call opens one. The investigation stays open until its key closes it. Since v0.8.4.
          */
         post: operations["adminOpenInvestigation"];
         delete?: never;
@@ -1533,7 +1533,7 @@ export interface paths {
         put?: never;
         /**
          * Close an investigation of the admin key; reads under it are refused from then on.
-         * @description Requires: admin key role and the key that opened it (ADR-0089 d10, d17); another key's or an unknown id answers access.not_found. Journalled as admin.investigation_closed; closing one already closed answers it and journals nothing. Since v0.8.3.
+         * @description Requires: admin key role and the key that opened it (ADR-0089 d10, d17); another key's or an unknown id answers access.not_found. Journalled as admin.investigation_closed; closing one already closed answers it and journals nothing. Since v0.8.4.
          */
         post: operations["adminCloseInvestigation"];
         delete?: never;
@@ -1551,13 +1551,13 @@ export interface paths {
         };
         /**
          * The tenant's admin fixes, the unconfirmed ones by default.
-         * @description Requires: admin key role (ADR-0089 d15). Oldest first. Journals nothing. Since v0.8.3.
+         * @description Requires: admin key role (ADR-0089 d15). Oldest first. Journals nothing. Since v0.8.4.
          */
         get: operations["adminListFixes"];
         put?: never;
         /**
          * Take a marked break-glass fix that serves at once and waits for a person to confirm or revert it.
-         * @description Requires: admin key role, used by a person and linked to that person (ADR-0089 d1, the operator's decision of 2026-11-19); another admin key answers admin.fix_requires_person, details.reason not_used_by_person or unlinked, every other role access.verb_ceiling. act is demote (an approved version; the claim's tip returns to its latest earlier approved version, or none), edit (body and optional title replace the served tip), retire (the served tip is retired, reason as its body) or erase (every version of the claim is crypto-shredded). reason is 1 to 1,024 bytes, stored in clear and scanned. One commit journals the lifecycle event the act causes, then admin.fix naming it. An edit's body is scanned as its kind requires: a veto answers submission.scan_veto and a hold admin.fix_held_by_scan. In a frozen workspace an edit or retirement answers workspace.frozen. A demotion of a version that is not approved answers admin.fix_target_not_promoted. Not idempotent. Since v0.8.3.
+         * @description Requires: admin key role, used by a person and linked to that person (ADR-0089 d1, the operator's decision of 2026-11-19); another admin key answers admin.fix_requires_person, details.reason not_used_by_person or unlinked, every other role access.verb_ceiling. act is demote (an approved version; the claim's tip returns to its latest earlier approved version, or none), edit (body and optional title replace the served tip), retire (the served tip is retired, reason as its body) or erase (every version of the claim is crypto-shredded). reason is 1 to 1,024 bytes, stored in clear and scanned. One commit journals the lifecycle event the act causes, then admin.fix naming it. An edit's body is scanned as its kind requires: a veto answers submission.scan_veto and a hold admin.fix_held_by_scan. In a frozen workspace an edit or retirement answers workspace.frozen. A demotion of a version that is not approved answers admin.fix_target_not_promoted. Not idempotent. Since v0.8.4.
          */
         post: operations["adminFix"];
         delete?: never;
@@ -1575,7 +1575,7 @@ export interface paths {
         };
         /**
          * The unconfirmed admin fixes on workspaces where this person's reviewer key holds reviewer, each with the acts this key may take.
-         * @description Requires: a person's reviewer key: reviewer role, used by a person, no crew and no profile (ADR-0089 d15). Never names the admin key, principal or user. acts is [confirm, revert], [confirm] for an erasure, or [] when this key acts for the admin's own person and the fix's target lies outside that person's own root, sits in a protected or frozen workspace, or is a member of a release (ADR-0089, amendment of 2026-11-18). Journals nothing. Since v0.8.3.
+         * @description Requires: a person's reviewer key: reviewer role, used by a person, no crew and no profile (ADR-0089 d15). Never names the admin key, principal or user. acts is [confirm, revert], [confirm] for an erasure, or [] when this key acts for the admin's own person and the fix's target lies outside that person's own root, sits in a protected or frozen workspace, or is a member of a release (ADR-0089, amendment of 2026-11-18). Journals nothing. Since v0.8.4.
          */
         get: operations["reviewListFixes"];
         put?: never;
@@ -1597,7 +1597,7 @@ export interface paths {
         put?: never;
         /**
          * Confirm an admin fix; the version it serves reads approver.confirmed true from then on.
-         * @description Requires: a person's reviewer key with reviewer on the fix's workspace (ADR-0089 d8, d15). A key of the admin's own person confirms, marked same_user, only a fix whose target lies inside that person's own root, in a workspace neither protected nor frozen, and is a member of no release; anywhere else it answers review.author_in_lineage with details.reason same_person (amendment of 2026-11-18). A fix already settled answers admin.fix_settled. Journalled as admin.fix_confirmed. Since v0.8.3.
+         * @description Requires: a person's reviewer key with reviewer on the fix's workspace (ADR-0089 d8, d15). A key of the admin's own person confirms, marked same_user, only a fix whose target lies inside that person's own root, in a workspace neither protected nor frozen, and is a member of no release; anywhere else it answers review.author_in_lineage with details.reason same_person (amendment of 2026-11-18). A fix already settled answers admin.fix_settled. Journalled as admin.fix_confirmed. Since v0.8.4.
          */
         post: operations["reviewConfirmFix"];
         delete?: never;
@@ -1617,7 +1617,7 @@ export interface paths {
         put?: never;
         /**
          * Revert an admin fix; the text it took out of service returns as a new version this key approves.
-         * @description Requires: as confirm (ADR-0089 d8, d15). The restored version is authored by the tenant's reserved server key (principal oml:server, used_by service, revoked at issuance), derives from the version the fix took out of service, and is promoted by this key's verdict; R2 excludes that version's lineage and the admin's principal. An erasure answers admin.fix_not_revertible; a fix whose claim moved on admin.fix_superseded; a frozen workspace workspace.frozen. Journalled as admin.fix_reverted, after the submission, verdict and promotion it causes. Since v0.8.3.
+         * @description Requires: as confirm (ADR-0089 d8, d15). The restored version is authored by the tenant's reserved server key (principal oml:server, used_by service, revoked at issuance), derives from the version the fix took out of service, and is promoted by this key's verdict; R2 excludes that version's lineage and the admin's principal. An erasure answers admin.fix_not_revertible; a fix whose claim moved on admin.fix_superseded; a frozen workspace workspace.frozen. Journalled as admin.fix_reverted, after the submission, verdict and promotion it causes. Since v0.8.4.
          */
         post: operations["reviewRevertFix"];
         delete?: never;
@@ -1862,7 +1862,7 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** @description An admin key's investigation, the reason its reads of claim text are made under (ADR-0089 d10, d15). Since v0.8.3. */
+        /** @description An admin key's investigation, the reason its reads of claim text are made under (ADR-0089 d10, d15). Since v0.8.4. */
         Investigation: {
             /** Format: uuid */
             investigation_id: string;
@@ -1877,7 +1877,7 @@ export interface components {
             /** Format: date-time */
             closed_at: string | null;
         };
-        /** @description An admin's marked break-glass fix (ADR-0089 d3, d8, d15). admin_key_id and admin_person are served on the admin routes alone; a person's review read never names the admin. acts is served on GET /v2/review/fixes alone. Since v0.8.3. */
+        /** @description An admin's marked break-glass fix (ADR-0089 d3, d8, d15). admin_key_id and admin_person are served on the admin routes alone; a person's review read never names the admin. acts is served on GET /v2/review/fixes alone. Since v0.8.4. */
         Fix: {
             /** Format: uuid */
             fix_id: string;
@@ -2267,7 +2267,7 @@ export interface components {
             /** @description Admission's scan finding on the version, class: rule at place, never the matched text; null when the scan found nothing, and null wherever principal is (ADR-0065 d8; ADR-0044 d9; ADR-0070 d5). Since v0.7.0. */
             scan_finding?: string | null;
             /**
-             * @description admin_fix for a version an admin fix wrote (an edit or a retirement), whose principal and author_key_id are then null: no reader learns which admin (ADR-0089 d7). Since v0.8.3 for admin_fix.
+             * @description admin_fix for a version an admin fix wrote (an edit or a retirement), whose principal and author_key_id are then null: no reader learns which admin (ADR-0089 d7). Since v0.8.4 for admin_fix.
              * @enum {string}
              */
             provenance?: "agent" | "human" | "connector" | "simulation" | "admin_fix";
@@ -2330,13 +2330,13 @@ export interface components {
         /** @description The reviewer behind a version's approving verdict, by kind (ADR-0077 d2). It carries no key id, key name, principal or crew: who reviewed is in the journal's review events, which no reader of a memory is served (ADR-0025 d15; ADR-0037 d5). A crew's reviewer reads used_by agent; a person reads used_by person; a person approving their own agents' writes reads same_user true. */
         Approver: {
             /**
-             * @description verdict for a version a review promoted; admin_fix for one served because of an admin's fix (ADR-0089 d7). Since v0.8.3.
+             * @description verdict for a version a review promoted; admin_fix for one served because of an admin's fix (ADR-0089 d7). Since v0.8.4.
              * @enum {string}
              */
             act?: "verdict" | "admin_fix";
-            /** @description For act admin_fix, whether a person confirmed the fix; null for a verdict (ADR-0089 d7). Since v0.8.3. */
+            /** @description For act admin_fix, whether a person confirmed the fix; null for a verdict (ADR-0089 d7). Since v0.8.4. */
             confirmed?: boolean | null;
-            /** @description For act admin_fix, whether a person reverted the fix; the version keeps its mark and reads confirmed false; null for a verdict (ADR-0089 d7, d17). Since v0.8.3. */
+            /** @description For act admin_fix, whether a person reverted the fix; the version keeps its mark and reads confirmed false; null for a verdict (ADR-0089 d7, d17). Since v0.8.4. */
             reverted?: boolean | null;
             /**
              * @description The reviewing key's attestation, who holds it, when it gave the verdict (docs/architecture/roles-and-keys.md), as a served guardrail's verdicts carry it (ADR-0037 d5).
@@ -3474,7 +3474,7 @@ export interface components {
             key_id: string;
             name: string | null;
             linked_user: string | null;
-            /** @description True from a console admin's link until the named user accepts it; the key acts for no one meanwhile. Since v0.8.3. */
+            /** @description True from a console admin's link until the named user accepts it; the key acts for no one meanwhile. Since v0.8.4. */
             pending: boolean;
         };
         Key: {
@@ -3666,7 +3666,7 @@ export interface components {
             }[];
             /** @description The artifact_ids of the served rows of this claim_key with another severity; empty when none. */
             conflict: string[];
-            /** @description The mark of a guardrail an admin fix serves, whether a person confirmed or reverted the fix, never which admin; null for one a verdict promoted (ADR-0089 d7). Since v0.8.3. */
+            /** @description The mark of a guardrail an admin fix serves, whether a person confirmed or reverted the fix, never which admin; null for one a verdict promoted (ADR-0089 d7). Since v0.8.4. */
             admin_fix?: {
                 confirmed: boolean;
                 reverted: boolean;
@@ -3771,7 +3771,7 @@ export interface components {
             deletion_requested_at: string | null;
             /** @description The live tenant keys an admin linked to the person (not revoked, not past their expiry, used_by person), by id and name, in name order: the keys oml-web may name in OML-Acting-Key for this person (ADR-0085 d16). Since v0.8.0. */
             linked_keys?: components["schemas"]["WhoamiRef"][];
-            /** @description The live tenant keys an admin linked to the person that wait on the person's acceptance, by id and name, in name order; each acts for no one until the person accepts it with POST /v2/keys/{key}/accept_link (ADR-0085 d16, the operator's decision of 2026-11-19). Since v0.8.3. */
+            /** @description The live tenant keys an admin linked to the person that wait on the person's acceptance, by id and name, in name order; each acts for no one until the person accepts it with POST /v2/keys/{key}/accept_link (ADR-0085 d16, the operator's decision of 2026-11-19). Since v0.8.4. */
             pending_links?: components["schemas"]["WhoamiRef"][];
             /** @description With start=true, what the onboarding page waits for: whether one of the person's agent keys has connected, and the state of the newest memory of their root, held or promoted, else null (ADR-0068 d10; ADR-0070 d5). Absent otherwise. Since v0.7.0. */
             start?: {
@@ -8735,7 +8735,7 @@ export interface operations {
                     cursor?: string;
                     /**
                      * Format: uuid
-                     * @description An open investigation of the admin key, from POST /v2/admin/investigations; required (ADR-0089 d10). Since v0.8.3.
+                     * @description An open investigation of the admin key, from POST /v2/admin/investigations; required (ADR-0089 d10). Since v0.8.4.
                      */
                     investigation?: string;
                 };
@@ -8764,7 +8764,7 @@ export interface operations {
     adminReadMemory: {
         parameters: {
             query: {
-                /** @description An open investigation of the admin key (ADR-0089 d10). Since v0.8.3. */
+                /** @description An open investigation of the admin key (ADR-0089 d10). Since v0.8.4. */
                 investigation: string;
             };
             header?: {

@@ -33,7 +33,7 @@ class AdminSearchMemoriesBody:
         limit (int | Unset): At most 200, the console list's largest page (ADR-0045 d22; raised from 100 in v0.7.0).
         cursor (str | Unset):
         investigation (UUID | Unset): An open investigation of the admin key, from POST /v2/admin/investigations;
-            required (ADR-0089 d10). Since v0.8.3.
+            required (ADR-0089 d10). Since v0.8.4.
     """
 
     query: str | Unset = UNSET

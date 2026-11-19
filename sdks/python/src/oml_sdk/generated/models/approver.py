@@ -26,11 +26,11 @@ class Approver:
                 promotion's event marks it (ADR-0055 d7); the reviewing key and principal still differ from the author's
                 (ADR-0044 d8). Null on a version ratified before the mark.
             act (ApproverAct | Unset): verdict for a version a review promoted; admin_fix for one served because of an
-                admin's fix (ADR-0089 d7). Since v0.8.3.
+                admin's fix (ADR-0089 d7). Since v0.8.4.
             confirmed (bool | None | Unset): For act admin_fix, whether a person confirmed the fix; null for a verdict
-                (ADR-0089 d7). Since v0.8.3.
+                (ADR-0089 d7). Since v0.8.4.
             reverted (bool | None | Unset): For act admin_fix, whether a person reverted the fix; the version keeps its mark
-                and reads confirmed false; null for a verdict (ADR-0089 d7, d17). Since v0.8.3.
+                and reads confirmed false; null for a verdict (ADR-0089 d7, d17). Since v0.8.4.
     """
 
     used_by: ApproverUsedBy

@@ -93,7 +93,7 @@ def sync_detailed(
     the fix took out of service, and is promoted by this key's verdict; R2 excludes that version's
     lineage and the admin's principal. An erasure answers admin.fix_not_revertible; a fix whose claim
     moved on admin.fix_superseded; a frozen workspace workspace.frozen. Journalled as
-    admin.fix_reverted, after the submission, verdict and promotion it causes. Since v0.8.3.
+    admin.fix_reverted, after the submission, verdict and promotion it causes. Since v0.8.4.
 
     Args:
         fix_id (UUID):
@@ -138,7 +138,7 @@ def sync(
     the fix took out of service, and is promoted by this key's verdict; R2 excludes that version's
     lineage and the admin's principal. An erasure answers admin.fix_not_revertible; a fix whose claim
     moved on admin.fix_superseded; a frozen workspace workspace.frozen. Journalled as
-    admin.fix_reverted, after the submission, verdict and promotion it causes. Since v0.8.3.
+    admin.fix_reverted, after the submission, verdict and promotion it causes. Since v0.8.4.
 
     Args:
         fix_id (UUID):
@@ -178,7 +178,7 @@ async def asyncio_detailed(
     the fix took out of service, and is promoted by this key's verdict; R2 excludes that version's
     lineage and the admin's principal. An erasure answers admin.fix_not_revertible; a fix whose claim
     moved on admin.fix_superseded; a frozen workspace workspace.frozen. Journalled as
-    admin.fix_reverted, after the submission, verdict and promotion it causes. Since v0.8.3.
+    admin.fix_reverted, after the submission, verdict and promotion it causes. Since v0.8.4.
 
     Args:
         fix_id (UUID):
@@ -221,7 +221,7 @@ async def asyncio(
     the fix took out of service, and is promoted by this key's verdict; R2 excludes that version's
     lineage and the admin's principal. An erasure answers admin.fix_not_revertible; a fix whose claim
     moved on admin.fix_superseded; a frozen workspace workspace.frozen. Journalled as
-    admin.fix_reverted, after the submission, verdict and promotion it causes. Since v0.8.3.
+    admin.fix_reverted, after the submission, verdict and promotion it causes. Since v0.8.4.
 
     Args:
         fix_id (UUID):

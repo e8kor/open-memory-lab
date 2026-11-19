@@ -54,7 +54,7 @@ class ServedGuardrail:
             none.
         admin_fix (None | ServedGuardrailAdminFixType0 | Unset): The mark of a guardrail an admin fix serves, whether a
             person confirmed or reverted the fix, never which admin; null for one a verdict promoted (ADR-0089 d7). Since
-            v0.8.3.
+            v0.8.4.
     """
 
     artifact_id: str

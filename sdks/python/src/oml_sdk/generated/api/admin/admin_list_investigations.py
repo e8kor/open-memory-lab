@@ -89,7 +89,7 @@ def sync_detailed(
     """The admin key's own investigations, open by default, each with its reason, read count and age.
 
      Requires: admin key role (ADR-0089 d15). Lists only the calling key's investigations, oldest first.
-    Journals nothing. Since v0.8.3.
+    Journals nothing. Since v0.8.4.
 
     Args:
         state (AdminListInvestigationsState | Unset):  Default: AdminListInvestigationsState.OPEN.
@@ -130,7 +130,7 @@ def sync(
     """The admin key's own investigations, open by default, each with its reason, read count and age.
 
      Requires: admin key role (ADR-0089 d15). Lists only the calling key's investigations, oldest first.
-    Journals nothing. Since v0.8.3.
+    Journals nothing. Since v0.8.4.
 
     Args:
         state (AdminListInvestigationsState | Unset):  Default: AdminListInvestigationsState.OPEN.
@@ -166,7 +166,7 @@ async def asyncio_detailed(
     """The admin key's own investigations, open by default, each with its reason, read count and age.
 
      Requires: admin key role (ADR-0089 d15). Lists only the calling key's investigations, oldest first.
-    Journals nothing. Since v0.8.3.
+    Journals nothing. Since v0.8.4.
 
     Args:
         state (AdminListInvestigationsState | Unset):  Default: AdminListInvestigationsState.OPEN.
@@ -205,7 +205,7 @@ async def asyncio(
     """The admin key's own investigations, open by default, each with its reason, read count and age.
 
      Requires: admin key role (ADR-0089 d15). Lists only the calling key's investigations, oldest first.
-    Journals nothing. Since v0.8.3.
+    Journals nothing. Since v0.8.4.
 
     Args:
         state (AdminListInvestigationsState | Unset):  Default: AdminListInvestigationsState.OPEN.
