@@ -9316,7 +9316,10 @@ fn form_values(page: &str) -> Vec<(String, String)> {
         let name = &form[start..start + form[start..].find('"').unwrap()];
         let open = start + form[start..].find('>').unwrap() + 1;
         let close = open + form[open..].find("</textarea>").unwrap();
-        out.push((name.to_owned(), form[open..close].replace("&amp;", "&")));
+        // An HTML parser drops the one line break that opens a textarea.
+        let value = &form[open..close];
+        let value = value.strip_prefix('\n').unwrap_or(value);
+        out.push((name.to_owned(), value.replace("&amp;", "&")));
         at = close;
     }
     out
@@ -10306,4 +10309,323 @@ async fn a_crlf_body_shows_no_carriage_return_marker_and_a_lone_cr_is_still_flag
         );
         assert_eq!(previewed.contains(CR), flagged, "{body:?}: {previewed}");
     }
+}
+
+/// A builder form past a page's 64 KiB is read only under a live session:
+/// under a session that is gone, a post past even the builder's cap is
+/// sent to sign in unread, never answered `413` after its body was taken
+/// in (the review of PR #494, re-verification).
+#[tokio::test]
+async fn a_builder_post_over_64_kib_under_a_gone_session_goes_to_sign_in_unread() {
+    let rig = rig().await;
+    let gone = format!("{SESSION_COOKIE}={}", "7".repeat(64));
+    let body = format!(
+        "csrf_token=x&body={}",
+        "a".repeat(oml_web::middleware::BUILDER_FORM_MAX_BYTES)
+    );
+    let request = Request::post("/web/workspace/new")
+        .header(header::CONTENT_TYPE, FORM)
+        .header("sec-fetch-site", "same-origin")
+        .header(header::COOKIE, &gone)
+        .body(Body::from(body))
+        .expect("a request");
+    let (status, headers, page) = send(&rig.router, request).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
+    assert!(
+        headers[header::LOCATION]
+            .to_str()
+            .expect("ASCII")
+            .starts_with("/web/sign-in"),
+        "{headers:?}"
+    );
+}
+
+/// The skill `triage` previewed on the builder of `workspace` under the
+/// session `cookie`: the values of the form the preview answered.
+async fn skill_previewed(rig: &Rig, cookie: &str, workspace: &str) -> Vec<(String, String)> {
+    let (status, _, first) = send(
+        &rig.router,
+        get(
+            &format!("/web/workspace/new?kind=skill&workspace={workspace}"),
+            Some(cookie),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    let mut values = form_values(&first);
+    for (name, value) in &mut values {
+        match name.as_str() {
+            "name" => *value = "triage".to_owned(),
+            "description" => *value = "Sort an incident.".to_owned(),
+            "body" => *value = "Read the alert.".to_owned(),
+            _ => {}
+        }
+    }
+    let (status, _, previewed) = post_form(
+        rig,
+        cookie,
+        "/web/workspace/new",
+        &values,
+        &[("step", "preview")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{previewed}");
+    let values = form_values(&previewed);
+    assert!(values.iter().any(|(n, _)| n == "previewed"), "{previewed}");
+    values
+}
+
+fn form_field(values: &[(String, String)], name: &str) -> String {
+    values
+        .iter()
+        .find(|(n, _)| n == name)
+        .map(|(_, v)| v.clone())
+        .unwrap_or_default()
+}
+
+/// The preview stamp a builder form carries is keyed apart from the act's
+/// `Idempotency-Key`: by the act key of `preview/<nonce>`, never by the key
+/// the write is sent under (the review of PR #494, re-verification).
+#[tokio::test]
+async fn the_preview_stamp_is_keyed_apart_from_the_acts_idempotency_key() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let values = skill_previewed(&rig, &cookie, "alice").await;
+    let token = cookie.split_once('=').expect("a cookie").1;
+    let nonce = form_field(&values, "nonce");
+    let workspace = form_field(&values, "workspace");
+    let joined = [
+        "skill",
+        "new",
+        "",
+        workspace.as_str(),
+        "",
+        "triage",
+        "Sort an incident.",
+        "Read the alert.",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+    ]
+    .join("\u{0}");
+    let stamp = |key: &str| -> String {
+        let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, key.as_bytes());
+        ring::hmac::sign(&key, joined.as_bytes()).as_ref()[..16]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    };
+    let previewed = form_field(&values, "previewed");
+    assert_ne!(
+        previewed,
+        stamp(&oml_web_credential::act_idempotency_key(token, &nonce)),
+        "keyed by the act's Idempotency-Key"
+    );
+    assert_eq!(
+        previewed,
+        stamp(&oml_web_credential::act_idempotency_key(
+            token,
+            &format!("preview/{nonce}")
+        ))
+    );
+}
+
+/// Propose writes only under the stamp its own preview drew: a forged
+/// `previewed`, one drawn for another session of the same person, and one
+/// sent with another workspace each redraw the preview and write nothing
+/// (ADR-0082 d5; the review of PR #494, re-verification).
+#[tokio::test]
+async fn a_forged_or_borrowed_preview_stamp_re_previews_and_writes_nothing() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let other = signed_in(&rig, "sub-1", EMAIL).await;
+    assert_ne!(cookie, other, "two sessions");
+    let (status, _, _) = act(
+        &rig,
+        &cookie,
+        "/web/workspaces",
+        &[("action", "create_workspace"), ("name", "proj")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let mine = skill_previewed(&rig, &cookie, "alice").await;
+    let theirs = skill_previewed(&rig, &other, "alice").await;
+    let set = |values: &[(String, String)], name: &str, to: &str| -> Vec<(String, String)> {
+        values
+            .iter()
+            .map(|(n, v)| (n.clone(), if n == name { to.to_owned() } else { v.clone() }))
+            .collect()
+    };
+    for (why, sent) in [
+        ("forged", set(&mine, "previewed", &"0".repeat(32))),
+        ("another session's", theirs.clone()),
+        ("another workspace's", set(&mine, "workspace", "alice.proj")),
+    ] {
+        let (status, _, page) = post_form(
+            &rig,
+            &cookie,
+            "/web/workspace/new",
+            &sent,
+            &[("step", "propose")],
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{why}: {page}");
+        assert!(
+            page.contains(r#"<h2 id="preview">Preview</h2>"#),
+            "{why}: {page}"
+        );
+        assert_eq!(held_skills(&rig).await, 0, "{why}: nothing is written");
+    }
+    // Its own stamp writes once.
+    let (status, _, page) = post_form(
+        &rig,
+        &cookie,
+        "/web/workspace/new",
+        &mine,
+        &[("step", "propose")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
+    assert_eq!(held_skills(&rig).await, 1);
+}
+
+/// A body that starts with a line break keeps it on the builder: the
+/// textarea opens with a line break of its own, the one an HTML parser
+/// drops, so the body's own is what the next post sends (the review of PR
+/// #494, re-verification).
+#[tokio::test]
+async fn a_body_that_starts_with_a_line_break_keeps_it_in_the_builders_textarea() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (_, _, first) = send(
+        &rig.router,
+        get("/web/workspace/new?kind=skill", Some(&cookie)),
+    )
+    .await;
+    let mut values = form_values(&first);
+    for (name, value) in &mut values {
+        match name.as_str() {
+            "name" => *value = "triage".to_owned(),
+            "description" => *value = "Sort an incident.".to_owned(),
+            "body" => *value = "\nRead the alert.".to_owned(),
+            _ => {}
+        }
+    }
+    let (status, _, previewed) = post_form(
+        &rig,
+        &cookie,
+        "/web/workspace/new",
+        &values,
+        &[("step", "preview")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{previewed}");
+    assert!(
+        previewed.contains("<textarea name=\"body\" required>\n\nRead the alert.</textarea>"),
+        "{previewed}"
+    );
+    assert_eq!(
+        form_field(&form_values(&previewed), "body"),
+        "\nRead the alert."
+    );
+}
+
+/// Next pages on past the first 50 held rows: from the last row of the
+/// first page it opens the first of the second, and from a row past the
+/// first page the row after it, never the oldest row again (the review of
+/// PR #494, re-verification).
+#[tokio::test]
+async fn next_from_an_item_past_the_first_50_rows_opens_the_row_after_it() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    let mut held = Vec::new();
+    for n in 0..53 {
+        held.push(agent_writes(&rig, &value, &format!("the build number is {n}")).await);
+    }
+    for (left, opens) in [
+        (held[49], held[50]),
+        (held[50], held[51]),
+        (held[51], held[52]),
+    ] {
+        let (status, headers, body) = act(
+            &rig,
+            &cookie,
+            "/web/todo",
+            &[("action", "next"), ("after", &left.to_string())],
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+        assert_eq!(
+            headers[header::LOCATION].to_str().unwrap(),
+            format!("/web/todo/judge?memory={opens}"),
+            "after {left}"
+        );
+    }
+}
+
+/// A guardrail named "Auto deploy" is proposed under a claim key without
+/// the `auto-` lead only the server derives: its preview is no refusal,
+/// and Propose writes it under `deploy` (ADR-0039 d6; the review of PR
+/// #494, re-verification).
+#[tokio::test]
+async fn a_guardrail_named_auto_something_is_proposed_without_the_servers_auto_lead() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (status, _, first) = send(
+        &rig.router,
+        get("/web/workspace/new?kind=guardrail", Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    let mut values = form_values(&first);
+    for (name, value) in &mut values {
+        match name.as_str() {
+            "name" => *value = "Auto deploy".to_owned(),
+            "body" => *value = "Never deploy without a ticket.".to_owned(),
+            _ => {}
+        }
+    }
+    let (status, _, previewed) = post_form(
+        &rig,
+        &cookie,
+        "/web/workspace/new",
+        &values,
+        &[("step", "preview"), ("severity", "never")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{previewed}");
+    assert!(!previewed.contains("auto-"), "{previewed}");
+    // The severity is a radio, which `form_values` does not read.
+    let (status, _, page) = post_form(
+        &rig,
+        &cookie,
+        "/web/workspace/new",
+        &form_values(&previewed),
+        &[("step", "propose"), ("severity", "never")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
+    let written: Vec<String> = rig
+        .app
+        .admin_search(
+            rig.boot.admin_key.value.as_str(),
+            Some("Never deploy without a ticket."),
+            None,
+            None,
+            None,
+            10,
+        )
+        .await
+        .expect("the admin reads")
+        .items
+        .iter()
+        .map(|m| m.memory.claim_key.clone())
+        .collect();
+    assert_eq!(written, ["deploy"]);
 }
