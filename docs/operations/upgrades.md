@@ -199,8 +199,8 @@ root belongs to root and the server never changes the mode of a directory it doe
 
 v0.8.3 moves the scanner's rule set from `oml-scan/1.2` to `oml-scan/1.3`, which vetoes an age identity
 ([ADR-0065](../adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md) d1, d2),
-so the release notes carry the marker `<!-- oml-deployer: post-step admin-rescan-record-held -->`
-([releasing](../contributing/releasing.md#markers-in-the-release-notes)). After the server is up, run
+so the release notes carry the marker `<!-- oml-deployer: post-step admin-rescan-record-held -->`,
+which an installer may read. After the server is up, run
 `oml admin rescan --record-held` under an admin key. Until it has run, `oml doctor` warns
 `scan_held_unrescanned` and `scan_rescan_due` for the versions scanned under `oml-scan/1.2`; nothing is
 demoted or deleted meanwhile.
