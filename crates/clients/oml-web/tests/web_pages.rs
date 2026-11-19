@@ -5735,7 +5735,13 @@ async fn alice_key(
     expiry: Option<&str>,
     requests_per_minute: Option<u32>,
 ) {
-    let grants = [role, Role::Reader]
+    // A contributor writes through a submitter grant (ADR-0093 d2).
+    let writes = if role == Role::Contributor {
+        Role::Submitter
+    } else {
+        role
+    };
+    let grants = [writes, Role::Reader]
         .into_iter()
         .map(|role| GrantRequest {
             node: Name::parse("alice").expect("a name").into(),
@@ -8583,9 +8589,9 @@ async fn the_console_judges_in_a_shared_workspace_with_the_linked_key() {
     let bot = team_key(
         &rig,
         "team-bot",
-        Role::Contributor,
+        Role::Submitter,
         UsedBy::Agent,
-        &[Role::Contributor],
+        &[Role::Submitter],
     )
     .await;
     let memory = agent_writes_in(&rig, &bot.value, "The team ships on Fridays.", "team").await;
