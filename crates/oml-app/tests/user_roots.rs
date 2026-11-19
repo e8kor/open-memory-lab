@@ -4223,6 +4223,36 @@ async fn a_guardrail_preview_answers_its_canonical_rule_and_the_set_size_after_i
     assert_eq!(retire.set_after, Some(0));
 }
 
+/// A stale edit of a guardrail with no `kind` still says a person must
+/// approve it beside its `submission.version_conflict`: the facts of the
+/// version it replaces are read before the version checks (ADR-0082 d5;
+/// the review of PR #494, L2).
+#[tokio::test]
+async fn a_stale_guardrail_edit_preview_says_it_needs_a_person_beside_its_conflict() {
+    use oml_app::types::PreviewRequest;
+    let (app, web, id) = one_guardrail_in_force().await;
+    let preview = app
+        .preview(
+            Bearer::Session(&web),
+            &PreviewRequest::Supersede(SupersedeRequest {
+                severity: Some(Severity::Must),
+                expected_version: 2,
+                ..supersede_req("g2", id, "Never force-push to main.")
+            }),
+        )
+        .await
+        .expect("a preview");
+    assert!(
+        matches!(
+            preview.refusal,
+            Some(AppError::VersionConflict { current: 1 })
+        ),
+        "{:?}",
+        preview.refusal
+    );
+    assert!(preview.needs_person, "a guardrail needs a person's verdict");
+}
+
 /// Alice's web and review session keys, with one approved guardrail in
 /// force in her root: (app, web, the guardrail's id).
 async fn one_guardrail_in_force() -> (TestApp, oml_app::app::Caller, Uuid) {
