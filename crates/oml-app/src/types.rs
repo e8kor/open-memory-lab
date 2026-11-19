@@ -1088,6 +1088,11 @@ pub struct WorkspaceInfo {
     /// away since they were reviewed; 0 for an admin key, which reads no
     /// claim (ADR-0057 d17).
     pub stale_versions: u64,
+    /// The claims on the node itself whose promoted tip is not a
+    /// retirement, by kind, one per claim; a kind with none is absent
+    /// (ADR-0082 d8 item 7, d10). Counts name no content, so an admin key
+    /// is served them too.
+    pub approved_by_kind: Vec<(MemoryKind, u64)>,
 }
 
 /// One node of a workspace tree read, with its derived path and the crew
@@ -1981,6 +1986,62 @@ pub struct SubmitReceipt {
     pub similar: Vec<SimilarItem>,
 }
 
+/// `POST /v1/memories/preview`'s request: a submit's body, or a
+/// supersession's with the version it replaces (ADR-0082 d5).
+#[derive(Debug, Clone)]
+pub enum PreviewRequest {
+    Submit(SubmitRequest),
+    Supersede(SupersedeRequest),
+}
+
+/// What a capture's decision gathered on the way, which a preview reads
+/// back: the workspace, the kind and the scan's findings, set as each is
+/// decided, so a refusal after them still answers them (ADR-0082 d5, d10).
+#[derive(Debug, Clone, Default)]
+pub struct PreviewFacts {
+    pub workspace_id: Option<Uuid>,
+    pub kind: Option<MemoryKind>,
+    /// The version a supersession replaces, and whether it is in force.
+    pub replaces: Option<MemoryRecord>,
+    pub findings: Vec<VersionFinding>,
+}
+
+/// A skill of the same name on another workspace of the chain: the
+/// previewed one `shadows` it at the previewed workspace and below it, or is
+/// `shadowed_by` it at that workspace and below it (ADR-0080 d5; ADR-0082
+/// d5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillShadow {
+    pub workspace_path: String,
+    pub shadowed_by: bool,
+}
+
+/// What capture would decide, deciding it without capturing (ADR-0082 d5,
+/// d10): the capture-time refusal, if any, and what the decision read on
+/// the way. Nothing is journalled, held, replayed or metered.
+#[derive(Debug)]
+pub struct Preview {
+    /// The refusal capture would answer; `None` when it would capture.
+    pub refusal: Option<AppError>,
+    pub findings: Vec<VersionFinding>,
+    /// Whether a person's verdict is needed (ADR-0074 d24; ADR-0080 d16).
+    pub needs_person: bool,
+    pub body_bytes: u64,
+    /// The body's budget tokens under `oml-tc/1`.
+    pub budget_tokens: u64,
+    /// A guardrail's rule in its canonical `oml-gr/1` form.
+    pub rule: Option<serde_json::Value>,
+    /// A skill's prompt name.
+    pub offered_as: Option<String>,
+    pub shadows: Vec<SkillShadow>,
+    /// A guardrail's set size at its workspace after it, the promoted
+    /// rules alone, as the set cap counts them (ADR-0037 d7).
+    pub set_after: Option<usize>,
+    /// A document's passages as capture would cut them, by fragment and
+    /// lines (ADR-0081 d3); `None` for any other kind and a retirement.
+    pub passages: Option<Vec<HitPassage>>,
+}
+
 #[derive(Debug, Clone)]
 pub struct SubmitOutcome {
     pub receipt: SubmitReceipt,
@@ -2112,6 +2173,37 @@ pub struct HeldItem {
     pub served: ServedMemory,
     pub held_since: EventTime,
     pub same_user: bool,
+}
+
+/// The most a To do count counts; past it the read answers this number
+/// with `truncated` set (ADR-0083 d2, d11: chosen, not measured).
+pub const TODO_COUNT_CAP: u64 = 1_000;
+
+/// The most held rows a To do count reads, counted or not; past them the
+/// read answers what it counted with `truncated` set, so the badge's read
+/// stays bounded where most rows are ones the person may not judge
+/// (ADR-0083 d11; chosen, not measured: twice [`TODO_COUNT_CAP`]).
+pub const TODO_SCAN_ROWS_MAX: usize = 2_000;
+
+/// The To do counts read (ADR-0083 d11, d14): each built group's length,
+/// as its own list would serve it, up to [`TODO_COUNT_CAP`]. Only `review`
+/// is built; every other group joins with its feature.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TodoCounts {
+    /// The To review group: the held rows the person's reviewer key may
+    /// judge.
+    pub review: u64,
+    /// Whether a count passed [`TODO_COUNT_CAP`].
+    pub truncated: bool,
+}
+
+/// The administration To do counts read (ADR-0083 d11, d14): its groups
+/// (unconfirmed fixes, alerts, investigations) join with ADR-0089's acts;
+/// until then it answers `truncated` alone.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AdminTodoCounts {
+    /// Whether a count passed [`TODO_COUNT_CAP`].
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -2629,8 +2721,10 @@ pub struct ListingFilter {
     /// Only rows on these nodes — the own-work listing's `workspace_id`
     /// subtree; `None` narrows nothing.
     pub subtree: Option<Vec<Uuid>>,
-    pub state: Option<MemoryStatus>,
-    /// The kinds a row may be; empty narrows nothing (ADR-0092 d6).
+    /// Rows in any of these states; empty narrows nothing (ADR-0083 d3).
+    pub states: Vec<StateClause>,
+    /// The kinds a row may be; empty narrows nothing (ADR-0082 d8 item 3;
+    /// ADR-0092 d6).
     pub kinds: Vec<MemoryKind>,
     pub claim_key: Option<String>,
     /// A `claim_key` prefix, read as a byte range (ADR-0092 d6, d9).
@@ -2643,12 +2737,48 @@ pub struct ListingFilter {
     pub anchor: AnchorFilter,
     /// Only rows this key wrote; `None` narrows nothing (ADR-0045 d23).
     pub author: Option<Uuid>,
-    /// Only tips, or only replaced versions; `None` narrows nothing
-    /// (ADR-0045 d22).
-    pub tip: Option<bool>,
     /// On the tips scope: the tips at this instant and the held rows
     /// recorded by it, instead of today's tips (ADR-0059 d15, d19).
     pub as_of: Option<EventTime>,
+}
+
+/// One state a listing admits: a status, whether the row must be its
+/// claim's tip (`promoted` is the tip, `superseded` a replaced promoted
+/// version; ADR-0045 d22), and for a promoted row the instant it must have
+/// been approved at or after (`promoted_since`, ADR-0083 d3). A row passes
+/// a listing's states when it passes any one clause.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateClause {
+    pub status: MemoryStatus,
+    /// `Some(true)` only tips, `Some(false)` only replaced versions.
+    pub tip: Option<bool>,
+    /// `promoted_at` at or after this instant.
+    pub promoted_since: Option<EventTime>,
+}
+
+impl StateClause {
+    /// A clause on the status alone.
+    #[must_use]
+    pub fn status(status: MemoryStatus) -> Self {
+        Self {
+            status,
+            tip: None,
+            promoted_since: None,
+        }
+    }
+
+    /// Whether `memory` passes this clause.
+    #[must_use]
+    pub fn admits(&self, memory: &MemoryRecord) -> bool {
+        memory.status == self.status
+            && self.tip.is_none_or(|t| memory.is_tip == t)
+            && self.promoted_since.as_ref().is_none_or(|since| {
+                memory
+                    .promoted_at
+                    .as_ref()
+                    .is_some_and(|at| at.as_str() >= since.as_str())
+            })
+    }
 }
 
 /// Where a listing page resumes: the `created_at` and id of the last row
@@ -2772,7 +2902,11 @@ pub struct ListRequest {
     /// own-work listing it narrows the key's rows to that subtree, and
     /// `None` lists every workspace the key wrote in.
     pub workspace: Option<Reference>,
-    pub state: Option<MemoryStatus>,
+    /// Rows in any of these states; empty narrows nothing. The API's
+    /// `state` is one clause on the status alone; the web pages' `promoted`
+    /// and `superseded` add the tip, and `mine`'s `promoted_since` the
+    /// approval instant (ADR-0045 d22; ADR-0083 d3).
+    pub states: Vec<StateClause>,
     /// `kinds`: the kinds listed; empty lists every kind (ADR-0092 d6).
     pub kinds: Vec<MemoryKind>,
     pub claim_key: Option<String>,
@@ -2793,12 +2927,9 @@ pub struct ListRequest {
     /// Only rows this key wrote, inside the listing's scope; the web
     /// pages' `author` filter (ADR-0045 d22, d23). The API sets none.
     pub author: Option<Uuid>,
-    /// Only tips (`true`) or only versions a successor replaced (`false`);
-    /// the web pages' `promoted` and `superseded` (ADR-0045 d22). The API
-    /// sets none.
-    pub tip: Option<bool>,
     /// `as_of`: the scoped listing at a past instant under today's access;
-    /// refused with `own`, `author` and `tip` (ADR-0059 d14, d19).
+    /// refused with `own`, `author` and a tip or `promoted_since` clause
+    /// (ADR-0059 d14, d19).
     pub as_of: Option<EventTime>,
 }
 
@@ -3633,6 +3764,14 @@ pub enum AppError {
         "a memory is started in a user root by its own user's keys only; this key is not one of them (ADR-0044 d16, submission.user_root_refused)"
     )]
     UserRootRefused,
+    /// A person's reviewer session key starts no claim inside its person's
+    /// own root, where `<user>-web` writes (ADR-0082 d2; d10, note of
+    /// 2026-11-19; `access.verb_ceiling`, `details.reason:
+    /// review_key_in_own_root`).
+    #[error(
+        "inside the person's own root a claim is started by their web key; the review key starts one only outside it (ADR-0082 d2, d10, access.verb_ceiling)"
+    )]
+    ReviewKeyInOwnRoot,
     /// The key names a user root that is not one: the lead serves it
     /// nothing (ADR-0044 d14; auth.invalid, reason user_root).
     #[error("the key's user root is not a user root (ADR-0044 d14, auth.invalid)")]
@@ -4350,9 +4489,12 @@ pub struct WebCredentialRows {
 
 /// The session key's rows of [`WebCredentialRows`]: its row, a revoked
 /// key's included; its access, `None` for a key the tenant does not hold;
-/// and, for a key that names a user root, that root's row, `None` when
-/// the tenant holds no such node, and the keys naming it, revoked ones
-/// included, in name order. A key that names no root has neither.
+/// for a key that names a user root, that root's row, `None` when the
+/// tenant holds no such node; and its person's keys, revoked ones
+/// included: the keys naming the root the person's session key names, in
+/// name order, then the person's session keys not among them, in name
+/// order, never a linked tenant key
+/// ([`crate::ports::person_keys_read_apart`]; ADR-0083 d14).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebCredentialKey {
     pub key: KeyRecord,
@@ -4431,6 +4573,9 @@ pub struct AdminSearch {
     pub origin_kinds: Vec<OriginKind>,
     /// Only rows this key wrote (ADR-0045 d24).
     pub author: Option<Uuid>,
+    /// Only rows of these kinds; empty narrows nothing (ADR-0083 d5;
+    /// ADR-0082 d8 item 3).
+    pub kinds: Vec<MemoryKind>,
     pub after: Option<ListingPosition>,
     pub limit: usize,
 }
@@ -4449,6 +4594,16 @@ pub enum AdminState {
 }
 
 impl AdminState {
+    /// Every state, in the order the admin read names them.
+    pub const ALL: [AdminState; 6] = [
+        AdminState::Held,
+        AdminState::Promoted,
+        AdminState::Rejected,
+        AdminState::Superseded,
+        AdminState::Demoted,
+        AdminState::Withdrawn,
+    ];
+
     #[must_use]
     pub fn of(memory: &MemoryRecord) -> Self {
         match memory.status {

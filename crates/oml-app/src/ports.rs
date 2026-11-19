@@ -1623,6 +1623,15 @@ pub trait JournalStore: Retriever + Send + Sync {
         workspace_id: Uuid,
     ) -> impl Future<Output = Result<u64, StoreError>> + Send;
 
+    /// How many claims on `workspace_id` itself have a promoted tip that is
+    /// not a retirement, by kind, one per claim; a kind with none is absent
+    /// (ADR-0082 d8 item 7, d10).
+    fn approved_by_kind(
+        &self,
+        tenant_id: Uuid,
+        workspace_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<(MemoryKind, u64)>, StoreError>> + Send;
+
     /// The greatest `version` of `claim_key` in the workspace that a key of
     /// `own_key_ids` may read as the claim's: its own held and promoted
     /// versions, and with `reads_promoted` (reader effective access on the
@@ -2104,10 +2113,10 @@ pub trait WebStore: JournalStore {
     /// (ADR-0070 d2, d8; #297): the session and capacity
     /// [`Self::web_session_credential`] reads, then the key the tenant holds
     /// under the name `key_name` gives for the session's user and that
-    /// capacity, its access as [`JournalStore::key_access`] reads it, and
-    /// for a key that names a user root the root's row and the keys naming
-    /// it, as [`JournalStore::workspace`] and [`Self::web_user_keys`] read
-    /// them. `None` for a digest no row holds; a `key_name` that answers
+    /// capacity, its access as [`JournalStore::key_access`] reads it, for
+    /// a key that names a user root the root's row as
+    /// [`JournalStore::workspace`] reads it, and its person's keys as
+    /// [`person_keys_read_apart`] reads them. `None` for a digest no row holds; a `key_name` that answers
     /// `None`, or a name no row holds, leaves the key `None`. A store may
     /// read them in one transaction under one snapshot, which is what the
     /// separate reads answer when nothing changes between them; it decides
@@ -2235,13 +2244,11 @@ pub async fn web_credential_rows_read_apart<W: WebStore + ?Sized>(
     let key = match key {
         Some(key) => {
             let access = store.key_access(tenant_id, key.key_id).await?;
-            let (user_root, own_keys) = match key.user {
-                Some(root) => (
-                    store.workspace(tenant_id, root).await?,
-                    store.web_user_keys(tenant_id, root).await?,
-                ),
-                None => (None, Vec::new()),
+            let user_root = match key.user {
+                Some(root) => store.workspace(tenant_id, root).await?,
+                None => None,
             };
+            let own_keys = person_keys_read_apart(store, &key).await?;
             Some(WebCredentialKey {
                 key,
                 access,
@@ -2256,6 +2263,48 @@ pub async fn web_credential_rows_read_apart<W: WebStore + ?Sized>(
         capacity,
         key,
     }))
+}
+
+/// The keys of the person a key of `key`'s session acts for, as
+/// [`WebCredentialKey::own_keys`] holds them, one read after another: for a
+/// key that names a user root, the keys naming it ([`WebStore::web_user_keys`]);
+/// for a session key, the keys naming the root its person's session key
+/// names, then that person's session keys not among them
+/// ([`WebStore::web_session_keys`]); nothing for any other key. Never a
+/// linked tenant key (ADR-0045 d16; ADR-0083 d14; ADR-0084 I6).
+pub async fn person_keys_read_apart<W: WebStore + ?Sized>(
+    store: &W,
+    key: &KeyRecord,
+) -> Result<Vec<KeyRecord>, StoreError> {
+    let tenant_id = key.tenant_id;
+    let Some(user) = &key.session_user else {
+        return match key.user {
+            Some(root) => store.web_user_keys(tenant_id, root).await,
+            None => Ok(Vec::new()),
+        };
+    };
+    let session_keys = store.web_session_keys(tenant_id, user).await?;
+    let root = key
+        .user
+        .or_else(|| session_keys.iter().find_map(|k| k.user));
+    let user_keys = match root {
+        Some(root) => store.web_user_keys(tenant_id, root).await?,
+        None => Vec::new(),
+    };
+    Ok(person_key_set(user_keys, session_keys))
+}
+
+/// The keys naming a person's root, then that person's session keys not
+/// among them: the one merge every store makes of the two reads.
+#[must_use]
+pub fn person_key_set(user_keys: Vec<KeyRecord>, session_keys: Vec<KeyRecord>) -> Vec<KeyRecord> {
+    let mut keys = user_keys;
+    for k in session_keys {
+        if !keys.iter().any(|o| o.key_id == k.key_id) {
+            keys.push(k);
+        }
+    }
+    keys
 }
 
 /// The connection rows of a store that serves connector keys

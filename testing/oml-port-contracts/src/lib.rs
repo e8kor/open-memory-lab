@@ -57,8 +57,8 @@ use oml_app::types::{
     ConnectOutcome, ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord, DocumentCaching,
     GrantRecord, GuardrailFields, HeldFilter, HeldRow, KeyAccess, KeyRecord, KindFields,
     ListingFilter, ListingPosition, ListingScope, MemoryRecord, MintedToken, OAuthClientRecord,
-    RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord,
-    TransitionState, UnnamedRows, WorkspaceRecord,
+    RefreshFacts, RefreshOutcome, StateClause, SweepReport, TenantRow, TokenPair, TokenRecord,
+    TransitionRecord, TransitionState, UnnamedRows, WorkspaceRecord,
 };
 use oml_app::types::{FindingVerdict, FoundBy, VersionFinding};
 use serde_json::{Value, json};
@@ -6625,14 +6625,13 @@ fn listing(scope: ListingScope) -> ListingFilter {
         anchor: oml_app::types::AnchorFilter::default(),
         scope,
         subtree: None,
-        state: None,
+        states: Vec::new(),
         kinds: Vec::new(),
         prefix: None,
         claim_key: None,
         since: None,
         until: None,
         author: None,
-        tip: None,
         as_of: None,
     }
 }
@@ -6748,7 +6747,7 @@ pub async fn an_own_listing_holds_every_state_of_the_key_sets_rows_off_masked_no
     assert_eq!(
         list(ListingFilter {
             anchor: oml_app::types::AnchorFilter::default(),
-            state: Some(MemoryStatus::Held),
+            states: vec![StateClause::status(MemoryStatus::Held)],
             ..own(vec![denied])
         })
         .await,
@@ -6800,13 +6799,118 @@ pub async fn an_own_listing_holds_every_state_of_the_key_sets_rows_off_masked_no
     );
     assert_eq!(
         list(ListingFilter {
-            tip: Some(true),
-            state: Some(MemoryStatus::Promoted),
+            states: vec![StateClause {
+                tip: Some(true),
+                ..StateClause::status(MemoryStatus::Promoted)
+            }],
             ..own(vec![denied])
         })
         .await,
         vec![promoted.memory_id],
         "the tip narrows (ADR-0045 d22)"
+    );
+    assert_eq!(
+        list(ListingFilter {
+            states: vec![
+                StateClause::status(MemoryStatus::Held),
+                StateClause::status(MemoryStatus::Rejected),
+            ],
+            ..own(vec![denied])
+        })
+        .await,
+        vec![rejected.memory_id, held.memory_id],
+        "a row passes when it passes any one state (ADR-0083 d3)"
+    );
+    assert_eq!(
+        list(ListingFilter {
+            kinds: vec![MemoryKind::Steering, MemoryKind::Memory],
+            ..own(vec![denied])
+        })
+        .await,
+        vec![rejected.memory_id, promoted.memory_id, held.memory_id],
+        "a row passes when it is any one kind (ADR-0082 d8 item 3)"
+    );
+    let promoted_since = |at: &str| {
+        vec![
+            StateClause::status(MemoryStatus::Held),
+            StateClause {
+                tip: Some(true),
+                promoted_since: Some(EventTime::parse(at).expect("fixture time")),
+                ..StateClause::status(MemoryStatus::Promoted)
+            },
+        ]
+    };
+    assert_eq!(
+        list(ListingFilter {
+            states: promoted_since("2000-01-01T00:00:00.000000Z"),
+            ..own(vec![denied])
+        })
+        .await,
+        vec![promoted.memory_id, held.memory_id],
+        "a promoted row approved at or after promoted_since passes"
+    );
+    assert_eq!(
+        list(ListingFilter {
+            states: promoted_since("2999-01-01T00:00:00.000000Z"),
+            ..own(vec![denied])
+        })
+        .await,
+        vec![held.memory_id],
+        "promoted_since narrows the promoted rows and leaves the held whole (ADR-0083 d3)"
+    );
+}
+
+/// `approved_by_kind` counts, by kind, the claims on the node itself whose
+/// promoted tip is not a retirement, one per claim: a replaced version, a
+/// held successor, a retired claim, a held claim and a claim on a child
+/// count nothing, and a kind with none is absent (ADR-0082 d8 item 7, d10).
+pub async fn approved_by_kind_counts_each_claims_served_tip_once_on_the_node_alone<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(37);
+    rig.seed_chain(store, 0).await;
+    let (wa, child) = (Uuid::from_u128(0xB71), Uuid::from_u128(0xB72));
+    let author = Uuid::from_u128(0xD71);
+    let a = listed_row(37, 0xC71, wa, author, 1);
+    hold_and_promote(&mut rig, store, a.clone()).await;
+    let a2 = successor_of(&a, Uuid::from_u128(0xC72), "a, revised", false);
+    supersede(&mut rig, store, &a, a2.memory_id, "a, revised", false).await;
+    hold(
+        &mut rig,
+        store,
+        successor_of(&a2, Uuid::from_u128(0xC73), "a, again", false),
+    )
+    .await
+    .expect("a held successor");
+    let b = MemoryRecord {
+        kind: MemoryKind::Steering,
+        ..listed_row(37, 0xC74, wa, author, 2)
+    };
+    hold_and_promote(&mut rig, store, b).await;
+    let c = listed_row(37, 0xC75, wa, author, 3);
+    hold_and_promote(&mut rig, store, c.clone()).await;
+    supersede(&mut rig, store, &c, Uuid::from_u128(0xC76), "retired", true).await;
+    hold(&mut rig, store, listed_row(37, 0xC77, wa, author, 4))
+        .await
+        .expect("a held claim");
+    hold_and_promote(&mut rig, store, listed_row(37, 0xC78, child, author, 5)).await;
+
+    assert_eq!(
+        store
+            .approved_by_kind(rig_tenant(37), wa)
+            .await
+            .expect("counts"),
+        vec![(MemoryKind::Memory, 1), (MemoryKind::Steering, 1)],
+    );
+    assert_eq!(
+        store
+            .approved_by_kind(rig_tenant(37), Uuid::from_u128(0xB7F))
+            .await
+            .expect("counts"),
+        Vec::new(),
+        "a node with no claim names no kind"
     );
 }
 
@@ -6870,7 +6974,7 @@ pub async fn a_tips_listing_holds_only_the_promoted_tips_on_its_nodes<S: Journal
     assert!(
         list(ListingFilter {
             anchor: oml_app::types::AnchorFilter::default(),
-            state: Some(MemoryStatus::Held),
+            states: vec![StateClause::status(MemoryStatus::Held)],
             ..tips(vec![wa])
         })
         .await
@@ -10659,6 +10763,10 @@ where
     .await;
     Box::pin(
         an_own_listing_holds_every_state_of_the_key_sets_rows_off_masked_nodes(&new_store().await),
+    )
+    .await;
+    Box::pin(
+        approved_by_kind_counts_each_claims_served_tip_once_on_the_node_alone(&new_store().await),
     )
     .await;
     Box::pin(a_tips_listing_holds_only_the_promoted_tips_on_its_nodes(

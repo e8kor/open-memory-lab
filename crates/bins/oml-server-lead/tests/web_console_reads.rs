@@ -946,6 +946,140 @@ async fn the_top_label_read_costs_the_gate_and_one_tree_walk() {
 }
 
 // ---------------------------------------------------------------------------
+// The To do badge's counts read (ADR-0083 d6, d11)
+// ---------------------------------------------------------------------------
+
+/// The two reads the "To do · N" badge is drawn from, `GET /v2/todo/counts`
+/// as `<user>-web` on the Personal side and `GET /v2/admin/todo/counts` as
+/// `<user>-admin` on the admin side, cost the same store calls at 6 and 48
+/// workspaces, and the admin read two (that each console page makes one of
+/// them is `oml-web`'s `partial_answers.rs`, which calls every page). The
+/// Personal read counts what the held listing serves `<user>-review`
+/// through the listing's own store read: the gate's call, the reviewer
+/// key's resolution and access, its reviewer walk and one page of held
+/// rows, and the author's person for the `same_user` fence, so its store
+/// calls do not grow with the workspaces, as the listing's do not. The
+/// admin read is the gate's call and the key's resolution alone: no group
+/// of it is built (d14).
+#[tokio::test]
+async fn the_todo_counts_reads_cost_the_same_store_calls_at_6_and_48_workspaces() {
+    let mut calls = Vec::new();
+    for n in [6, 48] {
+        let rig = rig().await;
+        held_in_workspaces(&rig, n).await;
+        let counts = get(
+            &rig.router,
+            "/v2/todo/counts",
+            &web(&rig.alice, "web"),
+            true,
+        )
+        .await;
+        assert_eq!(counts.status, StatusCode::OK, "{}", counts.body);
+        let held = get(
+            &rig.router,
+            "/v2/review/held?limit=200",
+            &web(&rig.alice, "review"),
+            true,
+        )
+        .await;
+        let listed = held.body["items"].as_array().expect("items").len();
+        assert_eq!(counts.body["review"], listed, "{}", counts.body);
+        assert_eq!(counts.body["truncated"], false);
+        println!(
+            "store calls: the counts read at {n} workspaces {}",
+            counts.store_calls()
+        );
+        calls.push(counts.store_calls());
+        let admin = get(
+            &rig.router,
+            "/v2/admin/todo/counts",
+            &web(&rig.alice, "admin"),
+            true,
+        )
+        .await;
+        assert_eq!(admin.status, StatusCode::OK, "{}", admin.body);
+        assert_eq!(admin.body, serde_json::json!({"truncated": false}));
+        // Measured 2026-11-19 over the in-memory store: the gate's call and
+        // the use case's own resolution of the admin key, which reads its
+        // access afresh as every later resolution in a request does
+        // (ADR-0070 d8, #297); no group of it reads anything (d14).
+        assert_eq!(
+            admin.store_calls(),
+            2,
+            "the gate's call and the key's resolution: {}",
+            admin.line
+        );
+    }
+    assert_eq!(
+        calls[0], calls[1],
+        "the counts read's store calls at 6 and 48"
+    );
+}
+
+/// The workspace page's reads, each a call the builder added (ADR-0082
+/// d1, d6; Consequences), measured 2026-11-19 over the in-memory store:
+/// the node with its approved counts by kind (10 store calls), the kind's
+/// listing on the node (14) and an edit's read of the served tip whose text
+/// the change is drawn against (4), none growing with the workspaces under
+/// the person's root; and the person's own rows (`mine`), which the page
+/// reads to offer Withdraw, at 6 calls and one more per row it lists, the
+/// listing's own cost, not the page's (6 rows: 12; 48 rows: 54).
+#[tokio::test]
+async fn the_workspace_pages_reads_cost_the_same_at_6_and_48_workspaces() {
+    let mut seen = Vec::new();
+    for n in [6, 48] {
+        let rig = rig().await;
+        held_in_workspaces(&rig, n).await;
+        let web_key = web(&rig.alice, "web");
+        let node = get(&rig.router, "/v2/workspaces/alice", &web_key, true).await;
+        assert_eq!(node.status, StatusCode::OK, "{}", node.body);
+        assert!(node.body["approved_by_kind"].is_object(), "{}", node.body);
+        let id = node.body["id"].as_str().expect("an id").to_owned();
+        let list = get(
+            &rig.router,
+            &format!(
+                "/v1/memories?with_own=true&include_text=true&limit=200&workspace={id}&kinds=skill"
+            ),
+            &web_key,
+            true,
+        )
+        .await;
+        assert_eq!(list.status, StatusCode::OK, "{}", list.body);
+        let mine = get(
+            &rig.router,
+            &format!(
+                "/v1/memories?mine=true&include_text=true&limit=200&workspace={id}&kinds=memory"
+            ),
+            &web_key,
+            true,
+        )
+        .await;
+        assert_eq!(mine.status, StatusCode::OK, "{}", mine.body);
+        let row = mine.body["items"][0]["artifact_id"]
+            .as_str()
+            .expect("a row")
+            .to_owned();
+        let tip = get(&rig.router, &format!("/v1/memories/{row}"), &web_key, true).await;
+        assert_eq!(tip.status, StatusCode::OK, "{}", tip.body);
+        println!(
+            "store calls at {n} workspaces: node {}, list {}, mine {}, tip {}",
+            node.store_calls(),
+            list.store_calls(),
+            mine.store_calls(),
+            tip.store_calls()
+        );
+        seen.push((
+            node.store_calls(),
+            list.store_calls(),
+            mine.store_calls(),
+            tip.store_calls(),
+        ));
+    }
+    assert_eq!(seen[0], (10, 14, 12, 4), "the reads at 6 workspaces");
+    assert_eq!(seen[1], (10, 14, 54, 4), "the reads at 48 workspaces");
+}
+
+// ---------------------------------------------------------------------------
 // The Catalog page's one read (ADR-0092 d7)
 // ---------------------------------------------------------------------------
 

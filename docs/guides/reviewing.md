@@ -61,16 +61,73 @@ To read the queue without taking anything, run `oml review list` (a reviewer key
 
 ## Reviewing on the user page
 
-Signed in at `/web`, the **Review** tab serves the next held memory to the user's own reviewer key,
-`<user>-review`, as `oml review next` does. **Memories** lists what the agents wrote, every
-state, newest first, 50 a page: filter by state, workspace, origin, author key or text. A held
-card says it is held until someone else reviews it. **Atlas** shows the workspaces as a map
+Signed in at `/web`, every page carries a **To do · N** badge beside the account name: the number
+of held memories the user's own reviewer key, `<user>-review`, may judge, across every workspace.
+It links to **To do** (`/web/todo`), whose **To review** group lists them oldest first, each row
+naming the decision (New memory, New skill, Edit of v2, Retirement of v1), its kind, workspace and
+author, `same user` where a key of the person wrote it inside their own root, and how long it has
+waited, with **Judge**. A workspace filter narrows the list; **Next** opens the oldest item.
+**Judge** (`/web/todo/judge`) draws the item whole with the checks, what each verdict does and, for
+an edit, the change against the version it replaces, name, description and body each in its own
+block, removed words struck and added words underlined; **Record verdict** records the verdict as
+`<user>-review` and returns to To do, and Next on Judge opens the next item without one. With
+nothing to judge the page says "Nothing waits for this account." and links to Memories, Submitted.
+The old **Review** address answers a redirect to To do for this release
+([ADR-0083](../adr/ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) d2, d6, d11). **Memories** has two views, two links under its
+heading that keep the workspace and the filters. **Approved**, the default, lists the approved
+versions the person's keys read, newest first, 50 a page, filtered by workspace, text, state
+(approved or superseded), origin or author key; its search never serves a held version, inside an
+in-progress workspace either, so a held row is never listed there. **Submitted** lists what the
+person's own keys wrote that is held, rejected or withdrawn, and what was approved in the last 30
+days, each row led by one sentence: "Waiting for review.", "Waiting for review. v2 is still
+served.", "Approved on 2026-11-10 and served as `deploy-window` v3." (for a skill, "Approved on 2026-11-10 and
+published as `/mcp__<server>__bump-deps`."), "Rejected." or
+"Withdrawn.". A held row offers **Withdraw**, which asks for confirmation first. Submitted has no
+text search, since a held row's text is read only by its author; when a rejection or a withdrawal
+happened is not served to its author, so neither sentence names a day
+([ADR-0083](../adr/ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) d1, d3, d4, d13). **Atlas** shows the workspaces as a map
 sized by readable count, with the same numbers in a table below it. **Workspaces** gives each workspace one dropdown
 of what the reviewer key may do there now: propose the next status, ratify another key's
 proposal, or set who sees its drafts: everyone working here, or the writing key only, which waits while
 any memory in it is held. Apply
 shows what will happen before anything is recorded
 ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d22–d30).
+
+### Build skills, guardrails and documents on a workspace's page
+
+Each row of **Workspaces** opens that workspace's own page, `/web/workspace?workspace=<name>`
+([ADR-0082](../adr/ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) d1). Under the workspace picker, **Approved contents by kind** links Memories (the Memories
+page filtered to the workspace), Skills, Guardrails and Documents, each with its count of approved
+items, one per claim, on that workspace alone. The kind's table lists every version: name, state,
+for a held one the decision (New skill, Edit of v2, Retirement of v1), version and when it changed,
+or severity and rule for a guardrail. An approved version with nothing held after it offers
+**Edit** and **Retire**; one with a held successor says "in force · edit v3 waits for review" and
+links that version; a held version offers **Judge it** where the person's reviewer key may judge
+it, and **Withdraw** where a key of the person wrote it. Inside a workspace whose drafts are visible
+to everyone working there, a held row is marked unreviewed and "served here, unreviewed". The
+Guardrails kind opens with **In force here**: every guardrail an agent connected to the workspace
+loads, the inherited ones first, each linking to the workspace it comes from, then the workspace's
+own, with the counts under the key's guardrail scope
+([ADR-0083](../adr/ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) d12). The old Guardrails
+address answers a redirect there.
+
+**New skill**, **New guardrail** and **New document** open a form, offered where a key of the person
+may write: `<user>-web` in the person's own root, `<user>-review` in a shared workspace where it
+holds reviewer. A skill takes a name (fixed for every version), a description and a markdown body;
+a guardrail a severity (`never`, `must`, `should`), a text of at most 300 bytes and an optional
+rule (tool, match, effect); a document a title, a format (markdown or plain text), an optional
+claim key and a body. **Preview** comes first: it writes nothing and draws above the form what a
+session will receive, the command `/mcp__<server>__<name>` for a skill, the session-start line, what
+the rule checks and the set's size against its cap of 12 for a guardrail, the resource address and
+the passages for a document, with the scan's findings. **Propose** appears only on the page a
+preview answered and writes exactly the previewed values, held until approved; a field changed
+since then is previewed again instead. An edit also draws its change against the served tip, name,
+description and body in their own blocks. **Retire** names what stops once it is approved and
+needs a reason. A refusal keeps every value and names the error beside its field; when the claim
+moved on since the form was drawn, the one action is **Edit from v3 with this text**. The same form
+sent twice writes one version. In the person's root `<user>-review` may approve, marked same user;
+in a shared workspace a reviewer outside the person approves, a person for a skill or a guardrail
+([ADR-0082](../adr/ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) d2-d7).
 
 **Catalog** ([ADR-0092](../adr/ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) d7). The
 **Catalog** page, `/web/catalog`, after Memories in the Personal nav, lists what the person's web

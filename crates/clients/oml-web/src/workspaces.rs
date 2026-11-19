@@ -24,8 +24,7 @@ use axum::extract::{Form, State};
 use axum::response::{IntoResponse as _, Response};
 use http::{HeaderValue, StatusCode, Uri, header};
 use oml_page::web::{
-    ADMIN_MEMORIES_PATH, ADMIN_WORKSPACES_PATH, USER_MEMORIES_PATH, USER_WORKSPACES_PATH, attr,
-    form, hidden, input, shell, short, text,
+    ADMIN_WORKSPACES_PATH, USER_WORKSPACES_PATH, attr, form, hidden, input, shell, short, text,
 };
 use oml_sdk::{WorkspaceNode, WorkspaceOffers};
 use tokio::sync::Semaphore;
@@ -506,9 +505,10 @@ fn table(
     rows: &[Row],
 ) -> String {
     let page = side.path();
+    // Each row leads to the workspace's own page (ADR-0082 d1).
     let memories = match side {
-        Side::User => USER_MEMORIES_PATH,
-        Side::Admin => ADMIN_MEMORIES_PATH,
+        Side::User => crate::workspace::WORKSPACE_PATH,
+        Side::Admin => crate::workspace::ADMIN_WORKSPACE_PATH,
     };
     let mut out = String::from(
         "<table class=\"oml-stack t-wa\"><tr><th>Workspace</th><th>Inside</th><th>Status</th><th>Mode</th><th>Act</th></tr>",

@@ -179,3 +179,4 @@ branch that reserved later renumbers.
 | migration | 0062 | `bulk/v080-e` |  | postings and counts for every hit kind, and the catalog index (ADR-0092 d4, d9, #443) | reserved |
 | migration | 0063 | `bulk/v083-2` |  | admin investigations | reserved |
 | migration | 0064 | `bulk/v083-2` |  | admin fixes and the fix mark on memories | reserved |
+| migration | 0065 | `bulk/v080-d` |  | a person's review key writes are charged to the person's account | reserved |

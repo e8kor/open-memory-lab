@@ -661,6 +661,164 @@ async fn a_rejected_chain_leaves_the_memories_meter_and_its_bytes_and_write_stay
     drop_db(&rig.db).await;
 }
 
+/// The tenant reviewer's verdict on `id` in `universe`, through the bulk
+/// act of one id.
+async fn approve_as(rig: &Rig, reviewer: &str, id: &str) {
+    let (status, _, answer) = json(
+        rig,
+        api(
+            "POST",
+            "/v2/review/verdicts/bulk",
+            reviewer,
+            Some(json!({"verdict": "approve", "artifact_ids": [id], "reason": "curated"})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer["summary"]["approved"], 1, "{answer}");
+}
+
+/// A claim a person's curate key started before migration 0065, when its
+/// write charged no account, and that is retired after it leaves the drift
+/// report empty and the person's usage where it was: curation is charged
+/// to no person, so the retirement takes nothing off their memories
+/// (ADR-0071 d1, operator's decision of 2026-11-19; migration 0065).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_curate_started_chain_written_before_0065_and_then_retired_drifts_nothing_and_charges_no_person()
+ {
+    let Some(rig) = rig().await else { return };
+    let ada = sign_up(&rig, 12, "ada@example.com").await;
+    let key = agent_key(&rig, &ada).await;
+    let (status, body) = remember(&rig, &key, "k0", "Ada's own fact.").await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let user = whoami(&rig, &ada).await["person"]["user"]
+        .as_str()
+        .expect("the person's user")
+        .to_owned();
+    let admin = rig.boot.admin_key.value.clone();
+    let (status, _, granted) = json(
+        &rig,
+        api(
+            "POST",
+            &format!("/v2/web/users/{user}/capacities"),
+            &admin,
+            Some(json!({"capacity": "curate", "workspaces": ["universe"]})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{granted}");
+    assert_eq!(granted["key"]["name"], format!("{user}-curate"));
+    let (status, _, reviewer) = json(
+        &rig,
+        api(
+            "POST",
+            "/v2/keys",
+            &admin,
+            Some(json!({"role": "reviewer", "name": "universe-reviewer",
+                        "principal": "universe-reviewer", "used_by": "person", "grants": [
+                            {"workspace": "universe", "role": "reviewer"},
+                            {"workspace": "universe", "role": "reader"}]})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{reviewer}");
+    let reviewer = reviewer["value"].as_str().expect("a value").to_owned();
+    // The curate capacity is reached from a session opened after its
+    // designation.
+    let (status, headers, _) = callback(&rig, 12, "ada@example.com").await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let again = format!(
+        "{SESSION_COOKIE}={}",
+        set_cookie(&headers, SESSION_COOKIE).expect("a session")
+    );
+    let before = used(&rig, &key).await;
+    let account = own_usage(&rig, &key).await["account"]
+        .as_str()
+        .expect("an account")
+        .to_owned();
+    let mut su = PgConnection::connect(&superuser_url(&rig.db))
+        .await
+        .expect("superuser connect");
+    let meters: (i64, i64) = sqlx::query_as(&format!(
+        "SELECT memories, text_bytes FROM account_meters WHERE user_root = '{account}'"
+    ))
+    .fetch_one(&mut su)
+    .await
+    .expect("ada's meters");
+    let days: Vec<(String, i64)> = sqlx::query_as(&format!(
+        "SELECT day::text, writes FROM account_activity WHERE user_root = '{account}'"
+    ))
+    .fetch_all(&mut su)
+    .await
+    .expect("ada's days");
+    let (status, _, curated) = json(
+        &rig,
+        as_web(
+            &again,
+            "curate",
+            "POST",
+            "/v1/memories",
+            Some(
+                json!({"verb": "remember", "claim_key": "curated", "kind": "memory",
+                        "body": "Quartz resonators drift with heat.", "workspace": "universe"}),
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{curated}");
+    let curated = curated["artifact_id"].as_str().expect("an id").to_owned();
+    // Before 0065 a curate key's write charged no account: ada's counters
+    // stand as that write left them.
+    su.execute(
+        format!(
+            "UPDATE account_meters SET memories = {}, text_bytes = {} WHERE user_root = '{account}'",
+            meters.0, meters.1
+        )
+        .as_str(),
+    )
+    .await
+    .expect("the counters before 0065");
+    for (day, writes) in &days {
+        su.execute(
+            format!(
+                "UPDATE account_activity SET writes = {writes} \
+                  WHERE user_root = '{account}' AND day = '{day}'"
+            )
+            .as_str(),
+        )
+        .await
+        .expect("the day's writes before 0065");
+    }
+    approve_as(&rig, &reviewer, &curated).await;
+    let (status, _, retirement) = json(
+        &rig,
+        as_web(
+            &again,
+            "curate",
+            "POST",
+            &format!("/v1/memories/{curated}/supersede"),
+            Some(
+                json!({"expected_version": 1, "body": "Retired: the resonators were replaced.",
+                        "retirement": true}),
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{retirement}");
+    approve_as(
+        &rig,
+        &reviewer,
+        retirement["artifact_id"].as_str().expect("an id"),
+    )
+    .await;
+    assert_eq!(
+        drift(&rig).await,
+        json!({"drift": [], "undeclared_profiles": []})
+    );
+    assert_eq!(used(&rig, &key).await, before, "curation charges no person");
+    drop_db(&rig.db).await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_admin_assigns_a_profile_and_an_override_and_the_new_limit_holds_from_the_next_write() {
     let Some(rig) = rig().await else { return };

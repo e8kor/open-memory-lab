@@ -2965,6 +2965,7 @@ async fn an_admin_keys_workspace_read_lists_every_child_with_my_effective_verbs_
                 "my_effective_verbs": [],
                 "permission_epoch": view["permission_epoch"],
                 "stale_versions": 0,
+                "approved_by_kind": {},
                 "in_progress_root": null,
                 "policy": { "k": 1, "required_roles": ["reviewer"] },
                 "federation": { "accept_federated": true },
@@ -6160,6 +6161,7 @@ async fn crew_given_at_create_is_persisted_and_returned() {
             ],
             "permission_epoch": view["permission_epoch"],
             "stale_versions": 0,
+            "approved_by_kind": {},
             "in_progress_root": null,
             "policy": { "k": 1, "required_roles": ["reviewer"] },
             "federation": { "accept_federated": true },
@@ -8132,7 +8134,7 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     );
     assert_eq!(
         declared.len(),
-        101,
+        104,
         "the source check (ADR-0057 d5), the workspace mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the four web routes the lead keeps (ADR-0045 d25; its two JSON routes are oml-web's, ADR-0070 d7 (b), and GET and POST /web/admin are deleted, ADR-0070 \"The old URLs deleted\"), open sign-up's one the lead keeps, POST /web/sign-up (ADR-0068 d10; the onboarding and users pages are oml-web's, ADR-0070 d7 (b)), the web console's ten (ADR-0070 d5), the sign-in page oml-web sends to (ADR-0070 d4) , federation's three (ADR-0072 d5), usage metering's six (ADR-0071 d5, d6), a key's limits (ADR-0079 d5), a key's link and unlink (ADR-0085 d16), the withdrawal (ADR-0083 d13), the skill read (ADR-0080 d11), the five upload routes (ADR-0004 d3), the workspace export and the import and its status (ADR-0084 d15), the admin investigation's open, list and close (ADR-0089 d10, d15), and the five fix routes, the admin's fix and list and a person's list, confirm and revert (ADR-0089 d15)"
     );
     assert_eq!(oauth.len(), 6, "the six OAuth operations");
@@ -10216,6 +10218,166 @@ fn web_call(credential: &str) -> Call {
     Call::auth(credential).header("oml-web-client", WEB_SECRET)
 }
 
+/// A person's session web key submits a memory in its own root over the
+/// HTTP API: the session refusals name only the key acts, so the builder's
+/// new item needs no other change (ADR-0082 d8 item 6).
+#[tokio::test]
+async fn the_web_key_submits_a_memory_in_its_root() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let token = rig.signed_in("alice@example.com", "alice", false).await;
+    let web = credential(&token, "web");
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v1/memories",
+        web_call(&web).idem("web-new-1").body(json!({
+            "kind": "memory",
+            "workspace": "alice",
+            "body": "Typed in the builder.",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    assert_eq!(body["state"], "held", "{body}");
+    let id = body["artifact_id"].as_str().expect("an id").to_owned();
+    let (status, _, row) = send(
+        &rig.router,
+        "GET",
+        &format!("/v1/memories/{id}"),
+        web_call(&web),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{row}");
+    // A held claim counts in no kind (ADR-0082 d10).
+    let (status, _, view) = send(&rig.router, "GET", "/v2/workspaces/alice", web_call(&web)).await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    assert_eq!(view["approved_by_kind"], json!({}), "{view}");
+    drop_db(&rig.db_name).await;
+}
+
+/// `POST /v1/memories/preview` over HTTP: a draft capture would take
+/// answers `200` with `would_capture` and its facts, a capture-time refusal
+/// answers `200` with the refusal in the error object's shape, an authority
+/// refusal is the HTTP error submit answers, and nothing is written
+/// (ADR-0082 d5, d10).
+#[tokio::test]
+async fn preview_answers_capture_refusals_in_its_body_and_authority_refusals_as_errors() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let token = rig.signed_in("alice@example.com", "alice", false).await;
+    let web = credential(&token, "web");
+    let _bob = rig.signed_in("bob@example.com", "bob", false).await;
+    let mine = |page: &Value| page["items"].as_array().map_or(0, Vec::len);
+    let (_, _, before) = send(&rig.router, "GET", "/v1/memories?mine=true", web_call(&web)).await;
+
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v1/memories/preview",
+        web_call(&web).body(json!({ "kind": "memory", "workspace": "alice", "body": "A draft." })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["would_capture"], true, "{body}");
+    assert_eq!(body["refusal"], Value::Null, "{body}");
+    assert_eq!(body["body_bytes"], 8, "{body}");
+    assert_eq!(body["needs_person"], false, "{body}");
+
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v1/memories/preview",
+        web_call(&web).body(json!({ "kind": "memory", "workspace": "alice" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["would_capture"], false, "{body}");
+    assert_eq!(body["refusal"]["code"], "request.validation", "{body}");
+
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v1/memories/preview",
+        web_call(&web).body(json!({ "kind": "memory", "workspace": "bob", "body": "Not hers." })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(body["error"]["code"], "access.not_found", "{body}");
+
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v1/memories/preview",
+        web_call(&web).body(json!({
+            "replaces": "not-an-id", "body": "An edit.", "expected_version": 1,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v1/memories/preview",
+        Call::default().body(json!({ "kind": "memory", "body": "No key." })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+
+    let (_, _, after) = send(&rig.router, "GET", "/v1/memories?mine=true", web_call(&web)).await;
+    assert_eq!(mine(&after), mine(&before), "nothing was written");
+    drop_db(&rig.db_name).await;
+}
+
+/// A document's preview answers its passages on the wire, each with its
+/// fragment, ordinal, lines and heading path, as recall's hit names its
+/// passage (ADR-0082 d5; ADR-0081 d3, d4; #409).
+#[tokio::test]
+async fn a_document_preview_answers_its_passages_on_the_wire() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let token = rig.signed_in("alice@example.com", "alice", false).await;
+    let web = credential(&token, "web");
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v1/memories/preview",
+        web_call(&web).body(json!({
+            "kind": "document",
+            "workspace": "alice",
+            "claim_key": "doc/runbook",
+            "format": "text/markdown",
+            "body": "# Runbook\n\nStart here.\n\n## Deploy\n\nRun the deployer.\n",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["would_capture"], true, "{body}");
+    assert_eq!(
+        body["passages"],
+        json!([
+            { "fragment": "runbook", "ordinal": 0, "start_line": 1, "end_line": 3,
+              "heading_path": ["Runbook"] },
+            { "fragment": "deploy", "ordinal": 1, "start_line": 5, "end_line": 7,
+              "heading_path": ["Runbook", "Deploy"] },
+        ]),
+        "{body}"
+    );
+    let (_, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v1/memories/preview",
+        web_call(&web).body(json!({ "kind": "memory", "workspace": "alice", "body": "A draft." })),
+    )
+    .await;
+    assert!(body.get("passages").is_none(), "{body}");
+    drop_db(&rig.db_name).await;
+}
+
 /// A capacity credential reaches the API only with oml-web's client
 /// identity: without the secret, with a wrong one, or beside a client
 /// certificate a gateway forwarded, it is `auth.invalid`
@@ -11017,14 +11179,44 @@ async fn the_changed_operations_serve_the_merged_listing_counts_offers_and_named
         StatusCode::NOT_FOUND,
         "another person's key: {body}"
     );
+    // kinds and state are comma lists beside with_own and mine, guardrail
+    // among the kinds; mine drops the scoped part (ADR-0082 d8 item 3;
+    // ADR-0083 d3).
+    for query in [
+        "/v1/memories?with_own=true&kinds=memory,guardrail",
+        "/v1/memories?mine=true&state=held,withdrawn&kinds=memory",
+        "/v1/memories?mine=true&state=held,promoted&promoted_since=2026-01-01T00:00:00Z",
+    ] {
+        let (status, _, body) = send(&rig.router, "GET", query, web_call(&web)).await;
+        assert_eq!(status, StatusCode::OK, "{query}: {body}");
+        assert_eq!(
+            ids(&body),
+            [second.clone(), first.clone()],
+            "{query}: {body}"
+        );
+    }
     let (status, _, body) = send(
         &rig.router,
         "GET",
-        "/v1/memories?with_own=true&kind=memory",
+        "/v1/memories?mine=true&kinds=guardrail,skill",
         web_call(&web),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(ids(&body).is_empty(), "{body}");
+    for (query, field) in [
+        ("/v1/memories?with_own=true&kinds=memory,nope", "kinds"),
+        ("/v1/memories?mine=true&state=held,erased", "state"),
+        (
+            "/v1/memories?mine=true&promoted_since=yesterday",
+            "promoted_since",
+        ),
+        ("/v1/memories?mine=yes", "mine"),
+    ] {
+        let (status, _, body) = send(&rig.router, "GET", query, web_call(&web)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{query}: {body}");
+        assert_eq!(body["error"]["details"]["field"], field, "{query}: {body}");
+    }
 
     let (status, _, tree) = send(
         &rig.router,
@@ -11162,6 +11354,159 @@ async fn the_changed_operations_serve_the_merged_listing_counts_offers_and_named
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(body["error"]["details"]["field"], "/origin_kind");
+    drop_db(&rig.db_name).await;
+}
+
+/// `kinds` repeated, as a generated client explodes a list, answers every
+/// kind it names on the `mine` and `with_own` listings, each named once,
+/// as the catalog does; `own=false`, the default a generated client sends,
+/// reads as absent beside them (ADR-0092 d6; ADR-0082 d8 item 3).
+#[tokio::test]
+async fn kinds_repeated_on_the_mine_listing_answers_every_kind_it_names() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let token = rig.signed_in("alice@example.com", "alice", false).await;
+    let web = credential(&token, "web");
+    let laptop = rig.agent_key("alice", "alice-laptop").await;
+    let note = rig.held(&laptop, "alice", "laptop-note").await;
+    let (status, _, steering) = send(
+        &rig.router,
+        "POST",
+        "/v1/memories",
+        Call::auth(&laptop)
+            .idem("w-steer")
+            .workspace("alice")
+            .body(json!({
+                "verb": "remember",
+                "claim_key": "steer",
+                "kind": "steering",
+                "body": "Every note names its source.",
+            })),
+    )
+    .await;
+    assert!(status.is_success(), "{steering}");
+    let steer = steering["artifact_id"].as_str().expect("id").to_owned();
+    let ids = |page: &Value| -> Vec<String> {
+        page["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .map(|m| m["artifact_id"].as_str().expect("id").to_owned())
+            .collect()
+    };
+    for query in [
+        "/v1/memories?mine=true&kinds=memory&kinds=steering",
+        "/v1/memories?with_own=true&kinds=steering&kinds=memory,steering",
+        "/v1/memories?mine=true&kinds=memory&kinds=memory&kinds=steering",
+        "/v1/memories?own=false&mine=true&kinds=memory&kinds=steering&limit=50",
+    ] {
+        let (status, _, body) = send(&rig.router, "GET", query, web_call(&web)).await;
+        assert_eq!(status, StatusCode::OK, "{query}: {body}");
+        assert_eq!(ids(&body), [steer.clone(), note.clone()], "{query}: {body}");
+    }
+    let (status, _, body) = send(
+        &rig.router,
+        "GET",
+        "/v1/memories?mine=true&kinds=memory&kinds=nope",
+        web_call(&web),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["details"]["field"], "kinds", "{body}");
+    let (status, _, body) = send(
+        &rig.router,
+        "GET",
+        "/v1/memories?own=true&mine=true",
+        web_call(&web),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "own=true still does not combine: {body}"
+    );
+    drop_db(&rig.db_name).await;
+}
+
+/// The admin search takes `kinds`, a list of kinds as recall's body does,
+/// a row of any of them served; the v0.8.0 draft's `kind` is refused naming
+/// `kinds` (ADR-0083 d5; ADR-0092 d6; ADR-0091 d2).
+#[tokio::test]
+async fn the_admin_search_takes_a_kinds_list_and_refuses_kind_naming_kinds() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let _token = rig.signed_in("alice@example.com", "alice", false).await;
+    let laptop = rig.agent_key("alice", "alice-laptop").await;
+    let note = rig.held(&laptop, "alice", "laptop-note").await;
+    let (status, _, steering) = send(
+        &rig.router,
+        "POST",
+        "/v1/memories",
+        Call::auth(&laptop)
+            .idem("w-steer")
+            .workspace("alice")
+            .body(json!({
+                "verb": "remember",
+                "claim_key": "steer",
+                "kind": "steering",
+                "body": "Every note names its source.",
+            })),
+    )
+    .await;
+    assert!(status.is_success(), "{steering}");
+    let steer = steering["artifact_id"].as_str().expect("id").to_owned();
+    let ids = |page: &Value| -> Vec<String> {
+        page["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .map(|m| m["artifact_id"].as_str().expect("id").to_owned())
+            .collect()
+    };
+    for (kinds, want) in [
+        (
+            json!(["memory", "steering"]),
+            vec![steer.clone(), note.clone()],
+        ),
+        (json!(["steering", "steering"]), vec![steer.clone()]),
+        (json!(["memory"]), vec![note.clone()]),
+    ] {
+        let (status, _, found) = send(
+            &rig.router,
+            "POST",
+            "/v2/admin/memories/search",
+            Call::auth(&rig.admin).body(json!({ "state": "held", "kinds": kinds })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{kinds}: {found}");
+        assert_eq!(ids(&found), want, "{kinds}: {found}");
+    }
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v2/admin/memories/search",
+        Call::auth(&rig.admin).body(json!({ "kind": "memory" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["details"]["field"], "/kind", "{body}");
+    assert_eq!(body["error"]["details"]["renamed_to"], "/kinds", "{body}");
+    for kinds in [json!([]), json!(["memory", "nope"]), json!("memory")] {
+        let (status, _, body) = send(
+            &rig.router,
+            "POST",
+            "/v2/admin/memories/search",
+            Call::auth(&rig.admin).body(json!({ "kinds": kinds })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{kinds}: {body}");
+        assert_eq!(
+            body["error"]["details"]["field"], "/kinds",
+            "{kinds}: {body}"
+        );
+    }
     drop_db(&rig.db_name).await;
 }
 
@@ -11831,6 +12176,38 @@ async fn the_author_withdraws_its_held_version_over_http_and_the_route_refuses_b
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert_envelope(&body, "memory.not_held");
 
+    drop_db(&rig.db_name).await;
+}
+
+/// `GET /v2/admin/todo/counts` answers a person's `<user>-admin` session
+/// key alone: a tenant admin key shares its role, not its capacity, and is
+/// refused `access.verb_ceiling` with `session_key_only` (ADR-0083 d11; the
+/// review of PR #494, L5).
+#[tokio::test]
+async fn the_admin_todo_counts_answer_only_the_admin_session_key() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let token = rig.signed_in("ada@example.com", "ada", true).await;
+    let (status, _, body) = send(
+        &rig.router,
+        "GET",
+        "/v2/admin/todo/counts",
+        web_call(&credential(&token, "admin")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["truncated"], false);
+    let (status, _, body) = send(
+        &rig.router,
+        "GET",
+        "/v2/admin/todo/counts",
+        Call::auth(&rig.admin),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_envelope(&body, "access.verb_ceiling");
+    assert_eq!(body["error"]["details"]["reason"], "session_key_only");
     drop_db(&rig.db_name).await;
 }
 

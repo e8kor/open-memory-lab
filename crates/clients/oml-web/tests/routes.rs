@@ -82,3 +82,126 @@ fn the_charts_default_ingress_paths_are_oml_webs_pages() {
         );
     }
 }
+
+/// An API no call reaches: a redirect reads no session.
+struct Nowhere;
+
+impl oml_sdk::Transport for Nowhere {
+    fn send(&self, _: http::Request<Vec<u8>>) -> oml_sdk::Sending<'_> {
+        Box::pin(async {
+            Err(oml_sdk::TransportError::Unreachable(
+                "no API in this test".to_owned(),
+            ))
+        })
+    }
+}
+
+/// `path`'s answer from `oml-web` alone, with no session cookie: its
+/// status and `Location`.
+async fn moved(path: &str) -> (http::StatusCode, Option<String>) {
+    use tower::ServiceExt as _;
+    let web = oml_web::router(oml_web::Web {
+        layers: oml_web::Layers {
+            public_origin: Some("https://memory.example".to_owned()),
+            log: std::sync::Arc::new(|_| {}),
+        },
+        api: oml_web::api(
+            std::sync::Arc::new(Nowhere),
+            "0123456789abcdef0123456789abcdef",
+        )
+        .unwrap(),
+    });
+    let response = web
+        .oneshot(
+            http::Request::get(path)
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let location = response
+        .headers()
+        .get(http::header::LOCATION)
+        .map(|v| v.to_str().unwrap().to_owned());
+    (response.status(), location)
+}
+
+/// The Review view's old path answers `308` to To do for one release,
+/// keeping the workspace and the linked key it judged as, and dropping
+/// every other field; it reads no session (ADR-0083 d6).
+#[tokio::test]
+async fn the_old_review_path_answers_308_to_todo_keeping_the_workspace() {
+    for (path, location) in [
+        ("/web/review", "/web/todo"),
+        (
+            "/web/review?workspace=alice.proj",
+            "/web/todo?workspace=alice.proj",
+        ),
+        (
+            "/web/review?held=1&workspace=team&author_key=k&as=0f0e8a52-5d1c-4f43-9a5e-2f7c1f9b8f10",
+            "/web/todo?workspace=team&as=0f0e8a52-5d1c-4f43-9a5e-2f7c1f9b8f10",
+        ),
+    ] {
+        assert_eq!(
+            moved(path).await,
+            (
+                http::StatusCode::PERMANENT_REDIRECT,
+                Some(location.to_owned())
+            ),
+            "{path}"
+        );
+    }
+    // A POST is not oml-web's any more: the proxy sends it to the lead.
+    assert!(!oml_web::serves("POST", "/web/review"));
+}
+
+/// The admin Review view's old path answers `308` to the admin Memories
+/// page's Held view, keeping the workspace (ADR-0083 d6).
+#[tokio::test]
+async fn the_old_admin_review_path_answers_308_to_the_held_view() {
+    for (path, location) in [
+        ("/web/admin/review", "/web/admin/memories?view=held"),
+        (
+            "/web/admin/review?workspace=team",
+            "/web/admin/memories?view=held&workspace=team",
+        ),
+    ] {
+        assert_eq!(
+            moved(path).await,
+            (
+                http::StatusCode::PERMANENT_REDIRECT,
+                Some(location.to_owned())
+            ),
+            "{path}"
+        );
+    }
+    assert!(!oml_web::serves("POST", "/web/admin/review"));
+}
+
+/// The Guardrails view's path answers `308` to the workspace page's
+/// Guardrails kind, keeping the workspace, and with none to the page,
+/// which opens on the person's root (ADR-0083 d12).
+#[tokio::test]
+async fn web_guardrails_redirects_308_to_the_workspace_page() {
+    for (path, location) in [
+        ("/web/guardrails", "/web/workspace?kind=guardrail"),
+        (
+            "/web/guardrails?workspace=alice.proj",
+            "/web/workspace?workspace=alice.proj&kind=guardrail",
+        ),
+        (
+            "/web/guardrails?workspace=team&done=x",
+            "/web/workspace?workspace=team&kind=guardrail",
+        ),
+    ] {
+        assert_eq!(
+            moved(path).await,
+            (
+                http::StatusCode::PERMANENT_REDIRECT,
+                Some(location.to_owned())
+            ),
+            "{path}"
+        );
+    }
+    assert!(!oml_web::serves("POST", "/web/guardrails"));
+}

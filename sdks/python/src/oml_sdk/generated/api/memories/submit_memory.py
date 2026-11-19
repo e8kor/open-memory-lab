@@ -98,11 +98,13 @@ def sync_detailed(
 ) -> Response[ErrorEnvelope | SubmitAccepted]:
     """Submit a memory (remember or learn); held on arrival, scanned same-call.
 
-     Requires: writer effective access on the resolved workspace; every derives_from ancestor must be
-    readable by the key — promoted within its reader effective access, or its own row in any state —
-    else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is
-    attribution, not a verb of its own. The target workspace is the body's workspace, by id or name,
-    honoured only within the key's grants, else the key's default_workspace;
+     Requires: writer effective access on the resolved workspace, or, for a person's session key whose
+    role is reviewer, reviewer and reader effective access there: the version is held and its lineage
+    excludes that key, and every other reviewer key is access.verb_ceiling (ADR-0082 d2, d10); every
+    derives_from ancestor must be readable by the key — promoted within its reader effective access, or
+    its own row in any state — else 404 access.not_found, indistinguishable from a nonexistent id
+    (ADR-0025 d3); lineage is attribution, not a verb of its own. The target workspace is the body's
+    workspace, by id or name, honoured only within the key's grants, else the key's default_workspace;
     request.workspace_unresolved with neither, and an X-OML-Workarea header is request.validation naming
     /workspace in details.renamed_to (ADR-0039 d7). A workspace in a user's root takes a new memory from
     that user's keys alone: from any other key that reads the workspace it is 409
@@ -157,11 +159,13 @@ def sync(
 ) -> ErrorEnvelope | SubmitAccepted | None:
     """Submit a memory (remember or learn); held on arrival, scanned same-call.
 
-     Requires: writer effective access on the resolved workspace; every derives_from ancestor must be
-    readable by the key — promoted within its reader effective access, or its own row in any state —
-    else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is
-    attribution, not a verb of its own. The target workspace is the body's workspace, by id or name,
-    honoured only within the key's grants, else the key's default_workspace;
+     Requires: writer effective access on the resolved workspace, or, for a person's session key whose
+    role is reviewer, reviewer and reader effective access there: the version is held and its lineage
+    excludes that key, and every other reviewer key is access.verb_ceiling (ADR-0082 d2, d10); every
+    derives_from ancestor must be readable by the key — promoted within its reader effective access, or
+    its own row in any state — else 404 access.not_found, indistinguishable from a nonexistent id
+    (ADR-0025 d3); lineage is attribution, not a verb of its own. The target workspace is the body's
+    workspace, by id or name, honoured only within the key's grants, else the key's default_workspace;
     request.workspace_unresolved with neither, and an X-OML-Workarea header is request.validation naming
     /workspace in details.renamed_to (ADR-0039 d7). A workspace in a user's root takes a new memory from
     that user's keys alone: from any other key that reads the workspace it is 409
@@ -211,11 +215,13 @@ async def asyncio_detailed(
 ) -> Response[ErrorEnvelope | SubmitAccepted]:
     """Submit a memory (remember or learn); held on arrival, scanned same-call.
 
-     Requires: writer effective access on the resolved workspace; every derives_from ancestor must be
-    readable by the key — promoted within its reader effective access, or its own row in any state —
-    else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is
-    attribution, not a verb of its own. The target workspace is the body's workspace, by id or name,
-    honoured only within the key's grants, else the key's default_workspace;
+     Requires: writer effective access on the resolved workspace, or, for a person's session key whose
+    role is reviewer, reviewer and reader effective access there: the version is held and its lineage
+    excludes that key, and every other reviewer key is access.verb_ceiling (ADR-0082 d2, d10); every
+    derives_from ancestor must be readable by the key — promoted within its reader effective access, or
+    its own row in any state — else 404 access.not_found, indistinguishable from a nonexistent id
+    (ADR-0025 d3); lineage is attribution, not a verb of its own. The target workspace is the body's
+    workspace, by id or name, honoured only within the key's grants, else the key's default_workspace;
     request.workspace_unresolved with neither, and an X-OML-Workarea header is request.validation naming
     /workspace in details.renamed_to (ADR-0039 d7). A workspace in a user's root takes a new memory from
     that user's keys alone: from any other key that reads the workspace it is 409
@@ -268,11 +274,13 @@ async def asyncio(
 ) -> ErrorEnvelope | SubmitAccepted | None:
     """Submit a memory (remember or learn); held on arrival, scanned same-call.
 
-     Requires: writer effective access on the resolved workspace; every derives_from ancestor must be
-    readable by the key — promoted within its reader effective access, or its own row in any state —
-    else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is
-    attribution, not a verb of its own. The target workspace is the body's workspace, by id or name,
-    honoured only within the key's grants, else the key's default_workspace;
+     Requires: writer effective access on the resolved workspace, or, for a person's session key whose
+    role is reviewer, reviewer and reader effective access there: the version is held and its lineage
+    excludes that key, and every other reviewer key is access.verb_ceiling (ADR-0082 d2, d10); every
+    derives_from ancestor must be readable by the key — promoted within its reader effective access, or
+    its own row in any state — else 404 access.not_found, indistinguishable from a nonexistent id
+    (ADR-0025 d3); lineage is attribution, not a verb of its own. The target workspace is the body's
+    workspace, by id or name, honoured only within the key's grants, else the key's default_workspace;
     request.workspace_unresolved with neither, and an X-OML-Workarea header is request.validation naming
     /workspace in details.renamed_to (ADR-0039 d7). A workspace in a user's root takes a new memory from
     that user's keys alone: from any other key that reads the workspace it is 409

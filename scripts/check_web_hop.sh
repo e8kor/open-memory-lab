@@ -2,11 +2,12 @@
 # The web hop of a running stack (ADR-0070 d4), through its one origin:
 #   - the public /readyz is the lead's, and the lead accepts oml-web's
 #     client identity (web_client is not none);
-#   - the moved pages, GET /web/guardrails, /web/workspaces, /web/memories,
-#     /web/atlas, /web/review, /web/keys, /web/memory, /web/start and
-#     /web/setup, reach
-#     oml-web, which sends a browser with no session to the lead's
-#     /web/sign-in carrying the page as next;
+#   - the moved pages, GET /web/workspaces, /web/workspace, /web/memories,
+#     /web/atlas, /web/todo, /web/keys, /web/memory, /web/start and
+#     /web/setup, reach oml-web, which sends a browser with no session to
+#     the lead's /web/sign-in carrying the page as next; and the old
+#     /web/guardrails and /web/review answer oml-web's 308 to their new
+#     pages, before any session is read (ADR-0083 d6, d12);
 #   - the rest of the command line, oml-web --doctor run where oml-web runs,
 #     exits 0.
 # Used by .github/workflows/ci.yml (job compose) for docker-compose.yml and for
@@ -35,17 +36,20 @@ web_client="$(jq -r '.web_client // "absent"' <<<"$ready")"
 # oml-web may start after the router: wait for its answer rather than the
 # router's 502.
 got=""
-want="303 $origin/web/sign-in?next=%2Fweb%2Fguardrails"
+want="308 $origin/web/workspace?kind=guardrail"
 for _ in $(seq 1 60); do
     got="$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "$origin/web/guardrails")"
     [ "$got" = "$want" ] && break
     sleep 1
 done
 [ "$got" = "$want" ] || fail "GET /web/guardrails answered '$got', not '$want'"
+got="$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "$origin/web/review")"
+want="308 $origin/web/todo"
+[ "$got" = "$want" ] || fail "GET /web/review answered '$got', not '$want'"
 got="$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "$origin/web/workspaces")"
 want="303 $origin/web/sign-in?next=%2Fweb%2Fworkspaces"
 [ "$got" = "$want" ] || fail "GET /web/workspaces answered '$got', not '$want'"
-for page in memories atlas review keys memory start setup; do
+for page in workspace memories atlas todo keys memory start setup; do
     got="$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "$origin/web/$page")"
     want="303 $origin/web/sign-in?next=%2Fweb%2F$page"
     [ "$got" = "$want" ] || fail "GET /web/$page answered '$got', not '$want'"

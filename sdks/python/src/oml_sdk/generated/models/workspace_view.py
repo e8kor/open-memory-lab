@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from ..models.review_policy import ReviewPolicy
     from ..models.transition import Transition
     from ..models.whoami_ref import WhoamiRef
+    from ..models.workspace_view_approved_by_kind import WorkspaceViewApprovedByKind
     from ..models.workspace_view_children_item import WorkspaceViewChildrenItem
     from ..models.workspace_view_edges_item import WorkspaceViewEdgesItem
     from ..models.workspace_view_federation import WorkspaceViewFederation
@@ -43,6 +44,10 @@ class WorkspaceView:
             stale_versions (int): The promoted served tips on this node whose latest source check found the source changed
                 or removed (ADR-0057 d5, d17); 0 for an admin key, which reads no claim. oml doctor reports it for the key's
                 default workspace.
+            approved_by_kind (WorkspaceViewApprovedByKind): The approved claims on this node alone, not its subtree, by
+                kind: a claim counts once when its tip is promoted and is not a retirement, so a replaced version or a held
+                successor adds nothing. Only kinds with at least one approved claim are named (ADR-0082 d8 item 7, d10). Since
+                v0.8.0.
             children (list[WorkspaceViewChildrenItem]): The readable immediate children, ordered by path_leaf ascending in
                 byte order, then id; a child's path_leaf is its name.
             edges (list[WorkspaceViewEdgesItem]): The workspace edges touching the node whose other endpoint the key can
@@ -76,6 +81,7 @@ class WorkspaceView:
     path: str
     status: WorkspaceStatus
     stale_versions: int
+    approved_by_kind: WorkspaceViewApprovedByKind
     children: list[WorkspaceViewChildrenItem]
     edges: list[WorkspaceViewEdgesItem]
     my_effective_verbs: list[WorkspaceViewMyEffectiveVerbsItem]
@@ -107,6 +113,8 @@ class WorkspaceView:
         status = self.status.value
 
         stale_versions = self.stale_versions
+
+        approved_by_kind = self.approved_by_kind.to_dict()
 
         children = []
         for children_item_data in self.children:
@@ -174,6 +182,7 @@ class WorkspaceView:
                 "path": path,
                 "status": status,
                 "stale_versions": stale_versions,
+                "approved_by_kind": approved_by_kind,
                 "children": children,
                 "edges": edges,
                 "my_effective_verbs": my_effective_verbs,
@@ -205,6 +214,7 @@ class WorkspaceView:
         from ..models.review_policy import ReviewPolicy
         from ..models.transition import Transition
         from ..models.whoami_ref import WhoamiRef
+        from ..models.workspace_view_approved_by_kind import WorkspaceViewApprovedByKind
         from ..models.workspace_view_children_item import WorkspaceViewChildrenItem
         from ..models.workspace_view_edges_item import WorkspaceViewEdgesItem
         from ..models.workspace_view_federation import WorkspaceViewFederation
@@ -226,6 +236,10 @@ class WorkspaceView:
         status = WorkspaceStatus(d.pop("status"))
 
         stale_versions = d.pop("stale_versions")
+
+        approved_by_kind = WorkspaceViewApprovedByKind.from_dict(
+            d.pop("approved_by_kind")
+        )
 
         children = []
         _children = d.pop("children")
@@ -329,6 +343,7 @@ class WorkspaceView:
             path=path,
             status=status,
             stale_versions=stale_versions,
+            approved_by_kind=approved_by_kind,
             children=children,
             edges=edges,
             my_effective_verbs=my_effective_verbs,

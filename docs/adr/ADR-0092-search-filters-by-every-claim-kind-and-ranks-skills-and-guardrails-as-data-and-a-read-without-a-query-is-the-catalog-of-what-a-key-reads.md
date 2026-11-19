@@ -477,10 +477,11 @@ workspace holds across kinds has the workspace page's contents by kind for one w
        vocabulary.
 
     **Waiting.** `binding` (d6, d8) waits on ADR-0085's releases, which are not built: every key
-    reads tips, so no catalog answer carries `binding` until they are. The console's **Judge it**
-    link (d7) waits on the judge page `/web/todo/judge` that the console's To do work (#411, PR
-    #494) adds; until it is on `main`, a held instruction row shows the "needs a person" chip
-    alone. The MCP catalog (`oml_read` without a query) copies each entry's `kind` and the
+    reads tips, so no catalog answer carries `binding` until they are. *(Amended 2026-11-19, PR
+    #494: the console's **Judge it** link (d7) is built. Where a page holds a held instruction
+    row, the page makes one more read, the held listing in the person lane at the scope as
+    `<user>-review`, and links `/web/todo/judge?memory=<id>` on the rows that listing serves; a
+    read that fails leaves the "needs a person" chip alone.)* The MCP catalog (`oml_read` without a query) copies each entry's `kind` and the
     projection of d6, and leaves out `scan_findings`, which only the surfaces a reviewer judges
     from carry (ADR-0074 d17, d23). Document hits are
     ADR-0081's best-passage hits, and a document counts in the statistics as ADR-0081 R6

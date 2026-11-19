@@ -65,7 +65,7 @@ What the console does today:
 - **One card, one picker.** Every memory is drawn by one card function (`card.rs`), and one
   workspace picker serves Memories, the Atlas, Review and Guardrails (`picker.rs`).
 
-Decided, not built.
+Decided; built in v0.8.0: the API in #409, the console in #410 (the workspace page, its forms, In force here and the admin workspace page).
 
 ## Decision
 
@@ -142,7 +142,11 @@ Decided, not built.
   deleted.** Submit on an existing item supersedes it; the served tip stays the old version until
   the successor promotes (ADR-0025 d10). Retire asks for a confirmation naming what stops when it
   promotes ("the command /oml:`<name>` is no longer offered", "the rule no longer loads", "the
-  document is no longer listed or recalled"), then sends `retirement: true` (ADR-0025 d11). No
+  document is no longer listed or recalled"), then sends `retirement: true` (ADR-0025 d11).
+  *(Note of 2026-11-19, the review of PR #494, 16: the console writes the command one way,
+  `/mcp__<server>__<name>`, on the builder, the retirement confirmation and the card, since the
+  prompt's served name is the skill's bare name (ADR-0080 d5) and the server's name is the one the
+  client gives it; `/oml:<name>` above is out of date.)* No
   control erases, demotes or deletes; rejected versions stay listed to their author under
   Submitted ([ADR-0083](ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md)).
 
@@ -159,6 +163,13 @@ Decided, not built.
     - Every form has an optional claim-key field only for documents (ADR-0081 d2), and a free
       "why" line the person may fill, sent as the version's `sources` citation where the API
       admits it and otherwise kept out of the write.
+    - *Amended 2026-11-19 by the operator's decision (B2 of the #410 readings), recorded for the
+      operator's batch:* a guardrail form also carries an optional **Name**, from which the
+      console derives the guardrail's claim key by the slug rule documents use (ADR-0081 d2) and
+      sends it as `claim_key` on `POST /v1/memories`, which already admits a claim key for a
+      guardrail; with no name the server derives its `auto-…` key as before (ADR-0039 d6). The
+      name is fixed on an edit, since a supersession keeps the claim's key. Rejected: keeping
+      only derived keys, which read as noise in In force here and on To do.
 
 - **d5 — Preview is an API call that writes nothing: `POST /v1/memories/preview`.** It takes the
   body of submit, or of supersede with `replaces`, and answers what capture would decide without
@@ -182,7 +193,13 @@ Decided, not built.
   the code. When the tip moved (`submission.tip_conflict`), the one primary is **Edit from v3 with
   this text** (`step=rebase`), the console's own step, which re-reads the tip and redraws the form
   with the typed text and the change against it; no API change. The cost is one more route and a
-  second pass of the scan per previewed edit.
+  second pass of the scan per previewed edit. *(Cost noted 2026-11-19, the review of PR #494, L1:
+  "name taken" makes preview a free probe of the claim keys and skill names held in a workspace
+  the key may write, another author's held, author-only version included. Submit already answers
+  the same refusal, but a free name there writes a version, which is journalled and metered;
+  preview writes nothing, so the probe is limited by the key's request rate alone (ADR-0079).
+  Accepted as the price of telling the author before they write that the name is taken; the
+  answer names no author, text or state of the row that holds the name.)*
 
 - **d6 — An edit is judged by what changed, drawn on the edit form and on the Judge page** (the
   operator, 2026-11-14, as drawn). The change is the console's own word comparison (longest
@@ -259,6 +276,77 @@ Decided, not built.
   no builder view; the admin cockpit's kind filter covers reading. The screen choices are settled
   by the approved design system v18 mockups: d1's workspace page and forms, d5's preview on the
   form's own page, d6's diff on the form and on Judge. Nothing stays open.
+
+- **d10 — Three readings the build took, 2026-11-18** (proposed for the operator's batch; confirmed
+  by the operator's coordinator the same day, #409).
+    - **Which refusals preview answers inside its body (d5).** Refusals of authority answer as the
+      same HTTP error submit or supersede would: no or a bad key, the verb ceiling, every `access.*`
+      grant refusal, a target the key cannot read (`access.not_found`) and the request rate (`429`),
+      since preview "needs the same grant". Every refusal capture itself would make (validation,
+      size, the scan's veto, quota headroom, a name taken, `submission.version_conflict`,
+      `submission.tip_conflict`, `workspace.frozen`, a guardrail rule that does not parse) answers
+      `200` with `would_capture: false` and `refusal: {code, message, details}`, the shape of the
+      error body. Preview takes no idempotency record and never replays one. Rejected: every
+      refusal as an HTTP error (the form would lose the findings and budget beside it); grant
+      refusals inside the body (it would describe a workspace the key cannot write).
+    - **Which reviewer key starts a claim (d2, d8 item 5).** A key whose credential is a session
+      and whose role is reviewer submits a new claim where it holds reviewer and reader, the grants
+      supersede's step 4 asks; the version is held, and its lineage excludes the author key, so no
+      key of the author's person counts a verdict on it outside the person's root (d7). Every other
+      reviewer key keeps `access.verb_ceiling`. Rejected: reviewer alone, which would let a key
+      start a claim it cannot read back.
+      *(Note of 2026-11-19, the review of PR #494, H1: inside the person's own root the session
+      reviewer key starts no claim. d2 routes every new item there through `<user>-web`, the key
+      whose writes count on the person's account (ADR-0071 d1), so a start there as `<user>-review`
+      is refused `access.verb_ceiling` with `details.reason: review_key_in_own_root`, preview
+      answers the same HTTP error, and the key lists no `remember` on a node of that root. Outside
+      the root the start stands as above, and the write is checked against the person's limits
+      (ADR-0071 d3). Rejected: leaving the start open in the root, where a key of no account
+      wrote past the person's quota.)*
+    - **The shape of `approved_by_kind` (d8 item 7).** An object keyed by kind naming only kinds
+      with at least one approved claim: a claim counts when its tip is promoted and is not a
+      retirement, one per claim, on that workspace alone. The workspace page's Memories count is
+      the sum over the kinds the Memories cockpit lists, read from the one kind set the cockpit's
+      listing uses. The cockpit lists every kind (ADR-0083 d1 sets no kind filter), so steering,
+      like every kind, counts under Memories, and Skills, Guardrails and Documents count their own
+      kinds again beside it. Rejected: every kind with zeros, which ties the answer to the kind
+      list; Memories as "every kind but skill, guardrail and document", which a cockpit listing
+      every kind would contradict.
+
+- **d11 — Three more readings the build took, 2026-11-18** (proposed for the operator's batch;
+  confirmed by the operator's coordinator the same day, #409).
+    - **Preview's `shadows` (d5).** A list of `{workspace, relation}`, `relation` being `shadows`
+      for a promoted skill of the same name on an ancestor the key reads, and `shadowed_by` for one
+      on a descendant it reads; a skill the key cannot read is never named. Rejected: bare paths,
+      which cannot say which way the shadow falls.
+    - **Preview's `set_after` (d5).** `{size, cap}`: the guardrails in force under the caller's
+      `guardrail_scope` after the version, one more for a new rule, the same for an edit of a rule
+      in force, one fewer for a retirement, beside ADR-0037 d7's `SET_CAP`. Rejected: a bare
+      number, which leaves the form without the cap it draws.
+    - **The verbs a session reviewer key lists (d2, d10).** `remember` joins its effective verbs
+      where it holds reviewer and reader, so the verbs it lists are the verbs it may use; the
+      verbs table of [roles and keys](../architecture/roles-and-keys.md) says so. Rejected: leaving
+      it out, which lists less than the key may do.
+
+- **d12 — Readings the console build took, 2026-11-19** (B1, B3 to B8 of #410; confirmed by the
+  operator's coordinator 2026-11-19 for the operator's batch).
+    - **B1 (d4, the "why" line).** Neither submit nor supersede admits `sources`, so the form draws
+      no "why" field until the API admits a citation. Rejected: a field whose value goes nowhere.
+    - **B3 (d1, the default kind).** With no `kind`, the workspace page opens on Skills.
+    - **B4 (d1; ADR-0083 d12, which key reads).** Inside the root the page reads as `<user>-web`,
+      outside it as `<user>-review`, because the web key cannot read shared workspaces; ADR-0083
+      d12 names `<user>-web` for the In force set, which holds inside the root. A shared
+      workspace the review key only reads opens read-only rather than refusing, built by the
+      console step of this round.
+    - **B5 (d1, the person's own held rows for Withdraw).** One extra `mine` read on the page, now
+      with `state=held`. Rejected: `with_own`, which inside an in-progress workspace also returns
+      other authors' held rows.
+    - **B6 (d4, the rule fields).** Tool, Match and Effect, as the mockup draws them. A shell match
+      is split on whitespace into `oml-gr/1` word globs.
+    - **B7 (d1, the admin page).** Read-only, with no status act. Lineage reads "follows vN" from
+      the claim ordinals, because the admin search serves no `replaces`.
+    - **B8 (d5, rebase).** The API answers `submission.version_conflict` before
+      `submission.tip_conflict`, so both open the rebase frame.
 
 ## Consequences
 

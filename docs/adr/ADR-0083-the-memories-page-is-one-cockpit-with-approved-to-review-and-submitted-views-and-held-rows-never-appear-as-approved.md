@@ -320,6 +320,72 @@ Decided, not built.
     console path to a mistaken agent write meanwhile; and a stub Submitted view, which #410 would
     replace whole.
 
+- **d14 — Three readings the build took, 2026-11-18** (proposed for the operator's batch; confirmed
+  by the operator's coordinator the same day, #409, #412).
+    - **Who may send `mine=true` (d3).** Any key: it lists the key's own set, every key of the
+      person for a person's session key and the key alone for any other, as the own part of
+      `with_own` does today. Rejected: refusing every key but the session web key, a refusal path
+      that protects nothing.
+    - **Groups whose feature is not built (d11).** `GET /v2/todo/counts` serves `review` and
+      `truncated` only, and each other member joins with its group's feature; To do draws only the
+      groups served. `GET /v2/admin/todo/counts` serves `{truncated: false}` until its groups land;
+      `/web/admin/todo` exists and says "Nothing waits for this account.", and both sides make the
+      one counts call per page, so the read counts do not move when a group lands. Rejected: zeros
+      or empty groups for lists that do not exist; leaving the admin To do and its badge out until
+      ADR-0089's acts land.
+    - **Next (d2, d11).** To do's Next is the console's own act: it reads `GET /v2/review/held`
+      oldest first, one row, under the To do filter's workspace, and answers `303` to that row's
+      Judge page, or to To do with its "Nothing waits" notice when nothing is held. It does not call
+      `POST /v2/review/next`, which d10 leaves undecided for a workspace filter.
+
+- **d15 — Four readings the cockpit's build took, 2026-11-18** (proposed for the operator's batch;
+  confirmed by the operator's coordinator the same day, #411, #413).
+    - **No date on Rejected or Withdrawn (d3).** The own listing serves its author no instant of
+      the rejection or the withdrawal, so Submitted says "Rejected." or "Withdrawn." without a date
+      until the author's own read serves that instant, never naming the reviewer (ADR-0077 d2);
+      #487 tracks it. Rejected: the version's `created_at`, which
+      dates the write, not the decision.
+    - **"Served as" (d3).** An approved skill's sentence names the command its name is published
+      as, `/mcp__oml__<name>`, derived in the console from the row's skill name; since a nearer
+      workspace's skill of the same name shadows it (ADR-0080 d5, R15), the copy says "published
+      as", not what a session runs. A document names its resource address once the listing serves
+      it; every other kind names its claim key. Rejected: one more read per row.
+    - **Approved's State filter (d1, d5).** Both sides offer "approved" (the promoted tip) and
+      "superseded"; a superseded version was approved and is never held, so d1's rule stands.
+    - **Counts on the admin tabs (d5).** Held carries the queue's total; Approved and Rejected carry
+      no number, current or not, until a count read serves them. Rejected: counting a fetched page,
+      wrong past its first page.
+
+- **d16 — Six readings the To do build took, 2026-11-19** (T1 to T6 of #412; confirmed by the
+  operator's coordinator 2026-11-19 for the operator's batch).
+    - **T1 (d2, To review rows).** No read serves the author's key kind (person or agent) or the
+      workspace's approval count, so rows name the author's key alone and leave out "approvals
+      asked"; the fix is a later addition to the held listing. Rejected: guessing from
+      `provenance`.
+    - **T2 (d2, d11).** There is one To review group. A row that only a person may approve says
+      "needs a person". The old Review page's split into two lanes (person / any) is gone.
+    - **T3 (d6).** A `POST` to the old `/web/review` or `/web/admin/review` gets a `404`, not a
+      `308`, because a `308` would carry the verdict form to a page with no such act.
+    - **T4 (d6, the badge).** When the counts read fails, or on a refusal page, the badge reads
+      "To do" with no number. Past the cap it reads "To do · 1000+". It never shows a number the
+      API did not serve.
+    - **T5 (d11).** The counts read with an unknown or unreadable workspace answers 0, not a
+      refusal. A key other than `<user>-web` gets `access.verb_ceiling` with `details.reason:
+      session_key_only`.
+    - **T6 (d6, one store call per page).** A To do page filtered to a workspace makes a second
+      counts call (with the workspace) for its group number, so that page costs two counts calls;
+      every other page makes one. Rejected: drawing the group number unfiltered on a filtered
+      page, which would be wrong. When acting as a linked key (`as`), the group number is not
+      drawn, since the counts are the person's own. Next on Judge posts with `after=<id>`, so it
+      skips the item left unjudged.
+    - **The scan's bound (d11; the review of PR #494, L4; proposed 2026-11-19 for the operator's
+      batch, not yet confirmed).** A count also stops after reading 2,000 held rows, counted or
+      not (twice the cap, chosen, not measured), and answers what it counted with `truncated`
+      set, so rows the store answers and the core's own check drops (the listing's checks in
+      depth, R2 and R3) cannot make the badge's read unbounded; both stores already leave out
+      the person's own writes outside their root, so the bound is a guard, not a path taken. The badge then reads "To do · N+" with the count
+      served. Rejected: no bound, where every page view could scan the tenant's whole queue.
+
 ## Consequences
 
 - API changes: `mine=true`, `promoted_since` and a comma-list `state` with `withdrawn` on

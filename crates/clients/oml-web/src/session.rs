@@ -15,8 +15,8 @@ use axum::extract::{Request, State};
 use axum::middleware::Next;
 use axum::response::Response;
 use http::{HeaderMap, header};
-use oml_page::web::{Bar, Scope};
-use oml_sdk::{Call, Whoami};
+use oml_page::web::{Bar, Scope, Todo};
+use oml_sdk::{AdminTodoCounts, Call, TodoCounts, Whoami};
 use oml_web_credential::capacity_credential;
 
 use crate::{Capacity, SESSION_COOKIE, Web, outcome};
@@ -48,7 +48,7 @@ pub struct PageCalls {
     action: Mutex<Option<String>>,
     csrf: OnceLock<Csrf>,
     path: OnceLock<String>,
-    signed_in: OnceLock<(String, bool)>,
+    signed_in: OnceLock<(String, bool, Todo)>,
 }
 
 /// The CSRF token of the session a request's cookie names.
@@ -145,7 +145,10 @@ impl PageCalls {
     /// Records who the session is and whether it holds the admin capacity,
     /// once it resolved, so a refusal page is drawn on its side's bar.
     pub fn signed_in(&self, session: &Session) {
-        let _ = self.signed_in.set((session.who(), session.admin));
+        let scope = Scope::of_path(self.path(), session.admin);
+        let _ = self
+            .signed_in
+            .set((session.who(), session.admin, session.badge(scope)));
     }
 
     /// The page's path, `/web` until the request carried a session.
@@ -161,11 +164,12 @@ impl PageCalls {
     #[must_use]
     pub fn bar(&self) -> Option<Bar> {
         let csrf = self.csrf()?.to_owned();
-        let (who, admin) = self.signed_in.get().cloned().unwrap_or_default();
+        let (who, admin, todo) = self.signed_in.get().cloned().unwrap_or_default();
         Some(Bar {
             scope: Scope::of_path(self.path(), admin),
             who,
             csrf,
+            todo,
         })
     }
 
@@ -187,6 +191,13 @@ pub struct Session {
     /// The browser session's open admin investigation, from its cookie
     /// (ADR-0089 d10).
     pub investigation: Option<String>,
+    /// The To do counts read as `<user>-web`, made on a Personal page's
+    /// `GET` (ADR-0083 d6, d11); `None` where it was not made or did not
+    /// answer.
+    pub todo: Option<TodoCounts>,
+    /// The administration counts read as `<user>-admin`, made on an admin
+    /// page's `GET`; `None` likewise.
+    pub admin_todo: Option<AdminTodoCounts>,
 }
 
 /// No debug output prints the session token.
@@ -197,6 +208,7 @@ impl std::fmt::Debug for Session {
             .field("whoami", &self.whoami)
             .field("admin", &self.admin)
             .field("investigation", &self.investigation)
+            .field("todo", &self.todo)
             .finish()
     }
 }
@@ -243,6 +255,26 @@ impl Session {
             scope,
             who: self.who(),
             csrf: self.csrf(),
+            todo: self.badge(scope),
+        }
+    }
+
+    /// The To do badge of `scope`'s bar: the sum of the side's counts read
+    /// (only `review` is served on the Personal side, and nothing on the
+    /// admin side, ADR-0083 d14), or no number where the read was not made
+    /// or did not answer, so the page never shows a number the API did not
+    /// serve.
+    #[must_use]
+    pub fn badge(&self, scope: Scope) -> Todo {
+        match scope {
+            Scope::Personal { .. } => self.todo.map_or(Todo::Unread, |t| Todo::Counted {
+                n: t.review,
+                truncated: t.truncated,
+            }),
+            Scope::Administration => self.admin_todo.map_or(Todo::Unread, |t| Todo::Counted {
+                n: 0,
+                truncated: t.truncated,
+            }),
         }
     }
 
@@ -258,6 +290,14 @@ impl Session {
     #[must_use]
     pub fn act_key(&self, nonce: &str) -> String {
         oml_web_credential::act_idempotency_key(&self.token, nonce)
+    }
+
+    /// The key a builder form's preview stamp is signed with: the act key
+    /// of `preview/<nonce>`, derived apart from the `Idempotency-Key` the
+    /// write is sent under (the review of PR #494).
+    #[must_use]
+    pub fn preview_key(&self, nonce: &str) -> String {
+        self.act_key(&format!("preview/{nonce}"))
     }
 
     /// The header's "who": the person and their organisation, as the lead's
@@ -303,28 +343,57 @@ pub fn call_as<'a>(credential: &'a str, ids: &'a CallIds, acting: Option<&'a str
 /// that had no answer included: the lead's act decides whether a session
 /// stands behind it (#327).
 pub async fn load(State(web): State<Web>, mut req: Request, next: Next) -> Response {
-    let calls = req
-        .extensions()
+    // A builder post's session, resolved before its body was read
+    // (`middleware::same_origin`), is not resolved again.
+    if req.extensions().get::<Session>().is_none() {
+        let calls = page_calls(req.extensions());
+        match resolve_request(&web, &calls, req.headers(), req.uri()).await {
+            Ok(session) => {
+                req.extensions_mut().insert(session);
+            }
+            Err(answer) => return *answer,
+        }
+    }
+    next.run(req).await
+}
+
+/// The page's record of its calls, which layer 1 puts on the request.
+pub(crate) fn page_calls(extensions: &http::Extensions) -> Arc<PageCalls> {
+    extensions
         .get::<Arc<PageCalls>>()
         .cloned()
-        .unwrap_or_else(|| Arc::new(PageCalls::new("page")));
-    let page = req
-        .uri()
+        .unwrap_or_else(|| Arc::new(PageCalls::new("page")))
+}
+
+/// Layer 3's read of the session a request carries, or the page's answer
+/// when there is none: sign in without a cookie, and the whoami's refusal
+/// for a session that does not resolve.
+pub(crate) async fn resolve_request(
+    web: &Web,
+    calls: &PageCalls,
+    headers: &HeaderMap,
+    uri: &http::Uri,
+) -> Result<Session, Box<Response>> {
+    let page = uri
         .path_and_query()
         .map_or_else(|| "/web".to_owned(), |pq| pq.as_str().to_owned());
-    let Some(token) = cookie(req.headers(), SESSION_COOKIE) else {
-        return outcome::sign_in(&page);
+    let Some(token) = cookie(headers, SESSION_COOKIE) else {
+        return Err(Box::new(outcome::sign_in(&page)));
     };
-    calls.carries_session(&token, req.uri().path());
-    let investigation = cookie(req.headers(), crate::investigation::INVESTIGATION_COOKIE)
+    calls.carries_session(&token, uri.path());
+    // The badge's counts read, beside whoami in one round, on every page
+    // request: a form's post that draws a page (Preview, a refusal, a
+    // rebase) carries the number as a GET does (ADR-0083 d6; the review of
+    // PR #494, 11).
+    let counts = Some(Scope::of_path(uri.path(), true));
+    let investigation = cookie(headers, crate::investigation::INVESTIGATION_COOKIE)
         .filter(|id| !id.is_empty());
-    let session = match resolve(&web, &calls, token).await {
-        Ok(session) => session.investigating(investigation),
-        Err(e) => return outcome::page(&e, &calls, &page),
-    };
+    let session = resolve_with_counts(web, calls, token, counts)
+        .await
+        .map_err(|e| Box::new(outcome::page(&e, calls, &page)))?
+        .investigating(investigation);
     calls.signed_in(&session);
-    req.extensions_mut().insert(session);
-    next.run(req).await
+    Ok(session)
 }
 
 /// The session `token` names, checked by `GET /v2/whoami` under its `web`
@@ -339,6 +408,21 @@ pub async fn resolve(
     calls: &PageCalls,
     token: String,
 ) -> Result<Session, oml_sdk::Error> {
+    resolve_with_counts(web, calls, token, None).await
+}
+
+/// [`resolve`], and with `counts` the badge's counts read of that side in
+/// the same round: one call per page view, `GET /v2/todo/counts` as
+/// `<user>-web` or `GET /v2/admin/todo/counts` as `<user>-admin`
+/// (ADR-0083 d6). A read that fails leaves the badge without a number and
+/// the page drawn whole: the count is a hint, and the To do page itself
+/// reads the list.
+async fn resolve_with_counts(
+    web: &Web,
+    calls: &PageCalls,
+    token: String,
+    counts: Option<Scope>,
+) -> Result<Session, oml_sdk::Error> {
     let web_credential = capacity_credential(&token, Capacity::Web.as_str());
     let admin_credential = capacity_credential(&token, Capacity::Admin.as_str());
     let (web_ids, admin_ids) = (calls.next_ids(), calls.next_ids());
@@ -346,7 +430,28 @@ pub async fn resolve(
         call(&web_credential, &web_ids),
         call(&admin_credential, &admin_ids),
     );
-    let (me, admin) = tokio::join!(web.api.whoami(&web_call), web.api.whoami(&admin_call));
+    let counts_ids = counts.map(|_| calls.next_ids());
+    let read = async {
+        match (counts, &counts_ids) {
+            (Some(Scope::Personal { .. }), Some(ids)) => (
+                web.api
+                    .todo_counts(&call(&web_credential, ids), None)
+                    .await
+                    .ok(),
+                None,
+            ),
+            (Some(Scope::Administration), Some(ids)) => (
+                None,
+                web.api
+                    .admin_todo_counts(&call(&admin_credential, ids))
+                    .await
+                    .ok(),
+            ),
+            _ => (None, None),
+        }
+    };
+    let (me, admin, (todo, admin_todo)) =
+        tokio::join!(web.api.whoami(&web_call), web.api.whoami(&admin_call), read);
     let whoami = me?;
     calls.acting_as(whoami.name.as_deref());
     Ok(Session {
@@ -354,6 +459,8 @@ pub async fn resolve(
         whoami,
         admin: admin.is_ok(),
         investigation: None,
+        todo,
+        admin_todo,
     })
 }
 
@@ -398,6 +505,8 @@ mod tests {
             },
             admin: false,
             investigation: None,
+            todo: None,
+            admin_todo: None,
         };
         let shown = format!("{session:?}");
         assert!(!shown.contains("the-secret-session-token"), "{shown}");

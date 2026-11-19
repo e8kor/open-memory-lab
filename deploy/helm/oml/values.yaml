@@ -109,6 +109,16 @@ web:
   ingressPaths:
     - path: /web/guardrails
       pathType: Exact
+    - path: /web/workspace
+      pathType: Exact
+    - path: /web/workspace/new
+      pathType: Exact
+    - path: /web/workspace/edit
+      pathType: Exact
+    - path: /web/workspace/retire
+      pathType: Exact
+    - path: /web/admin/workspace
+      pathType: Exact
     - path: /web/workspaces
       pathType: Exact
     - path: /web/admin/workspaces
@@ -130,6 +140,12 @@ web:
     - path: /web/review
       pathType: Exact
     - path: /web/admin/review
+      pathType: Exact
+    - path: /web/todo
+      pathType: Exact
+    - path: /web/todo/judge
+      pathType: Exact
+    - path: /web/admin/todo
       pathType: Exact
     - path: /web/keys
       pathType: Exact

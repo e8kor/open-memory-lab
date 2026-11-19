@@ -1988,10 +1988,13 @@ async fn signed_in(app: &TestApp, admin: &str, user: &str, is_admin: bool) -> We
 /// another person's. `<user>-curate`, a tenant writer key with writer on
 /// the `universe` node alone, writes there, is told `access.grant_refused`
 /// in its person's root, and `submission.user_root_refused` in another
-/// person's root it reads. `<user>-review` and `<user>-admin` are refused
-/// a new memory by their role before any node is read, wherever it is
-/// addressed; the review key reaches the rule through a supersession, which
-/// the port contracts' user-root suite proves.
+/// person's root it reads. `<user>-review`, a session reviewer key, starts
+/// a held memory where it holds reviewer and reader (ADR-0082 d10), never
+/// in its person's own root, where `<user>-web` writes (d10, note of
+/// 2026-11-19), and in another person's root it was designated to review
+/// it is told `submission.user_root_refused`. `<user>-admin` is refused a
+/// new memory by its role before any node is read, wherever it is
+/// addressed.
 #[tokio::test]
 async fn each_session_key_of_a_person_is_read_in_a_user_root_as_that_persons_key_and_no_one_elses()
 {
@@ -2022,6 +2025,7 @@ async fn each_session_key_of_a_person_is_read_in_a_user_root_as_that_persons_key
         GrantRefused,
         UserRootRefused,
         VerbCeiling,
+        ReviewKeyInOwnRoot,
     }
     let cases = [
         (Capacity::Web, "alice", Answer::Held),
@@ -2029,8 +2033,8 @@ async fn each_session_key_of_a_person_is_read_in_a_user_root_as_that_persons_key
         (Capacity::Curate, "universe", Answer::Held),
         (Capacity::Curate, "alice", Answer::GrantRefused),
         (Capacity::Curate, "bob", Answer::UserRootRefused),
-        (Capacity::Review, "alice", Answer::VerbCeiling),
-        (Capacity::Review, "bob", Answer::VerbCeiling),
+        (Capacity::Review, "alice", Answer::ReviewKeyInOwnRoot),
+        (Capacity::Review, "bob", Answer::UserRootRefused),
         (Capacity::Admin, "alice", Answer::VerbCeiling),
         (Capacity::Admin, "bob", Answer::VerbCeiling),
     ];
@@ -2066,6 +2070,7 @@ async fn each_session_key_of_a_person_is_read_in_a_user_root_as_that_persons_key
             }) => Answer::GrantRefused,
             Err(AppError::UserRootRefused) => Answer::UserRootRefused,
             Err(AppError::VerbCeiling { verb: "submit", .. }) => Answer::VerbCeiling,
+            Err(AppError::ReviewKeyInOwnRoot) => Answer::ReviewKeyInOwnRoot,
             Err(other) => panic!("alice-{} in {workspace}: {other:?}", capacity.suffix()),
         };
         assert_eq!(
@@ -2995,6 +3000,16 @@ async fn team_with_alices_reviewer_and_bobs_writer(
     app: &TestApp,
     admin: &str,
 ) -> (oml_app::app::Caller, IssuedKey, IssuedKey) {
+    let (_, review, alice, bob) = team_with_alices_session_and_bobs_writer(app, admin).await;
+    (review, alice, bob)
+}
+
+/// [`team_with_alices_reviewer_and_bobs_writer`] with alice's session, which
+/// her other capacities' callers are made from.
+async fn team_with_alices_session_and_bobs_writer(
+    app: &TestApp,
+    admin: &str,
+) -> (WebSessionRecord, oml_app::app::Caller, IssuedKey, IssuedKey) {
     let ops = console_admin(app, admin, "ops").await;
     let (alice, writer) = team_with_alices_linked_writer(app, admin, &ops).await;
     let alice_admin = app
@@ -3027,7 +3042,7 @@ async fn team_with_alices_reviewer_and_bobs_writer(
         )
         .await
         .expect("bob's tenant writer key");
-    (review, writer, bob)
+    (alice, review, writer, bob)
 }
 
 fn held_request(
@@ -3276,6 +3291,1880 @@ async fn a_held_skill_is_offered_to_its_authoring_key_and_no_other_key_of_its_pe
             "{e:?}"
         ),
     }
+}
+
+// -- mine, state lists and promoted_since (ADR-0083 d3, d14; #409) -----------
+
+fn mine_listing(
+    states: Vec<oml_app::types::AdminState>,
+    kinds: Vec<MemoryKind>,
+    promoted_since: Option<EventTime>,
+) -> oml_app::app::WebListRequest {
+    oml_app::app::WebListRequest {
+        mine: true,
+        states,
+        kinds,
+        promoted_since,
+        limit: 50,
+        ..oml_app::app::WebListRequest::default()
+    }
+}
+
+async fn listed_ids(
+    app: &TestApp,
+    caller: &oml_app::app::Caller,
+    req: &oml_app::app::WebListRequest,
+) -> std::collections::BTreeSet<Uuid> {
+    app.list_memories_with_own(caller, req)
+        .await
+        .expect("the listing")
+        .items
+        .iter()
+        .map(|m| m.memory.memory_id)
+        .collect()
+}
+
+/// `mine=true` from a person's session web key lists the rows of every key
+/// of the person, in every state, and no scoped part: a `universe` tip the
+/// merged listing serves is absent. `state` takes a comma list, `kind` a
+/// comma list, `author` narrows to one own key, and `promoted_since`
+/// narrows the promoted rows alone, the held ones staying whole (ADR-0083
+/// d3, d14; ADR-0082 d8 item 3).
+#[tokio::test]
+async fn mine_lists_every_key_of_the_person_and_promoted_since_limits_only_promoted_rows() {
+    use oml_app::types::AdminState;
+    let store = MemStore::new();
+    let clock = FixedClock::new();
+    let app = App::new(
+        store,
+        MemSigner::new(TEST_SEED),
+        clock.clone(),
+        SeqIdGen::new(),
+        MarkerScanner::default(),
+    );
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let c = curated(&app, &boot).await;
+    let alice = signed_in(&app, admin, "alice", false).await;
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let review = app
+        .web_caller(&alice, Capacity::Review)
+        .await
+        .expect("alice-review");
+    clock.advance(60);
+    let cut = oml_app::ports::Clock::now(&clock);
+    let late = written(
+        &app,
+        &c.alice.value,
+        &submit("late", "Releases tag from main.", None),
+    )
+    .await;
+    app.post_verdict(Bearer::Session(&review), late, Verdict::Approve, None)
+        .await
+        .expect("alice's review key approves in her root");
+    let held = app
+        .submit_memory(
+            Bearer::Session(&web),
+            &submit("held", "Typed in the console.", None),
+        )
+        .await
+        .expect("the web key writes in its root")
+        .receipt
+        .memory_id;
+    let steer = written(
+        &app,
+        &c.alice.value,
+        &SubmitRequest {
+            kind: MemoryKind::Steering,
+            ..submit("steer", "Run the tests before a commit.", None)
+        },
+    )
+    .await;
+
+    let all = listed_ids(&app, &web, &mine_listing(Vec::new(), Vec::new(), None)).await;
+    let expected: std::collections::BTreeSet<Uuid> =
+        [c.source, late, held, steer].into_iter().collect();
+    assert_eq!(all, expected, "every key of the person, no scoped part");
+    let merged = listed_ids(
+        &app,
+        &web,
+        &oml_app::app::WebListRequest {
+            limit: 50,
+            ..oml_app::app::WebListRequest::default()
+        },
+    )
+    .await;
+    assert!(
+        merged.contains(&c.placed),
+        "the merged listing has the scoped part"
+    );
+
+    let since = listed_ids(
+        &app,
+        &web,
+        &mine_listing(
+            vec![AdminState::Held, AdminState::Promoted],
+            Vec::new(),
+            Some(cut),
+        ),
+    )
+    .await;
+    let expected: std::collections::BTreeSet<Uuid> = [late, held, steer].into_iter().collect();
+    assert_eq!(
+        since, expected,
+        "promoted_since drops the promoted row approved before it and leaves the held rows whole"
+    );
+
+    let steering = listed_ids(
+        &app,
+        &web,
+        &mine_listing(
+            Vec::new(),
+            vec![MemoryKind::Steering, MemoryKind::Skill],
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(steering, [steer].into_iter().collect());
+
+    let by_web = listed_ids(
+        &app,
+        &web,
+        &oml_app::app::WebListRequest {
+            author: web.key().name.clone(),
+            ..mine_listing(Vec::new(), Vec::new(), None)
+        },
+    )
+    .await;
+    assert_eq!(by_web, [held].into_iter().collect(), "author narrows mine");
+}
+
+/// `mine=true` from a key no person's session serves lists that key's own
+/// rows alone, as the own part of `with_own` does (ADR-0083 d14).
+#[tokio::test]
+async fn mine_from_a_key_no_session_serves_lists_that_key_alone() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", false).await;
+    let agent = user_writer(&app, admin, "alice", "alice/laptop").await;
+    let other = user_writer(&app, admin, "alice", "alice/desktop").await;
+    let mine = written(&app, &agent.value, &submit("a1", "The agent's note.", None)).await;
+    written(
+        &app,
+        &other.value,
+        &submit("o1", "Another key's note.", None),
+    )
+    .await;
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    app.submit_memory(
+        Bearer::Session(&web),
+        &submit("w1", "The person's own note.", None),
+    )
+    .await
+    .expect("the web key writes");
+    let caller = app
+        .caller(Bearer::from(agent.value.as_str()))
+        .await
+        .expect("the agent's caller");
+    let listed = listed_ids(&app, &caller, &mine_listing(Vec::new(), Vec::new(), None)).await;
+    assert_eq!(listed, [mine].into_iter().collect());
+}
+
+// -- same-person supersede (ADR-0082 d2, d8 item 2; #409) --------------------
+
+fn supersede_req(idem: &str, target: Uuid, body: &str) -> SupersedeRequest {
+    SupersedeRequest {
+        idempotency_key: idem.to_owned(),
+        on_similar: Default::default(),
+        target_id: target,
+        body: body.to_owned(),
+        kind: None,
+        retirement: false,
+        derives_from: Vec::new(),
+        reason: None,
+        workspace: None,
+        refuse_vocabulary_target: false,
+        severity: None,
+        rule: None,
+        kind_fields: None,
+        valid_from: None,
+        valid_until: None,
+        anchor: None,
+        format: None,
+        title: None,
+        origin: None,
+        expected_version: 1,
+    }
+}
+
+/// A person's session web key supersedes a served row their agent's key
+/// wrote, the successor held; a served row no key of the person wrote, the
+/// curator's in `universe`, stays `access.author_only` (ADR-0082 d2, d8
+/// item 2).
+#[tokio::test]
+async fn a_session_web_key_supersedes_a_row_its_person_agent_wrote() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let c = curated(&app, &boot).await;
+    let alice = signed_in(&app, admin, "alice", false).await;
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let outcome = app
+        .supersede(
+            Bearer::Session(&web),
+            &supersede_req("s1", c.source, "quartz resonators drift with heat and age"),
+        )
+        .await
+        .expect("alice's web key revises her agent's row");
+    let successor = app
+        .get_memory(Bearer::Session(&web), outcome.receipt.memory_id)
+        .await
+        .expect("the author reads its successor");
+    assert_eq!(successor.memory.status, MemoryStatus::Held);
+    assert_eq!(successor.memory.replaces, Some(c.source));
+    assert_eq!(successor.memory.author_key_id, web.key().key_id);
+    let err = app
+        .supersede(
+            Bearer::Session(&web),
+            &supersede_req("s2", c.placed, "quartz drifts"),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::AuthorOnly), "{err:?}");
+}
+
+/// A key no session serves keeps the author-only rule: another writer key
+/// of the same person supersedes nothing its sibling wrote.
+#[tokio::test]
+async fn an_agent_key_supersedes_no_row_another_key_of_its_person_wrote() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let c = curated(&app, &boot).await;
+    let other = user_writer(&app, admin, "alice", "alice/desktop").await;
+    let err = app
+        .supersede(
+            other.value.as_str(),
+            &supersede_req("s1", c.source, "quartz resonators drift with heat and age"),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::AuthorOnly), "{err:?}");
+}
+
+// -- a person's reviewer starts a claim (ADR-0082 d2, d8 item 5, d10; #409) --
+
+/// A person's session reviewer key starts a new claim where it holds
+/// reviewer and reader, a shared workspace included; the version is held
+/// and author-only, and a tenant reviewer key, which no session serves,
+/// keeps `access.verb_ceiling` (ADR-0082 d10).
+#[tokio::test]
+async fn a_session_reviewer_key_starts_a_held_claim_in_a_shared_workspace() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let (review, _writer, bob) = team_with_alices_reviewer_and_bobs_writer(&app, admin).await;
+    let id = app
+        .submit_memory(
+            Bearer::Session(&review),
+            &submit("r1", "Releases freeze on Thursdays.", Some("team")),
+        )
+        .await
+        .expect("alice's review key starts a claim in team")
+        .receipt
+        .memory_id;
+    let row = app
+        .get_memory(Bearer::Session(&review), id)
+        .await
+        .expect("its author reads it");
+    assert_eq!(row.memory.status, MemoryStatus::Held);
+    assert_eq!(row.memory.author_key_id, review.key().key_id);
+    let err = app.get_memory(bob.value.as_str(), id).await.unwrap_err();
+    assert!(
+        matches!(err, AppError::NotFound),
+        "held rows are author-only: {err:?}"
+    );
+    let tenant_reviewer = tenant_key(
+        &app,
+        admin,
+        Role::Reviewer,
+        "team-review",
+        vec![
+            grant(by_name("team"), Role::Reviewer),
+            grant(by_name("team"), Role::Reader),
+        ],
+    )
+    .await;
+    let err = app
+        .submit_memory(
+            tenant_reviewer.value.as_str(),
+            &submit("t1", "A tenant reviewer's claim.", Some("team")),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::VerbCeiling { .. }), "{err:?}");
+}
+
+/// Inside its person's own root a session reviewer key starts no claim:
+/// `<user>-web` writes there (ADR-0082 d2), so a start there is refused
+/// `access.verb_ceiling` with its reason, journals nothing, and preview
+/// answers the same refusal (ADR-0082 d10, note of 2026-11-19).
+#[tokio::test]
+async fn a_session_reviewer_key_starts_no_claim_in_its_persons_own_root() {
+    let (app, store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", false).await;
+    let review = app
+        .web_caller(&alice, Capacity::Review)
+        .await
+        .expect("alice-review");
+    let head = store
+        .events_range(boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal")
+        .len();
+    let req = submit("r1", "Releases freeze on Thursdays.", Some("alice"));
+    let err = app
+        .submit_memory(Bearer::Session(&review), &req)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::ReviewKeyInOwnRoot),
+        "the review key starts nothing in alice's root: {err:?}"
+    );
+    let preview = app
+        .preview(
+            Bearer::Session(&review),
+            &oml_app::types::PreviewRequest::Submit(req),
+        )
+        .await
+        .expect("a preview");
+    assert!(
+        matches!(preview.refusal, Some(AppError::ReviewKeyInOwnRoot)),
+        "{:?}",
+        preview.refusal
+    );
+    assert_eq!(
+        store
+            .events_range(boot.tenant_id, 1, 10_000)
+            .await
+            .expect("journal")
+            .len(),
+        head,
+        "a refusal journals nothing"
+    );
+}
+
+/// The app of `probe` under open sign-up into `tenant_id`, its accounts on
+/// `quotas` (ADR-0071 d5).
+fn metered(probe: TestApp, tenant_id: Uuid, quotas: oml_app::domain::signup::Quotas) -> TestApp {
+    probe
+        .with_signup(oml_app::types::SignupPolicy {
+            mode: oml_app::domain::signup::SignupMode::Open,
+            tenant_id,
+            issuer: name("root-admin"),
+            terms_version: "2026-11-06".to_owned(),
+            terms_url: "https://example.com/terms".to_owned(),
+            privacy_url: "https://example.com/privacy".to_owned(),
+            per_ip_per_hour: 100,
+            quotas,
+        })
+        .with_quota_profiles(oml_app::types::QuotaProfiles::only(quotas))
+}
+
+/// A person's review key's write is charged to that person's account: a
+/// claim it starts in a shared workspace counts against their memories, so
+/// with a quota of two their web key writes one more and is refused the
+/// next (ADR-0071 d1, d3; ADR-0082 d10, note of 2026-11-19).
+#[tokio::test]
+async fn a_persons_review_key_write_moves_their_usage() {
+    use oml_app::domain::signup::{Quota, Quotas};
+    let (probe, _store) = rig();
+    let boot = bootstrap(&probe).await;
+    let app = metered(
+        probe,
+        boot.tenant_id,
+        Quotas::default().with(Quota::Memories, 2),
+    );
+    let admin = boot.admin_key.value.as_str();
+    let (alice, review, _writer, _bob) =
+        team_with_alices_session_and_bobs_writer(&app, admin).await;
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    app.submit_memory(
+        Bearer::Session(&review),
+        &submit("r1", "Releases freeze on Thursdays.", Some("team")),
+    )
+    .await
+    .expect("alice's review key starts a claim in team");
+    app.submit_memory(
+        Bearer::Session(&web),
+        &submit("w1", "Builds run on push.", Some("alice")),
+    )
+    .await
+    .expect("alice's second memory");
+    let err = app
+        .submit_memory(
+            Bearer::Session(&web),
+            &submit("w2", "Tests run nightly.", Some("alice")),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, AppError::QuotaReached(r) if r.quota == Quota::Memories),
+        "the review key's claim counts: {err:?}"
+    );
+}
+
+/// A person's curate key's write is charged to no person: at their
+/// memories quota of one, the curate key still starts a claim in
+/// `universe`, and their account's meters stay where their own write left
+/// them (ADR-0071 d1, operator's decision of 2026-11-19).
+#[tokio::test]
+async fn a_curate_key_write_moves_no_persons_usage_and_is_not_refused_by_their_quota() {
+    use oml_app::domain::signup::{Quota, Quotas};
+    let (probe, _store) = rig();
+    let boot = bootstrap(&probe).await;
+    let app = metered(
+        probe,
+        boot.tenant_id,
+        Quotas::default().with(Quota::Memories, 1),
+    );
+    let admin = boot.admin_key.value.as_str();
+    let (alice, _review, _writer, _bob) =
+        team_with_alices_session_and_bobs_writer(&app, admin).await;
+    let alice_admin = app
+        .web_caller(&alice, Capacity::Admin)
+        .await
+        .expect("alice-admin");
+    app.grant_curation_capacity(&alice_admin, &name("alice"), by_name("team"))
+        .await
+        .expect("the curate designation");
+    let curate = app
+        .web_caller(&alice, Capacity::Curate)
+        .await
+        .expect("alice-curate");
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let root = web.key().user.expect("alice-web is of alice's account");
+    app.submit_memory(
+        Bearer::Session(&web),
+        &submit("w1", "Builds run on push.", Some("alice")),
+    )
+    .await
+    .expect("alice's one memory");
+    let before = app.usage_of(boot.tenant_id, root).await.expect("usage");
+    app.submit_memory(
+        Bearer::Session(&curate),
+        &submit("c1", "Quartz resonators drift with heat.", Some("universe")),
+    )
+    .await
+    .expect("the curate key's claim is no write of alice's account");
+    let after = app.usage_of(boot.tenant_id, root).await.expect("usage");
+    assert_eq!(
+        format!("{:?}", after.meters),
+        format!("{:?}", before.meters),
+        "curation moves no meter of alice's"
+    );
+}
+
+/// A person's review key is held to that person's limits wherever it
+/// writes: past their memories quota its new claim in a shared workspace
+/// is refused `limit.quota`, and past their monthly writes its proposal is
+/// too, journalling nothing (ADR-0071 d3; ADR-0082 d10, note of
+/// 2026-11-19).
+#[tokio::test]
+async fn a_persons_review_key_past_their_quota_is_refused_limit_quota_for_a_claim_and_a_proposal() {
+    use oml_app::domain::signup::{Quota, Quotas};
+    let (probe, store) = rig();
+    let boot = bootstrap(&probe).await;
+    let app = metered(
+        probe,
+        boot.tenant_id,
+        Quotas::default()
+            .with(Quota::Memories, 1)
+            .with(Quota::WritesPerMonth, 2),
+    );
+    let admin = boot.admin_key.value.as_str();
+    let (alice, review, _writer, bob) = team_with_alices_session_and_bobs_writer(&app, admin).await;
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let own = app
+        .submit_memory(
+            Bearer::Session(&web),
+            &submit("w1", "Builds run on push.", Some("alice")),
+        )
+        .await
+        .expect("alice's one memory")
+        .receipt
+        .memory_id;
+    let team = written(
+        &app,
+        &bob.value,
+        &submit("b1", "Team ships on Fridays.", Some("team")),
+    )
+    .await;
+    app.post_verdict(Bearer::Session(&review), team, Verdict::Approve, None)
+        .await
+        .expect("alice approves bob's row");
+    let head = store
+        .events_range(boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal")
+        .len();
+    let err = app
+        .submit_memory(
+            Bearer::Session(&review),
+            &submit("r1", "Releases freeze on Thursdays.", Some("team")),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, AppError::QuotaReached(r) if r.quota == Quota::Memories),
+        "past alice's memories: {err:?}"
+    );
+    assert_eq!(
+        store
+            .events_range(boot.tenant_id, 1, 10_000)
+            .await
+            .expect("journal")
+            .len(),
+        head,
+        "a refusal journals nothing"
+    );
+    // Alice's web key revises her own row: her second write this month.
+    app.post_verdict(Bearer::Session(&review), own, Verdict::Approve, None)
+        .await
+        .expect("alice approves her own row in her root");
+    app.supersede(
+        Bearer::Session(&web),
+        &supersede_req("w2", own, "Builds run on every push."),
+    )
+    .await
+    .expect("alice's second write");
+    let head = store
+        .events_range(boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal")
+        .len();
+    let err = app
+        .supersede(
+            Bearer::Session(&review),
+            &supersede_req("r2", team, "Team ships on Thursdays."),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, AppError::QuotaReached(r) if r.quota == Quota::WritesPerMonth),
+        "past alice's monthly writes: {err:?}"
+    );
+    assert_eq!(
+        store
+            .events_range(boot.tenant_id, 1, 10_000)
+            .await
+            .expect("journal")
+            .len(),
+        head,
+        "a refusal journals nothing"
+    );
+}
+
+/// `mine=true` from a person's web key lists the claim their review key
+/// started in a shared workspace and the proposal it made there, the web
+/// key reads and withdraws that claim, and the review key's own set holds
+/// the web key's held row; a linked tenant key's row stays out of both
+/// (ADR-0083 d3, d13, d14; ADR-0084 I6).
+#[tokio::test]
+async fn mine_lists_the_rows_a_persons_review_key_wrote_and_the_web_key_withdraws_them() {
+    use oml_app::types::AdminState;
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let (alice, review, linked, bob) = team_with_alices_session_and_bobs_writer(&app, admin).await;
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let started = app
+        .submit_memory(
+            Bearer::Session(&review),
+            &submit("r1", "Releases freeze on Thursdays.", Some("team")),
+        )
+        .await
+        .expect("alice's review key starts a claim in team")
+        .receipt
+        .memory_id;
+    let team = written(
+        &app,
+        &bob.value,
+        &submit("b1", "Team ships on Fridays.", Some("team")),
+    )
+    .await;
+    app.post_verdict(Bearer::Session(&review), team, Verdict::Approve, None)
+        .await
+        .expect("alice approves bob's row");
+    let proposed = app
+        .supersede(
+            Bearer::Session(&review),
+            &supersede_req("r2", team, "Team ships on Thursdays."),
+        )
+        .await
+        .expect("alice's review key proposes")
+        .receipt
+        .memory_id;
+    let by_linked = written(
+        &app,
+        &linked.value,
+        &submit("l1", "A linked write.", Some("team")),
+    )
+    .await;
+    let own = app
+        .submit_memory(
+            Bearer::Session(&web),
+            &submit("w1", "Typed in the console.", Some("alice")),
+        )
+        .await
+        .expect("the web key writes in its root")
+        .receipt
+        .memory_id;
+    let mine = listed_ids(
+        &app,
+        &web,
+        &mine_listing(vec![AdminState::Held], Vec::new(), None),
+    )
+    .await;
+    assert!(mine.contains(&started), "the review key's claim: {mine:?}");
+    assert!(
+        mine.contains(&proposed),
+        "the review key's proposal: {mine:?}"
+    );
+    assert!(mine.contains(&own));
+    assert!(
+        !mine.contains(&by_linked),
+        "never a linked tenant key's row"
+    );
+    let reviews = listed_ids(
+        &app,
+        &review,
+        &mine_listing(vec![AdminState::Held], Vec::new(), None),
+    )
+    .await;
+    assert!(
+        reviews.contains(&own),
+        "the review key's own set holds the web key's"
+    );
+    assert!(!reviews.contains(&by_linked));
+    app.get_memory(Bearer::Session(&web), started)
+        .await
+        .expect("the web key reads its person's held claim");
+    let (receipt, _) = app
+        .withdraw(Bearer::Session(&web), &withdraw_req("x1", started))
+        .await
+        .expect("the web key withdraws it");
+    assert_eq!(receipt.state, "withdrawn");
+}
+
+/// The claim a person's session reviewer key started is judged by no key of
+/// that person outside their root: the key itself is in its lineage, and
+/// the person's linked reviewer key is refused `same_person`; another
+/// person's reviewer approves it (ADR-0082 d7, d10).
+#[tokio::test]
+async fn a_session_reviewers_claim_is_judged_by_no_key_of_its_person_outside_their_root() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let (review, _writer, _bob) = team_with_alices_reviewer_and_bobs_writer(&app, admin).await;
+    let id = app
+        .submit_memory(
+            Bearer::Session(&review),
+            &submit("r1", "Releases freeze on Thursdays.", Some("team")),
+        )
+        .await
+        .expect("alice's review key starts a claim in team")
+        .receipt
+        .memory_id;
+    let err = app
+        .post_verdict(Bearer::Session(&review), id, Verdict::Approve, None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AppError::Verdict(
+                oml_app::domain::VerdictError::PrincipalInLineage(_)
+                    | oml_app::domain::VerdictError::KeyInLineage(_)
+            )
+        ),
+        "{err:?}"
+    );
+    let ops = console_admin(&app, admin, "ops-two").await;
+    let linked = person_tenant_key(
+        &app,
+        admin,
+        "alice/team-review",
+        vec![
+            grant(by_name("team"), Role::Reviewer),
+            grant(by_name("team"), Role::Reader),
+        ],
+    )
+    .await;
+    app.link_key_to_person(Bearer::Session(&ops), linked.key_id.into(), &name("alice"))
+        .await
+        .expect("linked");
+    let err = app
+        .post_verdict(linked.value.as_str(), id, Verdict::Approve, None)
+        .await
+        .unwrap_err();
+    assert!(same_person(&err), "{err:?}");
+    let other = person_tenant_key(
+        &app,
+        admin,
+        "bob/team-review",
+        vec![
+            grant(by_name("team"), Role::Reviewer),
+            grant(by_name("team"), Role::Reader),
+        ],
+    )
+    .await;
+    let outcome = app
+        .post_verdict(other.value.as_str(), id, Verdict::Approve, None)
+        .await
+        .expect("another person approves");
+    assert!(!outcome.same_user);
+}
+
+// -- approved_by_kind (ADR-0082 d8 item 7, d10; #409) ------------------------
+
+/// The workspace read counts the approved claims on the node by kind, one
+/// per claim: a claim whose approved tip has a held successor counts once,
+/// a retired claim counts nothing, a held claim counts nothing, and a kind
+/// with no approved claim is absent (ADR-0082 d10).
+#[tokio::test]
+async fn approved_by_kind_counts_each_approved_claim_once_and_no_retired_or_held_one() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", false).await;
+    let agent = user_writer(&app, admin, "alice", "alice/laptop").await;
+    let review = app
+        .web_caller(&alice, Capacity::Review)
+        .await
+        .expect("alice-review");
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let approve_as_person = |id: Uuid| {
+        let review = &review;
+        let app = &app;
+        async move {
+            app.post_verdict(Bearer::Session(review), id, Verdict::Approve, None)
+                .await
+                .expect("approved");
+        }
+    };
+    let a = written(
+        &app,
+        &agent.value,
+        &submit("a", "Builds run on push.", None),
+    )
+    .await;
+    approve_as_person(a).await;
+    app.supersede(
+        Bearer::Session(&web),
+        &supersede_req("a2", a, "Builds run on every push."),
+    )
+    .await
+    .expect("a held successor");
+    let b = written(
+        &app,
+        &agent.value,
+        &SubmitRequest {
+            kind: MemoryKind::Steering,
+            ..submit("b", "Run the tests before a commit.", None)
+        },
+    )
+    .await;
+    approve_as_person(b).await;
+    let c = written(&app, &agent.value, &submit("c", "An old practice.", None)).await;
+    approve_as_person(c).await;
+    let retirement = app
+        .supersede(
+            agent.value.as_str(),
+            &SupersedeRequest {
+                retirement: true,
+                ..supersede_req("c2", c, "No longer done.")
+            },
+        )
+        .await
+        .expect("a retirement")
+        .receipt
+        .memory_id;
+    approve_as_person(retirement).await;
+    written(&app, &agent.value, &submit("d", "Still held.", None)).await;
+
+    let info = app
+        .workspace_info(agent.value.as_str(), Some(by_name("alice")))
+        .await
+        .expect("the workspace read");
+    assert_eq!(
+        info.approved_by_kind,
+        vec![(MemoryKind::Memory, 1), (MemoryKind::Steering, 1)]
+    );
+}
+
+// -- preview (ADR-0082 d5, d8 item 1, d10; #409) -----------------------------
+
+/// The journal's length, the account's meters and the person's own rows:
+/// what a write would move.
+async fn written_state(
+    app: &TestApp,
+    store: &MemStore,
+    tenant: Uuid,
+    root: Uuid,
+    web: &oml_app::app::Caller,
+) -> (
+    usize,
+    oml_app::types::UserUsage,
+    std::collections::BTreeSet<Uuid>,
+) {
+    let events = store
+        .events_range(tenant, 1, 100_000)
+        .await
+        .expect("journal")
+        .len();
+    let usage = store
+        .user_usage(
+            tenant,
+            root,
+            &EventTime::parse("2026-10-29T13:00:00.000000Z").expect("an instant"),
+        )
+        .await
+        .expect("usage");
+    let rows = listed_ids(app, web, &mine_listing(Vec::new(), Vec::new(), None)).await;
+    (events, usage, rows)
+}
+
+/// A preview of a submit and of a supersession answers what capture would
+/// decide, the scan's findings, the budget and whether a person must
+/// approve, and journals, holds, records and meters nothing: the journal,
+/// the meters and the rows are unchanged, and the same idempotency key
+/// then captures a new version rather than replaying (ADR-0082 d5, d10;
+/// ADR-0071 d2).
+#[tokio::test]
+async fn preview_writes_nothing_and_meters_nothing() {
+    use oml_app::types::PreviewRequest;
+    let (app, store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", false).await;
+    let agent = user_writer(&app, admin, "alice", "alice/laptop").await;
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let review = app
+        .web_caller(&alice, Capacity::Review)
+        .await
+        .expect("alice-review");
+    let served = written(
+        &app,
+        &agent.value,
+        &submit("a", "Builds run on push.", None),
+    )
+    .await;
+    app.post_verdict(Bearer::Session(&review), served, Verdict::Approve, None)
+        .await
+        .expect("approved");
+    let root = app
+        .workspace_info(agent.value.as_str(), Some(by_name("alice")))
+        .await
+        .expect("the root")
+        .workspace
+        .workspace_id;
+    let before = written_state(&app, &store, boot.tenant_id, root, &web).await;
+
+    let body = "Deploys wait for [needs-person] a green build.";
+    let new = submit("p1", body, None);
+    let preview = app
+        .preview(Bearer::Session(&web), &PreviewRequest::Submit(new.clone()))
+        .await
+        .expect("a preview");
+    assert!(preview.refusal.is_none(), "{:?}", preview.refusal);
+    assert!(!preview.findings.is_empty(), "the scan's hold is a finding");
+    assert!(!preview.needs_person);
+    assert_eq!(preview.body_bytes, body.len() as u64);
+    assert_eq!(
+        preview.budget_tokens,
+        oml_app::domain::budget::budget_tokens(body.len() as u64)
+    );
+    let preview = app
+        .preview(
+            Bearer::Session(&web),
+            &PreviewRequest::Supersede(supersede_req("p2", served, "Builds run on every push.")),
+        )
+        .await
+        .expect("a preview");
+    assert!(preview.refusal.is_none(), "{:?}", preview.refusal);
+
+    assert_eq!(
+        written_state(&app, &store, boot.tenant_id, root, &web).await,
+        before,
+        "no event, no meter, no row"
+    );
+    let outcome = app
+        .submit_memory(Bearer::Session(&web), &new)
+        .await
+        .expect("the write the preview described");
+    assert!(!outcome.replayed, "the preview recorded no idempotency key");
+}
+
+/// Preview answers, as its refusal, the refusal submit or supersede would
+/// answer, the same error for the same body: a validation, the scan's
+/// veto, a version conflict, and an authority refusal, which a transport
+/// answers as its error (ADR-0082 d10).
+#[tokio::test]
+async fn preview_answers_the_refusal_submit_would_answer() {
+    use oml_app::types::PreviewRequest;
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    signed_in(&app, admin, "alice", false).await;
+    let agent = user_writer(&app, admin, "alice", "alice/laptop").await;
+    let bob = user_writer(&app, admin, "bob", "bob/laptop").await;
+    let review = user_reviewer(&app, admin, "alice", "alice/review").await;
+    let served = written(
+        &app,
+        &agent.value,
+        &submit("a", "Builds run on push.", None),
+    )
+    .await;
+    approve(&app, &review.value, served).await;
+
+    let submits = [
+        (
+            agent.value.as_str(),
+            SubmitRequest {
+                claim_key: Some("auto-mine".to_owned()),
+                ..submit("v1", "A sent derived key.", None)
+            },
+        ),
+        (
+            agent.value.as_str(),
+            submit("v2", "-----BEGIN PRIVATE KEY----- abc", None),
+        ),
+        (
+            bob.value.as_str(),
+            submit("v3", "Into another root.", Some("alice")),
+        ),
+    ];
+    for (key, req) in submits {
+        let preview = app
+            .preview(key, &PreviewRequest::Submit(req.clone()))
+            .await
+            .expect("a preview");
+        let submitted = app.submit_memory(key, &req).await.unwrap_err();
+        assert_eq!(
+            format!("{:?}", preview.refusal.expect("a refusal")),
+            format!("{submitted:?}")
+        );
+    }
+    let conflict = SupersedeRequest {
+        expected_version: 2,
+        ..supersede_req("c1", served, "Builds run on every push.")
+    };
+    let preview = app
+        .preview(
+            agent.value.as_str(),
+            &PreviewRequest::Supersede(conflict.clone()),
+        )
+        .await
+        .expect("a preview");
+    let superseded = app
+        .supersede(agent.value.as_str(), &conflict)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(superseded, AppError::VersionConflict { current: 1 }),
+        "{superseded:?}"
+    );
+    assert_eq!(
+        format!("{:?}", preview.refusal.expect("a refusal")),
+        format!("{superseded:?}")
+    );
+}
+
+/// A skill's preview names the command it would be offered as and the
+/// same-named skill it shadows along its chain (ADR-0080 d5; ADR-0082 d5).
+#[tokio::test]
+async fn a_skill_preview_with_a_shadowing_name_answers_offered_as_and_shadows() {
+    use oml_app::types::PreviewRequest;
+    let (app, store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", false).await;
+    let agent = user_writer(&app, admin, "alice", "alice/laptop").await;
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let review = app
+        .web_caller(&alice, Capacity::Review)
+        .await
+        .expect("alice-review");
+    app.create_workspace(agent.value.as_str(), &name("proj"), None, None)
+        .await
+        .expect("a workspace under alice's root");
+    let skill = |idem: &str, workspace: &str| SubmitRequest {
+        kind: MemoryKind::Skill,
+        claim_key: None,
+        format: Some("text/markdown".to_owned()),
+        kind_fields: Some(oml_app::types::KindFields::Skill {
+            name: "cite".to_owned(),
+            description: "Cite every source.".to_owned(),
+        }),
+        ..submit(idem, "Cite every source, then check each.", Some(workspace))
+    };
+    let root_skill = written(&app, &agent.value, &skill("s1", "alice")).await;
+    app.post_verdict(Bearer::Session(&review), root_skill, Verdict::Approve, None)
+        .await
+        .expect("alice approves her skill");
+    let head = store
+        .events_range(boot.tenant_id, 1, 100_000)
+        .await
+        .expect("journal")
+        .len();
+    let preview = app
+        .preview(
+            Bearer::Session(&web),
+            &PreviewRequest::Submit(skill("s2", "proj")),
+        )
+        .await
+        .expect("a preview");
+    assert!(preview.refusal.is_none(), "{:?}", preview.refusal);
+    assert_eq!(preview.offered_as.as_deref(), Some("cite"));
+    assert!(preview.needs_person, "a skill needs a person's verdict");
+    assert_eq!(
+        preview.shadows,
+        vec![oml_app::types::SkillShadow {
+            workspace_path: "universe.alice".to_owned(),
+            shadowed_by: false,
+        }]
+    );
+    assert_eq!(
+        store
+            .events_range(boot.tenant_id, 1, 100_000)
+            .await
+            .expect("journal")
+            .len(),
+        head,
+        "the preview journalled nothing"
+    );
+}
+
+/// A guardrail's preview answers its rule in canonical form and the set
+/// size an agent at its workspace loads once it is approved: one more for
+/// a new rule, one fewer for the retirement of a rule in force (ADR-0037
+/// d7; ADR-0082 d5).
+#[tokio::test]
+async fn a_guardrail_preview_answers_its_canonical_rule_and_the_set_size_after_it() {
+    use oml_app::types::PreviewRequest;
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", false).await;
+    let agent = user_writer(&app, admin, "alice", "alice/laptop").await;
+    let review = app
+        .web_caller(&alice, Capacity::Review)
+        .await
+        .expect("alice-review");
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let in_force = written(
+        &app,
+        &agent.value,
+        &guardrail("g1", "Never force-push.", Some("alice")),
+    )
+    .await;
+    app.post_verdict(Bearer::Session(&review), in_force, Verdict::Approve, None)
+        .await
+        .expect("alice approves her guardrail");
+    let rule = serde_json::json!({
+        "effect": "deny", "tool": "shell", "command": ["git", "push", "*"], "rule": "oml-gr/1",
+    });
+    let preview = app
+        .preview(
+            Bearer::Session(&web),
+            &PreviewRequest::Submit(SubmitRequest {
+                rule: Some(rule),
+                ..guardrail("g2", "Never push without review.", Some("alice"))
+            }),
+        )
+        .await
+        .expect("a preview");
+    assert!(preview.refusal.is_none(), "{:?}", preview.refusal);
+    let canonical = preview.rule.expect("the canonical rule");
+    assert_eq!(canonical["rule"], "oml-gr/1");
+    assert_eq!(canonical["tool"], "shell");
+    assert_eq!(preview.set_after, Some(2));
+    assert!(preview.needs_person);
+    let retire = app
+        .preview(
+            Bearer::Session(&web),
+            &PreviewRequest::Supersede(SupersedeRequest {
+                retirement: true,
+                ..supersede_req("g3", in_force, "No longer needed.")
+            }),
+        )
+        .await
+        .expect("a preview");
+    assert!(retire.refusal.is_none(), "{:?}", retire.refusal);
+    assert_eq!(retire.set_after, Some(0));
+}
+
+/// A stale edit of a guardrail with no `kind` still says a person must
+/// approve it beside its `submission.version_conflict`: the facts of the
+/// version it replaces are read before the version checks (ADR-0082 d5;
+/// the review of PR #494, L2).
+#[tokio::test]
+async fn a_stale_guardrail_edit_preview_says_it_needs_a_person_beside_its_conflict() {
+    use oml_app::types::PreviewRequest;
+    let (app, web, id) = one_guardrail_in_force().await;
+    let preview = app
+        .preview(
+            Bearer::Session(&web),
+            &PreviewRequest::Supersede(SupersedeRequest {
+                severity: Some(Severity::Must),
+                expected_version: 2,
+                ..supersede_req("g2", id, "Never force-push to main.")
+            }),
+        )
+        .await
+        .expect("a preview");
+    assert!(
+        matches!(
+            preview.refusal,
+            Some(AppError::VersionConflict { current: 1 })
+        ),
+        "{:?}",
+        preview.refusal
+    );
+    assert!(preview.needs_person, "a guardrail needs a person's verdict");
+}
+
+/// A key that writes a workspace but does not read it previews a
+/// guardrail as submit would capture it, with no set size, which it may
+/// not read (ADR-0082 d5, d11; the review of PR #494, L3).
+#[tokio::test]
+async fn a_writer_that_cannot_read_its_workspace_previews_a_guardrail_with_no_set_size() {
+    use oml_app::types::PreviewRequest;
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    app.create_workspace(admin, &name("team"), Some(by_name("universe")), None)
+        .await
+        .expect("a shared workspace");
+    let writer = tenant_key(
+        &app,
+        admin,
+        Role::Writer,
+        "team-writer",
+        vec![grant(by_name("team"), Role::Writer)],
+    )
+    .await;
+    let req = guardrail("g1", "Never force-push.", Some("team"));
+    let preview = app
+        .preview(writer.value.as_str(), &PreviewRequest::Submit(req.clone()))
+        .await
+        .expect("a preview");
+    assert!(preview.refusal.is_none(), "{:?}", preview.refusal);
+    assert_eq!(preview.set_after, None);
+    let written = app
+        .submit_memory(writer.value.as_str(), &req)
+        .await
+        .expect("submit captures it");
+    assert_eq!(written.receipt.state, "held");
+}
+
+/// A guardrail submitted with a claim key carries it, as a document's
+/// named key does, and one sent without carries the server's `auto-` key
+/// (ADR-0082 d4, amended 2026-11-19; ADR-0081 d2; ADR-0039 d6).
+#[tokio::test]
+async fn a_guardrail_keeps_the_claim_key_it_is_sent_and_derives_one_without() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", false).await;
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let named = app
+        .submit_memory(
+            Bearer::Session(&web),
+            &SubmitRequest {
+                claim_key: Some("no-force-push".to_owned()),
+                ..guardrail("g1", "Never force-push.", Some("alice"))
+            },
+        )
+        .await
+        .expect("a named guardrail");
+    assert_eq!(named.receipt.claim_key, "no-force-push");
+    let unnamed = app
+        .submit_memory(
+            Bearer::Session(&web),
+            &SubmitRequest {
+                claim_key: None,
+                ..guardrail("g2", "Never push to main.", Some("alice"))
+            },
+        )
+        .await
+        .expect("an unnamed guardrail");
+    assert!(
+        unnamed.receipt.claim_key.starts_with("auto-"),
+        "{}",
+        unnamed.receipt.claim_key
+    );
+}
+
+/// A person's web key supersedes a row their linked tenant key wrote in
+/// their root, read the one way `same_user` reads it, and the successor
+/// is held (ADR-0082 d2, d8 item 2; ADR-0085 d16; the review of PR #494,
+/// L7).
+#[tokio::test]
+async fn a_persons_web_key_supersedes_their_linked_tenant_keys_row_held() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let ops = console_admin(&app, admin, "ops").await;
+    let alice = signed_in(&app, admin, "alice", false).await;
+    let linked = app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                user: None,
+                used_by: Some(UsedBy::Person),
+                ..user_req(
+                    Role::Writer,
+                    "unused",
+                    "alice/desk",
+                    vec![
+                        grant(by_name("alice"), Role::Writer),
+                        grant(by_name("alice"), Role::Reader),
+                    ],
+                )
+            },
+        )
+        .await
+        .expect("alice's tenant writer key");
+    app.link_key_to_person(Bearer::Session(&ops), linked.key_id.into(), &name("alice"))
+        .await
+        .expect("linked");
+    let id = written(
+        &app,
+        &linked.value,
+        &submit("l1", "Builds run on push.", Some("alice")),
+    )
+    .await;
+    let review = app
+        .web_caller(&alice, Capacity::Review)
+        .await
+        .expect("alice-review");
+    app.post_verdict(Bearer::Session(&review), id, Verdict::Approve, None)
+        .await
+        .expect("alice approves it in her root");
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let successor = app
+        .supersede(
+            Bearer::Session(&web),
+            &supersede_req("w1", id, "Builds run on every push."),
+        )
+        .await
+        .expect("the web key supersedes its person's linked key's row");
+    assert_eq!(successor.receipt.state, "held");
+}
+
+/// Alice's web and review session keys, with one approved guardrail in
+/// force in her root: (app, web, the guardrail's id).
+async fn one_guardrail_in_force() -> (TestApp, oml_app::app::Caller, Uuid) {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", false).await;
+    let agent = user_writer(&app, admin, "alice", "alice/laptop").await;
+    let review = app
+        .web_caller(&alice, Capacity::Review)
+        .await
+        .expect("alice-review");
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let id = written(
+        &app,
+        &agent.value,
+        &guardrail("g1", "Never force-push.", Some("alice")),
+    )
+    .await;
+    app.post_verdict(Bearer::Session(&review), id, Verdict::Approve, None)
+        .await
+        .expect("alice approves her guardrail");
+    (app, web, id)
+}
+
+async fn set_after(
+    app: &TestApp,
+    web: &oml_app::app::Caller,
+    req: oml_app::types::PreviewRequest,
+) -> Option<usize> {
+    let preview = app
+        .preview(Bearer::Session(web), &req)
+        .await
+        .expect("a preview");
+    assert!(preview.refusal.is_none(), "{:?}", preview.refusal);
+    preview.set_after
+}
+
+/// A new rule's preview adds one to the set in force (ADR-0082 d11).
+#[tokio::test]
+async fn a_new_guardrails_preview_adds_one_to_the_set_size() {
+    let (app, web, _) = one_guardrail_in_force().await;
+    let req = oml_app::types::PreviewRequest::Submit(guardrail(
+        "g2",
+        "Never push without review.",
+        Some("alice"),
+    ));
+    assert_eq!(set_after(&app, &web, req).await, Some(2));
+}
+
+/// An edit of a rule in force keeps the set's size (ADR-0082 d11).
+#[tokio::test]
+async fn an_edit_of_a_guardrail_in_force_keeps_the_set_size() {
+    let (app, web, id) = one_guardrail_in_force().await;
+    let req = oml_app::types::PreviewRequest::Supersede(SupersedeRequest {
+        severity: Some(Severity::Must),
+        ..supersede_req("g2", id, "Never force-push to main.")
+    });
+    assert_eq!(set_after(&app, &web, req).await, Some(1));
+}
+
+/// A retirement of a rule in force takes one from the set (ADR-0082 d11).
+#[tokio::test]
+async fn a_retirement_of_a_guardrail_in_force_takes_one_from_the_set_size() {
+    let (app, web, id) = one_guardrail_in_force().await;
+    let req = oml_app::types::PreviewRequest::Supersede(SupersedeRequest {
+        retirement: true,
+        ..supersede_req("g2", id, "No longer needed.")
+    });
+    assert_eq!(set_after(&app, &web, req).await, Some(0));
+}
+
+/// A skill's preview names only the same-named skills the key reads: a
+/// key granted on `team.sub` alone is told nothing of `team`'s skill, which
+/// a key that reads `team` is told it shadows (ADR-0082 d11).
+#[tokio::test]
+async fn a_skill_preview_never_names_a_skill_the_key_cannot_read() {
+    use oml_app::types::PreviewRequest;
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    app.create_workspace(admin, &name("team"), Some(by_name("universe")), None)
+        .await
+        .expect("team");
+    let sub = app
+        .create_workspace(admin, &name("sub"), Some(by_name("team")), None)
+        .await
+        .expect("team.sub")
+        .workspace
+        .workspace_id
+        .to_string();
+    let rw = |node: &str| {
+        vec![
+            grant(by_name(node), Role::Writer),
+            grant(by_name(node), Role::Reader),
+        ]
+    };
+    let team_writer = tenant_key(&app, admin, Role::Writer, "team/writer", rw("team")).await;
+    let sub_writer = tenant_key(&app, admin, Role::Writer, "sub/writer", rw(&sub)).await;
+    let reviewer = person_tenant_key(
+        &app,
+        admin,
+        "carol/team-review",
+        vec![
+            grant(by_name("team"), Role::Reviewer),
+            grant(by_name("team"), Role::Reader),
+        ],
+    )
+    .await;
+    let skill = |idem: &str, workspace: &str| SubmitRequest {
+        kind: MemoryKind::Skill,
+        claim_key: None,
+        format: Some("text/markdown".to_owned()),
+        kind_fields: Some(oml_app::types::KindFields::Skill {
+            name: "cite".to_owned(),
+            description: "Cite every source.".to_owned(),
+        }),
+        ..submit(idem, "Cite every source, then check each.", Some(workspace))
+    };
+    let id = written(&app, &team_writer.value, &skill("s1", "team")).await;
+    approve(&app, &reviewer.value, id).await;
+
+    let shadows = |key: String| {
+        let app = &app;
+        let req = PreviewRequest::Submit(skill("s2", &sub));
+        async move {
+            let preview = app.preview(key.as_str(), &req).await.expect("a preview");
+            assert!(preview.refusal.is_none(), "{:?}", preview.refusal);
+            preview.shadows
+        }
+    };
+    assert_eq!(
+        shadows(team_writer.value.clone()).await,
+        vec![oml_app::types::SkillShadow {
+            workspace_path: "universe.team".to_owned(),
+            shadowed_by: false,
+        }]
+    );
+    assert!(
+        shadows(sub_writer.value.clone()).await.is_empty(),
+        "team's skill is not named to a key that cannot read team"
+    );
+}
+
+/// The verbs a key lists on a workspace are the verbs it may use there: a
+/// person's session reviewer key lists `remember` where it holds reviewer
+/// and reader outside its person's root, and its submit is held, and none
+/// in that root, where its submit is refused; a tenant reviewer key lists
+/// no `remember`, and its submit is `access.verb_ceiling` (ADR-0082 d11;
+/// d10, note of 2026-11-19).
+#[tokio::test]
+async fn a_session_reviewer_lists_remember_where_it_may_submit_and_a_tenant_reviewer_does_not() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let (review, _writer, _bob) = team_with_alices_reviewer_and_bobs_writer(&app, admin).await;
+    let tenant_reviewer = tenant_key(
+        &app,
+        admin,
+        Role::Reviewer,
+        "team-review",
+        vec![
+            grant(by_name("team"), Role::Reviewer),
+            grant(by_name("team"), Role::Reader),
+        ],
+    )
+    .await;
+    let verbs = app
+        .workspace_info(Bearer::Session(&review), Some(by_name("team")))
+        .await
+        .expect("the workspace read")
+        .my_effective_verbs;
+    assert!(verbs.contains(&"remember"), "{verbs:?}");
+    let written = app
+        .submit_memory(
+            Bearer::Session(&review),
+            &submit("r1", "Releases freeze on Thursdays.", Some("team")),
+        )
+        .await
+        .expect("its submit is held");
+    assert_eq!(written.receipt.state, "held");
+    let verbs = app
+        .workspace_info(Bearer::Session(&review), Some(by_name("alice")))
+        .await
+        .expect("the workspace read")
+        .my_effective_verbs;
+    assert!(
+        !verbs.contains(&"remember"),
+        "not in alice's root: {verbs:?}"
+    );
+
+    let verbs = app
+        .workspace_info(tenant_reviewer.value.as_str(), Some(by_name("team")))
+        .await
+        .expect("the workspace read")
+        .my_effective_verbs;
+    assert!(!verbs.contains(&"remember"), "{verbs:?}");
+    let err = app
+        .submit_memory(
+            tenant_reviewer.value.as_str(),
+            &submit("t1", "A tenant reviewer's claim.", Some("team")),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::VerbCeiling { .. }), "{err:?}");
+}
+
+/// The To do counts read's `review` is the length of the held listing it
+/// counts, as the person's reviewer key reads it, across every workspace
+/// and under a workspace filter, and counts no row the listing would not
+/// serve: alice's own rows outside her root (ADR-0083 d2, d11, d14).
+#[tokio::test]
+async fn todo_counts_equal_the_lengths_of_the_lists_they_count() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let (alice, review, writer, bob) = team_with_alices_session_and_bobs_writer(&app, admin).await;
+    for n in 0..3 {
+        written(
+            &app,
+            &writer.value,
+            &submit(
+                &format!("a{n}"),
+                &format!("Alice's note {n}."),
+                Some("team"),
+            ),
+        )
+        .await;
+    }
+    for n in 0..2 {
+        written(
+            &app,
+            &bob.value,
+            &submit(&format!("b{n}"), &format!("Bob's note {n}."), Some("team")),
+        )
+        .await;
+    }
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    for workspace in [None, Some(by_name("team"))] {
+        let listed = app
+            .review_held(
+                Bearer::Session(&review),
+                &oml_app::types::HeldListingRequest {
+                    workspace: workspace.clone(),
+                    ..held_request(200, None)
+                },
+            )
+            .await
+            .expect("the listing");
+        let counts = app
+            .todo_counts(Bearer::Session(&web), workspace.as_ref())
+            .await
+            .expect("the counts");
+        assert_eq!(listed.items.len(), 2, "bob's rows alone");
+        assert_eq!(counts.review, listed.items.len() as u64, "{workspace:?}");
+        assert!(!counts.truncated);
+    }
+}
+
+/// Past the cap a To do count answers the cap with `truncated`, read across
+/// more than one page of the held listing (ADR-0083 d2, d11; the review of
+/// PR #494, L7).
+#[tokio::test]
+async fn todo_counts_past_the_cap_answer_the_cap_with_truncated_across_pages() {
+    use oml_app::types::{HELD_PAGE_MAX, TODO_COUNT_CAP};
+    let (app, store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let (alice, _review, _writer, bob) =
+        team_with_alices_session_and_bobs_writer(&app, admin).await;
+    let copies = u32::try_from(TODO_COUNT_CAP).expect("a small cap");
+    assert!(copies as usize + 1 > HELD_PAGE_MAX);
+    // One held row and its copies, each a claim of its own, seeded with no
+    // event as a timing test seeds a large workspace.
+    let held = written(&app, &bob.value, &submit("b0", "Bob's note.", Some("team"))).await;
+    store.seed_copies(boot.tenant_id, held, copies);
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let counts = app
+        .todo_counts(Bearer::Session(&web), None)
+        .await
+        .expect("the counts");
+    assert_eq!(counts.review, TODO_COUNT_CAP);
+    assert!(counts.truncated);
+}
+
+/// A To do count stops after reading [`TODO_SCAN_ROWS_MAX`] rows of the
+/// held listing, counted or not, and says so with `truncated`: rows the
+/// store answers and the core's own check drops (here queued rows no
+/// longer held, as a regressed store would answer them) are read and never
+/// counted, so they cannot make the badge's read unbounded (ADR-0083 d11,
+/// d16; the review of PR #494, L4).
+#[tokio::test]
+async fn todo_counts_stop_after_their_scan_bound_with_truncated() {
+    use oml_app::types::TODO_SCAN_ROWS_MAX;
+    let (app, store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let (alice, _review, _writer, bob) =
+        team_with_alices_session_and_bobs_writer(&app, admin).await;
+    let held = written(&app, &bob.value, &submit("b0", "Bob's note.", Some("team"))).await;
+    let copies = store.seed_copies(
+        boot.tenant_id,
+        held,
+        u32::try_from(TODO_SCAN_ROWS_MAX).expect("a small bound"),
+    );
+    for id in copies {
+        store.set_status(boot.tenant_id, id, MemoryStatus::Rejected);
+    }
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let counts = app
+        .todo_counts(Bearer::Session(&web), None)
+        .await
+        .expect("the counts");
+    assert_eq!(counts.review, 1, "bob's one held row");
+    assert!(counts.truncated, "the read stopped at its bound");
+}
+
+/// The administration To do counts answer only a person's admin session
+/// key: `<user>-curate`, also of the admin role, and a tenant admin key are
+/// refused `access.verb_ceiling` (ADR-0083 d11; the review of PR #494, L5).
+#[tokio::test]
+async fn admin_todo_counts_answer_only_a_persons_admin_session_key() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", true).await;
+    let alice_admin = app
+        .web_caller(&alice, Capacity::Admin)
+        .await
+        .expect("alice-admin");
+    app.grant_curation_capacity(&alice_admin, &name("alice"), by_name("universe"))
+        .await
+        .expect("the curation designation");
+    let curate = app
+        .web_caller(&alice, Capacity::Curate)
+        .await
+        .expect("alice-curate");
+    app.admin_todo_counts(Bearer::Session(&alice_admin))
+        .await
+        .expect("alice-admin reads the counts");
+    let err = app
+        .admin_todo_counts(Bearer::Session(&curate))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::VerbCeiling { .. }), "{err:?}");
+    let err = app.admin_todo_counts(admin).await.unwrap_err();
+    assert!(matches!(err, AppError::VerbCeiling { .. }), "{err:?}");
+}
+
+/// A workspace the person's reviewer key cannot read contributes zero and
+/// is not named: filtered to it the count is 0, not a refusal; across
+/// every workspace its rows are not counted; and a person whose reviewer
+/// key holds no grant counts 0 (ADR-0083 d11, d14).
+#[tokio::test]
+async fn todo_counts_never_count_an_unreadable_workspace() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let (alice, _review, _writer, bob) =
+        team_with_alices_session_and_bobs_writer(&app, admin).await;
+    app.create_workspace(admin, &name("other"), Some(by_name("universe")), None)
+        .await
+        .expect("a second shared workspace");
+    let elsewhere = app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                user: None,
+                used_by: Some(UsedBy::Person),
+                ..user_req(
+                    Role::Writer,
+                    "unused",
+                    "bob/other",
+                    vec![
+                        grant(by_name("other"), Role::Writer),
+                        grant(by_name("other"), Role::Reader),
+                    ],
+                )
+            },
+        )
+        .await
+        .expect("bob's writer on other");
+    written(
+        &app,
+        &elsewhere.value,
+        &submit("o1", "Held where alice cannot review.", Some("other")),
+    )
+    .await;
+    written(&app, &bob.value, &submit("t1", "Bob's note.", Some("team"))).await;
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let every = app
+        .todo_counts(Bearer::Session(&web), None)
+        .await
+        .expect("every workspace");
+    assert_eq!(every.review, 1, "team's row alone");
+    let other = app
+        .todo_counts(Bearer::Session(&web), Some(&by_name("other")))
+        .await
+        .expect("an unreadable workspace counts, never refuses");
+    assert_eq!(other.review, 0);
+    let missing = app
+        .todo_counts(Bearer::Session(&web), Some(&by_name("no-such-place")))
+        .await
+        .expect("a workspace that does not exist answers the same");
+    assert_eq!(missing.review, 0);
+    let carol = signed_in(&app, admin, "carol", false).await;
+    let carol_web = app
+        .web_caller(&carol, Capacity::Web)
+        .await
+        .expect("carol-web");
+    let none = app
+        .todo_counts(Bearer::Session(&carol_web), None)
+        .await
+        .expect("no reviewer grant");
+    assert_eq!(none.review, 0);
+}
+
+/// Only a person's web session key reads the counts: its reviewer key's
+/// own caller, or any other key, is refused before anything is counted
+/// (ADR-0083 d11).
+#[tokio::test]
+async fn todo_counts_answer_only_a_persons_web_session_key() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let (_alice, review, _writer, bob) =
+        team_with_alices_session_and_bobs_writer(&app, admin).await;
+    for bearer in [Bearer::Session(&review), Bearer::Key(bob.value.as_str())] {
+        let err = app.todo_counts(bearer, None).await.unwrap_err();
+        assert!(matches!(err, AppError::VerbCeiling { .. }), "{err:?}");
+    }
+}
+
+/// The admin search's kind list narrows its rows to those kinds, and an
+/// empty list narrows nothing (ADR-0083 d5; ADR-0082 d8 item 3).
+#[tokio::test]
+async fn the_admin_search_serves_only_the_kinds_its_kind_list_names() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let (_, _review, _writer, bob) = team_with_alices_session_and_bobs_writer(&app, admin).await;
+    let note = written(
+        &app,
+        &bob.value,
+        &submit("k1", "A plain note.", Some("team")),
+    )
+    .await;
+    let steering = written(
+        &app,
+        &bob.value,
+        &SubmitRequest {
+            kind: MemoryKind::Steering,
+            ..submit("k2", "Cite every source.", Some("team"))
+        },
+    )
+    .await;
+    let search = |kinds: Vec<MemoryKind>| oml_app::app::AdminSearchRequest {
+        query: None,
+        workspace: Some(by_name("team")),
+        state: None,
+        origin: None,
+        author: None,
+        kinds,
+        after: None,
+        limit: 50,
+    };
+    let ids = |page: oml_app::app::AdminPage| -> Vec<Uuid> {
+        page.items.iter().map(|m| m.memory.memory_id).collect()
+    };
+    let only = app
+        .admin_search_filtered(admin, &search(vec![MemoryKind::Steering]))
+        .await
+        .expect("the steering alone");
+    assert_eq!(ids(only), [steering]);
+    let both = app
+        .admin_search_filtered(
+            admin,
+            &search(vec![MemoryKind::Memory, MemoryKind::Steering]),
+        )
+        .await
+        .expect("both kinds");
+    assert_eq!(ids(both).len(), 2);
+    let any = app
+        .admin_search_filtered(admin, &search(Vec::new()))
+        .await
+        .expect("no kind list");
+    let any = ids(any);
+    assert!(any.contains(&note) && any.contains(&steering), "{any:?}");
+}
+
+/// A document's preview answers its passages as capture would cut them,
+/// each by its fragment and its lines, and a preview of any other kind
+/// answers none (ADR-0082 d5; ADR-0081 d3; #409).
+#[tokio::test]
+async fn a_document_preview_answers_its_passages_by_fragment_and_lines() {
+    use oml_app::types::PreviewRequest;
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", false).await;
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let document = SubmitRequest {
+        kind: MemoryKind::Document,
+        claim_key: Some("doc/runbook".to_owned()),
+        format: Some("text/markdown".to_owned()),
+        ..submit(
+            "d1",
+            "# Runbook\n\nStart here.\n\n## Deploy\n\nRun the deployer.\n",
+            Some("alice"),
+        )
+    };
+    let preview = app
+        .preview(Bearer::Session(&web), &PreviewRequest::Submit(document))
+        .await
+        .expect("a preview");
+    assert!(preview.refusal.is_none(), "{:?}", preview.refusal);
+    let passages = preview.passages.expect("a document answers its passages");
+    let cut: Vec<(String, usize, usize, Vec<String>)> = passages
+        .into_iter()
+        .map(|p| (p.fragment, p.start_line, p.end_line, p.heading_path))
+        .collect();
+    assert_eq!(
+        cut,
+        vec![
+            ("runbook".to_owned(), 1, 3, vec!["Runbook".to_owned()]),
+            (
+                "deploy".to_owned(),
+                5,
+                7,
+                vec!["Runbook".to_owned(), "Deploy".to_owned()]
+            ),
+        ]
+    );
+    let memory = app
+        .preview(
+            Bearer::Session(&web),
+            &PreviewRequest::Submit(submit("m1", "A plain memory.", Some("alice"))),
+        )
+        .await
+        .expect("a preview");
+    assert!(memory.passages.is_none(), "only a document is cut");
 }
 
 // -- who confirms an admin fix (ADR-0089, amendment of 2026-11-18; #490) ----
