@@ -526,14 +526,26 @@ async fn a_person_plans_then_imports_a_bundle_over_http_and_each_refusal_carries
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
 
     // The upload bound once: a second import of it is the session's state.
-    let (status, body) = json_call(
-        r,
-        "POST",
-        "/v2/imports",
-        Some(&ada),
-        json!({ "upload_id": up, "target": "notes", "expect_key": fingerprint }),
-    )
-    .await;
+    // The run shreds the bound upload after its row reads done and holds
+    // the tenant's import slot until then, so `import.busy`, which is
+    // retryable, may answer first (ADR-0084 I13).
+    let mut second = None;
+    for _ in 0..500 {
+        let (status, body) = json_call(
+            r,
+            "POST",
+            "/v2/imports",
+            Some(&ada),
+            json!({ "upload_id": up, "target": "notes", "expect_key": fingerprint }),
+        )
+        .await;
+        if code(&body) != "import.busy" {
+            second = Some((status, body));
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let (status, body) = second.expect("the import slot is released within 10 s");
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert_eq!(code(&body), "upload.session_invalid");
     assert_eq!(body["error"]["details"]["state"], "bound");
