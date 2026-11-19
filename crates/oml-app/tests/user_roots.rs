@@ -4287,6 +4287,98 @@ async fn a_writer_that_cannot_read_its_workspace_previews_a_guardrail_with_no_se
     assert_eq!(written.receipt.state, "held");
 }
 
+/// A guardrail submitted with a claim key carries it, as a document's
+/// named key does, and one sent without carries the server's `auto-` key
+/// (ADR-0082 d4, amended 2026-11-19; ADR-0081 d2; ADR-0039 d6).
+#[tokio::test]
+async fn a_guardrail_keeps_the_claim_key_it_is_sent_and_derives_one_without() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", false).await;
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let named = app
+        .submit_memory(
+            Bearer::Session(&web),
+            &SubmitRequest {
+                claim_key: Some("no-force-push".to_owned()),
+                ..guardrail("g1", "Never force-push.", Some("alice"))
+            },
+        )
+        .await
+        .expect("a named guardrail");
+    assert_eq!(named.receipt.claim_key, "no-force-push");
+    let unnamed = app
+        .submit_memory(
+            Bearer::Session(&web),
+            &SubmitRequest {
+                claim_key: None,
+                ..guardrail("g2", "Never push to main.", Some("alice"))
+            },
+        )
+        .await
+        .expect("an unnamed guardrail");
+    assert!(unnamed.receipt.claim_key.starts_with("auto-"), "{}", unnamed.receipt.claim_key);
+}
+
+/// A person's web key supersedes a row their linked tenant key wrote in
+/// their root, read the one way `same_user` reads it, and the successor
+/// is held (ADR-0082 d2, d8 item 2; ADR-0085 d16; the review of PR #494,
+/// L7).
+#[tokio::test]
+async fn a_persons_web_key_supersedes_their_linked_tenant_keys_row_held() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let ops = console_admin(&app, admin, "ops").await;
+    let alice = signed_in(&app, admin, "alice", false).await;
+    let linked = app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                user: None,
+                used_by: Some(UsedBy::Person),
+                ..user_req(
+                    Role::Writer,
+                    "unused",
+                    "alice/desk",
+                    vec![
+                        grant(by_name("alice"), Role::Writer),
+                        grant(by_name("alice"), Role::Reader),
+                    ],
+                )
+            },
+        )
+        .await
+        .expect("alice's tenant writer key");
+    app.link_key_to_person(Bearer::Session(&ops), linked.key_id.into(), &name("alice"))
+        .await
+        .expect("linked");
+    let id = written(&app, &linked.value, &submit("l1", "Builds run on push.", Some("alice"))).await;
+    let review = app
+        .web_caller(&alice, Capacity::Review)
+        .await
+        .expect("alice-review");
+    app.post_verdict(Bearer::Session(&review), id, Verdict::Approve, None)
+        .await
+        .expect("alice approves it in her root");
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let successor = app
+        .supersede(
+            Bearer::Session(&web),
+            &supersede_req("w1", id, "Builds run on every push."),
+        )
+        .await
+        .expect("the web key supersedes its person's linked key's row");
+    assert_eq!(successor.receipt.state, "held");
+}
+
 /// Alice's web and review session keys, with one approved guardrail in
 /// force in her root: (app, web, the guardrail's id).
 async fn one_guardrail_in_force() -> (TestApp, oml_app::app::Caller, Uuid) {
@@ -4550,6 +4642,103 @@ async fn todo_counts_equal_the_lengths_of_the_lists_they_count() {
         assert_eq!(counts.review, listed.items.len() as u64, "{workspace:?}");
         assert!(!counts.truncated);
     }
+}
+
+/// Past the cap a To do count answers the cap with `truncated`, read across
+/// more than one page of the held listing (ADR-0083 d2, d11; the review of
+/// PR #494, L7).
+#[tokio::test]
+async fn todo_counts_past_the_cap_answer_the_cap_with_truncated_across_pages() {
+    use oml_app::types::{HELD_PAGE_MAX, TODO_COUNT_CAP};
+    let (app, store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let (alice, _review, _writer, bob) =
+        team_with_alices_session_and_bobs_writer(&app, admin).await;
+    let copies = u32::try_from(TODO_COUNT_CAP).expect("a small cap");
+    assert!(copies as usize + 1 > HELD_PAGE_MAX);
+    // One held row and its copies, each a claim of its own, seeded with no
+    // event as a timing test seeds a large workspace.
+    let held = written(&app, &bob.value, &submit("b0", "Bob's note.", Some("team"))).await;
+    store.seed_copies(boot.tenant_id, held, copies);
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let counts = app
+        .todo_counts(Bearer::Session(&web), None)
+        .await
+        .expect("the counts");
+    assert_eq!(counts.review, TODO_COUNT_CAP);
+    assert!(counts.truncated);
+}
+
+/// A To do count stops after scanning [`TODO_SCAN_ROWS_MAX`] rows of the
+/// held listing, counted or not, and says so with `truncated`: rows the
+/// person may not judge, their own linked key's outside their root, are
+/// scanned and never counted, so they cannot make the badge's read
+/// unbounded (ADR-0083 d11; the review of PR #494, L4).
+#[tokio::test]
+async fn todo_counts_stop_after_their_scan_cap_with_truncated() {
+    use oml_app::types::TODO_SCAN_ROWS_MAX;
+    let (app, store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let (alice, _review, writer, _bob) =
+        team_with_alices_session_and_bobs_writer(&app, admin).await;
+    let held = written(
+        &app,
+        &writer.value,
+        &submit("a0", "Alice's note.", Some("team")),
+    )
+    .await;
+    store.seed_copies(
+        boot.tenant_id,
+        held,
+        u32::try_from(TODO_SCAN_ROWS_MAX).expect("a small cap"),
+    );
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let counts = app
+        .todo_counts(Bearer::Session(&web), None)
+        .await
+        .expect("the counts");
+    assert_eq!(counts.review, 0, "alice judges none of her own rows");
+    assert!(counts.truncated, "the scan stopped at its cap");
+}
+
+/// The administration To do counts answer only a person's admin session
+/// key: `<user>-curate`, also of the admin role, and a tenant admin key are
+/// refused `access.verb_ceiling` (ADR-0083 d11; the review of PR #494, L5).
+#[tokio::test]
+async fn admin_todo_counts_answer_only_a_persons_admin_session_key() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", true).await;
+    let alice_admin = app
+        .web_caller(&alice, Capacity::Admin)
+        .await
+        .expect("alice-admin");
+    app.grant_curation_capacity(&alice_admin, &name("alice"), by_name("universe"))
+        .await
+        .expect("the curation designation");
+    let curate = app
+        .web_caller(&alice, Capacity::Curate)
+        .await
+        .expect("alice-curate");
+    app.admin_todo_counts(Bearer::Session(&alice_admin))
+        .await
+        .expect("alice-admin reads the counts");
+    let err = app
+        .admin_todo_counts(Bearer::Session(&curate))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::VerbCeiling { .. }), "{err:?}");
+    let err = app.admin_todo_counts(admin).await.unwrap_err();
+    assert!(matches!(err, AppError::VerbCeiling { .. }), "{err:?}");
 }
 
 /// A workspace the person's reviewer key cannot read contributes zero and

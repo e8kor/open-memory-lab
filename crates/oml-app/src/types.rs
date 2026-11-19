@@ -2117,6 +2117,12 @@ pub struct HeldItem {
 /// with `truncated` set (ADR-0083 d2, d11: chosen, not measured).
 pub const TODO_COUNT_CAP: u64 = 1_000;
 
+/// The most held rows a To do count reads, counted or not; past them the
+/// read answers what it counted with `truncated` set, so the badge's read
+/// stays bounded where most rows are ones the person may not judge
+/// (ADR-0083 d11; chosen, not measured: twice [`TODO_COUNT_CAP`]).
+pub const TODO_SCAN_ROWS_MAX: usize = 2_000;
+
 /// The To do counts read (ADR-0083 d11, d14): each built group's length,
 /// as its own list would serve it, up to [`TODO_COUNT_CAP`]. Only `review`
 /// is built; every other group joins with its feature.

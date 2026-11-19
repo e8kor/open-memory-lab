@@ -579,6 +579,8 @@ impl MemStore {
     /// `n` copies of the tenant's memory `memory_id` on its workspace, each a
     /// served tip of its own claim, inserted with no event: a large
     /// workspace for a timing law, built in one step (ADR-0072 d13 test 7).
+    /// A held template's copies wait in the review queue, as a large queue
+    /// for a count's bound.
     pub fn seed_copies(&self, tenant_id: Uuid, memory_id: Uuid, n: u32) {
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return;
@@ -597,6 +599,14 @@ impl MemStore {
                 .entry(copy.workspace_id)
                 .or_default()
                 .insert(copy.memory_id);
+            if copy.status == MemoryStatus::Held {
+                // A held copy waits in the review queue as a captured
+                // version does.
+                state.queue.push(QueueEntry {
+                    memory_id: copy.memory_id,
+                    claimed_by: None,
+                });
+            }
             state.memories.insert(copy.memory_id, copy);
         }
     }
