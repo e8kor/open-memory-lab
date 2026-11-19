@@ -10,7 +10,7 @@ answers: which acts an admin key may take on a workspace's content, on which tar
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its five questions decided at their
 recommendations and every other default as drafted, and its amendment of ADR-0001 d5 accepted with
 it · proposed the same day · amended 2026-11-17 by the operator (d16: demote's targets, the
-fix route as the one surface for demote and erase, erase's claim-wide scope, a fix's events; as-of reads skip a demoted version) · amendments of d8 proposed 2026-11-18 for the operator's batch (strict confirmation wherever the fixed version is served to production; a cut refuses a `same_user`-only member; #429)
+fix route as the one surface for demote and erase, erase's claim-wide scope, a fix's events; as-of reads skip a demoted version) · amendments of d8 of 2026-11-18, from the operator's batch (strict confirmation wherever the fixed version is served to production; a cut refuses a `same_user`-only member; #429), accepted 2026-11-19 by the operator
 
 **Release:** not scheduled; with ADR-0085, whose releases a fix overlays
 
@@ -138,7 +138,7 @@ Decided, not built.
   not revert a superseded fix.**
   - **Who, in a production scope.** A person's reviewer key (`used_by: person`) with reviewer on the
     workspace, of a person other than the admin's own (never `same_user`). In a development scope, the rule below lets the admin's own person confirm,
-    marked `same_user`. *(Superseded outside the admin's own root, proposed 2026-11-18 for the operator's batch: see the amendments at the end of this record.)*
+    marked `same_user`. *(Superseded outside the admin's own root 2026-11-18, accepted 2026-11-19 by the operator: see the amendments at the end of this record.)*
   - **Confirm** journals `admin.fix_confirmed`.
   - **Revert** journals `admin.fix_reverted` and writes the inverse as new state:
     - a demoted version returns as a new version carrying its text;
@@ -160,8 +160,8 @@ Decided, not built.
     places on a published release (d5), only a person other than the admin's own (never `same_user`) confirms or reverts.
     The cost: a one-person tenant confirms its own fixes in development, but a fixed item stays
     unconfirmed in a production scope, excluded from every cut (ADR-0085 d1), until a second
-    person confirms it. *(Superseded outside the admin's own root, proposed 2026-11-18 for the
-    operator's batch: see the amendments at the end of this record.)*
+    person confirms it. *(Superseded outside the admin's own root 2026-11-18, accepted 2026-11-19
+    by the operator: see the amendments at the end of this record.)*
   - Every row a fix touched stays (R4).
 
 - **d9 — ADR-0077 d5's read-path law gains the fix.** Every served hit must satisfy one of:
@@ -171,7 +171,7 @@ Decided, not built.
 
   A hit with `confirmed: true` also has an `admin.fix_confirmed`: in a production scope by a person
   other than the admin's own; in a development scope it may be by the admin's own person, and the
-  hit's `approver.same_user` is then `true`. *(Superseded outside the admin's own root, proposed 2026-11-18 for the operator's batch: see the amendments at the end of this record.)*
+  hit's `approver.same_user` is then `true`. *(Superseded outside the admin's own root 2026-11-18, accepted 2026-11-19 by the operator: see the amendments at the end of this record.)*
 
 - **d10 — An admin reads claim text tenant-wide, as ADR-0045 d21 already serves it, with one
   reason per investigation.**
@@ -211,7 +211,7 @@ Decided, not built.
     - an admin edit is served before any identity other than its author has reviewed it;
     - it is reviewed afterwards: by a person other than the admin's own (never `same_user`) in a production scope, and in a
       development scope by any person holding reviewer there, its own person's key marked
-      `same_user` (d8). *(Superseded outside the admin's own root, proposed 2026-11-18 for the operator's batch: see the amendments at the end of this record.)*
+      `same_user` (d8). *(Superseded outside the admin's own root 2026-11-18, accepted 2026-11-19 by the operator: see the amendments at the end of this record.)*
   - **R3 changes in its first sentence:** an admin's edit is readable by others before it is
     ratified.
   - **ADR-0045 d21 already relaxed R3** for admin reads of held rows, without recording it in
@@ -251,7 +251,7 @@ Decided, not built.
     - Each entry carries the act, the target version, the replaced version, the reason, the time
       and `loosens_guardrail`. It never names the admin key, principal or user.
     - A fix taken by the reader's own person is listed with confirm and revert in a development
-      scope (marked `same_user` when confirmed) and without either in a production scope (d8). *(Superseded outside the admin's own root, proposed 2026-11-18 for the operator's batch: see the amendments at the end of this record.)*
+      scope (marked `same_user` when confirmed) and without either in a production scope (d8). *(Superseded outside the admin's own root 2026-11-18, accepted 2026-11-19 by the operator: see the amendments at the end of this record.)*
     - Confirm and revert are `POST /v2/review/fixes/{id}/confirm|revert`.
   - **CLI:**
     - `oml admin fix demote|edit|retire|release-rollback|import-rollback --reason`;
@@ -372,12 +372,13 @@ Decided, not built.
 | **Admin reads on the agent surfaces** | That puts text into a model's context with no reason asked. |
 | **Confirmation by any key** | An agent confirming an admin's fix is the gate called by the thing gated (R1). |
 
-## Proposed amendments of 2026-11-18 (the lifecycle review; for the operator's batch, #429)
+## Amendments of 2026-11-18 (the lifecycle review; the operator's batch, accepted 2026-11-19, #429)
 
 The lifecycle review's model proposed these with the operator's answers D1 to D4 (ADR-0085 and
-ADR-0084, amendments of 2026-11-18), and the operator approved the reviewed proposal. Each is
-proposed and marked **[operator batch]**: it stands until the operator confirms or reverses it
-with the other decisions of the batch. Sentences above that contradict them stay as written,
+ADR-0084, amendments of 2026-11-18), and the operator approved the reviewed proposal. Each was
+proposed and marked **[operator batch]**, to stand until the operator confirmed or reversed it
+with the other decisions of the batch; the operator accepted every one on 2026-11-19 ("Accept
+all"). Sentences above that contradict them stay as written,
 marked superseded.
 
 - **Confirmation is strict wherever the fixed version is served to production, and for any target
