@@ -133,6 +133,10 @@ pub struct Person {
     /// person accepts it (ADR-0085 d16, the operator's decision of
     /// 2026-11-19).
     pub pending_links: Vec<NamedRef>,
+    /// The sign-in emails an admin added for the person that wait on their
+    /// acceptance; each signs in to nothing until the person accepts it
+    /// (ADR-0045 d2's note of 2026-11-19, the operator's decision).
+    pub pending_emails: Vec<oml_domain::web::Email>,
 }
 
 /// The least per-minute request rate a person's session keys get, whatever
@@ -693,6 +697,16 @@ where
                 }
             }
         }
+        // The emails an admin added for the person that wait on them (the
+        // operator's decision of 2026-11-19, ADR-0045 d2's note).
+        let pending_emails = self
+            .journal
+            .web_pending_emails(key.tenant_id)
+            .await?
+            .into_iter()
+            .filter(|e| e.user == user)
+            .map(|e| e.email)
+            .collect();
         Ok(Person {
             user,
             limits,
@@ -700,6 +714,7 @@ where
             start,
             linked_keys,
             pending_links,
+            pending_emails,
         })
     }
 

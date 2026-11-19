@@ -1841,7 +1841,18 @@ fn apply_fold(
             };
             held.user = entry.user;
             held.admin = entry.admin;
+            held.pending = entry.pending;
             state.web_sessions.retain(|_, s| s.email_hash != hash);
+        }
+        MetadataFold::WebEmailAccepted { email_hash, user } => {
+            match state.web_entries.get_mut(&email_hash.0) {
+                Some(held) if held.pending && held.user == user => held.pending = false,
+                _ => {
+                    return Err(StoreError::Backend(
+                        "web.email_accepted names no pending entry of this user".to_owned(),
+                    ));
+                }
+            }
         }
         MetadataFold::WebEmailRemoved {
             email_hash,
@@ -6025,10 +6036,20 @@ impl WebStore for MemStore {
         }
         let state = self.tenant(session.tenant_id);
         let mut state = state.lock().expect("tenant lock");
-        if !state.web_entries.contains_key(&session.email_hash.0) {
-            return Err(StoreError::Backend(
-                "a session names an entry the tenant does not hold".to_owned(),
-            ));
+        match state.web_entries.get(&session.email_hash.0) {
+            None => {
+                return Err(StoreError::Backend(
+                    "a session names an entry the tenant does not hold".to_owned(),
+                ));
+            }
+            // A pending entry signs in to nothing (ADR-0045 d2's note of
+            // 2026-11-19), as Postgres refuses it.
+            Some(entry) if entry.pending => {
+                return Err(StoreError::Backend(
+                    "web_sessions: the entry waits on its person's acceptance".to_owned(),
+                ));
+            }
+            Some(_) => {}
         }
         for (capacity, digest) in credentials {
             state
@@ -6102,6 +6123,21 @@ impl WebStore for MemStore {
         Ok(self.tenant_keys(tenant_id, |k| {
             k.revoked_at.is_none() && k.link_pending.is_some()
         }))
+    }
+
+    async fn web_pending_emails(&self, tenant_id: Uuid) -> Result<Vec<WebEntry>, StoreError> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = state.lock().expect("tenant lock");
+        let mut pending: Vec<WebEntry> = state
+            .web_entries
+            .values()
+            .filter(|e| e.pending)
+            .cloned()
+            .collect();
+        pending.sort_by(|a, b| a.email.as_str().cmp(b.email.as_str()));
+        Ok(pending)
     }
 
     async fn web_session_keys(
@@ -7356,7 +7392,9 @@ impl crate::ports::SparseEncoder for FakeSparseEncoder {
 /// tenant is (ADR-0045 d10).
 fn last_admin(entries: &BTreeMap<[u8; 32], WebEntry>, hash: &Sha256Hash) -> bool {
     entries.get(&hash.0).is_some_and(|e| e.admin)
-        && !entries.iter().any(|(h, e)| e.admin && h != &hash.0)
+        && !entries
+            .iter()
+            .any(|(h, e)| e.admin && !e.pending && h != &hash.0)
 }
 
 /// An object store in memory (ADR-0004 d3, as amended 2026-11-17): what an

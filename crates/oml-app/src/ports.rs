@@ -496,6 +496,14 @@ pub enum MetadataFold {
         /// tenant's last admin entry (ADR-0070 d5).
         keep_an_admin: bool,
     },
+    /// `web.email_accepted`: the pending entry of `email_hash`, naming
+    /// `user`, signs in from this commit on. The store refuses an entry it
+    /// does not hold, one that is not pending, and one that names another
+    /// user (ADR-0045 d2's note of 2026-11-19, the operator's decision).
+    WebEmailAccepted {
+        email_hash: Sha256Hash,
+        user: Name,
+    },
     /// `web.email_removed`: the entry's row and every session of it, gone
     /// in the same commit; the store refuses an entry it does not hold
     /// (ADR-0045 d2, d13).
@@ -2182,6 +2190,14 @@ pub trait WebStore: JournalStore {
         &self,
         tenant_id: Uuid,
     ) -> impl Future<Output = Result<Vec<KeyRecord>, StoreError>> + Send;
+
+    /// The tenant's allowlist entries that wait on their person's
+    /// acceptance, in email order (ADR-0045 d2's note of 2026-11-19, the
+    /// operator's decision).
+    fn web_pending_emails(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<WebEntry>, StoreError>> + Send;
 
     /// The tenant's session keys serving `session_user` (ADR-0045 d6).
     fn web_session_keys(

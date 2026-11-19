@@ -1,5 +1,6 @@
 """Contains all the data models used in inputs/outputs"""
 
+from .accept_web_email_body import AcceptWebEmailBody
 from .account_profile_request import AccountProfileRequest
 from .account_profile_request_overrides import AccountProfileRequestOverrides
 from .account_usage import AccountUsage
@@ -102,6 +103,7 @@ from .crew import Crew
 from .crew_create import CrewCreate
 from .crew_page import CrewPage
 from .crew_update import CrewUpdate
+from .decline_web_email_body import DeclineWebEmailBody
 from .denial import Denial
 from .denial_request import DenialRequest
 from .disable_web_user_body import DisableWebUserBody
@@ -454,6 +456,7 @@ from .workspace_view_federation import WorkspaceViewFederation
 from .workspace_view_my_effective_verbs_item import WorkspaceViewMyEffectiveVerbsItem
 
 __all__ = (
+    "AcceptWebEmailBody",
     "AccountProfileRequest",
     "AccountProfileRequestOverrides",
     "AccountUsage",
@@ -536,6 +539,7 @@ __all__ = (
     "CrewCreate",
     "CrewPage",
     "CrewUpdate",
+    "DeclineWebEmailBody",
     "Denial",
     "DenialRequest",
     "DisableWebUserBody",

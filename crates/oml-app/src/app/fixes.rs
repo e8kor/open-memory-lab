@@ -1519,6 +1519,9 @@ pub struct FixStats {
     /// acceptance; each acts for no one, so an admin key among them takes
     /// no fix (ADR-0085 d16, the operator's decision of 2026-11-19).
     pub links_pending: u64,
+    /// Allowlist entries that wait on their person's acceptance; each
+    /// signs in to nothing until then (ADR-0045 d2's note of 2026-11-19).
+    pub emails_pending: u64,
 }
 
 impl<J, S, C, I, Sc> App<J, S, C, I, Sc>
@@ -1546,6 +1549,7 @@ where
             .iter()
             .filter(|k| !k.expired_at(&now))
             .count() as u64;
+        stats.emails_pending = self.journal.web_pending_emails(tenant_id).await?.len() as u64;
         if all.is_empty() {
             return Ok(stats);
         }

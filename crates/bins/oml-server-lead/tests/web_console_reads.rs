@@ -387,7 +387,9 @@ async fn whoami_of_a_key_value_without_the_person_block_reads_each_row_once() {
 /// one resolution of the credential: the record's reads and the person's
 /// own (their deletion request, their account's profile, which alone
 /// puts an account outside the sign-up tenant under limits, ADR-0071 d5,
-/// and the keys an admin linked to them, ADR-0085 d16).
+/// the keys an admin linked to them, ADR-0085 d16, and the sign-in emails
+/// an admin added for them that wait on their acceptance, ADR-0045 d2's
+/// note of 2026-11-19: one read more since v0.8.4).
 #[tokio::test]
 async fn whoami_serves_the_person_block_unless_asked_not_to_in_one_resolution() {
     let rig = rig().await;
@@ -397,7 +399,7 @@ async fn whoami_serves_the_person_block_unless_asked_not_to_in_one_resolution() 
     assert_eq!(me.body["person"]["under_quotas"], false, "{}", me.body);
     assert_eq!(me.body["person"]["deletion_requested_at"], Value::Null);
     assert!(me.body["person"].get("start").is_none(), "{}", me.body);
-    assert_eq!(me.store_calls(), 1 + 1 + 3, "{}", me.line);
+    assert_eq!(me.store_calls(), 1 + 1 + 4, "{}", me.line);
     let asked = get(
         &rig.router,
         "/v2/whoami?person=true",

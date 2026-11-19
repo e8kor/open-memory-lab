@@ -40,6 +40,8 @@ pub const USER_ACTIONS: &[&str] = &[
     "connect_code",
     "cut_off",
     "accept_link",
+    "accept_email",
+    "decline_email",
 ];
 
 /// The admin page's acts: the cut-off, and a tenant key's link to the
@@ -139,6 +141,8 @@ fn notice(done: Option<&str>) -> Option<&'static str> {
         "cut off" => Some("cut off"),
         "linked" => Some("linked: the key acts for this person once they accept the link"),
         "accepted" => Some("accepted: the console acts with the key for this account"),
+        "email_accepted" => Some("accepted: the email signs in to this account"),
+        "email_removed" => Some("removed: the email signs in to nothing"),
         "unlinked" => Some("unlinked: the console no longer acts with the key"),
         _ => None,
     }
@@ -542,28 +546,29 @@ async fn user_view(
             found.person.as_ref().and_then(usage::card),
             found
                 .person
-                .map(|p| (p.linked_keys, p.pending_links))
+                .map(|p| (p.linked_keys, p.pending_links, p.pending_emails))
                 .unwrap_or_default(),
         ),
         Err(_) => (
             Some(usage::unavailable(
                 usage_ids.request_id.as_deref().unwrap_or_default(),
             )),
-            (Vec::new(), Vec::new()),
+            (Vec::new(), Vec::new(), Vec::new()),
         ),
     };
-    let (linked, pending) = linked;
+    let (linked, pending, emails) = linked;
     let csrf = session.csrf();
     // For a session whose key carries a denial the page opens on the
     // sentence, above the table, and draws none of the three forms: the API
     // refuses each one for this session's key, now and for good.
     let denied = denied(session).then_some(session.whoami.key_id.as_str());
     let mut body = format!(
-        r#"<h1>Keys</h1><p class="desc">Keys acting for <code>{}</code>.</p>{}{}{}{}{}"#,
+        r#"<h1>Keys</h1><p class="desc">Keys acting for <code>{}</code>.</p>{}{}{}{}{}{}"#,
         short(&user),
         denied.map(|_| denied_notice()).unwrap_or_default(),
         card.unwrap_or_default(),
         table(&listed, Side::User, &csrf, "", denied),
+        pending_emails_section(&emails, &csrf),
         pending_section(&pending, &csrf),
         linked_section(&linked)
     );
@@ -643,6 +648,45 @@ fn pending_section(pending: &[oml_sdk::LinkedKey], csrf: &str) -> String {
                 csrf,
                 &format!("{}{}", hidden("key", &key.name), acts::nonce_field()),
                 "Accept link",
+                false
+            )
+        );
+    }
+    out.push_str("</ul>");
+    out
+}
+
+/// The sign-in emails an admin added for this account that wait on its
+/// acceptance, each with its **Accept sign-in email** and **Remove** acts;
+/// nothing where none waits. Until accepted an email signs in to nothing
+/// (ADR-0045 d2, the operator's decision of 2026-11-19).
+fn pending_emails_section(emails: &[String], csrf: &str) -> String {
+    if emails.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from(
+        r#"<h2>Sign-in emails to accept</h2><p class="desc">An admin added these sign-in emails for this account. An email signs in to this account only once it is accepted here; until then it signs in to nothing. An email not asked for is removed here.</p><ul>"#,
+    );
+    for email in emails {
+        let fields = format!("{}{}", hidden("email", email), acts::nonce_field());
+        let _ = write!(
+            out,
+            "<li><code>{}</code> {} {}</li>",
+            text(email),
+            form(
+                USER_KEYS_PATH,
+                "accept_email",
+                csrf,
+                &fields,
+                "Accept sign-in email",
+                false
+            ),
+            form(
+                USER_KEYS_PATH,
+                "decline_email",
+                csrf,
+                &fields,
+                "Remove",
                 false
             )
         );
@@ -756,6 +800,7 @@ fn defined(side: Side, action: &str, name: &str) -> bool {
         "issue_key" | "connect_key" => matches!(name, "name" | "role" | "expires"),
         "cut_off" => matches!(name, "key" | "confirm") || (side == Side::Admin && name == "user"),
         "link_key" | "unlink_key" => matches!(name, "key" | "user"),
+        "accept_email" | "decline_email" => name == "email",
         _ => name == "key",
     }
 }
@@ -852,6 +897,7 @@ async fn act(
     let required: &[&str] = match action {
         "issue_key" | "connect_key" => &["name"],
         "link_key" => &["key", "user"],
+        "accept_email" | "decline_email" => &["email"],
         _ => &["key"],
     };
     if let Some(missing) = required.iter().find(|n| fields.given(n).is_none()) {
@@ -940,6 +986,24 @@ async fn act(
                 Ok(_) => return no_secret(&calls),
                 Err(e) => return outcome::page(&e, &calls, page),
             }
+        }
+        "accept_email" | "decline_email" => {
+            let email = fields.given("email").unwrap_or_default();
+            let (answer, done) = if action == "accept_email" {
+                (
+                    web.api.accept_web_email(&call, &key, email).await,
+                    "email_accepted",
+                )
+            } else {
+                (
+                    web.api.decline_web_email(&call, &key, email).await,
+                    "email_removed",
+                )
+            };
+            return match answer {
+                Ok(_) => acts::see_other(&format!("{page}?done={done}"), &[]),
+                Err(e) => outcome::page(&e, &calls, page),
+            };
         }
         "accept_link" => {
             let name = fields.given("key").unwrap_or_default();

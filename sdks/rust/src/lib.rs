@@ -1118,6 +1118,11 @@ pub struct Person {
     /// the operator's decision of 2026-11-19).
     #[serde(default)]
     pub pending_links: Vec<LinkedKey>,
+    /// The sign-in emails an admin added for the person that wait on their
+    /// acceptance; empty from an API before v0.8.4 (ADR-0045 d2, the
+    /// operator's decision of 2026-11-19).
+    #[serde(default)]
+    pub pending_emails: Vec<String>,
 }
 
 /// `POST /v2/keys/{key}/link`, `/unlink` and `/accept_link`: the key and
@@ -1153,6 +1158,11 @@ pub struct WebEmail {
     pub email: String,
     pub user: String,
     pub admin: bool,
+    /// Whether the entry waits on its person's acceptance; false from an
+    /// API before v0.8.4 (ADR-0045 d2, the operator's decision of
+    /// 2026-11-19).
+    #[serde(default)]
+    pub pending: bool,
 }
 
 /// `GET /v2/web/emails`: one page of the allowlist.
@@ -2836,6 +2846,48 @@ impl<T: Transport> Client<T> {
             "/v2/web/emails/remove".to_owned(),
             idempotency_key,
             &serde_json::json!({ "email": email, "keep_an_admin": true }),
+        )
+        .await
+    }
+
+    /// `POST /v2/web/emails/accept`: the signed-in person accepts a sign-in
+    /// email an admin added for them, so it signs in as them (ADR-0045 d2,
+    /// the operator's decision of 2026-11-19).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn accept_web_email(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        email: &str,
+    ) -> Result<WebEmail, Error> {
+        self.post(
+            call,
+            "/v2/web/emails/accept".to_owned(),
+            idempotency_key,
+            &serde_json::json!({ "email": email }),
+        )
+        .await
+    }
+
+    /// `POST /v2/web/emails/decline`: the signed-in person removes a sign-in
+    /// email an admin added for them that waits on them (ADR-0045 d2, the
+    /// operator's decision of 2026-11-19).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn decline_web_email(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        email: &str,
+    ) -> Result<WebEmail, Error> {
+        self.post(
+            call,
+            "/v2/web/emails/decline".to_owned(),
+            idempotency_key,
+            &serde_json::json!({ "email": email }),
         )
         .await
     }

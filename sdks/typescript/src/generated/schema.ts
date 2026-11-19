@@ -1082,6 +1082,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/web/emails/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept a sign-in email an admin added for the signed-in person, so it signs in as them.
+         * @description Requires: the console session of the person the pending entry names, through its capacity credential (the operator's decision of 2026-11-19, ADR-0045 d2's note). An email an admin adds for a person who signs in already, or an entry changed to name such a person, is pending and signs in to nothing until that person accepts it. Journalled as web.email_accepted with the email's digest; the email signs in as the person from then on. Refused request.validation, details.field /email, with details.reason session_only for a bearer key, an admin key's included, not_named_person for a session of any other person, the adding admin's included, and not_pending for an entry that waits on no one; an email on no entry of the caller's tenant answers access.not_found. A refusal journals nothing. The email is in the body, never the path. Since v0.8.4.
+         */
+        post: operations["acceptWebEmail"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/web/emails/decline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Remove a sign-in email an admin added for the signed-in person that waits on them.
+         * @description Requires: the console session of the person the pending entry names, through its capacity credential (the operator's decision of 2026-11-19, ADR-0045 d2's note). An email an admin adds for a person who signs in already, or an entry changed to name such a person, is pending and signs in to nothing until that person accepts it. Journalled as web.email_removed with the email's digest and pending true; an admin removes a pending entry with POST /v2/web/emails/remove. Refused request.validation, details.field /email, with details.reason session_only for a bearer key, an admin key's included, not_named_person for a session of any other person, the adding admin's included, and not_pending for an entry that waits on no one; an email on no entry of the caller's tenant answers access.not_found. A refusal journals nothing. The email is in the body, never the path. Since v0.8.4.
+         */
+        post: operations["declineWebEmail"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/web/users": {
         parameters: {
             query?: never;
@@ -2004,6 +2044,8 @@ export interface components {
             /** @description A name under the creation grammar, at most 56 characters. */
             user: string;
             admin: boolean;
+            /** @description Whether the entry waits on its person's acceptance: an admin added it, or changed it to name them, for a person who signs in already; it signs in to nothing, auth.invalid with details.reason email_pending, until that person accepts it with POST /v2/web/emails/accept (ADR-0045 d2, the operator's decision of 2026-11-19). Since v0.8.4. */
+            pending: boolean;
         };
         /** @description SHA-256 of plaintext unless a field says ciphertext. */
         Digest: string;
@@ -3773,6 +3815,8 @@ export interface components {
             linked_keys?: components["schemas"]["WhoamiRef"][];
             /** @description The live tenant keys an admin linked to the person that wait on the person's acceptance, by id and name, in name order; each acts for no one until the person accepts it with POST /v2/keys/{key}/accept_link (ADR-0085 d16, the operator's decision of 2026-11-19). Since v0.8.4. */
             pending_links?: components["schemas"]["WhoamiRef"][];
+            /** @description The sign-in emails an admin added for the person that wait on the person's acceptance, in email order; each signs in to nothing until the person accepts it with POST /v2/web/emails/accept or removes it with POST /v2/web/emails/decline (ADR-0045 d2, the operator's decision of 2026-11-19). Since v0.8.4. */
+            pending_emails?: string[];
             /** @description With start=true, what the onboarding page waits for: whether one of the person's agent keys has connected, and the state of the newest memory of their root, held or promoted, else null (ADR-0068 d10; ADR-0070 d5). Absent otherwise. Since v0.7.0. */
             start?: {
                 connected?: boolean;
@@ -7748,6 +7792,94 @@ export interface operations {
                 };
             };
             403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    acceptWebEmail: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "email": "alice@work.example"
+                 *     }
+                 */
+                "application/json": {
+                    email: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Accepted; the entry as it stands, pending false. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebEmail"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    declineWebEmail: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "email": "alice@work.example"
+                 *     }
+                 */
+                "application/json": {
+                    email: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Removed; the entry as it stood, pending true. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebEmail"];
+                };
+            };
             404: components["responses"]["NotFound"];
             default: components["responses"]["Error"];
         };

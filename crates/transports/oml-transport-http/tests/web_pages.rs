@@ -689,12 +689,84 @@ async fn removing_an_email_ends_its_sessions() {
     )
     .await;
     assert!(page.contains("Sign in with Google"), "signed out: {page}");
-    // Changing the entry's admin flag ends its sessions too.
-    rig.allow(EMAIL, "alice", false).await;
+    // Changing the entry's admin flag ends its sessions too. alice signed
+    // in before, so the address comes back for a new person: one added for
+    // alice would wait on her (the operator's decision of 2026-11-19).
+    rig.allow(EMAIL, "alice-two", false).await;
     let (_, token, _) = sign_in_google(&rig, "sub-1", EMAIL).await;
     let token = token.expect("a session");
-    rig.allow(EMAIL, "alice", true).await;
+    rig.allow(EMAIL, "alice-two", true).await;
     assert!(rig.app.web_session(&token).await.unwrap().is_none());
+}
+
+/// The operator's decision of 2026-11-19 (ADR-0045 d2's note): an address
+/// an admin adds for a person who signs in already signs in to nothing, with
+/// the reason named and no session cookie, until that person accepts it
+/// through the API from a session they already have; then it signs in as
+/// them. A first address for a new person signs in at once.
+#[tokio::test]
+async fn an_email_an_admin_adds_for_a_person_who_signs_in_already_signs_in_only_once_that_person_accepts_it()
+ {
+    const ADDED: &str = "mallory@example.net";
+    let rig = rig().await;
+    let alice = signed_in(&rig, "sub-1", EMAIL).await;
+    rig.allow(ADDED, "alice", false).await;
+    let (status, token, body) = sign_in_google(&rig, "sub-9", ADDED).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert!(body.contains("waits for its person to accept it"), "{body}");
+    assert_eq!(token, None, "a pending email opens no session");
+
+    // The admin key is no session, and a session of another person is not
+    // alice's: both are refused, by name.
+    let (status, refused) = as_admin(
+        &rig,
+        "/v2/web/emails/accept",
+        "accept-0",
+        json!({ "email": ADDED }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    assert_eq!(
+        refused["error"]["details"]["reason"], "session_only",
+        "{refused}"
+    );
+    rig.allow("bob@example.com", "bob", false).await;
+    let bob = signed_in(&rig, "sub-2", "bob@example.com").await;
+    let (status, refused) = as_web(
+        &rig,
+        &bob,
+        "web",
+        "/v2/web/emails/accept",
+        json!({ "email": ADDED }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    assert_eq!(
+        refused["error"]["details"]["reason"], "not_named_person",
+        "{refused}"
+    );
+
+    let (status, accepted) = as_web(
+        &rig,
+        &alice,
+        "web",
+        "/v2/web/emails/accept",
+        json!({ "email": ADDED }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{accepted}");
+    assert_eq!(accepted["user"], "alice", "{accepted}");
+    assert_eq!(accepted["pending"], false, "{accepted}");
+    let (status, token, body) = sign_in_google(&rig, "sub-9", ADDED).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let token = token.expect("the accepted email opens a session");
+    let session = rig
+        .app
+        .web_session(&token)
+        .await
+        .expect("a read")
+        .expect("a live session");
+    assert_eq!(session.user.as_str(), "alice");
 }
 
 #[tokio::test]

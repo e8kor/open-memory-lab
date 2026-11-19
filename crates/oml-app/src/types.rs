@@ -4053,6 +4053,12 @@ pub enum AppError {
     /// (ADR-0085 d16).
     #[error("the key cannot be linked or unlinked: {reason} (ADR-0085 d16)")]
     KeyLinkRefused { reason: &'static str },
+    /// A pending sign-in email its caller may not accept or remove,
+    /// `request.validation` naming `/email` with `details.reason` one of
+    /// `session_only`, `not_pending` or `not_named_person` (ADR-0045 d2's
+    /// note of 2026-11-19, the operator's decision).
+    #[error("the sign-in email cannot be accepted or removed here: {reason} (ADR-0045 d2)")]
+    WebEmailRefused { reason: &'static str },
     /// Only a key used by a person exports, never an admin, agent or
     /// service key (ADR-0084 d10, reading I1; `access.verb_ceiling`,
     /// `details.reason: export_person_only`).
@@ -4438,6 +4444,12 @@ pub struct WebEntry {
     /// When an admin disabled the entry's person; a disabled entry signs
     /// in to nothing and cannot sign up again (ADR-0068 d8).
     pub disabled_at: Option<EventTime>,
+    /// Whether the entry waits on its person's acceptance: an admin added
+    /// it, or changed it to name them, for a person who signs in already.
+    /// A pending entry signs in to nothing until that person accepts it
+    /// from a session they already have (ADR-0045 d2's note of 2026-11-19,
+    /// the operator's decision).
+    pub pending: bool,
 }
 
 impl WebEntry {

@@ -304,6 +304,10 @@ pub enum SignInRefusal {
     SessionExpired,
     #[error("this account is disabled; ask the administrator of this server")]
     Disabled,
+    #[error(
+        "this email address waits for its person to accept it from a session they already have"
+    )]
+    Pending,
 }
 
 impl SignInRefusal {
@@ -318,6 +322,7 @@ impl SignInRefusal {
             SignInRefusal::ProviderRefused => "provider_refused",
             SignInRefusal::SessionExpired => "session_expired",
             SignInRefusal::Disabled => "disabled",
+            SignInRefusal::Pending => "email_pending",
         }
     }
 }

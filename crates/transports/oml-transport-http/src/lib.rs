@@ -159,6 +159,8 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/v2/web/users"),
     ("POST", "/v2/web/emails"),
     ("POST", "/v2/web/emails/remove"),
+    ("POST", "/v2/web/emails/accept"),
+    ("POST", "/v2/web/emails/decline"),
     ("POST", "/v2/web/users/{user}/capacities"),
     ("POST", "/v2/web/users/{user}/quota"),
     ("POST", "/v2/web/users/{user}/disable"),
@@ -430,6 +432,8 @@ where
             ("GET", "/v2/web/users") => get(Self::list_web_users),
             ("POST", "/v2/web/emails") => post(Self::allow_web_email),
             ("POST", "/v2/web/emails/remove") => post(Self::remove_web_email),
+            ("POST", "/v2/web/emails/accept") => post(Self::accept_web_email),
+            ("POST", "/v2/web/emails/decline") => post(Self::decline_web_email),
             ("POST", "/v2/web/users/{user}/capacities") => post(Self::grant_capacities),
             ("POST", "/v2/web/users/{user}/quota") => post(Self::set_quota),
             ("POST", "/v2/web/users/{user}/disable") => post(Self::disable_user),
@@ -4896,6 +4900,11 @@ fn person_json(person: &oml_app::app::Person) -> Value {
             .pending_links
             .iter()
             .map(|k| json!({ "id": k.id, "name": k.name.as_str() }))
+            .collect::<Vec<_>>(),
+        "pending_emails": person
+            .pending_emails
+            .iter()
+            .map(|e| e.as_str())
             .collect::<Vec<_>>(),
     });
     // The onboarding status, only when asked (`start=true`): every page's

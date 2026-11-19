@@ -132,6 +132,11 @@ pub mod event_types {
     /// An email leaves the allowlist; the commit ends its sessions, and the
     /// user's agent keys keep working (ADR-0045 d2, d13).
     pub const WEB_EMAIL_REMOVED: &str = "web.email_removed";
+    /// The person a pending allowlist entry names accepted it from a
+    /// console session they already had; the email signs in from this
+    /// event on (ADR-0045 d2's note of 2026-11-19, the operator's
+    /// decision).
+    pub const WEB_EMAIL_ACCEPTED: &str = "web.email_accepted";
     /// A person signed up in open mode: the entry's email digest, the drawn
     /// user, the provider and the terms version they accepted (ADR-0068 d2).
     pub const WEB_SIGNED_UP: &str = "web.signed_up";

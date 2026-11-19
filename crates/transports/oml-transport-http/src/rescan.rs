@@ -57,6 +57,7 @@ fn report_json(r: &RescanReport, fixes: &oml_app::app::FixStats) -> Value {
         "fixes_admin_person_only": fixes.admin_person_only,
         "fixes_reverted": fixes.reverted,
         "key_links_pending": fixes.links_pending,
+        "web_emails_pending": fixes.emails_pending,
     })
 }
 

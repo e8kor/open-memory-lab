@@ -1827,6 +1827,7 @@ Kind: table.
 | `added_by` | `uuid` | not null |  |  |
 | `terms_version` | `text` | null |  |  |
 | `disabled_at` | `timestamp with time zone` | null |  |  |
+| `pending_since` | `timestamp with time zone` | null |  | When an admin added this entry, or changed it to name its user, for a person who signs in already; it signs in to nothing until that person accepts it, and is NULL after (the operator's decision of 2026-11-19). |
 
 Checks:
 

@@ -1298,4 +1298,99 @@ where
     .await;
     a_held_put_back_another_key_proposed_before_the_rule_is_still_ratified_after_it(make().await)
         .await;
+    a_pending_email_signs_in_to_nothing_until_its_person_accepts_it(make().await).await;
+}
+
+/// The operator's decision of 2026-11-19 (ADR-0045 d2's note), on either
+/// store: an email an admin adds for a person who signs in already is
+/// stored pending, listed among the tenant's pending entries, and opens no
+/// session, whatever calls the store; once its person accepts it from
+/// their own session it is listed no longer and opens one. A pending admin
+/// entry is no admin the tenant keeps: the last live admin entry stays
+/// refused its un-flagging.
+pub async fn a_pending_email_signs_in_to_nothing_until_its_person_accepts_it<
+    S: WebStore + ConnectionStore + Clone,
+>(
+    store: S,
+) {
+    let w = RootsWorld::new(store).await;
+    let ann = w.signed_in("ann", true).await;
+    let added = Email::parse("ann@elsewhere.example").expect("an email");
+    let (entry, _) = w
+        .app
+        .allow_web_email(
+            w.admin.as_str(),
+            &WebEmailRequest {
+                email: added.clone(),
+                user: Name::parse("ann").expect("a name"),
+                admin: true,
+            },
+        )
+        .await
+        .expect("the admin key adds it");
+    assert!(entry.pending, "{entry:?}");
+    let stored = w
+        .store
+        .web_entry_by_email(&added.digest())
+        .await
+        .expect("a read")
+        .expect("the entry");
+    assert!(stored.pending, "the store keeps it pending");
+    let listed = w
+        .store
+        .web_pending_emails(w.tenant)
+        .await
+        .expect("the pending entries");
+    assert_eq!(
+        listed.iter().map(|e| e.email.clone()).collect::<Vec<_>>(),
+        vec![added.clone()]
+    );
+    assert!(
+        w.app.web_session_open(&stored, 3600, None).await.is_err(),
+        "a pending entry opens no session"
+    );
+    // ann's own admin entry is the tenant's last live one: the pending one
+    // keeps no admin.
+    let err = w
+        .app
+        .allow_web_email_keeping(
+            w.admin.as_str(),
+            &WebEmailRequest {
+                email: Email::parse("ann@example.com").expect("an email"),
+                user: Name::parse("ann").expect("a name"),
+                admin: false,
+            },
+            true,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::WebField { field: "admin", .. }),
+        "{err:?}"
+    );
+    let web = w.session_key(&ann, Capacity::Web).await;
+    let accepted = w
+        .app
+        .accept_web_email(Bearer::Session(&web), &added)
+        .await
+        .expect("ann accepts");
+    assert!(!accepted.pending);
+    assert!(
+        w.store
+            .web_pending_emails(w.tenant)
+            .await
+            .expect("the pending entries")
+            .is_empty()
+    );
+    let stored = w
+        .store
+        .web_entry_by_email(&added.digest())
+        .await
+        .expect("a read")
+        .expect("the entry");
+    assert!(!stored.pending);
+    w.app
+        .web_session_open(&stored, 3600, None)
+        .await
+        .expect("the accepted entry opens a session");
 }

@@ -701,6 +701,10 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             ApiError::validation(format!("the key cannot be linked or unlinked: {reason}"))
                 .with_details(json!({ "field": field, "reason": reason }))
         }
+        AppError::WebEmailRefused { reason } => ApiError::validation(format!(
+            "the sign-in email cannot be accepted or removed here: {reason}"
+        ))
+        .with_details(json!({ "field": "/email", "reason": reason })),
         AppError::ActingKeyNotLinked => ApiError::auth_invalid("acting_key_not_linked"),
         AppError::SkillBodyTooLarge => ApiError::payload_too_large("a skill body past 32,768 bytes")
             .with_details(json!({ "field": "/body" })),

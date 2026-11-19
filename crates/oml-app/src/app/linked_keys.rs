@@ -273,7 +273,7 @@ where
                 .journal
                 .web_entries(tenant_id, after.as_ref(), 500)
                 .await?;
-            for entry in page.iter().filter(|e| &e.user == user) {
+            for entry in page.iter().filter(|e| &e.user == user && !e.pending) {
                 if entry.disabled_at.is_some() {
                     return Ok(false);
                 }

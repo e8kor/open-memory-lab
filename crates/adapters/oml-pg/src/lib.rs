@@ -4959,10 +4959,13 @@ async fn apply_fold(
             })?;
         }
         MetadataFold::WebEmailAllowed(entry) => {
+            // A pending entry records when it began to wait on its person
+            // (ADR-0045 d2's note of 2026-11-19).
             sqlx::query(
                 "INSERT INTO web_emails (tenant_id, email_hash, email, user_name, admin, \
-                 created_at, added_by, terms_version) \
-                 VALUES ($1, $2, $3, $4, $5, ($6)::timestamptz, $7, $8)",
+                 created_at, added_by, terms_version, pending_since) \
+                 VALUES ($1, $2, $3, $4, $5, ($6)::timestamptz, $7, $8, \
+                         CASE WHEN $9 THEN ($6)::timestamptz END)",
             )
             .bind(tenant_id)
             .bind(entry.email.digest().0.to_vec())
@@ -4972,6 +4975,7 @@ async fn apply_fold(
             .bind(at.as_str())
             .bind(entry.added_by)
             .bind(entry.terms_version.as_deref())
+            .bind(entry.pending)
             .execute(&mut **tx)
             .await
             .map_err(|e| match &e {
@@ -4996,20 +5000,45 @@ async fn apply_fold(
                 return Err(StoreError::LastAdminEntry);
             }
             end_entry_sessions(tx, tenant_id, &hash).await?;
+            // A change that leaves the entry pending keeps the time it began
+            // to wait; one that makes it pending starts it now.
             let changed = sqlx::query(
-                "UPDATE web_emails SET user_name = $3, admin = $4 \
+                "UPDATE web_emails SET user_name = $3, admin = $4, \
+                 pending_since = CASE WHEN $5 THEN coalesce(pending_since, ($6)::timestamptz) END \
                  WHERE tenant_id = $1 AND email_hash = $2",
             )
             .bind(tenant_id)
             .bind(&hash)
             .bind(entry.user.as_str())
             .bind(entry.admin)
+            .bind(entry.pending)
+            .bind(at.as_str())
             .execute(&mut **tx)
             .await
             .map_err(backend)?;
             if changed.rows_affected() != 1 {
                 return Err(StoreError::Backend(
                     "web.email_changed names an entry the tenant does not hold".to_owned(),
+                ));
+            }
+        }
+        MetadataFold::WebEmailAccepted { email_hash, user } => {
+            // The pending entry naming this user signs in from this commit
+            // on; anything else aborts it (ADR-0045 d2's note of 2026-11-19).
+            let accepted = sqlx::query(
+                "UPDATE web_emails SET pending_since = NULL \
+                 WHERE tenant_id = $1 AND email_hash = $2 AND user_name = $3 \
+                 AND pending_since IS NOT NULL",
+            )
+            .bind(tenant_id)
+            .bind(email_hash.0.to_vec())
+            .bind(user.as_str())
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if accepted.rows_affected() != 1 {
+                return Err(StoreError::Backend(
+                    "web.email_accepted names no pending entry of this user".to_owned(),
                 ));
             }
         }
@@ -6404,6 +6433,7 @@ async fn meter_plan(
         | MetadataFold::FindingsRecorded { .. }
         | MetadataFold::WebEmailAllowed(_)
         | MetadataFold::WebEmailChanged { .. }
+        | MetadataFold::WebEmailAccepted { .. }
         | MetadataFold::WebEmailRemoved { .. }
         | MetadataFold::AdminRead
         | MetadataFold::AdminMemoryRead { .. }
@@ -11954,7 +11984,7 @@ async fn last_admin_entry(
 ) -> Result<bool, StoreError> {
     let admins: Vec<Vec<u8>> = sqlx::query_scalar(
         "SELECT email_hash FROM web_emails WHERE tenant_id = $1 AND admin \
-         ORDER BY email_hash FOR UPDATE",
+         AND pending_since IS NULL ORDER BY email_hash FOR UPDATE",
     )
     .bind(tenant_id)
     .fetch_all(&mut **tx)
@@ -11981,7 +12011,7 @@ async fn end_entry_sessions(
 
 const WEB_ENTRY_COLUMNS: &str = concat!(
     "tenant_id, email, user_name, admin, google_subject, github_subject, added_by, ",
-    "terms_version, ",
+    "terms_version, pending_since IS NOT NULL AS pending, ",
     utc!("disabled_at"),
     " AS disabled_at_signed"
 );
@@ -11999,6 +12029,7 @@ fn web_entry_from_row(row: &PgRow) -> Result<WebEntry, StoreError> {
         added_by: row.try_get("added_by").map_err(backend)?,
         terms_version: row.try_get("terms_version").map_err(backend)?,
         disabled_at: event_time_column(row, "disabled_at_signed")?,
+        pending: row.try_get("pending").map_err(backend)?,
     })
 }
 
@@ -12281,10 +12312,14 @@ impl WebStore for PgStore {
                 .await
                 .map_err(backend)?;
         }
-        sqlx::query(
+        // A session opens only on an entry that waits on no one: a pending
+        // entry signs in to nothing (ADR-0045 d2's note of 2026-11-19).
+        let opened = sqlx::query(
             "INSERT INTO web_sessions (token_hash, tenant_id, email_hash, user_name, admin, \
              created_at, expires_at) \
-             VALUES ($1, $2, $3, $4, $5, ($6)::timestamptz, ($7)::timestamptz)",
+             SELECT $1, $2, $3, $4, $5, ($6)::timestamptz, ($7)::timestamptz \
+             WHERE NOT EXISTS (SELECT 1 FROM web_emails e WHERE e.tenant_id = $2 \
+                               AND e.email_hash = $3 AND e.pending_since IS NOT NULL)",
         )
         .bind(session.token_hash.0.to_vec())
         .bind(session.tenant_id)
@@ -12296,6 +12331,11 @@ impl WebStore for PgStore {
         .execute(&mut *tx)
         .await
         .map_err(backend)?;
+        if opened.rows_affected() != 1 {
+            return Err(StoreError::Backend(
+                "web_sessions: the entry waits on its person's acceptance".to_owned(),
+            ));
+        }
         // The capacity credentials' digests, in the commit that opens the
         // session; the foreign key ends them with it (ADR-0070 d2).
         for (capacity, digest) in credentials {
@@ -12550,6 +12590,21 @@ impl WebStore for PgStore {
             |q| q,
         )
         .await
+    }
+
+    async fn web_pending_emails(&self, tenant_id: Uuid) -> Result<Vec<WebEntry>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sqlx::query(&format!(
+            "SELECT {WEB_ENTRY_COLUMNS} FROM web_emails \
+             WHERE tenant_id = $1 AND pending_since IS NOT NULL ORDER BY email"
+        ))
+        .bind(tenant_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter().map(web_entry_from_row).collect()
     }
 
     async fn web_session_keys(

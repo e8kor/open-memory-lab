@@ -38,17 +38,42 @@
 -- moves it to linked_user_id. memories.admin_fix_reverted marks a version a
 -- reverted fix served (ADR-0089 d17).
 --
+-- Links made before this migration wait on their person too: every linked
+-- key but the bootstrap ceremony's first admin key (issued_by NULL: no key
+-- issues it, and its person runs the ceremony) moves its linked_user_id to
+-- link_pending_user_id, so its person accepts it before it acts for them.
+-- api_keys_link_guard, owner-owned and SECURITY INVOKER as 0057's guard is,
+-- admits a change of linked_user_id only to NULL (an unlink), from the
+-- link pending to the same root (an acceptance), or on the ceremony's own
+-- key while it holds no link (the bootstrap's), and refuses any change of
+-- issued_by, which marks that key.
+--
+-- An admin can no longer quietly become a person who signs in already (the
+-- operator's decision of 2026-11-19, ADR-0045 d2's note):
+-- web_emails.pending_since marks an entry an admin added, or changed to
+-- name them, for such a person; it signs in to nothing until that person
+-- accepts it from a session they already have, web.email_accepted, which
+-- clears it. A session opens only on an entry with pending_since NULL.
+--
+-- A database that applied an earlier draft of this migration (a stage or
+-- development database built from the #498 branch before 2026-11-19's third
+-- round) is reset and migrated again: sqlx records the file's checksum, and
+-- the edited file no longer matches it.
+--
 -- What it costs a live database: one new, empty table with one index, its
--- policy and its update guard, four nullable columns on memories and one
--- on api_keys with no default, which rewrite no row, and the api_keys
--- checks replaced and added NOT VALID, then validated. ALTER TABLE memories
--- takes ACCESS EXCLUSIVE on memories and its partitions for the catalog
--- change only. The DROP CONSTRAINT on api_keys takes ACCESS EXCLUSIVE on
--- api_keys and holds it to the commit, so both VALIDATEs scan api_keys
--- under it: measured at 1,000,000 keys, about 120 ms of scan, during which
--- a key lookup waits about 150 ms; a tenant holds hundreds of keys. The
--- foreign key to tenants takes SHARE ROW EXCLUSIVE on tenants until the
--- commit. A lock is waited for at most 5 s.
+-- policy and its update guard, four nullable columns on memories, one on
+-- api_keys and one on web_emails with no default, which rewrite no row, an
+-- update guard on api_keys, the linked keys' rows updated per tenant, and
+-- the api_keys checks replaced and added NOT VALID, then validated. ALTER
+-- TABLE memories takes ACCESS EXCLUSIVE on memories and its partitions for
+-- the catalog change only. The DROP CONSTRAINT on api_keys takes ACCESS
+-- EXCLUSIVE on api_keys and holds it to the commit, so both VALIDATEs scan
+-- api_keys under it: measured at 1,000,000 keys, about 120 ms of scan for
+-- one VALIDATE, so with two a key lookup waits about 230 ms; a tenant holds
+-- hundreds of keys. ALTER TABLE web_emails takes ACCESS EXCLUSIVE on
+-- web_emails for the catalog change only. The foreign key to tenants takes
+-- SHARE ROW EXCLUSIVE on tenants until the commit. A lock is waited for at
+-- most 5 s.
 
 SET LOCAL lock_timeout = '5s';
 
@@ -159,6 +184,28 @@ ALTER TABLE api_keys ADD COLUMN link_pending_user_id uuid;
 COMMENT ON COLUMN api_keys.link_pending_user_id IS
     'The user root a console admin linked this key to, until that person accepts the link; the '
     'key acts for no one meanwhile (ADR-0085 d16, the operator''s decision of 2026-11-19).';
+
+-- Links made before this migration wait on their person as a console
+-- admin's link does (the operator's decision of 2026-11-19): every linked key
+-- but the bootstrap ceremony's first admin key, which no key issues, moves its
+-- link to pending, one tenant at a time under that tenant's row security.
+DO $$
+DECLARE
+    t uuid;
+BEGIN
+    PERFORM set_config('oml.startup_check', 'on', true);
+    FOR t IN SELECT id FROM tenants ORDER BY id LOOP
+        PERFORM set_config('oml.tenant_id', t::text, true);
+        UPDATE api_keys
+           SET link_pending_user_id = linked_user_id,
+               linked_user_id = NULL
+         WHERE tenant_id = t
+           AND linked_user_id IS NOT NULL
+           AND issued_by IS NOT NULL;
+    END LOOP;
+    PERFORM set_config('oml.tenant_id', '', true);
+    PERFORM set_config('oml.startup_check', '', true);
+END $$;
 ALTER TABLE api_keys
     ADD CONSTRAINT api_keys_link_pending CHECK (
         link_pending_user_id IS NULL
@@ -166,6 +213,55 @@ ALTER TABLE api_keys
     ) NOT VALID;
 -- lint:allow validate the column is new and NULL on every stored row, so no row fails it, and api_keys holds one row per key
 ALTER TABLE api_keys VALIDATE CONSTRAINT api_keys_link_pending;
+
+-- A key comes to act for a person only through the person (the operator's
+-- decision of 2026-11-19): an update that sets linked_user_id is an unlink to
+-- NULL, an acceptance that moves the link pending to the same root, or the
+-- bootstrap ceremony's link of its own first admin key, which no key issues;
+-- issued_by, which marks that key, never changes. Owner-owned and SECURITY
+-- INVOKER, as 0057's guard is.
+CREATE OR REPLACE FUNCTION oml_api_keys_link_guard() RETURNS trigger
+    LANGUAGE plpgsql SECURITY INVOKER SET search_path = public, pg_temp AS $$
+BEGIN
+    IF NEW.issued_by IS DISTINCT FROM OLD.issued_by THEN
+        RAISE EXCEPTION 'api_keys_link_guard: a key''s issuer never changes'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.linked_user_id IS NOT DISTINCT FROM OLD.linked_user_id
+       OR NEW.linked_user_id IS NULL THEN
+        RETURN NEW;
+    END IF;
+    IF OLD.linked_user_id IS NULL
+       AND OLD.link_pending_user_id = NEW.linked_user_id
+       AND NEW.link_pending_user_id IS NULL THEN
+        RETURN NEW;
+    END IF;
+    IF OLD.linked_user_id IS NULL AND OLD.link_pending_user_id IS NULL
+       AND OLD.issued_by IS NULL AND OLD.role = 'admin' THEN
+        RETURN NEW;
+    END IF;
+    RAISE EXCEPTION 'api_keys_link_guard: a key acts for a person only once that person accepts its link'
+        USING ERRCODE = 'check_violation';
+END $$;
+
+CREATE TRIGGER api_keys_link_guard
+    BEFORE UPDATE OF linked_user_id, issued_by ON api_keys
+    FOR EACH ROW EXECUTE FUNCTION oml_api_keys_link_guard();
+
+COMMENT ON FUNCTION oml_api_keys_link_guard() IS
+    'Refuses an update of api_keys that sets linked_user_id other than to NULL, from the link '
+    'pending to the same root, or on the bootstrap ceremony''s first admin key while it holds no '
+    'link, and any change of issued_by (0064; ADR-0085 d16, the operator''s decision of '
+    '2026-11-19).';
+
+-- A sign-in email for a person who signs in already waits on that person
+-- (the operator's decision of 2026-11-19, ADR-0045 d2's note): the time it
+-- began to wait, NULL once accepted or for an entry that never waited.
+ALTER TABLE web_emails ADD COLUMN pending_since timestamptz;
+COMMENT ON COLUMN web_emails.pending_since IS
+    'When an admin added this entry, or changed it to name its user, for a person who signs in '
+    'already; it signs in to nothing until that person accepts it, and is NULL after '
+    '(ADR-0045 d2, the operator''s decision of 2026-11-19).';
 
 DO $$
 BEGIN

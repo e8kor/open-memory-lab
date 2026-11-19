@@ -199,6 +199,12 @@ where
         if entry.disabled_at.is_some() {
             return Err(refused(SignInRefusal::Disabled));
         }
+        // Nor does an entry that waits on its person, and its provider
+        // subject stays unpinned (the operator's decision of 2026-11-19,
+        // ADR-0045 d2's note).
+        if entry.pending {
+            return Err(refused(SignInRefusal::Pending));
+        }
         match self
             .journal
             .web_pin(
@@ -225,6 +231,16 @@ where
         ttl_secs: i64,
         replaces: Option<&str>,
     ) -> Result<OpenedSession, AppError> {
+        // A pending entry opens no session, read again here rather than
+        // trusted from the caller's copy (the operator's decision of
+        // 2026-11-19); the store refuses one too.
+        let stored = self
+            .journal
+            .web_entry_by_email(&entry.email.digest())
+            .await?;
+        if entry.pending || stored.is_some_and(|e| e.pending) {
+            return Err(AppError::WebSignIn(SignInRefusal::Pending));
+        }
         let token: String = self
             .ids
             .new_secret()
@@ -630,6 +646,7 @@ where
             added_by: issuer.key_id,
             terms_version: Some(policy.terms_version.clone()),
             disabled_at: None,
+            pending: false,
         };
         let prev = self.head_event(tenant_id).await?;
         let event = self.seal(

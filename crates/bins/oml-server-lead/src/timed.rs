@@ -1517,6 +1517,16 @@ impl<J: WebStore> WebStore for Timed<J> {
         timed("web_pending_links", self.inner.web_pending_links(tenant_id))
     }
 
+    fn web_pending_emails(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<WebEntry>, StoreError>> + Send {
+        timed(
+            "web_pending_emails",
+            self.inner.web_pending_emails(tenant_id),
+        )
+    }
+
     fn web_user_keys(
         &self,
         tenant_id: Uuid,

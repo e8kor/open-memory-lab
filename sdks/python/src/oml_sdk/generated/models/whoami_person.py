@@ -35,6 +35,10 @@ class WhoamiPerson:
         pending_links (list[WhoamiRef] | Unset): The live tenant keys an admin linked to the person that wait on the
             person's acceptance, by id and name, in name order; each acts for no one until the person accepts it with POST
             /v2/keys/{key}/accept_link (ADR-0085 d16, the operator's decision of 2026-11-19). Since v0.8.4.
+        pending_emails (list[str] | Unset): The sign-in emails an admin added for the person that wait on the person's
+            acceptance, in email order; each signs in to nothing until the person accepts it with POST /v2/web/emails/accept
+            or removes it with POST /v2/web/emails/decline (ADR-0045 d2, the operator's decision of 2026-11-19). Since
+            v0.8.4.
         start (None | Unset | WhoamiPersonStartType0): With start=true, what the onboarding page waits for: whether one
             of the person's agent keys has connected, and the state of the newest memory of their root, held or promoted,
             else null (ADR-0068 d10; ADR-0070 d5). Absent otherwise. Since v0.7.0.
@@ -47,6 +51,7 @@ class WhoamiPerson:
     deletion_requested_at: datetime.datetime | None
     linked_keys: list[WhoamiRef] | Unset = UNSET
     pending_links: list[WhoamiRef] | Unset = UNSET
+    pending_emails: list[str] | Unset = UNSET
     start: None | Unset | WhoamiPersonStartType0 = UNSET
 
     def to_dict(self) -> dict[str, Any]:
@@ -90,6 +95,10 @@ class WhoamiPerson:
                 pending_links_item = pending_links_item_data.to_dict()
                 pending_links.append(pending_links_item)
 
+        pending_emails: list[str] | Unset = UNSET
+        if not isinstance(self.pending_emails, Unset):
+            pending_emails = self.pending_emails
+
         start: dict[str, Any] | None | Unset
         if isinstance(self.start, Unset):
             start = UNSET
@@ -113,6 +122,8 @@ class WhoamiPerson:
             field_dict["linked_keys"] = linked_keys
         if pending_links is not UNSET:
             field_dict["pending_links"] = pending_links
+        if pending_emails is not UNSET:
+            field_dict["pending_emails"] = pending_emails
         if start is not UNSET:
             field_dict["start"] = start
 
@@ -195,6 +206,8 @@ class WhoamiPerson:
 
                 pending_links.append(pending_links_item)
 
+        pending_emails = cast(list[str], d.pop("pending_emails", UNSET))
+
         def _parse_start(data: object) -> None | Unset | WhoamiPersonStartType0:
             if data is None:
                 return data
@@ -220,6 +233,7 @@ class WhoamiPerson:
             deletion_requested_at=deletion_requested_at,
             linked_keys=linked_keys,
             pending_links=pending_links,
+            pending_emails=pending_emails,
             start=start,
         )
 

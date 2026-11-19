@@ -6074,3 +6074,272 @@ async fn a_workspace_moved_to_protected_after_the_fix_is_judged_at_the_confirm()
         .expect("another person confirms in a protected workspace");
     assert_eq!(confirmed.settled_same_user, Some(false));
 }
+
+// ---------------------------------------------------------------------------
+// A sign-in email for a person who signs in already waits on that person
+// (ADR-0045 d2's note of 2026-11-19, the operator's decision; ADR-0089).
+// ---------------------------------------------------------------------------
+
+fn email(value: &str) -> Email {
+    Email::parse(value).expect("an email")
+}
+
+/// `email` added by the bootstrap's admin key for `user`.
+async fn allowed(r: &FixRig, address: &str, user: &str) -> oml_app::types::WebEntry {
+    r.app
+        .allow_web_email(
+            r.boot.admin_key.value.as_str(),
+            &WebEmailRequest {
+                email: email(address),
+                user: name(user),
+                admin: false,
+            },
+        )
+        .await
+        .expect("the admin key adds the entry")
+        .0
+}
+
+fn email_refused(err: &AppError, reason: &str) -> bool {
+    matches!(err, AppError::WebEmailRefused { reason: r } if *r == reason)
+}
+
+fn pending_refusal(err: &AppError) -> bool {
+    matches!(
+        err,
+        AppError::WebSignIn(oml_app::domain::web::SignInRefusal::Pending)
+    )
+}
+
+/// The attack the decision closes: an admin adds an address they control
+/// for alice, who signs in already. The entry is pending, and no session
+/// opens on it, so the admin cannot act as alice through it.
+#[tokio::test]
+async fn an_email_an_admin_adds_for_a_person_who_signs_in_already_is_pending_and_opens_no_session()
+{
+    let r = fix_rig().await;
+    let entry = allowed(&r, "mallory@example.net", "alice").await;
+    assert!(entry.pending, "{entry:?}");
+    let stored = r
+        .store
+        .web_entry_by_email(&email("mallory@example.net").digest())
+        .await
+        .expect("a read")
+        .expect("the entry");
+    assert!(stored.pending);
+    let err = r
+        .app
+        .web_session_open(&stored, 3600, None)
+        .await
+        .unwrap_err();
+    assert!(pending_refusal(&err), "{err:?}");
+    let events = r
+        .store
+        .events_range(r.boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal");
+    let last = &events.last().expect("an event").envelope;
+    assert_eq!(last.event_type, event_types::WEB_EMAIL_ALLOWED);
+    assert_eq!(last.payload["pending"], true);
+}
+
+/// A person's first email signs in at once, as before the decision: no
+/// session of theirs exists to accept it from.
+#[tokio::test]
+async fn a_first_email_for_a_new_person_is_not_pending_and_signs_in() {
+    let r = fix_rig().await;
+    let entry = allowed(&r, "carol@example.com", "carol").await;
+    assert!(!entry.pending, "{entry:?}");
+    r.app
+        .web_ensure_keys(&entry)
+        .await
+        .expect("carol's session keys");
+    r.app
+        .web_session_open(&entry, 3600, None)
+        .await
+        .expect("carol's first email opens a session");
+}
+
+/// Only the person a pending email names accepts it, from their own
+/// console session: another person's session and the adding admin's are
+/// refused `not_named_person`, a bearer key `session_only`, and none of
+/// them journals anything. Once accepted the email signs in, and a second
+/// acceptance is `not_pending`.
+#[tokio::test]
+async fn only_the_named_person_accepts_a_pending_email_and_then_it_signs_in() {
+    let r = fix_rig().await;
+    let address = email("alice@work.example");
+    allowed(&r, address.as_str(), "alice").await;
+    let head = r
+        .store
+        .events_range(r.boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal")
+        .len();
+    let bob = console_of(&r.app, &r.store, "bob").await;
+    for caller in [&bob, &r.ops] {
+        let err = r
+            .app
+            .accept_web_email(Bearer::Session(caller), &address)
+            .await
+            .unwrap_err();
+        assert!(email_refused(&err, "not_named_person"), "{err:?}");
+    }
+    for bearer in [
+        r.alice_review.value.as_str(),
+        r.boot.admin_key.value.as_str(),
+    ] {
+        let err = r.app.accept_web_email(bearer, &address).await.unwrap_err();
+        assert!(email_refused(&err, "session_only"), "{err:?}");
+    }
+    assert_eq!(
+        r.store
+            .events_range(r.boot.tenant_id, 1, 10_000)
+            .await
+            .expect("journal")
+            .len(),
+        head,
+        "a refused acceptance journals nothing"
+    );
+    let alice = console_of(&r.app, &r.store, "alice").await;
+    let accepted = r
+        .app
+        .accept_web_email(Bearer::Session(&alice), &address)
+        .await
+        .expect("alice accepts");
+    assert!(!accepted.pending);
+    let events = r
+        .store
+        .events_range(r.boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal");
+    let last = &events.last().expect("an event").envelope;
+    assert_eq!(last.event_type, event_types::WEB_EMAIL_ACCEPTED);
+    assert_eq!(last.payload["user"], "alice");
+    assert_eq!(last.payload["email_digest"], address.digest().to_prefixed());
+    let stored = r
+        .store
+        .web_entry_by_email(&address.digest())
+        .await
+        .expect("a read")
+        .expect("the entry");
+    assert!(!stored.pending);
+    r.app
+        .web_session_open(&stored, 3600, None)
+        .await
+        .expect("the accepted email opens a session");
+    let err = r
+        .app
+        .accept_web_email(Bearer::Session(&alice), &address)
+        .await
+        .unwrap_err();
+    assert!(email_refused(&err, "not_pending"), "{err:?}");
+}
+
+/// Changing an entry so that it names another person who signs in already
+/// is the same act as adding one for them: it waits on that person.
+#[tokio::test]
+async fn an_admin_changing_an_entry_to_name_another_existing_person_leaves_it_pending() {
+    let r = fix_rig().await;
+    allowed(&r, "spare@example.com", "spare").await;
+    let changed = allowed(&r, "spare@example.com", "alice").await;
+    assert!(changed.pending, "{changed:?}");
+    // A change of the admin flag alone keeps the person the entry names.
+    let flagged = r
+        .app
+        .allow_web_email(
+            r.boot.admin_key.value.as_str(),
+            &WebEmailRequest {
+                email: email("bob@example.com"),
+                user: name("bob"),
+                admin: true,
+            },
+        )
+        .await
+        .expect("bob's entry made an admin's")
+        .0;
+    assert!(!flagged.pending, "{flagged:?}");
+}
+
+/// Removing every entry of a person does not make them new: they signed in
+/// before, so an email added for them afterwards waits on them too.
+#[tokio::test]
+async fn an_email_added_after_a_persons_entries_were_removed_still_waits_on_them() {
+    let r = fix_rig().await;
+    r.app
+        .remove_web_email(r.boot.admin_key.value.as_str(), &email("bob@example.com"))
+        .await
+        .expect("bob's entry removed");
+    let entry = allowed(&r, "not-bob@example.net", "bob").await;
+    assert!(entry.pending, "{entry:?}");
+}
+
+/// A pending email is removed by the person it names, from their own
+/// session, or by an admin as any entry is; anyone else's session is
+/// refused. The person's console lists it while it waits, and the doctor
+/// counts it.
+#[tokio::test]
+async fn a_pending_email_is_listed_counted_and_removed_by_its_person_or_an_admin() {
+    let r = fix_rig().await;
+    let first = email("alice@second.example");
+    let second = email("alice@third.example");
+    allowed(&r, first.as_str(), "alice").await;
+    allowed(&r, second.as_str(), "alice").await;
+    let alice = console_of(&r.app, &r.store, "alice").await;
+    let person = r
+        .app
+        .whoami_person(Bearer::Session(&alice), false)
+        .await
+        .expect("whoami")
+        .expect("alice's person");
+    let mut listed = person.pending_emails.clone();
+    listed.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+    assert_eq!(listed, vec![first.clone(), second.clone()]);
+    assert_eq!(
+        r.app
+            .fix_stats(r.boot.tenant_id)
+            .await
+            .expect("stats")
+            .emails_pending,
+        2
+    );
+    let bob = console_of(&r.app, &r.store, "bob").await;
+    let err = r
+        .app
+        .decline_web_email(Bearer::Session(&bob), &first)
+        .await
+        .unwrap_err();
+    assert!(email_refused(&err, "not_named_person"), "{err:?}");
+    r.app
+        .decline_web_email(Bearer::Session(&alice), &first)
+        .await
+        .expect("alice removes the email she did not ask for");
+    r.app
+        .remove_web_email(r.boot.admin_key.value.as_str(), &second)
+        .await
+        .expect("an admin removes a pending email");
+    for address in [&first, &second] {
+        assert!(
+            r.store
+                .web_entry_by_email(&address.digest())
+                .await
+                .expect("a read")
+                .is_none()
+        );
+    }
+    assert_eq!(
+        r.app
+            .fix_stats(r.boot.tenant_id)
+            .await
+            .expect("stats")
+            .emails_pending,
+        0
+    );
+    // An accepted entry is no pending one to remove from a session.
+    let err = r
+        .app
+        .decline_web_email(Bearer::Session(&alice), &email("alice@example.com"))
+        .await
+        .unwrap_err();
+    assert!(email_refused(&err, "not_pending"), "{err:?}");
+}

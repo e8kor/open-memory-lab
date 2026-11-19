@@ -8642,6 +8642,68 @@ async fn team_key(
         .expect("a key on team")
 }
 
+/// An address an admin adds for a person who signs in already waits on
+/// that person (the operator's decision of 2026-11-19, ADR-0045 d2's note):
+/// it signs in to nothing, the person's Keys page offers it to accept or
+/// remove, and once accepted it signs in as them; one the person removes is
+/// gone.
+#[tokio::test]
+async fn the_keys_page_offers_a_pending_sign_in_email_to_accept_or_remove() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    rig.allow("alice@work.example", "alice", false).await;
+    rig.allow("someone@example.net", "alice", false).await;
+    let (status, token, body) = sign_in_google(&rig, "sub-2", "alice@work.example").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_eq!(token, None, "a pending email opens no session");
+
+    let (status, _, keys) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{keys}");
+    assert!(keys.contains("<h2>Sign-in emails to accept</h2>"), "{keys}");
+    assert!(keys.contains("<code>alice@work.example</code>"), "{keys}");
+    assert!(keys.contains(">Accept sign-in email</button>"), "{keys}");
+    assert!(keys.contains(">Remove</button>"), "{keys}");
+
+    let (status, headers, body) = act(
+        &rig,
+        &cookie,
+        "/web/keys",
+        &[("action", "accept_email"), ("email", "alice@work.example")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    assert_eq!(
+        headers[header::LOCATION].to_str().unwrap(),
+        "/web/keys?done=email_accepted"
+    );
+    let (status, headers, body) = act(
+        &rig,
+        &cookie,
+        "/web/keys",
+        &[
+            ("action", "decline_email"),
+            ("email", "someone@example.net"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    assert_eq!(
+        headers[header::LOCATION].to_str().unwrap(),
+        "/web/keys?done=email_removed"
+    );
+    let (_, _, keys) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+    assert!(
+        !keys.contains("<h2>Sign-in emails to accept</h2>"),
+        "{keys}"
+    );
+    let (status, token, body) = sign_in_google(&rig, "sub-2", "alice@work.example").await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    assert!(token.is_some(), "the accepted email opens a session");
+    let (status, token, _) = sign_in_google(&rig, "sub-3", "someone@example.net").await;
+    assert_ne!(status, StatusCode::SEE_OTHER);
+    assert_eq!(token, None, "the removed email is on no list");
+}
+
 /// In a shared workspace the person's own reviewer key holds no grant, so
 /// the console judges there with the tenant key an admin linked to them:
 /// the Keys page links it to Review, Review lists what that key may judge,

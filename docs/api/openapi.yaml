@@ -2513,6 +2513,76 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         default: { $ref: '#/components/responses/Error' }
 
+  /v2/web/emails/accept:
+    post:
+      tags: [web]
+      operationId: acceptWebEmail
+      summary: Accept a sign-in email an admin added for the signed-in person, so it signs in as them.
+      description: 'Requires: the console session of the person the pending entry names, through its capacity credential (the operator''s decision of 2026-11-19, ADR-0045 d2''s note). An email an admin adds for a person who signs in already, or an entry changed to name such a person, is pending and signs in to nothing until that person accepts it. Journalled as web.email_accepted with the email''s digest; the email signs in as the person from then on. Refused request.validation, details.field /email, with details.reason session_only for a bearer key, an admin key''s included, not_named_person for a session of any other person, the adding admin''s included, and not_pending for an entry that waits on no one; an email on no entry of the caller''s tenant answers access.not_found. A refusal journals nothing. The email is in the body, never the path. Since v0.8.4.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              email: alice@work.example
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email]
+              properties:
+                email: { type: string, maxLength: 254 }
+      responses:
+        '200':
+          description: Accepted; the entry as it stands, pending false.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebEmail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/web/emails/decline:
+    post:
+      tags: [web]
+      operationId: declineWebEmail
+      summary: Remove a sign-in email an admin added for the signed-in person that waits on them.
+      description: 'Requires: the console session of the person the pending entry names, through its capacity credential (the operator''s decision of 2026-11-19, ADR-0045 d2''s note). An email an admin adds for a person who signs in already, or an entry changed to name such a person, is pending and signs in to nothing until that person accepts it. Journalled as web.email_removed with the email''s digest and pending true; an admin removes a pending entry with POST /v2/web/emails/remove. Refused request.validation, details.field /email, with details.reason session_only for a bearer key, an admin key''s included, not_named_person for a session of any other person, the adding admin''s included, and not_pending for an entry that waits on no one; an email on no entry of the caller''s tenant answers access.not_found. A refusal journals nothing. The email is in the body, never the path. Since v0.8.4.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              email: alice@work.example
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email]
+              properties:
+                email: { type: string, maxLength: 254 }
+      responses:
+        '200':
+          description: Removed; the entry as it stood, pending true.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebEmail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+
   /v2/web/users:
     get:
       tags: [web]
@@ -4235,11 +4305,12 @@ components:
       type: object
       additionalProperties: false
       description: 'An allowlist entry (ADR-0045 d2): an email a person may sign in with, the ADR-0044 user it signs in as, and whether it opens the admin page.'
-      required: [email, user, admin]
+      required: [email, user, admin, pending]
       properties:
         email: { type: string, maxLength: 254 }
         user: { type: string, pattern: '^[a-z]([a-z0-9-]{0,54}[a-z0-9])?$', description: 'A name under the creation grammar, at most 56 characters.' }
         admin: { type: boolean }
+        pending: { type: boolean, description: "Whether the entry waits on its person's acceptance: an admin added it, or changed it to name them, for a person who signs in already; it signs in to nothing, auth.invalid with details.reason email_pending, until that person accepts it with POST /v2/web/emails/accept (ADR-0045 d2, the operator's decision of 2026-11-19). Since v0.8.4." }
 
     Digest:
       type: string
@@ -6324,6 +6395,10 @@ components:
           description: "The live tenant keys an admin linked to the person that wait on the person's acceptance, by id and name, in name order; each acts for no one until the person accepts it with POST /v2/keys/{key}/accept_link (ADR-0085 d16, the operator's decision of 2026-11-19). Since v0.8.4."
           type: array
           items: { $ref: '#/components/schemas/WhoamiRef' }
+        pending_emails:
+          description: "The sign-in emails an admin added for the person that wait on the person's acceptance, in email order; each signs in to nothing until the person accepts it with POST /v2/web/emails/accept or removes it with POST /v2/web/emails/decline (ADR-0045 d2, the operator's decision of 2026-11-19). Since v0.8.4."
+          type: array
+          items: { type: string, maxLength: 254 }
         start:
           description: "With start=true, what the onboarding page waits for: whether one of the person's agent keys has connected, and the state of the newest memory of their root, held or promoted, else null (ADR-0068 d10; ADR-0070 d5). Absent otherwise. Since v0.7.0."
           type: [object, 'null']

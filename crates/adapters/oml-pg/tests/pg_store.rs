@@ -13877,6 +13877,69 @@ async fn an_open_investigations_read_count_never_goes_down() {
     drop_dbs(&created).await;
 }
 
+/// A key comes to act for a person only through that person (the
+/// operator's decision of 2026-11-19; ADR-0085 d16): the serving role may
+/// not set a key's link directly, nor accept a pending link to another root
+/// than the one pending, nor change a key's issuer, which marks the
+/// bootstrap ceremony's key; 0064's guard refuses each. An acceptance of the
+/// pending link and an unlink pass.
+#[tokio::test]
+async fn the_serving_role_links_a_key_to_a_person_only_through_an_acceptance() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let (_app, tenant, _admin, _writer, _v1, _v2) = two_promoted_pg(&store, "linkguard").await;
+    let key: Uuid = {
+        let mut tx = store.pool().begin().await.expect("begin");
+        sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+            .bind(tenant.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("tenant");
+        let id = sqlx::query_scalar(
+            "SELECT id FROM api_keys WHERE tenant_id = $1 AND issued_by IS NOT NULL \
+             AND credential = 'bearer' AND user_root_id IS NULL ORDER BY id LIMIT 1",
+        )
+        .bind(tenant)
+        .fetch_one(&mut *tx)
+        .await
+        .expect("a tenant key an admin issued");
+        tx.commit().await.expect("commit");
+        id
+    };
+    for sql in [
+        "UPDATE api_keys SET linked_user_id = gen_random_uuid() WHERE tenant_id = $1 AND id = $2",
+        "UPDATE api_keys SET issued_by = NULL WHERE tenant_id = $1 AND id = $2",
+    ] {
+        let err = serving_refusal(&store, tenant, sql, key)
+            .await
+            .unwrap_or_else(|| panic!("the serving role linked a key directly: {sql}"));
+        assert!(err.contains("api_keys_link_guard"), "{sql}: {err}");
+    }
+    let pend = "UPDATE api_keys SET link_pending_user_id = $2 WHERE tenant_id = $1 AND id = $2";
+    assert_eq!(serving_refusal(&store, tenant, pend, key).await, None);
+    let elsewhere = "UPDATE api_keys SET linked_user_id = gen_random_uuid(), \
+                     link_pending_user_id = NULL WHERE tenant_id = $1 AND id = $2";
+    let err = serving_refusal(&store, tenant, elsewhere, key)
+        .await
+        .expect("an acceptance to another root is refused");
+    assert!(err.contains("api_keys_link_guard"), "{err}");
+    for sql in [
+        "UPDATE api_keys SET linked_user_id = link_pending_user_id, \
+         link_pending_user_id = NULL WHERE tenant_id = $1 AND id = $2",
+        "UPDATE api_keys SET linked_user_id = NULL WHERE tenant_id = $1 AND id = $2",
+    ] {
+        assert_eq!(
+            serving_refusal(&store, tenant, sql, key).await,
+            None,
+            "{sql}"
+        );
+    }
+    drop_dbs(&created).await;
+}
+
 /// The serving role settles a fix once and closes an investigation once,
 /// and rewrites nothing either recorded: column grants keep the recorded
 /// columns out of its reach, and the guards of 0063 and 0064 refuse a
