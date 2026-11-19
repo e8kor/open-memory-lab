@@ -40,7 +40,10 @@
 --    (test, skill, guardrail and the vocabulary kinds) has its skills'
 --    lexemes recomputed and its postings and counts refilled under its row
 --    security, alone in its own transaction; a tenant with none is read by
---    one probe and left as it is.
+--    one probe and left as it is. A refill rewrites every posting and count
+--    of its tenant, not only the new kinds': measured at about 4.5 s for a
+--    tenant of 20,000 versions, so about 225 s per million versions, during
+--    which that tenant's writes wait on the rows it rewrites.
 
 DO $mig$
 DECLARE
@@ -137,6 +140,11 @@ BEGIN
     ALTER TABLE search_postings VALIDATE CONSTRAINT search_postings_memory_kind;
     COMMIT;
 
+    -- The tenant list is read under 0003's startup policy: tenants forces
+    -- row security, so an owner with neither SUPERUSER nor BYPASSRLS would
+    -- read no tenant without it. The loop's first COMMIT materializes the
+    -- list, so the setting need only hold for its first fetch.
+    PERFORM set_config('oml.startup_check', 'on', true);
     FOR t IN SELECT id FROM tenants ORDER BY id LOOP
         SET LOCAL lock_timeout = '5s';
         -- The tenants are enumerated under 0003's startup policy, and each

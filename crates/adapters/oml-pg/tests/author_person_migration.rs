@@ -7,7 +7,7 @@
 use std::sync::atomic::Ordering;
 
 use oml_pg::MIGRATOR;
-use oml_test_pg::{DB_N, mint_database, owner_url, run_tag};
+use oml_test_pg::{DB_N, drop_db, mint_database, owner_url, run_tag};
 use sqlx::migrate::Migrate;
 use sqlx::postgres::PgConnection;
 use sqlx::{Connection, Executor};
@@ -200,4 +200,133 @@ async fn migration_0061_backfills_each_versions_author_person_from_its_key_today
                 .expect("the version");
         assert_eq!(recorded.as_deref(), person, "key {key:#x}");
     }
+}
+
+/// One tenant holding `carol`'s user root under a universe, carol's linked
+/// tenant key and one held note that key wrote; `unlinked` unlinks the key
+/// before the migration runs, as `key.unlinked_person` does.
+async fn seed_linked_note(conn: &mut PgConnection, n: u128, unlinked: bool) -> Uuid {
+    let tenant = Uuid::from_u128(0xA161 + n);
+    sqlx::query("SELECT set_config('oml.tenant_id', $1::text, false)")
+        .bind(tenant)
+        .execute(&mut *conn)
+        .await
+        .expect("tenant");
+    sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, $2)")
+        .bind(tenant)
+        .bind(format!("acme{n}"))
+        .execute(&mut *conn)
+        .await
+        .expect("tenant row");
+    partition_for(conn, tenant).await;
+    let (universe, carol) = (Uuid::from_u128(0xB161 + n), Uuid::from_u128(0xB171 + n));
+    for (id, parent, name, user_root) in [
+        (universe, None, "universe", false),
+        (carol, Some(universe), "carol", true),
+    ] {
+        sqlx::query(
+            "INSERT INTO workspaces (id, tenant_id, parent_id, name, status, user_root) \
+             VALUES ($1, $2, $3, $4, CASE WHEN $3::uuid IS NULL THEN 'protected' ELSE 'development' END, $5)",
+        )
+        .bind(id)
+        .bind(tenant)
+        .bind(parent)
+        .bind(name)
+        .bind(user_root)
+        .execute(&mut *conn)
+        .await
+        .unwrap_or_else(|e| panic!("workspace {name}: {e}"));
+    }
+    let key = Uuid::from_u128(0xC161 + n);
+    sqlx::query(
+        "INSERT INTO api_keys (id, tenant_id, name, role, principal, issued_seq, credential, \
+                               used_by, linked_user_id) \
+         VALUES ($1, $2, 'carol-key', 'writer', 'carol-key', 1, 'bearer', 'person', $3)",
+    )
+    .bind(key)
+    .bind(tenant)
+    .bind(carol)
+    .execute(&mut *conn)
+    .await
+    .expect("key");
+    let event = Uuid::from_u128(0xE161 + n);
+    sqlx::query(
+        "INSERT INTO journal (tenant_id, seq, event_id, event_type, prev_hash, principal, \
+                              payload, signed_bytes_hash, sig, signed_bytes) \
+         VALUES ($1, 1, $2, 'submission.remember', '\\x00', 'acme/agent', '{}', \
+                 '\\x00', '\\x00', '\\x00')",
+    )
+    .bind(tenant)
+    .bind(event)
+    .execute(&mut *conn)
+    .await
+    .expect("journal row");
+    sqlx::query(
+        "INSERT INTO memories (id, tenant_id, workspace_id, claim, claim_digest, status, \
+                               created_event_id, claim_key, author_principal, author_key_id, \
+                               version, kind, body_bytes) \
+         VALUES ($1, $2, $3, 'a held note', '\\x00', 'held', $4, 'note', 'acme/agent', $5, \
+                 1, 'memory', 11)",
+    )
+    .bind(Uuid::from_u128(0xD161 + n))
+    .bind(tenant)
+    .bind(universe)
+    .bind(event)
+    .bind(key)
+    .execute(&mut *conn)
+    .await
+    .expect("memory");
+    if unlinked {
+        sqlx::query("UPDATE api_keys SET linked_user_id = NULL WHERE id = $1")
+            .bind(key)
+            .execute(&mut *conn)
+            .await
+            .expect("unlink");
+    }
+    tenant
+}
+
+/// 0061 runs outside a migration transaction, so the column is added under
+/// one short lock and each tenant's backfill commits alone (the lock is not
+/// held over every tenant's UPDATE). Applied by the owner with no tenant
+/// named, it still reaches every tenant: the linked key's note names carol,
+/// and the key unlinked before the migration gives its note no person.
+#[tokio::test]
+async fn migration_0061_commits_each_tenants_backfill_alone_and_an_unlinked_key_names_no_person() {
+    let db = db_name("per_tenant");
+    if !mint_database(&db).await {
+        return;
+    }
+    let migration = MIGRATOR
+        .iter()
+        .find(|m| m.version == AUTHOR_PERSON)
+        .expect("migration 0061");
+    assert!(
+        migration.no_tx,
+        "0061 is `-- no-transaction`, so no lock outlives its own step"
+    );
+    let mut conn = schema_before(&db, AUTHOR_PERSON).await;
+    let linked = seed_linked_note(&mut conn, 0, false).await;
+    let unlinked = seed_linked_note(&mut conn, 1, true).await;
+    conn.execute("SELECT set_config('oml.tenant_id', '', false)")
+        .await
+        .expect("no tenant");
+    conn.apply(migration).await.expect("0061 applies");
+
+    for (tenant, person) in [(linked, Some("carol")), (unlinked, None)] {
+        sqlx::query("SELECT set_config('oml.tenant_id', $1::text, false)")
+            .bind(tenant)
+            .execute(&mut conn)
+            .await
+            .expect("tenant");
+        let recorded: Option<String> =
+            sqlx::query_scalar("SELECT author_person::text FROM memories WHERE tenant_id = $1")
+                .bind(tenant)
+                .fetch_one(&mut conn)
+                .await
+                .expect("the version");
+        assert_eq!(recorded.as_deref(), person, "tenant {tenant}");
+    }
+    drop(conn);
+    drop_db(&db).await;
 }
