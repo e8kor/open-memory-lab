@@ -10890,7 +10890,7 @@ async fn a_held_skill_in_a_development_workspace_is_served_unreviewed_and_needs_
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
-    agent_skill_in(&rig, &value, "bump-deps", "alice.proj").await;
+    let held = agent_skill_in(&rig, &value, "bump-deps", "alice.proj").await;
     let (status, _, page) = send(&rig.router, get("/web/catalog", Some(&cookie))).await;
     assert_eq!(status, StatusCode::OK, "{page}");
     let state = between(&page, r#"<td class="c-state">"#, "</td>");
@@ -10900,6 +10900,14 @@ async fn a_held_skill_in_a_development_workspace_is_served_unreviewed_and_needs_
         "{state}"
     );
     assert!(state.contains("needs a person</span>"), "{state}");
+    // alice-review may judge it in her own root: Judge it opens the judge
+    // page (ADR-0092 d7; ADR-0083 d2).
+    assert!(
+        state.contains(&format!(
+            r#"<a href="/web/todo/judge?memory={held}">Judge it</a>"#
+        )),
+        "{state}"
+    );
     // The read serves held rows here, so State offers Unreviewed.
     assert!(
         page.contains(r#"<option value="unreviewed">Unreviewed</option>"#),
