@@ -355,7 +355,7 @@ enum BootstrapCommand {
         principal: Option<String>,
         /// The person the first admin key acts for: the claim creates that
         /// person's user root and links the key to it, so the key may take
-        /// an admin fix (ADR-0089).
+        /// an admin fix.
         #[arg(long)]
         person: Option<String>,
     },

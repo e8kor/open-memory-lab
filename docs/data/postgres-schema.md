@@ -26,8 +26,8 @@ Three roles reach the database. The owner role owns every table and runs the mig
 | [`account_activity`](#account_activity) | owns | SELECT, INSERT, UPDATE, DELETE |  |
 | [`account_meters`](#account_meters) | owns | SELECT, INSERT, UPDATE |  |
 | [`account_profiles`](#account_profiles) | owns | SELECT, INSERT, UPDATE, DELETE |  |
-| [`admin_fixes`](#admin_fixes) | owns | SELECT, INSERT, UPDATE |  |
-| [`admin_investigations`](#admin_investigations) | owns | SELECT, INSERT, UPDATE |  |
+| [`admin_fixes`](#admin_fixes) | owns | SELECT, INSERT, UPDATE (restored_id, settled_at, settled_by_key_id, settled_same_user, settled_seq, state) |  |
+| [`admin_investigations`](#admin_investigations) | owns | SELECT, INSERT, UPDATE (closed_at, closed_seq, reads) |  |
 | [`api_keys`](#api_keys) | owns | SELECT, INSERT, UPDATE |  |
 | [`artifact_keys`](#artifact_keys) | owns | SELECT (artifact_id, destroyed_at, tenant_id), UPDATE (destroyed_at, wrapped_dek) | SELECT, INSERT, UPDATE |
 | [`brief_edges`](#brief_edges) | owns | SELECT, INSERT, UPDATE | SELECT |
@@ -251,7 +251,7 @@ Row-level security: enabled and forced, so the owner is bound too.
     - using `tenant_id = NULLIF(current_setting('oml.tenant_id'::text, true), ''::text)::uuid`
     - with check `tenant_id = NULLIF(current_setting('oml.tenant_id'::text, true), ''::text)::uuid`
 
-Grants: serving: SELECT, INSERT, UPDATE.
+Grants: serving: SELECT, INSERT, UPDATE (restored_id, settled_at, settled_by_key_id, settled_same_user, settled_seq, state).
 
 ### admin_investigations
 
@@ -288,7 +288,7 @@ Row-level security: enabled and forced, so the owner is bound too.
     - using `tenant_id = NULLIF(current_setting('oml.tenant_id'::text, true), ''::text)::uuid`
     - with check `tenant_id = NULLIF(current_setting('oml.tenant_id'::text, true), ''::text)::uuid`
 
-Grants: serving: SELECT, INSERT, UPDATE.
+Grants: serving: SELECT, INSERT, UPDATE (closed_at, closed_seq, reads).
 
 ### api_keys
 
@@ -327,7 +327,7 @@ Checks:
 - `api_keys_connector_has_no_hash`: `CHECK (credential = 'bearer'::text OR hash IS NULL)`
 - `api_keys_credential_check`: `CHECK (credential = ANY (ARRAY['bearer'::text, 'connection'::text, 'session'::text]))`
 - `api_keys_guardrail_scope_check`: `CHECK (guardrail_scope = ANY (ARRAY['workspace'::text, 'ancestors'::text]))`
-- `api_keys_linked_user`: `CHECK (linked_user_id IS NULL OR user_root_id IS NULL AND credential <> 'session'::text AND role <> 'admin'::text)`
+- `api_keys_linked_user`: `CHECK (linked_user_id IS NULL OR user_root_id IS NULL AND credential <> 'session'::text)`
 - `api_keys_profile`: `CHECK (profile IS NULL OR profile = 'curator'::text AND role = 'reviewer'::text AND used_by = 'agent'::text)`
 - `api_keys_requests_per_minute_check`: `CHECK (requests_per_minute >= 1 AND requests_per_minute <= 1000000)`
 - `api_keys_role_check`: `CHECK (role = ANY (ARRAY['reader'::text, 'writer'::text, 'reviewer'::text, 'admin'::text, 'operator'::text]))`
@@ -982,6 +982,7 @@ Kind: partitioned table, `PARTITION BY LIST (tenant_id)`.
 | `admin_fix_id` | `uuid` | null |  | The admin fix this version is served because of; NULL for a version a verdict promoted. |
 | `admin_fix_confirmed` | `boolean` | null |  | Whether a person confirmed the fix that serves this version: approver.confirmed. |
 | `admin_fix_same_user` | `boolean` | null |  | Whether that confirmation was by the admin's own person, in a development scope: approver.same_user. |
+| `admin_fix_reverted` | `boolean` | null |  | Whether a person reverted the fix that served this version: approver.reverted (the decision of 2026-11-19). |
 
 Checks:
 

@@ -105,7 +105,7 @@ describe("the agent loop", live, () => {
     // same (ADR-0077 d1, d2). The fixture's reviewer key is used by a person
     // and acts for no user.
     const approved = recalled.hits[0]?.memory;
-    assert.deepEqual(approved?.approver, { used_by: "person", same_user: false, act: "verdict", confirmed: null });
+    assert.deepEqual(approved?.approver, { used_by: "person", same_user: false, act: "verdict", confirmed: null, reverted: null });
     assert.ok(approved?.approved_at && approved.promoted_at);
     assert.ok(approved.approved_at <= approved.promoted_at);
     const fetched = await agent.read({ artifact_id: held.artifact_id });

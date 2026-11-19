@@ -1449,7 +1449,7 @@ Requires: admin key role and the key that opened it; another key's or an unknown
 
 Take a marked break-glass fix that serves at once and waits for a person to confirm or revert it.
 
-Requires: admin key role, used by a person; another admin key answers admin.fix_requires_person, every other role access.verb_ceiling. act is demote (an approved version; the claim's tip returns to its latest earlier approved version, or none), edit (body and optional title replace the served tip), retire (the served tip is retired, reason as its body) or erase (every version of the claim is crypto-shredded). reason is 1 to 1,024 bytes, stored in clear and scanned.
+Requires: admin key role, used by a person and linked to that person (the operator's decision of 2026-11-19); another admin key answers admin.fix_requires_person, details.reason not_used_by_person or unlinked, every other role access.verb_ceiling. act is demote (an approved version; the claim's tip returns to its latest earlier approved version, or none), edit (body and optional title replace the served tip), retire (the served tip is retired, reason as its body) or erase (every version of the claim is crypto-shredded). reason is 1 to 1,024 bytes, stored in clear and scanned.
 
 **Request body** (`application/json`)
 

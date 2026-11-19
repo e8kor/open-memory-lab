@@ -128,6 +128,7 @@ ALTER TABLE api_keys
         linked_user_id IS NULL
         OR (user_root_id IS NULL AND credential <> 'session')
     ) NOT VALID;
+-- lint:allow validate the new check is looser than the one it replaces, so no stored row fails it, and api_keys holds one row per key
 ALTER TABLE api_keys VALIDATE CONSTRAINT api_keys_linked_user;
 
 DO $$
