@@ -25,7 +25,7 @@ OUT = docgen.DOCS / "reference" / "design-records.md"
 BLOB = "https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/"
 
 CATEGORIES = {
-    "Trust and governance": [1, 7, 9, 10, 12, 30, 55, 65, 74, 85, 86, 88, 89],
+    "Trust and governance": [1, 7, 9, 10, 12, 30, 55, 65, 74, 85, 86, 88, 89, 93],
     "Storage and data": [2, 3, 4, 5, 17, 60, 90],
     "Search and recall": [13, 48, 49, 52, 53, 54, 59, 72, 92],
     "Writing and review": [11, 20, 21, 50, 56, 87],
@@ -47,9 +47,9 @@ BLURB = {
 
 
 # Records the page leaves out although they are accepted: ADR-0064, ADR-0080 to ADR-0087,
-# ADR-0089 to ADR-0092 are decided and not built (ADR-0088 is deferred, not decided), and
+# ADR-0089 to ADR-0093 are decided and not built (ADR-0088 is deferred, not decided), and
 # ADR-0066 is about how this repository tracks work, which readers of the site do not need.
-HELD_BACK = {64, 66, 80, 81, 82, 83, 84, 85, 86, 87, 89, 90, 91, 92}
+HELD_BACK = {64, 66, 80, 81, 82, 83, 84, 85, 86, 87, 89, 90, 91, 92, 93}
 
 
 RENAMED_ROW = re.compile(r"^\|\s*`(ADR-\d{4}[^`]*\.md)`\s*\|\s*\[`(ADR-\d{4}[^`]*\.md)`\]", re.M)
