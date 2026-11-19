@@ -8,7 +8,7 @@ answers: what a workspace release is, when its manifest is fixed and what it may
 # ADR-0085 — A workspace publishes immutable releases that one person cuts and another ratifies, and each key binds to the tip, the latest release or a pinned one
 
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its three questions decided at their
-recommendations and every other default as drafted · proposed the same day · amended 2026-11-17 (d16: how the console acts with a linked key, accepted the same day by the operator, "Session + named key") · amended 2026-11-18 (d16: a version records its author's person at its write, the follow-up d16 left open, built by #448)
+recommendations and every other default as drafted · proposed the same day · amended 2026-11-17 (d16: how the console acts with a linked key, accepted the same day by the operator, "Session + named key") · amended 2026-11-18 (d16: a version records its author's person at its write, the follow-up d16 left open, built by #448) · amendments of 2026-11-18 proposed (d2, d6, d10: the operator's answers D1 to D3 to the lifecycle review; d1 and the stage tabs for the operator's batch; #429)
 
 **Release:** not scheduled; the first record of the workspace lifecycle
 ([review](https://github.com/e8kor/open-memory-lab/blob/main/design/workspace-lifecycle.md)), before
@@ -104,7 +104,8 @@ Decided, not built.
 - **d2 — Vocabulary: "cut" in prose, `propose` in the API, `published` once ratified.**
   - A release is named `<workspace path>@<label>`, with a semantic-version label. The name is
     unique per workspace, immutable and never released for reuse
-    ([ADR-0026](ADR-0026-names-are-keys.md) d1, d10).
+    ([ADR-0026](ADR-0026-names-are-keys.md) d1, d10). *(Superseded in part, proposed 2026-11-18,
+    D3 below: a cut makes a candidate named by an id, and the label is bound at publish.)*
   - Its states are `proposed`, `published`, `withdrawn` and `refused`.
   - "Publish" means ratifying a release, and nothing else. A version is promoted, never published.
   - ADR-0018 d4 lists "published" as a word never used for `promoted`. That stays true for a
@@ -159,6 +160,8 @@ Decided, not built.
   - **A pin** is `{<workspace>: <label>}`. A workspace without an entry resolves as `latest`.
   - **No release yet.** A `latest` key on a workspace with no release is served the promoted tip,
     never another key's held item, and every answer carries `binding_fallback: tip`.
+    *(Superseded, proposed 2026-11-18, D2 below: refused in a `protected` or `frozen` workspace,
+    and marked on every hit in an open one.)*
   - **A pin to a withdrawn release** keeps being served, marked `withdrawn: true`.
   - **Marks do not apply.** For a `latest` or pinned key, ADR-0030 d2's boundary does not hide a
     member, and ADR-0030 d3's and ADR-0080 d10's serving of held items does not apply. This amends
@@ -240,7 +243,8 @@ Decided, not built.
     - a guardrail retired, dropped or of lower severity;
     - a document key removed.
   - **Confirming breaking items.** The proposer must confirm each breaking item. The label must
-    raise its major number, or the proposal is refused, reason `label_not_major`.
+    raise its major number, or the proposal is refused, reason `label_not_major`. *(Superseded in
+    part, proposed 2026-11-18, D3 below: the label, and so this check, comes at publish.)*
   - **Storage.** The notes are stored as the release's own document claim (ADR-0081, proposed).
 
 - **d11 — The change set is computed review UI, and a revert drafts the inverse.**
@@ -269,6 +273,8 @@ Decided, not built.
     - `oml workspaces revert`;
     - `oml keys bind`.
   - **Console:** a Releases section on a workspace's personal page. No MCP tool (R1).
+  - *(Proposed 2026-11-18, D3 below: until it is published a candidate is addressed by its id,
+    not a label; the stage tabs below are for the operator's batch.)*
   - **Events:** `workspace.release_proposed`, `workspace.release_ratified`,
     `workspace.release_withdrawn`, `workspace.release_withdrawal_acknowledged`, `key.binding_set`.
     `recall_events` gains the release a read was served from (ADR-0054).
@@ -428,3 +434,103 @@ Decided, not built.
 | **Two persons to withdraw a release that loosens a guardrail** | The operator ruled it too slow for a bad publish; an alert and an acknowledgement keep it visible. |
 | **Admins publish releases** | Publishing is the reviewed path; the admin's acts are fixes, marked and confirmed afterwards (ADR-0089). |
 | **Key binding as its own record** | See Consequences: the read rules and the object they read belong together. |
+
+## The lifecycle review's amendments of 2026-11-18 (proposed, #429)
+
+The lifecycle review (artifact `E7ysHcU2MxVsF3pWQ644c5`, the plan on PR #397) left four questions
+for the operator, who answered them on 2026-11-18. D1 to D3 amend this record; D4 amends ADR-0084
+d6. Each is proposed: it records the operator's answer, and the operator accepts the text. Where a
+sentence above contradicts an answer, it stays as written, marked superseded, and the answer below
+governs. The two items marked **[operator batch]** come from the review's model, which the
+operator approved with the proposal; they stand as proposed until the operator confirms or
+reverses them with the rest of the batch.
+
+- **D1 — The place carries the rules (amends d2, d6; ADR-0001 d5).**
+  - An open workspace, a `development` one in progress or not, is development.
+  - A `protected` or `frozen` workspace is production for every reader.
+  - A published release is production wherever its workspace sits: its members, and an admin
+    fix's overlay on them (d6), are held to production rules in an open workspace too.
+  - A key's binding, `tip`, `latest` or a pin, only chooses which version the key reads (d6) and
+    never relaxes a rule. A binding widened under d7 changes what the key reads, never the rules
+    that govern what it reads: a `tip` key in a `protected` workspace reads production content,
+    and a `latest` key reads production content from a release in an open workspace.
+  - d2 gains one sentence: "production" names a place or a published release, never a binding.
+  - **Superseded:** ADR-0001 d5's "everything a key bound to `latest` or a pin reads" as a
+    production scope of its own (see that record's amendment of the same day).
+
+- **D2 — A `latest` key on a workspace with no published release (amends d6).**
+  - **In a `protected` or `frozen` workspace, refused.** A read whose served workspaces include a
+    `protected` or `frozen` one with no published, not withdrawn release whose subtree holds it is
+    refused, and nothing is served from it, so a production reader never reads a set no second
+    person published. A workspace whose every release is withdrawn has none published
+    **[operator batch]**. A pin without an entry for the workspace follows the same rule, since d6
+    resolves it as `latest`.
+  - **In an open workspace, the tip, marked on every hit.** The key is served the promoted tip,
+    never another key's held item, as d6 says, and every hit, not only the answer, is marked as not
+    from a release (`binding_fallback: tip` on the hit). A read across several workspaces can then
+    mix release members with fallback rows, and each hit says which it is.
+  - **The code, proposed: `release.none_published`** (409, not retryable; `details.workspace`
+    names the first such workspace and `details.binding` the key's binding). The errors page
+    groups codes by the subject that refuses: `workspace` for structure and status, `bundle` and
+    `import` for imports, `upload` for upload sessions. The act refused here is a key's read
+    through its release binding, neither a workspace change nor a cut, so the code opens a
+    `release` family. *Rejected:* `workspace.release_refused` with a new reason, since that code
+    answers a person's cut and its reasons are the cut's; `access.not_found`, since it would hide
+    a fault the doctor must name.
+  - **Doctor.** d12's line "`latest` keys served `binding_fallback`" gains its pair: keys refused
+    `release.none_published`, by workspace.
+  - **A reading for the operator's batch [operator batch].** A read that spans several workspaces,
+    one of them `protected` with no published release, is refused whole rather than served
+    without that workspace, because a partial answer would look complete.
+  - **Superseded:** d6's "No release yet" bullet, for a `protected` or `frozen` workspace.
+
+- **D3 — A candidate has an id, and its label is bound at publish (amends d2, d10; d1 and d12
+  follow).**
+  - A cut makes a **release candidate** with an internal id the server assigns.
+    `workspace.release_proposed` signs the id and the manifest's digest, and no label.
+  - The publishing person binds the semantic-version label in the publish act, and
+    `workspace.release_ratified` signs it. Only then is the release named
+    `<workspace path>@<label>`. A refused candidate keeps its id and never holds a label, so a
+    refusal never uses up a label; a published release's label stays unique, immutable and never
+    reused (ADR-0026 d1, d10).
+  - **What the label promises.** The label promises the manifest, fixed at the cut (d1). The served
+    set is the manifest, minus the members that dropped out (d1), plus the marked overlays of
+    admin fixes (d6). Every served item can be checked against the manifest the label names: a
+    dropped member is named by `degraded`, an overlay by `approver.act: "admin_fix"`.
+  - **The major-number check moves to publish (d10).** The proposer still confirms each breaking
+    item at the cut. A publish that binds a label not raising the major number over the latest
+    published release, for a candidate with a confirmed breaking item, is refused
+    `workspace.release_refused`, reason `label_not_major`; the candidate stays `proposed`.
+  - **Who reads a candidate [operator batch].** A person's key and a CI service key read a candidate, its manifest
+    and members, under staging rules: no second person has published it, so nothing in it is
+    production by being in it (D1). A candidate is never a binding for an agent key: no agent
+    key's binding names a candidate, and a pin names only a published label.
+  - **Surfaces (d12) [operator batch].** A candidate is addressed by its id until it is published:
+    `POST /v2/workspaces/{w}/releases` answers the id, `.../releases/{id}/ratify {label}` publishes
+    it and binds the label, and `GET .../releases/{id or label}` reads either. The CLI's
+    `oml workspaces release publish` takes `--label`.
+  - **Superseded:** d2's naming of a release by its label from the cut; d10's "or the proposal is
+    refused, reason `label_not_major`"; d12's `{label}` in the routes from proposal to publish.
+
+- **A cut refuses a member whose only verdict is `same_user` (amends d1; ADR-0089 d8)
+  [operator batch].** A proposal is refused `workspace.release_refused`, reason
+  `same_user_only`, naming each such member, while any member's only approving verdicts are marked
+  `same_user`. Such a verdict comes from the author's own person: no cut happens in a user root
+  (d4), so outside one it is a fix confirmed under development rules (ADR-0089 d8). A publication
+  approves the set, never each item, so without the refusal the next cut would carry into
+  production a version no other person judged. The member needs a verdict from another person
+  first.
+
+- **The workspace page's stage tabs (amends d12's console; ADR-0083) [operator batch].** The
+  workspace page's Releases section shows three tabs, **Drafts · Candidate · Published**, under one
+  caption line, **Development / Staging / Production**. Drafts is what a `tip` key reads there;
+  Candidate the newest proposed candidate, by its id; Published the latest published release, by
+  its label, or "Published, pinned `<label>`" for a pin. Each tab carries the count of keys bound
+  to it from d8's consumers read. The captions follow D1, not the binding: in a `protected` or
+  `frozen` workspace the Drafts tab is captioned Production, because a `tip` key reads production
+  content there. The binding values stay `tip`, `latest` and a pin; the tab names are display
+  names, under ADR-0091 d16's rule.
+
+- **Not decided here.** The review's decision 3, its display names, was decided on 2026-11-14 and
+  recorded in ADR-0091 d16. Nothing in these amendments is built; the release work builds them
+  with this record.
