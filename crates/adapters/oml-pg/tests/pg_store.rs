@@ -239,7 +239,19 @@ fn row_before_rename(table: &str, row: &Value) -> Value {
                 ("workareas", "status") | ("workarea_transitions", "from_status" | "to_status") => {
                     back(value, &statuses)
                 }
-                ("api_keys" | "grants", "role") => back(value, &[("reviewer", "dreamer")]),
+                // Every schema this seeds predates 0066 too, whose checks
+                // hold writer (ADR-0093 d5).
+                ("api_keys", "role") => back(
+                    value,
+                    &[
+                        ("reviewer", "dreamer"),
+                        ("contributor", "writer"),
+                        ("submitter", "writer"),
+                    ],
+                ),
+                ("grants", "role") => {
+                    back(value, &[("reviewer", "dreamer"), ("submitter", "writer")])
+                }
                 ("api_keys" | "memories", "held_by" | "approver_held_by") => {
                     back(value, &[("person", "human")])
                 }
@@ -3070,6 +3082,17 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
                  - 'author_person'"
             }
             (true, "key_denials") => "to_jsonb(t) - 'lifted_epoch'",
+            // 0066 makes a writer key a contributor and a writer grant a
+            // submitter (ADR-0093 d5), so the PoC's rows are read in the
+            // roles it leaves them.
+            (false, "api_keys") => {
+                "to_jsonb(t) || jsonb_build_object('role', \
+                 CASE t.role WHEN 'writer' THEN 'contributor' ELSE t.role END)"
+            }
+            (false, "grants") => {
+                "to_jsonb(t) || jsonb_build_object('role', \
+                 CASE t.role WHEN 'writer' THEN 'submitter' ELSE t.role END)"
+            }
             _ => "to_jsonb(t)",
         };
         // Row-level security does not bind a superuser, as CI's Postgres role
@@ -5170,7 +5193,7 @@ fn digest_hex(byte: u8) -> String {
 fn connector_key_sql(tenant: Uuid, key: Uuid) -> String {
     format!(
         "INSERT INTO api_keys (id, tenant_id, hash, credential, role, principal, issued_seq) \
-         VALUES ('{key}', '{tenant}', NULL, 'connection', 'writer', 'crew/claude-mobile', 1)"
+         VALUES ('{key}', '{tenant}', NULL, 'connection', 'contributor', 'crew/claude-mobile', 1)"
     )
 }
 
@@ -5273,7 +5296,7 @@ async fn a_connector_key_row_has_no_hash_and_a_bearer_key_row_holding_its_hash_c
 
     let hashed_connector = format!(
         "INSERT INTO api_keys (id, tenant_id, hash, credential, role, principal, issued_seq) \
-         VALUES ('{}', '{tenant}', decode('{}', 'hex'), 'connection', 'writer', 'crew/x', 1)",
+         VALUES ('{}', '{tenant}', decode('{}', 'hex'), 'connection', 'contributor', 'crew/x', 1)",
         Uuid::from_u128(0xC0DE_0F00),
         digest_hex(0x77)
     );
