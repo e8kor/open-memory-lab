@@ -782,7 +782,7 @@ pub async fn user_page(
     let query = |mine: bool| MemoryQuery {
         mine,
         workspace: Some(&id),
-        kind: Some(kind.as_str()),
+        kinds: Some(kind.as_str()),
         state: mine.then_some("held"),
         limit: LIST_LIMIT,
         ..MemoryQuery::default()
@@ -2164,7 +2164,7 @@ async fn pending(
             &MemoryQuery {
                 mine: true,
                 workspace: Some(&workspace),
-                kind: Some(kind.as_str()),
+                kinds: Some(kind.as_str()),
                 state: Some("held"),
                 limit: LIST_LIMIT,
                 ..MemoryQuery::default()

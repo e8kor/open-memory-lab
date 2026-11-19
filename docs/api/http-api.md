@@ -47,7 +47,7 @@ Write, list, recall and replace memories on the provider ring.
 | Operation | What it does |
 |---|---|
 | `POST /v1/memories` | Submit a memory (remember or learn); held on arrival, scanned same-call. |
-| `GET /v1/memories` | Structured, paginated listing of memory summaries. |
+| `GET /v1/memories` | The catalog of what a key reads, or the key's own work; paginated, with per-kind counts. |
 | `POST /v1/memories/recall` | Ranked retrieval over promoted rows by a named search pipeline; steering rows precede hits, unranked. |
 | `POST /v1/memories/preview` | What capture would decide for a submit's body or a supersession's, without capturing. |
 | `GET /v1/memories/{artifact_id}` | One memory with its text (decrypted on the serving path) and attachment descriptors. |
@@ -95,7 +95,7 @@ Requires: writer effective access on the resolved workspace, or, for a person's 
 
 ### `GET /v1/memories`
 
-Structured, paginated listing of memory summaries.
+The catalog of what a key reads, or the key's own work; paginated, with per-kind counts.
 
 Requires: reader effective access; own=true admits any tenant role except operator (access.verb_ceiling) for its own rows only — every row the calling key authored, in every state, across all workspaces minus its globally denied subtrees, no grant needed.
 
@@ -104,13 +104,14 @@ Requires: reader effective access; own=true admits any tenant role except operat
 | `workspace` | query | WorkspaceRef | no | The subtree read, by id or name, which must name a node the key may be told about, else access.not_found, indistinguishable from a nonexistent node. |
 | `claim_key` | query | string | no |  |
 | `state` | query | string | no | One of held, promoted, demoted, rejected, erased or withdrawn. |
-| `kind` | query | string | no | One of memory, derived_fact, steering, guardrail, term, term_mapping, vocab_release, skill, document or test. |
+| `kinds` | query | array of `memory` \| `derived_fact` \| `steering` \| `term` \| `term_mapping` \| `vocab_release` \| `guardrail` \| `skill` \| `document` \| `test` | no | Comma-separated or repeated: only these kinds. |
+| `prefix` | query | string | no | Only claim keys starting with these bytes, such as skill/ or doc/runbooks/; read as a byte range, never a pattern. |
 | `own` | query | boolean | no |  |
 | `with_own` | query | boolean | no | true: the scoped listing (at workspace, else universe) and the caller's own rows, every key of the person for a person's session key (as for `mine`), merged newest first under one cursor, a row in both once. |
 | `mine` | query | boolean | no | true: the caller's own rows alone, with no scoped part, under one cursor: every key of the person for a person's session key (the keys naming their root and their web, review and curate session keys, never a linked tenant key), the key alone for any other key, in every state, off the subtrees the key's global denials cover. |
 | `promoted_since` | query | string | no | With with_own, `mine` or author: only the promoted rows approved at or after this instant, the rows of every other state left whole; with no state, every state is listed. |
 | `author` | query | string | no | One of the caller's own keys, by name: the caller's rows by that key alone, the scoped part dropped; a key that is not the caller's is access.not_found. |
-| `include_text` | query | boolean | no | With with_own or author alone: true serves each item with its text, as the web console's Memories list shows it; false or absent, summaries. |
+| `include_text` | query | boolean | no | true serves each item with its text: on the catalog, and with with_own or author, as the web console's Memories list shows it; false or absent, entries without text. |
 | `anchor_repo` | query | string | no | Rows whose anchor names this repository, with own or without it; unanchored rows are left out. |
 | `anchor_path_prefix` | query | string | no | Rows whose anchor path starts with these bytes; unanchored rows are left out. |
 | `origin_kinds` | query | OriginKinds | no | Comma-separated: rows whose origin kind is one of these; rows without a kind are left out. |
@@ -136,7 +137,7 @@ Requires: reader effective access on the subtree.
 | `query` | string | yes |  |
 | `workspace` | WorkspaceRef | no | The subtree recalled, by id or name; omitted, the key's default_workspace. |
 | `k` | integer | no |  |
-| `kinds` | array of `memory` \| `derived_fact` \| `document` | no | Filters hits only; an empty array is refused (request.validation), so only an absent kinds means no filter, every hit kind, documents included. |
+| `kinds` | array of `memory` \| `derived_fact` \| `steering` \| `term` \| `term_mapping` \| `vocab_release` \| `guardrail` \| `skill` \| `document` \| `test` | no | Any kind but test, which is never a hit; an empty array, an unknown kind or test is refused (request.validation naming /kinds), so only an absent kinds means no filter. |
 | `include_text` | boolean | no | Whether each served item carries its text. |
 | `anchor_repo` | string | no | A repository, scheme, credentials and.git dropped (github.com/e8kor/open-memory-lab); no segment is. or... |
 | `anchor_path_prefix` | string | no | A byte prefix of the anchor path, at most 1,024 UTF-8 bytes; rows whose anchor path starts with it, unanchored rows left out. |

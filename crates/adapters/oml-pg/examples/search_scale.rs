@@ -76,6 +76,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 MemoryKind::DerivedFact,
                 MemoryKind::Document,
             ],
+            instructions: Vec::new(),
+            counted_kinds: vec![
+                MemoryKind::Memory,
+                MemoryKind::DerivedFact,
+                MemoryKind::Document,
+            ],
             own_held: (!own_keys.is_empty()).then(|| OwnHeldScope {
                 any_author_nodes: Vec::new(),
                 author_key_ids: own_keys,

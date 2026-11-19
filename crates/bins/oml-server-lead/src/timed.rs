@@ -780,6 +780,19 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         )
     }
 
+    fn count_memories(
+        &self,
+        tenant_id: Uuid,
+        filter: &ListingFilter,
+        kinds: &[MemoryKind],
+        cap: u64,
+    ) -> impl Future<Output = Result<Vec<(MemoryKind, u64)>, StoreError>> + Send {
+        timed(
+            "count_memories",
+            self.inner.count_memories(tenant_id, filter, kinds, cap),
+        )
+    }
+
     fn claim_key_state(
         &self,
         tenant_id: Uuid,

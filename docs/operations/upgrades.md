@@ -126,7 +126,10 @@ and the SDKs in the same window. The notice to send before the date:
 > `oml_workarea`. Memories, keys, grants and workspace names are unchanged. The role `dreamer` is
 > now `reviewer`: `--role reviewer` and grants such as `dev:reviewer`. The statuses `committed`
 > and `validated` are now `protected` and `frozen`, and a key's `held_by` is now `used_by`, with
-> `human` now `person`. Existing keys, grants and workspaces are converted by the upgrade.
+> `human` now `person`. Existing keys, grants and workspaces are converted by the upgrade. A read
+> without a query now lists the catalog of what the key reads (`oml_read`'s `own` defaults to
+> `false`, `oml read` with no flags, the SDKs' iterators), `kind` is now `kinds`, and a recall
+> with no `kinds` also returns skill and guardrail hits.
 
 **Before the server.** Take a backup and verify that it restores
 ([restore](restore.md)): migration 0047 has no reverse, and only that verified dump undoes it.
@@ -168,9 +171,9 @@ nothing is sent.
 | MCP `oml_supersede` | `oml_write` with `replaces` |
 | MCP `oml_recall` | `oml_read` with `query`. `include_unreviewed` replaces `include_own_held`, and `workarea` replaces `scope`. |
 | MCP `oml_get` | `oml_read` with `artifact_id` |
-| MCP `oml_my_work` | `oml_read` with neither argument |
+| MCP `oml_my_work` | `oml_read` with `own: true` |
 | MCP `oml_workarea_info` | `oml_workarea` |
-| MCP `oml_events_tail` | `oml_read` with `state` for an agent's own writes. `GET /v2/events` for an audit. |
+| MCP `oml_events_tail` | `oml_read` with `own: true` and `state` for an agent's own writes. `GET /v2/events` for an audit. |
 | `oml submit --claim <text>` | `oml write <text>` |
 | `oml recall --query` | `oml read --query` |
 | `oml supersede --target <id> --claim <text>` | `oml write <text> --replaces <id>` |

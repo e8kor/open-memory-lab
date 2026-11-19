@@ -239,27 +239,40 @@ test("a read argument outside its mode raises before sending", async () => {
   assert.deepEqual(requests, []);
 });
 
-test("read with neither lists the key's own rows", async () => {
+test("read with neither lists the catalog, own false", async () => {
   const { requests, fetcher } = recorder(200, { items: [], next_cursor: null });
   const page: MemoryPage = await client(fetcher).read({ limit: 5 });
   assert.deepEqual(page.items, []);
   const url = new URL(requests[0]?.url ?? "");
   assert.deepEqual(
     [requests[0]?.method, url.pathname, Object.fromEntries(url.searchParams)],
-    ["GET", "/v1/memories", { own: "true", limit: "5" }],
+    ["GET", "/v1/memories", { own: "false", limit: "5" }],
   );
 });
 
-test("the listing iterators send own true unless the caller passes own false, workspace in the query", async () => {
+test("the catalog sends kinds, prefix and include_text, and refuses the single kind", async () => {
+  const { requests, fetcher } = recorder(200, { items: [], next_cursor: null });
+  const oml = client(fetcher);
+  await oml.read({ kinds: ["skill", "guardrail"], prefix: "skill/", include_text: true });
+  const url = new URL(requests[0]?.url ?? "");
+  assert.deepEqual(url.searchParams.getAll("kinds").join(","), "skill,guardrail");
+  assert.equal(url.searchParams.get("prefix"), "skill/");
+  assert.equal(url.searchParams.get("include_text"), "true");
+  assert.equal(url.searchParams.get("own"), "false");
+  await refusedNaming(() => oml.read({ kind: "memory" } as unknown as ReadInput), "/kind");
+  assert.equal(requests.length, 1);
+});
+
+test("the listing iterators list the catalog unless the caller passes own true, which carries the text", async () => {
   const { requests, fetcher } = recorder(200, { items: [], next_cursor: null });
   const oml = client(fetcher);
   for await (const _ of oml.memories({ limit: 5 })) assert.fail("no rows were answered");
-  for await (const _ of oml.pages({ own: false, workspace: "w", limit: 5 })) continue;
+  for await (const _ of oml.pages({ own: true, workspace: "w", limit: 5 })) continue;
   assert.deepEqual(
     requests.map((r) => Object.fromEntries(new URL(r.url).searchParams)),
     [
-      { own: "true", limit: "5" },
-      { own: "false", workspace: "w", limit: "5" },
+      { own: "false", limit: "5" },
+      { own: "true", include_text: "true", workspace: "w", limit: "5" },
     ],
   );
 });

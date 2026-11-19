@@ -399,3 +399,27 @@ header.top.admin .oml-todo-b[aria-current]{box-shadow:inset 0 calc(-1 * var(--st
 @container (max-width:479px){.oml-todo .td-main{flex-basis:100%}}
 .oml-empty{display:flex;flex-direction:column;gap:var(--space-2);max-width:var(--card-max);margin:var(--space-4) 0;padding:var(--space-6) var(--space-4);border:1px dashed var(--rule);border-radius:var(--radius-md)}
 .oml-empty p{margin:0}
+
+/* Catalog (ADR-0092 d7): kind tabs with counts, a zero tab greyed and still a link; the table of
+   claims, which at 479px and under turns each row into the console card: the name, then kind,
+   workspace and version, then the state, the description and the date. The tabs then scroll as
+   one row inside themselves, never the page. */
+.oml-views.kinds{margin:0 0 var(--space-3)}
+.oml-views.kinds a.zero,.oml-views.kinds a.zero .n{color:var(--ink-faint)}
+.oml-crumbs{margin:var(--space-6) 0 0;font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-dim)}
+.oml-crumbs+.oml-section-head{margin-top:var(--space-1)}
+.oml-scope-line{margin:0 0 var(--space-3);font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-dim)}
+.oml-table.cat td .oml-chip{vertical-align:baseline}
+.oml-table.cat td.c-name,.oml-table.cat td.c-ws{overflow-wrap:break-word}
+.oml-table.cat td.c-ver,.oml-table.cat td.c-when{white-space:nowrap}
+.oml-table.cat td.c-name a{font-weight:var(--t-button-weight)}
+.oml-table.cat td.c-name .key{display:block;font-family:var(--font-mono);font-size:var(--t-meta-size);color:var(--ink-faint);font-variant-ligatures:none;overflow-wrap:break-word}
+.oml-table.cat .cell{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-1) var(--space-2)}
+.oml-table.cat .mark{font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-dim)}
+.oml-table.cat .mark svg{width:var(--glyph);height:var(--glyph);vertical-align:middle}
+.oml-table.cat td.c-desc{color:var(--ink)}
+.oml-table.cat td.c-desc .sev{font-weight:var(--t-button-weight)}
+.oml-table.cat td.c-desc .tag{margin-right:var(--space-1)}
+.oml-table.cat td.c-meta{font-family:var(--font-mono);font-size:var(--t-meta-size);color:var(--ink-dim);font-variant-ligatures:none}
+.oml-table.cat td.c-state .when{display:block;font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-dim)}
+@media (max-width:479px){.oml-views.kinds{flex-wrap:nowrap;overflow-x:auto;overscroll-behavior-x:contain}.oml-views.kinds a{flex:none}.oml-table.cat,.oml-table.cat tbody{display:block;overflow:visible}.oml-table.cat thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}.oml-table.cat tr{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-1) var(--space-3);margin:0 0 var(--space-3);padding:var(--space-3) var(--space-4);background:var(--ground-alt);border:1px solid var(--rule);border-radius:var(--radius-md)}.oml-table.cat tr:hover td{background:none}.oml-table.cat td{display:block;padding:0;border:0}.oml-table.cat td.c-name{order:1;flex-basis:100%}.oml-table.cat td.c-kind{order:2}.oml-table.cat td.c-ws{order:3}.oml-table.cat td.c-ver{order:4}.oml-table.cat td.c-state{order:5;flex-basis:100%}.oml-table.cat td.c-desc{order:6;flex-basis:100%}.oml-table.cat td.c-when{order:7;flex-basis:100%}.oml-table.cat td.c-state .when{display:inline;margin-left:var(--space-1)}}

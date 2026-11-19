@@ -102,7 +102,7 @@ export interface GetInput {
 }
 /** `read`'s recall: ranked hits over promoted rows, and the caller's held rows with `include_unreviewed`. */
 export type RecallInput = RecallRequest;
-/** `read`'s listing: the key's own rows, or with `own: false` the promoted tips of `workspace`'s subtree. */
+/** `read`'s listing: the catalog of `workspace`'s subtree, or with `own: true` the key's own rows. */
 export type ListingInput = ListQuery;
 /** Every field of `read`'s three modes; the fields set choose the mode (ADR-0039 d4). */
 export type ReadInput = Partial<GetInput & RecallInput & ListingInput>;
@@ -168,7 +168,9 @@ const READ_LISTING: readonly string[] = [
   "workspace",
   "claim_key",
   "state",
-  "kind",
+  "kinds",
+  "prefix",
+  "include_text",
   "since",
   "until",
   "limit",
@@ -376,8 +378,10 @@ export class OmlClient {
   /**
    * Read in oml_read's three modes (ADR-0039 d4): `artifact_id` fetches one version with its text;
    * `query` recalls over promoted rows in `workspace`, else the key's default workspace, and the
-   * caller's own held rows with `include_unreviewed`; neither lists one page, newest first, of the
-   * key's own rows, or with `own: false` the promoted tips of `workspace`'s subtree. `as_of`, in every
+   * caller's own held rows with `include_unreviewed`; neither lists one page of the catalog, newest
+   * first: what the key reads in `workspace`'s subtree, narrowed by `kinds`, `prefix` and `state`,
+   * each item without its text unless `include_text`, or with `own: true` the key's own rows with
+   * their text. `as_of`, in every
    * mode, reads memory as it was at that past instant under today's access (ADR-0059 d14). A field outside
    * the mode, and `query` beside `artifact_id`, reject with `request.validation` naming it before
    * anything is sent; only the fields given are sent.
@@ -430,13 +434,16 @@ export class OmlClient {
   }
 
   /**
-   * One page of `GET /v1/memories`, `own` defaulting to true as oml_read's listing does, or to false
-   * with `as_of`, which reads the scoped listing (ADR-0039 d4; ADR-0059 d19).
+   * One page of `GET /v1/memories`: the catalog unless `own` is true, as oml_read's listing mode
+   * reads it (ADR-0092 d6). The key's own work, `own: true`, carries each item's text, as the
+   * own-work check needs it (ADR-0092 d12 reading 3); the catalog carries it only with
+   * `include_text`.
    */
   async #listing(query: ListingInput): Promise<MemoryPage> {
-    const own = query.as_of === undefined;
+    const own = Boolean(query.own);
+    const sent = { ...query, own, ...(own ? { include_text: true } : {}) };
     const answer = await this.#send((signal) =>
-      this.#api.GET("/v1/memories", { params: { query: { own, ...query } }, signal }),
+      this.#api.GET("/v1/memories", { params: { query: sent }, signal }),
     );
     return answer.data as MemoryPage;
   }

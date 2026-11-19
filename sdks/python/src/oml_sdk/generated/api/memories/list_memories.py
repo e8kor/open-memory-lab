@@ -5,6 +5,7 @@ from typing import Any
 import httpx
 
 from ...client import AuthenticatedClient, Client
+from ...models.claim_kind import ClaimKind
 from ...models.error_envelope import ErrorEnvelope
 from ...models.memory_page import MemoryPage
 from ...models.origin_kind import OriginKind
@@ -16,7 +17,8 @@ def _get_kwargs(
     workspace: str | Unset = UNSET,
     claim_key: str | Unset = UNSET,
     state: str | Unset = UNSET,
-    kind: str | Unset = UNSET,
+    kinds: list[ClaimKind] | Unset = UNSET,
+    prefix: str | Unset = UNSET,
     own: bool | Unset = False,
     with_own: bool | Unset = UNSET,
     mine: bool | Unset = UNSET,
@@ -58,7 +60,16 @@ def _get_kwargs(
 
     params["state"] = state
 
-    params["kind"] = kind
+    json_kinds: list[str] | Unset = UNSET
+    if not isinstance(kinds, Unset):
+        json_kinds = []
+        for kinds_item_data in kinds:
+            kinds_item = kinds_item_data.value
+            json_kinds.append(kinds_item)
+
+    params["kinds"] = json_kinds
+
+    params["prefix"] = prefix
 
     params["own"] = own
 
@@ -156,7 +167,8 @@ def sync_detailed(
     workspace: str | Unset = UNSET,
     claim_key: str | Unset = UNSET,
     state: str | Unset = UNSET,
-    kind: str | Unset = UNSET,
+    kinds: list[ClaimKind] | Unset = UNSET,
+    prefix: str | Unset = UNSET,
     own: bool | Unset = False,
     with_own: bool | Unset = UNSET,
     mine: bool | Unset = UNSET,
@@ -175,7 +187,7 @@ def sync_detailed(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | MemoryPage]:
-    """Structured, paginated listing of memory summaries.
+    """The catalog of what a key reads, or the key's own work; paginated, with per-kind counts.
 
      Requires: reader effective access; own=true admits any tenant role except operator
     (access.verb_ceiling) for its own rows only — every row the calling key authored, in every state,
@@ -186,8 +198,12 @@ def sync_detailed(
     own workspace; a retired claim's tip, its retirement version, among them, flagged retirement true;
     others' held rows are never returned (R3). workspace is the subtree read (see the parameter);
     v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workspace in
-    details.renamed_to (ADR-0039 d7). Ordered created_at descending, then artifact_id descending; the
-    cursor is bound to the calling key and expires under api.cursor_ttl.
+    details.renamed_to (ADR-0039 d7). Without own the read is the catalog (ADR-0092 d6): every kind the
+    key reads in the subtree, each entry with the projection of its kind and no text unless
+    include_text, and on the first page `counts`, each kind's entries under every filter but kinds,
+    capped at catalog.count_cap and served as {"at_least": cap} above it. Ordered created_at descending,
+    then artifact_id descending; the cursor is bound to the calling key and expires under
+    api.cursor_ttl.
 
     Args:
         workspace (str | Unset): A workspace, by its node id, its name or its qualified name.
@@ -198,7 +214,8 @@ def sync_detailed(
             universe, is neither, and is refused (request.validation).
         claim_key (str | Unset):
         state (str | Unset):
-        kind (str | Unset):
+        kinds (list[ClaimKind] | Unset):
+        prefix (str | Unset):
         own (bool | Unset):  Default: False.
         with_own (bool | Unset):
         mine (bool | Unset):
@@ -233,7 +250,8 @@ def sync_detailed(
         workspace=workspace,
         claim_key=claim_key,
         state=state,
-        kind=kind,
+        kinds=kinds,
+        prefix=prefix,
         own=own,
         with_own=with_own,
         mine=mine,
@@ -266,7 +284,8 @@ def sync(
     workspace: str | Unset = UNSET,
     claim_key: str | Unset = UNSET,
     state: str | Unset = UNSET,
-    kind: str | Unset = UNSET,
+    kinds: list[ClaimKind] | Unset = UNSET,
+    prefix: str | Unset = UNSET,
     own: bool | Unset = False,
     with_own: bool | Unset = UNSET,
     mine: bool | Unset = UNSET,
@@ -285,7 +304,7 @@ def sync(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
 ) -> ErrorEnvelope | MemoryPage | None:
-    """Structured, paginated listing of memory summaries.
+    """The catalog of what a key reads, or the key's own work; paginated, with per-kind counts.
 
      Requires: reader effective access; own=true admits any tenant role except operator
     (access.verb_ceiling) for its own rows only — every row the calling key authored, in every state,
@@ -296,8 +315,12 @@ def sync(
     own workspace; a retired claim's tip, its retirement version, among them, flagged retirement true;
     others' held rows are never returned (R3). workspace is the subtree read (see the parameter);
     v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workspace in
-    details.renamed_to (ADR-0039 d7). Ordered created_at descending, then artifact_id descending; the
-    cursor is bound to the calling key and expires under api.cursor_ttl.
+    details.renamed_to (ADR-0039 d7). Without own the read is the catalog (ADR-0092 d6): every kind the
+    key reads in the subtree, each entry with the projection of its kind and no text unless
+    include_text, and on the first page `counts`, each kind's entries under every filter but kinds,
+    capped at catalog.count_cap and served as {"at_least": cap} above it. Ordered created_at descending,
+    then artifact_id descending; the cursor is bound to the calling key and expires under
+    api.cursor_ttl.
 
     Args:
         workspace (str | Unset): A workspace, by its node id, its name or its qualified name.
@@ -308,7 +331,8 @@ def sync(
             universe, is neither, and is refused (request.validation).
         claim_key (str | Unset):
         state (str | Unset):
-        kind (str | Unset):
+        kinds (list[ClaimKind] | Unset):
+        prefix (str | Unset):
         own (bool | Unset):  Default: False.
         with_own (bool | Unset):
         mine (bool | Unset):
@@ -344,7 +368,8 @@ def sync(
         workspace=workspace,
         claim_key=claim_key,
         state=state,
-        kind=kind,
+        kinds=kinds,
+        prefix=prefix,
         own=own,
         with_own=with_own,
         mine=mine,
@@ -371,7 +396,8 @@ async def asyncio_detailed(
     workspace: str | Unset = UNSET,
     claim_key: str | Unset = UNSET,
     state: str | Unset = UNSET,
-    kind: str | Unset = UNSET,
+    kinds: list[ClaimKind] | Unset = UNSET,
+    prefix: str | Unset = UNSET,
     own: bool | Unset = False,
     with_own: bool | Unset = UNSET,
     mine: bool | Unset = UNSET,
@@ -390,7 +416,7 @@ async def asyncio_detailed(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | MemoryPage]:
-    """Structured, paginated listing of memory summaries.
+    """The catalog of what a key reads, or the key's own work; paginated, with per-kind counts.
 
      Requires: reader effective access; own=true admits any tenant role except operator
     (access.verb_ceiling) for its own rows only — every row the calling key authored, in every state,
@@ -401,8 +427,12 @@ async def asyncio_detailed(
     own workspace; a retired claim's tip, its retirement version, among them, flagged retirement true;
     others' held rows are never returned (R3). workspace is the subtree read (see the parameter);
     v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workspace in
-    details.renamed_to (ADR-0039 d7). Ordered created_at descending, then artifact_id descending; the
-    cursor is bound to the calling key and expires under api.cursor_ttl.
+    details.renamed_to (ADR-0039 d7). Without own the read is the catalog (ADR-0092 d6): every kind the
+    key reads in the subtree, each entry with the projection of its kind and no text unless
+    include_text, and on the first page `counts`, each kind's entries under every filter but kinds,
+    capped at catalog.count_cap and served as {"at_least": cap} above it. Ordered created_at descending,
+    then artifact_id descending; the cursor is bound to the calling key and expires under
+    api.cursor_ttl.
 
     Args:
         workspace (str | Unset): A workspace, by its node id, its name or its qualified name.
@@ -413,7 +443,8 @@ async def asyncio_detailed(
             universe, is neither, and is refused (request.validation).
         claim_key (str | Unset):
         state (str | Unset):
-        kind (str | Unset):
+        kinds (list[ClaimKind] | Unset):
+        prefix (str | Unset):
         own (bool | Unset):  Default: False.
         with_own (bool | Unset):
         mine (bool | Unset):
@@ -448,7 +479,8 @@ async def asyncio_detailed(
         workspace=workspace,
         claim_key=claim_key,
         state=state,
-        kind=kind,
+        kinds=kinds,
+        prefix=prefix,
         own=own,
         with_own=with_own,
         mine=mine,
@@ -479,7 +511,8 @@ async def asyncio(
     workspace: str | Unset = UNSET,
     claim_key: str | Unset = UNSET,
     state: str | Unset = UNSET,
-    kind: str | Unset = UNSET,
+    kinds: list[ClaimKind] | Unset = UNSET,
+    prefix: str | Unset = UNSET,
     own: bool | Unset = False,
     with_own: bool | Unset = UNSET,
     mine: bool | Unset = UNSET,
@@ -498,7 +531,7 @@ async def asyncio(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
 ) -> ErrorEnvelope | MemoryPage | None:
-    """Structured, paginated listing of memory summaries.
+    """The catalog of what a key reads, or the key's own work; paginated, with per-kind counts.
 
      Requires: reader effective access; own=true admits any tenant role except operator
     (access.verb_ceiling) for its own rows only — every row the calling key authored, in every state,
@@ -509,8 +542,12 @@ async def asyncio(
     own workspace; a retired claim's tip, its retirement version, among them, flagged retirement true;
     others' held rows are never returned (R3). workspace is the subtree read (see the parameter);
     v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workspace in
-    details.renamed_to (ADR-0039 d7). Ordered created_at descending, then artifact_id descending; the
-    cursor is bound to the calling key and expires under api.cursor_ttl.
+    details.renamed_to (ADR-0039 d7). Without own the read is the catalog (ADR-0092 d6): every kind the
+    key reads in the subtree, each entry with the projection of its kind and no text unless
+    include_text, and on the first page `counts`, each kind's entries under every filter but kinds,
+    capped at catalog.count_cap and served as {"at_least": cap} above it. Ordered created_at descending,
+    then artifact_id descending; the cursor is bound to the calling key and expires under
+    api.cursor_ttl.
 
     Args:
         workspace (str | Unset): A workspace, by its node id, its name or its qualified name.
@@ -521,7 +558,8 @@ async def asyncio(
             universe, is neither, and is refused (request.validation).
         claim_key (str | Unset):
         state (str | Unset):
-        kind (str | Unset):
+        kinds (list[ClaimKind] | Unset):
+        prefix (str | Unset):
         own (bool | Unset):  Default: False.
         with_own (bool | Unset):
         mine (bool | Unset):
@@ -558,7 +596,8 @@ async def asyncio(
             workspace=workspace,
             claim_key=claim_key,
             state=state,
-            kind=kind,
+            kinds=kinds,
+            prefix=prefix,
             own=own,
             with_own=with_own,
             mine=mine,

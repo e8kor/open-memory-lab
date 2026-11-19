@@ -70,7 +70,7 @@ pub const ADMIN_DATA_PATH: &str = "/web/admin/data/memories";
 
 /// Which page the list is on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Side {
+pub(crate) enum Side {
     User,
     Admin,
 }
@@ -413,7 +413,7 @@ impl CardPage {
 }
 
 /// Why a page of the list has no answer.
-enum Failed {
+pub(crate) enum Failed {
     /// The API refused or did not answer.
     Api(oml_sdk::Error),
     /// The page refused a value before any call.
@@ -496,7 +496,7 @@ async fn user_cards(
             promoted_since: since.as_deref(),
             origin: q.origin.as_deref(),
             author: q.author.as_deref(),
-            kind: COCKPIT_KIND,
+            kinds: COCKPIT_KIND,
             limit: q.limit,
             cursor: q.cursor.as_deref(),
         };
@@ -563,6 +563,7 @@ async fn user_cards(
     let cards = result
         .steering
         .iter()
+        .flatten()
         .chain(result.hits.iter().map(|h| &h.memory))
         .filter(|m| row_state(&m.state, m.tip) == state)
         .filter(|m| {
@@ -1167,7 +1168,7 @@ fn page(side: Side, session: &Session, active: &str, title: &str, body: &str) ->
     outcome::html(StatusCode::OK, shell(title, &bar, active, None, body))
 }
 
-fn failed_page(failed: Failed, calls: &PageCalls, next: &str) -> Response {
+pub(crate) fn failed_page(failed: Failed, calls: &PageCalls, next: &str) -> Response {
     match failed {
         Failed::Api(e) => outcome::page(&e, calls, next),
         Failed::Refused(status, code, message) => refused(status, code, &message, calls),
@@ -1196,7 +1197,7 @@ async fn cards(
 /// its hints, from the uncounted tree, and Browse's counted tree only when
 /// the query asks for Browse open (the operator's decision on the design
 /// notes' row 14).
-async fn picker_reads(
+pub(crate) async fn picker_reads(
     web: &Web,
     session: &Session,
     calls: &PageCalls,
@@ -1234,13 +1235,13 @@ async fn picker_reads(
 
 /// A page drawn with `status`: the picker's refusal answers 404 or 400
 /// with the page whole around it.
-fn with_status(mut response: Response, status: StatusCode) -> Response {
+pub(crate) fn with_status(mut response: Response, status: StatusCode) -> Response {
     *response.status_mut() = status;
     response
 }
 
 /// What a page's primary read answered for the field's value.
-enum Primary<T> {
+pub(crate) enum Primary<T> {
     /// Served, for `Chosen`.
     Served(Chosen, T),
     /// The field is refused; nothing is read or drawn below it.
@@ -1252,7 +1253,7 @@ enum Primary<T> {
 /// The primary read `read` for `chosen`, settled against `names`: an
 /// `access.not_found` to the field's value is its miss, or one more read by
 /// the place a bare name names (ADR-0044 d5, the admin page's case).
-async fn settle<T, F, Fut>(
+pub(crate) async fn settle<T, F, Fut>(
     names: &Names,
     chosen: Chosen,
     first: Option<Result<T, Failed>>,

@@ -17,7 +17,8 @@ with its forms at `/web/workspace/new`, `/web/workspace/edit` and `/web/workspac
 admin side's read-only `GET /web/admin/workspace`; `GET /web/guardrails`, the former Guardrails
 view, answers `308` to the workspace page's Guardrails kind; the
 Workspaces view at `/web/workspaces` on the user page and `/web/admin/workspaces` on the admin page;
-the Memories list at `GET /web/memories` and `GET /web/admin/memories`; the Atlas at
+the Memories list at `GET /web/memories` and `GET /web/admin/memories`; the Catalog at
+`GET /web/catalog`; the Atlas at
 `GET /web/atlas` and `GET /web/admin/atlas`, with the list's JSON at `GET /web/data/memories` and
 `GET /web/admin/data/memories`; the To do page at `/web/todo` and `/web/admin/todo`, with the Judge
 page at `/web/todo/judge`; and the
@@ -182,7 +183,7 @@ included. For Caddy (`deploy/caddy/Caddyfile` is the full route table):
 
 ```caddyfile
 memory.example.com {
-	@oml_web path /web/guardrails /web/workspace /web/workspace/new /web/workspace/edit /web/workspace/retire /web/admin/workspace /web/workspaces /web/admin/workspaces /web/memories /web/atlas /web/admin/memories /web/admin/atlas /web/data/memories /web/admin/data/memories /web/review /web/admin/review /web/todo /web/todo/judge /web/admin/todo /web/keys /web/admin/keys
+	@oml_web path /web/guardrails /web/workspace /web/workspace/new /web/workspace/edit /web/workspace/retire /web/admin/workspace /web/workspaces /web/admin/workspaces /web/memories /web/catalog /web/atlas /web/admin/memories /web/admin/atlas /web/data/memories /web/admin/data/memories /web/review /web/admin/review /web/todo /web/todo/judge /web/admin/todo /web/keys /web/admin/keys
 	reverse_proxy @oml_web 127.0.0.1:8091
 	reverse_proxy 127.0.0.1:8090
 }

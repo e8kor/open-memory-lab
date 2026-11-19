@@ -155,3 +155,20 @@ fn a_document_preview_reads_its_passages() {
     .expect("a preview without passages");
     assert!(older.passages.is_empty());
 }
+
+/// A recall whose `kinds` does not name steering answers `steering:
+/// "not_requested"`, which the SDK keeps apart from an empty list, "none in
+/// force"; any other string is refused (ADR-0092 d2).
+#[test]
+fn steering_not_requested_decodes_apart_from_an_empty_list_of_none_in_force() {
+    let answer: oml_sdk::RecallResponse =
+        serde_json::from_value(json!({"steering": "not_requested", "hits": []})).expect("a recall");
+    assert_eq!(answer.steering, None, "not requested");
+    let none_in_force: oml_sdk::RecallResponse =
+        serde_json::from_value(json!({"steering": [], "hits": []})).expect("a recall");
+    assert_eq!(none_in_force.steering, Some(Vec::new()), "none in force");
+    assert!(
+        serde_json::from_value::<oml_sdk::RecallResponse>(json!({"steering": "x", "hits": []}))
+            .is_err()
+    );
+}

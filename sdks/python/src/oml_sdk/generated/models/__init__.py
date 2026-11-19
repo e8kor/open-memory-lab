@@ -64,9 +64,11 @@ from .bulk_verdict_result_items_item_details_type_0 import (
 from .bulk_verdict_result_items_item_outcome import BulkVerdictResultItemsItemOutcome
 from .bulk_verdict_result_items_item_state import BulkVerdictResultItemsItemState
 from .bulk_verdict_result_summary import BulkVerdictResultSummary
+from .catalog_count_type_1 import CatalogCountType1
 from .claim_edge import ClaimEdge
 from .claim_edge_proposal import ClaimEdgeProposal
 from .claim_edge_state import ClaimEdgeState
+from .claim_kind import ClaimKind
 from .client_registration import ClientRegistration
 from .client_registration_request import ClientRegistrationRequest
 from .client_registration_request_grant_types_item import (
@@ -189,6 +191,7 @@ from .listed_key_grants_item import ListedKeyGrantsItem
 from .listed_key_used_by import ListedKeyUsedBy
 from .memory import Memory
 from .memory_page import MemoryPage
+from .memory_page_counts import MemoryPageCounts
 from .memory_preview import MemoryPreview
 from .memory_preview_passages_item import MemoryPreviewPassagesItem
 from .memory_preview_refusal_type_0 import MemoryPreviewRefusalType0
@@ -235,16 +238,18 @@ from .recall_matched_tokens_item import RecallMatchedTokensItem
 from .recall_matched_via_item import RecallMatchedViaItem
 from .recall_passage import RecallPassage
 from .recall_request import RecallRequest
-from .recall_request_kinds_item import RecallRequestKindsItem
 from .recall_request_match import RecallRequestMatch
 from .recall_request_search import RecallRequestSearch
 from .recall_request_sources_type_0 import RecallRequestSourcesType0
 from .recall_response import RecallResponse
 from .recall_response_hits_item import RecallResponseHitsItem
 from .recall_response_hits_item_via import RecallResponseHitsItemVia
+from .recall_response_steering_type_1 import RecallResponseSteeringType1
 from .recall_search import RecallSearch
 from .recall_search_access import RecallSearchAccess
+from .recall_search_hits import RecallSearchHits
 from .recall_search_match import RecallSearchMatch
+from .recall_search_matched_by_kind import RecallSearchMatchedByKind
 from .recall_search_pipeline import RecallSearchPipeline
 from .recall_search_widen import RecallSearchWiden
 from .recall_search_widen_sources import RecallSearchWidenSources
@@ -483,9 +488,11 @@ __all__ = (
     "BulkVerdictResultItemsItemOutcome",
     "BulkVerdictResultItemsItemState",
     "BulkVerdictResultSummary",
+    "CatalogCountType1",
     "ClaimEdge",
     "ClaimEdgeProposal",
     "ClaimEdgeState",
+    "ClaimKind",
     "ClientRegistration",
     "ClientRegistrationRequest",
     "ClientRegistrationRequestGrantTypesItem",
@@ -598,6 +605,7 @@ __all__ = (
     "ListedKeyUsedBy",
     "Memory",
     "MemoryPage",
+    "MemoryPageCounts",
     "MemoryPreview",
     "MemoryPreviewPassagesItem",
     "MemoryPreviewRefusalType0",
@@ -640,16 +648,18 @@ __all__ = (
     "RecallMatchedViaItem",
     "RecallPassage",
     "RecallRequest",
-    "RecallRequestKindsItem",
     "RecallRequestMatch",
     "RecallRequestSearch",
     "RecallRequestSourcesType0",
     "RecallResponse",
     "RecallResponseHitsItem",
     "RecallResponseHitsItemVia",
+    "RecallResponseSteeringType1",
     "RecallSearch",
     "RecallSearchAccess",
+    "RecallSearchHits",
     "RecallSearchMatch",
+    "RecallSearchMatchedByKind",
     "RecallSearchPipeline",
     "RecallSearchWiden",
     "RecallSearchWidenSources",

@@ -371,6 +371,8 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
                     workspace: (!own).then(|| Reference::from(self.home)),
                     states: Vec::new(),
                     kinds: Vec::new(),
+                    prefix: None,
+                    counts: false,
                     claim_key: claim_key.map(ToOwned::to_owned),
                     since: None,
                     until: None,

@@ -63,13 +63,12 @@ The plugin loads promoted guardrails at session start and checks each rule befor
 
 **Builder. Designed** ([ADR-0082](../adr/ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md)). The workspace page in the console edits skills, guardrails and documents in forms; each save is a held version under the person's own key, and Preview writes nothing.
 
-**Finding the right skill. Designed** ([ADR-0092](../adr/ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md), v0.8.0). An agent on `payments.dev` asks
+**Finding the right skill. Built** ([ADR-0092](../adr/ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md)). An agent on `payments.dev` asks
 recall "which skill fits a failing migration" and gets skills and guardrails ranked beside
-runbook memories, each marked by kind: a skill hit names the skill and its resource, a guardrail
-hit shows the rule in force. Only skills offered at its workspace and guardrails that apply there
-are hits. `oml_read` without a query lists the workspace's contents by kind with counts, and the
-console's **Catalog** page shows the same to alice and bob, held drafts marked unreviewed and held
-instructions marked as needing a person.
+runbook memories, each marked by kind: a skill hit names the skill, its prompt and its resource,
+and a guardrail hit shows the rule in force. Only skills offered at its workspace and guardrails
+that apply there are hits. `oml_read` without a query lists the workspace's contents by kind with
+counts, held drafts marked unreviewed and held instructions marked as needing a person.
 
 ## 4. Review
 

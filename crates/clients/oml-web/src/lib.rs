@@ -11,6 +11,7 @@ mod acts;
 pub mod admin;
 pub mod atlas;
 mod card;
+pub mod catalog;
 pub mod config;
 mod diff;
 pub mod doctor;
@@ -78,6 +79,7 @@ pub const PAGES: &[(&str, &str)] = &[
     ("GET", ADMIN_WORKSPACES_PATH),
     ("POST", ADMIN_WORKSPACES_PATH),
     ("GET", USER_MEMORIES_PATH),
+    ("GET", USER_CATALOG_PATH),
     ("GET", USER_ATLAS_PATH),
     ("GET", ADMIN_MEMORIES_PATH),
     ("GET", ADMIN_ATLAS_PATH),
@@ -137,6 +139,9 @@ pub use oml_page::web::{
 /// the lead answers it not found: the forms that posted it are drawn
 /// nowhere, and a `308` would carry a verdict to a page without that act.
 pub use oml_page::web::{ADMIN_REVIEW_PATH, USER_REVIEW_PATH};
+
+/// The Personal side's Catalog page (ADR-0092 d7).
+pub use oml_page::web::USER_CATALOG_PATH;
 
 /// The To do page of each side and the Judge page (ADR-0083 d2, d6, d11).
 pub use oml_page::web::{ADMIN_TODO_PATH, TODO_JUDGE_PATH, TODO_PATH};
@@ -362,6 +367,7 @@ pub fn router(web: Web) -> Router {
             get(workspaces::admin_page).post(workspaces::admin_act),
         )
         .route(USER_MEMORIES_PATH, get(memories::user_list))
+        .route(USER_CATALOG_PATH, get(catalog::page))
         .route(ADMIN_MEMORIES_PATH, get(memories::admin_list))
         .route(USER_ATLAS_PATH, get(memories::user_atlas))
         .route(ADMIN_ATLAS_PATH, get(memories::admin_atlas))
@@ -496,6 +502,8 @@ mod tests {
             assert!(serves("GET", path), "{path}");
             assert!(!serves("POST", path), "{path}");
         }
+        // The Catalog page reads only (ADR-0092 d7).
+        assert!(serves("GET", "/web/catalog") && !serves("POST", "/web/catalog"));
         for path in ["/web/memory", "/web/admin/memory", "/web/admin/curate"] {
             assert!(serves("GET", path), "{path}");
         }

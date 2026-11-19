@@ -1198,6 +1198,12 @@ pub struct MemoryRecord {
     pub replaces: Option<Uuid>,
     pub author_principal: String,
     pub author_key_id: Uuid,
+    /// The person the author key acted for at the write, by name, as
+    /// `same_user` compares it; `None` for a key that acts for no person.
+    /// Set once at the write, so a later unlink of the key changes neither
+    /// the `same_user` mark nor R2 by person (ADR-0085 d16, amended
+    /// 2026-11-18; #448).
+    pub author_person: Option<Name>,
     pub derives_from: Vec<Uuid>,
     /// The row's lineage closure, flattened: the author plus every declared
     /// ancestor's closure (roles-and-keys.md lineage-closure exclusion).
@@ -2175,14 +2181,38 @@ pub struct VerdictRequest {
     pub idempotency_key: String,
 }
 
-/// The kinds recall serves as hits. Vocabulary kinds join them only by a
-/// workspace's journalled opt-in, which is unbuilt (retrieval.md, the
-/// recall-ordering contract; ADR-0021 d9, ADR-0025 d8).
-pub const HIT_KINDS: [MemoryKind; 3] = [
+/// The kinds recall may serve as hits: every kind but steering, which is
+/// served first and never ranked (ADR-0092 d1, d2), and test, which is
+/// never a hit, a prompt or a resource and never counts in the statistics
+/// (ADR-0086 d1, which ADR-0092 does not amend). `document` joins them with
+/// its passages (ADR-0081 d4).
+pub const HIT_KINDS: [MemoryKind; 8] = [
     MemoryKind::Memory,
     MemoryKind::DerivedFact,
     MemoryKind::Document,
+    MemoryKind::Skill,
+    MemoryKind::Guardrail,
+    MemoryKind::Term,
+    MemoryKind::TermMapping,
+    MemoryKind::VocabRelease,
 ];
+
+/// The hits of a recall that names no `kinds`: every hit kind but the
+/// vocabulary kinds, which join only by a workspace's journalled opt-in;
+/// that opt-in is unbuilt, so none does (ADR-0092 d1, d12 reading 2;
+/// ADR-0021 d9).
+pub const DEFAULT_HIT_KINDS: [MemoryKind; 5] = [
+    MemoryKind::Memory,
+    MemoryKind::DerivedFact,
+    MemoryKind::Document,
+    MemoryKind::Skill,
+    MemoryKind::Guardrail,
+];
+
+/// The instruction kinds recall ranks: a skill offered at the scope node
+/// and a guardrail applicable there are candidates, and no other row of
+/// these kinds is (ADR-0092 d3).
+pub const INSTRUCTION_HIT_KINDS: [MemoryKind; 2] = [MemoryKind::Skill, MemoryKind::Guardrail];
 
 #[derive(Debug, Clone)]
 pub struct RecallRequest {
@@ -2193,9 +2223,10 @@ pub struct RecallRequest {
     /// refused — there is no tenant-wide fallback (ADR-0025 d1; ADR-0026
     /// d4, ADR-0039 d4).
     pub workspace: Option<Reference>,
-    /// The hit kinds the request admits; empty when it sent no filter. It
-    /// narrows the hits only, never the steering (retrieval.md, the
-    /// recall-ordering contract; ADR-0025 d8).
+    /// The kinds the request names; empty when it sent no filter. It
+    /// narrows the hits, and decides whether the steering list is served:
+    /// a filter that does not name `steering` serves none, and one naming
+    /// `steering` alone serves no hits (ADR-0092 d1, d2).
     pub kinds: Vec<MemoryKind>,
     /// `include_text`: whether the served rows carry their text; a budget
     /// counts text, so `max_tokens` without it is refused (retrieval.md
@@ -2273,6 +2304,20 @@ pub struct RecallHit {
     /// The hit's `via` under `wide` or a list: whether its workspace is the
     /// scope's or a federated source; `None` under `scope` (ADR-0072 d8).
     pub source: Option<crate::federation::Via>,
+    /// A skill hit's command and resource: the name `prompts/list` offers
+    /// it under and its `oml://` URI (ADR-0092 d3; ADR-0080 d5, d7); `None`
+    /// for every other kind.
+    pub skill: Option<SkillHit>,
+}
+
+/// What a skill hit names beside its row (ADR-0092 d3): the prompt that
+/// runs it and the resource that reads its body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillHit {
+    /// The command: the skill's name, or `<name>-unreviewed` for a held
+    /// edit of a promoted skill (ADR-0080 d10).
+    pub prompt: String,
+    pub uri: String,
 }
 
 /// The passage a document's hit serves (ADR-0081 d4): its fragment, the
@@ -2339,6 +2384,17 @@ pub struct RecallResult {
     /// The recall's id, the answer's `recall_id`: the event that records it
     /// and the id a `feedback` member names (ADR-0054 d2, d6).
     pub recall_id: Uuid,
+    /// Whether the steering list was asked for: `false` when `kinds` does
+    /// not name `steering`, answered `steering: "not_requested"` so an
+    /// empty list is never read as none in force (ADR-0092 d2).
+    pub steering_requested: bool,
+    /// Whether hits were asked for: `false` when `kinds` names `steering`
+    /// alone, answered `search.hits: "not_requested"` (ADR-0092 d2).
+    pub hits_requested: bool,
+    /// `search.matched_by_kind`: per kind, the candidates in the fused list
+    /// before the `k` cut, a lower bound bounded by each list's depth, in
+    /// [`HIT_KINDS`] order, kinds with none left out (ADR-0092 d4).
+    pub matched_by_kind: Vec<(MemoryKind, u64)>,
     /// The workspace node the recall read, resolved.
     pub scope_workspace_id: Uuid,
     pub steering: Vec<ServedMemory>,
@@ -2608,10 +2664,12 @@ pub struct ListingFilter {
     pub subtree: Option<Vec<Uuid>>,
     /// Rows in any of these states; empty narrows nothing (ADR-0083 d3).
     pub states: Vec<StateClause>,
-    /// Rows of any of these kinds; empty narrows nothing (ADR-0082 d8
-    /// item 3).
+    /// The kinds a row may be; empty narrows nothing (ADR-0082 d8 item 3;
+    /// ADR-0092 d6).
     pub kinds: Vec<MemoryKind>,
     pub claim_key: Option<String>,
+    /// A `claim_key` prefix, read as a byte range (ADR-0092 d6, d9).
+    pub prefix: Option<String>,
     /// `created_at` at or after this instant.
     pub since: Option<EventTime>,
     /// `created_at` before this instant.
@@ -2790,9 +2848,15 @@ pub struct ListRequest {
     /// and `superseded` add the tip, and `mine`'s `promoted_since` the
     /// approval instant (ADR-0045 d22; ADR-0083 d3).
     pub states: Vec<StateClause>,
-    /// Rows of any of these kinds; empty narrows nothing.
+    /// `kinds`: the kinds listed; empty lists every kind (ADR-0092 d6).
     pub kinds: Vec<MemoryKind>,
     pub claim_key: Option<String>,
+    /// `prefix`: only claim keys starting with these bytes (ADR-0092 d6).
+    pub prefix: Option<String>,
+    /// Whether the answer carries the catalog's counts, served on a scoped
+    /// read's first page only and capped at `catalog.count_cap` (ADR-0092
+    /// d6).
+    pub counts: bool,
     pub since: Option<EventTime>,
     pub until: Option<EventTime>,
     /// The page size, which the transport bounds by `api.page_limit_max`.
@@ -2816,6 +2880,33 @@ pub struct ListRequest {
 pub struct MemoryPage {
     pub items: Vec<ServedMemory>,
     pub next_cursor: Option<String>,
+    /// The catalog's counts on a scoped read's first page: per kind, the
+    /// rows every filter but `kinds` admits, `Exact` up to the cap and
+    /// `AtLeast` above it (ADR-0092 d6); `None` when not asked.
+    pub counts: Option<Vec<(MemoryKind, KindCount)>>,
+    /// Per item, what says whether it applies at the read's scope node: a
+    /// skill's offered command, a guardrail's `in_force`, a steering row's
+    /// `applies_here` (ADR-0092 d6); absent for an item of another kind.
+    pub marks: std::collections::BTreeMap<Uuid, CatalogMark>,
+}
+
+/// A catalog count (ADR-0092 d6, d11 answer 6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KindCount {
+    Exact(u64),
+    AtLeast(u64),
+}
+
+/// Whether a catalog item applies at the read's scope node (ADR-0092 d6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CatalogMark {
+    /// A skill: the command `prompts/list` offers it under at the scope
+    /// node, `None` when it is not offered there.
+    Skill { prompt: Option<String> },
+    /// A guardrail: whether it binds at the scope node.
+    Guardrail { in_force: bool },
+    /// A steering row: whether it is in the steering list there.
+    Steering { applies_here: bool },
 }
 
 /// One page of the tenant's crew records in name order, and the cursor of

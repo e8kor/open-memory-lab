@@ -275,6 +275,8 @@ impl World {
                     claim_key: None,
                     states: Vec::new(),
                     kinds: Vec::new(),
+                    prefix: None,
+                    counts: false,
                     since: None,
                     until: None,
                     limit: 50,
@@ -439,6 +441,8 @@ async fn a_held_version_with_a_hold_finding_is_never_served_unreviewed_in_progre
                 claim_key: None,
                 states: Vec::new(),
                 kinds: Vec::new(),
+                prefix: None,
+                counts: false,
                 since: None,
                 until: None,
                 limit: 50,
@@ -2169,5 +2173,88 @@ async fn down_reach_crosses_an_intermediate_workspace_that_is_not_in_progress() 
     assert_eq!(
         w.offered(&w.bob, mid, false).await,
         vec![("deep".to_owned(), true, 1)]
+    );
+}
+
+/// A recall at `node` as `key`, naming `kinds`: the answer.
+async fn recall_kinds(
+    w: &World,
+    key: &IssuedKey,
+    node: Uuid,
+    query: &str,
+    kinds: Vec<MemoryKind>,
+) -> oml_app::types::RecallResult {
+    w.app
+        .recall(
+            key.value.as_str(),
+            &RecallRequest {
+                sources: None,
+                timings: false,
+                include_expired: false,
+                now: None,
+                anchor: oml_app::types::AnchorFilter::default(),
+                query: query.to_owned(),
+                k: 10,
+                workspace: Some(node.into()),
+                kinds,
+                include_text: true,
+                include_unreviewed: None,
+                max_tokens: None,
+                search: None,
+                match_mode: oml_app::search::MatchMode::Any,
+                as_of: None,
+            },
+        )
+        .await
+        .expect("recall")
+}
+
+/// A skill the scope offers is a ranked hit naming the prompt that runs it
+/// and the resource that reads it, a held one served to the in-progress
+/// audience marked as needing a person; a skill the scope does not offer
+/// is no hit, however well it matches (ADR-0092 d3; ADR-0080 d4, d16).
+#[tokio::test]
+async fn a_skill_hit_is_one_the_scope_offers_with_its_prompt_and_resource() {
+    let w = world().await;
+    w.mark(w.proj).await;
+    let canary = w
+        .skill(&w.ann, "s1", "canary", "Drain the canary pool.", w.proj)
+        .await;
+    // Held on a node outside every in-progress subtree: offered to no one
+    // but its author under include_unreviewed.
+    let side = w
+        .skill(&w.ann, "s2", "sidecar", "Drain the canary sidecar.", w.side)
+        .await;
+    let recall = recall_kinds(&w, &w.bob, w.proj, "canary", Vec::new()).await;
+    let hit = recall
+        .hits
+        .iter()
+        .find(|h| h.served.memory.memory_id == canary)
+        .expect("the offered skill is a hit");
+    let skill = hit.skill.as_ref().expect("a skill hit names its prompt");
+    assert_eq!(skill.prompt, "canary");
+    assert!(skill.uri.ends_with("/skill/canary"), "{}", skill.uri);
+    assert_eq!(hit.served.memory.status, MemoryStatus::Held);
+    assert!(hit.served.needs_person());
+    assert!(
+        recall
+            .hits
+            .iter()
+            .all(|h| h.served.memory.memory_id != side),
+        "a skill the scope does not offer is no hit"
+    );
+    assert!(
+        recall
+            .matched_by_kind
+            .iter()
+            .any(|(k, n)| *k == MemoryKind::Skill && *n >= 1)
+    );
+    // Narrowed to memories, no skill is a hit.
+    let recall = recall_kinds(&w, &w.bob, w.proj, "canary", vec![MemoryKind::Memory]).await;
+    assert!(
+        recall
+            .hits
+            .iter()
+            .all(|h| h.served.memory.kind == MemoryKind::Memory)
     );
 }

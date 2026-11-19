@@ -4390,7 +4390,7 @@ async fn steering_on_an_unreadable_ancestor_is_not_served() {
 }
 
 #[tokio::test]
-async fn kinds_filters_hits_only() {
+async fn kinds_narrows_the_hits_and_decides_whether_the_steering_list_is_served() {
     let Some((rig, admin, crew, _quotes, writer, reviewer)) = steering_rig().await else {
         return;
     };
@@ -4416,9 +4416,10 @@ async fn kinds_filters_hits_only() {
     ))
     .await;
 
-    for (kinds, hits) in [
-        (json!(["derived_fact"]), vec![derived.clone()]),
-        (json!(["memory"]), vec![memory.clone()]),
+    // (kinds, steering served, hits) under ADR-0092 d1, d2.
+    for (kinds, steered, hits) in [
+        (json!(["derived_fact"]), false, vec![derived.clone()]),
+        (json!(["memory", "steering"]), true, vec![memory.clone()]),
     ] {
         let (status, recall) = recall_over_http(
             router,
@@ -4428,18 +4429,39 @@ async fn kinds_filters_hits_only() {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{recall}");
-        assert_eq!(steering_ids(&recall), vec![steering.clone()], "{recall}");
+        if steered {
+            assert_eq!(steering_ids(&recall), vec![steering.clone()], "{recall}");
+        } else {
+            assert_eq!(recall["steering"], "not_requested", "{recall}");
+        }
         assert_eq!(hit_ids(&recall), hits, "{recall}");
     }
+    // Steering alone serves the list and ranks nothing.
+    let (status, recall) = recall_over_http(
+        router,
+        &reader,
+        None,
+        json!({"query": "aluminium price", "kinds": ["steering"]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{recall}");
+    assert_eq!(steering_ids(&recall), vec![steering.clone()], "{recall}");
+    assert_eq!(recall["hits"], json!([]), "{recall}");
+    assert_eq!(recall["search"]["hits"], "not_requested", "{recall}");
+    // A vocabulary kind named is served; none is written here.
+    let (status, recall) = recall_over_http(
+        router,
+        &reader,
+        None,
+        json!({"query": "aluminium price", "kinds": ["term"]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{recall}");
+    assert_eq!(recall["hits"], json!([]), "{recall}");
 
-    // An empty filter, a steering filter and a vocabulary kind are refused,
-    // never read as no filter (openapi.yaml RecallRequest.kinds).
-    for kinds in [
-        json!([]),
-        json!(["steering"]),
-        json!(["term"]),
-        json!(["bogus"]),
-    ] {
+    // An empty filter and an unknown kind are refused naming /kinds, never
+    // read as no filter (openapi.yaml RecallRequest.kinds).
+    for kinds in [json!([]), json!(["bogus"])] {
         let (status, refused) = recall_over_http(
             router,
             &reader,
@@ -4449,6 +4471,79 @@ async fn kinds_filters_hits_only() {
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{kinds}: {refused}");
         assert_envelope(&refused, "request.validation");
+        assert_eq!(refused["error"]["details"]["field"], "/kinds", "{refused}");
+    }
+
+    drop_db(&rig.db_name).await;
+}
+
+/// A test case is never a recall hit: `kinds` naming `test` is refused by
+/// name on `/kinds`, alone or beside a hit kind, and the catalog still
+/// lists by it (ADR-0086 d1; ADR-0092 d1, d6).
+#[tokio::test]
+async fn recall_refuses_kinds_test_by_name_and_the_catalog_lists_by_it() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
+    for kinds in [json!(["test"]), json!(["memory", "test"])] {
+        let (status, refused) = recall_over_http(
+            router,
+            &reader,
+            None,
+            json!({"query": "aluminium price", "kinds": kinds.clone()}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{kinds}: {refused}");
+        assert_envelope(&refused, "request.validation");
+        assert_eq!(refused["error"]["details"]["field"], "/kinds", "{refused}");
+        let message = refused["error"]["message"].as_str().expect("message");
+        assert!(message.contains("never a recall hit"), "{refused}");
+    }
+    let (status, _, page) = send(
+        router,
+        "GET",
+        "/v1/memories?kinds=test",
+        Call::auth(&reader),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+
+    drop_db(&rig.db_name).await;
+}
+
+/// The catalog's `prefix` is a claim key's start: one holding NUL or
+/// another control character, or longer than 1,024 bytes, is refused naming
+/// `prefix`; an ordinary one, multi-byte included, is served (ADR-0092 d6;
+/// d12 reading 6).
+#[tokio::test]
+async fn the_catalog_refuses_a_prefix_with_a_control_character_or_past_its_cap() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    let (admin, _tenant, crew) = crew_tenant(router).await;
+    let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
+    let long = "a".repeat(1025);
+    for prefix in [
+        "skill%00",
+        "doc%0Arun",
+        "notes%1B",
+        "notes%7F",
+        long.as_str(),
+    ] {
+        let (status, refused) =
+            list(router, Call::auth(&reader), &format!("prefix={prefix}")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{prefix}: {refused}");
+        assert_envelope(&refused, "request.validation");
+        assert_eq!(refused["error"]["details"]["field"], "prefix", "{refused}");
+    }
+    let at_cap = "a".repeat(1024);
+    for prefix in ["skill/", "doc/r%C3%A9sum%C3%A9", at_cap.as_str()] {
+        let (status, page) = list(router, Call::auth(&reader), &format!("prefix={prefix}")).await;
+        assert_eq!(status, StatusCode::OK, "{prefix}: {page}");
     }
 
     drop_db(&rig.db_name).await;
@@ -11076,12 +11171,12 @@ async fn the_changed_operations_serve_the_merged_listing_counts_offers_and_named
         StatusCode::NOT_FOUND,
         "another person's key: {body}"
     );
-    // kind and state are comma lists beside with_own and mine, guardrail
+    // kinds and state are comma lists beside with_own and mine, guardrail
     // among the kinds; mine drops the scoped part (ADR-0082 d8 item 3;
     // ADR-0083 d3).
     for query in [
-        "/v1/memories?with_own=true&kind=memory,guardrail",
-        "/v1/memories?mine=true&state=held,withdrawn&kind=memory",
+        "/v1/memories?with_own=true&kinds=memory,guardrail",
+        "/v1/memories?mine=true&state=held,withdrawn&kinds=memory",
         "/v1/memories?mine=true&state=held,promoted&promoted_since=2026-01-01T00:00:00Z",
     ] {
         let (status, _, body) = send(&rig.router, "GET", query, web_call(&web)).await;
@@ -11095,14 +11190,14 @@ async fn the_changed_operations_serve_the_merged_listing_counts_offers_and_named
     let (status, _, body) = send(
         &rig.router,
         "GET",
-        "/v1/memories?mine=true&kind=guardrail,skill",
+        "/v1/memories?mine=true&kinds=guardrail,skill",
         web_call(&web),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(ids(&body).is_empty(), "{body}");
     for (query, field) in [
-        ("/v1/memories?with_own=true&kind=memory,nope", "kind"),
+        ("/v1/memories?with_own=true&kinds=memory,nope", "kinds"),
         ("/v1/memories?mine=true&state=held,erased", "state"),
         (
             "/v1/memories?mine=true&promoted_since=yesterday",

@@ -970,6 +970,8 @@ where
             states: states.clone(),
             kinds: req.kinds.clone(),
             claim_key: None,
+            prefix: None,
+            counts: false,
             since: None,
             until: None,
             limit: req.limit,
@@ -1020,6 +1022,8 @@ where
         Ok(MemoryPage {
             items: rows,
             next_cursor,
+            counts: None,
+            marks: std::collections::BTreeMap::new(),
         })
     }
 

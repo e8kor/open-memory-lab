@@ -173,10 +173,10 @@ branch that reserved later renumbers.
 | migration | 0056 | `main` |  | serving role destroys erased keys | used |
 | migration | 0057 | `main` |  | artifact keys guard | used |
 | migration | 0058 | `main` |  | valid until before supersession | used |
-| migration | 0059 | `main` |  | document passages search | used |
-| migration | 0060 | `main` |  | document passages served index | used |
+| migration | 0059 | `bulk/v080-c` |  | document passages as search units (ADR-0081 d3, d4, #405) | reserved |
+| migration | 0060 | `bulk/v080-c` |  | document passages: the served index rebuilt partition by partition and the kind check validated (ADR-0081 R14, #405) | reserved |
 | migration | 0061 | `bulk/v080-e` |  | a version records its author's person at write (ADR-0085 d16, #448) | reserved |
 | migration | 0062 | `bulk/v080-e` |  | postings and counts for every hit kind, and the catalog index (ADR-0092 d4, d9, #443) | reserved |
 | migration | 0063 | `bulk/v083-2` |  | admin investigations | reserved |
 | migration | 0064 | `bulk/v083-2` |  | admin fixes and the fix mark on memories | reserved |
-| migration | 0065 | `bulk/v080-d` |  | a person's session key writes are charged to the person's account | reserved |
+| migration | 0065 | `bulk/v080-d` |  | a person's review key writes are charged to the person's account | reserved |

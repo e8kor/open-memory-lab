@@ -38,6 +38,7 @@ from .generated.api.workspaces import get_workspace
 from .generated.client import Client
 from .generated.models import (
     Anchor,
+    ClaimKind,
     EventsPage,
     Memory,
     MemoryPage,
@@ -45,7 +46,6 @@ from .generated.models import (
     Origin,
     OriginKind,
     RecallRequest,
-    RecallRequestKindsItem,
     RecallRequestMatch,
     RecallRequestSearch,
     RecallRequestSourcesType0,
@@ -105,7 +105,9 @@ READ_LISTING = (
     "workspace",
     "claim_key",
     "state",
-    "kind",
+    "kinds",
+    "prefix",
+    "include_text",
     "since",
     "until",
     "limit",
@@ -404,7 +406,7 @@ class OmlClient:
         own: bool | None = None,
         claim_key: str | None = None,
         state: str | None = None,
-        kind: str | None = None,
+        prefix: str | None = None,
         since: datetime.datetime | None = None,
         until: datetime.datetime | None = None,
         limit: int | None = None,
@@ -419,8 +421,11 @@ class OmlClient:
         fetches one version with its text, a `Memory`. `query` recalls over
         promoted rows in `workspace`, else the key's default workspace, and the
         caller's own held rows with `include_unreviewed`, a `RecallResponse`.
-        Neither lists one page, newest first, of the key's own rows, or with
-        `own=False` the promoted tips of `workspace`'s subtree, a `MemoryPage`.
+        Neither reads one page of the catalog, newest first: what the key
+        reads in `workspace`'s subtree, every kind unless `kinds`, entries
+        without text unless `include_text`, per-kind counts on the first page;
+        or with `own=True` the key's own rows with their text, a `MemoryPage`
+        (ADR-0092 d6).
         A recall's `sources` is `"scope"`, `"wide"` or a list of workspace names
         searched alone, where the tenant enabled federation (ADR-0072 d5).
         `as_of`, in every mode, reads memory as it was at that past instant
@@ -444,7 +449,7 @@ class OmlClient:
             "own": own,
             "claim_key": claim_key,
             "state": state,
-            "kind": kind,
+            "prefix": prefix,
             "since": since,
             "until": until,
             "limit": limit,
@@ -472,9 +477,7 @@ class OmlClient:
                 query=query,
                 workspace=_opt(workspace),
                 k=_opt(k),
-                kinds=[RecallRequestKindsItem(kind) for kind in kinds]
-                if kinds is not None
-                else UNSET,
+                kinds=[ClaimKind(kind) for kind in kinds] if kinds is not None else UNSET,
                 include_text=_opt(include_text),
                 include_unreviewed=_opt(include_unreviewed),
                 max_tokens=_opt(max_tokens),
@@ -496,7 +499,14 @@ class OmlClient:
                 lambda: recall_memories.sync_detailed(client=self._api, body=request)
             ).parsed
         _outside_mode(recall, READ_LISTING, "listing")
-        return self._listing(workspace=workspace, as_of=as_of, **listing, **origin)
+        return self._listing(
+            workspace=workspace,
+            as_of=as_of,
+            kinds=kinds,
+            include_text=include_text,
+            **listing,
+            **origin,
+        )
 
     def _listing(
         self,
@@ -505,7 +515,9 @@ class OmlClient:
         workspace: str | None = None,
         claim_key: str | None = None,
         state: str | None = None,
-        kind: str | None = None,
+        kinds: Sequence[str] | None = None,
+        prefix: str | None = None,
+        include_text: bool | None = None,
         since: datetime.datetime | None = None,
         until: datetime.datetime | None = None,
         limit: int | None = None,
@@ -515,17 +527,18 @@ class OmlClient:
         origin_kinds: Sequence[str] | None = None,
         as_of: datetime.datetime | None = None,
     ) -> MemoryPage:
-        """One page of `GET /v1/memories`, `own` defaulting to true as
-        `oml_read`'s listing does, or to false with `as_of`, which reads the
-        scoped listing (ADR-0039 d4; ADR-0059 d19)."""
+        """One page of `GET /v1/memories`: the catalog, unless `own` is true
+        (ADR-0092 d6); the own-work list carries its text."""
         return self._send(
             lambda: list_memories.sync_detailed(
                 client=self._api,
-                own=(as_of is None) if own is None else own,
+                own=bool(own),
                 as_of=_opt(as_of),
                 claim_key=_opt(claim_key),
                 state=_opt(state),
-                kind=_opt(kind),
+                kinds=[ClaimKind(k) for k in kinds] if kinds is not None else UNSET,
+                prefix=_opt(prefix),
+                include_text=True if own else _opt(include_text),
                 workspace=_opt(workspace),
                 since=_opt(since),
                 until=_opt(until),

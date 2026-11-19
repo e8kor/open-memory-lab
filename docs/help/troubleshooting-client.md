@@ -99,7 +99,7 @@ The CLI prints the code, a message and a `rule:` line, then exits `1`. Branch on
 
 A new memory is held. Nobody but its author can recall it until a different reviewer approves it.
 
-- **If the key wrote it**, find it with `include_unreviewed: true` on `oml_read`. Or list the writes with their `state`.
+- **If the key wrote it**, find it with `include_unreviewed: true` on `oml_read`. Or list the writes with their `state`, using `own: true` on `oml_read`.
 - **If someone else wrote it**, a reviewer key approves it. See [review held memories](../guides/reviewing.md).
 - **If it is approved but missing**, check that the key has a reader grant on the workspace. Without one the answer is `access.not_found`.
 

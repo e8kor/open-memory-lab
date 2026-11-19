@@ -9,7 +9,18 @@ answers: which kinds recall's kinds filter admits and what a recall that names n
 
 **Status:** accepted design · 2026-11-15, by the operator, before it is built: three decisions
 taken with the request (d1, d3, d6) and twelve answers the same day, every one at its
-recommendation (d11) · proposed the same day
+recommendation (d11) · proposed the same day · amended 2026-11-18 (d12: the readings the
+build took, recorded before the code and marked for the operator's batch, #443) · amended
+2026-11-19 (d12: reading 4 restated as built, readings 6 to 8, and the note that this record does
+not amend ADR-0086)
+
+**Note, 2026-11-19.** This record does not amend
+[ADR-0086](ADR-0086-a-workspaces-tests-are-reviewed-claims-the-server-runs-under-the-callers-key-and-a-release-is-published-only-through-ordered-gates.md)
+d1, which is accepted: a test case is never served as a hit, a prompt or a resource. Where this
+record says "the ten kinds" or counts `test` among the hit kinds (d1, d4, Consequences), recall
+reads nine: `kinds` naming `test` is refused (`request.validation`, `details.field: /kinds`), a
+test gets no postings and never counts in the statistics, and the catalog still lists tests (d6).
+The coordinator took this reading on the review of #443 by the accepted record.
 
 **Release:** planned for v0.8.0; not built
 
@@ -398,9 +409,88 @@ workspace holds across kinds has the workspace page's contents by kind for one w
         `own: true` for the key's own work. Rejected: keep `own: true` as the MCP default and serve
         the catalog with `own: false`.
 
+- **d12 — The readings the build took** (amended 2026-11-18, #443; 1 to 3 are the
+  coordinator's decisions on the build's questions, 4 to 8 the build's own; each recorded before
+  the code and **marked for the operator's batch**). Each names the alternative it rejected.
+    1. **How a skill's name and description enter its search text** (d3, "a skill by its name,
+       description and body"). The store's search-vector fold reads the name, the description
+       and the body for a version of kind `skill`, and runs again when the name or the
+       description column changes, as it does for the claim and the search text; the in-memory
+       store reads the same three. The application derives no `search_text` for a skill.
+       Rejected: the application writing a `search_text` for skills, since `search_text` is the
+       format adapter's staged output (ADR-0056 d4, ADR-0090 d13) and a second writer of it would
+       drift from the adapter's.
+    2. **Vocabulary kinds before ADR-0021 d9's opt-in is built** (d1, d4, d11 answer 3). The
+       journalled opt-in does not exist yet, so no workspace admits vocabulary: with no `kinds`,
+       `term`, `term_mapping` and `vocab_release` are never hits and never in the BM25 reference
+       set; named in `kinds`, they are served wherever the key reads, d1's exception. The
+       postings and counts are written for them all the same, so the opt-in, once built, needs
+       no further migration. Rejected: building the opt-in in this change, which is ADR-0021's
+       record and has no decided event.
+    3. **The MCP own-work listing and text** (d6, ADR-0039 d4). `own: true` keeps answering its
+       items with their text, as the own-work check does today; the catalog, the default mode,
+       follows d6 and serves no body unless `include_text` asks. Rejected: one no-text rule for
+       both modes, which would make an agent checking its own write send a second flag.
+
+    4. **Which rows the BM25 statistics count** (d4; the build's own reading, not one of the
+       coordinator's three, recorded before the code and flagged for the operator because it
+       narrows d4's text; restated 2026-11-19 to say what the code does). The statistics count:
+       the served tips and the admitted held rows of the knowledge kinds (`memory`,
+       `derived_fact` and `document`, the last by its passages) on the readable hit nodes; every
+       offered skill and applicable guardrail, by id, wherever it lives, an ancestor's included;
+       and any vocabulary kind the request names. They never count a test (ADR-0086 d1), a
+       readable skill or guardrail that is not offered or not applicable, nor the knowledge rows
+       of an ancestor that only offers one. Two consequences differ from d4's sentences and are
+       marked for the operator: a recall whose `kinds` names a vocabulary kind counts that kind's
+       rows, so memory scores move when `kinds` names `term` (d4 fixes the set before `kinds`);
+       and an offered skill in an ancestor counts, though no knowledge row of that ancestor does.
+       A filtered answer is the unfiltered one restricted when the filter names no vocabulary
+       kind (the law holds on both stores), the scan and the postings statements count the same
+       rows, and no memory's score moves because a skill was written in a descendant workspace.
+       A federated recall's reference set counts its knowledge rows alone. Rejected: d4's literal
+       set, which needs per-kind node sets in every statement and moves memory scores by rows the
+       recall never serves.
+    5. **What a skill is searched by on each retriever** (d3, with reading 1). The scoring
+       retrievers that read stored lexemes (`bm25`, `bm25-postings`) search a skill's name,
+       description and body; the keyword and trigram retrievers read the text as they do for
+       every kind, its search text or claim, so on them a skill is found by its body. Rejected:
+       a second text expression for skills in the keyword statements, which would leave their
+       index.
+
+    6. **The catalog's `prefix` bound** (d6, d9; 2026-11-19, the build's reading, marked for the
+       operator). A `prefix` holding NUL or another control character is refused naming
+       `prefix`, as is one longer than 1,024 bytes. The server sets no claim key maximum, so the
+       bound limits the read and is no key rule. Rejected: no bound, which let a NUL reach the
+       store and answer 503.
+    7. **Instruction hits re-read by state** (d3; 2026-11-19). The offered set is read once,
+       before the pipeline; a verdict, a withdrawal or a supersession that lands between that
+       read and the hydration would serve a row no longer offered. The core re-checks each
+       hydrated instruction: a promoted tip, or a held version its read serves. Rejected:
+       carrying the state predicate into every retriever statement, which the core's re-check
+       covers on both stores at once.
+    8. **`did_you_mean` draws its words from the knowledge rows alone** (d1; 2026-11-19, marked
+       for the operator). The suggestion vocabulary (ADR-0052) counts the served `memory`,
+       `derived_fact` and `document` rows, so a word only a skill, a guardrail or a vocabulary
+       row holds is never suggested. Intended: the vocabulary is per workspace, not per offered
+       set, so counting instructions would suggest the words of skills the scope does not offer
+       and guardrails that do not apply there. Rejected: adding the instruction kinds to the
+       vocabulary.
+
+    **Waiting.** `binding` (d6, d8) waits on ADR-0085's releases, which are not built: every key
+    reads tips, so no catalog answer carries `binding` until they are. The console's **Judge it**
+    link (d7) waits on the judge page `/web/todo/judge` that the console's To do work (#411, PR
+    #494) adds; until it is on `main`, a held instruction row shows the "needs a person" chip
+    alone. The MCP catalog (`oml_read` without a query) copies each entry's `kind` and the
+    projection of d6, and leaves out `scan_findings`, which only the surfaces a reviewer judges
+    from carry (ADR-0074 d17, d23). Document hits are
+    ADR-0081's best-passage hits, and a document counts in the statistics as ADR-0081 R6
+    amended counts it (once in a word's document frequency, once in N, its passages in the
+    mean length); a catalog entry's `passages` count is not served yet.
+
 ## Consequences
 
-- `HIT_KINDS` becomes every kind recall may serve, and `parse_hit_kinds` admits the ten kinds;
+- `HIT_KINDS` becomes every kind recall may serve, and `parse_hit_kinds` admits every kind but
+  `test` (note of 2026-11-19);
   the guardrail refusal goes (ADR-0037 d18 Q7 is replaced). The retrievers take the kinds in the
   candidate scope; postings and the counts of ADR-0052 d5 cover every hit kind, filled for
   existing rows by one migration, reserved at build.

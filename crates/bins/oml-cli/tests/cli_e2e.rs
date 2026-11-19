@@ -5352,8 +5352,12 @@ async fn oml_read_refuses_query_with_an_artifact_id() {
             vec!["read", STUB_ARTIFACT, "--workspace", "metals"],
             "--workspace",
         ),
-        (vec!["read", STUB_ARTIFACT, "--all"], "--all"),
-        (vec!["read", "--own", "--all"], "--all"),
+        (vec!["read", STUB_ARTIFACT, "--own"], "--own"),
+        (
+            vec!["read", "--query", "q", "--prefix", "skill/"],
+            "--prefix",
+        ),
+        (vec!["read", STUB_ARTIFACT, "--kinds", "skill"], "--kinds"),
     ] {
         let (code, _, stderr) = stub_text(&server, &dir, &args);
         assert_eq!(code, 2, "{args:?}: {stderr}");
@@ -5404,19 +5408,27 @@ async fn oml_read_fetches_with_an_artifact_id_recalls_with_query_and_lists_with_
         (
             vec!["read"],
             "GET /v1/memories".to_owned(),
-            "own=true".to_owned(),
+            "own=false".to_owned(),
+            Value::Null,
+        ),
+        (
+            vec!["read", "--own"],
+            "GET /v1/memories".to_owned(),
+            "own=true&include_text=true".to_owned(),
             Value::Null,
         ),
         (
             vec![
                 "read",
-                "--all",
                 "--workspace",
                 "universe.metals",
                 "--state",
                 "promoted",
-                "--kind",
-                "memory",
+                "--kinds",
+                "memory,skill",
+                "--prefix",
+                "skill/",
+                "--text",
                 "--since",
                 "2026-11-01T00:00:00Z",
                 "--until",
@@ -5427,8 +5439,8 @@ async fn oml_read_fetches_with_an_artifact_id_recalls_with_query_and_lists_with_
                 "c/1",
             ],
             "GET /v1/memories".to_owned(),
-            "own=false&workspace=universe.metals&state=promoted&kind=memory\
-             &since=2026-11-01T00%3A00%3A00Z&until=2026-11-03T00%3A00%3A00Z&limit=5&cursor=c%2F1"
+            "own=false&workspace=universe.metals&state=promoted&kinds=memory%2Cskill\
+             &prefix=skill%2F&include_text=true&since=2026-11-01T00%3A00%3A00Z&until=2026-11-03T00%3A00%3A00Z&limit=5&cursor=c%2F1"
                 .to_owned(),
             Value::Null,
         ),
@@ -7144,8 +7156,7 @@ async fn oml_sync_keeps_a_workspace_in_step_with_a_clones_records() {
         edited["summary"]["changed"], 1,
         "the decision alone, since the summary's span holds only its headline: {log}"
     );
-    let (code, served, log) =
-        lab.json(Some(&sync), &["read", "--all", "--workspace", "oml-design"]);
+    let (code, served, log) = lab.json(Some(&sync), &["read", "--workspace", "oml-design"]);
     assert_eq!(code, 0, "{log}");
     let d2 = served["items"]
         .as_array()

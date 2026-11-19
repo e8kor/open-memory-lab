@@ -887,6 +887,7 @@ Kind: partitioned table, `PARTITION BY LIST (tenant_id)`.
 | `valid_until_ratified` | `boolean` | not null | `false` | Whether valid_until is the end a ratified supersession gave the version; a demotion that restores it as the tip writes valid_until_before back. |
 | `valid_until_before` | `text` | null |  | The end the version had before a ratified supersession replaced it; NULL for an open end. Read only while valid_until_ratified is true (0058). |
 | `valid_until_before_us` | `bigint` | null |  | valid_until_before as Unix microseconds, as valid_until_us is valid_until (0058). |
+| `author_person` | `text` | null |  | The person the author key acted for at the write, by name, as same_user compares it; NULL for a key that acts for no person (0061). |
 
 Checks:
 
@@ -1297,7 +1298,7 @@ Kind: partitioned table, `PARTITION BY LIST (tenant_id)`.
 Checks:
 
 - `search_postings_kind`: `CHECK (kind = ANY (ARRAY[1, 2]))`
-- `search_postings_memory_kind`: `CHECK (memory_kind = ANY (ARRAY[1, 2, 3]))`
+- `search_postings_memory_kind`: `CHECK (memory_kind = ANY (ARRAY[1, 2, 3, 5, 6, 7, 8, 9]))`
 - `search_postings_state`: `CHECK (state = ANY (ARRAY[0, 1, 2]))`
 
 Row-level security: enabled and forced, so the owner is bound too.

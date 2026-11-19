@@ -43,7 +43,7 @@ console.log(memory.state, memory.text);
 await oml.write({ text: "Drain, then wait five minutes.", replaces: memory.artifact_id });
 
 for await (const row of oml.memories({ limit: 50 })) {
-  console.log(row.artifact_id, row.state); // the key's own rows; follows next_cursor to the end
+  console.log(row.artifact_id, row.kind); // the catalog the key reads; follows next_cursor to the end
 }
 ```
 

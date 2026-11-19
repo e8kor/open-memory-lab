@@ -125,6 +125,8 @@ web:
       pathType: Exact
     - path: /web/memories
       pathType: Exact
+    - path: /web/catalog
+      pathType: Exact
     - path: /web/atlas
       pathType: Exact
     - path: /web/admin/memories

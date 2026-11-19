@@ -32,7 +32,7 @@ pub use transport::{HttpTransport, Sending, Transport, TransportError};
 /// and of each struct it holds, to the operation's 2xx schema;
 /// `every_method_sends_the_method_path_and_type_its_table_entry_names`
 /// holds the methods to it.
-pub const OPERATIONS: [&str; 45] = [
+pub const OPERATIONS: [&str; 46] = [
     "authorizationServerMetadata GET /.well-known/oauth-authorization-server resp:AuthorizationServerMetadata",
     "whoami GET /v2/whoami query:person resp:Whoami",
     "getGuardrails GET /v1/guardrails query:workspace resp:GuardrailSet",
@@ -43,7 +43,7 @@ pub const OPERATIONS: [&str; 45] = [
     "proposeTransition POST /v2/workspaces/{workspace}/transitions body:to resp:Transition",
     "ratifyTransition POST /v2/workspaces/{workspace}/transitions/{transition_id}/ratify resp:Transition",
     "setWorkspaceMode POST /v2/workspaces/{workspace}/mode body:mode resp:WorkspaceView",
-    "listMemories GET /v1/memories query:with_own,mine,include_text,author,workspace,state,kind,promoted_since,origin_kinds,limit,cursor resp:MemoryPage",
+    "listMemories GET /v1/memories query:with_own,mine,include_text,author,workspace,state,kinds,promoted_since,origin_kinds,limit,cursor resp:MemoryPage",
     "recallMemories POST /v1/memories/recall body:query,k,workspace,kinds,include_text,include_unreviewed,origin_kinds resp:RecallResponse",
     "adminSearchMemories POST /v2/admin/memories/search body:query,workspace,state,origin_kind,author,kind,limit,cursor resp:AdminMemoryPage",
     "getWorkspaceTree GET /v2/workspaces/{workspace}/tree query:counts,offers resp:WorkspaceCounts",
@@ -78,6 +78,7 @@ pub const OPERATIONS: [&str; 45] = [
     "exportWebPerson GET /v2/web/export resp:Export",
     "requestWebDeletion POST /v2/web/deletion-requests resp:DeletionRequested",
     "whoami GET /v2/whoami resp:Onboarding",
+    "listMemories GET /v1/memories query:workspace,kinds,prefix,state,limit,cursor resp:CatalogPage",
 ];
 
 /// The request id header (ADR-0042 d4).
@@ -734,6 +735,81 @@ pub struct MemoryPage {
     pub next_cursor: Option<String>,
 }
 
+/// One kind's count on the catalog's first page (openapi.yaml
+/// `CatalogCount`; ADR-0092 d6): exact up to `catalog.count_cap`, a lower
+/// bound above it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(untagged)]
+pub enum CatalogCount {
+    Exact(u64),
+    AtLeast { at_least: u64 },
+}
+
+/// One catalog entry (openapi.yaml `Memory` as the catalog serves it,
+/// without text; ADR-0092 d6): the fields every kind carries and the
+/// projection of its own kind, the fields the Catalog page reads.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct CatalogEntry {
+    pub artifact_id: String,
+    pub claim_key: String,
+    pub kind: String,
+    pub version: u32,
+    pub workspace_path: Option<String>,
+    pub state: String,
+    #[serde(default)]
+    pub unreviewed: bool,
+    #[serde(default)]
+    pub needs_person: bool,
+    #[serde(default)]
+    pub retirement: bool,
+    pub created_at: String,
+    #[serde(default)]
+    pub approved_at: Option<String>,
+    #[serde(default)]
+    pub approver: Option<Approver>,
+    /// A skill's name.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// A document's title.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// A skill's description, or the server's cut of a memory's or a
+    /// derived fact's text where `preview` is true.
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub preview: bool,
+    /// The command a skill is offered under at the read's scope node;
+    /// `None` where the scope does not offer it.
+    #[serde(default)]
+    pub prompt: Option<String>,
+    /// A guardrail's severity word: `never`, `must` or `should`.
+    #[serde(default)]
+    pub severity: Option<String>,
+    /// A guardrail's `oml-gr/1` rule, or `None` where it has none.
+    #[serde(default)]
+    pub rule: Option<Value>,
+    /// A guardrail: whether it binds at the read's scope node.
+    #[serde(default)]
+    pub in_force: Option<bool>,
+    /// A steering entry: whether it is in force at the read's scope node.
+    #[serde(default)]
+    pub applies_here: Option<bool>,
+    /// A document's body bytes.
+    #[serde(default)]
+    pub size: Option<u64>,
+}
+
+/// `GET /v1/memories` without `own`: one page of the catalog, with each
+/// kind's count on the first page only (ADR-0092 d6).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct CatalogPage {
+    pub items: Vec<CatalogEntry>,
+    pub next_cursor: Option<String>,
+    #[serde(default)]
+    pub counts: Option<std::collections::BTreeMap<String, CatalogCount>>,
+}
+
 /// One ranked hit of a recall.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct RecallHit {
@@ -743,8 +819,30 @@ pub struct RecallHit {
 /// `POST /v1/memories/recall`: steering first, then the ranked hits.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct RecallResponse {
-    pub steering: Vec<Memory>,
+    /// The steering list, `Some` and possibly empty, "none in force"; `None`
+    /// when the recall's `kinds` does not name steering, which the server
+    /// answers as `"not_requested"`, so an unasked list is never read as
+    /// none in force (ADR-0092 d2).
+    #[serde(deserialize_with = "steering_list")]
+    pub steering: Option<Vec<Memory>>,
     pub hits: Vec<RecallHit>,
+}
+
+/// A recall's `steering`: the list, or `None` for `"not_requested"`.
+fn steering_list<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Vec<Memory>>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Steering {
+        List(Vec<Memory>),
+        NotRequested(String),
+    }
+    match Steering::deserialize(d)? {
+        Steering::List(items) => Ok(Some(items)),
+        Steering::NotRequested(s) if s == "not_requested" => Ok(None),
+        Steering::NotRequested(other) => Err(serde::de::Error::custom(format!(
+            "steering is a list or \"not_requested\", not {other:?}"
+        ))),
+    }
 }
 
 /// A memory as the admin read serves it (openapi.yaml `AdminMemory`).
@@ -1409,8 +1507,8 @@ pub struct MemoryQuery<'a> {
     pub workspace: Option<&'a str>,
     /// A comma list of states.
     pub state: Option<&'a str>,
-    /// A comma list of kinds (ADR-0082 d8 item 3).
-    pub kind: Option<&'a str>,
+    /// A comma list of kinds (ADR-0082 d8 item 3; ADR-0092 d6).
+    pub kinds: Option<&'a str>,
     /// Only the promoted rows approved at or after this RFC 3339 instant.
     pub promoted_since: Option<&'a str>,
     pub origin: Option<&'a str>,
@@ -1419,7 +1517,20 @@ pub struct MemoryQuery<'a> {
     pub cursor: Option<&'a str>,
 }
 
-/// A text search of the caller's readable memories.
+/// The catalog's filters for `GET /v1/memories` without `own` (ADR-0092
+/// d6): `kinds` comma-separated, none for every kind; never `include_text`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CatalogQuery<'a> {
+    pub workspace: Option<&'a str>,
+    pub kinds: Option<&'a str>,
+    pub prefix: Option<&'a str>,
+    pub state: Option<&'a str>,
+    pub limit: u32,
+    pub cursor: Option<&'a str>,
+}
+
+/// A text search of the caller's readable memories, its own held ones
+/// among them.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RecallQuery<'a> {
     pub query: &'a str,
@@ -1829,9 +1940,35 @@ impl<T: Transport> Client<T> {
             ("author", query.author),
             ("workspace", query.workspace),
             ("state", query.state),
-            ("kind", query.kind),
+            ("kinds", query.kinds),
             ("promoted_since", query.promoted_since),
             ("origin_kinds", query.origin),
+            ("cursor", query.cursor),
+        ] {
+            if let Some(value) = value {
+                path.push_str(&format!("&{name}={}", encode(value)));
+            }
+        }
+        self.get(Some(call), path).await
+    }
+
+    /// `GET /v1/memories` without `own`: one page of the catalog of what
+    /// the caller reads, without text, and on the first page each kind's
+    /// count (ADR-0092 d6).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn catalog(
+        &self,
+        call: &Call<'_>,
+        query: &CatalogQuery<'_>,
+    ) -> Result<CatalogPage, Error> {
+        let mut path = format!("/v1/memories?limit={}", query.limit);
+        for (name, value) in [
+            ("workspace", query.workspace),
+            ("kinds", query.kinds),
+            ("prefix", query.prefix),
+            ("state", query.state),
             ("cursor", query.cursor),
         ] {
             if let Some(value) = value {
@@ -2931,6 +3068,18 @@ mod tests {
             decodes(&client.export_web_person(&CALL).await),
             decodes(&client.request_web_deletion(&CALL, "idem-18").await),
             decodes(&client.whoami_person(&CALL).await),
+            decodes(
+                &client
+                    .catalog(
+                        &CALL,
+                        &CatalogQuery {
+                            kinds: Some("skill"),
+                            limit: 50,
+                            ..CatalogQuery::default()
+                        },
+                    )
+                    .await,
+            ),
         ];
         let seen = seen.lock().unwrap();
         let table = table();
@@ -2952,7 +3101,7 @@ mod tests {
         // The record alone, for a caller that needs no person block.
         assert_eq!(seen[1].uri(), "/v2/whoami?person=false");
         // The person block is asked for by name, on the one method that reads it.
-        assert_eq!(seen[seen.len() - 1].uri(), "/v2/whoami");
+        assert_eq!(seen[seen.len() - 2].uri(), "/v2/whoami");
         assert_eq!(seen[2].uri(), "/v1/guardrails?workspace=alice.proj");
         assert_eq!(
             seen[3].uri(),
@@ -2997,6 +3146,39 @@ mod tests {
             std::str::from_utf8(seen[24].body()).unwrap(),
             r#"{"connect_code":false,"name":"alice-laptop","role":"writer"}"#
         );
+    }
+
+    /// The catalog read sends no `own`, no `with_own` and no
+    /// `include_text`, each filter percent-encoded, and reads the first
+    /// page's counts, exact or capped (ADR-0092 d6).
+    #[tokio::test]
+    async fn the_catalog_read_sends_its_filters_and_never_asks_for_text_or_own_work() {
+        const BODY: &str = r#"{"items":[{"artifact_id":"a1","claim_key":"skill/deploy","kind":"skill","version":2,"workspace_path":"universe.alice","state":"promoted","unreviewed":false,"needs_person":false,"retirement":false,"created_at":"2026-11-15T10:00:00Z","approved_at":"2026-11-15T10:01:00Z","approver":{"used_by":"person","same_user":false},"name":"deploy","description":"Deploy, then check.","prompt":null}],"next_cursor":"c2","counts":{"skill":1,"memory":{"at_least":10000}}}"#;
+        let (client, seen) = recording(200, BODY);
+        let page = client
+            .catalog(
+                &CALL,
+                &CatalogQuery {
+                    workspace: Some("alice.proj"),
+                    kinds: Some("term,term_mapping"),
+                    prefix: Some("doc/run books/"),
+                    state: Some("promoted"),
+                    limit: 50,
+                    cursor: Some("c 1"),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            seen.lock().unwrap()[0].uri(),
+            "/v1/memories?limit=50&workspace=alice.proj&kinds=term%2Cterm_mapping&prefix=doc%2Frun%20books%2F&state=promoted&cursor=c%201"
+        );
+        let counts = page.counts.expect("the first page's counts");
+        assert_eq!(counts["skill"], CatalogCount::Exact(1));
+        assert_eq!(counts["memory"], CatalogCount::AtLeast { at_least: 10_000 });
+        assert_eq!(page.items[0].name.as_deref(), Some("deploy"));
+        assert_eq!(page.items[0].prompt, None);
+        assert_eq!(page.next_cursor.as_deref(), Some("c2"));
     }
 
     #[tokio::test]
