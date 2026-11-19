@@ -11465,6 +11465,15 @@ async fn the_admin_search_takes_a_kinds_list_and_refuses_kind_naming_kinds() {
             .map(|m| m["artifact_id"].as_str().expect("id").to_owned())
             .collect()
     };
+    let (status, _, opened) = send(
+        &rig.router,
+        "POST",
+        "/v2/admin/investigations",
+        Call::auth(&rig.admin).body(json!({ "reason": "the kinds filter" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{opened}");
+    let investigation = opened["investigation_id"].clone();
     for (kinds, want) in [
         (
             json!(["memory", "steering"]),
@@ -11477,7 +11486,8 @@ async fn the_admin_search_takes_a_kinds_list_and_refuses_kind_naming_kinds() {
             &rig.router,
             "POST",
             "/v2/admin/memories/search",
-            Call::auth(&rig.admin).body(json!({ "state": "held", "kinds": kinds })),
+            Call::auth(&rig.admin)
+                .body(json!({ "state": "held", "kinds": kinds, "investigation": investigation })),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{kinds}: {found}");

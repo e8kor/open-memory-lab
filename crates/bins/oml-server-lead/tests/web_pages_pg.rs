@@ -311,7 +311,7 @@ async fn the_first_admin_email_is_added_under_an_admin_key_and_signs_in_through_
         json_post(
             "/v2/admin/memories/search",
             &boot.admin_key.value,
-            json!({"state": "promoted", "kinds": ["skill", "guardrail"]}),
+            json!({"state": "promoted", "kinds": ["skill", "guardrail"], "investigation": opened["investigation_id"]}),
         ),
     )
     .await;
