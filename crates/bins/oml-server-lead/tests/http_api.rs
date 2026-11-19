@@ -321,16 +321,31 @@ fn assert_envelope(body: &Value, code: &str) {
 /// The bootstrap ceremony over HTTP; returns (admin token, tenant id, root
 /// workspace id).
 async fn bootstrap(router: &Router) -> (String, Uuid, Uuid) {
+    bootstrap_claim(router, None).await
+}
+
+/// [`bootstrap`], the claim naming the admin key's person, `platform`, so
+/// the key may take an admin fix (ADR-0089, the operator's decision of
+/// 2026-11-19).
+async fn bootstrap_linked(router: &Router) -> (String, Uuid, Uuid) {
+    bootstrap_claim(router, Some("platform")).await
+}
+
+async fn bootstrap_claim(router: &Router, person: Option<&str>) -> (String, Uuid, Uuid) {
+    let mut claim = json!({
+        "enrollment_token": ENROLLMENT,
+        "name": "root-admin",
+        "tenant_name": "test-tenant",
+        "admin_principal": "platform/admin",
+    });
+    if let Some(person) = person {
+        claim["person"] = json!(person);
+    }
     let (status, _, body) = send(
         router,
         "POST",
         "/v2/bootstrap/claim",
-        Call::default().body(json!({
-            "enrollment_token": ENROLLMENT,
-            "name": "root-admin",
-            "tenant_name": "test-tenant",
-            "admin_principal": "platform/admin",
-        })),
+        Call::default().body(claim),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "bootstrap claim: {body}");
@@ -11836,7 +11851,7 @@ async fn an_admin_fix_serves_marked_and_a_person_confirms_it_over_http() {
         return;
     };
     let router = &rig.router;
-    let (admin, _tenant, root) = bootstrap(router).await;
+    let (admin, _tenant, root) = bootstrap_linked(router).await;
     let crew = create_workspace(router, &admin, root, "fixes").await;
     let writer = issue_key(router, &admin, "writer", "fx/agent", crew).await;
     let reviewer = issue_key_with(

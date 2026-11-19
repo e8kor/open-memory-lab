@@ -234,7 +234,7 @@ An admin key reads claim text under one reason per investigation, and takes a ma
 | Code | HTTP | Fires when |
 |---|---|---|
 | `admin.investigation_required` | 403 | An admin read of claim text, `POST /v2/admin/memories/search` or `GET /v2/admin/memories/{artifact_id}`, names no open investigation of its key: none, an unknown or malformed id, one closed, or another key's. `details.field` is `/investigation` on the search and `investigation` on the one-memory read. Nothing is journalled; open one with `POST /v2/admin/investigations {reason}`. |
-| `admin.fix_requires_person` | 403 | `POST /v2/admin/fixes` by an admin key that is not used by a person (ADR-0089 d1). Nothing is journalled. |
+| `admin.fix_requires_person` | 403 | `POST /v2/admin/fixes` by an admin key that is not used by a person (`details.reason: not_used_by_person`) or names no person (`details.reason: unlinked`: a bearer admin key no console admin linked and no bootstrap claim named) (ADR-0089 d1, the operator's decision of 2026-11-19). Nothing is journalled. |
 | `admin.fix_target_not_promoted` | 409 | A demotion names a version that is not approved: held, rejected, withdrawn, demoted or erased (ADR-0089 d16). `details.state` names its state. Nothing is journalled. |
 | `admin.fix_held_by_scan` | 422 | An admin edit's body carries a scan finding that would hold a write. A fix serves at once, so it is refused; demote instead (ADR-0089 d4, d17). A veto answers `submission.scan_veto`. Nothing is journalled. |
 | `admin.fix_superseded` | 409 | `POST /v2/review/fixes/{fix_id}/revert` on a fix whose claim moved on since: the version the fix made the claim's tip is no longer its tip, or the fix demoted a version below the tip. A person fixes the claim forward (ADR-0089 d8, d17). |

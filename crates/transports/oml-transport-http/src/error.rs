@@ -1046,12 +1046,17 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "the investigation was closed while the read was made",
         )
         .with_details(json!({ "field": "investigation" })),
-        AppError::FixRequiresPerson { .. } => ApiError::new(
+        AppError::FixRequiresPerson { reason } => ApiError::new(
             StatusCode::FORBIDDEN,
             "admin.fix_requires_person",
-            "A fix is break-glass: it is taken by an admin key used by a person (ADR-0089 d1).",
-            "this admin key is not used by a person",
-        ),
+            "A fix is break-glass: it is taken by an admin key used by a person and linked to that person (ADR-0089 d1, the operator's decision of 2026-11-19).",
+            if *reason == "unlinked" {
+                "this admin key is linked to no person: a console admin links it, or the bootstrap claim names its person"
+            } else {
+                "this admin key is not used by a person"
+            },
+        )
+        .with_details(json!({ "reason": reason })),
         AppError::FixTargetNotPromoted { status } => ApiError::new(
             StatusCode::CONFLICT,
             "admin.fix_target_not_promoted",

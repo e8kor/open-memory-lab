@@ -421,8 +421,14 @@ where
         require_role(&admin, Role::Admin, "fix")?;
         if admin.used_by != UsedBy::Person {
             return Err(AppError::FixRequiresPerson {
-                used_by: admin.used_by,
+                reason: "not_used_by_person",
             });
+        }
+        // The admin's person is known, so the settlement rule compares a
+        // person and never an absence of one (ADR-0089, the operator's
+        // decision of 2026-11-19).
+        if self.person_of(&admin).await?.is_none() {
+            return Err(AppError::FixRequiresPerson { reason: "unlinked" });
         }
         let reason = req.reason.trim();
         if reason.is_empty() || reason.len() > FIX_REASON_MAX_BYTES {
@@ -1012,6 +1018,27 @@ where
         let key = &caller.key;
         let prev = self.head_event(key.tenant_id).await?;
         let (fix, same_user) = self.settle_checks(&caller, fix_id).await?;
+        // An edit or retirement serves a version the admin wrote over the
+        // claim's lineage: R2 by key and by person over that lineage, so a
+        // person never confirms a fix of a claim they wrote outside their
+        // own root (ADR-0089, the operator's decision of 2026-11-19).
+        let same_user = match (fix.act, fix.served_id) {
+            (FixAct::Edit | FixAct::Retire, Some(served)) => {
+                let served = self
+                    .journal
+                    .memory(key.tenant_id, served)
+                    .await?
+                    .ok_or(AppError::NotFound)?;
+                check_reviewer(
+                    key.role,
+                    &key.principal,
+                    key.key_id,
+                    &served.lineage_closure(),
+                )?;
+                self.lineage_person_rule(key, &served, same_user).await?
+            }
+            _ => same_user,
+        };
         let event = self.seal(
             prev.as_ref(),
             key.tenant_id,
@@ -1076,6 +1103,10 @@ where
         }
         .filter(|m| m.status != MemoryStatus::Erased)
         .ok_or(AppError::FixSuperseded)?;
+        // R2 by person against the original version's authors, as recorded
+        // at each write (ADR-0089, the operator's decision of 2026-11-19;
+        // ADR-0085 d16, #448).
+        let same_user = self.lineage_person_rule(key, &original, same_user).await?;
         // The claim must still be served by the version the fix made its
         // tip, or by none when the fix made none (ADR-0089 d8).
         let tip = self
@@ -1350,21 +1381,29 @@ where
         Ok((fix, same_user))
     }
 
-    /// Who settles a fix (ADR-0089 d8, as amended 2026-11-18; #490): a key
-    /// acting for another person than the admin's settles it, `Some(false)`;
+    /// Who settles a fix (ADR-0089 d8, as amended 2026-11-18; #490; the
+    /// operator's decision of 2026-11-19): a key acting for a known person
+    /// other than the admin key's known person settles it, `Some(false)`;
     /// a key acting for the admin's own person settles it, marked
     /// `same_user`, `Some(true)`, only when the target lies inside that
     /// person's own user root, in a workspace that is neither protected nor
-    /// frozen, and is a member of no release; otherwise `None`.
+    /// frozen, and is a member of no release; otherwise, a person unknown on either
+    /// side included, `None`.
     async fn settle_rule(
         &self,
         key: &KeyRecord,
         fix: &FixRecord,
     ) -> Result<Option<bool>, AppError> {
-        if !self
-            .same_person(key.tenant_id, fix.admin_key_id, key)
-            .await?
-        {
+        let admin_person = match self.journal.key(key.tenant_id, fix.admin_key_id).await? {
+            Some(admin) => self.person_of(&admin).await?,
+            None => None,
+        };
+        let (Some(admin_person), Some(person)) = (admin_person, self.person_of(key).await?) else {
+            // Fails closed: a person unknown on either side settles nothing
+            // (ADR-0089, the operator's decision of 2026-11-19).
+            return Ok(None);
+        };
+        if admin_person != person {
             return Ok(Some(false));
         }
         let development = self
@@ -1376,6 +1415,40 @@ where
             && self.in_own_root(key, fix.workspace_id).await?
             && self.member_of_no_release(fix);
         Ok(loose.then_some(true))
+    }
+
+    /// R2 by person over `m`'s lineage: `m`'s author as recorded at its
+    /// write (`author_person`), and every other key in its lineage as it
+    /// stands. When one of them acts for `key`'s person, the settlement is
+    /// [`AppError::SamePerson`] outside that person's own root, and marked
+    /// `same_user` inside it; otherwise `same_user` as judged before
+    /// (ADR-0089, the operator's decision of 2026-11-19).
+    async fn lineage_person_rule(
+        &self,
+        key: &KeyRecord,
+        m: &MemoryRecord,
+        same_user: bool,
+    ) -> Result<bool, AppError> {
+        let Some(person) = self.person_of(key).await? else {
+            return Err(AppError::SamePerson);
+        };
+        let mut same = m.author_person.as_ref() == Some(&person);
+        for key_id in m.lineage_key_ids.iter().filter(|k| **k != m.author_key_id) {
+            if same {
+                break;
+            }
+            if let Some(author) = self.journal.key(key.tenant_id, *key_id).await? {
+                same = self.person_of(&author).await?.as_ref() == Some(&person);
+            }
+        }
+        if !same {
+            return Ok(same_user);
+        }
+        if self.in_own_root(key, m.workspace_id).await? {
+            Ok(true)
+        } else {
+            Err(AppError::SamePerson)
+        }
     }
 
     /// Whether the fix's target is a member of no release, published or

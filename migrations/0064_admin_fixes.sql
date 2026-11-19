@@ -89,3 +89,16 @@ BEGIN
     EXECUTE format('GRANT SELECT, INSERT, UPDATE ON admin_fixes TO %I',
                    current_setting('oml.serving_role'));
 END $$;
+
+-- An admin key is linked to its person (ADR-0085 d16, the operator's decision
+-- of 2026-11-19): the check keeps the link off session keys and user keys
+-- only. The new check is looser than 0050's, so every stored row meets it;
+-- it is added NOT VALID and validated in this transaction, one scan of
+-- api_keys, which holds one row per key.
+ALTER TABLE api_keys DROP CONSTRAINT api_keys_linked_user;
+ALTER TABLE api_keys
+    ADD CONSTRAINT api_keys_linked_user CHECK (
+        linked_user_id IS NULL
+        OR (user_root_id IS NULL AND credential <> 'session')
+    ) NOT VALID;
+ALTER TABLE api_keys VALIDATE CONSTRAINT api_keys_linked_user;

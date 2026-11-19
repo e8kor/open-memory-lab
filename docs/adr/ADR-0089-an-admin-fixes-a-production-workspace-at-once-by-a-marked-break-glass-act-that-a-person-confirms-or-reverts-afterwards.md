@@ -10,7 +10,7 @@ answers: which acts an admin key may take on a workspace's content, on which tar
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its five questions decided at their
 recommendations and every other default as drafted, and its amendment of ADR-0001 d5 accepted with
 it · proposed the same day · amended 2026-11-17 by the operator (d16: demote's targets, the
-fix route as the one surface for demote and erase, erase's claim-wide scope, a fix's events; as-of reads skip a demoted version) · readings of 2026-11-18 recorded for the operator's batch (d17) · amendments of d8 of 2026-11-18, from the operator's batch (strict confirmation wherever the fixed version is served to production and for any target outside the admin's own root; a cut refuses a `same_user`-only member; #429), accepted 2026-11-19 by the operator · amended 2026-11-19 by the operator (d16, O8: a claim whose approved versions are all demoted is written again, continuing its numbers; #474)
+fix route as the one surface for demote and erase, erase's claim-wide scope, a fix's events; as-of reads skip a demoted version) · readings of 2026-11-18 recorded for the operator's batch (d17) · amendments of d8 of 2026-11-18, from the operator's batch (strict confirmation wherever the fixed version is served to production and for any target outside the admin's own root; a cut refuses a `same_user`-only member; #429), accepted 2026-11-19 by the operator · amended 2026-11-19 by the operator (d16, O8: a claim whose approved versions are all demoted is written again, continuing its numbers; #474) · amended 2026-11-19 by the operator after the review of #498 (an admin key is linked to its person; the settlement fails closed; a revert checks R2 by person; proposed for the record, see the decision at the end)
 
 **Release:** not scheduled; with ADR-0085, whose releases a fix overlays
 
@@ -519,3 +519,41 @@ marked superseded.
   `same_user_only`, is ADR-0085's amendment of the same day. With the strict confirmation above, a
   `same_user` confirmation happens only inside a user root, where no cut is made, so the refusal is
   the backstop should any `same_user` verdict reach a subtree a cut covers.
+
+## Operator decision of 2026-11-19: an admin key is linked to its person (proposed for the record; #498 review)
+
+The operator decided on 2026-11-19, after the review of #498, that an admin key that fixes acts for
+a known person, so the rule that keeps the admin's own person off the confirmation reads a person
+and never an absence of one. It amends d1, d8 and d17 (c5, c8) as follows.
+
+- **An admin fix needs an admin key linked to its person (amends d1).** The admin key must be
+  `used_by: person` and must name its person: a bearer admin key linked under ADR-0085 d16 (now
+  admitted for admin keys), or a console admin session key, whose person is its session user. An
+  admin key that names no person is refused `admin.fix_requires_person` with
+  `details.reason: unlinked`; one used by a service keeps `details.reason: not_used_by_person`.
+  Nothing is journalled.
+- **The settlement rule fails closed (amends d8 as amended 2026-11-18).** Outside the own-root
+  allowance a confirm or revert is admitted only when the admin key's person and the settling
+  key's person are both known and differ; an unknown person on either side answers
+  `review.author_in_lineage` with `details.reason: same_person`. Rejected: reading an unknown
+  person as "another person", which let an unlinked admin's own reviewer key confirm its fix.
+- **A revert checks R2 by person against the original version's authors (amends d8).** Beside the
+  key-and-principal R2 over the restored version's lineage, the reverter's person is compared with
+  the person recorded at the write (`author_person`, ADR-0085 d16, #448) of the original version
+  and of every version in its lineage the store holds: the same person outside the reverter's own
+  root is refused `same_person`; inside it the revert is admitted marked `same_user`. A confirm of
+  an edit or retirement applies the same two checks over the served version's lineage, so a person
+  never confirms a fix of a claim they wrote outside their own root.
+- **The bootstrap links its admin key (amends ADR-0085 d16's "Console only" for the ceremony).**
+  `POST /v2/bootstrap/claim` takes an optional `person`; with it the ceremony creates that
+  person's user root and journals `key.linked_person` for the first admin key, actor `operator`,
+  in the ceremony's chain. `oml bootstrap claim --person` sends it, and the quickstart and the
+  stack jobs pass one. Without it the tenant's first admin key is unlinked and takes no fix until
+  a console admin links it. The console link stays console-only and still refuses a self-link.
+- **A reverted fix's served version reads `reverted` (d17, the build's reading of D6).** The
+  version a fix served keeps its mark when the fix is reverted, and reads `approver.act:
+  admin_fix`, `confirmed: false`, `reverted: true`; the restored version reads `act: verdict`.
+  Rejected: clearing the mark, which would show an edit no one reviewed as `act: verdict`.
+- **A non-admin reader never learns which admin fixed a version (d7, the build's reading of A5).**
+  On a version written by a fix (an edit or retirement), every non-admin read serves `principal`
+  and `author_key_id` as null and `provenance: admin_fix`; an admin read serves them as stored.

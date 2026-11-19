@@ -2185,7 +2185,6 @@ async fn linking_an_agent_held_key_is_refused() {
     for (key, reason) in [
         (agent.key_id, "not_used_by_person"),
         (user_key.key_id, "not_a_tenant_key"),
-        (boot.admin_key.key_id, "admin_key"),
     ] {
         let err = app
             .link_key_to_person(Bearer::Session(&ops), key.into(), &name("alice"))
@@ -3444,4 +3443,303 @@ async fn an_admins_own_person_confirms_a_fix_inside_their_own_root_marked_same_u
         .await
         .expect("her own person confirms inside her root");
     assert_eq!(confirmed.settled_same_user, Some(true));
+}
+
+// -- an admin key linked to its person (ADR-0089, the operator's decision of
+// 2026-11-19; ADR-0085 d16) ---------------------------------------------------
+
+/// A tenant whose bootstrap linked its admin key to `alice`, a shared
+/// workspace `team`, an agent writer there, and two persons' reviewer keys on
+/// it, alice's and bob's, each linked to its person; one claim in `team`
+/// written by the agent and approved by bob's key.
+struct FixRig {
+    app: TestApp,
+    store: MemStore,
+    boot: BootstrapResult,
+    alice_review: IssuedKey,
+    bob_review: IssuedKey,
+    claim: Uuid,
+}
+
+async fn fix_rig() -> FixRig {
+    let (app, store) = rig();
+    let boot = app
+        .bootstrap_tenant_for(
+            &BootstrapRequest {
+                tenant_name: name("acme"),
+                admin_key_name: name("root-admin"),
+                admin_principal: "acme-admin".to_owned(),
+            },
+            Some(&name("alice")),
+        )
+        .await
+        .expect("bootstrap");
+    let admin = boot.admin_key.value.as_str();
+    let ops = console_admin(&app, admin, "ops").await;
+    signed_in(&app, admin, "alice", false).await;
+    signed_in(&app, admin, "bob", false).await;
+    app.create_workspace(admin, &name("team"), Some(by_name("universe")), None)
+        .await
+        .expect("a shared workspace");
+    let writer = tenant_key(
+        &app,
+        admin,
+        Role::Writer,
+        "team/agent",
+        vec![
+            grant(by_name("team"), Role::Writer),
+            grant(by_name("team"), Role::Reader),
+        ],
+    )
+    .await;
+    let mut linked = Vec::new();
+    for person in ["alice", "bob"] {
+        let key = person_tenant_key(
+            &app,
+            admin,
+            &format!("{person}/review"),
+            vec![
+                grant(by_name("team"), Role::Reviewer),
+                grant(by_name("team"), Role::Reader),
+            ],
+        )
+        .await;
+        app.link_key_to_person(Bearer::Session(&ops), key.key_id.into(), &name(person))
+            .await
+            .expect("linked");
+        linked.push(key);
+    }
+    let bob_review = linked.pop().expect("bob");
+    let alice_review = linked.pop().expect("alice");
+    let claim = written(
+        &app,
+        &writer.value,
+        &submit("fx1", "The queue drains nightly.", Some("team")),
+    )
+    .await;
+    app.post_verdict(&bob_review.value, claim, Verdict::Approve, None)
+        .await
+        .expect("bob approves");
+    FixRig {
+        app,
+        store,
+        boot,
+        alice_review,
+        bob_review,
+        claim,
+    }
+}
+
+fn edit(target: Uuid, body: &str) -> oml_app::app::FixRequest {
+    oml_app::app::FixRequest {
+        act: oml_app::types::FixAct::Edit,
+        target,
+        reason: "ticket 7: the claim is wrong".to_owned(),
+        body: Some(body.to_owned()),
+        title: None,
+    }
+}
+
+#[tokio::test]
+async fn a_fix_by_an_admin_key_linked_to_no_person_is_refused_unlinked() {
+    let (app, store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let writer = user_writer(&app, admin, "carol", "carol/laptop").await;
+    let reviewer = user_reviewer(&app, admin, "carol", "carol/review").await;
+    let claim = written(
+        &app,
+        &writer.value,
+        &submit("u1", "The build is green.", None),
+    )
+    .await;
+    app.post_verdict(&reviewer.value, claim, Verdict::Approve, None)
+        .await
+        .expect("approve");
+    let head = store
+        .events_range(boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal")
+        .len();
+    let err = app
+        .admin_fix(admin, &edit(claim, "The build is red."))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::FixRequiresPerson { reason: "unlinked" }),
+        "{err:?}"
+    );
+    let after = store
+        .events_range(boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal")
+        .len();
+    assert_eq!(head, after, "a refused fix journals nothing");
+}
+
+#[tokio::test]
+async fn the_bootstrap_links_its_admin_key_to_the_person_its_claim_names() {
+    let r = fix_rig().await;
+    let key = r
+        .store
+        .key(r.boot.tenant_id, r.boot.admin_key.key_id)
+        .await
+        .expect("read")
+        .expect("the admin key");
+    let root = key.linked_user.expect("linked");
+    let root = r
+        .store
+        .workspace(r.boot.tenant_id, root)
+        .await
+        .expect("read")
+        .expect("the root");
+    assert!(root.user_root);
+    assert_eq!(root.name, name("alice"));
+    let types: Vec<String> = r
+        .store
+        .events_range(r.boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal")
+        .into_iter()
+        .map(|e| e.envelope.event_type)
+        .collect();
+    assert!(types.iter().any(|t| t == event_types::KEY_LINKED_PERSON));
+}
+
+#[tokio::test]
+async fn a_linked_admins_fix_in_a_shared_workspace_is_refused_to_its_own_persons_review_key() {
+    let r = fix_rig().await;
+    let fix = r
+        .app
+        .admin_fix(
+            &r.boot.admin_key.value,
+            &edit(r.claim, "The queue drains hourly."),
+        )
+        .await
+        .expect("a linked admin fixes");
+    for settle in [true, false] {
+        let err = if settle {
+            r.app.confirm_fix(&r.alice_review.value, fix.fix_id).await
+        } else {
+            r.app.revert_fix(&r.alice_review.value, fix.fix_id).await
+        }
+        .unwrap_err();
+        assert!(matches!(err, AppError::SamePerson), "{err:?}");
+    }
+    let listed = r
+        .app
+        .review_fixes(&r.alice_review.value)
+        .await
+        .expect("list");
+    assert!(!listed[0].settles, "alice waits on another person");
+}
+
+#[tokio::test]
+async fn another_persons_linked_key_confirms_a_linked_admins_fix() {
+    let r = fix_rig().await;
+    let fix = r
+        .app
+        .admin_fix(
+            &r.boot.admin_key.value,
+            &edit(r.claim, "The queue drains hourly."),
+        )
+        .await
+        .expect("fix");
+    let confirmed = r
+        .app
+        .confirm_fix(&r.bob_review.value, fix.fix_id)
+        .await
+        .expect("bob confirms");
+    assert_eq!(confirmed.settled_same_user, Some(false));
+}
+
+#[tokio::test]
+async fn a_reverter_is_refused_a_fix_of_a_claim_their_own_person_wrote_in_a_shared_workspace() {
+    let r = fix_rig().await;
+    let admin = r.boot.admin_key.value.as_str();
+    let ops = console_admin(&r.app, admin, "ops").await;
+    // Bob writes a claim in team with a key linked to him; alice approves it.
+    let bob_writer = r
+        .app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                user: None,
+                used_by: Some(UsedBy::Person),
+                ..user_req(
+                    Role::Writer,
+                    "unused",
+                    "bob/writer",
+                    vec![
+                        grant(by_name("team"), Role::Writer),
+                        grant(by_name("team"), Role::Reader),
+                    ],
+                )
+            },
+        )
+        .await
+        .expect("bob's writer key");
+    r.app
+        .link_key_to_person(
+            Bearer::Session(&ops),
+            bob_writer.key_id.into(),
+            &name("bob"),
+        )
+        .await
+        .expect("linked");
+    let bobs = written(
+        &r.app,
+        &bob_writer.value,
+        &submit("fx2", "The cache warms at boot.", Some("team")),
+    )
+    .await;
+    r.app
+        .post_verdict(&r.alice_review.value, bobs, Verdict::Approve, None)
+        .await
+        .expect("alice approves");
+    let fix = r
+        .app
+        .admin_fix(admin, &edit(bobs, "The cache warms lazily."))
+        .await
+        .expect("fix");
+    let err = r
+        .app
+        .revert_fix(&r.bob_review.value, fix.fix_id)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::SamePerson), "{err:?}");
+    // Confirming an edit of his own claim is refused the same way (A4).
+    let err = r
+        .app
+        .confirm_fix(&r.bob_review.value, fix.fix_id)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::SamePerson), "{err:?}");
+}
+
+#[tokio::test]
+async fn a_console_admin_links_an_admin_key_to_another_person_and_never_to_its_own() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let ops = console_admin(&app, admin, "ops").await;
+    signed_in(&app, admin, "alice", false).await;
+    let err = app
+        .link_key_to_person(
+            Bearer::Session(&ops),
+            boot.admin_key.key_id.into(),
+            &name("ops"),
+        )
+        .await
+        .unwrap_err();
+    assert!(link_refused(&err, "self_link"), "{err:?}");
+    let linked = app
+        .link_key_to_person(
+            Bearer::Session(&ops),
+            boot.admin_key.key_id.into(),
+            &name("alice"),
+        )
+        .await
+        .expect("an admin key used by a person is linkable");
+    assert!(linked.linked_user.is_some());
 }

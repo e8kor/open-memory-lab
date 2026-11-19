@@ -145,7 +145,7 @@ Demotion ([ADR-0010](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr
 
 ## The operator and the first admin key
 
-The operator tier is designed and not built. A single-use enrollment token starts a new server: `oml bootstrap claim` exchanges it for the first admin key of the server's tenant and stores the URL and key in an owner-only file (mode 0600). No route creates a further tenant.
+The operator tier is designed and not built. A single-use enrollment token starts a new server: `oml bootstrap claim` exchanges it for the first admin key of the server's tenant and stores the URL and key in an owner-only file (mode 0600). With `--person <name>` the claim also creates that person's user root and links the admin key to it, as an admin fix requires ([ADR-0089](../adr/ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md), the operator's decision of 2026-11-19); without it a console admin links the key later. No route creates a further tenant.
 
 ## User keys
 

@@ -23,9 +23,8 @@ where
     /// `POST /v2/keys/{key}/link` (ADR-0085 d16): the tenant key acts for
     /// `user` from this commit on, journalled as `key.linked_person`.
     /// A console admin session only (`<user>-admin`). Only a live tenant
-    /// bearer key used by a person
-    /// that is not an admin key is linked, to a user root of the tenant
-    /// whose person has a sign-in entry that is not disabled; anything else
+    /// bearer key used by a person, an admin key's included (the operator,
+    /// 2026-11-19), is linked, to a user root of the tenant whose person has a sign-in entry that is not disabled; anything else
     /// is [`AppError::KeyLinkRefused`] naming why, and journals nothing.
     pub async fn link_key_to_person(
         &self,
@@ -139,7 +138,8 @@ where
     }
 
     /// The key `key` names, if a link may name it: a live tenant bearer key
-    /// used by a person that is not an admin key.
+    /// used by a person, an admin key's included (ADR-0085 d16, the
+    /// operator's decision of 2026-11-19).
     async fn linkable_key(
         &self,
         admin: &KeyRecord,
@@ -157,8 +157,6 @@ where
             // One link at a time: an unlink comes first, journalled
             // (ADR-0085 d16, amended 2026-11-17).
             Some("already_linked")
-        } else if target.role == Role::Admin {
-            Some("admin_key")
         } else if target.user.is_some() || target.credential != Credential::Bearer {
             Some("not_a_tenant_key")
         } else if target.used_by != UsedBy::Person {

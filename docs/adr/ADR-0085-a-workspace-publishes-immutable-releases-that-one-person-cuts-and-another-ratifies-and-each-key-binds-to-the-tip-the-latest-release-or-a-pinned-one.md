@@ -8,7 +8,7 @@ answers: what a workspace release is, when its manifest is fixed and what it may
 # ADR-0085 — A workspace publishes immutable releases that one person cuts and another ratifies, and each key binds to the tip, the latest release or a pinned one
 
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its three questions decided at their
-recommendations and every other default as drafted · proposed the same day · amended 2026-11-17 (d16: how the console acts with a linked key, accepted the same day by the operator, "Session + named key") · amended 2026-11-18 (d16: a version records its author's person at its write, the follow-up d16 left open, built by #448) · amendments of 2026-11-18 (d2, d6, d10: the operator's answers D1 to D3 to the lifecycle review; d1 and the stage tabs from the operator's batch; #429), accepted 2026-11-19 by the operator · amended 2026-11-19 by the operator's decisions on the release plan (D2's reach, federated sources at their latest release, a reviewed retirement at the next cut, the release notes' document, a pin moved by a person's reviewer key; the decisions of 2026-11-19 at the end of this record)
+recommendations and every other default as drafted · proposed the same day · amended 2026-11-17 (d16: how the console acts with a linked key, accepted the same day by the operator, "Session + named key") · amended 2026-11-18 (d16: a version records its author's person at its write, the follow-up d16 left open, built by #448) · amendments of 2026-11-18 (d2, d6, d10: the operator's answers D1 to D3 to the lifecycle review; d1 and the stage tabs from the operator's batch; #429), accepted 2026-11-19 by the operator · amended 2026-11-19 by the operator's decisions on the release plan (D2's reach, federated sources at their latest release, a reviewed retirement at the next cut, the release notes' document, a pin moved by a person's reviewer key; the decisions of 2026-11-19 at the end of this record) · amended 2026-11-19 by the operator (d16: an admin key is linkable to its person, and the bootstrap claim links its first admin key; ADR-0089's decision of that day)
 
 **Release:** not scheduled; the first record of the workspace lifecycle
 ([review](https://github.com/e8kor/open-memory-lab/blob/main/design/workspace-lifecycle.md)), before
@@ -367,6 +367,13 @@ Decided, not built.
       verdict. Recording the author's person on the version at its write, so an unlink cannot
       clear the mark, is the follow-up this record leaves open. A revoked key may still be
       unlinked.
+    - *Admin keys are linkable* (the operator, 2026-11-19, ADR-0089's decision of that day). A
+      bearer admin key `used_by: person` is linked to its person through the same console flow,
+      console-only, a self-link refused as for any key, so ADR-0089's fix knows whose act it is.
+      The tenant's first admin key is linked by the bootstrap ceremony when its claim names a
+      `person`. A linked admin key never acts through `OML-Acting-Key`: the console's acting
+      routes still refuse an admin key. The `api_keys_linked_user` check drops its `role <> 'admin'`
+      clause (migration 0064).
     - *The author's person is recorded at the write* (amended 2026-11-18, #448, closing the
       follow-up above). A version records, when it is written, the person its author key acts
       for, by name as `same_user` compares it: a session key's person, the user root a user key

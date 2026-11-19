@@ -107,6 +107,24 @@ async fn tenant(app: &TestApp) -> (BootstrapResult, Uuid) {
     (boot, crew)
 }
 
+/// [`tenant`], its bootstrap admin key linked to the person `alice`, as an
+/// admin fix requires (ADR-0089, the operator's decision of 2026-11-19).
+async fn fix_tenant(app: &TestApp) -> (BootstrapResult, Uuid) {
+    let boot = app
+        .bootstrap_tenant_for(
+            &BootstrapRequest {
+                tenant_name: Name::parse("acme").expect("a name"),
+                admin_key_name: Name::parse("root-admin").expect("a name"),
+                admin_principal: "alice-admin".to_owned(),
+            },
+            Some(&name("alice")),
+        )
+        .await
+        .expect("bootstrap");
+    let crew = workspace(app, &boot.admin_key.value, "crew", boot.root_workspace_id).await;
+    (boot, crew)
+}
+
 fn grant(node: Uuid, role: Role) -> GrantRequest {
     GrantRequest {
         node: node.into(),
@@ -16919,7 +16937,7 @@ async fn two_promoted_versions() -> (
 ) {
     let store = MemStore::new();
     let app = app_over(store.clone());
-    let (boot, crew) = tenant(&app).await;
+    let (boot, crew) = fix_tenant(&app).await;
     let (writer, reader, reviewer) = crew_keys(&app, &boot.admin_key.value, crew).await;
     let v1 = promoted(
         &app,
@@ -18812,6 +18830,43 @@ async fn an_investigation_reason_the_scan_vetoes_opens_nothing() {
 
 // -- admin fixes (ADR-0089 d2-d9, d15-d17; #422) -----------------------------
 
+/// Links the person's key `key_id` to the person `person` through a console
+/// admin session, as the settlement of an admin fix requires a known person
+/// on both sides (ADR-0089, the operator's decision of 2026-11-19).
+async fn link_person(app: &TestApp, admin: &str, key_id: Uuid, person: &str) {
+    use oml_app::app::Capacity;
+    use oml_app::domain::web::Email;
+    use oml_app::types::{Bearer, WebEmailRequest};
+    let mut sessions = Vec::new();
+    for (user, is_admin) in [(format!("ops-{person}"), true), (person.to_owned(), false)] {
+        let (entry, _) = app
+            .allow_web_email(
+                admin,
+                &WebEmailRequest {
+                    email: Email::parse(&format!("{user}@example.com")).expect("an email"),
+                    user: name(&user),
+                    admin: is_admin,
+                },
+            )
+            .await
+            .expect("the entry is added");
+        app.web_ensure_keys(&entry).await.expect("the session keys");
+        let token = app
+            .web_session_open(&entry, 3600, None)
+            .await
+            .expect("the session opens")
+            .token;
+        sessions.push(app.web_session(&token).await.expect("read").expect("live"));
+    }
+    let ops = app
+        .web_caller(&sessions[0], Capacity::Admin)
+        .await
+        .expect("the console admin");
+    app.link_key_to_person(Bearer::Session(&ops), key_id.into(), &name(person))
+        .await
+        .expect("linked");
+}
+
 fn fix_req(
     act: oml_app::types::FixAct,
     target: Uuid,
@@ -18897,7 +18952,9 @@ async fn a_fix_by_an_admin_key_not_used_by_a_person_is_refused_and_journals_noth
         )
         .await
         .unwrap_err(),
-        AppError::FixRequiresPerson { .. }
+        AppError::FixRequiresPerson {
+            reason: "not_used_by_person"
+        }
     ));
     assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
 }
@@ -18907,7 +18964,7 @@ async fn only_an_approved_version_is_demoted_as_a_fix() {
     use oml_app::types::FixAct;
     let store = MemStore::new();
     let app = app_over(store.clone());
-    let (boot, crew) = tenant(&app).await;
+    let (boot, crew) = fix_tenant(&app).await;
     let (writer, _reader, _reviewer) = crew_keys(&app, &boot.admin_key.value, crew).await;
     let held = app
         .submit_memory(&writer.value, &submit_req("fx-held", "the build is green"))
@@ -18951,8 +19008,9 @@ async fn a_person_confirms_a_fix_and_the_served_version_reads_confirmed() {
     use oml_app::types::{FixAct, FixState};
     let store = MemStore::new();
     let app = app_over(store.clone());
-    let (boot, crew) = tenant(&app).await;
+    let (boot, crew) = fix_tenant(&app).await;
     let (writer, reader, reviewer) = crew_keys(&app, &boot.admin_key.value, crew).await;
+    link_person(&app, &boot.admin_key.value, reviewer.key_id, "dana").await;
     let v1 = promoted(
         &app,
         &writer.value,
@@ -19004,8 +19062,9 @@ async fn a_revert_serves_the_earlier_text_as_a_server_authored_version_the_rever
     use oml_app::types::{FixAct, FixState};
     let store = MemStore::new();
     let app = app_over(store.clone());
-    let (boot, crew) = tenant(&app).await;
+    let (boot, crew) = fix_tenant(&app).await;
     let (writer, reader, reviewer) = crew_keys(&app, &boot.admin_key.value, crew).await;
+    link_person(&app, &boot.admin_key.value, reviewer.key_id, "dana").await;
     let v1 = promoted(
         &app,
         &writer.value,
@@ -19078,8 +19137,9 @@ async fn an_erasure_is_confirmed_and_never_reverted() {
     use oml_app::types::FixAct;
     let store = MemStore::new();
     let app = app_over(store.clone());
-    let (boot, crew) = tenant(&app).await;
+    let (boot, crew) = fix_tenant(&app).await;
     let (writer, _reader, reviewer) = crew_keys(&app, &boot.admin_key.value, crew).await;
+    link_person(&app, &boot.admin_key.value, reviewer.key_id, "dana").await;
     let v1 = promoted(
         &app,
         &writer.value,
@@ -19107,8 +19167,9 @@ async fn a_fix_whose_claim_moved_on_is_refused_revert_as_superseded() {
     use oml_app::types::FixAct;
     let store = MemStore::new();
     let app = app_over(store.clone());
-    let (boot, crew) = tenant(&app).await;
+    let (boot, crew) = fix_tenant(&app).await;
     let (writer, _reader, reviewer) = crew_keys(&app, &boot.admin_key.value, crew).await;
+    link_person(&app, &boot.admin_key.value, reviewer.key_id, "dana").await;
     let v1 = promoted(
         &app,
         &writer.value,
@@ -19191,7 +19252,7 @@ async fn every_served_hit_satisfies_the_read_path_law() {
     use oml_app::types::FixAct;
     let store = MemStore::new();
     let app = app_over(store.clone());
-    let (boot, crew) = tenant(&app).await;
+    let (boot, crew) = fix_tenant(&app).await;
     let (writer, reader, reviewer) = crew_keys(&app, &boot.admin_key.value, crew).await;
     let mut ids = Vec::new();
     for (idem, body) in [

@@ -3674,10 +3674,12 @@ pub enum AppError {
         "an admin read of claim text names an open investigation of its key in {field}; open one with a reason first"
     )]
     InvestigationRequired { field: &'static str },
-    /// A fix by an admin key not used by a person
-    /// (`admin.fix_requires_person`; ADR-0089 d1).
-    #[error("a fix is taken by an admin key used by a person; this key is used by {used_by:?}")]
-    FixRequiresPerson { used_by: UsedBy },
+    /// A fix by an admin key that is not used by a person
+    /// (`not_used_by_person`) or names no person (`unlinked`)
+    /// (`admin.fix_requires_person`; ADR-0089 d1, the operator's decision
+    /// of 2026-11-19).
+    #[error("a fix is taken by an admin key linked to its person; this key is refused: {reason}")]
+    FixRequiresPerson { reason: &'static str },
     /// A demotion of a version that is not promoted
     /// (`admin.fix_target_not_promoted`; ADR-0089 d16).
     #[error("only an approved version is demoted; this one is {status:?}")]

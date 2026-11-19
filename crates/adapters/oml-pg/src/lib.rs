@@ -5363,7 +5363,7 @@ async fn apply_fold(
         }
         MetadataFold::KeyLinked { key_id, user_root } => {
             // A link's guard matches only a live tenant bearer key used by
-            // a person that is not an admin key and holds no link, and a
+            // a person, an admin key's included (0064), that holds no link, and a
             // root that is a user root of this tenant; an unlink's matches
             // any linked key of the tenant, a revoked one included. Anything
             // else aborts the commit (ADR-0085 d16).
@@ -5371,7 +5371,7 @@ async fn apply_fold(
                 Some(root) => sqlx::query(
                     "UPDATE api_keys SET linked_user_id = $3 \
                      WHERE tenant_id = $1 AND id = $2 AND revoked_at IS NULL \
-                     AND credential = 'bearer' AND role <> 'admin' AND used_by = 'person' \
+                     AND credential = 'bearer' AND used_by = 'person' \
                      AND user_root_id IS NULL AND linked_user_id IS NULL \
                      AND EXISTS (SELECT 1 FROM workspaces w \
                           WHERE w.tenant_id = $1 AND w.id = $3 AND w.user_root)",

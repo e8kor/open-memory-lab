@@ -3241,6 +3241,25 @@ where
         &self,
         req: &BootstrapRequest,
     ) -> Result<BootstrapResult, AppError> {
+        self.bootstrap_tenant_for(req, None).await
+    }
+
+    /// [`Self::bootstrap_tenant`], the first admin key linked to `person`
+    /// where the claim names one (ADR-0085 d16; ADR-0089, the operator's
+    /// decision of 2026-11-19).
+    ///
+    /// # Errors
+    /// As [`Self::bootstrap_tenant`].
+    pub async fn bootstrap_tenant_for(
+        &self,
+        req: &BootstrapRequest,
+        person: Option<&Name>,
+    ) -> Result<BootstrapResult, AppError> {
+        if person.is_some_and(|p| p.as_str() == UNIVERSE) {
+            return Err(AppError::UserRefused(
+                "user may not be universe, the tenant's root",
+            ));
+        }
         let tenant_id = self.ids.new_id();
         self.journal.create_tenant_partitions(tenant_id).await?;
         let genesis = self.seal(
@@ -3319,9 +3338,14 @@ where
             None,
             Self::key_issued_payload(&record, issue.used_by),
         )?;
+        let prev = event.clone();
         let receipt = self
             .commit(event, MetadataFold::KeyIssued(record), None)
             .await?;
+        if let Some(person) = person {
+            self.link_bootstrap_admin(tenant_id, root_workspace_id, key_id, person, prev)
+                .await?;
+        }
 
         Ok(BootstrapResult {
             tenant_id,
@@ -3348,6 +3372,67 @@ where
                 connect_code: None,
             },
         })
+    }
+
+    /// The ceremony's link of its admin key to `person` (ADR-0085 d16;
+    /// ADR-0089, the operator's decision of 2026-11-19): that person's user
+    /// root under `universe`, then `key.linked_person`, both by the
+    /// operator, chained after the key's issuance.
+    async fn link_bootstrap_admin(
+        &self,
+        tenant_id: Uuid,
+        universe: Uuid,
+        key_id: Uuid,
+        person: &Name,
+        prev: SignedEnvelope,
+    ) -> Result<(), AppError> {
+        let root = WorkspaceRecord {
+            in_progress: false,
+            workspace_id: self.ids.new_id(),
+            tenant_id,
+            parent_id: Some(universe),
+            name: person.clone(),
+            status: WorkspaceStatus::Development,
+            crew: None,
+            crew_id: None,
+            user_root: true,
+            namespace: None,
+        };
+        let root_id = root.workspace_id;
+        let created = self.seal(
+            Some(&prev),
+            tenant_id,
+            event_types::WORKSPACE_CREATE,
+            "operator",
+            None,
+            Self::workspace_create_payload(&root),
+        )?;
+        let linked = self.seal(
+            Some(&created),
+            tenant_id,
+            event_types::KEY_LINKED_PERSON,
+            "operator",
+            None,
+            json!({
+                "key_id": key_id.to_string(),
+                "user": person.as_str(),
+                "user_root_id": root_id.to_string(),
+                "linked_by_key_id": Value::Null,
+            }),
+        )?;
+        self.commit_requests(vec![
+            commit_request(created, MetadataFold::WorkspaceCreated(root), None),
+            commit_request(
+                linked,
+                MetadataFold::KeyLinked {
+                    key_id,
+                    user_root: Some(root_id),
+                },
+                None,
+            ),
+        ])
+        .await?;
+        Ok(())
     }
 
     /// Issue a key with its grants, validated in the issuance order of

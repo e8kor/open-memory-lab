@@ -3029,7 +3029,7 @@ where
         // d5; http-api.md bootstrap). The names are checked while the lock
         // still holds the token: a refused name consumes no token and
         // journals nothing, and no concurrent claim sees it consumed.
-        let (taken, admin_key_name, tenant_name) = {
+        let (taken, admin_key_name, tenant_name, person) = {
             let mut guard = st
                 .enrollment
                 .lock()
@@ -3045,7 +3045,12 @@ where
                 "/tenant_name",
                 req.tenant_name.as_deref().unwrap_or("default"),
             )?;
-            (guard.take(), admin_key_name, tenant_name)
+            let person = req
+                .person
+                .as_deref()
+                .map(|p| creation_name("/person", p))
+                .transpose()?;
+            (guard.take(), admin_key_name, tenant_name, person)
         };
         let boot = BootstrapRequest {
             tenant_name,
@@ -3054,7 +3059,7 @@ where
                 .admin_principal
                 .unwrap_or_else(|| "bootstrap/admin".to_owned()),
         };
-        match st.app.bootstrap_tenant(&boot).await {
+        match st.app.bootstrap_tenant_for(&boot, person.as_ref()).await {
             Err(e) => {
                 // The ceremony did not journal; the token stays claimable.
                 if let Ok(mut guard) = st.enrollment.lock() {
@@ -4209,6 +4214,11 @@ struct BootstrapClaimBody {
     tenant_name: Option<String>,
     #[serde(default)]
     admin_principal: Option<String>,
+    /// The person the first admin key acts for: its user root is created
+    /// and the key linked to it (ADR-0085 d16; ADR-0089, the operator's
+    /// decision of 2026-11-19).
+    #[serde(default)]
+    person: Option<String>,
 }
 
 // ---------------------------------------------------------------------------

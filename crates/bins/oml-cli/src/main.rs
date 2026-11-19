@@ -353,6 +353,11 @@ enum BootstrapCommand {
         /// Principal for the first admin key.
         #[arg(long)]
         principal: Option<String>,
+        /// The person the first admin key acts for: the claim creates that
+        /// person's user root and links the key to it, so the key may take
+        /// an admin fix (ADR-0089).
+        #[arg(long)]
+        person: Option<String>,
     },
 }
 
@@ -1635,6 +1640,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                     token_stdin: _,
                     tenant_name,
                     principal,
+                    person,
                 },
         } => {
             let client = resolve_url(cli, &stored)?;
@@ -1645,6 +1651,9 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             }
             if let Some(p) = principal {
                 body["admin_principal"] = json!(p);
+            }
+            if let Some(p) = person {
+                body["person"] = json!(p);
             }
             let (_, response) = client.post(
                 "/v2/bootstrap/claim",

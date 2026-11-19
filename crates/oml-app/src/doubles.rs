@@ -1958,8 +1958,9 @@ fn apply_fold(
         // hold, a revoked key, a session key and an admin key are refused,
         // as the store's guarded update refuses them (ADR-0079 d5).
         // The link takes the event's root; a key that is not a live tenant
-        // bearer key used by a person, an admin key, or a root that is not a
-        // user root are refused, as the store's guarded update refuses them
+        // bearer key used by a person, or a root that is not a user root, are
+        // refused (an admin key used by a person is linkable, the operator's
+        // decision of 2026-11-19), as the store's guarded update refuses them
         // (ADR-0085 d16).
         MetadataFold::KeyLinked { key_id, user_root } => {
             // As the Postgres guard: a link names a live unlinked tenant
@@ -1971,7 +1972,6 @@ fn apply_fold(
                     root_ok
                         && k.revoked_at.is_none()
                         && k.credential == Credential::Bearer
-                        && k.role != Role::Admin
                         && k.used_by == oml_domain::UsedBy::Person
                         && k.user.is_none()
                         && k.linked_user.is_none()

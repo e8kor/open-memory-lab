@@ -79,7 +79,7 @@ fi
 [ -n "$TOKEN" ] || fail "no enrollment token: set OML_ENROLLMENT_TOKEN to the token the server printed at first boot"
 
 # The secret travels on stdin, never in argv (ADR-0039 d10).
-boot="$(printf '%s\n' "$TOKEN" | oml --url "$CLI_SERVER" bootstrap claim quickstart-admin --token-stdin --tenant-name quickstart --principal platform/admin)" \
+boot="$(printf '%s\n' "$TOKEN" | oml --url "$CLI_SERVER" bootstrap claim quickstart-admin --token-stdin --tenant-name quickstart --principal platform/admin --person platform)" \
     || fail "bootstrap claim refused (already claimed? the token is single-use): $boot"
 workspace="$(oml workspaces create universe "$WORKSPACE_NAME" | jq -r .id)"
 
