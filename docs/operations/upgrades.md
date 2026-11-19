@@ -1,7 +1,7 @@
 ---
 status: Stable
 verified: 2026-11-19
-answers: "how to upgrade an OML server: how migrations run, the upgrade steps in order, what rollback does and does not mean, the upgrade from a pre-0.3.1 install, the v0.5.4 fix, how to move from v0.3, the v0.8.0 rename that clients take before the server, what the v0.8.0 migrations cost and what waits during them, and the storage.url to set before v0.8.2's uploads"
+answers: "how to upgrade an OML server: how migrations run, the upgrade steps in order, what rollback does and does not mean, the upgrade from a pre-0.3.1 install, the v0.5.4 fix, how to move from v0.3, the v0.8.0 rename that clients take before the server, what the v0.8.3 migrations cost and what waits during them, and the storage.url to set before v0.8.2's uploads"
 ---
 
 # Upgrade OML
@@ -159,12 +159,16 @@ held version reviewed as usual. Bookmarks of the pages `use/workareas/` and
 `architecture/workareas/` answer 404; the pages are now [workspaces](../use/workspaces.md) and
 [how workspaces grant access](../architecture/workspaces.md).
 
-## Upgrading to v0.8.0: what the migrations cost
+## Upgrading to v0.8.3: what the migrations cost
 
-The server runs the v0.8.0 migrations at boot, before it serves, so their time adds to the outage
-of [Upgrade in order](#upgrade-in-order). Most are catalog changes that read no row. Four grow with
-the stored data. Each works one tenant at a time and waits at most 5 s for a lock; 0060, 0061 and
-0062 commit after each step, so a run that fails resumes where it stopped.
+The server runs the migrations from 0047 on at boot, before it serves, so their time adds to the
+outage of [Upgrade in order](#upgrade-in-order). The rest change the catalog, add empty tables or
+columns with constant defaults, or touch a few small tables; the ones below read or write rows in
+proportion to the stored data. Each waits at most 5 s for a lock, and 0060, 0061 and 0062 commit
+after each step, so a run that fails resumes where it stopped.
+
+- **0047**, the rename ([ADR-0091](../adr/ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md)), updates the stored roles, holders and statuses tenant by tenant, every promoted version that carries an approver among them, in one transaction.
+- **0049** runs `VALIDATE CONSTRAINT` twice on `memories`, a full scan of every version, under a lock that lets reads and writes run.
 
 | Migration | What it does to each tenant | What waits, and for how long |
 |---|---|---|
@@ -176,8 +180,9 @@ the stored data. Each works one tenant at a time and waits at most 5 s for a loc
 On one server nothing else writes while the migrations run, so these waits lengthen the outage
 rather than stall requests. The work of 0060 and 0062 grows with each tenant's postings and
 versions: rehearse on a copy ([step 3](#upgrade-in-order)) and time both on the data before the
-window is announced. Uploads and imports, which this release's tree carries, need `storage.url`
-set before they are used: see [set `storage.url` before using uploads](#upgrading-to-v082-set-storageurl-before-using-uploads).
+window is announced. Before the window, also read [the rename](#upgrading-to-v080-workspaces-reviewer-protected-frozen-used-by),
+and set `storage.url` before uploads or imports are used:
+see [set `storage.url` before using uploads](#upgrading-to-v082-set-storageurl-before-using-uploads).
 
 ## Upgrading from v0.3
 
