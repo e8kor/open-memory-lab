@@ -1989,8 +1989,9 @@ async fn signed_in(app: &TestApp, admin: &str, user: &str, is_admin: bool) -> We
 /// the `universe` node alone, writes there, is told `access.grant_refused`
 /// in its person's root, and `submission.user_root_refused` in another
 /// person's root it reads. `<user>-review`, a session reviewer key, starts
-/// a held memory where it holds reviewer and reader (ADR-0082 d10): in its
-/// person's root, and in another person's root it was designated to review
+/// a held memory where it holds reviewer and reader (ADR-0082 d10), never
+/// in its person's own root, where `<user>-web` writes (d10, note of
+/// 2026-11-19), and in another person's root it was designated to review
 /// it is told `submission.user_root_refused`. `<user>-admin` is refused a
 /// new memory by its role before any node is read, wherever it is
 /// addressed.
@@ -2024,6 +2025,7 @@ async fn each_session_key_of_a_person_is_read_in_a_user_root_as_that_persons_key
         GrantRefused,
         UserRootRefused,
         VerbCeiling,
+        ReviewKeyInOwnRoot,
     }
     let cases = [
         (Capacity::Web, "alice", Answer::Held),
@@ -2031,7 +2033,7 @@ async fn each_session_key_of_a_person_is_read_in_a_user_root_as_that_persons_key
         (Capacity::Curate, "universe", Answer::Held),
         (Capacity::Curate, "alice", Answer::GrantRefused),
         (Capacity::Curate, "bob", Answer::UserRootRefused),
-        (Capacity::Review, "alice", Answer::Held),
+        (Capacity::Review, "alice", Answer::ReviewKeyInOwnRoot),
         (Capacity::Review, "bob", Answer::UserRootRefused),
         (Capacity::Admin, "alice", Answer::VerbCeiling),
         (Capacity::Admin, "bob", Answer::VerbCeiling),
@@ -2068,6 +2070,7 @@ async fn each_session_key_of_a_person_is_read_in_a_user_root_as_that_persons_key
             }) => Answer::GrantRefused,
             Err(AppError::UserRootRefused) => Answer::UserRootRefused,
             Err(AppError::VerbCeiling { verb: "submit", .. }) => Answer::VerbCeiling,
+            Err(AppError::ReviewKeyInOwnRoot) => Answer::ReviewKeyInOwnRoot,
             Err(other) => panic!("alice-{} in {workspace}: {other:?}", capacity.suffix()),
         };
         assert_eq!(
@@ -3492,6 +3495,57 @@ async fn a_session_reviewer_key_starts_a_held_claim_in_a_shared_workspace() {
         .await
         .unwrap_err();
     assert!(matches!(err, AppError::VerbCeiling { .. }), "{err:?}");
+}
+
+/// Inside its person's own root a session reviewer key starts no claim:
+/// `<user>-web` writes there (ADR-0082 d2), so a start there is refused
+/// `access.verb_ceiling` with its reason, journals nothing, and preview
+/// answers the same refusal (ADR-0082 d10, note of 2026-11-19).
+#[tokio::test]
+async fn a_session_reviewer_key_starts_no_claim_in_its_persons_own_root() {
+    let (app, store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", false).await;
+    let review = app
+        .web_caller(&alice, Capacity::Review)
+        .await
+        .expect("alice-review");
+    let head = store
+        .events_range(boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal")
+        .len();
+    let req = submit("r1", "Releases freeze on Thursdays.", Some("alice"));
+    let err = app
+        .submit_memory(Bearer::Session(&review), &req)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::ReviewKeyInOwnRoot),
+        "the review key starts nothing in alice's root: {err:?}"
+    );
+    let preview = app
+        .preview(
+            Bearer::Session(&review),
+            &oml_app::types::PreviewRequest::Submit(req),
+        )
+        .await
+        .expect("a preview");
+    assert!(
+        matches!(preview.refusal, Some(AppError::ReviewKeyInOwnRoot)),
+        "{:?}",
+        preview.refusal
+    );
+    assert_eq!(
+        store
+            .events_range(boot.tenant_id, 1, 10_000)
+            .await
+            .expect("journal")
+            .len(),
+        head,
+        "a refusal journals nothing"
+    );
 }
 
 /// The claim a person's session reviewer key started is judged by no key of

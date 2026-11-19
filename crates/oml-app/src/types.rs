@@ -3503,6 +3503,14 @@ pub enum AppError {
         "a memory is started in a user root by its own user's keys only; this key is not one of them (ADR-0044 d16, submission.user_root_refused)"
     )]
     UserRootRefused,
+    /// A person's reviewer session key starts no claim inside its person's
+    /// own root, where `<user>-web` writes (ADR-0082 d2; d10, note of
+    /// 2026-11-19; `access.verb_ceiling`, `details.reason:
+    /// review_key_in_own_root`).
+    #[error(
+        "inside the person's own root a claim is started by their web key; the review key starts one only outside it (ADR-0082 d2, d10, access.verb_ceiling)"
+    )]
+    ReviewKeyInOwnRoot,
     /// The key names a user root that is not one: the lead serves it
     /// nothing (ADR-0044 d14; auth.invalid, reason user_root).
     #[error("the key's user root is not a user root (ADR-0044 d14, auth.invalid)")]
