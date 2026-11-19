@@ -35,13 +35,13 @@ class RecallRequest:
                 shared namespace (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is
                 universe, is neither, and is refused (request.validation).
             k (int | Unset):  Default: 8.
-            kinds (list[ClaimKind] | Unset): Any of the ten kinds; an empty array or an unknown kind is refused
-                (request.validation naming /kinds), so only an absent kinds means no filter (ADR-0092 d1). Absent, hits are
-                every kind but steering and the vocabulary kinds, which join only by a workspace's opt-in (ADR-0021 d9). kinds
-                decides whether the steering list is served: naming steering, or absent, it is; otherwise the answer's steering
-                is "not_requested"; steering alone serves the list and ranks nothing (search.hits "not_requested"). A skill is a
-                hit only as one the scope offers, and a guardrail only as one applicable there; a document's hit is its best
-                passage (ADR-0092 d2, d3; ADR-0081 d4).
+            kinds (list[ClaimKind] | Unset): Any kind but test, which is never a hit (ADR-0086 d1); an empty array, an
+                unknown kind or test is refused (request.validation naming /kinds), so only an absent kinds means no filter
+                (ADR-0092 d1). Absent, hits are every kind but steering, test and the vocabulary kinds, which join only by a
+                workspace's opt-in (ADR-0021 d9). kinds decides whether the steering list is served: naming steering, or absent,
+                it is; otherwise the answer's steering is "not_requested"; steering alone serves the list and ranks nothing
+                (search.hits "not_requested"). A skill is a hit only as one the scope offers, and a guardrail only as one
+                applicable there; a document's hit is its best passage (ADR-0092 d2, d3; ADR-0081 d4).
             include_text (bool | Unset): Whether each served item carries its text (ADR-0039 d7). Default: True.
             anchor_repo (str | Unset): A repository, scheme, credentials and .git dropped (github.com/e8kor/open-memory-
                 lab); no segment is . or .. (ADR-0057 d3). As a filter, rows whose anchor names it; unanchored rows are left out

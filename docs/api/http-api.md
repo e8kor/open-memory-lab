@@ -134,7 +134,7 @@ Requires: reader effective access on the subtree.
 | `query` | string | yes |  |
 | `workspace` | WorkspaceRef | no | The subtree recalled, by id or name; omitted, the key's default_workspace. |
 | `k` | integer | no |  |
-| `kinds` | array of `memory` \| `derived_fact` \| `steering` \| `term` \| `term_mapping` \| `vocab_release` \| `guardrail` \| `skill` \| `document` \| `test` | no | Any of the ten kinds; an empty array or an unknown kind is refused (request.validation naming /kinds), so only an absent kinds means no filter. |
+| `kinds` | array of `memory` \| `derived_fact` \| `steering` \| `term` \| `term_mapping` \| `vocab_release` \| `guardrail` \| `skill` \| `document` \| `test` | no | Any kind but test, which is never a hit; an empty array, an unknown kind or test is refused (request.validation naming /kinds), so only an absent kinds means no filter. |
 | `include_text` | boolean | no | Whether each served item carries its text. |
 | `anchor_repo` | string | no | A repository, scheme, credentials and.git dropped (github.com/e8kor/open-memory-lab); no segment is. or... |
 | `anchor_path_prefix` | string | no | A byte prefix of the anchor path, at most 1,024 UTF-8 bytes; rows whose anchor path starts with it, unanchored rows left out. |

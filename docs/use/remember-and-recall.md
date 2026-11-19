@@ -38,9 +38,10 @@ non-author approves it. An empty answer does not prove the answer is unknown. Tr
 ask the librarian subagent.
 
 **Search by kind** ([ADR-0092](../adr/ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md)).
-`kinds` takes any of the ten kinds: memories, derived facts, documents, tests, steering,
-guardrails, skills and the three vocabulary kinds. A recall that names none returns memories,
-derived facts, tests, the skills offered at the workspace and the guardrails that apply there,
+`kinds` takes any kind but tests: memories, derived facts, documents, steering, guardrails,
+skills and the three vocabulary kinds. A test case is never a hit, so `kinds: ["test"]` is
+refused; the catalog lists tests. A recall that names none returns memories, derived facts,
+documents, the skills offered at the workspace and the guardrails that apply there,
 each marked with its kind; vocabulary is a hit only when named. Steering is served first and
 unranked unless `kinds` leaves it out, and then the answer says `steering: "not_requested"`. A
 skill hit carries its name, description, prompt and resource URI, never its body; a guardrail hit

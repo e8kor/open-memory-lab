@@ -126,7 +126,10 @@ and the SDKs in the same window. The notice to send before the date:
 > `oml_workarea`. Memories, keys, grants and workspace names are unchanged. The role `dreamer` is
 > now `reviewer`: `--role reviewer` and grants such as `dev:reviewer`. The statuses `committed`
 > and `validated` are now `protected` and `frozen`, and a key's `held_by` is now `used_by`, with
-> `human` now `person`. Existing keys, grants and workspaces are converted by the upgrade.
+> `human` now `person`. Existing keys, grants and workspaces are converted by the upgrade. A read
+> without a query now lists the catalog of what the key reads (`oml_read`'s `own` defaults to
+> `false`, `oml read` with no flags, the SDKs' iterators), `kind` is now `kinds`, and a recall
+> with no `kinds` also returns skill and guardrail hits.
 
 **Before the server.** Take a backup and verify that it restores
 ([restore](restore.md)): migration 0047 has no reverse, and only that verified dump undoes it.

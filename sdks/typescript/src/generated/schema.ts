@@ -2049,7 +2049,7 @@ export interface components {
             workspace?: components["schemas"]["WorkspaceRef"];
             /** @default 8 */
             k?: number;
-            /** @description Any of the ten kinds; an empty array or an unknown kind is refused (request.validation naming /kinds), so only an absent kinds means no filter (ADR-0092 d1). Absent, hits are every kind but steering and the vocabulary kinds, which join only by a workspace's opt-in (ADR-0021 d9). kinds decides whether the steering list is served: naming steering, or absent, it is; otherwise the answer's steering is "not_requested"; steering alone serves the list and ranks nothing (search.hits "not_requested"). A skill is a hit only as one the scope offers, and a guardrail only as one applicable there; a document's hit is its best passage (ADR-0092 d2, d3; ADR-0081 d4). */
+            /** @description Any kind but test, which is never a hit (ADR-0086 d1); an empty array, an unknown kind or test is refused (request.validation naming /kinds), so only an absent kinds means no filter (ADR-0092 d1). Absent, hits are every kind but steering, test and the vocabulary kinds, which join only by a workspace's opt-in (ADR-0021 d9). kinds decides whether the steering list is served: naming steering, or absent, it is; otherwise the answer's steering is "not_requested"; steering alone serves the list and ranks nothing (search.hits "not_requested"). A skill is a hit only as one the scope offers, and a guardrail only as one applicable there; a document's hit is its best passage (ADR-0092 d2, d3; ADR-0081 d4). */
             kinds?: components["schemas"]["ClaimKind"][];
             /**
              * @description Whether each served item carries its text (ADR-0039 d7).

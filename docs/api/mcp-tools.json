@@ -257,7 +257,7 @@
                 "test"
               ]
             },
-            "description": "Recall and listing: the kinds served; an empty array is refused, so only an absent kinds means no filter. Recall: with none, hits of every kind but steering and the vocabulary kinds; kinds that does not name steering serves no steering list (steering: not_requested), and steering alone ranks nothing. A document's hit is its best passage: its text, the passage's lines, its passage the fragment, ordinal, lines and headings, more_passages how many of its other passages matched (a lower bound), and its uri the passage's resource. Listing: the kinds listed; the counts ignore it."
+            "description": "Recall and listing: the kinds served; an empty array is refused, so only an absent kinds means no filter. Recall: test is refused, since a test case is never a hit; with none, hits of every kind but steering, test and the vocabulary kinds; kinds that does not name steering serves no steering list (steering: not_requested), and steering alone ranks nothing. A document's hit is its best passage: its text, the passage's lines, its passage the fragment, ordinal, lines and headings, more_passages how many of its other passages matched (a lower bound), and its uri the passage's resource. Listing: the kinds listed, test included; the counts ignore it."
           },
           "anchor_repo": {
             "type": "string",

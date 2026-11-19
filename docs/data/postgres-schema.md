@@ -1298,7 +1298,7 @@ Kind: partitioned table, `PARTITION BY LIST (tenant_id)`.
 Checks:
 
 - `search_postings_kind`: `CHECK (kind = ANY (ARRAY[1, 2]))`
-- `search_postings_memory_kind`: `CHECK (memory_kind >= 1 AND memory_kind <= 9)`
+- `search_postings_memory_kind`: `CHECK (memory_kind = ANY (ARRAY[1, 2, 3, 5, 6, 7, 8, 9]))`
 - `search_postings_state`: `CHECK (state = ANY (ARRAY[0, 1, 2]))`
 
 Row-level security: enabled and forced, so the owner is bound too.
