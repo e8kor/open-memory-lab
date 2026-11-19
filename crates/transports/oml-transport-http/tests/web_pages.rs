@@ -1325,7 +1325,7 @@ async fn the_allowlist_routes_take_an_admin_key_and_the_email_only_in_a_body() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
         serde_json::from_str::<Value>(&body).unwrap(),
-        json!({"email": "bob@example.com", "user": "bob", "admin": true})
+        json!({"email": "bob@example.com", "user": "bob", "admin": true, "pending": false})
     );
     let (status, _, body) = send(
         &rig.router,
@@ -2558,7 +2558,21 @@ async fn a_denied_session_key_is_still_refused_after_its_entry_is_removed_added_
     let web = key_named(&rig, "alice-web").await.key_id;
     let issued_before = journalled(&rig, "key.issued").await;
     // The entry removed and added back: the session ends, and the next
-    // sign-in opens a new one on the same key.
+    // sign-in opens a new one on the same key. alice signed in before, so
+    // the address added back waits on her, and she accepts it from a session
+    // of a second address of hers (the operator's decision of 2026-11-19).
+    const SECOND: &str = "alice@second.example";
+    rig.allow(SECOND, "alice", false).await;
+    let (status, accepted) = as_web(
+        &rig,
+        &cookie,
+        "web",
+        "/v2/web/emails/accept",
+        json!({ "email": SECOND }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{accepted}");
+    let bridge = signed_in(&rig, "sub-5", SECOND).await;
     rig.app
         .remove_web_email(&rig.boot.admin_key.value, &Email::parse(EMAIL).unwrap())
         .await
@@ -2569,6 +2583,15 @@ async fn a_denied_session_key_is_still_refused_after_its_entry_is_removed_added_
         "the old session ended with the entry"
     );
     rig.allow(EMAIL, "alice", false).await;
+    let (status, accepted) = as_web(
+        &rig,
+        &bridge,
+        "web",
+        "/v2/web/emails/accept",
+        json!({ "email": EMAIL }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{accepted}");
     let again = signed_in(&rig, "sub-1", EMAIL).await;
     assert_ne!(again, cookie, "a new session");
     assert_eq!(

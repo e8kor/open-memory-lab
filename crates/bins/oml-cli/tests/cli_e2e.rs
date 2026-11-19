@@ -2166,7 +2166,7 @@ async fn the_first_admin_email_is_added_by_the_cli_under_an_admin_key() {
     assert_eq!(code, 0, "web allow: {log}");
     assert_eq!(
         entry,
-        json!({"email": "alice@example.com", "user": "alice", "admin": true})
+        json!({"email": "alice@example.com", "user": "alice", "admin": true, "pending": false})
     );
     let seen = lab.take_requests();
     assert_eq!(routes(&seen), ["POST /v2/web/emails"]);

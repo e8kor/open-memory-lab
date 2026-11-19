@@ -10737,16 +10737,36 @@ pub async fn a_console_link_waits_on_its_persons_acceptance<S: JournalStore>(sto
     .await
     .expect("a pending link is withdrawn");
     assert_eq!(read().await, (None, None));
+    // The accepted link is the bootstrap ceremony's, of the admin key no
+    // key issues; Postgres's api_keys_link_guard admits a direct link on
+    // that key alone (0064, the operator's decision of 2026-11-19).
+    let ceremony = KeyRecord {
+        used_by: UsedBy::Person,
+        ..key_record(t, Uuid::from_u128(0x4A11), Role::Admin, None)
+    };
+    rig.issue_key(store, ceremony.clone()).await;
     rig.commit(
         store,
         event_types::KEY_LINKED_PERSON,
-        payload(),
-        link(carol.workspace_id, true),
+        json!({ "key_id": ceremony.key_id.to_string() }),
+        MetadataFold::KeyLinked {
+            key_id: ceremony.key_id,
+            user_root: Some(carol.workspace_id),
+            accepted: true,
+        },
         None,
     )
     .await
     .expect("an accepted link");
-    assert_eq!(read().await, (Some(carol.workspace_id), None));
+    let k = store
+        .key(t, ceremony.key_id)
+        .await
+        .expect("read")
+        .expect("key");
+    assert_eq!(
+        (k.linked_user, k.link_pending),
+        (Some(carol.workspace_id), None)
+    );
 }
 
 pub async fn run_journal_store_suite<S, F, Fut>(new_store: F)
