@@ -7,7 +7,7 @@ answers: why OML now serves a web console after ADR-0015 declined one, and how e
 
 # ADR-0045 — People sign in with Google or GitHub to a user page and an admin page that the lead serves on its own origin, and every act there is a session key's
 
-**Status:** accepted design · 2026-11-04 · revised the same day with the maintainer's answers to its open choices (d20) · amended by [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · amended 2026-11-06 with the Memories list, the Atlas view, the workspace dropdowns and the pages' copy (d22–d32) · amended 2026-11-13 by [the review amendment](ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md#the-amendment-of-2026-11-13-the-persons-review-page-lists-what-waits-and-judges-one-item-from-the-list) (d9 and d11: the person's Review lists what waits and judges one item from the list) and by [the header amendment](#the-amendment-of-2026-11-13-the-two-sides-are-told-apart-by-their-header-and-each-has-its-own-nav) (d27 and d32: the two sides, their navs and the Atlas), which the operator accepted the same day · amended by [ADR-0082](ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) (d9, d12, 2026-11-14), [ADR-0083](ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) (d9, d10, d11, 2026-11-14) · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d21, 2026-11-14)
+**Status:** accepted design · 2026-11-04 · revised the same day with the maintainer's answers to its open choices (d20) · amended by [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · amended 2026-11-06 with the Memories list, the Atlas view, the workspace dropdowns and the pages' copy (d22–d32) · amended 2026-11-13 by [the review amendment](ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md#the-amendment-of-2026-11-13-the-persons-review-page-lists-what-waits-and-judges-one-item-from-the-list) (d9 and d11: the person's Review lists what waits and judges one item from the list) and by [the header amendment](#the-amendment-of-2026-11-13-the-two-sides-are-told-apart-by-their-header-and-each-has-its-own-nav) (d27 and d32: the two sides, their navs and the Atlas), which the operator accepted the same day · amended by [ADR-0082](ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) (d9, d12, 2026-11-14), [ADR-0083](ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) (d9, d10, d11, 2026-11-14) · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d21, 2026-11-14) · amended 2026-11-19 by the operator after the third review of #498 (d2, d5, d18: a sign-in email an admin adds for a person who signs in already waits on that person's acceptance; [the decision at the end](#operator-decision-of-2026-11-19-an-admin-no-longer-quietly-becomes-an-existing-person))
 
 **Release:** introduced in v0.5.0 — sign-in, sessions, the email allowlist, the user page with review of the person's own agents' work, and on the admin page review, curation, supersession and the admin read of every memory's text and attribution; demotion is not built, since it rests on a verb not built ([releases](../changelog.md))
 
@@ -1082,4 +1082,62 @@ The [security page](../architecture/security.md) keeps a short table for the web
 | Secrets in logs | Logs record the route template, never the query. No cookie, token or email reaches a line. The journal holds an email's digest. | The deployment's reverse proxy's access log must drop the query on `/web/callback/*`. OML cannot check that. |
 | A person outliving their access | Removing an email ends its sessions. | The person's agent keys keep working until an admin cuts each off with a global denial. |
 | Admin authority through the pages | The admin key never reviews. Review runs as the person's reviewer key. The admin key reads content only on two admin read routes, and the journal records each read as `memory.admin_read`. | A tenant's admin can read every person's memories, held ones included. People who need privacy from that admin need their own tenant. |
+| An admin adds an address they control for a person who signs in already, signs in as that person and acts as them | The entry is pending: it signs in to nothing until that person accepts it from a session they already have (the decision of 2026-11-19 below). | An admin can still give a person's root its first address while that person has never signed in, and remove a person's addresses. |
+
+## Operator decision of 2026-11-19: an admin no longer quietly becomes an existing person
+
+The third review of #498 found that `POST /v2/web/emails` let any admin key add a sign-in email for
+a user who already exists. The admin then signed in as that person and could accept a key link
+([ADR-0085](ADR-0085-a-workspace-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md)
+d16) or settle a fix
+([ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md))
+as them. The operator decided on 2026-11-19 that an email added for an existing person stays
+pending until that person accepts it from a session they already have, the same shape as a key
+link. It amends d2, d5 and d18.
+
+- **Pending.** An entry an admin adds for a person who signs in already, or changes so that it
+  names another such person, is stored pending (`web_emails.pending_since`, migration 0064) and
+  journalled with `pending: true` on `web.email_allowed` or `web.email_changed`. A change of the
+  admin flag alone keeps the person the entry names and its state.
+- **Who is an existing person (the build's reading, recorded for the operator).** A user is
+  existing when an entry of the tenant names them or their session keys exist, that is, they
+  signed in once (d6). Session keys are never deleted, so removing every entry of a person and
+  adding a new one for them is still pending. A user root with no sign-in, made by a user key
+  (ADR-0044) or by `oml bootstrap claim --person`, takes its first email at once, as before: no
+  session exists to accept it from, and the bootstrap claim, the quickstart, the PoC demo and the
+  CI stack jobs add the first email that way. Rejected: any user root counting as existing, which
+  would leave a person who never signed in with no way into the console; and live entries alone,
+  which an admin defeats by removing the person's entries first.
+- **A pending entry signs in to nothing.** The callback refuses it before it pins a provider
+  subject, `auth.invalid` with `details.reason: email_pending` (the `web_sign_in` line's outcome),
+  and no session is created: the lead checks the entry before it opens one, and the store opens a
+  session only on an entry with `pending_since` NULL.
+- **Acceptance.** The person accepts it from their own console session, `POST
+  /v2/web/emails/accept {email}`, the **Accept sign-in email** act on their Keys page, journalled
+  `web.email_accepted` (`email_digest`, `user`, `accepted_by_key_id`); the email signs in as them
+  from that commit on. Anyone else is refused `request.validation`, `details.field: /email`, with
+  `details.reason`: `not_named_person` for another person's session, the adding admin's included;
+  `session_only` for a bearer key, an admin key's included; `not_pending` for an entry that waits
+  on no one. An address on no entry of the caller's tenant is `access.not_found`. A refusal
+  journals nothing.
+- **Removal.** The person removes a pending entry from their own session, `POST
+  /v2/web/emails/decline {email}`, the **Remove** act beside it, journalled `web.email_removed`
+  with `pending: true` and their session key as `by_key_id`; the same refusals apply. An admin
+  removes a pending entry as any other, `POST /v2/web/emails/remove`.
+- **Every route that adds or changes an entry.** The admin API's `POST /v2/web/emails` is the one
+  route an admin adds or changes an entry through; the console's allowlist page and `oml web
+  allow` call it, so each is gated the same way. An open sign-up (ADR-0068 d2) always draws a new
+  user and refuses an address an entry holds, a pending one included. The provider callback only
+  pins a subject on an entry it admits, never on a pending one. The bootstrap claim adds no entry.
+- **The tenant's admins.** A pending admin entry is no admin the tenant keeps: the last live admin
+  entry stays refused its removal or un-flagging (d10).
+- **Doctor.** `oml doctor` (admin key) warns `web.email_pending` with the count of pending entries,
+  from the admin rescan report's `web_emails_pending`. `GET /v2/whoami` serves the session's
+  person `pending_emails`, which the Keys page lists.
+- **Recovery.** When the last admin loses their provider account, the CLI path of d2 adds the new
+  address under a new user name, a new person, with the admin flag; an address for the old person
+  would wait on a session that person no longer has.
+- The cost: one more act by the person for each address an admin adds for them, two routes, one
+  journal event, one nullable column on `web_emails`, and one store read on each `whoami` that
+  serves a person.
 

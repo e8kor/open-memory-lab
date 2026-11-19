@@ -10,7 +10,7 @@ answers: which acts an admin key may take on a workspace's content, on which tar
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its five questions decided at their
 recommendations and every other default as drafted, and its amendment of ADR-0001 d5 accepted with
 it · proposed the same day · amended 2026-11-17 by the operator (d16: demote's targets, the
-fix route as the one surface for demote and erase, erase's claim-wide scope, a fix's events; as-of reads skip a demoted version) · readings of 2026-11-18 recorded for the operator's batch (d17) · amendments of d8 of 2026-11-18, from the operator's batch (strict confirmation wherever the fixed version is served to production and for any target outside the admin's own root; a cut refuses a `same_user`-only member; #429), accepted 2026-11-19 by the operator · amended 2026-11-19 by the operator (d16, O8: a claim whose approved versions are all demoted is written again, continuing its numbers; #474) · amended 2026-11-19 by the operator after the review of #498 (an admin key is linked to its person; the settlement fails closed; a revert checks R2 by person; proposed for the record, see the decision at the end) · amended 2026-11-19 by the operator after the second review of #498 (a link of an admin or reviewer key takes effect only once its person accepts it; each fix records its admin's person, which the settlement compares; see the second decision at the end) · reading of 2026-11-19 in d17 (a fix whose mark a later fix takes over is settled `superseded`)
+fix route as the one surface for demote and erase, erase's claim-wide scope, a fix's events; as-of reads skip a demoted version) · readings of 2026-11-18 recorded for the operator's batch (d17) · amendments of d8 of 2026-11-18, from the operator's batch (strict confirmation wherever the fixed version is served to production and for any target outside the admin's own root; a cut refuses a `same_user`-only member; #429), accepted 2026-11-19 by the operator · amended 2026-11-19 by the operator (d16, O8: a claim whose approved versions are all demoted is written again, continuing its numbers; #474) · amended 2026-11-19 by the operator after the review of #498 (an admin key is linked to its person; the settlement fails closed; a revert checks R2 by person; proposed for the record, see the decision at the end) · amended 2026-11-19 by the operator after the second review of #498 (a link of an admin or reviewer key takes effect only once its person accepts it; each fix records its admin's person, which the settlement compares; see the second decision at the end) · reading of 2026-11-19 in d17 (a fix whose mark a later fix takes over is settled `superseded`) · amended 2026-11-19 by the operator after the third review of #498 (a sign-in email an admin adds for an existing person waits on that person; a key's link set only through an acceptance; see the third decision at the end)
 
 **Release:** built in v0.8.4, except the release overlays (d5), which wait for ADR-0085
 
@@ -604,3 +604,27 @@ confirms with it. It amends d1, d8 and the first decision of that day.
   link, that key's fixes are theirs, recorded as theirs, and any other person may confirm them,
   the linking admin's own reviewer key included: the person consented to act through that key.
 - A fix that a later fix's mark supersedes is d17's reading of the same day.
+
+## Operator decision of 2026-11-19, third: an admin no longer quietly becomes an existing person (#498 third review)
+
+The second decision bound a key's link to its person's acceptance from their own console session,
+but an admin could still become that person: `POST /v2/web/emails` let any admin key add a sign-in
+address they control for a user who already signs in, sign in as them, and accept a link or settle
+a fix as them. The operator decided on 2026-11-19 that such an address stays pending until the
+person accepts it from a session they already have;
+[ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)'s
+note of that day records the rule, its acceptance and removal, and the build's reading of who is an
+existing person. Two defences follow here.
+
+- **A key's link is set only through its person (defence in depth).** Migration 0064's
+  `api_keys_link_guard`, owner-owned and SECURITY INVOKER as 0057's guard is, admits a change of
+  `api_keys.linked_user_id` only to NULL (an unlink), from the link pending to the same root (an
+  acceptance), or on the bootstrap ceremony's first admin key while it holds no link (its
+  `issued_by` is NULL: no key issues it, and its person runs the ceremony), and refuses any change
+  of `issued_by`. No CLI path sets a link directly: the CLI links nothing, and `oml bootstrap
+  claim --person` reaches the ceremony's link above.
+- **Links made before this decision wait on their person.** Migration 0064 moves every
+  `linked_user_id` but the bootstrap ceremony's key's to `link_pending_user_id`, so each person
+  accepts it before the key acts for them. v0.7.3, the release in production, has no link; a
+  stage or development database that applied an earlier draft of 0064 is reset (upgrades).
+
