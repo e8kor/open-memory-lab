@@ -36,7 +36,8 @@ twin note and ADR-0090 d18 class it. The build names each column's class under A
 - ADR-0072:
   - d1: a released in-progress workspace is a federation source at its latest release, d15;
   - d5: a federated source is read at its latest release, for every key whatever its binding
-    (confirmed 2026-11-19 by the operator, O3 at the end of this record).
+    (confirmed 2026-11-19 by the operator, O3 at the end of this record), except `universe`, read
+    at its promoted rows **[operator batch]**.
 - On their branches:
   - ADR-0047 (d10, proposed);
   - ADR-0080 (d3: a withdrawal may stop a person-approved skill being offered, d9; d10:
@@ -253,7 +254,8 @@ Decided, not built.
     part 2026-11-18, accepted 2026-11-19, D3 below: the label, and so this check, comes at publish.)*
   - **Storage.** The notes are stored as the release's own document claim (ADR-0081, proposed).
     *(Made precise 2026-11-19 by the operator, O6 at the end of this record: the server writes
-    `doc/releases/<label>` at publish, promoted by the publisher's verdict.)*
+    `doc/releases/<label>` at publish, promoted by the publisher's verdict in the same transaction
+    **[operator batch]**.)*
 
 - **d11 — The change set is computed review UI, and a revert drafts the inverse.**
   - A change set is the subtree's versions since the latest published release, shown with a line
@@ -530,7 +532,7 @@ The release plan for v0.9.0 left nine questions, O1 to O9, for the operator, who
 2026-11-18 and 2026-11-19. O1 accepted the amendments of 2026-11-18 above, every **[operator
 batch]** item included. O2, O3, O4, O6 and O7 are this record's, and each records the operator's
 decision. Where a sentence above contradicts one, it stays as written, marked superseded, and the
-decision below governs. The three items marked **[operator batch]** are readings this record takes
+decision below governs. The eight items marked **[operator batch]** are readings this record takes
 beside a decision, for the operator to confirm or reverse.
 
 - **O2 — D2 refuses only a workspace that holds approved content and has no published release
@@ -567,17 +569,19 @@ beside a decision, for the operator to confirm or reverse.
     a federated source per query and the key's scope does not name it, so one source without a
     release would fail every federated recall in its tenant. D2's whole-read refusal still holds
     for the workspaces the key's own scope serves.
-  - **`universe` as a source.** O2 leaves `universe` outside release governance, so where ADR-0072
+  - **`universe` as a source **[operator batch]**.** O2 leaves `universe` outside release governance, so where ADR-0072
     d1 makes it a source it is read as today, at its promoted rows.
 
 - **O4 — A reviewed retirement waits for the next cut; only an admin's fix changes a published
   release at once (amends d1; supersedes its "retired").**
   - A retirement written, held and approved like any change takes effect for release-bound keys at
     the next cut, as every promotion does (d5); until then the published release keeps serving the
-    member, and the next release's notes list the retirement (d10).
+    member, and the next release's notes list the retirement, as d10's Contents lists every claim
+    key retired.
   - Only a demotion, an erasure or an admin's retire fix (ADR-0089 d2, d16) changes a published
     release at once, as a marked overlay: the member is replaced or withheld as d6's table says,
-    the release reads `degraded`, and the served item carries `approver.act: "admin_fix"`.
+    and, as d6 says beneath that table, the served item is marked `approver.act: "admin_fix"` and
+    the release reads `degraded` until a person confirms the fix.
   - Why: under d1 as written a reviewed retirement of a guardrail would loosen production with no
     publish and no alert, past d9's alert on a loosening withdrawal.
   - **Superseded:** d1's "or retired", except for an admin's retire fix.
@@ -586,12 +590,12 @@ beside a decision, for the operator to confirm or reverse.
   promotes (amends d10's storage).**
   - At publish, the server's own identity, the one that authors a revert (ADR-0089 d8), writes the
     notes as the release's document claim `doc/releases/<label>` in the release's workspace
-    (ADR-0081). The publisher's verdict promotes it in the same transaction. Its author is the
-    server and its reviewer the publishing person, so R2 holds.
+    (ADR-0081). The publisher's verdict promotes it in the same transaction **[operator batch]**. Its author
+    is the server and its reviewer the publishing person, so R2 holds **[operator batch]**.
   - Until publish a candidate has no label (D3), so its notes are generated on read and the
-    ratifier reads them before publishing. The manifest is fixed at the cut (d1), so the notes are
-    never a member of the release they describe; the next cut lists them like any promoted
-    document.
+    ratifier reads them before publishing **[operator batch]**. The manifest is fixed at the cut (d1), so the notes are
+    never a member of the release they describe **[operator batch]**; the next cut lists them like any
+    promoted document.
   - A person may edit the notes afterwards. An edit is a held supersession of the document,
     reviewed as any document is in that workspace.
 
