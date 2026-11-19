@@ -10,7 +10,7 @@ answers: what a workspace export carries and what it never carries; the bundle's
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its four questions decided at their
 recommendations and every other default as drafted · proposed the same day · the "unless its source server is
 pinned" of its file name is ADR-0088, which is deferred · the format built as the crate `oml-bundle`, with its readings and the
-operator's R1 decision of 2026-11-17 and the integration readings I1–I9 recorded at the end of this record; of d15, `history`-mode export (the route and `oml workspaces export`) is built (#425), and the import (`POST /v2/imports`, `GET /v2/imports/{id}`, `oml workspaces import`, the `imports` doctor line) is built (#426); the rest is not built · amendment of d6 proposed 2026-11-18 (imports into any open or protected workspace, the operator's answer D4 to the lifecycle review; #429)
+operator's R1 decision of 2026-11-17 and the integration readings I1–I9 recorded at the end of this record; of d15, `history`-mode export (the route and `oml workspaces export`) is built (#425), and the import (`POST /v2/imports`, `GET /v2/imports/{id}`, `oml workspaces import`, the `imports` doctor line) is built (#426); the rest is not built · amendment of d6 of 2026-11-18 (imports into any open or protected workspace, the operator's answer D4 to the lifecycle review; #429), accepted 2026-11-19 by the operator
 
 **Release:** not scheduled; after ADR-0085, whose release manifest `release` mode exports. A
 trusted source server, the "unless" of the title, is the deferred ADR-0088.
@@ -146,7 +146,7 @@ Decided, not built.
 - **d6 — An import lands in an in-progress workspace, and every imported version is held.**
   - The target is a `development` workspace in progress, or a new name the import creates in
     progress where the importer may create workspaces (ADR-0044 d6). Any other target is refused as
-    `import.target_not_in_progress`. *(Superseded, proposed 2026-11-18, D4 at the end of this
+    `import.target_not_in_progress`. *(Superseded 2026-11-18, accepted 2026-11-19, D4 at the end of this
     record: any open or protected workspace, never a frozen one, with a person's verdict where the
     workspace is protected or released.)*
   - Each version is written held by the importing key. The `tip` keys connected there read it
@@ -634,14 +634,15 @@ until the operator confirms or reverses it with the other decisions of the batch
   for a user key or a session key of that person, never through `linked_user`, so a linked key
   exports none of the person's other keys' held, rejected or withdrawn rows (R3).
 
-### The lifecycle review's amendment of 2026-11-18 (D4; proposed, #429)
+### The lifecycle review's amendment of 2026-11-18 (D4; accepted 2026-11-19, #429)
 
 The operator answered the lifecycle review's import question on 2026-11-18 (ADR-0085's
 amendments of the same day hold D1 to D3). The question read "imports into any open workspace,
 and into protected ones only if every imported item then gets a person's verdict from someone
 other than the importer"; the answer chosen was "Any open; protected needs verdict", described as
 "A team can import into its normal workspace, and a protected workspace stays two-person". This
-records the answer as proposed; the operator accepts the text.
+records the answer, first as proposed; the operator accepted the text on 2026-11-19 ("Accept all"),
+with each item in it marked **[operator batch]**.
 
 - **D4 — An import lands held in any open or protected workspace, and a protected or released one
   needs a person's verdict (amends d6; ADR-0030 d1's exception of 2026-11-18).**
