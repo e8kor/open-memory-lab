@@ -3190,7 +3190,7 @@ paths:
                 state: { type: string, enum: [held, promoted, rejected, superseded, demoted, withdrawn] }
                 origin_kind: { type: string, enum: [repo, doc, code, lake, chat, web, manual], description: "One origin.kind (ADR-0045 d22, d24; ADR-0070 d5). Since v0.6.4." }
                 author: { type: string, description: "The authoring key of the tenant, by name or id (ADR-0045 d24; ADR-0070 d5). Since v0.6.4." }
-                kind: { type: string, description: "A comma list of kinds, each one of memory, derived_fact, steering, guardrail, term, term_mapping, vocab_release, skill, document or test: a row of any of them is served (ADR-0083 d5; ADR-0082 d8 item 3). Any other value is request.validation naming /kind. Since v0.8.0." }
+                kinds: { type: array, minItems: 1, items: { $ref: '#/components/schemas/ClaimKind' }, description: "Only these kinds, each named once, as recall's kinds: a row of any of them is served (ADR-0083 d5; ADR-0082 d8 item 3; ADR-0092 d6). An empty array, an unknown kind or any other value is request.validation naming /kinds; v0.8.0's draft kind is request.validation naming /kinds in details.renamed_to. Since v0.8.0." }
                 limit: { type: integer, minimum: 1, maximum: 200, description: "At most 200, the console list's largest page (ADR-0045 d22; raised from 100 in v0.7.0)." }
                 cursor: { type: string }
       responses:

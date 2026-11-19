@@ -45,7 +45,7 @@ pub const OPERATIONS: [&str; 46] = [
     "setWorkspaceMode POST /v2/workspaces/{workspace}/mode body:mode resp:WorkspaceView",
     "listMemories GET /v1/memories query:with_own,mine,include_text,author,workspace,state,kinds,promoted_since,origin_kinds,limit,cursor resp:MemoryPage",
     "recallMemories POST /v1/memories/recall body:query,k,workspace,kinds,include_text,include_unreviewed,origin_kinds resp:RecallResponse",
-    "adminSearchMemories POST /v2/admin/memories/search body:query,workspace,state,origin_kind,author,kind,limit,cursor resp:AdminMemoryPage",
+    "adminSearchMemories POST /v2/admin/memories/search body:query,workspace,state,origin_kind,author,kinds,limit,cursor resp:AdminMemoryPage",
     "getWorkspaceTree GET /v2/workspaces/{workspace}/tree query:counts,offers resp:WorkspaceCounts",
     "listKeys GET /v2/keys query:user,limit,cursor resp:KeyPage",
     "createWorkspace POST /v2/workspaces body:name,parent resp:Workspace",
@@ -1550,8 +1550,9 @@ pub struct AdminSearch<'a> {
     pub state: Option<&'a str>,
     pub origin_kind: Option<&'a str>,
     pub author: Option<&'a str>,
-    /// A comma list of kinds (ADR-0083 d5).
-    pub kind: Option<&'a str>,
+    /// A comma list of kinds, sent as the body's `kinds` array (ADR-0083
+    /// d5; ADR-0092 d6).
+    pub kinds: Option<&'a str>,
     pub limit: u32,
     pub cursor: Option<&'a str>,
 }
@@ -2029,12 +2030,14 @@ impl<T: Transport> Client<T> {
             ("state", search.state),
             ("origin_kind", search.origin_kind),
             ("author", search.author),
-            ("kind", search.kind),
             ("cursor", search.cursor),
         ] {
             if let Some(value) = value {
                 body[name] = serde_json::json!(value);
             }
+        }
+        if let Some(kinds) = search.kinds {
+            body["kinds"] = serde_json::json!(kinds.split(',').collect::<Vec<_>>());
         }
         self.send(
             Method::POST,
@@ -3179,6 +3182,30 @@ mod tests {
         assert_eq!(page.items[0].name.as_deref(), Some("deploy"));
         assert_eq!(page.items[0].prompt, None);
         assert_eq!(page.next_cursor.as_deref(), Some("c2"));
+    }
+
+    /// The admin search sends its kinds as the body's `kinds` array, as
+    /// recall's body takes them, never v0.8.0's draft `kind` (ADR-0083 d5;
+    /// ADR-0092 d6).
+    #[tokio::test]
+    async fn the_admin_search_sends_its_kinds_as_a_kinds_array() {
+        let (client, seen) = recording(200, r#"{"items":[],"next_cursor":null}"#);
+        client
+            .admin_search(
+                &CALL,
+                &AdminSearch {
+                    state: Some("promoted"),
+                    kinds: Some("skill,guardrail"),
+                    limit: 50,
+                    ..AdminSearch::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            std::str::from_utf8(seen.lock().unwrap()[0].body()).unwrap(),
+            r#"{"kinds":["skill","guardrail"],"limit":50,"state":"promoted"}"#
+        );
     }
 
     #[tokio::test]

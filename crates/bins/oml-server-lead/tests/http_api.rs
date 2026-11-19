@@ -11407,6 +11407,87 @@ async fn kinds_repeated_on_the_mine_listing_answers_every_kind_it_names() {
     drop_db(&rig.db_name).await;
 }
 
+/// The admin search takes `kinds`, a list of kinds as recall's body does,
+/// a row of any of them served; the v0.8.0 draft's `kind` is refused naming
+/// `kinds` (ADR-0083 d5; ADR-0092 d6; ADR-0091 d2).
+#[tokio::test]
+async fn the_admin_search_takes_a_kinds_list_and_refuses_kind_naming_kinds() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let _token = rig.signed_in("alice@example.com", "alice", false).await;
+    let laptop = rig.agent_key("alice", "alice-laptop").await;
+    let note = rig.held(&laptop, "alice", "laptop-note").await;
+    let (status, _, steering) = send(
+        &rig.router,
+        "POST",
+        "/v1/memories",
+        Call::auth(&laptop)
+            .idem("w-steer")
+            .workspace("alice")
+            .body(json!({
+                "verb": "remember",
+                "claim_key": "steer",
+                "kind": "steering",
+                "body": "Every note names its source.",
+            })),
+    )
+    .await;
+    assert!(status.is_success(), "{steering}");
+    let steer = steering["artifact_id"].as_str().expect("id").to_owned();
+    let ids = |page: &Value| -> Vec<String> {
+        page["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .map(|m| m["artifact_id"].as_str().expect("id").to_owned())
+            .collect()
+    };
+    for (kinds, want) in [
+        (
+            json!(["memory", "steering"]),
+            vec![steer.clone(), note.clone()],
+        ),
+        (json!(["steering", "steering"]), vec![steer.clone()]),
+        (json!(["memory"]), vec![note.clone()]),
+    ] {
+        let (status, _, found) = send(
+            &rig.router,
+            "POST",
+            "/v2/admin/memories/search",
+            Call::auth(&rig.admin).body(json!({ "state": "held", "kinds": kinds })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{kinds}: {found}");
+        assert_eq!(ids(&found), want, "{kinds}: {found}");
+    }
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v2/admin/memories/search",
+        Call::auth(&rig.admin).body(json!({ "kind": "memory" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["details"]["field"], "/kind", "{body}");
+    assert_eq!(body["error"]["details"]["renamed_to"], "/kinds", "{body}");
+    for kinds in [json!([]), json!(["memory", "nope"]), json!("memory")] {
+        let (status, _, body) = send(
+            &rig.router,
+            "POST",
+            "/v2/admin/memories/search",
+            Call::auth(&rig.admin).body(json!({ "kinds": kinds })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{kinds}: {body}");
+        assert_eq!(
+            body["error"]["details"]["field"], "/kinds",
+            "{kinds}: {body}"
+        );
+    }
+    drop_db(&rig.db_name).await;
+}
+
 /// `keep_an_admin` refuses removing or un-flagging the tenant's last admin
 /// entry, `request.validation` naming `admin`, and changes nothing
 /// (ADR-0070 d5; ADR-0045 d10).

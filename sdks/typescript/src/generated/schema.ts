@@ -4061,8 +4061,9 @@ export interface operations {
                 kinds?: components["schemas"]["ClaimKind"][];
                 /** @description Only claim keys starting with these bytes, such as skill/ or doc/runbooks/; read as a byte range, never a pattern (ADR-0092 d6, d9). */
                 prefix?: string;
+                /** @description true: the key's own work (see the operation). With with_own, `mine` or author, false, the default a generated client sends, reads as absent and true is request.validation. */
                 own?: boolean;
-                /** @description true: the scoped listing (at workspace, else universe) and the caller's own rows, every key of the person for a person's session key (as for `mine`), merged newest first under one cursor, a row in both once (ADR-0045 d22, d23; ADR-0070 d5). Combines only with `mine`, author, include_text, workspace, state (a comma list of held, promoted, superseded, rejected, demoted and withdrawn), kinds, promoted_since, one origin_kinds, limit and cursor; any other parameter is request.validation. Since v0.6.4. */
+                /** @description true: the scoped listing (at workspace, else universe) and the caller's own rows, every key of the person for a person's session key (as for `mine`), merged newest first under one cursor, a row in both once (ADR-0045 d22, d23; ADR-0070 d5). Combines only with `mine`, author, include_text, own=false, workspace, state (a comma list of held, promoted, superseded, rejected, demoted and withdrawn), kinds, promoted_since, one origin_kinds, limit and cursor; any other parameter is request.validation. Since v0.6.4. */
                 with_own?: boolean;
                 /** @description true: the caller's own rows alone, with no scoped part, under one cursor: every key of the person for a person's session key (the keys naming their root and their web, review and curate session keys, never a linked tenant key), the key alone for any other key, in every state, off the subtrees the key's global denials cover (ADR-0083 d3, d14). Combines as with_own does; author narrows it to one own key. Since v0.8.0. */
                 mine?: boolean;
@@ -8445,8 +8446,8 @@ export interface operations {
                     origin_kind?: "repo" | "doc" | "code" | "lake" | "chat" | "web" | "manual";
                     /** @description The authoring key of the tenant, by name or id (ADR-0045 d24; ADR-0070 d5). Since v0.6.4. */
                     author?: string;
-                    /** @description A comma list of kinds, each one of memory, derived_fact, steering, guardrail, term, term_mapping, vocab_release, skill, document or test: a row of any of them is served (ADR-0083 d5; ADR-0082 d8 item 3). Any other value is request.validation naming /kind. Since v0.8.0. */
-                    kind?: string;
+                    /** @description Only these kinds, each named once, as recall's kinds: a row of any of them is served (ADR-0083 d5; ADR-0082 d8 item 3; ADR-0092 d6). An empty array, an unknown kind or any other value is request.validation naming /kinds; v0.8.0's draft kind is request.validation naming /kinds in details.renamed_to. Since v0.8.0. */
+                    kinds?: components["schemas"]["ClaimKind"][];
                     /** @description At most 200, the console list's largest page (ADR-0045 d22; raised from 100 in v0.7.0). */
                     limit?: number;
                     cursor?: string;

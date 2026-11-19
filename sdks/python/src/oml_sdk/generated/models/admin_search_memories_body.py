@@ -9,6 +9,7 @@ from ..models.admin_search_memories_body_origin_kind import (
     AdminSearchMemoriesBodyOriginKind,
 )
 from ..models.admin_search_memories_body_state import AdminSearchMemoriesBodyState
+from ..models.claim_kind import ClaimKind
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="AdminSearchMemoriesBody")
@@ -24,9 +25,10 @@ class AdminSearchMemoriesBody:
         origin_kind (AdminSearchMemoriesBodyOriginKind | Unset): One origin.kind (ADR-0045 d22, d24; ADR-0070 d5). Since
             v0.6.4.
         author (str | Unset): The authoring key of the tenant, by name or id (ADR-0045 d24; ADR-0070 d5). Since v0.6.4.
-        kind (str | Unset): A comma list of kinds, each one of memory, derived_fact, steering, guardrail, term,
-            term_mapping, vocab_release, skill, document or test: a row of any of them is served (ADR-0083 d5; ADR-0082 d8
-            item 3). Any other value is request.validation naming /kind. Since v0.8.0.
+        kinds (list[ClaimKind] | Unset): Only these kinds, each named once, as recall's kinds: a row of any of them is
+            served (ADR-0083 d5; ADR-0082 d8 item 3; ADR-0092 d6). An empty array, an unknown kind or any other value is
+            request.validation naming /kinds; v0.8.0's draft kind is request.validation naming /kinds in details.renamed_to.
+            Since v0.8.0.
         limit (int | Unset): At most 200, the console list's largest page (ADR-0045 d22; raised from 100 in v0.7.0).
         cursor (str | Unset):
     """
@@ -36,7 +38,7 @@ class AdminSearchMemoriesBody:
     state: AdminSearchMemoriesBodyState | Unset = UNSET
     origin_kind: AdminSearchMemoriesBodyOriginKind | Unset = UNSET
     author: str | Unset = UNSET
-    kind: str | Unset = UNSET
+    kinds: list[ClaimKind] | Unset = UNSET
     limit: int | Unset = UNSET
     cursor: str | Unset = UNSET
 
@@ -55,7 +57,12 @@ class AdminSearchMemoriesBody:
 
         author = self.author
 
-        kind = self.kind
+        kinds: list[str] | Unset = UNSET
+        if not isinstance(self.kinds, Unset):
+            kinds = []
+            for kinds_item_data in self.kinds:
+                kinds_item = kinds_item_data.value
+                kinds.append(kinds_item)
 
         limit = self.limit
 
@@ -74,8 +81,8 @@ class AdminSearchMemoriesBody:
             field_dict["origin_kind"] = origin_kind
         if author is not UNSET:
             field_dict["author"] = author
-        if kind is not UNSET:
-            field_dict["kind"] = kind
+        if kinds is not UNSET:
+            field_dict["kinds"] = kinds
         if limit is not UNSET:
             field_dict["limit"] = limit
         if cursor is not UNSET:
@@ -106,7 +113,14 @@ class AdminSearchMemoriesBody:
 
         author = d.pop("author", UNSET)
 
-        kind = d.pop("kind", UNSET)
+        _kinds = d.pop("kinds", UNSET)
+        kinds: list[ClaimKind] | Unset = UNSET
+        if _kinds is not UNSET:
+            kinds = []
+            for kinds_item_data in _kinds:
+                kinds_item = ClaimKind(kinds_item_data)
+
+                kinds.append(kinds_item)
 
         limit = d.pop("limit", UNSET)
 
@@ -118,7 +132,7 @@ class AdminSearchMemoriesBody:
             state=state,
             origin_kind=origin_kind,
             author=author,
-            kind=kind,
+            kinds=kinds,
             limit=limit,
             cursor=cursor,
         )

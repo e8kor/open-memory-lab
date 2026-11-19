@@ -1038,7 +1038,7 @@ pub async fn admin_page(
     let ids = calls.next_ids();
     let search = AdminSearch {
         workspace: Some(&view.id),
-        kind: Some(kind.as_str()),
+        kinds: Some(kind.as_str()),
         limit: LIST_LIMIT,
         ..AdminSearch::default()
     };

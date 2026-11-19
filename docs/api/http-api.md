@@ -106,7 +106,7 @@ Requires: reader effective access; own=true admits any tenant role except operat
 | `state` | query | string | no | One of held, promoted, demoted, rejected, erased or withdrawn. |
 | `kinds` | query | array of `memory` \| `derived_fact` \| `steering` \| `term` \| `term_mapping` \| `vocab_release` \| `guardrail` \| `skill` \| `document` \| `test` | no | Comma-separated or repeated: only these kinds. |
 | `prefix` | query | string | no | Only claim keys starting with these bytes, such as skill/ or doc/runbooks/; read as a byte range, never a pattern. |
-| `own` | query | boolean | no |  |
+| `own` | query | boolean | no | true: the key's own work (see the operation). |
 | `with_own` | query | boolean | no | true: the scoped listing (at workspace, else universe) and the caller's own rows, every key of the person for a person's session key (as for `mine`), merged newest first under one cursor, a row in both once. |
 | `mine` | query | boolean | no | true: the caller's own rows alone, with no scoped part, under one cursor: every key of the person for a person's session key (the keys naming their root and their web, review and curate session keys, never a linked tenant key), the key alone for any other key, in every state, off the subtrees the key's global denials cover. |
 | `promoted_since` | query | string | no | With with_own, `mine` or author: only the promoted rows approved at or after this instant, the rows of every other state left whole; with no state, every state is listed. |
@@ -1378,7 +1378,7 @@ Requires: admin key role; the operator and every other role answer access.verb_c
 | `state` | `held` \| `promoted` \| `rejected` \| `superseded` \| `demoted` \| `withdrawn` | no |  |
 | `origin_kind` | `repo` \| `doc` \| `code` \| `lake` \| `chat` \| `web` \| `manual` | no | One origin.kind. |
 | `author` | string | no | The authoring key of the tenant, by name or id. |
-| `kind` | string | no | A comma list of kinds, each one of memory, derived_fact, steering, guardrail, term, term_mapping, vocab_release, skill, document or test: a row of any of them is served. |
+| `kinds` | array of `memory` \| `derived_fact` \| `steering` \| `term` \| `term_mapping` \| `vocab_release` \| `guardrail` \| `skill` \| `document` \| `test` | no | Only these kinds, each named once, as recall's kinds: a row of any of them is served. |
 | `limit` | integer | no | At most 200, the console list's largest page (raised from 100 in v0.7.0). |
 | `cursor` | string | no |  |
 

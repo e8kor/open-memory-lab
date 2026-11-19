@@ -617,7 +617,7 @@ async fn admin_cards(
                 state: Some(q.state_sent()),
                 origin_kind: q.origin.as_deref(),
                 author: q.author.as_deref(),
-                kind: q.kind.as_deref(),
+                kinds: q.kind.as_deref(),
                 limit: q.limit,
                 cursor: q.cursor.as_deref(),
             },
