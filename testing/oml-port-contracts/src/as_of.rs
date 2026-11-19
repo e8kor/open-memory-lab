@@ -369,7 +369,7 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
                 &ListRequest {
                     own,
                     workspace: (!own).then(|| Reference::from(self.home)),
-                    state: None,
+                    states: Vec::new(),
                     kinds: Vec::new(),
                     prefix: None,
                     counts: false,
@@ -380,7 +380,6 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
                     cursor: None,
                     anchor: AnchorFilter::default(),
                     author: None,
-                    tip: None,
                     as_of: as_of.cloned(),
                 },
             )

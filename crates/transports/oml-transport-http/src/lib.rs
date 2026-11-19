@@ -78,13 +78,14 @@ use oml_app::types::{
     EdgeRatification, GrantRecord, GrantRequest, GuardrailRequest, GuardrailSet, IssueKeyRequest,
     IssuedKey, KeyDetail, KeyLimitsChange, KeyRecord, KindFields, ListRequest, MemoryRecord,
     NamedServe, OnSimilar, ProposeBriefEdge, ProposeClaimEdge, RecallRequest, ServedMemory,
-    SimilarItem, SkillRequest, SkillSet, SourceCheck, SourceCheckRequest, SubmitRequest,
-    SubmitVerb, SupersedeRequest, TailedEvent, Verdict, VerdictRequest, Whoami, WithdrawRequest,
-    WorkspaceInfo, WorkspaceRecord,
+    SimilarItem, SkillRequest, SkillSet, SourceCheck, SourceCheckRequest, StateClause,
+    SubmitRequest, SubmitVerb, SupersedeRequest, TailedEvent, Verdict, VerdictRequest, Whoami,
+    WithdrawRequest, WorkspaceInfo, WorkspaceRecord,
 };
 use oml_app::types::{
     BulkItem, BulkVerdictRequest, HELD_PAGE_DEFAULT, HeldListingRequest, HeldPage, ReviewLane,
 };
+use oml_app::types::{Preview, PreviewRequest};
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
 use crate::time::{parse_date_time, system_event_time, system_event_time_plus};
@@ -105,6 +106,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v1/memories"),
     ("GET", "/v1/memories"),
     ("POST", "/v1/memories/recall"),
+    ("POST", "/v1/memories/preview"),
     ("GET", "/v1/memories/{artifact_id}"),
     ("POST", "/v1/memories/{artifact_id}/supersede"),
     ("POST", "/v1/memories/{artifact_id}/source-check"),
@@ -117,6 +119,8 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/v2/review/held"),
     ("POST", "/v2/review/verdicts/bulk"),
     ("GET", "/v2/review/queue"),
+    ("GET", "/v2/todo/counts"),
+    ("GET", "/v2/admin/todo/counts"),
     ("GET", "/v2/keys"),
     ("POST", "/v2/keys"),
     ("GET", "/v2/keys/{key}"),
@@ -362,6 +366,7 @@ where
             ("POST", "/v1/memories") => post(Self::submit),
             ("GET", "/v1/memories") => get(Self::list_memories),
             ("POST", "/v1/memories/recall") => post(Self::recall),
+            ("POST", "/v1/memories/preview") => post(Self::preview),
             ("GET", "/v1/memories/{artifact_id}") => get(Self::get_memory),
             ("POST", "/v1/memories/{artifact_id}/supersede") => post(Self::supersede),
             ("POST", "/v1/memories/{artifact_id}/source-check") => post(Self::source_check),
@@ -373,6 +378,8 @@ where
             ("GET", "/v2/review/held") => get(Self::review_held),
             ("POST", "/v2/review/verdicts/bulk") => post(Self::review_bulk),
             ("GET", "/v2/review/queue") => get(Self::review_queue),
+            ("GET", "/v2/todo/counts") => get(Self::todo_counts),
+            ("GET", "/v2/admin/todo/counts") => get(Self::admin_todo_counts),
             ("GET", "/v2/keys") => get(Self::list_keys),
             ("POST", "/v2/keys") => post(Self::issue_key),
             ("GET", "/v2/keys/{key}") => get(Self::get_key),
@@ -663,59 +670,7 @@ where
         let acting = acting(headers, connection)?;
         refuse_workarea_header(headers, "/workspace")?;
         let idem_key = idempotency_key(headers)?;
-        let req: SubmitBody = parse_json(headers, body)?;
-        // kind defaults to memory, and an omitted verb is the app's to
-        // choose from derives_from (ADR-0039 d3).
-        let kind = parse_kind(req.kind.as_deref().unwrap_or("memory"))?;
-        let verb = match req.verb.as_deref() {
-            None => None,
-            Some("remember") => Some(SubmitVerb::Remember),
-            // learn asserts a derived claim: lineage is required, never
-            // optional (errors.md submission.lineage_required).
-            Some("learn") if req.derives_from.is_empty() => {
-                return Err(ApiError::new(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "submission.lineage_required",
-                    "learn asserts a derived claim, so its lineage is required; a derived conclusion without nameable lineage is remember with kind derived_fact.",
-                    "verb learn with an empty or omitted derives_from",
-                ));
-            }
-            Some("learn") => Some(SubmitVerb::Learn),
-            Some(other) => {
-                return Err(ApiError::validation(format!(
-                    "verb must be remember or learn, not {other:?}"
-                )));
-            }
-        };
-        // The limit counts the NFC body, the form capture stores
-        // (http-api.md limits; ADR-0025 d6).
-        let text = nfc(&req.body);
-        if text.len() > MAX_BODY_BYTES {
-            return Err(ApiError::payload_too_large("the claim body"));
-        }
-        refuse_attachments(&req.attachments)?;
-        refuse_simulation(req.simulation_id.as_ref())?;
-        let workspace = optional_reference("/workspace", req.workspace.as_deref())?;
-
-        let app_req = SubmitRequest {
-            on_similar: parse_on_similar(req.on_similar.as_deref())?,
-            idempotency_key: idem_key,
-            claim_key: req.claim_key,
-            verb,
-            kind,
-            body: text,
-            workspace,
-            derives_from: req.derives_from,
-            severity: parse_severity(req.severity.as_deref())?,
-            rule: req.rule,
-            kind_fields: parse_kind_fields(req.skill, req.document, req.test)?,
-            valid_from: req.valid_from,
-            valid_until: req.valid_until,
-            anchor: parse_anchor(req.anchor.as_ref())?,
-            format: req.format,
-            title: req.title,
-            origin: parse_origin(req.origin.as_ref())?,
-        };
+        let app_req = submit_request(headers, body, idem_key)?;
         let outcome = retry_chain(|| st.app.submit_memory(acting.bearer(), &app_req))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
@@ -802,10 +757,9 @@ where
     ) -> Result<Response, ApiError> {
         let acting = acting(headers, connection)?;
         refuse_workarea_header(headers, "workspace")?;
-        if params
-            .iter()
-            .any(|(n, v)| (n == "with_own" && v == "true") || n == "author")
-        {
+        if params.iter().any(|(n, v)| {
+            (n == "with_own" && v == "true") || (n == "mine" && v != "false") || n == "author"
+        }) {
             // as_of reads the scoped listing alone (ADR-0059 d19).
             if params.iter().any(|(n, _)| n == "as_of") {
                 return Err(ApiError::validation(
@@ -860,6 +814,19 @@ where
         };
         let mut seen = HashSet::new();
         for (name, value) in params {
+            // A comma list of kinds (ADR-0082 d8 item 3), named `kinds` and
+            // sent comma-separated or repeated, every kind named once in the
+            // filter, as the catalog's is (ADR-0092 d6).
+            if name == "kinds" {
+                for kind in value.split(',') {
+                    let kind = parse_kind(kind)
+                        .map_err(|e| e.with_details(json!({ "field": "kinds" })))?;
+                    if !req.kinds.contains(&kind) {
+                        req.kinds.push(kind);
+                    }
+                }
+                continue;
+            }
             if !seen.insert(name.as_str()) {
                 return Err(ApiError::validation(format!(
                     "the query parameter {name} is given more than once"
@@ -868,6 +835,9 @@ where
             match name.as_str() {
                 "with_own" if value == "true" || value == "false" => {}
                 "with_own" => return Err(ApiError::validation("with_own must be true or false")),
+                // own's default, which a generated client sends, reads as
+                // absent; own=true stays its own listing.
+                "own" if value == "false" => {}
                 // Each item with its text, as the console's list shows it
                 // (ADR-0070 d5).
                 "include_text" if value == "true" => include_text = true,
@@ -883,14 +853,34 @@ where
                     })?);
                 }
                 "workspace" => req.workspace = Some(reference("workspace", value)?),
+                "mine" if value == "true" => req.mine = true,
+                "mine" if value == "false" => {}
+                "mine" => {
+                    return Err(ApiError::validation("mine must be true or false")
+                        .with_details(json!({ "field": "mine" })));
+                }
+                // A comma list of the admin read's states (ADR-0083 d3).
                 "state" => {
-                    req.state =
-                        Some(oml_app::types::AdminState::parse(value).ok_or_else(|| {
-                            ApiError::validation(
-                                "state is held, promoted, rejected, superseded or demoted",
-                            )
-                            .with_details(json!({ "field": "state" }))
-                        })?);
+                    req.states = value
+                        .split(',')
+                        .map(|v| {
+                            oml_app::types::AdminState::parse(v).ok_or_else(|| {
+                                ApiError::validation(
+                                    "state is a comma list of held, promoted, superseded, rejected, demoted and withdrawn",
+                                )
+                                .with_details(json!({ "field": "state" }))
+                            })
+                        })
+                        .collect::<Result<_, _>>()?;
+                }
+                "kind" => return Err(ApiError::renamed("kind", "kinds")),
+                "promoted_since" => {
+                    req.promoted_since = Some(parse_date_time(value).ok_or_else(|| {
+                        ApiError::validation(
+                            "promoted_since must be an RFC 3339 date-time with an offset and at most microsecond precision",
+                        )
+                        .with_details(json!({ "field": "promoted_since" }))
+                    })?);
                 }
                 "origin_kinds" => {
                     let kinds = origin_grammar::parse_kinds(value.split(',')).map_err(|why| {
@@ -909,7 +899,7 @@ where
                 "cursor" => req.cursor = Some(value.clone()),
                 other => {
                     return Err(ApiError::validation(format!(
-                        "the query parameter {other:?} does not combine with with_own or author"
+                        "the query parameter {other:?} does not combine with with_own, mine or author"
                     )));
                 }
             }
@@ -1577,6 +1567,94 @@ where
         )
     }
 
+    async fn preview(
+        State(st): State<Self>,
+        rid: Rid,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
+        finish(&rid, Self::preview_inner(&st, &headers, &body).await)
+    }
+
+    /// `POST /v1/memories/preview` (ADR-0082 d5, d10): submit's body, or
+    /// supersede's with `replaces`, decided as capture decides it and never
+    /// captured. A refusal of authority is the HTTP error submit or
+    /// supersede would answer: no or a bad key and the request rate, read
+    /// first, then the verb ceiling and every `access.*` grant refusal, an
+    /// unreadable target among them. Every other refusal, the body's shape
+    /// included, answers `200` with `would_capture: false` and `refusal` in
+    /// the error object's shape, beside what was read before it. No
+    /// `Idempotency-Key` is read: preview records and replays nothing.
+    async fn preview_inner(
+        st: &Self,
+        headers: &HeaderMap,
+        body: &Bytes,
+    ) -> Result<Response, ApiError> {
+        let acting = acting(headers, None)?;
+        // Authenticated once, here: the rate is charged once (ADR-0079).
+        let caller = st
+            .app
+            .caller(acting.bearer())
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        refuse_workarea_header(headers, "/workspace")?;
+        require_json(headers)?;
+        let parsed = (|| {
+            let mut value: Value = serde_json::from_slice(body).map_err(not_the_shape)?;
+            let replaces = value.as_object_mut().and_then(|o| o.remove("replaces"));
+            let rest = Bytes::from(value.to_string());
+            match replaces {
+                None => Ok(PreviewRequest::Submit(submit_request(
+                    headers,
+                    &rest,
+                    String::new(),
+                )?)),
+                Some(target) => {
+                    // An id that names no row is a target the key cannot
+                    // read, as supersede's path answers it.
+                    let target_id = target
+                        .as_str()
+                        .and_then(|t| Uuid::parse_str(t).ok())
+                        .ok_or_else(ApiError::not_found)?;
+                    Ok(PreviewRequest::Supersede(supersede_request(
+                        headers,
+                        &rest,
+                        String::new(),
+                        target_id,
+                        false,
+                    )?))
+                }
+            }
+        })();
+        let req = match parsed {
+            Ok(req) => req,
+            Err(refusal) if is_authority_refusal(&refusal) => return Err(refusal),
+            Err(refusal) => {
+                return Ok(json_response(
+                    StatusCode::OK,
+                    &preview_json(None, Some(&refusal)),
+                ));
+            }
+        };
+        let mut preview = st
+            .app
+            .preview(Bearer::Session(&caller), &req)
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        let refusal = preview
+            .refusal
+            .take()
+            .map(|e| map_app_error(e, ErrorContext::Write));
+        let refusal = match refusal {
+            Some(r) if is_authority_refusal(&r) => return Err(r),
+            other => other,
+        };
+        Ok(json_response(
+            StatusCode::OK,
+            &preview_json(Some(&preview), refusal.as_ref()),
+        ))
+    }
+
     /// `POST /v1/memories/{artifact_id}/supersede`: a held successor that
     /// names what it replaces; the target stays the tip until ratification
     /// (http-api.md supersede; ADR-0025 d10, d11). The body is closed: a
@@ -1596,50 +1674,8 @@ where
         refuse_workarea_header(headers, "/workspace")?;
         let idem_key = idempotency_key(headers)?;
         let target_id = Uuid::parse_str(artifact_id).map_err(|_| ApiError::not_found())?;
-        let req: SupersedeBody = parse_json(headers, body)?;
-        let text = nfc(&req.body);
-        if text.len() > MAX_BODY_BYTES {
-            return Err(ApiError::payload_too_large("the claim body"));
-        }
-        let kind = req.kind.as_deref().map(parse_kind).transpose()?;
-        refuse_attachments(&req.attachments)?;
-        refuse_simulation(req.simulation_id.as_ref())?;
-        // Vocabulary successors are unbuilt: their fields are parsed so the
-        // closed body can name them, and refused by name (ADR-0025 d16).
-        for (field, sent) in [
-            ("mapping", req.mapping.is_some()),
-            ("terms", req.terms.is_some()),
-            ("term_status", req.term_status.is_some()),
-            ("successors", req.successors.is_some()),
-        ] {
-            if sent {
-                return Err(ApiError::validation(format!(
-                    "{field} on supersede is not built: vocabulary successors are outside this slice, so the field is refused, never dropped"
-                )));
-            }
-        }
-        let app_req = SupersedeRequest {
-            on_similar: parse_on_similar(req.on_similar.as_deref())?,
-            idempotency_key: idem_key,
-            target_id,
-            body: text,
-            kind,
-            retirement: req.retirement,
-            derives_from: req.derives_from,
-            reason: req.reason,
-            workspace: optional_reference("/workspace", req.workspace.as_deref())?,
-            refuse_vocabulary_target,
-            severity: parse_severity(req.severity.as_deref())?,
-            rule: req.rule,
-            kind_fields: parse_kind_fields(req.skill, req.document, req.test)?,
-            valid_from: req.valid_from,
-            valid_until: req.valid_until,
-            anchor: parse_anchor(req.anchor.as_ref())?,
-            origin: parse_origin(req.origin.as_ref())?,
-            expected_version: parse_expected_version(req.expected_version)?,
-            format: req.format,
-            title: req.title,
-        };
+        let app_req =
+            supersede_request(headers, body, idem_key, target_id, refuse_vocabulary_target)?;
         let outcome = retry_chain(|| st.app.supersede(acting.bearer(), &app_req))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
@@ -4865,7 +4901,7 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
     let mut req = ListRequest {
         own: false,
         workspace: None,
-        state: None,
+        states: Vec::new(),
         kinds: Vec::new(),
         claim_key: None,
         prefix: None,
@@ -4876,7 +4912,6 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
         cursor: None,
         anchor: AnchorFilter::default(),
         author: None,
-        tip: None,
         as_of: None,
     };
     let mut anchor_repo = None;
@@ -4930,7 +4965,7 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
             // v0.3.0's spelling, refused under its real name (ADR-0039 d7).
             "workarea_id" => return Err(ApiError::renamed("workarea_id", "workspace")),
             "claim_key" => req.claim_key = Some(value.clone()),
-            "state" => req.state = Some(parse_state(value)?),
+            "state" => req.states = vec![StateClause::status(parse_state(value)?)],
             // The single kind became the kinds filter (ADR-0092 d6).
             "kind" => return Err(ApiError::renamed("kind", "kinds")),
             "prefix" => {
@@ -4986,6 +5021,8 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
             // `with_own=true` is the merged listing's; false is this one.
             "with_own" if value == "false" => {}
             "with_own" => return Err(ApiError::validation("with_own must be true or false")),
+            // `mine=true` is the own listing's (ADR-0083 d3); false is this one.
+            "mine" if value == "false" => {}
             other => {
                 return Err(ApiError::validation(format!(
                     "unknown query parameter {other:?}"
@@ -4995,6 +5032,194 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
     }
     req.anchor = anchor_filter(anchor_repo, anchor_path_prefix, origin_kinds.as_deref(), "")?;
     Ok(req)
+}
+
+/// Whether a refusal is one of authority, which preview answers as the
+/// HTTP error submit or supersede would: no or a bad key, the request rate,
+/// the verb ceiling and every `access.*` grant refusal (ADR-0082 d10).
+fn is_authority_refusal(refusal: &ApiError) -> bool {
+    refusal.code.starts_with("auth.")
+        || refusal.code.starts_with("access.")
+        || refusal.code == "limit.rate"
+}
+
+/// `MemoryPreview` (openapi.yaml; ADR-0082 d5): what capture would decide,
+/// and the refusal in the error object's shape when it would refuse. A
+/// refusal before the body was read answers no facts.
+fn preview_json(preview: Option<&Preview>, refusal: Option<&ApiError>) -> Value {
+    let mut out = json!({
+        "would_capture": refusal.is_none(),
+        "refusal": refusal.map(ApiError::error_object),
+        "findings": preview.map_or_else(Vec::new, |p| p.findings.iter().map(scan_finding_json).collect()),
+        "needs_person": preview.is_some_and(|p| p.needs_person),
+        "body_bytes": preview.map(|p| p.body_bytes),
+        "budget_tokens": preview.map(|p| p.budget_tokens),
+    });
+    if let (Some(p), Some(obj)) = (preview, out.as_object_mut()) {
+        if let Some(rule) = &p.rule {
+            obj.insert("rule".to_owned(), rule.clone());
+        }
+        if let Some(name) = &p.offered_as {
+            obj.insert("offered_as".to_owned(), json!(name));
+            obj.insert(
+                "shadows".to_owned(),
+                p.shadows
+                    .iter()
+                    .map(|sh| {
+                        json!({
+                            "workspace": sh.workspace_path,
+                            "relation": if sh.shadowed_by { "shadowed_by" } else { "shadows" },
+                        })
+                    })
+                    .collect(),
+            );
+        }
+        if let Some(n) = p.set_after {
+            obj.insert(
+                "set_after".to_owned(),
+                json!({ "size": n, "cap": oml_app::domain::guardrail::SET_CAP }),
+            );
+        }
+        // A document's passages, each as recall's hit names its passage
+        // (ADR-0081 d3, d4; ADR-0082 d5).
+        if let Some(passages) = &p.passages {
+            obj.insert(
+                "passages".to_owned(),
+                passages
+                    .iter()
+                    .map(|p| {
+                        json!({
+                            "fragment": p.fragment,
+                            "ordinal": p.ordinal,
+                            "start_line": p.start_line,
+                            "end_line": p.end_line,
+                            "heading_path": p.heading_path,
+                        })
+                    })
+                    .collect(),
+            );
+        }
+    }
+    out
+}
+
+/// A submit's app request from its body, refused by name where the body is
+/// not the operation's shape: the one parse submit and preview share
+/// (ADR-0082 d5).
+fn submit_request(
+    headers: &HeaderMap,
+    body: &Bytes,
+    idem_key: String,
+) -> Result<SubmitRequest, ApiError> {
+    let req: SubmitBody = parse_json(headers, body)?;
+    // kind defaults to memory, and an omitted verb is the app's to
+    // choose from derives_from (ADR-0039 d3).
+    let kind = parse_kind(req.kind.as_deref().unwrap_or("memory"))?;
+    let verb = match req.verb.as_deref() {
+        None => None,
+        Some("remember") => Some(SubmitVerb::Remember),
+        // learn asserts a derived claim: lineage is required, never
+        // optional (errors.md submission.lineage_required).
+        Some("learn") if req.derives_from.is_empty() => {
+            return Err(ApiError::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "submission.lineage_required",
+                "learn asserts a derived claim, so its lineage is required; a derived conclusion without nameable lineage is remember with kind derived_fact.",
+                "verb learn with an empty or omitted derives_from",
+            ));
+        }
+        Some("learn") => Some(SubmitVerb::Learn),
+        Some(other) => {
+            return Err(ApiError::validation(format!(
+                "verb must be remember or learn, not {other:?}"
+            )));
+        }
+    };
+    // The limit counts the NFC body, the form capture stores
+    // (http-api.md limits; ADR-0025 d6).
+    let text = nfc(&req.body);
+    if text.len() > MAX_BODY_BYTES {
+        return Err(ApiError::payload_too_large("the claim body"));
+    }
+    refuse_attachments(&req.attachments)?;
+    refuse_simulation(req.simulation_id.as_ref())?;
+    let workspace = optional_reference("/workspace", req.workspace.as_deref())?;
+
+    Ok(SubmitRequest {
+        on_similar: parse_on_similar(req.on_similar.as_deref())?,
+        idempotency_key: idem_key,
+        claim_key: req.claim_key,
+        verb,
+        kind,
+        body: text,
+        workspace,
+        derives_from: req.derives_from,
+        severity: parse_severity(req.severity.as_deref())?,
+        rule: req.rule,
+        kind_fields: parse_kind_fields(req.skill, req.document, req.test)?,
+        valid_from: req.valid_from,
+        valid_until: req.valid_until,
+        anchor: parse_anchor(req.anchor.as_ref())?,
+        format: req.format,
+        title: req.title,
+        origin: parse_origin(req.origin.as_ref())?,
+    })
+}
+
+/// A supersession's app request from its body, refused by name where the
+/// body is not the operation's shape: the one parse supersede and preview
+/// share (ADR-0082 d5).
+fn supersede_request(
+    headers: &HeaderMap,
+    body: &Bytes,
+    idem_key: String,
+    target_id: Uuid,
+    refuse_vocabulary_target: bool,
+) -> Result<SupersedeRequest, ApiError> {
+    let req: SupersedeBody = parse_json(headers, body)?;
+    let text = nfc(&req.body);
+    if text.len() > MAX_BODY_BYTES {
+        return Err(ApiError::payload_too_large("the claim body"));
+    }
+    let kind = req.kind.as_deref().map(parse_kind).transpose()?;
+    refuse_attachments(&req.attachments)?;
+    refuse_simulation(req.simulation_id.as_ref())?;
+    // Vocabulary successors are unbuilt: their fields are parsed so the
+    // closed body can name them, and refused by name (ADR-0025 d16).
+    for (field, sent) in [
+        ("mapping", req.mapping.is_some()),
+        ("terms", req.terms.is_some()),
+        ("term_status", req.term_status.is_some()),
+        ("successors", req.successors.is_some()),
+    ] {
+        if sent {
+            return Err(ApiError::validation(format!(
+                "{field} on supersede is not built: vocabulary successors are outside this slice, so the field is refused, never dropped"
+            )));
+        }
+    }
+    Ok(SupersedeRequest {
+        on_similar: parse_on_similar(req.on_similar.as_deref())?,
+        idempotency_key: idem_key,
+        target_id,
+        body: text,
+        kind,
+        retirement: req.retirement,
+        derives_from: req.derives_from,
+        reason: req.reason,
+        workspace: optional_reference("/workspace", req.workspace.as_deref())?,
+        refuse_vocabulary_target,
+        severity: parse_severity(req.severity.as_deref())?,
+        rule: req.rule,
+        kind_fields: parse_kind_fields(req.skill, req.document, req.test)?,
+        valid_from: req.valid_from,
+        valid_until: req.valid_until,
+        anchor: parse_anchor(req.anchor.as_ref())?,
+        origin: parse_origin(req.origin.as_ref())?,
+        expected_version: parse_expected_version(req.expected_version)?,
+        format: req.format,
+        title: req.title,
+    })
 }
 
 /// The origin filters, each checked against its grammar and refused naming
@@ -5797,6 +6022,15 @@ pub fn workspace_view_json(info: &WorkspaceInfo) -> Value {
         );
         obj.insert("permission_epoch".to_owned(), json!(info.permission_epoch));
         obj.insert("stale_versions".to_owned(), json!(info.stale_versions));
+        // Only kinds with an approved claim, keyed by kind (ADR-0082 d10).
+        obj.insert(
+            "approved_by_kind".to_owned(),
+            info.approved_by_kind
+                .iter()
+                .map(|(kind, n)| (kind.as_str().to_owned(), json!(n)))
+                .collect::<serde_json::Map<String, Value>>()
+                .into(),
+        );
         // The node's in-progress root, itself for a root, null outside
         // (ADR-0030 d13).
         obj.insert(

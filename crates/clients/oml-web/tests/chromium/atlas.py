@@ -99,7 +99,10 @@ def main() -> int:
                         if a.shots:
                             page.screenshot(path=f"{a.shots}/{tag}-{name}.png", full_page=True)
 
-                    page.goto(f"{issuer}{base}/memories")
+                    # The seven held rows: the person's Submitted, the admin's Held
+                    # (ADR-0083 d3, d5).
+                    view = "submitted" if who == "person" else "held"
+                    page.goto(f"{issuer}{base}/memories?view={view}")
                     out[f"{tag}_cards"] = page.locator("article.oml-mc > details.mc-d").count()
                     # The provenance is folded by default; one card opened for the picture.
                     out[f"{tag}_folded"] = page.locator("article.oml-mc > details.mc-d[open]").count() == 0

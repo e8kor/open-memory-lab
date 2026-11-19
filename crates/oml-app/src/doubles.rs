@@ -595,14 +595,17 @@ impl MemStore {
     /// `n` copies of the tenant's memory `memory_id` on its workspace, each a
     /// served tip of its own claim, inserted with no event: a large
     /// workspace for a timing law, built in one step (ADR-0072 d13 test 7).
-    pub fn seed_copies(&self, tenant_id: Uuid, memory_id: Uuid, n: u32) {
+    /// A held template's copies wait in the review queue, as a large queue
+    /// for a count's bound. Answers the copies' ids.
+    pub fn seed_copies(&self, tenant_id: Uuid, memory_id: Uuid, n: u32) -> Vec<Uuid> {
         let Some(tenant) = self.tenant_existing(tenant_id) else {
-            return;
+            return Vec::new();
         };
         let mut state = tenant.lock().expect("tenant lock");
         let Some(template) = state.memories.get(&memory_id).cloned() else {
-            return;
+            return Vec::new();
         };
+        let mut ids = Vec::new();
         for i in 0..n {
             let mut copy = template.clone();
             copy.memory_id =
@@ -613,8 +616,18 @@ impl MemStore {
                 .entry(copy.workspace_id)
                 .or_default()
                 .insert(copy.memory_id);
+            if copy.status == MemoryStatus::Held {
+                // A held copy waits in the review queue as a captured
+                // version does.
+                state.queue.push(QueueEntry {
+                    memory_id: copy.memory_id,
+                    claimed_by: None,
+                });
+            }
+            ids.push(copy.memory_id);
             state.memories.insert(copy.memory_id, copy);
         }
+        ids
     }
 
     /// How many memory rows the recall path's reads (`retrieve`, the
@@ -2149,7 +2162,7 @@ fn apply_fold(
                 f.event_seq = Some(seq);
                 state.findings.push((memory.memory_id, f));
             }
-            if let Some(root) = state.keys.get(&memory.author_key_id).and_then(|k| k.user) {
+            if let Some(root) = key_account(state, &memory.author_key_id) {
                 // Counted on the day of the row's own clock read, which
                 // the month's stored versions are read by (ADR-0071 d2).
                 let day = oml_domain::usage::day_of(&memory.created_at).to_owned();
@@ -2742,12 +2755,38 @@ fn assign_names_fold(
 /// One account's meters recomputed from the rows by ADR-0071 d2's
 /// definitions, the flows of `month`: the double keeps no counters, so it
 /// is the definition the Postgres counters are held to.
+/// The account a key's writes are charged to (ADR-0071 d1): a user key's
+/// root, and a person's `<user>-review`, a session key of no root, its
+/// person's root, as `oml_key_account` reads it; `<user>-curate` and
+/// `<user>-admin` are charged to no account (migration 0065; the
+/// operator's decision of 2026-11-19; ADR-0082 d10).
+fn key_account(state: &TenantState, key_id: &Uuid) -> Option<Uuid> {
+    let key = state.keys.get(key_id)?;
+    if key.user.is_some() || key.credential != Credential::Session {
+        return key.user;
+    }
+    let person = key.session_user.as_ref()?;
+    let review = format!(
+        "{}-{}",
+        person.as_str(),
+        crate::app::Capacity::Review.suffix()
+    );
+    if key.name.as_ref().map(|n| n.as_str()) != Some(review.as_str()) {
+        return None;
+    }
+    state
+        .workspaces
+        .values()
+        .find(|w| w.user_root && &w.name == person)
+        .map(|w| w.workspace_id)
+}
+
 fn account_usage(
     state: &TenantState,
     root: Uuid,
     month: oml_domain::usage::Month,
 ) -> crate::types::UserUsage {
-    let account_of = |key_id: &Uuid| state.keys.get(key_id).and_then(|k| k.user);
+    let account_of = |key_id: &Uuid| key_account(state, key_id);
     let mut chains: BTreeMap<(Uuid, &str), Vec<&MemoryRecord>> = BTreeMap::new();
     for m in state.memories.values() {
         chains
@@ -4458,7 +4497,7 @@ impl JournalStore for MemStore {
                     .as_ref()
                     .is_none_or(|nodes| nodes.contains(&m.workspace_id))
             })
-            .filter(|m| filter.state.is_none_or(|s| m.status == s))
+            .filter(|m| filter.states.is_empty() || filter.states.iter().any(|c| c.admits(m)))
             .filter(|m| filter.kinds.is_empty() || filter.kinds.contains(&m.kind))
             .filter(|m| filter.claim_key.as_ref().is_none_or(|c| &m.claim_key == c))
             .filter(|m| {
@@ -4469,7 +4508,6 @@ impl JournalStore for MemStore {
             })
             .filter(|m| filter.anchor.admits_row(m.anchor.as_deref(), m.origin_kind))
             .filter(|m| filter.author.is_none_or(|a| m.author_key_id == a))
-            .filter(|m| filter.tip.is_none_or(|t| m.is_tip == t))
             .filter(|m| {
                 filter
                     .since
@@ -4664,6 +4702,31 @@ impl JournalStore for MemStore {
                     .is_some()
             })
             .count() as u64)
+    }
+
+    async fn approved_by_kind(
+        &self,
+        tenant_id: Uuid,
+        workspace_id: Uuid,
+    ) -> Result<Vec<(MemoryKind, u64)>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        // One served tip per claim (ADR-0025 d10), so a tip is a claim.
+        let mut counts: Vec<(MemoryKind, u64)> = Vec::new();
+        for m in state
+            .memories
+            .values()
+            .filter(|m| m.workspace_id == workspace_id && served_tip(m))
+        {
+            match counts.iter_mut().find(|(k, _)| *k == m.kind) {
+                Some((_, n)) => *n += 1,
+                None => counts.push((m.kind, 1)),
+            }
+        }
+        counts.sort_by_key(|(k, _)| k.as_str());
+        Ok(counts)
     }
 
     async fn claim_latest_readable(
@@ -5864,6 +5927,7 @@ impl WebStore for MemStore {
                         .is_some_and(|k| search.origin_kinds.contains(&k))
             })
             .filter(|m| search.author.is_none_or(|a| m.author_key_id == a))
+            .filter(|m| search.kinds.is_empty() || search.kinds.contains(&m.kind))
             .filter(|m| {
                 search.after.as_ref().is_none_or(|a| {
                     (m.created_at.unix_micros(), m.memory_id)

@@ -269,11 +269,24 @@ async fn the_keys_page_reads_the_persons_usage_beside_the_key_list() {
         "{}",
         answered.body
     );
+    // The session check's round also carries the To do badge's one counts
+    // read (ADR-0083 d6); beside it, the page's own reads are two.
     assert_eq!(
         answered
             .calls
             .iter()
-            .filter(|c| !c.starts_with("GET /v2/whoami?person=false"))
+            .filter(|c| c.starts_with("GET /v2/todo/counts"))
+            .count(),
+        1,
+        "{:?}",
+        answered.calls
+    );
+    assert_eq!(
+        answered
+            .calls
+            .iter()
+            .filter(|c| !c.starts_with("GET /v2/whoami?person=false")
+                && !c.starts_with("GET /v2/todo/counts"))
             .count(),
         2,
         "{:?}",
@@ -317,11 +330,25 @@ async fn the_admin_atlas_reads_the_scopes_offers_with_its_counts() {
         "{}",
         answered.body
     );
+    // The session check's round also carries the admin To do badge's one
+    // counts read (ADR-0083 d6); beside it, the page's own reads are two.
     assert_eq!(
         answered
             .calls
             .iter()
-            .filter(|c| !c.starts_with("GET /v2/whoami"))
+            .filter(|c| c.starts_with("GET /v2/admin/todo/counts"))
+            .count(),
+        1,
+        "{:?}",
+        answered.calls
+    );
+    assert_eq!(
+        answered
+            .calls
+            .iter()
+            .filter(
+                |c| !c.starts_with("GET /v2/whoami") && !c.starts_with("GET /v2/admin/todo/counts")
+            )
             .count(),
         2,
         "{:?}",
@@ -336,7 +363,7 @@ async fn the_session_check_asks_whoami_for_no_person_block() {
     let script: Script = |record| {
         session(record).unwrap_or_else(|| (200, json!({"items": [], "next_cursor": null}), None))
     };
-    let answered = page(script, "/web/review").await;
+    let answered = page(script, "/web/todo").await;
     let checks: Vec<&String> = answered
         .calls
         .iter()

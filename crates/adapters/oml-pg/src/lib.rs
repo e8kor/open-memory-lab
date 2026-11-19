@@ -3079,8 +3079,25 @@ fn push_listing_predicate(
             .push_bind(subtree.clone())
             .push("::uuid[])");
     }
-    if let Some(state) = filter.state {
-        sql.push(" AND m.status = ").push_bind(state.as_str());
+    // Any one state clause admits a row (ADR-0083 d3).
+    if !filter.states.is_empty() {
+        sql.push(" AND (");
+        for (i, clause) in filter.states.iter().enumerate() {
+            if i > 0 {
+                sql.push(" OR ");
+            }
+            sql.push("(m.status = ").push_bind(clause.status.as_str());
+            if let Some(tip) = clause.tip {
+                sql.push(" AND m.is_tip = ").push_bind(tip);
+            }
+            if let Some(since) = &clause.promoted_since {
+                sql.push(" AND m.promoted_at >= (")
+                    .push_bind(since.as_str().to_owned())
+                    .push(")::timestamptz");
+            }
+            sql.push(")");
+        }
+        sql.push(")");
     }
     if !filter.kinds.is_empty() && !every_kind {
         sql.push(" AND m.kind = ANY(")
@@ -3121,9 +3138,6 @@ fn push_listing_predicate(
     }
     if let Some(author) = filter.author {
         sql.push(" AND m.author_key_id = ").push_bind(author);
-    }
-    if let Some(tip) = filter.tip {
-        sql.push(" AND m.is_tip = ").push_bind(tip);
     }
     if let Some(since) = &filter.since {
         sql.push(" AND m.created_at >= (")
@@ -5836,19 +5850,33 @@ struct TrackedChain {
     live_before: bool,
 }
 
-/// The account a key belongs to, if any (ADR-0071 d1).
+/// The account a key belongs to, if any: its user root, or for a person's
+/// `<user>-review` session key its person's; `<user>-curate` and
+/// `<user>-admin` belong to none (ADR-0071 d1, the operator's decision of
+/// 2026-11-19; migration 0065).
 async fn author_account(
     tx: &mut Transaction<'_, Postgres>,
     tenant_id: Uuid,
     key_id: Uuid,
 ) -> Result<Option<Uuid>, StoreError> {
-    let root: Option<Option<Uuid>> =
-        sqlx::query_scalar("SELECT user_root_id FROM api_keys WHERE tenant_id = $1 AND id = $2")
-            .bind(tenant_id)
-            .bind(key_id)
-            .fetch_optional(&mut **tx)
-            .await
-            .map_err(backend)?;
+    // `oml_key_account` written out, so a store reads it on a schema
+    // before 0065 too.
+    let root: Option<Option<Uuid>> = sqlx::query_scalar(
+        "SELECT CASE \
+                  WHEN k.user_root_id IS NULL AND k.credential = 'session' \
+                       AND k.name = k.session_for || '-review' \
+                  THEN (SELECT w.id FROM workspaces w \
+                         WHERE w.tenant_id = k.tenant_id AND w.user_root \
+                           AND w.name = k.session_for) \
+                  ELSE k.user_root_id \
+                END \
+           FROM api_keys k WHERE k.tenant_id = $1 AND k.id = $2",
+    )
+    .bind(tenant_id)
+    .bind(key_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(backend)?;
     Ok(root.flatten())
 }
 
@@ -9107,10 +9135,11 @@ impl JournalStore for PgStore {
         set_tenant(&mut tx, tenant_id).await?;
         let rows: Vec<DriftRow> = sqlx::query_as(
             "WITH src AS (SELECT * FROM oml_account_source($1)), \
-                  held AS (SELECT k.user_root_id AS user_root, count(*)::bigint AS writes \
-                             FROM memories m JOIN api_keys k \
-                               ON k.tenant_id = m.tenant_id AND k.id = m.author_key_id \
-                            WHERE m.tenant_id = $1 AND k.user_root_id IS NOT NULL \
+                  held AS (SELECT a.user_root, count(*)::bigint AS writes \
+                             FROM memories m CROSS JOIN LATERAL \
+                                  (SELECT oml_key_account(m.tenant_id, m.author_key_id) \
+                                          AS user_root) a \
+                            WHERE m.tenant_id = $1 AND a.user_root IS NOT NULL \
                               AND m.created_at >= ($2)::date::timestamp AT TIME ZONE 'UTC' \
                               AND m.created_at < ($3)::date::timestamp AT TIME ZONE 'UTC' \
                             GROUP BY 1), \
@@ -10195,6 +10224,36 @@ impl JournalStore for PgStore {
         .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
         u64::try_from(n).map_err(backend)
+    }
+
+    async fn approved_by_kind(
+        &self,
+        tenant_id: Uuid,
+        workspace_id: Uuid,
+    ) -> Result<Vec<(MemoryKind, u64)>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        // A claim has one served tip (ADR-0025 d10), so counting distinct
+        // claim keys counts the tips once each (ADR-0082 d10).
+        let rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT kind, count(DISTINCT claim_key) FROM memories \
+             WHERE tenant_id = $1 AND workspace_id = $2 AND status = 'promoted' AND is_tip \
+               AND NOT retirement \
+             GROUP BY kind ORDER BY kind",
+        )
+        .bind(tenant_id)
+        .bind(workspace_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.into_iter()
+            .map(|(kind, n)| {
+                let kind = MemoryKind::parse(&kind)
+                    .ok_or_else(|| StoreError::Backend(format!("unknown stored kind {kind:?}")))?;
+                Ok((kind, u64::try_from(n).map_err(backend)?))
+            })
+            .collect()
     }
 
     async fn claim_latest_readable(
@@ -11896,36 +11955,62 @@ impl WebStore for PgStore {
         let key = match key {
             Some(key) => {
                 let access = key_access_in(&mut tx, tenant_id, key.key_id).await?;
-                let (user_root, own_keys) = match key.user {
-                    Some(root) => {
-                        // As `workspace` and `web_user_keys`.
-                        let node = sqlx::query(&format!(
-                            "SELECT {WORKSPACE_COLUMNS} FROM workspaces \
-                             WHERE tenant_id = $1 AND id = $2"
-                        ))
-                        .bind(tenant_id)
-                        .bind(root)
-                        .fetch_optional(&mut *tx)
-                        .await
-                        .map_err(backend)?;
-                        let keys = sqlx::query(&format!(
-                            "SELECT {KEY_COLUMNS} FROM api_keys \
-                             WHERE tenant_id = $1 AND user_root_id = $2 ORDER BY name"
-                        ))
-                        .bind(tenant_id)
-                        .bind(root)
-                        .fetch_all(&mut *tx)
-                        .await
-                        .map_err(backend)?;
-                        (
-                            node.as_ref().map(workspace_from_row).transpose()?,
-                            keys.iter()
-                                .map(key_from_row)
-                                .collect::<Result<Vec<_>, StoreError>>()?,
-                        )
-                    }
-                    None => (None, Vec::new()),
+                let user_root = match key.user {
+                    // As `workspace`.
+                    Some(root) => sqlx::query(&format!(
+                        "SELECT {WORKSPACE_COLUMNS} FROM workspaces \
+                         WHERE tenant_id = $1 AND id = $2"
+                    ))
+                    .bind(tenant_id)
+                    .bind(root)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(backend)?
+                    .as_ref()
+                    .map(workspace_from_row)
+                    .transpose()?,
+                    None => None,
                 };
+                // As `person_keys_read_apart`: the person's session keys,
+                // as `web_session_keys`, then the keys naming the root,
+                // as `web_user_keys`.
+                let session_keys = match &key.session_user {
+                    Some(user) => sqlx::query(&format!(
+                        "SELECT {KEY_COLUMNS} FROM api_keys \
+                         WHERE tenant_id = $1 AND session_for = $2 ORDER BY name"
+                    ))
+                    .bind(tenant_id)
+                    .bind(user.as_str())
+                    .fetch_all(&mut *tx)
+                    .await
+                    .map_err(backend)?
+                    .iter()
+                    .map(key_from_row)
+                    .collect::<Result<Vec<_>, StoreError>>()?,
+                    None => Vec::new(),
+                };
+                let root = match &key.session_user {
+                    Some(_) => key
+                        .user
+                        .or_else(|| session_keys.iter().find_map(|k| k.user)),
+                    None => key.user,
+                };
+                let user_keys = match root {
+                    Some(root) => sqlx::query(&format!(
+                        "SELECT {KEY_COLUMNS} FROM api_keys \
+                         WHERE tenant_id = $1 AND user_root_id = $2 ORDER BY name"
+                    ))
+                    .bind(tenant_id)
+                    .bind(root)
+                    .fetch_all(&mut *tx)
+                    .await
+                    .map_err(backend)?
+                    .iter()
+                    .map(key_from_row)
+                    .collect::<Result<Vec<_>, StoreError>>()?,
+                    None => Vec::new(),
+                };
+                let own_keys = oml_app::ports::person_key_set(user_keys, session_keys);
                 Some(WebCredentialKey {
                     key,
                     access,
@@ -12148,6 +12233,7 @@ impl WebStore for PgStore {
              AND ($4::timestamptz IS NULL OR (m.created_at, m.id) < ($4::timestamptz, $5::uuid)) \
              AND (cardinality($7::text[]) = 0 OR m.origin_kind = ANY($7)) \
              AND ($8::uuid IS NULL OR m.author_key_id = $8) \
+             AND (cardinality($9::text[]) = 0 OR m.kind = ANY($9)) \
              ORDER BY m.created_at DESC, m.id DESC LIMIT $6"
         );
         let mut tx = self.pool.begin().await.map_err(backend)?;
@@ -12166,6 +12252,13 @@ impl WebStore for PgStore {
             .bind(i64::try_from(search.limit).unwrap_or(i64::MAX))
             .bind(origin_kind_strings(&search.origin_kinds))
             .bind(search.author)
+            .bind(
+                search
+                    .kinds
+                    .iter()
+                    .map(|k| k.as_str().to_owned())
+                    .collect::<Vec<_>>(),
+            )
             .fetch_all(&mut *tx)
             .await
             .map_err(backend)?;

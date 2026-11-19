@@ -1,0 +1,363 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
+
+from attrs import define as _attrs_define
+from attrs import field as _attrs_field
+
+from ..models.severity import Severity
+from ..models.supersede_request_kind import SupersedeRequestKind
+from ..models.supersede_request_on_similar import SupersedeRequestOnSimilar
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.anchor import Anchor
+    from ..models.document_fields import DocumentFields
+    from ..models.guardrail_rule import GuardrailRule
+    from ..models.origin import Origin
+    from ..models.skill_fields import SkillFields
+    from ..models.test_fields import TestFields
+
+
+T = TypeVar("T", bound="PreviewSupersedeRequest")
+
+
+@_attrs_define
+class PreviewSupersedeRequest:
+    """Supersede's body with replaces, the version the supersession would replace (ADR-0082 d5).
+
+    Attributes:
+        body (str): Claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body;
+            larger is 413 request.payload_too_large (http-api.md Limits). With retirement true, why the claim is retired.
+        expected_version (int): The claim's latest version the caller can read, as it last read it: its promoted
+            versions where it reads the workspace and its own keys' versions; never another author's held version. Any other
+            is 409 submission.version_conflict, details.current_version (ADR-0057 d19).
+        replaces (str): The artifact_id of the version a supersession would replace.
+        anchor (Anchor | Unset): The origin the author declares (ADR-0057 d1-d3, d21): signed in the submission event,
+            immutable per version, shown to the reviewer, never fetched by the server, and clear metadata that crypto-
+            shredding never erases. Exactly one of repo (with rev and path) and uri; hash and hasher together or neither.
+            Any other shape is request.validation naming the field, such as /anchor/path; a scan finding in repo, uri, path
+            or fragment is submission.scan_veto.
+        origin (Origin | Unset): What kind of source the text was taken from (ADR-0063 d1, d2): signed in the submission
+            event, immutable per version, never inherited by a successor. Omitted on a write, it is recorded manual. chat
+            requires a chat anchor and a chat anchor requires chat; either mismatch is request.validation naming
+            /origin/kind.
+        workspace (str | Unset): A workspace, by its node id, its name or its qualified name. Resolved server-side
+            before any check that reads state; an unknown name answers exactly what an unknown id answers. A user key
+            resolves a bare name in its own user root's namespace, plus universe and its root's name; every other key in the
+            shared namespace (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is
+            universe, is neither, and is refused (request.validation).
+        retirement (bool | Unset): true proposes retiring the claim, and body states why. Refused with
+            request.validation when the target's kind is term (terms deprecate), or when a kind is sent that differs from
+            the target's. Default: False.
+        kind (SupersedeRequestKind | Unset): Omitted, the successor takes the target's kind — the one field inherited
+            from the target. A memory, derived_fact or steering target admits any of those three; a vocabulary-kind target
+            and a retirement keep the target's kind; anything else is request.validation (docs/architecture/audit-and-
+            lineage.md).
+        derives_from (list[str] | Unset): The superseded target is included implicitly.
+        reason (str | Unset):
+        severity (Severity | Unset): A guardrail's severity: never and must bind, should is the reviewed default, and it
+            orders the set first; required on kind guardrail except a retirement, refused on every other kind
+            (request.validation, details.field /severity; ADR-0037 d2, d10; since v0.5.1).
+        rule (GuardrailRule | Unset): A guardrail's optional rule in the oml-gr/1 grammar: one tool class, its match and
+            an effect, deny or ask, never allow; should takes ask only. Refused on every other kind and on a retirement
+            (request.validation, details.field /rule); a rule outside the grammar, or over 160 bytes, is vetoed as
+            submission.scan_veto with guardrail.rule_unparsable or guardrail.too_long (ADR-0037 d8, d10; since v0.5.1).
+        skill (SkillFields | Unset): A skill's name and description, signed with the version (ADR-0080 d1).
+        document (DocumentFields | Unset): A document's title, signed with the version (ADR-0081 d1).
+        test (TestFields | Unset): A test case's shape (ADR-0086 d1).
+        on_similar (SupersedeRequestOnSimilar | Unset): Omitted, hold. What the write does when the similar check names
+            a row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the
+            rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims
+            no idempotency record. A retirement is never checked, and the claim superseded is never named. Not part of the
+            request digest. Since v0.5.9.
+        valid_from (str | Unset): YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six
+            fractional digits. A period is read in UTC: 2026-11-05 runs from 00:00 to 24:00 UTC (ADR-0059 d2).
+        valid_until (str | Unset): YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six
+            fractional digits. A period is read in UTC: 2026-11-05 runs from 00:00 to 24:00 UTC (ADR-0059 d2).
+        format_ (str | Unset): The media type of body, signed with the successor and fixed for it; nothing is inherited
+            from the target, so a format changes by supersession alone: text/plain (the default), text/markdown,
+            text/vnd.oml.mermaid, application/json, application/yaml, or text/vnd.oml.code; lang=<language>. An unknown
+            value is request.validation with details.field format and details.allowed; a source its format refuses is 422
+            submission.format_invalid; kinds other than memory and derived_fact take text/plain or text/markdown only
+            (ADR-0056 d1, d13).
+        title (str | Unset): One line stating the one fact the body shows, NFC, at most 100 characters, signed with the
+            version. Required with a format other than text/plain and text/markdown: request.validation with details.field
+            title otherwise (ADR-0056 d10).
+    """
+
+    body: str
+    expected_version: int
+    replaces: str
+    anchor: Anchor | Unset = UNSET
+    origin: Origin | Unset = UNSET
+    workspace: str | Unset = UNSET
+    retirement: bool | Unset = False
+    kind: SupersedeRequestKind | Unset = UNSET
+    derives_from: list[str] | Unset = UNSET
+    reason: str | Unset = UNSET
+    severity: Severity | Unset = UNSET
+    rule: GuardrailRule | Unset = UNSET
+    skill: SkillFields | Unset = UNSET
+    document: DocumentFields | Unset = UNSET
+    test: TestFields | Unset = UNSET
+    on_similar: SupersedeRequestOnSimilar | Unset = UNSET
+    valid_from: str | Unset = UNSET
+    valid_until: str | Unset = UNSET
+    format_: str | Unset = UNSET
+    title: str | Unset = UNSET
+    additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        body = self.body
+
+        expected_version = self.expected_version
+
+        replaces = self.replaces
+
+        anchor: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.anchor, Unset):
+            anchor = self.anchor.to_dict()
+
+        origin: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.origin, Unset):
+            origin = self.origin.to_dict()
+
+        workspace: str | Unset
+        if isinstance(self.workspace, Unset):
+            workspace = UNSET
+        else:
+            workspace = self.workspace
+
+        retirement = self.retirement
+
+        kind: str | Unset = UNSET
+        if not isinstance(self.kind, Unset):
+            kind = self.kind.value
+
+        derives_from: list[str] | Unset = UNSET
+        if not isinstance(self.derives_from, Unset):
+            derives_from = self.derives_from
+
+        reason = self.reason
+
+        severity: str | Unset = UNSET
+        if not isinstance(self.severity, Unset):
+            severity = self.severity.value
+
+        rule: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.rule, Unset):
+            rule = self.rule.to_dict()
+
+        skill: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.skill, Unset):
+            skill = self.skill.to_dict()
+
+        document: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.document, Unset):
+            document = self.document.to_dict()
+
+        test: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.test, Unset):
+            test = self.test.to_dict()
+
+        on_similar: str | Unset = UNSET
+        if not isinstance(self.on_similar, Unset):
+            on_similar = self.on_similar.value
+
+        valid_from = self.valid_from
+
+        valid_until = self.valid_until
+
+        format_ = self.format_
+
+        title = self.title
+
+        field_dict: dict[str, Any] = {}
+        field_dict.update(self.additional_properties)
+        field_dict.update(
+            {
+                "body": body,
+                "expected_version": expected_version,
+                "replaces": replaces,
+            }
+        )
+        if anchor is not UNSET:
+            field_dict["anchor"] = anchor
+        if origin is not UNSET:
+            field_dict["origin"] = origin
+        if workspace is not UNSET:
+            field_dict["workspace"] = workspace
+        if retirement is not UNSET:
+            field_dict["retirement"] = retirement
+        if kind is not UNSET:
+            field_dict["kind"] = kind
+        if derives_from is not UNSET:
+            field_dict["derives_from"] = derives_from
+        if reason is not UNSET:
+            field_dict["reason"] = reason
+        if severity is not UNSET:
+            field_dict["severity"] = severity
+        if rule is not UNSET:
+            field_dict["rule"] = rule
+        if skill is not UNSET:
+            field_dict["skill"] = skill
+        if document is not UNSET:
+            field_dict["document"] = document
+        if test is not UNSET:
+            field_dict["test"] = test
+        if on_similar is not UNSET:
+            field_dict["on_similar"] = on_similar
+        if valid_from is not UNSET:
+            field_dict["valid_from"] = valid_from
+        if valid_until is not UNSET:
+            field_dict["valid_until"] = valid_until
+        if format_ is not UNSET:
+            field_dict["format"] = format_
+        if title is not UNSET:
+            field_dict["title"] = title
+
+        return field_dict
+
+    @classmethod
+    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.anchor import Anchor
+        from ..models.document_fields import DocumentFields
+        from ..models.guardrail_rule import GuardrailRule
+        from ..models.origin import Origin
+        from ..models.skill_fields import SkillFields
+        from ..models.test_fields import TestFields
+
+        d = dict(src_dict)
+        body = d.pop("body")
+
+        expected_version = d.pop("expected_version")
+
+        replaces = d.pop("replaces")
+
+        _anchor = d.pop("anchor", UNSET)
+        anchor: Anchor | Unset
+        if isinstance(_anchor, Unset):
+            anchor = UNSET
+        else:
+            anchor = Anchor.from_dict(_anchor)
+
+        _origin = d.pop("origin", UNSET)
+        origin: Origin | Unset
+        if isinstance(_origin, Unset):
+            origin = UNSET
+        else:
+            origin = Origin.from_dict(_origin)
+
+        def _parse_workspace(data: object) -> str | Unset:
+            if isinstance(data, Unset):
+                return data
+            return cast(str | Unset, data)
+
+        workspace = _parse_workspace(d.pop("workspace", UNSET))
+
+        retirement = d.pop("retirement", UNSET)
+
+        _kind = d.pop("kind", UNSET)
+        kind: SupersedeRequestKind | Unset
+        if isinstance(_kind, Unset):
+            kind = UNSET
+        else:
+            kind = SupersedeRequestKind(_kind)
+
+        derives_from = cast(list[str], d.pop("derives_from", UNSET))
+
+        reason = d.pop("reason", UNSET)
+
+        _severity = d.pop("severity", UNSET)
+        severity: Severity | Unset
+        if isinstance(_severity, Unset):
+            severity = UNSET
+        else:
+            severity = Severity(_severity)
+
+        _rule = d.pop("rule", UNSET)
+        rule: GuardrailRule | Unset
+        if isinstance(_rule, Unset):
+            rule = UNSET
+        else:
+            rule = GuardrailRule.from_dict(_rule)
+
+        _skill = d.pop("skill", UNSET)
+        skill: SkillFields | Unset
+        if isinstance(_skill, Unset):
+            skill = UNSET
+        else:
+            skill = SkillFields.from_dict(_skill)
+
+        _document = d.pop("document", UNSET)
+        document: DocumentFields | Unset
+        if isinstance(_document, Unset):
+            document = UNSET
+        else:
+            document = DocumentFields.from_dict(_document)
+
+        _test = d.pop("test", UNSET)
+        test: TestFields | Unset
+        if isinstance(_test, Unset):
+            test = UNSET
+        else:
+            test = TestFields.from_dict(_test)
+
+        _on_similar = d.pop("on_similar", UNSET)
+        on_similar: SupersedeRequestOnSimilar | Unset
+        if isinstance(_on_similar, Unset):
+            on_similar = UNSET
+        else:
+            on_similar = SupersedeRequestOnSimilar(_on_similar)
+
+        valid_from = d.pop("valid_from", UNSET)
+
+        valid_until = d.pop("valid_until", UNSET)
+
+        format_ = d.pop("format", UNSET)
+
+        title = d.pop("title", UNSET)
+
+        preview_supersede_request = cls(
+            body=body,
+            expected_version=expected_version,
+            replaces=replaces,
+            anchor=anchor,
+            origin=origin,
+            workspace=workspace,
+            retirement=retirement,
+            kind=kind,
+            derives_from=derives_from,
+            reason=reason,
+            severity=severity,
+            rule=rule,
+            skill=skill,
+            document=document,
+            test=test,
+            on_similar=on_similar,
+            valid_from=valid_from,
+            valid_until=valid_until,
+            format_=format_,
+            title=title,
+        )
+
+        preview_supersede_request.additional_properties = d
+        return preview_supersede_request
+
+    @property
+    def additional_keys(self) -> list[str]:
+        return list(self.additional_properties.keys())
+
+    def __getitem__(self, key: str) -> Any:
+        return self.additional_properties[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        self.additional_properties[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        del self.additional_properties[key]
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.additional_properties

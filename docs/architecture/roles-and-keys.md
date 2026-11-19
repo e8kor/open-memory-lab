@@ -113,15 +113,17 @@ For a verb that needs a grant role on a workspace:
 
 OML works this out again on every request and caches nothing. The permission epoch labels the grant state each answer used.
 
-A writer supersedes only its own memory; another key's readable memory answers `access.author_only`. A reviewer edit also needs reader on the node.
+A writer supersedes only its own memory; a person's session web key also supersedes a memory any key of its person wrote, read the one way `same_user` reads it ([ADR-0082](../adr/ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) d2). Another key's readable memory answers `access.author_only`. A reviewer edit also needs reader on the node.
 
 | Effective grant role | Verbs (`my_effective_verbs`) |
 |---|---|
 | `reader` | `recall`, `read`, `graph_read`, `events_tail` |
 | `writer` | `remember`, `learn`, `attach`, `supersede` |
-| `reviewer` | `propose`, `review`, `supersede` |
+| `reviewer` | `propose`, `review`, `supersede`; a person's session reviewer key with reader beside it also `remember`, outside its person's own root |
 
 A `service` key omits `review`.
+
+A person's session key whose role is reviewer also starts a new claim, held as every write is, where it holds reviewer and reader outside that person's own root (inside it the person's web key writes, and the review key is refused `access.verb_ceiling`, reason `review_key_in_own_root`), and lists `remember` in `my_effective_verbs` there, so the verbs it lists are the verbs it may use; its lineage excludes it from judging that claim. No other reviewer key starts one or lists `remember` ([ADR-0082](../adr/ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) d2, d10).
 
 ## Review independence
 

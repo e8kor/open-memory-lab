@@ -22,7 +22,7 @@ use oml_app::domain::web::Provider;
 
 use oml_page::escape;
 pub use oml_page::web::{
-    Bar, STYLESHEET, Scope, attr, bare, brand, document, refusal, refusal_page, short,
+    Bar, STYLESHEET, Scope, Todo, attr, bare, brand, document, refusal, refusal_page, short,
 };
 
 /// The pages' `Content-Security-Policy`: nothing loads but the one

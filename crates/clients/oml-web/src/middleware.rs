@@ -1,7 +1,10 @@
 //! The layers of ADR-0070 d3, outermost first: 1 the ids and the line, 2
 //! the person-only gate, 4 the same-origin and CSRF check, 5 the headers.
 //! Layer 3, the session load, is [`crate::session::load`] on the page
-//! routes, inside these, so a form is refused before any API call; layer 7
+//! routes, inside these, so a form is refused before any API call, but for
+//! a builder form, whose body may run past a page's 64 KiB: layer 4
+//! resolves its session before reading the body and hands it to layer 3;
+//! layer 7
 //! is [`crate::outcome`]. Layer 6, the per-session cap on calls in flight,
 //! is not built yet (#170); a page that fans out bounds its own calls
 //! ([`crate::workspaces::FAN_OUT`]).
@@ -39,6 +42,25 @@ pub fn content_security_policy() -> String {
 
 /// The most a form's body may be; past it the post is refused unread.
 pub const FORM_MAX_BYTES: usize = 64 * 1024;
+
+/// The most a builder form's body may be (`/web/workspace/new`, `edit` and
+/// `retire`, Preview included): a document's 1 MiB body with every byte
+/// percent-encoded, three bytes each, beside the other fields' 64 KiB, so
+/// the cap the form states is the cap that holds (ADR-0082 d4; the review
+/// of PR #494, C-B3).
+pub const BUILDER_FORM_MAX_BYTES: usize = 3 * 1_048_576 + FORM_MAX_BYTES;
+
+/// The cap of a form posted to `path`.
+fn form_max_bytes(path: &str) -> usize {
+    if matches!(
+        path,
+        "/web/workspace/new" | "/web/workspace/edit" | "/web/workspace/retire"
+    ) {
+        BUILDER_FORM_MAX_BYTES
+    } else {
+        FORM_MAX_BYTES
+    }
+}
 
 /// Where the one line per request goes: standard output in the binary, a
 /// buffer in the tests.
@@ -226,11 +248,11 @@ fn csrf_field(body: &[u8]) -> Option<String> {
 /// origin, by the lead's own rule ([`oml_page::same_origin`], #230), and
 /// carries the session's CSRF token, compared in constant time (ADR-0045
 /// d8). A post without a session cookie goes to sign in.
-pub async fn same_origin(State(layers): State<Layers>, req: Request, next: Next) -> Response {
+pub async fn same_origin(State(web): State<crate::Web>, req: Request, next: Next) -> Response {
     if matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS) {
         return next.run(req).await;
     }
-    let admitted = layers.public_origin.as_deref().is_some_and(|ours| {
+    let admitted = web.layers.public_origin.as_deref().is_some_and(|ours| {
         oml_page::same_origin(
             |name| {
                 req.headers()
@@ -257,13 +279,30 @@ pub async fn same_origin(State(layers): State<Layers>, req: Request, next: Next)
         // A form's page is its path; the query a GET carried is not resent.
         return outcome::sign_in(req.uri().path());
     };
-    let (parts, body) = req.into_parts();
-    let Ok(bytes) = axum::body::to_bytes(body, FORM_MAX_BYTES).await else {
+    let (mut parts, body) = req.into_parts();
+    let cap = form_max_bytes(parts.uri.path());
+    // A builder form's body, which may run past a page's 64 KiB, is read
+    // only for a live session: the session is resolved first, and layer 3
+    // takes it from here (the review of PR #494).
+    if cap > FORM_MAX_BYTES {
+        let calls = crate::session::page_calls(&parts.extensions);
+        match crate::session::resolve_request(&web, &calls, &parts.headers, &parts.uri).await {
+            Ok(session) => {
+                parts.extensions.insert(session);
+            }
+            Err(answer) => return *answer,
+        }
+    }
+    let Ok(bytes) = axum::body::to_bytes(body, cap).await else {
         return refusal(
             &ids,
             StatusCode::PAYLOAD_TOO_LARGE,
             "request.payload_too_large",
-            "A page's form is at most 64 KiB.",
+            if cap == FORM_MAX_BYTES {
+                "A page's form is at most 64 KiB."
+            } else {
+                "A builder form is at most 3 MiB and 64 KiB, a 1 MiB body percent-encoded."
+            },
             "this form is larger than a page sends",
             None,
         );

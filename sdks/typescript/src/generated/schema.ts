@@ -19,7 +19,7 @@ export interface paths {
         put?: never;
         /**
          * Submit a memory (remember or learn); held on arrival, scanned same-call.
-         * @description Requires: writer effective access on the resolved workspace; every derives_from ancestor must be readable by the key — promoted within its reader effective access, or its own row in any state — else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is attribution, not a verb of its own. The target workspace is the body's workspace, by id or name, honoured only within the key's grants, else the key's default_workspace; request.workspace_unresolved with neither, and an X-OML-Workarea header is request.validation naming /workspace in details.renamed_to (ADR-0039 d7). A workspace in a user's root takes a new memory from that user's keys alone: from any other key that reads the workspace it is 409 submission.user_root_refused, answered in place of access.grant_refused, and a key that reads nothing of it gets 404 access.not_found (ADR-0044 d16). Journals submission.remember or submission.learn; verb learn with an empty or omitted derives_from is refused (submission.lineage_required).
+         * @description Requires: writer effective access on the resolved workspace, or, for a person's session key whose role is reviewer, reviewer and reader effective access there: the version is held and its lineage excludes that key, and every other reviewer key is access.verb_ceiling (ADR-0082 d2, d10); every derives_from ancestor must be readable by the key — promoted within its reader effective access, or its own row in any state — else 404 access.not_found, indistinguishable from a nonexistent id (ADR-0025 d3); lineage is attribution, not a verb of its own. The target workspace is the body's workspace, by id or name, honoured only within the key's grants, else the key's default_workspace; request.workspace_unresolved with neither, and an X-OML-Workarea header is request.validation naming /workspace in details.renamed_to (ADR-0039 d7). A workspace in a user's root takes a new memory from that user's keys alone: from any other key that reads the workspace it is 409 submission.user_root_refused, answered in place of access.grant_refused, and a key that reads nothing of it gets 404 access.not_found (ADR-0044 d16). Journals submission.remember or submission.learn; verb learn with an empty or omitted derives_from is refused (submission.lineage_required).
          */
         post: operations["submitMemory"];
         delete?: never;
@@ -42,6 +42,26 @@ export interface paths {
          * @description Requires: reader effective access on the subtree. The scope is the subtree of the body's workspace, by id or name, else of the key's default_workspace (ADR-0039 d4); neither answers request.workspace_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is request.validation naming /workspace in details.renamed_to (ADR-0039 d7). Read-shaped POST: no Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after truncation and the canonical request digest (D12, ADR-0025 d9). The hits are ranked by the search pipeline the body's search names, else the tenant's default, else the deployment's (ADR-0049 d4); a body naming no search under a tenant default the deployment does not serve is ranked by the deployment's default and answers search.fallback tenant_default_unserved (ADR-0049 d15); recall quality is measured per pipeline by the recall eval (eval/recall, ADR-0049 d9).
          */
         post: operations["recallMemories"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/memories/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * What capture would decide for a submit's body or a supersession's, without capturing.
+         * @description Requires: the grant submit would need, or, with replaces, the grant supersede would need on that target (ADR-0082 d5). The body is submit's, or supersede's with replaces naming the version it replaces. Every check capture makes runs through the same pipeline, which stops before anything is journalled, held or metered: no version, no event, no counter moves (ADR-0071 d2), and no Idempotency-Key is read, so nothing is recorded or replayed. A refusal of authority is the HTTP error submit or supersede would answer: auth.*, limit.rate, access.verb_ceiling, every access.* grant refusal, and access.not_found for a target the key cannot read, replaces that names no row included. Every other refusal capture would make, the body's shape, size, the scan's veto, a quota's headroom, a name taken, submission.version_conflict, submission.tip_conflict, workspace.frozen and a guardrail rule that does not parse among them, answers 200 with would_capture false and refusal in the error object's shape, beside what was read before it (ADR-0082 d10). The request rate is charged once (ADR-0079). Read-shaped POST. Since v0.8.0.
+         */
+        post: operations["previewMemory"];
         delete?: never;
         options?: never;
         head?: never;
@@ -79,7 +99,7 @@ export interface paths {
         put?: never;
         /**
          * Propose a replacement version, or with retirement true propose retiring the claim; a new attributed submission, held like any write.
-         * @description Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order) — a writer on a target version it authored, a reviewer through edit-as-proposal. A target that is a ratified retirement in a user's root takes a successor, which would put the claim back in service, from that user's keys alone: any other key that reads the target is 409 submission.user_root_refused, answered after step 2 of that rule and ahead of access.author_only and access.grant_refused; every other successor there is under the supersede rule (ADR-0044 d16). The target must be the current served tip: submission.tip_conflict, with details.current_tip when the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-ordinal, competing-successor, retirement and retired-claim rules are declared in docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). The body's workspace, if sent, must equal the target's workspace (request.validation, details.field /workspace, otherwise), and an X-OML-Workarea header is request.validation naming /workspace in details.renamed_to (ADR-0039 d7); that check, the tip, the kind and retirement checks and workspace.frozen are answered only after the target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to the key with a nil workspace; the record is looked up after step 1 of that rule and before step 2, so a committed supersession replays its stored response whatever the target's state or the key's access now, and it is claimed only after step 2 passes. Only kind is inherited from the target; a successor declares its own anchor or has none (ADR-0057 d2). expected_version is required: the claim's latest version the caller can read (its promoted versions where the caller reads the workspace, and the versions its own keys wrote; never another author's held version) as the caller last read it; any other is 409 submission.version_conflict with details.current_version, answered after the target is known readable and before the tip check, with nothing captured (ADR-0057 d19). The designed attachment, simulation and vocabulary fields of a successor are declared in openapi-designed.yaml (ADR-0039 d9).
+         * @description Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order) — a writer on a target version it authored, a person's session web key on one any key of its person authored, read as same_user reads it (ADR-0082 d2), a reviewer through edit-as-proposal. A target that is a ratified retirement in a user's root takes a successor, which would put the claim back in service, from that user's keys alone: any other key that reads the target is 409 submission.user_root_refused, answered after step 2 of that rule and ahead of access.author_only and access.grant_refused; every other successor there is under the supersede rule (ADR-0044 d16). The target must be the current served tip: submission.tip_conflict, with details.current_tip when the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-ordinal, competing-successor, retirement and retired-claim rules are declared in docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). The body's workspace, if sent, must equal the target's workspace (request.validation, details.field /workspace, otherwise), and an X-OML-Workarea header is request.validation naming /workspace in details.renamed_to (ADR-0039 d7); that check, the tip, the kind and retirement checks and workspace.frozen are answered only after the target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to the key with a nil workspace; the record is looked up after step 1 of that rule and before step 2, so a committed supersession replays its stored response whatever the target's state or the key's access now, and it is claimed only after step 2 passes. Only kind is inherited from the target; a successor declares its own anchor or has none (ADR-0057 d2). expected_version is required: the claim's latest version the caller can read (its promoted versions where the caller reads the workspace, and the versions its own keys wrote; never another author's held version) as the caller last read it; any other is 409 submission.version_conflict with details.current_version, answered after the target is known readable and before the tip check, with nothing captured (ADR-0057 d19). The designed attachment, simulation and vocabulary fields of a successor are declared in openapi-designed.yaml (ADR-0039 d9).
          */
         post: operations["supersedeMemory"];
         delete?: never;
@@ -217,7 +237,7 @@ export interface paths {
         };
         /**
          * One node — id, parent, derived path, status, crew record — with the calling key's view of it.
-         * @description Requires: reader effective access (access.not_found otherwise), or the admin key role, which reads the structure of every workspace in its tenant without grants and never claim content — for an admin key every child and edge is present and my_effective_verbs is empty (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15). children, my_effective_verbs and permission_epoch are relative to the calling key: children (ordered by path_leaf, then id) and edges (ordered by edge_id) outside read access are absent; my_effective_verbs is the union over the grant roles effective on the node (the effective-verbs table in docs/architecture/roles-and-keys.md); permission_epoch is the calling key's permission epoch as declared in docs/architecture/workspaces.md (ADR-0025 d14). One call carries all of it.
+         * @description Requires: reader effective access (access.not_found otherwise), or the admin key role, which reads the structure of every workspace in its tenant without grants and never claim content — for an admin key every child and edge is present and my_effective_verbs is empty (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15). children, my_effective_verbs and permission_epoch are relative to the calling key: children (ordered by path_leaf, then id) and edges (ordered by edge_id) outside read access are absent; my_effective_verbs is the union over the grant roles effective on the node (the effective-verbs table in docs/architecture/roles-and-keys.md), with remember for a person's session reviewer key where it holds reviewer and reader outside its person's own root (ADR-0082 d11, d10); permission_epoch is the calling key's permission epoch as declared in docs/architecture/workspaces.md (ADR-0025 d14). One call carries all of it.
          */
         get: operations["getWorkspace"];
         put?: never;
@@ -588,6 +608,46 @@ export interface paths {
          * @description Requires: admin key role; every other key answers access.verb_ceiling (ADR-0045 d10, amending ADR-0026 d15). One item per workspace holding a held row: its id, path, held count, the held instruction-class versions among them (held_instructions), the live person's reviewer keys whose grants and denials confer reviewer there (person_reviewers: reviewer keys used_by person with no crew and no profile, not revoked or expired, the only keys that approve an instruction; ADR-0080 d16, #435; a key whose person wrote the held instructions is counted though outside that person's own root it cannot approve them) and the oldest held row's time, by path. No memory id, text, author or key. Journals nothing. Since v0.6.4; the two counts since v0.8.2.
          */
         get: operations["reviewQueue"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/todo/counts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The To do page's counts for a person's web session key; no content.
+         * @description Requires: a person's web session key, <user>-web, through its capacity credential; any other key answers access.verb_ceiling with details.reason session_key_only (ADR-0083 d11). review is the number of rows GET /v2/review/held would serve the person's reviewer key, <user>-review, at workspace and below it, or across every workspace without workspace, computed under the same grants, lineage exclusions and author fences as that listing; counted up to 1,000, with truncated true past it, and read up to 2,000 held rows, counted or not, with truncated true and the count so far once that bound stops the read (ADR-0083 d16). A person with no live reviewer key or no reviewer grant counts 0, and so does a workspace that key cannot read or that does not exist, which is never named or refused. No memory id, text, claim key or name. Journals nothing. The other groups (fixes, ratify, withdrawals, overrides, imports) join with their features (ADR-0083 d14). Since v0.8.0.
+         */
+        get: operations["todoCounts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/admin/todo/counts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The administration To do page's counts; no content.
+         * @description Requires: a person's admin session key, <user>-admin, through its capacity credential; any other key, <user>-curate and a tenant admin key included, answers access.verb_ceiling with details.reason session_key_only (ADR-0083 d11). Its groups (unconfirmed admin fixes, guardrail-loosening alerts, open investigations) join with ADR-0089's acts; until then it answers truncated alone, false (ADR-0083 d14). Takes no query parameter. Journals nothing. Since v0.8.0.
+         */
+        get: operations["adminTodoCounts"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1785,6 +1845,65 @@ export interface components {
             /** @description Mirrors the X-Request-Id response header. */
             request_id: string;
         };
+        /** @description Submit's body, or supersede's with replaces naming the version it would replace (ADR-0082 d5). */
+        PreviewRequest: components["schemas"]["SubmitRequest"] | components["schemas"]["PreviewSupersedeRequest"];
+        /** @description Supersede's body with replaces, the version the supersession would replace (ADR-0082 d5). */
+        PreviewSupersedeRequest: components["schemas"]["SupersedeRequest"] & {
+            /** @description The artifact_id of the version a supersession would replace. */
+            replaces: string;
+        };
+        /** @description What capture would decide for a previewed body (ADR-0082 d5, d10). The facts are those read before any refusal; a refusal of the body's shape answers none. */
+        MemoryPreview: {
+            would_capture: boolean;
+            /** @description The refusal capture would answer, in the error object's shape; null when it would capture. */
+            refusal: {
+                code: components["schemas"]["ErrorCode"];
+                message: string;
+                rule: string;
+                details?: {
+                    [key: string]: unknown;
+                };
+                retryable: boolean;
+            } | null;
+            /** @description The scan's findings, as a held version's list carries them; empty when the scan did not run or found nothing. */
+            findings: components["schemas"]["ScanFinding"][];
+            /** @description Whether a person's verdict is needed: an instruction kind, or a successor of one (ADR-0074 d24; ADR-0080 d16). */
+            needs_person: boolean;
+            /** @description The NFC body's UTF-8 bytes. */
+            body_bytes: number | null;
+            /** @description The body's budget tokens under oml-tc/1. */
+            budget_tokens: number | null;
+            /** @description A guardrail's rule in its canonical oml-gr/1 form. */
+            rule?: {
+                [key: string]: unknown;
+            };
+            /** @description A skill's prompt name (ADR-0080 d5). */
+            offered_as?: string;
+            /** @description A skill's same-named skills along its chain that the key reads: one on an ancestor it shadows, one on a descendant that shadows it there (ADR-0080 d5). */
+            shadows?: {
+                /** @description The workspace's path. */
+                workspace: string;
+                /** @enum {string} */
+                relation: "shadows" | "shadowed_by";
+            }[];
+            /** @description A guardrail's set size at its workspace once the version is approved, the approved rules an agent there loads, against the set cap (ADR-0037 d7); absent for a key that does not read the workspace. */
+            set_after?: {
+                size: number;
+                cap: number;
+            };
+            /** @description A document's passages as capture would cut them, each by its fragment and its lines, as a recall hit names its passage; absent for any other kind and a retirement (ADR-0081 d3; ADR-0082 d5). */
+            passages?: {
+                /** @description The heading's slug for a whole section, else L<n>-L<m> (ADR-0057 d7, d21). */
+                fragment: string;
+                ordinal: number;
+                /** @description 1-based, inclusive. */
+                start_line: number;
+                /** @description 1-based, inclusive. */
+                end_line: number;
+                /** @description The headings above it, outermost first. */
+                heading_path: string[];
+            }[];
+        };
         /** @description The target is workspace, else the key's default_workspace; neither present is refused with request.workspace_unresolved (ADR-0039 d4, d7). This body, and its nested objects, stay open: ADR-0025 d16 closes the recall, supersede, key-issuance and grant bodies only. The designed attachment, simulation and vocabulary fields are declared under x-oml-designed-fields in openapi-designed.yaml; each sent here answers its v0.3.0 code (ADR-0039 d9). */
         SubmitRequest: {
             /**
@@ -2643,6 +2762,10 @@ export interface components {
             in_progress_root?: components["schemas"]["WhoamiRef"] | null;
             /** @description The promoted served tips on this node whose latest source check found the source changed or removed (ADR-0057 d5, d17); 0 for an admin key, which reads no claim. oml doctor reports it for the key's default workspace. */
             stale_versions: number;
+            /** @description The approved claims on this node alone, not its subtree, by kind: a claim counts once when its tip is promoted and is not a retirement, so a replaced version or a held successor adds nothing. Only kinds with at least one approved claim are named (ADR-0082 d8 item 7, d10). Since v0.8.0. */
+            approved_by_kind: {
+                [key: string]: number;
+            };
             /** @description The readable immediate children, ordered by path_leaf ascending in byte order, then id; a child's path_leaf is its name. */
             children: {
                 id: string;
@@ -3932,14 +4055,20 @@ export interface operations {
                 /** @description The subtree read, by id or name, which must name a node the key may be told about, else access.not_found, indistinguishable from a nonexistent node (ADR-0039 d4, d7). With own=true, a node the key holds some role on (the naming rule, docs/architecture/roles-and-keys.md, Own); it narrows the listing to the key's rows in that subtree whatever the key holds below it, and omitted the listing reads every workspace the key wrote in. Without own, the scope: a node where reader is effective, and omitted the key's default_workspace (request.workspace_unresolved for a key with neither). */
                 workspace?: components["schemas"]["WorkspaceRef"];
                 claim_key?: string;
-                state?: "held" | "promoted" | "demoted" | "rejected" | "erased" | "withdrawn";
-                /** @description Comma-separated or repeated: only these kinds. The counts ignore it. v0.7's single kind is request.validation naming kinds in details.renamed_to (ADR-0092 d6). */
+                /** @description One of held, promoted, demoted, rejected, erased or withdrawn. With with_own, `mine` or author, a comma list of held, promoted (the promoted tip), superseded, rejected, demoted and withdrawn, a row in any of them listed (ADR-0083 d3). Any other value is request.validation naming state. */
+                state?: string;
+                /** @description Comma-separated or repeated: only these kinds. The counts ignore it. With with_own, `mine` or author, a row of any of them listed (ADR-0082 d8 item 3). v0.7's single kind is request.validation naming kinds in details.renamed_to (ADR-0092 d6). */
                 kinds?: components["schemas"]["ClaimKind"][];
                 /** @description Only claim keys starting with these bytes, such as skill/ or doc/runbooks/; read as a byte range, never a pattern (ADR-0092 d6, d9). */
                 prefix?: string;
+                /** @description true: the key's own work (see the operation). With with_own, `mine` or author, false, the default a generated client sends, reads as absent and true is request.validation. */
                 own?: boolean;
-                /** @description true: the scoped listing (at workspace, else universe) and the caller's own rows, every key naming its user's for a person's web session key, merged newest first under one cursor, a row in both once (ADR-0045 d22, d23; ADR-0070 d5). Combines only with author, include_text, workspace, state (held, promoted, rejected, superseded, demoted), one origin_kinds, limit and cursor; any other parameter is request.validation. Since v0.6.4. */
+                /** @description true: the scoped listing (at workspace, else universe) and the caller's own rows, every key of the person for a person's session key (as for `mine`), merged newest first under one cursor, a row in both once (ADR-0045 d22, d23; ADR-0070 d5). Combines only with `mine`, author, include_text, own=false, workspace, state (a comma list of held, promoted, superseded, rejected, demoted and withdrawn), kinds, promoted_since, one origin_kinds, limit and cursor; any other parameter is request.validation. Since v0.6.4. */
                 with_own?: boolean;
+                /** @description true: the caller's own rows alone, with no scoped part, under one cursor: every key of the person for a person's session key (the keys naming their root and their web, review and curate session keys, never a linked tenant key), the key alone for any other key, in every state, off the subtrees the key's global denials cover (ADR-0083 d3, d14). Combines as with_own does; author narrows it to one own key. Since v0.8.0. */
+                mine?: boolean;
+                /** @description With with_own, `mine` or author: only the promoted rows approved at or after this instant, the rows of every other state left whole; with no state, every state is listed (ADR-0083 d3). Not an RFC 3339 date-time with an offset and at most microsecond precision is request.validation naming promoted_since. Since v0.8.0. */
+                promoted_since?: string;
                 /** @description One of the caller's own keys, by name: the caller's rows by that key alone, the scoped part dropped; a key that is not the caller's is access.not_found. Implies the with_own listing (ADR-0045 d23; ADR-0070 d5). Since v0.6.4. */
                 author?: string;
                 /** @description true serves each item with its text: on the catalog (ADR-0092 d6), and with with_own or author, as the web console's Memories list shows it (ADR-0045 d22; ADR-0070 d5); false or absent, entries without text. */
@@ -4191,6 +4320,72 @@ export interface operations {
                     "application/json": components["schemas"]["RecallResponse"];
                 };
             };
+            415: components["responses"]["UnsupportedMedia"];
+            429: components["responses"]["RateLimited"];
+            default: components["responses"]["Error"];
+        };
+    };
+    previewMemory: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "kind": "skill",
+                 *       "workspace": "alice",
+                 *       "format": "text/markdown",
+                 *       "skill": {
+                 *         "name": "release-checklist",
+                 *         "description": "Steps before a release."
+                 *       },
+                 *       "body": "Tag from main, then check the changelog."
+                 *     }
+                 */
+                "application/json": components["schemas"]["PreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description What capture would decide. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "would_capture": true,
+                     *       "refusal": null,
+                     *       "findings": [],
+                     *       "needs_person": true,
+                     *       "body_bytes": 41,
+                     *       "budget_tokens": 11,
+                     *       "offered_as": "release-checklist",
+                     *       "shadows": [
+                     *         {
+                     *           "workspace": "universe.alice",
+                     *           "relation": "shadows"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["MemoryPreview"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
             415: components["responses"]["UnsupportedMedia"];
             429: components["responses"]["RateLimited"];
             default: components["responses"]["Error"];
@@ -5800,6 +5995,89 @@ export interface operations {
                             /** Format: date-time */
                             oldest_at: string;
                         }[];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    todoCounts: {
+        parameters: {
+            query?: {
+                /** @description The workspace, by id or name, whose subtree is counted; every workspace when absent. */
+                workspace?: string;
+            };
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The counts. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "review": 3,
+                     *       "truncated": false
+                     *     }
+                     */
+                    "application/json": {
+                        /** @description The To review group's length: the held rows the person's reviewer key may judge. */
+                        review: number;
+                        /** @description Whether a count passed 1,000 and answers 1,000, or stopped after reading 2,000 held rows and answers what it counted. */
+                        truncated: boolean;
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    adminTodoCounts: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The counts. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "truncated": false
+                     *     }
+                     */
+                    "application/json": {
+                        truncated: boolean;
                     };
                 };
             };
@@ -8168,6 +8446,8 @@ export interface operations {
                     origin_kind?: "repo" | "doc" | "code" | "lake" | "chat" | "web" | "manual";
                     /** @description The authoring key of the tenant, by name or id (ADR-0045 d24; ADR-0070 d5). Since v0.6.4. */
                     author?: string;
+                    /** @description Only these kinds, each named once, as recall's kinds: a row of any of them is served (ADR-0083 d5; ADR-0082 d8 item 3; ADR-0092 d6). An empty array, an unknown kind or any other value is request.validation naming /kinds; v0.8.0's draft kind is request.validation naming /kinds in details.renamed_to. Since v0.8.0. */
+                    kinds?: components["schemas"]["ClaimKind"][];
                     /** @description At most 200, the console list's largest page (ADR-0045 d22; raised from 100 in v0.7.0). */
                     limit?: number;
                     cursor?: string;

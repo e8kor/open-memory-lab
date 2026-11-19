@@ -293,6 +293,25 @@ async fn the_first_admin_email_is_added_under_an_admin_key_and_signs_in_through_
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{page}");
+    // The admin search's kinds list runs under Postgres (ADR-0083 d5), and
+    // the To do counts read under the person's web capacity (d11).
+    let (status, _, body) = send(
+        &router,
+        json_post(
+            "/v2/admin/memories/search",
+            &boot.admin_key.value,
+            json!({"state": "promoted", "kinds": ["skill", "guardrail"]}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, _, counts) = send(
+        &router,
+        as_web(&cookie, "web", "GET", "/v2/todo/counts", None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{counts}");
+    assert!(counts.contains(r#""review":0"#), "{counts}");
 
     // A moved account is refused under Postgres's pin as under the double's.
     let (status, token) = sign_in(&router, &providers, 8, "alice@example.com").await;
@@ -408,11 +427,18 @@ async fn the_session_gates_rows_read_in_one_transaction_are_the_rows_its_separat
                 Some(format!("{}-{capacity}", rows.session.user.as_str()).as_str())
             );
             assert!(key.access.is_some(), "{capacity}");
-            // Only the web key names the person's root, and owns its keys.
+            // Only the web key names the person's root; every session key
+            // reads its person's keys, itself and the web key among them
+            // (ADR-0083 d14).
             assert_eq!(key.user_root.is_some(), capacity == "web", "{capacity}");
-            assert_eq!(
+            assert!(
                 key.own_keys.iter().any(|k| k.key_id == key.key.key_id),
-                capacity == "web",
+                "{capacity}"
+            );
+            assert!(
+                key.own_keys.iter().any(|k| k.user.is_some()
+                    && k.name.as_ref().map(Name::as_str)
+                        == Some(format!("{}-web", rows.session.user.as_str()).as_str())),
                 "{capacity}"
             );
         }
@@ -854,4 +880,399 @@ async fn bulk_review_lists_confirms_by_id_and_records_each_outcome_once() {
         "{metrics}"
     );
     drop_db(&db).await;
+}
+
+/// The Memories cockpit's rig under Postgres: the lead, the person alice
+/// signed in, two writer keys of hers, `alice-loader` and `alice-laptop`,
+/// and `helper`, a tenant reviewer key of another person's an admin granted
+/// reviewer and reader on alice's root, whose successors there are another author's rows.
+struct Cockpit {
+    db: String,
+    router: Router,
+    admin: String,
+    root: uuid::Uuid,
+    cookie: String,
+    loader: String,
+    laptop: String,
+    helper: String,
+}
+
+async fn cockpit() -> Option<Cockpit> {
+    let db = fresh_name();
+    if !mint_database(&db).await {
+        return None;
+    }
+    let store = serving_store(&db).await;
+    let key = SigningKey::from_bytes(&OsIds.new_secret());
+    let boot = tenant(&store, &key, "oml").await;
+    let providers = MemSignIn::new();
+    let router = lead(&store, &key, &providers).await;
+    let admin = boot.admin_key.value.clone();
+    let (status, _, body) = send(
+        &router,
+        json_post(
+            "/v2/web/emails",
+            &admin,
+            json!({"email": "alice@example.com", "user": "alice", "admin": false}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (_, token) = sign_in(&router, &providers, 7, "alice@example.com").await;
+    let cookie = format!("{SESSION_COOKIE}={}", token.expect("a session"));
+    let mut values = Vec::new();
+    for (name, body) in [
+        (
+            "alice-loader",
+            json!({"role": "writer", "name": "alice-loader", "principal": "alice/loader",
+                   "user": "alice", "grants": [
+                       {"workspace": "alice", "role": "writer"},
+                       {"workspace": "alice", "role": "reader"}]}),
+        ),
+        (
+            "alice-laptop",
+            json!({"role": "writer", "name": "alice-laptop", "principal": "alice/laptop",
+                   "user": "alice", "grants": [
+                       {"workspace": "alice", "role": "writer"},
+                       {"workspace": "alice", "role": "reader"}]}),
+        ),
+        (
+            "helper",
+            json!({"role": "reviewer", "name": "helper", "principal": "helper",
+                   "used_by": "person", "grants": [
+                       {"workspace": "alice", "role": "reviewer"},
+                       {"workspace": "alice", "role": "reader"}]}),
+        ),
+    ] {
+        let (status, _, issued) =
+            send(&router, json_post_under(name, "/v2/keys", &admin, body)).await;
+        assert_eq!(status, StatusCode::CREATED, "{issued}");
+        let issued: Value = serde_json::from_str(&issued).expect("JSON");
+        values.push(issued["value"].as_str().expect("a value").to_owned());
+    }
+    let helper = values.pop().expect("helper");
+    let laptop = values.pop().expect("laptop");
+    let loader = values.pop().expect("loader");
+    Some(Cockpit {
+        db,
+        router,
+        admin,
+        root: boot.root_workspace_id,
+        cookie,
+        loader,
+        laptop,
+        helper,
+    })
+}
+
+impl Cockpit {
+    /// `key` writes `body`, in `workspace` when named: the held row's id.
+    async fn write(&self, key: &str, body: &str, workspace: Option<&str>) -> String {
+        let mut sent = json!({"body": body});
+        if let Some(workspace) = workspace {
+            sent["workspace"] = json!(workspace);
+        }
+        let (status, _, answer) = send(
+            &self.router,
+            json_post_under(&format!("w-{body}"), "/v1/memories", key, sent),
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{answer}");
+        let answer: Value = serde_json::from_str(&answer).expect("JSON");
+        answer["artifact_id"].as_str().expect("an id").to_owned()
+    }
+
+    /// The helper's verdict on `id`, through the bulk act of one id.
+    async fn judge(&self, id: &str, verdict: &str) {
+        let (status, _, answer) = send(
+            &self.router,
+            json_post_under(
+                &format!("v-{id}"),
+                "/v2/review/verdicts/bulk",
+                &self.helper,
+                json!({"verdict": verdict, "artifact_ids": [id], "reason": "judged in the test"}),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{answer}");
+        let answer: Value = serde_json::from_str(&answer).expect("JSON");
+        let counted = if verdict == "approve" {
+            "approved"
+        } else {
+            "rejected"
+        };
+        assert_eq!(answer["summary"][counted], 1, "{answer}");
+    }
+
+    /// The helper approves `id` and proposes `body` as its successor: a
+    /// held row of another author in the target's workspace.
+    async fn helper_holds_a_successor(&self, id: &str, body: &str) {
+        self.judge(id, "approve").await;
+        let (status, _, answer) = send(
+            &self.router,
+            json_post_under(
+                &format!("s-{body}"),
+                &format!("/v1/memories/{id}/supersede"),
+                &self.helper,
+                json!({"body": body, "expected_version": 1}),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{answer}");
+    }
+
+    /// A read as `oml-web` makes it under the person's web key.
+    async fn as_web_get(&self, path: &str) -> String {
+        let (status, _, body) =
+            send(&self.router, as_web(&self.cookie, "web", "GET", path, None)).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {body}");
+        body
+    }
+
+    /// Recall as the Approved view's search sends it.
+    async fn recall(&self, query: &str, workspace: &str, include_unreviewed: bool) -> String {
+        let (status, _, body) = send(
+            &self.router,
+            as_web(
+                &self.cookie,
+                "web",
+                "POST",
+                "/v1/memories/recall",
+                Some((
+                    &format!("r-{include_unreviewed}"),
+                    json!({"query": query, "k": 50, "kinds": ["memory", "derived_fact"],
+                           "include_text": true, "include_unreviewed": include_unreviewed,
+                           "workspace": workspace}),
+                )),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body
+    }
+}
+
+/// A claim a person's review key starts in a shared workspace is charged
+/// to that person's account under Postgres: their memories meter moves by
+/// one, and the drift report, which recomputes every account from the rows,
+/// finds nothing to report (ADR-0071 d1, note of 2026-11-19; migration
+/// 0065; ADR-0082 d10).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_persons_review_key_claim_is_charged_to_their_account_and_drifts_nothing() {
+    let Some(c) = cockpit().await else {
+        return;
+    };
+    let (status, _, team) = send(
+        &c.router,
+        json_post_under(
+            "ws-team",
+            "/v2/workspaces",
+            &c.admin,
+            json!({"parent": c.root, "name": "team"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{team}");
+    let team: Value = serde_json::from_str(&team).expect("JSON");
+    let (status, _, granted) = send(
+        &c.router,
+        json_post_under(
+            "cap-review",
+            "/v2/web/users/alice/capacities",
+            &c.admin,
+            json!({"capacity": "review", "workspaces": [team["id"]]}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{granted}");
+    let memories = |usage: &str| -> u64 {
+        let usage: Value = serde_json::from_str(usage).expect("JSON");
+        usage["meters"]
+            .as_array()
+            .expect("meters")
+            .iter()
+            .find(|m| m["meter"] == "memories")
+            .expect("the memories meter")["used"]
+            .as_u64()
+            .expect("a count")
+    };
+    async fn usage(c: &Cockpit) -> (StatusCode, HeaderMap, String) {
+        let request = Request::get("/v2/admin/accounts/alice/usage")
+            .header(header::AUTHORIZATION, format!("Bearer {}", c.admin))
+            .body(Body::empty())
+            .expect("a request");
+        send(&c.router, request).await
+    }
+    let (status, _, before) = usage(&c).await;
+    assert_eq!(status, StatusCode::OK, "{before}");
+    let (status, _, written) = send(
+        &c.router,
+        as_web(
+            &c.cookie,
+            "review",
+            "POST",
+            "/v1/memories",
+            Some((
+                "r-team",
+                json!({"body": "Team ships on Fridays.", "workspace": "team"}),
+            )),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{written}");
+    let (_, _, after) = usage(&c).await;
+    assert_eq!(memories(&after), memories(&before) + 1, "{after}");
+    let request = Request::get("/v2/admin/usage/drift")
+        .header(header::AUTHORIZATION, format!("Bearer {}", c.admin))
+        .body(Body::empty())
+        .expect("a request");
+    let (status, _, drift) = send(&c.router, request).await;
+    assert_eq!(status, StatusCode::OK, "{drift}");
+    let drift: Value = serde_json::from_str(&drift).expect("JSON");
+    assert_eq!(drift["drift"], json!([]), "{drift}");
+    drop_db(&c.db).await;
+}
+
+/// Approved under Postgres, as `oml-web` reads it: the merged listing with
+/// `state=promoted` and recall with `include_unreviewed: false` serve no
+/// held row, not the person's own and not, inside an in-progress
+/// workspace, another author's, which the same reads without those
+/// filters do serve there (ADR-0083 d1; ADR-0030 d3, d4).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn approved_shows_no_held_row_even_inside_an_in_progress_workspace() {
+    let Some(c) = cockpit().await else {
+        return;
+    };
+    let (status, _, body) = send(
+        &c.router,
+        as_web(
+            &c.cookie,
+            "web",
+            "POST",
+            "/v2/workspaces",
+            Some(("ws-proj", json!({"name": "proj"}))),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let served = c
+        .write(&c.loader, "approved inside proj", Some("alice.proj"))
+        .await;
+    c.write(&c.laptop, "own held inside proj", Some("alice.proj"))
+        .await;
+    let (status, _, body) = send(
+        &c.router,
+        as_web(
+            &c.cookie,
+            "review",
+            "POST",
+            "/v2/workspaces/alice.proj/mode",
+            Some(("mode-proj", json!({"mode": "in_progress"}))),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    c.helper_holds_a_successor(&served, "helper held inside proj")
+        .await;
+    let held = ["own held inside proj", "helper held inside proj"];
+    for (listing, recalled) in [
+        (
+            c.as_web_get("/v1/memories?with_own=true&state=promoted&include_text=true&limit=50&workspace=alice.proj").await,
+            c.recall("inside", "alice.proj", false).await,
+        ),
+        (
+            c.as_web_get("/v1/memories?with_own=true&state=promoted&include_text=true&limit=50").await,
+            c.recall("inside", "alice", false).await,
+        ),
+    ] {
+        for answer in [&listing, &recalled] {
+            assert!(answer.contains("approved inside proj"), "{answer}");
+            for text in held {
+                assert!(!answer.contains(text), "{text}: {answer}");
+            }
+        }
+    }
+    // The same reads without the filters serve the held rows there, so the
+    // filters are what keeps them out.
+    let merged = c
+        .as_web_get("/v1/memories?with_own=true&include_text=true&limit=50&workspace=alice.proj")
+        .await;
+    let unreviewed = c.recall("inside", "alice.proj", true).await;
+    for answer in [&merged, &unreviewed] {
+        assert!(answer.contains("helper held inside proj"), "{answer}");
+    }
+    drop_db(&c.db).await;
+}
+
+/// Submitted under Postgres, as `oml-web` reads it: `mine=true` with the
+/// four states lists what any of the person's keys wrote that is held,
+/// rejected or withdrawn, and what they had approved since the instant,
+/// across two of their keys, and nothing scoped from another author
+/// (ADR-0083 d3, d13, d14).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn submitted_lists_held_rejected_withdrawn_and_recent_approved_rows_of_the_person() {
+    let Some(c) = cockpit().await else {
+        return;
+    };
+    c.write(&c.loader, "loader waits for review", None).await;
+    let rejected = c.write(&c.loader, "loader was refused", None).await;
+    c.judge(&rejected, "reject").await;
+    let withdrawn = c.write(&c.laptop, "laptop took this back", None).await;
+    let (status, _, body) = send(
+        &c.router,
+        json_post_under(
+            "withdraw-1",
+            &format!("/v1/memories/{withdrawn}/withdraw"),
+            &c.laptop,
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let approved = c.write(&c.laptop, "laptop was approved", None).await;
+    c.helper_holds_a_successor(&approved, "helper held successor")
+        .await;
+    let path = |since: &str| {
+        format!(
+            "/v1/memories?mine=true&include_text=true&limit=50&state=held,rejected,withdrawn,promoted&promoted_since={since}"
+        )
+    };
+    let listed = c.as_web_get(&path("2000-01-01T00:00:00Z")).await;
+    let rows: Value = serde_json::from_str(&listed).expect("JSON");
+    let states: Vec<(String, String)> = rows["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|i| {
+            (
+                i["text"].as_str().expect("text").to_owned(),
+                i["state"].as_str().expect("a state").to_owned(),
+            )
+        })
+        .collect();
+    for (text, state) in [
+        ("loader waits for review", "held"),
+        ("loader was refused", "rejected"),
+        ("laptop took this back", "withdrawn"),
+        ("laptop was approved", "promoted"),
+    ] {
+        assert!(
+            states.iter().any(|(t, s)| t == text && s == state),
+            "{text} {state}: {states:?}"
+        );
+    }
+    assert!(!listed.contains("helper held successor"), "{listed}");
+    assert_eq!(states.len(), 4, "{states:?}");
+    // An approval before the instant leaves the approved row out, and the
+    // other states whole.
+    let later = c.as_web_get(&path("2999-01-01T00:00:00Z")).await;
+    assert!(!later.contains("laptop was approved"), "{later}");
+    for text in [
+        "loader waits for review",
+        "loader was refused",
+        "laptop took this back",
+    ] {
+        assert!(later.contains(text), "{later}");
+    }
+    drop_db(&c.db).await;
 }

@@ -48,6 +48,10 @@ use crate::keys::instant;
 use crate::picker::Roots;
 use serde_json::{Value, json};
 
+/// The Personal side's Judge page, which #412 builds; the admin Held view
+/// links each held row to it (ADR-0083 d2, d5).
+pub(crate) const TODO_JUDGE_PATH: &str = "/web/todo/judge";
+
 /// The states the admin read names a version by.
 const ADMIN_STATES: &[&str] = &["held", "promoted", "rejected", "superseded", "demoted"];
 
@@ -121,8 +125,9 @@ pub(crate) fn row_state(state: &str, tip: bool) -> &'static str {
     match state {
         "held" => "held",
         "promoted" if tip => "promoted",
-        "promoted" => "superseded",
+        "promoted" | "superseded" => "superseded",
         "rejected" => "rejected",
+        "withdrawn" => "withdrawn",
         _ => "demoted",
     }
 }
@@ -361,6 +366,8 @@ pub(crate) struct Card {
     valid_from: Option<String>,
     valid_until: Option<String>,
     kind: Option<String>,
+    /// A skill's name, as the version carries it (ADR-0080 d1).
+    skill_name: Option<String>,
     origin: Option<String>,
     stale: Option<String>,
     checked: Option<SourceChecked>,
@@ -382,6 +389,12 @@ pub(crate) struct Card {
     /// offers Withdraw, which opens its confirmation (ADR-0083 d13, note of
     /// 2026-11-17).
     withdraw: bool,
+    /// Submitted's one plain sentence, markup, after the head (ADR-0083
+    /// d3).
+    lead: Option<String>,
+    /// The admin Held row's link to Judge on the Personal side, as the
+    /// person's reviewer key this names (ADR-0083 d5).
+    judge_as: Option<String>,
 }
 
 impl Card {
@@ -419,6 +432,7 @@ impl Card {
             valid_from: m.valid_from.clone(),
             valid_until: m.valid_until.clone(),
             kind: m.kind.clone(),
+            skill_name: m.skill.as_ref().map(|k| k.name.clone()),
             origin: m.origin.as_ref().map(|o| o.kind.clone()),
             stale: m.stale.clone(),
             checked: m.source_checked.clone(),
@@ -436,6 +450,8 @@ impl Card {
             digest: m.plaintext_digest.clone(),
             same_user: false,
             withdraw: false,
+            lead: None,
+            judge_as: None,
         }
     }
 
@@ -443,6 +459,62 @@ impl Card {
     pub(crate) fn withdrawable(self) -> Self {
         Self {
             withdraw: self.state == "held",
+            ..self
+        }
+    }
+
+    /// The card as Submitted lists it, led by its one plain sentence: a
+    /// row of the person's own, so a held one offers Withdraw (ADR-0083 d3,
+    /// d13).
+    pub(crate) fn submitted(self) -> Self {
+        let lead = self.submitted_lead();
+        Self {
+            lead: Some(lead),
+            ..self.withdrawable()
+        }
+    }
+
+    /// Submitted's sentence, by state, from what the listing serves: the
+    /// version a held edit or retirement replaces, and the approval's day
+    /// and claim. A rejection's or a withdrawal's day is not served to the
+    /// author, so neither sentence names one (ADR-0083 d3, d10).
+    fn submitted_lead(&self) -> String {
+        match self.state {
+            "held" => match self.replaces.as_ref().and_then(|(_, v)| *v) {
+                Some(v) => format!("Waiting for review. v{v} is still served."),
+                None => "Waiting for review.".to_owned(),
+            },
+            "rejected" => "Rejected. The text is kept and never served.".to_owned(),
+            "withdrawn" => "Withdrawn. The text is kept and never served.".to_owned(),
+            _ => {
+                let on = self
+                    .approved
+                    .as_deref()
+                    .map_or_else(String::new, |at| format!(" on {}", text(&day(at))));
+                // An approved skill names the command its name is
+                // published as; a nearer workspace's skill of the same
+                // name shadows it, so the copy says published, not what a
+                // session runs (ADR-0083 d15; ADR-0080 d5).
+                match (self.kind.as_deref(), self.skill_name.as_deref()) {
+                    (Some("skill"), Some(name)) => format!(
+                        "Approved{on} and published as <code>/mcp__&lt;server&gt;__{}</code>.",
+                        text(name)
+                    ),
+                    _ => format!(
+                        "Approved{on} and served as <code>{}</code> v{}.",
+                        text(&self.claim_key),
+                        self.version
+                    ),
+                }
+            }
+        }
+    }
+
+    /// The admin Held row, linked to Judge on the Personal side as
+    /// `reviewer`, the person's own reviewer key (ADR-0083 d5).
+    pub(crate) fn judged_as(self, reviewer: &str) -> Self {
+        Self {
+            judge_as: (self.state == "held").then(|| reviewer.to_owned()),
             ..self
         }
     }
@@ -490,6 +562,7 @@ impl Card {
             valid_from: m.valid_from.clone(),
             valid_until: m.valid_until.clone(),
             kind: None,
+            skill_name: None,
             origin: None,
             stale: None,
             checked: None,
@@ -504,6 +577,8 @@ impl Card {
             digest: None,
             same_user: false,
             withdraw: false,
+            lead: None,
+            judge_as: None,
         }
     }
 
@@ -552,6 +627,7 @@ impl Card {
             valid_from: m.valid_from.clone(),
             valid_until: m.valid_until.clone(),
             kind: m.kind.clone(),
+            skill_name: None,
             origin: None,
             stale: None,
             checked: None,
@@ -566,6 +642,8 @@ impl Card {
             digest: m.plaintext_digest.clone(),
             same_user: false,
             withdraw: false,
+            lead: None,
+            judge_as: None,
         }
     }
 
@@ -605,6 +683,12 @@ impl Card {
     }
 
     /// The authoring principal, or on the admin side the key and its user.
+    /// The kind the read serves, `memory` among them; `None` where it
+    /// names none.
+    pub(crate) fn kind(&self) -> Option<&str> {
+        self.kind.as_deref()
+    }
+
     pub(crate) fn author(&self) -> Option<&str> {
         self.author.as_deref()
     }
@@ -702,7 +786,8 @@ impl Card {
     }
 
     /// The kind of decision a held version asks for (ReviewCard): a first
-    /// version, an edit of the version it replaces, or a retirement of it.
+    /// version (a new memory, skill, guardrail or document), an edit of the
+    /// version it replaces, or a retirement of it.
     pub(crate) fn decision(&self) -> String {
         let of = self
             .replaces
@@ -714,13 +799,25 @@ impl Card {
         let word = match (self.retirement, self.successor()) {
             (true, _) => "Retirement",
             (false, true) => "Edit",
-            (false, false) => return r#"<span class="oml-decision">New memory</span>"#.to_owned(),
+            // A first version, named by the builder's kinds (ADR-0083 d2).
+            (false, false) => {
+                let word = match self.kind.as_deref() {
+                    Some("skill") => "New skill",
+                    Some("guardrail") => "New guardrail",
+                    Some("document") => "New document",
+                    _ => "New memory",
+                };
+                return format!(r#"<span class="oml-decision">{word}</span>"#);
+            }
         };
         format!(r#"<span class="oml-decision">{word}{of}</span>"#)
     }
 
     fn quiet(&self) -> bool {
-        matches!(self.state, "superseded" | "rejected" | "demoted")
+        matches!(
+            self.state,
+            "superseded" | "rejected" | "withdrawn" | "demoted"
+        )
     }
 
     /// The head line's markers: the state or the decision, `stale`, a kind
@@ -760,7 +857,10 @@ impl Card {
             .map_or_else(String::new, |t| format!("<b>{}</b>\n", text(t)));
         format!(
             r#"<span class="mc-tx{mono}">{title}{}</span>"#,
-            text(&self.body)
+            // Hidden characters are drawn as marked code points, so an
+            // invisible instruction shows to the reviewer (the review of
+            // PR #494, 8).
+            oml_page::web::text_shown(&self.body)
         )
     }
 
@@ -1093,7 +1193,18 @@ impl Card {
                 self.head_text()
             );
         }
+        if let Some(lead) = &self.lead {
+            let _ = write!(out, r#"<p class="mc-lead">{lead}</p>"#);
+        }
         out.push_str(&self.facts(view));
+        if let Some(reviewer) = self.judge_as.as_deref().filter(|_| view.admin) {
+            let _ = write!(
+                out,
+                r#"<p class="mc-lead"><a href="{TODO_JUDGE_PATH}?memory={}">Judge as <code>{}</code></a></p>"#,
+                attr(&oml_sdk::encode(&self.id)),
+                text(reviewer),
+            );
+        }
         out.push_str(r#"<div class="mc-body">"#);
         if let Some(warning) = &self.load_warning {
             let _ = write!(out, r#"<p class="lede">Guardrail: {}.</p>"#, text(warning));
@@ -1141,115 +1252,9 @@ fn admin_state(state: &str) -> &'static str {
         .unwrap_or("demoted")
 }
 
-/// The words of `s`, split on whitespace.
-fn words(s: &str) -> Vec<&str> {
-    s.split_whitespace().collect()
-}
-
-/// The longest common subsequence of two word lists, as a mark per word of
-/// each: `true` where the word is kept.
-fn kept(was: &[&str], now: &[&str]) -> (Vec<bool>, Vec<bool>) {
-    let (n, m) = (was.len(), now.len());
-    let mut table = vec![vec![0u32; m + 1]; n + 1];
-    for i in (0..n).rev() {
-        for j in (0..m).rev() {
-            table[i][j] = if was[i] == now[j] {
-                table[i + 1][j + 1] + 1
-            } else {
-                table[i + 1][j].max(table[i][j + 1])
-            };
-        }
-    }
-    let (mut a, mut b) = (vec![false; n], vec![false; m]);
-    let (mut i, mut j) = (0, 0);
-    while i < n && j < m {
-        if was[i] == now[j] {
-            a[i] = true;
-            b[j] = true;
-            i += 1;
-            j += 1;
-        } else if table[i + 1][j] >= table[i][j + 1] {
-            i += 1;
-        } else {
-            j += 1;
-        }
-    }
-    (a, b)
-}
-
-/// The most words the change compares; past it the two texts are shown
-/// whole without marks, so a page never spends quadratic time on a long
-/// text. A constant of the build, unmeasured.
-const CHANGE_WORDS_MAX: usize = 2_000;
-
-/// One side of the change: each word escaped, a dropped one struck through
-/// (`del`), an added one underlined (`ins`), so the change does not rest
-/// on colour.
-fn side(list: &[&str], marks: &[bool], tag: &str) -> String {
-    list.iter()
-        .zip(marks)
-        .map(|(w, keep)| {
-            if *keep {
-                text(w)
-            } else {
-                format!("<{tag}>{}</{tag}>", text(w))
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-/// The change against the version a successor replaces, at page density
-/// (MemoryCard): a `<details>` that names its baseline and opens on two
-/// named blocks, "Was" and "Now"; for a retirement, the reason beside what
-/// stops being served. The comparison is the console's own: the longest
-/// common subsequence of whitespace-split words, no model.
-pub(crate) fn change(
-    was_version: i64,
-    was: &str,
-    now_version: u32,
-    now: &str,
-    retirement: bool,
-) -> String {
-    if retirement {
-        return format!(
-            r#"<details class="oml-diff" open><summary>What stops being served</summary><div class="sides"><div class="side"><p class="label">Reason · this version</p><p class="t">{}</p></div><div class="side"><p class="label">Stops being served · v{was_version}</p><p class="t">{}</p></div></div></details>"#,
-            text(now),
-            text(was)
-        );
-    }
-    let (a, b) = (words(was), words(now));
-    let (ka, kb) = if a.len() + b.len() > CHANGE_WORDS_MAX {
-        (vec![true; a.len()], vec![true; b.len()])
-    } else {
-        kept(&a, &b)
-    };
-    let removed = ka.iter().filter(|k| !**k).count();
-    let added = kb.iter().filter(|k| !**k).count();
-    format!(
-        r#"<details class="oml-diff" open><summary>Change against v{was_version} <span class="n">baseline: v{was_version} · {removed} words removed, {added} added</span></summary><div class="sides"><div class="side"><p class="label">Was · v{was_version}</p><p class="t">{}</p></div><div class="side"><p class="label">Now · v{now_version}, this version</p><p class="t">{}</p></div></div></details>"#,
-        side(&a, &ka, "del"),
-        side(&b, &kb, "ins"),
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_change_strikes_a_removed_word_and_underlines_an_added_one() {
-        let block = change(2, "runs on ci-small", 3, "runs on ci-medium now", false);
-        assert!(block.contains("<del>ci-small</del>"), "{block}");
-        assert!(
-            block.contains("<ins>ci-medium</ins> <ins>now</ins>"),
-            "{block}"
-        );
-        assert!(block.contains("1 words removed, 2 added"), "{block}");
-        assert!(block.contains("Was · v2") && block.contains("Now · v3, this version"));
-        let retired = change(1, "the old wiki", 2, "shut down", true);
-        assert!(retired.contains("Stops being served · v1"), "{retired}");
-    }
 
     #[test]
     fn an_instant_reads_to_the_second_in_utc() {

@@ -770,6 +770,7 @@ where
                     state: None,
                     origin_kinds: Vec::new(),
                     author: None,
+                    kinds: Vec::new(),
                     after: None,
                     limit,
                 },

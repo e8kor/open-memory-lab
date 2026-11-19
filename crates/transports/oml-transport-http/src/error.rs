@@ -405,6 +405,17 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "A memory is started in a user root by its own user's keys only: a new memory, or a successor of a ratified retirement, which puts the claim back in service. A key granted there reads, reviews and proposes a successor or a retirement of a served memory (ADR-0044 d16).",
             "this workspace lies in a user's root: only that user's keys start a memory there",
         ),
+        AppError::ReviewKeyInOwnRoot => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "access.verb_ceiling",
+            "Inside a person's own root their web key starts a claim; their review key starts one only in a shared workspace where it holds reviewer, so every write in the root counts on the person's account (ADR-0082 d2, d10).",
+            "this workspace lies in the person's own root: start the claim as the person's web key",
+        )
+        .with_details(json!({
+            "reason": "review_key_in_own_root",
+            "verb": "submit",
+            "role": "reviewer",
+        })),
         AppError::UserRootInvalid => ApiError::auth_invalid("user_root"),
         AppError::RoleExclusive => ApiError::new(
             StatusCode::FORBIDDEN,

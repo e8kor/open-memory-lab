@@ -117,6 +117,11 @@ use crate::ports::{
 };
 use crate::telemetry::{HITS_STORED, Label, RecallEvent, Remembered, Telemetry, TelemetryItem};
 use crate::types::{
+    AdminTodoCounts, BULK_VERDICT_MAX, BulkItem, BulkVerdictRequest, FindingVerdict, FoundBy,
+    HELD_PAGE_MAX, HeldFilter, HeldItem, HeldListingRequest, HeldPage, ReviewLane, TODO_COUNT_CAP,
+    TODO_SCAN_ROWS_MAX, TodoCounts, VersionFinding,
+};
+use crate::types::{
     AppError, Approval, AssignedNames, AuthorizationRecord, AuthorizeOutcome, AuthorizePage,
     AuthorizeParams, Bearer, BootstrapRequest, BootstrapResult, Brief, BriefEdgePage,
     BriefEdgeProposalOutcome, BriefEdgeRatification, BriefEdgeRecord, BriefEdgeView,
@@ -134,17 +139,14 @@ use crate::types::{
     OwnHeldGuardrail, PROVIDER_TENANT, ProposeBriefEdge, ProposeClaimEdge, RecallHit,
     RecallRequest, RecallResult, RefreshFacts, RefreshForm, RegisteredClient, RerankOutcome,
     SIMILAR_KINDS, ServedGuardrail, ServedMemory, SimilarItem, SkillHit, SourceCheck,
-    SourceCheckReceipt, SourceCheckRequest, SubmitOutcome, SubmitReceipt, SubmitRequest,
-    SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent,
-    TenantRow, TokenPair, TransitionRecord, TransitionState, TransitionView, TreeNode, TreePage,
-    UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami, WithdrawReceipt,
-    WithdrawRequest, WorkspaceInfo, WorkspaceRecord, WorkspaceStatusView,
-};
-use crate::types::{
-    BULK_VERDICT_MAX, BulkItem, BulkVerdictRequest, FindingVerdict, FoundBy, HELD_PAGE_MAX,
-    HeldFilter, HeldItem, HeldListingRequest, HeldPage, ReviewLane, VersionFinding,
+    SourceCheckReceipt, SourceCheckRequest, StateClause, SubmitOutcome, SubmitReceipt,
+    SubmitRequest, SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage,
+    TailedEvent, TenantRow, TokenPair, TransitionRecord, TransitionState, TransitionView, TreeNode,
+    TreePage, UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami,
+    WithdrawReceipt, WithdrawRequest, WorkspaceInfo, WorkspaceRecord, WorkspaceStatusView,
 };
 use crate::types::{CatalogMark, KindCount};
+use crate::types::{Preview, PreviewFacts, PreviewRequest, SkillShadow};
 use crate::types::{ServedSkill, SkillBody, SkillRead, SkillRequest, SkillSet};
 use oml_domain::skills::{SKILL_PAGE, SkillCandidate, offer, skill_uri};
 
@@ -659,6 +661,34 @@ fn require_role(key: &KeyRecord, role: Role, verb: &'static str) -> Result<(), A
 /// Step 1 of the refusal order: the key's role must admit the grant role the
 /// verb needs. It reads no node, so it runs before the workspace resolves
 /// (roles-and-keys.md grant admissibility and refusal order; ADR-0025 d1).
+/// The verbs a key lists on a node: the verbs table over its effective
+/// roles, and `remember` for a person's session reviewer key where it
+/// holds reviewer and reader, the grants under which its submit is held,
+/// outside its person's own root (ADR-0082 d10, d11, and d10's note of
+/// 2026-11-19), so the verbs it lists are the verbs it may use.
+fn listed_verbs(
+    key: &KeyRecord,
+    effective: &BTreeSet<Role>,
+    in_own_root: bool,
+) -> Vec<&'static str> {
+    let mut verbs = effective_verbs(effective, key.used_by);
+    if session_reviewer_starts_claims(key)
+        && !in_own_root
+        && effective.contains(&Role::Reviewer)
+        && effective.contains(&Role::Reader)
+        && !verbs.contains(&"remember")
+    {
+        verbs.push("remember");
+    }
+    verbs
+}
+
+/// Whether `key` is a person's session key whose role is reviewer, which
+/// starts a held claim where it holds reviewer and reader (ADR-0082 d10).
+fn session_reviewer_starts_claims(key: &KeyRecord) -> bool {
+    key.credential == Credential::Session && key.role == Role::Reviewer
+}
+
 fn require_admissible(key: &KeyRecord, needed: Role, verb: &'static str) -> Result<(), AppError> {
     // A curator key reaches only the verbs that read or narrow (ADR-0030
     // d9), before any lookup.
@@ -4039,6 +4069,7 @@ where
         } else {
             self.journal.stale_count(tenant_id, node).await?
         };
+        let approved_by_kind = self.journal.approved_by_kind(tenant_id, node).await?;
         // The node's in-progress root, read off the ancestry (ADR-0030 d13).
         let in_progress_root = ancestry.iter().find(|w| w.in_progress).cloned();
         // The node's federation field, served beside the policy (ADR-0072
@@ -4053,6 +4084,7 @@ where
         Ok(WorkspaceInfo {
             in_progress_root,
             stale_versions,
+            approved_by_kind,
             path: derived_path(&ancestry),
             policy: review_policy(),
             federation,
@@ -4065,7 +4097,9 @@ where
             my_effective_verbs: if structure {
                 Vec::new()
             } else {
-                effective_verbs(&effective, caller.key.used_by)
+                let in_own_root = session_reviewer_starts_claims(&caller.key)
+                    && self.in_own_root(&caller.key, node).await?;
+                listed_verbs(&caller.key, &effective, in_own_root)
             },
             permission_epoch: caller.permission_epoch,
         })
@@ -4735,6 +4769,19 @@ where
         self.person_root_of(&unlinked).await
     }
 
+    /// The account whose limits a write by `key` is held to: a user key's
+    /// own, and for a person's `<user>-review`, a session key of no
+    /// account, its person's; `None` for a tenant key, a linked one
+    /// included, and for `<user>-curate` and `<user>-admin`: curation is
+    /// not charged to the person (ADR-0071 d1, d3, the operator's decision
+    /// of 2026-11-19; ADR-0082 d10).
+    async fn limits_root_of(&self, key: &KeyRecord) -> Result<Option<Uuid>, AppError> {
+        if key.user.is_some() || !auth::is_review_session_key(key) {
+            return Ok(key.user);
+        }
+        self.own_set_root_of(key).await
+    }
+
     /// Whether `workspace` sits inside the user root of the person `key`
     /// acts for; false for a key that acts for no person (ADR-0082 d7).
     async fn in_own_root(&self, key: &KeyRecord, workspace: Uuid) -> Result<bool, AppError> {
@@ -5321,7 +5368,13 @@ where
         // `as_of` reads the scoped listing at an instant that has happened
         // (ADR-0059 d17, d19).
         if let Some(at) = &req.as_of {
-            if req.own || req.author.is_some() || req.tip.is_some() {
+            if req.own
+                || req.author.is_some()
+                || req
+                    .states
+                    .iter()
+                    .any(|c| c.tip.is_some() || c.promoted_since.is_some())
+            {
                 return Err(AppError::AsOfInvalid {
                     field: "as_of",
                     reason: "as_of reads the scoped listing: it does not combine with own, with_own, author or tip",
@@ -5404,7 +5457,7 @@ where
         let filter = ListingFilter {
             scope,
             subtree,
-            state: req.state,
+            states: req.states.clone(),
             kinds: req.kinds.clone(),
             claim_key: req.claim_key.clone(),
             prefix: req.prefix.clone(),
@@ -5412,7 +5465,6 @@ where
             until: req.until.clone(),
             anchor: req.anchor.clone(),
             author: req.author,
-            tip: req.tip,
             as_of: req.as_of.clone(),
         };
         // One row past the page says whether another page exists.
@@ -5817,16 +5869,53 @@ where
         req: &SubmitRequest,
         imported: Option<&crate::types::ImportedWrite>,
     ) -> Result<SubmitOutcome, AppError> {
+        self.submit_pipeline(bearer, req, imported, None)
+            .await?
+            .ok_or_else(|| {
+                StoreError::Backend("a capture stopped at its decision".to_owned()).into()
+            })
+    }
+
+    /// The submit pipeline: every check capture makes, then the capture.
+    /// With `preview` it takes no idempotency record and replays none, sets
+    /// what it decides on `preview` as it goes, and stops before anything is
+    /// sealed, committed or metered, answering `None` (ADR-0082 d5, d10).
+    async fn submit_pipeline(
+        &self,
+        bearer: Bearer<'_>,
+        req: &SubmitRequest,
+        imported: Option<&crate::types::ImportedWrite>,
+        mut preview: Option<&mut PreviewFacts>,
+    ) -> Result<Option<SubmitOutcome>, AppError> {
         let caller = self.authenticate_bearer(bearer).await?;
         let key = &caller.key;
-        require_admissible(key, Role::Writer, "submit")?;
+        // A person's reviewer session key starts a claim where it holds
+        // reviewer and reader, the grants a supersession's step 4 asks; the
+        // version is held and its lineage excludes the key. Every other
+        // reviewer key keeps the verb ceiling (ADR-0082 d2, d8 item 5, d10).
+        let session_reviewer = session_reviewer_starts_claims(key);
+        if !session_reviewer {
+            require_admissible(key, Role::Writer, "submit")?;
+        }
         // The body's workspace, by id or name, resolves after step 1 and
         // before the record is looked up, so either spelling is one request
         // (ADR-0026 d4).
         let workspace_id = self.target_workspace(key, req.workspace.as_ref()).await?;
-        let access = self
-            .require_access(&caller, workspace_id, Role::Writer, "submit")
-            .await;
+        let access = if session_reviewer {
+            match self
+                .require_access(&caller, workspace_id, Role::Reviewer, "submit")
+                .await
+            {
+                Ok(()) => {
+                    self.require_access(&caller, workspace_id, Role::Reader, "submit")
+                        .await
+                }
+                refused => refused,
+            }
+        } else {
+            self.require_access(&caller, workspace_id, Role::Writer, "submit")
+                .await
+        };
         // A memory is started in a user root by its own user's keys only.
         // The rule is answered where step 2 allows or step 3 would answer
         // `access.grant_refused`, which a key that reads the node gets; a
@@ -5834,6 +5923,12 @@ where
         // (ADR-0044 d16).
         if matches!(access, Ok(()) | Err(AppError::GrantRefused { .. })) {
             self.refuse_another_users_root(key, workspace_id).await?;
+        }
+        // Inside the person's own root their web key starts a claim, so
+        // every write there counts on their account; the review key starts
+        // one only outside it (ADR-0082 d2; d10, note of 2026-11-19).
+        if session_reviewer && access.is_ok() && self.in_own_root(key, workspace_id).await? {
+            return Err(AppError::ReviewKeyInOwnRoot);
         }
         if let Err(refusal) = access {
             // A user key reads `universe` and never writes it: it is told
@@ -5895,8 +5990,15 @@ where
             workspace_id,
             idem_key: req.idempotency_key.clone(),
         };
+        if let Some(facts) = preview.as_deref_mut() {
+            facts.workspace_id = Some(workspace_id);
+            facts.kind = Some(req.kind);
+        }
         let request_digest = submit_request_digest(req, &claim_key, verb, workspace_id);
-        if let Some(record) = self.journal.idempotency_get(&scope).await? {
+        // A preview takes no record and replays none (ADR-0082 d10).
+        if preview.is_none()
+            && let Some(record) = self.journal.idempotency_get(&scope).await?
+        {
             if record.request_digest != request_digest {
                 return Err(AppError::IdempotencyDigestMismatch);
             }
@@ -5905,17 +6007,20 @@ where
             receipt.similar = self
                 .still_readable(&caller, std::mem::take(&mut receipt.similar))
                 .await?;
-            return Ok(SubmitOutcome {
+            return Ok(Some(SubmitOutcome {
                 receipt,
                 replayed: true,
-            });
+            }));
         }
 
         // The account's limits, read once and before the head: the check
         // below and the commit's ceiling hold to the same ones, and nothing
         // is looked up in the window a conflicting commit reopens
-        // (ADR-0071 d3).
-        let ceiling = self.ceiling_for(key.tenant_id, key.user).await?;
+        // (ADR-0071 d3). A person's session key is held to its person's
+        // (ADR-0082 d10, note of 2026-11-19).
+        let ceiling = self
+            .ceiling_for(key.tenant_id, self.limits_root_of(key).await?)
+            .await?;
 
         // The head first, then the node's status, the ancestors' closures,
         // which a claim edge's proposal widens, and the claim_key read: a
@@ -5979,6 +6084,9 @@ where
             &mut scan_finding,
             &mut findings,
         )?;
+        if let Some(facts) = preview.as_deref_mut() {
+            facts.findings.clone_from(&findings);
+        }
 
         // The lineage closure: the author plus every declared ancestor's
         // closure — R2 runs over the whole of it (roles-and-keys.md). An
@@ -6050,6 +6158,10 @@ where
             )
             .await?;
 
+        // A preview stops here: nothing is sealed, committed or metered.
+        if preview.is_some() {
+            return Ok(None);
+        }
         let memory_id = self.ids.new_id();
         let body_digest = sha256_digest_string(body.as_bytes());
         let body_bytes = body.len() as u64;
@@ -6183,10 +6295,10 @@ where
         if key.profile == Some(KeyProfile::Curator) {
             self.observer.curation(CuratorAct::Write.as_str());
         }
-        Ok(SubmitOutcome {
+        Ok(Some(SubmitOutcome {
             receipt,
             replayed: false,
-        })
+        }))
     }
 
     /// Serve the next reviewable held item to this reviewer, claiming it,
@@ -6416,46 +6528,12 @@ where
         let mut items = Vec::with_capacity(rows.len());
         for row in rows {
             let m = &row.memory;
-            // R2 and R3 in depth: nothing the queue would not serve this key
-            // leaves the application layer, whatever the store returned.
-            let excluded = m.lineage_key_ids.contains(&key.key_id)
-                || m.lineage_principals.contains(&key.principal);
-            if m.status != MemoryStatus::Held || excluded || !filter.nodes.contains(&m.workspace_id)
-            {
+            let Some(same) = self
+                .held_admits(key, &filter, &walked, reviewer_person.as_ref(), m)
+                .await?
+            else {
                 continue;
-            }
-            // The author's person as recorded at the write (ADR-0085 d16,
-            // amended 2026-11-18; #448).
-            let same = same_user(m.author_person.as_ref(), reviewer_person.as_ref());
-            // R2 by person: a row the reviewer's own person wrote outside
-            // that person's root is not theirs to judge, so it is not
-            // listed (ADR-0001 d5; ADR-0082 d7).
-            if same {
-                let in_root = match walked.get(&m.workspace_id) {
-                    Some(w) => w.user(),
-                    None => self
-                        .journal
-                        .workspace(tenant_id, m.workspace_id)
-                        .await?
-                        .and_then(|w| w.user()),
-                };
-                // Whether the row's root is the reviewer's own person's,
-                // from the key row and the walk, without a read where the
-                // walk holds the root: a session key names its person by
-                // the root's name.
-                let own = match (key.user.or(key.linked_user), &key.session_user, in_root) {
-                    (_, _, None) => false,
-                    (Some(root), _, Some(r)) => root == r,
-                    (None, Some(user), Some(r)) => match walked.get(&r) {
-                        Some(w) => &w.name == user,
-                        None => self.person_root_of(key).await? == Some(r),
-                    },
-                    (None, None, Some(_)) => false,
-                };
-                if !own {
-                    continue;
-                }
-            }
+            };
             if let Entry::Vacant(slot) = ancestries.entry(m.workspace_id)
                 && let Some(ancestry) = ancestry_of(&walked, m.workspace_id)
             {
@@ -6484,6 +6562,240 @@ where
             next_cursor,
             lane_authors,
         })
+    }
+
+    /// Whether the held listing serves `m` to `key` under `filter`, and if
+    /// so whether the key names the author's person (`same_user`): the
+    /// application layer's half of the listing's rule, which every read
+    /// that lists or counts held rows applies to what the store returned
+    /// (ADR-0055 d2; ADR-0083 d11). `reviewer_person` is the key's person,
+    /// read once per read.
+    async fn held_admits(
+        &self,
+        key: &KeyRecord,
+        filter: &HeldFilter,
+        walked: &BTreeMap<Uuid, WorkspaceRecord>,
+        reviewer_person: Option<&Name>,
+        m: &MemoryRecord,
+    ) -> Result<Option<bool>, AppError> {
+        let tenant_id = key.tenant_id;
+        // R2 and R3 in depth: nothing the queue would not serve this key
+        // leaves the application layer, whatever the store returned.
+        let excluded = m.lineage_key_ids.contains(&key.key_id)
+            || m.lineage_principals.contains(&key.principal);
+        if m.status != MemoryStatus::Held || excluded || !filter.nodes.contains(&m.workspace_id) {
+            return Ok(None);
+        }
+        // The author's person as recorded at the write (ADR-0085 d16,
+        // amended 2026-11-18; #448).
+        let same = same_user(m.author_person.as_ref(), reviewer_person);
+        // R2 by person: a row the reviewer's own person wrote outside
+        // that person's root is not theirs to judge, so it is not
+        // listed (ADR-0001 d5; ADR-0082 d7).
+        if same {
+            let in_root = match walked.get(&m.workspace_id) {
+                Some(w) => w.user(),
+                None => self
+                    .journal
+                    .workspace(tenant_id, m.workspace_id)
+                    .await?
+                    .and_then(|w| w.user()),
+            };
+            // Whether the row's root is the reviewer's own person's,
+            // from the key row and the walk, without a read where the
+            // walk holds the root: a session key names its person by
+            // the root's name.
+            let own = match (key.user.or(key.linked_user), &key.session_user, in_root) {
+                (_, _, None) => false,
+                (Some(root), _, Some(r)) => root == r,
+                (None, Some(user), Some(r)) => match walked.get(&r) {
+                    Some(w) => &w.name == user,
+                    None => self.person_root_of(key).await? == Some(r),
+                },
+                (None, None, Some(_)) => false,
+            };
+            if !own {
+                return Ok(None);
+            }
+        }
+        Ok(Some(same))
+    }
+
+    /// The live session key of `capacity` that serves the same person as
+    /// the session key `key`, as its caller: the row holding the capacity's
+    /// name, a session key serving that person, not revoked and not
+    /// expired (ADR-0045 d6). `None` where the tenant holds no such key.
+    async fn sibling_session_caller(
+        &self,
+        key: &KeyRecord,
+        capacity: Capacity,
+    ) -> Result<Option<Caller>, AppError> {
+        let Some(user) = &key.session_user else {
+            return Ok(None);
+        };
+        let Ok(name) = pages::key_name(user, capacity.suffix()) else {
+            return Ok(None);
+        };
+        let Some(id) = self
+            .journal
+            .resolve_name(key.tenant_id, NamedKind::Key, &name)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let Some(found) = self.journal.key(key.tenant_id, id).await? else {
+            return Ok(None);
+        };
+        let now = self.clock.now();
+        let serves = found.name.as_ref() == Some(&name)
+            && found.credential == Credential::Session
+            && found.session_user.as_ref() == Some(user)
+            && found.revoked_at.is_none()
+            && !found.expired_at(&now);
+        if !serves {
+            return Ok(None);
+        }
+        Ok(Some(self.caller_of(found).await?))
+    }
+
+    /// The To do counts read (ADR-0083 d11, d14): for a person's web
+    /// session key, `review`, the number of rows the held listing would
+    /// serve the person's reviewer key, `<user>-review`, at `workspace` and
+    /// below it or across every workspace without one, counted under the
+    /// listing's own store read and the listing's own check (`held_admits`), so it counts no
+    /// row that listing would not serve; up to [`TODO_COUNT_CAP`], with
+    /// `truncated` set past it. It reads no text out and journals nothing.
+    /// A person with no live reviewer key, no reviewer grant or a
+    /// `workspace` its reviewer key cannot read counts 0, the workspace not
+    /// named. Groups whose feature is not built are not counted (d14).
+    pub async fn todo_counts(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        workspace: Option<&Reference>,
+    ) -> Result<TodoCounts, AppError> {
+        let caller = self.authenticate_bearer(bearer.into()).await?;
+        if !auth::is_web_session_key(&caller.key) {
+            return Err(AppError::VerbCeiling {
+                role: caller.key.role,
+                verb: "todo_counts",
+            });
+        }
+        let none = TodoCounts::default();
+        let Some(reviewer) = self
+            .sibling_session_caller(&caller.key, Capacity::Review)
+            .await?
+        else {
+            return Ok(none);
+        };
+        let key = &reviewer.key;
+        if require_person_reviewer(key).is_err() {
+            return Ok(none);
+        }
+        let Some(lane) = review_lane(key, None) else {
+            return Ok(none);
+        };
+        let tenant_id = key.tenant_id;
+        let (mut nodes, walked) = self.reviewer_nodes_walked(&reviewer).await?;
+        if let Some(workspace) = workspace {
+            let root = match self.resolve(key, NamedKind::Workspace, workspace).await {
+                Ok(root) => root,
+                Err(AppError::NotFound) => return Ok(none),
+                Err(e) => return Err(e),
+            };
+            let subtree: BTreeSet<Uuid> = self
+                .journal
+                .workspace_subtree(tenant_id, root)
+                .await?
+                .into_iter()
+                .map(|w| w.workspace_id)
+                .collect();
+            nodes.retain(|n| subtree.contains(n));
+        }
+        if nodes.is_empty() {
+            return Ok(none);
+        }
+        let filter = HeldFilter {
+            nodes,
+            author_key_id: None,
+            claim_key_prefix: None,
+            lane,
+        };
+        let reviewer_person = self.person_of(key).await?;
+        let mut after: Option<ListingPosition> = None;
+        let mut review = 0u64;
+        let mut scanned = 0usize;
+        loop {
+            let rows = self
+                .journal
+                .review_held(
+                    tenant_id,
+                    &key.principal,
+                    key.key_id,
+                    &filter,
+                    after.as_ref(),
+                    HELD_PAGE_MAX,
+                )
+                .await?;
+            for row in &rows {
+                // The scan is bounded as the count is: rows the person may
+                // not judge are read and never counted, so past
+                // `TODO_SCAN_ROWS_MAX` read the count stops and says so
+                // (ADR-0083 d11; the review of PR #494, L4).
+                if scanned == TODO_SCAN_ROWS_MAX {
+                    return Ok(TodoCounts {
+                        review,
+                        truncated: true,
+                    });
+                }
+                scanned += 1;
+                if self
+                    .held_admits(key, &filter, &walked, reviewer_person.as_ref(), &row.memory)
+                    .await?
+                    .is_some()
+                {
+                    review += 1;
+                    if review > TODO_COUNT_CAP {
+                        return Ok(TodoCounts {
+                            review: TODO_COUNT_CAP,
+                            truncated: true,
+                        });
+                    }
+                }
+            }
+            match rows.last() {
+                Some(last) if rows.len() == HELD_PAGE_MAX => {
+                    after = Some(ListingPosition {
+                        created_at: last.held_since.clone(),
+                        artifact_id: last.memory.memory_id,
+                    });
+                }
+                _ => break,
+            }
+        }
+        Ok(TodoCounts {
+            review,
+            truncated: false,
+        })
+    }
+
+    /// The administration To do counts read (ADR-0083 d11, d14): a
+    /// person's `<user>-admin` session key's, and no group of it is built yet, so it answers `truncated`
+    /// alone, false; each group joins with its feature (ADR-0089).
+    pub async fn admin_todo_counts(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+    ) -> Result<AdminTodoCounts, AppError> {
+        let caller = self.authenticate_bearer(bearer.into()).await?;
+        // The administration capacity's session key alone: `<user>-curate`
+        // and a tenant admin key share the role, not the capacity (ADR-0083
+        // d11; the review of PR #494, L5).
+        if !auth::is_admin_session_key(&caller.key) {
+            return Err(AppError::VerbCeiling {
+                role: caller.key.role,
+                verb: "admin_todo_counts",
+            });
+        }
+        Ok(AdminTodoCounts::default())
     }
 
     /// The named held rows as the listing would show them to this key, for
@@ -8425,7 +8737,7 @@ where
         let filter = |scope: ListingScope| ListingFilter {
             scope,
             subtree: Some(applicable.to_vec()),
-            state: Some(MemoryStatus::Held),
+            states: vec![StateClause::status(MemoryStatus::Held)],
             kinds: vec![MemoryKind::Steering],
             claim_key: None,
             prefix: None,
@@ -8433,7 +8745,6 @@ where
             until: None,
             anchor: crate::types::AnchorFilter::default(),
             author: None,
-            tip: None,
             as_of: None,
         };
         let current = self.scanner.version().map(str::to_owned);
@@ -9301,6 +9612,224 @@ where
         self.supersede_as(bearer.into(), req, None).await
     }
 
+    /// `POST /v1/memories/preview` (ADR-0082 d5, d10): what capture would
+    /// decide for a submit's body, or a supersession's, deciding it through
+    /// the same pipeline and stopping before anything is sealed, committed,
+    /// held, replayed or metered (ADR-0071 d2). The key is authenticated
+    /// once, so the request rate is charged once (ADR-0079). Every refusal
+    /// the pipeline makes is the answer's `refusal`, beside what it read
+    /// before it; which of them a transport answers as its error is the
+    /// transport's (d10). On a version capture would take, a skill answers
+    /// its prompt name and the same-named skills along its chain, and a
+    /// guardrail its canonical rule and the set size it leaves.
+    pub async fn preview(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        req: &PreviewRequest,
+    ) -> Result<Preview, AppError> {
+        let caller = self.authenticate_bearer(bearer.into()).await?;
+        let mut facts = PreviewFacts::default();
+        let (decided, body, rule, kind_fields) = match req {
+            PreviewRequest::Submit(r) => (
+                self.submit_pipeline(Bearer::Session(&caller), r, None, Some(&mut facts))
+                    .await
+                    .map(|_| ()),
+                &r.body,
+                r.rule.as_ref(),
+                r.kind_fields.as_ref(),
+            ),
+            PreviewRequest::Supersede(r) => (
+                self.supersede_pipeline(Bearer::Session(&caller), r, None, Some(&mut facts))
+                    .await
+                    .map(|_| ()),
+                &r.body,
+                r.rule.as_ref(),
+                r.kind_fields.as_ref(),
+            ),
+        };
+        let body_bytes = nfc(body).len() as u64;
+        let kind = facts.kind.unwrap_or(match req {
+            PreviewRequest::Submit(r) => r.kind,
+            PreviewRequest::Supersede(r) => r.kind.unwrap_or(MemoryKind::Memory),
+        });
+        let retirement = matches!(req, PreviewRequest::Supersede(r) if r.retirement);
+        let needs_person = kind.class().needs_person()
+            || facts
+                .replaces
+                .as_ref()
+                .is_some_and(|t| t.kind.class().needs_person());
+        let mut preview = Preview {
+            refusal: decided.err(),
+            findings: std::mem::take(&mut facts.findings),
+            needs_person,
+            body_bytes,
+            budget_tokens: budget_tokens(body_bytes),
+            rule: None,
+            offered_as: None,
+            shadows: Vec::new(),
+            set_after: None,
+            passages: None,
+        };
+        let Some(workspace_id) = facts.workspace_id.filter(|_| preview.refusal.is_none()) else {
+            return Ok(preview);
+        };
+        match kind {
+            MemoryKind::Skill if !retirement => {
+                let name = match (kind_fields, facts.replaces.as_ref()) {
+                    (Some(KindFields::Skill { name, .. }), _) => Some(name.clone()),
+                    (_, Some(target)) => match target.kind_fields.as_deref() {
+                        Some(KindFields::Skill { name, .. }) => Some(name.clone()),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                if let Some(name) = name {
+                    preview.shadows = self.skill_shadows(&caller, workspace_id, &name).await?;
+                    preview.offered_as = Some(name);
+                }
+            }
+            // A document's passages, cut by the rule capture cuts with, by
+            // fragment and lines (ADR-0081 d3; ADR-0082 d5).
+            MemoryKind::Document if !retirement => {
+                let format = match req {
+                    PreviewRequest::Submit(r) => r.format.as_deref(),
+                    PreviewRequest::Supersede(r) => r.format.as_deref(),
+                }
+                .unwrap_or_else(|| default_format(MemoryKind::Document));
+                let cut = if format == "text/markdown" {
+                    oml_passage::Format::Markdown
+                } else {
+                    oml_passage::Format::Plain
+                };
+                preview.passages = oml_passage::passages(&nfc(body), cut).ok().map(|cut| {
+                    cut.into_iter()
+                        .map(|p| HitPassage {
+                            fragment: p.fragment,
+                            ordinal: p.ordinal,
+                            start_line: p.start_line,
+                            end_line: p.end_line,
+                            heading_path: p.heading_path,
+                        })
+                        .collect()
+                });
+            }
+            MemoryKind::Guardrail => {
+                preview.rule = rule
+                    .and_then(|r| guardrail::Rule::parse(r).ok())
+                    .map(|r| r.to_value());
+                preview.set_after = self
+                    .guardrail_set_after(&caller, workspace_id, facts.replaces.as_ref(), retirement)
+                    .await?;
+            }
+            _ => {}
+        }
+        Ok(preview)
+    }
+
+    /// The same-named promoted skills along `workspace_id`'s chain that the
+    /// caller reads: an ancestor's, which a skill there shadows, and a
+    /// descendant's, which shadows it below (ADR-0080 d5). A workspace the
+    /// caller cannot read names nothing.
+    async fn skill_shadows(
+        &self,
+        caller: &Caller,
+        workspace_id: Uuid,
+        name: &str,
+    ) -> Result<Vec<SkillShadow>, AppError> {
+        let tenant_id = caller.key.tenant_id;
+        let chain = self
+            .journal
+            .workspace_ancestry(tenant_id, workspace_id)
+            .await?
+            .unwrap_or_default();
+        let ids: Vec<Uuid> = chain.iter().map(|w| w.workspace_id).collect();
+        let mut paths: BTreeMap<Uuid, (String, bool)> = BTreeMap::new();
+        for i in 1..ids.len() {
+            if caller.effective(&ids[i..]).contains(&Role::Reader) {
+                paths.insert(ids[i], (derived_path(&chain[i..]), false));
+            }
+        }
+        let mut walked = BTreeMap::new();
+        for node in self
+            .nodes_walked(caller, workspace_id, Role::Reader, Some(&mut walked))
+            .await?
+        {
+            if node == workspace_id {
+                continue;
+            }
+            if let Some(ancestry) = ancestry_of(&walked, node) {
+                paths.insert(node, (derived_path(&ancestry), true));
+            }
+        }
+        let nodes: Vec<Uuid> = paths.keys().copied().collect();
+        let rows = self
+            .journal
+            .instruction_rows(
+                tenant_id,
+                MemoryKind::Skill,
+                &nodes,
+                caller.key.key_id,
+                &[],
+                false,
+            )
+            .await?;
+        let mut shadows: Vec<SkillShadow> = rows
+            .iter()
+            .filter(|m| m.status == MemoryStatus::Promoted && m.is_tip && !m.retirement)
+            .filter(|m| {
+                matches!(m.kind_fields.as_deref(), Some(KindFields::Skill { name: n, .. }) if n == name)
+            })
+            .filter_map(|m| {
+                paths.get(&m.workspace_id).map(|(path, below)| SkillShadow {
+                    workspace_path: path.clone(),
+                    shadowed_by: *below,
+                })
+            })
+            .collect();
+        shadows.sort_by(|a, b| {
+            (a.shadowed_by, &a.workspace_path).cmp(&(b.shadowed_by, &b.workspace_path))
+        });
+        shadows.dedup();
+        Ok(shadows)
+    }
+
+    /// The promoted guardrails an agent at `workspace_id` would load after
+    /// the previewed version is approved: the set in force under the
+    /// caller's own guardrail scope, one more for a new rule, one fewer for
+    /// the retirement of a rule in it (ADR-0037 d7; ADR-0082 d5); `None`
+    /// for a caller that does not read the workspace.
+    async fn guardrail_set_after(
+        &self,
+        caller: &Caller,
+        workspace_id: Uuid,
+        replaces: Option<&MemoryRecord>,
+        retirement: bool,
+    ) -> Result<Option<usize>, AppError> {
+        // A key that writes the workspace but does not read it is told no
+        // set it may not read, and the preview still answers what capture
+        // would decide (the review of PR #494, L3).
+        let ancestry = self.ancestry(caller.key.tenant_id, workspace_id).await?;
+        if caller.denied(&ancestry) || !caller.effective(&ancestry).contains(&Role::Reader) {
+            return Ok(None);
+        }
+        let set = self
+            .guardrails(
+                Bearer::Session(caller),
+                &GuardrailRequest {
+                    workspace: Some(Reference::Id(workspace_id)),
+                    include_own_held: false,
+                },
+            )
+            .await?;
+        let in_force = set.guardrails.iter().filter(|g| !g.unreviewed).count();
+        let replaced_in_force = replaces.is_some_and(|t| set.served_ids.contains(&t.memory_id));
+        Ok(Some(match (replaced_in_force, retirement) {
+            (true, true) => in_force.saturating_sub(1),
+            (true, false) | (false, true) => in_force,
+            (false, false) => in_force + 1,
+        }))
+    }
+
     /// [`Self::supersede`], with an import's record of the write stored in
     /// its own commit (ADR-0084 I14).
     pub(crate) async fn supersede_as(
@@ -9309,6 +9838,25 @@ where
         req: &SupersedeRequest,
         imported: Option<&crate::types::ImportedWrite>,
     ) -> Result<SupersedeOutcome, AppError> {
+        self.supersede_pipeline(bearer, req, imported, None)
+            .await?
+            .ok_or_else(|| {
+                StoreError::Backend("a capture stopped at its decision".to_owned()).into()
+            })
+    }
+
+    /// The supersede pipeline: every check a supersession makes, then the
+    /// capture. With `preview` it takes no idempotency record and replays
+    /// none, sets what it decides on `preview` as it goes, and stops before
+    /// anything is sealed, committed or metered, answering `None` (ADR-0082
+    /// d5, d10).
+    async fn supersede_pipeline(
+        &self,
+        bearer: Bearer<'_>,
+        req: &SupersedeRequest,
+        imported: Option<&crate::types::ImportedWrite>,
+        mut preview: Option<&mut PreviewFacts>,
+    ) -> Result<Option<SupersedeOutcome>, AppError> {
         let caller = self.authenticate_bearer(bearer).await?;
         let key = &caller.key;
         let admissible = admissible_grant_roles(key.role);
@@ -9337,15 +9885,21 @@ where
             idem_key: req.idempotency_key.clone(),
         };
         let request_digest = supersede_request_digest(req)?;
-        if let Some(receipt) = self.recorded(&scope, &request_digest).await? {
-            return Ok(SupersedeOutcome {
+        // A preview takes no record and replays none (ADR-0082 d10).
+        if preview.is_none()
+            && let Some(receipt) = self.recorded(&scope, &request_digest).await?
+        {
+            return Ok(Some(SupersedeOutcome {
                 receipt: self.replayed_supersede(&caller, receipt).await?,
                 replayed: true,
-            });
+            }));
         }
         // The account's limits, read once and before the head, as a
-        // submit's are (ADR-0071 d3).
-        let ceiling = self.ceiling_for(key.tenant_id, key.user).await?;
+        // submit's are, a session key's its person's (ADR-0071 d3;
+        // ADR-0082 d10, note of 2026-11-19).
+        let ceiling = self
+            .ceiling_for(key.tenant_id, self.limits_root_of(key).await?)
+            .await?;
 
         // The head first, then the target, whose closure a claim edge's
         // proposal widens, the ancestors and the ordinal: a commit landing in
@@ -9386,8 +9940,15 @@ where
                 .await?;
         } else {
             // Step 3: own is the target version's authoring key, never the
-            // claim's first version (roles-and-keys.md#own).
-            if target.author_key_id != key.key_id {
+            // claim's first version (roles-and-keys.md#own); for a person's
+            // session key, any key of its person, read the one way
+            // `same_user` reads it (ADR-0082 d2, d8 item 2).
+            let own = target.author_key_id == key.key_id
+                || (key.credential == Credential::Session
+                    && self
+                        .same_person(key.tenant_id, target.author_key_id, key)
+                        .await?);
+            if !own {
                 return Err(AppError::AuthorOnly);
             }
             self.require_access(&caller, target.workspace_id, Role::Writer, "supersede")
@@ -9410,6 +9971,15 @@ where
         // the version the caller names is refused before the tip check,
         // nothing captured; another author's held version never changes the
         // answer (ADR-0057 d19; R3).
+        // A preview knows the version it replaces before any version check
+        // refuses, so its kind decides `needs_person` beside that refusal
+        // (ADR-0082 d5; the review of PR #494, L2).
+        if let Some(facts) = preview.as_deref_mut() {
+            facts.workspace_id = Some(target.workspace_id);
+            facts.kind =
+                Some(successor_kind(target.kind, req.kind, req.retirement).unwrap_or(target.kind));
+            facts.replaces = Some(target.clone());
+        }
         let claim_state = self
             .journal
             .claim_key_state(key.tenant_id, target.workspace_id, &target.claim_key)
@@ -9433,11 +10003,13 @@ where
             // An attempt under the same key that committed since the lookup
             // above made the claim move on: its record answers this one, as
             // it answers any replay (http-api.md idempotency).
-            if let Some(receipt) = self.recorded(&scope, &request_digest).await? {
-                return Ok(SupersedeOutcome {
+            if preview.is_none()
+                && let Some(receipt) = self.recorded(&scope, &request_digest).await?
+            {
+                return Ok(Some(SupersedeOutcome {
                     receipt: self.replayed_supersede(&caller, receipt).await?,
                     replayed: true,
-                });
+                }));
             }
             return Err(AppError::VersionConflict { current: latest });
         }
@@ -9449,6 +10021,11 @@ where
             });
         }
         let kind = successor_kind(target.kind, req.kind, req.retirement)?;
+        if let Some(facts) = preview.as_deref_mut() {
+            facts.workspace_id = Some(target.workspace_id);
+            facts.kind = Some(kind);
+            facts.replaces = Some(target.clone());
+        }
         if req.refuse_vocabulary_target
             && matches!(
                 target.kind,
@@ -9539,6 +10116,9 @@ where
             &mut scan_finding,
             &mut findings,
         )?;
+        if let Some(facts) = preview.as_deref_mut() {
+            facts.findings.clone_from(&findings);
+        }
         // derives_from ⊇ {target}; the lineage closure is the proposer plus
         // every ancestor's closure, the target's included (roles-and-keys.md).
         let mut derives_from = vec![target.memory_id];
@@ -9614,6 +10194,10 @@ where
             .await?
         };
 
+        // A preview stops here: nothing is sealed, committed or metered.
+        if preview.is_some() {
+            return Ok(None);
+        }
         let successor_id = self.ids.new_id();
         let body_digest = sha256_digest_string(body.as_bytes());
         let body_bytes = body.len() as u64;
@@ -9745,10 +10329,10 @@ where
                 .recorded(&scope, &request_digest)
                 .await?
                 .ok_or(AppError::Store(StoreError::IdempotencyRecorded))?;
-            return Ok(SupersedeOutcome {
+            return Ok(Some(SupersedeOutcome {
                 receipt: self.replayed_supersede(&caller, receipt).await?,
                 replayed: true,
-            });
+            }));
         }
         committed?;
         // A supersession labels the key's recall that served the target,
@@ -9769,10 +10353,10 @@ where
                 CuratorAct::Write.as_str()
             });
         }
-        Ok(SupersedeOutcome {
+        Ok(Some(SupersedeOutcome {
             receipt,
             replayed: false,
-        })
+        }))
     }
 
     /// Propose a claim edge `from_artifact_id -> to_artifact_id` carrying

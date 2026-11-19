@@ -126,6 +126,36 @@ fn a_held_guardrail_decodes_with_no_promotion_and_its_unreviewed_mark() {
     assert_eq!(promoted.effect_inside, None);
 }
 
+/// A document's preview carries its passages by fragment and lines, and a
+/// preview from an API that serves none decodes with none (ADR-0082 d5;
+/// ADR-0081 d3; #409).
+#[test]
+fn a_document_preview_reads_its_passages() {
+    let preview: oml_sdk::MemoryPreview = serde_json::from_value(json!({
+        "would_capture": true, "refusal": null, "findings": [], "needs_person": false,
+        "body_bytes": 53, "budget_tokens": 14,
+        "passages": [
+            {"fragment": "runbook", "ordinal": 0, "start_line": 1, "end_line": 3,
+             "heading_path": ["Runbook"]},
+            {"fragment": "deploy", "ordinal": 1, "start_line": 5, "end_line": 7,
+             "heading_path": ["Runbook", "Deploy"]}
+        ]
+    }))
+    .expect("a preview");
+    let cut: Vec<(&str, u32, u32)> = preview
+        .passages
+        .iter()
+        .map(|p| (p.fragment.as_str(), p.start_line, p.end_line))
+        .collect();
+    assert_eq!(cut, vec![("runbook", 1, 3), ("deploy", 5, 7)]);
+    let older: oml_sdk::MemoryPreview = serde_json::from_value(json!({
+        "would_capture": true, "refusal": null, "findings": [], "needs_person": false,
+        "body_bytes": 8, "budget_tokens": 2
+    }))
+    .expect("a preview without passages");
+    assert!(older.passages.is_empty());
+}
+
 /// A recall whose `kinds` does not name steering answers `steering:
 /// "not_requested"`, which the SDK keeps apart from an empty list, "none in
 /// force"; any other string is refused (ADR-0092 d2).

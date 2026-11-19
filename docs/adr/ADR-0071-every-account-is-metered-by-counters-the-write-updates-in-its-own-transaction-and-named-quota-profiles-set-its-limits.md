@@ -42,7 +42,13 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
   `user_root`.** An account is named by the id of the person's root workspace `universe.<user>`,
   the `user_root` column of every table below, as in `user_quotas`. A key belongs to the account
   its `api_keys.user_root_id` names, session keys included. A write is charged to the account of
-  the key that wrote it. A tenant key, whose `user_root_id` is null, belongs to no account. Its
+  the key that wrote it. *(Note of 2026-11-19, the review of PR #494, H1, and the operator's decision of the same
+  day: a person's `<user>-review`, a session key with no `user_root_id`, belongs to its person's
+  account, the user root its `session_for` names, since ADR-0082 d10 lets the review key start
+  claims outside the root. Curation is not charged to the person: `<user>-curate` belongs to no
+  account and its writes stay unmetered, as they were before, and `<user>-admin` belongs to none.
+  The review capacity is named, not every session key of no root. Migration 0065's
+  `oml_key_account` reads the rule for the fold and the drift report alike.)* A tenant key, whose `user_root_id` is null, belongs to no account. Its
   writes are counted in the tenant's aggregate metrics only. A key a person's root holds cannot
   write outside it (ADR-0044 d3), so "what their keys write" and "what lies in their root" name
   the same rows today. The key decides because it stays true if a grant outside the root is ever

@@ -273,7 +273,7 @@ impl World {
                     own: false,
                     workspace: Some(scope.into()),
                     claim_key: None,
-                    state: None,
+                    states: Vec::new(),
                     kinds: Vec::new(),
                     prefix: None,
                     counts: false,
@@ -283,7 +283,6 @@ impl World {
                     cursor: None,
                     anchor: oml_app::types::AnchorFilter::default(),
                     author: None,
-                    tip: None,
                     as_of: None,
                 },
             )
@@ -440,7 +439,7 @@ async fn a_held_version_with_a_hold_finding_is_never_served_unreviewed_in_progre
                 own: true,
                 workspace: Some(w.proj.into()),
                 claim_key: None,
-                state: None,
+                states: Vec::new(),
                 kinds: Vec::new(),
                 prefix: None,
                 counts: false,
@@ -450,7 +449,6 @@ async fn a_held_version_with_a_hold_finding_is_never_served_unreviewed_in_progre
                 cursor: None,
                 anchor: oml_app::types::AnchorFilter::default(),
                 author: None,
-                tip: None,
                 as_of: None,
             },
         )

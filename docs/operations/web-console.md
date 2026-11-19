@@ -12,17 +12,30 @@ SDKs do. It holds no store and writes no journal. The server keeps the API, sign
 that has not moved yet.
 
 The pages move one at a time, and each moved page gets its own path under `/web/`. In this build
-`oml-web` serves these views: the Guardrails view of the user page at `GET /web/guardrails`; the
+`oml-web` serves these views: a workspace's own page at `GET /web/workspace?workspace=&kind=`,
+with its forms at `/web/workspace/new`, `/web/workspace/edit` and `/web/workspace/retire`, and the
+admin side's read-only `GET /web/admin/workspace`; `GET /web/guardrails`, the former Guardrails
+view, answers `308` to the workspace page's Guardrails kind; the
 Workspaces view at `/web/workspaces` on the user page and `/web/admin/workspaces` on the admin page;
 the Memories list at `GET /web/memories` and `GET /web/admin/memories`; the Catalog at
 `GET /web/catalog`; the Atlas at
 `GET /web/atlas` and `GET /web/admin/atlas`, with the list's JSON at `GET /web/data/memories` and
-`GET /web/admin/data/memories`; the Review view at `/web/review` and `/web/admin/review`; and the
+`GET /web/admin/data/memories`; the To do page at `/web/todo` and `/web/admin/todo`, with the Judge
+page at `/web/todo/judge`; and the
 Keys view at `/web/keys` and `/web/admin/keys`. Every act on them runs through the API as the
 person's session keys, and a form sent twice runs once. Making a workspace's drafts visible to everyone working here or to
 the writing key only, proposing or ratifying a status change, and a bulk verdict are confirmed first. Every page of
-the admin list is one journalled admin read, as before. The Review view holds review next, and on
-the admin page the queue of held memories per workspace and bulk review; the reviewer is never the
+the admin list is one journalled admin read, as before. The Memories list has the views of
+ADR-0083: Approved and Submitted on the user page (`?view=submitted`), Approved, Held and Rejected
+on the admin page (`?view=held|rejected`), the admin views with a Kind filter. What waits on the
+person is the To do page (ADR-0083 d11): its To review group lists the held memories the person's
+reviewer key may judge, oldest first, each row opening Judge, where the verdict is recorded and the
+change of an edit is drawn against the version it replaces; Next opens the oldest. The admin To do
+lists nothing yet and offers no verdict, since the admin key never judges and bulk review is the
+command line's. Every page of both sides carries a "To do · N" badge beside the account name, read
+from one counts call per page view; where that read does not answer, the badge shows no number. The
+old Review paths answer `308` for this release: `/web/review` to `/web/todo` and
+`/web/admin/review` to the admin Memories page's Held view, each keeping the workspace. The reviewer is never the
 author, and a verdict the API refuses is shown with its code. On the Keys view a key's value or a
 connect code is shown once, on the page the act lands on: it travels there sealed in a cookie that
 page clears, never in an address or a log line, and `oml-web` keeps no copy. The admin's Keys view
@@ -170,7 +183,7 @@ included. For Caddy (`deploy/caddy/Caddyfile` is the full route table):
 
 ```caddyfile
 memory.example.com {
-	@oml_web path /web/guardrails /web/workspaces /web/admin/workspaces /web/memories /web/catalog /web/atlas /web/admin/memories /web/admin/atlas /web/data/memories /web/admin/data/memories /web/review /web/admin/review /web/keys /web/admin/keys
+	@oml_web path /web/guardrails /web/workspace /web/workspace/new /web/workspace/edit /web/workspace/retire /web/admin/workspace /web/workspaces /web/admin/workspaces /web/memories /web/catalog /web/atlas /web/admin/memories /web/admin/atlas /web/data/memories /web/admin/data/memories /web/review /web/admin/review /web/todo /web/todo/judge /web/admin/todo /web/keys /web/admin/keys
 	reverse_proxy @oml_web 127.0.0.1:8091
 	reverse_proxy 127.0.0.1:8090
 }
@@ -205,14 +218,14 @@ been measured ([#170](https://github.com/e8kor/open-memory-lab/issues/170)). Cal
 of kept-alive connections.
 
 When the call a page needs fails, `oml-web` shows the server's error code and message with the
-page's request id. When a secondary part fails, such as the workspace list on the Guardrails view,
+page's request id. When a secondary part fails, such as the workspace list on the workspace page,
 the page renders without it and names that call's request id.
 
 A list the page reads a page at a time is read whole or refused, never shown cut short:
 
 | List | Read by | Bound |
 |---|---|---|
-| a person's keys | the Memories view and its JSON | 10 pages of 200 |
+| a person's keys | the Memories view's text search by author and its JSON, and Withdraw on one memory's page | 10 pages of 200 |
 | a person's keys | the Keys views, and the confirmation before a person's last address is removed, which lists their agent keys with a cut-off beside each | 50 pages of 200 |
 | the allowlist | the People page and its acts | 50 pages of 200 |
 

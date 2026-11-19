@@ -335,7 +335,7 @@ fn render(
         glyph_svg("promoted"),
         hide(first == Some("held")),
         glyph_svg("held"),
-        oml_page::web::USER_REVIEW_PATH,
+        oml_page::web::TODO_PATH,
         hide(first == Some("promoted")),
         glyph_svg("promoted"),
     );

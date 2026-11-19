@@ -23,7 +23,7 @@ use super::{App, Caller, Head, Issuance, issuance_refusal, require_role};
 use crate::ports::{Clock, ConnectionStore, IdGen, MetadataFold, Scanner, Signer, WebStore};
 use oml_domain::in_progress::WorkspaceMode;
 use oml_domain::origin::OriginKind;
-use oml_domain::{MemoryStatus, WorkspaceStatus};
+use oml_domain::{MemoryKind, MemoryStatus, WorkspaceStatus};
 
 use crate::cursor::ListingCursor;
 use crate::types::{
@@ -31,7 +31,9 @@ use crate::types::{
     GrantRecord, GrantRequest, IssueKeyRequest, IssuedKey, KeyAccess, KeyRecord, MemoryRecord,
     QueueDepth, WorkspaceRecord,
 };
-use crate::types::{AnchorFilter, ListRequest, ListingPosition, MemoryPage, ServedMemory};
+use crate::types::{
+    AnchorFilter, ListRequest, ListingPosition, MemoryPage, ServedMemory, StateClause,
+};
 
 /// The capacity a page act needs: one session key each (ADR-0045 d6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,6 +148,9 @@ pub struct AdminSearchRequest<'a> {
     pub origin: Option<OriginKind>,
     /// The authoring key, by name or id.
     pub author: Option<Reference>,
+    /// Only rows of these kinds; empty narrows nothing (ADR-0083 d5;
+    /// ADR-0082 d8 item 3).
+    pub kinds: Vec<MemoryKind>,
     pub after: Option<(EventTime, Uuid)>,
     pub limit: usize,
 }
@@ -155,7 +160,17 @@ pub struct AdminSearchRequest<'a> {
 #[derive(Debug, Clone, Default)]
 pub struct WebListRequest {
     pub workspace: Option<Reference>,
-    pub state: Option<AdminState>,
+    /// Rows in any of these states; empty narrows nothing (ADR-0083 d3).
+    pub states: Vec<AdminState>,
+    /// Rows of any of these kinds; empty narrows nothing (ADR-0082 d8
+    /// item 3).
+    pub kinds: Vec<MemoryKind>,
+    /// `mine=true`: the caller's own key set alone, with no scoped part
+    /// (ADR-0083 d3, d14).
+    pub mine: bool,
+    /// Only the `promoted` rows approved at or after this instant; the
+    /// other states stay whole (ADR-0083 d3).
+    pub promoted_since: Option<EventTime>,
     pub origin: Option<OriginKind>,
     /// One of the person's own keys, by name.
     pub author: Option<Name>,
@@ -921,20 +936,39 @@ where
                     .ok_or(AppError::NotFound)?,
             ),
         };
-        let (state, tip) = match req.state {
-            None => (None, None),
-            Some(AdminState::Held) => (Some(MemoryStatus::Held), None),
-            Some(AdminState::Promoted) => (Some(MemoryStatus::Promoted), Some(true)),
-            Some(AdminState::Superseded) => (Some(MemoryStatus::Promoted), Some(false)),
-            Some(AdminState::Rejected) => (Some(MemoryStatus::Rejected), None),
-            Some(AdminState::Demoted) => (Some(MemoryStatus::Demoted), None),
-            Some(AdminState::Withdrawn) => (Some(MemoryStatus::Withdrawn), None),
+        // `promoted_since` with no state names every state, so it narrows
+        // the promoted rows alone (ADR-0083 d3).
+        let states: &[AdminState] = if req.states.is_empty() && req.promoted_since.is_some() {
+            &AdminState::ALL
+        } else {
+            &req.states
         };
+        let states: Vec<StateClause> = states
+            .iter()
+            .map(|s| {
+                let (status, tip) = match s {
+                    AdminState::Held => (MemoryStatus::Held, None),
+                    AdminState::Promoted => (MemoryStatus::Promoted, Some(true)),
+                    AdminState::Superseded => (MemoryStatus::Promoted, Some(false)),
+                    AdminState::Rejected => (MemoryStatus::Rejected, None),
+                    AdminState::Demoted => (MemoryStatus::Demoted, None),
+                    AdminState::Withdrawn => (MemoryStatus::Withdrawn, None),
+                };
+                StateClause {
+                    status,
+                    tip,
+                    promoted_since: req
+                        .promoted_since
+                        .clone()
+                        .filter(|_| *s == AdminState::Promoted),
+                }
+            })
+            .collect();
         let listing = |own: bool, workspace: Option<Reference>| ListRequest {
             own,
             workspace,
-            state,
-            kinds: Vec::new(),
+            states: states.clone(),
+            kinds: req.kinds.clone(),
             claim_key: None,
             prefix: None,
             counts: false,
@@ -948,13 +982,12 @@ where
                 origin_kinds: req.origin.into_iter().collect(),
             },
             author,
-            tip,
             as_of: None,
         };
         let own = self
             .list_memories(Bearer::Session(web), &listing(true, req.workspace.clone()))
             .await?;
-        let scoped = if author.is_some() {
+        let scoped = if author.is_some() || req.mine {
             None
         } else {
             let scope = req.workspace.clone().unwrap_or_else(|| {
@@ -1412,6 +1445,7 @@ where
                 state,
                 origin: None,
                 author: None,
+                kinds: Vec::new(),
                 after,
                 limit,
             },
@@ -1421,7 +1455,8 @@ where
 
     /// The admin read's search with the admin page's every filter
     /// (ADR-0045 d22, d24): [`Self::admin_search`] narrowed besides to one
-    /// `origin.kind` and one authoring key, by name or id, of the tenant. One
+    /// `origin.kind`, one authoring key, by name or id, of the tenant, and a
+    /// set of kinds (ADR-0083 d5). One
     /// `memory.admin_read` per page served, as there.
     pub async fn admin_search_filtered(
         &self,
@@ -1437,6 +1472,7 @@ where
             state,
             origin,
             author,
+            kinds,
             after,
             limit,
         } = req.clone();
@@ -1466,6 +1502,7 @@ where
             state,
             origin_kinds: origin.into_iter().collect(),
             author,
+            kinds,
             after: after.map(|(created_at, artifact_id)| crate::types::ListingPosition {
                 created_at,
                 artifact_id,

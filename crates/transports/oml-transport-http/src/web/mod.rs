@@ -336,6 +336,9 @@ where
             },
             who: session.user.as_str().to_owned(),
             csrf: csrf_token(token),
+            // The lead reads no counts: its refusal's badge has no number
+            // (ADR-0083 d6).
+            todo: page::Todo::Unread,
         };
         let html = page::refusal_page(error.code, &error.message, None, Some(&bar), "/web");
         self.refused_with(self.page(error.status, html), error, line)

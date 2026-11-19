@@ -12,15 +12,17 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use oml_app::app::{AdminMemory, AdminPage, AdminSearchRequest};
-use oml_app::domain::EventTime;
 use oml_app::domain::name::Reference;
 use oml_app::domain::origin::OriginKind;
+use oml_app::domain::{EventTime, MemoryKind};
 use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer, WebStore};
 use oml_app::types::AdminState;
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
 use crate::traffic::Rid;
-use crate::{ApiState, acting, finish, json_response, parse_json, retry_chain};
+use crate::{
+    ApiState, acting, finish, json_response, parse_json_renamed, refuse_renamed, retry_chain,
+};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -32,6 +34,9 @@ struct SearchBody {
     origin_kind: Option<String>,
     /// The authoring key, by name or id, of the tenant.
     author: Option<String>,
+    /// A list of kinds, as recall's body takes it (ADR-0083 d5; ADR-0082
+    /// d8 item 3; ADR-0092 d6); read here so a malformed one names its field.
+    kinds: Option<Value>,
     limit: Option<usize>,
     cursor: Option<String>,
 }
@@ -125,6 +130,28 @@ pub(crate) fn admin_memory_json(m: &AdminMemory, full: bool) -> Value {
     out
 }
 
+/// The search's `kinds`: a non-empty array of kinds, each named once in the
+/// filter; anything else is `request.validation` naming `/kinds`.
+fn search_kinds(kinds: &Value) -> Result<Vec<MemoryKind>, ApiError> {
+    let refused =
+        |why: String| ApiError::validation(why).with_details(json!({ "field": "/kinds" }));
+    let list = kinds
+        .as_array()
+        .filter(|list| !list.is_empty())
+        .ok_or_else(|| refused("kinds is a non-empty array of kinds".to_owned()))?;
+    let mut out = Vec::new();
+    for kind in list {
+        let kind = kind
+            .as_str()
+            .and_then(MemoryKind::parse)
+            .ok_or_else(|| refused(format!("kinds names an unknown kind {kind}")))?;
+        if !out.contains(&kind) {
+            out.push(kind);
+        }
+    }
+    Ok(out)
+}
+
 fn page_json(page: &AdminPage) -> Value {
     json!({
         "items": page.items.iter().map(|m| admin_memory_json(m, false)).collect::<Vec<_>>(),
@@ -156,7 +183,10 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let acting = acting(headers, None)?;
-        let req: SearchBody = parse_json(headers, body)?;
+        // v0.8.0's draft `kind` is `kinds` (ADR-0091 d2).
+        let req: SearchBody = parse_json_renamed(headers, body, |body| {
+            refuse_renamed(body, "", &[("kind", "kinds")])
+        })?;
         let workspace = req
             .workspace
             .as_deref()
@@ -204,12 +234,19 @@ where
                 })
             })
             .transpose()?;
+        let kinds = req
+            .kinds
+            .as_ref()
+            .map(search_kinds)
+            .transpose()?
+            .unwrap_or_default();
         let search = AdminSearchRequest {
             query: req.query.as_deref(),
             workspace,
             state,
             origin,
             author,
+            kinds,
             after,
             limit,
         };

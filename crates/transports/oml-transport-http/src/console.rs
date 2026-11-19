@@ -81,6 +81,20 @@ pub(crate) fn act_digest(user: &str, body: &Bytes) -> String {
     oml_app::domain::Sha256Hash::digest(&bytes).to_prefixed()
 }
 
+/// Whether `caller` is a person's `<user>-admin` session key (ADR-0083
+/// d11).
+fn is_admin_session_key(caller: &Caller) -> bool {
+    caller.key().credential == Credential::Session
+        && caller
+            .key()
+            .name
+            .as_ref()
+            .zip(caller.key().session_user.as_ref())
+            .is_some_and(|(name, user)| {
+                name.as_str() == format!("{}-{}", user.as_str(), Capacity::Admin.suffix())
+            })
+}
+
 /// Whether `caller` is a person's `<user>-web` session key.
 fn is_web_session_key(caller: &Caller) -> bool {
     caller.key().credential == Credential::Session
@@ -718,6 +732,119 @@ where
                     "oldest_at": r.depth.oldest.as_str(),
                 })).collect::<Vec<_>>(),
             }),
+        ))
+    }
+
+    // -- GET /v2/todo/counts, GET /v2/admin/todo/counts ----------------------
+
+    pub(crate) async fn todo_counts(
+        State(st): State<Self>,
+        rid: Rid,
+        query: Result<Query<Vec<(String, String)>>, QueryRejection>,
+        headers: HeaderMap,
+    ) -> Response {
+        let result = match query {
+            Ok(Query(params)) => Self::todo_counts_inner(&st, &params, &headers).await,
+            Err(e) => Err(ApiError::validation(format!(
+                "the query string is not this operation's shape: {e}"
+            ))),
+        };
+        finish(&rid, result)
+    }
+
+    /// `GET /v2/todo/counts`: the To do page's counts for a person's web
+    /// session key, each the length its group's list would serve the
+    /// person's reviewer key, at `workspace` and below or across every
+    /// workspace, up to 1,000 with `truncated` past it; no content, no
+    /// claim, no name (ADR-0083 d11, d14). Only `review` is built.
+    async fn todo_counts_inner(
+        st: &Self,
+        params: &[(String, String)],
+        headers: &HeaderMap,
+    ) -> Result<Response, ApiError> {
+        let caller = st.console_caller(headers).await?;
+        let mut workspace = None;
+        let mut seen = std::collections::HashSet::new();
+        for (name, value) in params {
+            if !seen.insert(name.as_str()) {
+                return Err(ApiError::validation(format!(
+                    "the query parameter {name} is given more than once"
+                )));
+            }
+            match name.as_str() {
+                "workspace" => workspace = Some(reference("workspace", value)?),
+                other => {
+                    return Err(ApiError::validation(format!(
+                        "unknown query parameter {other:?}"
+                    )));
+                }
+            }
+        }
+        if !is_web_session_key(&caller) {
+            return Err(session_key_only(&caller, "todo_counts"));
+        }
+        let counts = st
+            .app
+            .todo_counts(Bearer::Session(&caller), workspace.as_ref())
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(
+            StatusCode::OK,
+            &json!({
+                "review": counts.review,
+                "truncated": counts.truncated,
+            }),
+        ))
+    }
+
+    pub(crate) async fn admin_todo_counts(
+        State(st): State<Self>,
+        rid: Rid,
+        query: Result<Query<Vec<(String, String)>>, QueryRejection>,
+        headers: HeaderMap,
+    ) -> Response {
+        let result = match query {
+            Ok(Query(params)) if params.is_empty() => {
+                Self::admin_todo_counts_inner(&st, &headers).await
+            }
+            Ok(Query(params)) => Err(ApiError::validation(format!(
+                "unknown query parameter {:?}",
+                params[0].0
+            ))),
+            Err(e) => Err(ApiError::validation(format!(
+                "the query string is not this operation's shape: {e}"
+            ))),
+        };
+        finish(&rid, result)
+    }
+
+    /// `GET /v2/admin/todo/counts`, as a person's `<user>-admin` session key
+    /// alone: the administration
+    /// To do page's counts; none of its groups is built, so it answers
+    /// `{truncated: false}` (ADR-0083 d11, d14).
+    async fn admin_todo_counts_inner(st: &Self, headers: &HeaderMap) -> Result<Response, ApiError> {
+        let caller = st.console_caller(headers).await?;
+        if !is_admin_session_key(&caller) {
+            return Err(ApiError::new(
+                StatusCode::FORBIDDEN,
+                "access.verb_ceiling",
+                "A person's own acts run only as their session key, so an agent's key never acts as its person (ADR-0045 d16).",
+                "admin_todo_counts runs only as the person's admin session key",
+            )
+            .with_details(json!({
+                "verb": "admin_todo_counts",
+                "role": caller.key().role.as_str(),
+                "reason": "session_key_only",
+            })));
+        }
+        let counts = st
+            .app
+            .admin_todo_counts(Bearer::Session(&caller))
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(
+            StatusCode::OK,
+            &json!({ "truncated": counts.truncated }),
         ))
     }
 

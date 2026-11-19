@@ -35,11 +35,12 @@ use oml_sdk::{AdminRead, Error};
 use oml_sdk::{Memory, encode};
 
 use crate::acts::Refusal;
-use crate::card::{Card, View, change};
+use crate::card::{Card, View};
+use crate::diff::change;
 use crate::pages::{Fields, refused};
 use crate::picker::Roots;
-use crate::review::is_id;
 use crate::session::{PageCalls, Session, call};
+use crate::todo::is_id;
 use crate::{Capacity, Web, acts, outcome, render};
 
 /// The admin memory page's one act.
@@ -286,7 +287,7 @@ fn attribution(
     if m.state == "held" {
         let _ = write!(
             out,
-            r#"<p class="oml-noact">Read here as <code>{}</code>, which never judges. Judge it in Review as <code>{}</code>.</p>"#,
+            r#"<p class="oml-noact">Read here as <code>{}</code>, which never judges. Judge it in To do as <code>{}</code>.</p>"#,
             short(admin),
             short(reviewer)
         );

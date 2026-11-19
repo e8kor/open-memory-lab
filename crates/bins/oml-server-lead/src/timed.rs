@@ -845,6 +845,17 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         )
     }
 
+    fn approved_by_kind(
+        &self,
+        tenant_id: Uuid,
+        workspace_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<(MemoryKind, u64)>, StoreError>> + Send {
+        timed(
+            "approved_by_kind",
+            self.inner.approved_by_kind(tenant_id, workspace_id),
+        )
+    }
+
     fn claim_latest_readable(
         &self,
         tenant_id: Uuid,

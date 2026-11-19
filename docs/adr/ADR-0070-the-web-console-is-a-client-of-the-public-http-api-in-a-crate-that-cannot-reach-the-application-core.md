@@ -273,6 +273,10 @@ Built in phases (a) to (d), 2026-11-10 to 2026-11-11; the records below say how.
     | `submit_memory` for `curate` (main) | `POST /v1/memories` | curate |
     | `supersede` (main) | `POST /v1/memories/{artifact_id}/supersede` | curate or review |
     | `guardrails` (main) | `GET /v1/guardrails` | web |
+    | `build_list`, the workspace page's kind table ([ADR-0082](ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) d1, #410) | `GET /v1/memories?with_own=true&kind=…`, and `mine=true` for the person's own rows | web, or review outside the person's root |
+    | `build_submit`, a new skill, guardrail or document (ADR-0082 d2) | `POST /v1/memories` | web in the person's root, review elsewhere |
+    | `build_supersede`, an edit or a retirement (ADR-0082 d2, d3) | `POST /v1/memories/{artifact_id}/supersede` | web or review |
+    | `build_preview` (ADR-0082 d5) | `POST /v1/memories/preview` | web or review |
     | `review_next` (main, both pages) | `POST /v2/review/next` | review |
     | `review_verdict` (main, both pages) | `POST /v2/review/verdicts` | review |
     | `review_held` (main) | `GET /v2/review/held` | review |
@@ -605,6 +609,12 @@ Where it reads a decision differently:
 | d5 | `Memory` names the format and title | it also names `search_text`, what a derived format's claim will be found by, absent for prose | the reviewer's card shows it before the verdict (ADR-0056 d9) and `oml-web` cannot derive it |
 | d5 | (silent) | the moved card does not draw a Mermaid claim: it shows the whole source, the format and the title, and says the drawing shows on the memory's own page once the memory is promoted, with no link | the frame's token is sealed by the lead's per-process key over a source it caches (ADR-0056 d9); an API to mint one has no other use case; a held memory's own page opens only for its author and the agent's owner, so a link would answer a reviewer who is neither `access.not_found`. Drawing it on the card is an exit criterion of the change that moves the memory's own page ([#189](https://github.com/e8kor/open-memory-lab/issues/189)) |
 | (none) | the person lane (ADR-0074 d19) on the Review view | not built: it is not on `main` | it moves with the view when it lands |
+
+The builder (ADR-0082 d1, #410) adds pages of its own rather than moving any: the workspace page
+`GET /web/workspace`, its forms `GET|POST /web/workspace/new`, `/web/workspace/edit` and
+`/web/workspace/retire`, and the admin side's read-only `GET /web/admin/workspace`, each in `PAGES`
+and in every shipped proxy's path matcher. The Guardrails view's `GET /web/guardrails` answers
+`308` to the workspace page's Guardrails kind (ADR-0083 d12).
 
 The sixth change of phase (b) moves one memory opened by its id, on the user page and on the
 admin page with the admin page's supersede act, the admin page's Curate view with its act, and the

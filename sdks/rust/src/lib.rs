@@ -32,7 +32,7 @@ pub use transport::{HttpTransport, Sending, Transport, TransportError};
 /// and of each struct it holds, to the operation's 2xx schema;
 /// `every_method_sends_the_method_path_and_type_its_table_entry_names`
 /// holds the methods to it.
-pub const OPERATIONS: [&str; 43] = [
+pub const OPERATIONS: [&str; 46] = [
     "authorizationServerMetadata GET /.well-known/oauth-authorization-server resp:AuthorizationServerMetadata",
     "whoami GET /v2/whoami query:person resp:Whoami",
     "getGuardrails GET /v1/guardrails query:workspace resp:GuardrailSet",
@@ -43,9 +43,9 @@ pub const OPERATIONS: [&str; 43] = [
     "proposeTransition POST /v2/workspaces/{workspace}/transitions body:to resp:Transition",
     "ratifyTransition POST /v2/workspaces/{workspace}/transitions/{transition_id}/ratify resp:Transition",
     "setWorkspaceMode POST /v2/workspaces/{workspace}/mode body:mode resp:WorkspaceView",
-    "listMemories GET /v1/memories query:with_own,include_text,author,workspace,state,origin_kinds,limit,cursor resp:MemoryPage",
+    "listMemories GET /v1/memories query:with_own,mine,include_text,author,workspace,state,kinds,promoted_since,origin_kinds,limit,cursor resp:MemoryPage",
     "recallMemories POST /v1/memories/recall body:query,k,workspace,kinds,include_text,include_unreviewed,origin_kinds resp:RecallResponse",
-    "adminSearchMemories POST /v2/admin/memories/search body:query,workspace,state,origin_kind,author,limit,cursor resp:AdminMemoryPage",
+    "adminSearchMemories POST /v2/admin/memories/search body:query,workspace,state,origin_kind,author,kinds,limit,cursor resp:AdminMemoryPage",
     "getWorkspaceTree GET /v2/workspaces/{workspace}/tree query:counts,offers resp:WorkspaceCounts",
     "listKeys GET /v2/keys query:user,limit,cursor resp:KeyPage",
     "createWorkspace POST /v2/workspaces body:name,parent resp:Workspace",
@@ -55,6 +55,8 @@ pub const OPERATIONS: [&str; 43] = [
     "reviewHeld GET /v2/review/held query:ids resp:HeldNamed",
     "postBulkVerdict POST /v2/review/verdicts/bulk body:verdict,artifact_ids,reason resp:BulkVerdictResult",
     "reviewQueue GET /v2/review/queue resp:ReviewQueue",
+    "todoCounts GET /v2/todo/counts query:workspace resp:TodoCounts",
+    "adminTodoCounts GET /v2/admin/todo/counts resp:AdminTodoCounts",
     "issueKey POST /v2/keys body:name,role,connect_code,expiry resp:KeyIssued",
     "mintConnectCode POST /v2/keys/{key}/connect-codes resp:ConnectCode",
     "addDenial POST /v2/keys/{key}/denials body:workspace resp:Denial",
@@ -62,6 +64,7 @@ pub const OPERATIONS: [&str; 43] = [
     "adminReadMemory GET /v2/admin/memories/{artifact_id} resp:AdminRead",
     "submitMemory POST /v1/memories body:verb,claim_key,body,workspace,derives_from resp:Accepted",
     "supersedeMemory POST /v1/memories/{artifact_id}/supersede body:body,expected_version,retirement resp:Accepted",
+    "previewMemory POST /v1/memories/preview body:kind,workspace,body,format,skill,document,severity,rule,replaces,expected_version,retirement resp:MemoryPreview",
     "withdrawMemory POST /v1/memories/{artifact_id}/withdraw body:reason resp:Withdrawn",
     "whoami GET /v2/whoami query:start resp:Onboarding",
     "listWebEmails GET /v2/web/emails query:limit,cursor resp:WebEmailPage",
@@ -289,12 +292,28 @@ pub struct WorkspaceView {
     pub name: String,
     pub path: String,
     pub status: String,
+    /// `in_progress` where a person put the node in progress, else
+    /// `standard` (ADR-0030 d1); `None` from an API that does not serve it.
+    #[serde(default)]
+    pub mode: Option<String>,
+    /// Whether the node is a person's root (ADR-0044 d1).
+    #[serde(default)]
+    pub user_root: bool,
+    /// The verbs the calling key may use here; the builder offers New where
+    /// they hold `remember` (ADR-0082 d2, d11).
+    #[serde(default)]
+    pub my_effective_verbs: Vec<String>,
     #[serde(default)]
     pub pending_transitions: Vec<Transition>,
     /// The review policy in force (ADR-0009 d3); `None` from an API that
     /// does not serve it.
     #[serde(default)]
     pub policy: Option<ReviewPolicy>,
+    /// The approved claims on the node alone by kind, only kinds with one or
+    /// more; `None` from an API that does not serve it, where the builder's
+    /// kind links carry no number (ADR-0082 d8 item 7, d10).
+    #[serde(default)]
+    pub approved_by_kind: Option<std::collections::BTreeMap<String, u64>>,
 }
 
 /// A workspace's review policy (openapi.yaml `ReviewPolicy`): how many
@@ -443,6 +462,23 @@ pub struct Memory {
     /// kind; `None` from an API that does not name it.
     #[serde(default)]
     pub kind: Option<String>,
+    /// A skill's name and description, on kind `skill` alone, except a
+    /// retirement (ADR-0080 d1); the console's change compares them
+    /// (ADR-0082 d6).
+    #[serde(default)]
+    pub skill: Option<SkillFields>,
+    /// A guardrail's severity, `never`, `must` or `should`, on kind
+    /// `guardrail` alone, except a retirement (ADR-0037 d2).
+    #[serde(default)]
+    pub severity: Option<String>,
+    /// A guardrail's `oml-gr/1` rule, or `None` where it has none (ADR-0037
+    /// d8).
+    #[serde(default)]
+    pub rule: Option<Value>,
+    /// A document's title, on kind `document` alone, except a retirement
+    /// (ADR-0081 d1).
+    #[serde(default)]
+    pub document: Option<DocumentFields>,
     /// Who wrote it, by kind: `agent`, `human`, `connector` or
     /// `simulation`.
     #[serde(default)]
@@ -550,6 +586,146 @@ pub struct ScanFinding {
     pub found_by: String,
     #[serde(default)]
     pub migrated_from: Option<String>,
+}
+
+/// `POST /v1/memories/preview`'s answer (openapi.yaml `MemoryPreview`;
+/// ADR-0082 d5, d10): what capture would decide, never a capture.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct MemoryPreview {
+    pub would_capture: bool,
+    /// The refusal capture would answer, in the error object's shape.
+    #[serde(default)]
+    pub refusal: Option<PreviewRefusal>,
+    #[serde(default)]
+    pub findings: Vec<ScanFinding>,
+    pub needs_person: bool,
+    #[serde(default)]
+    pub body_bytes: Option<u64>,
+    #[serde(default)]
+    pub budget_tokens: Option<u64>,
+    /// A guardrail's rule in its canonical `oml-gr/1` form.
+    #[serde(default)]
+    pub rule: Option<Value>,
+    /// A skill's prompt name.
+    #[serde(default)]
+    pub offered_as: Option<String>,
+    #[serde(default)]
+    pub shadows: Vec<SkillShadow>,
+    #[serde(default)]
+    pub set_after: Option<SetAfter>,
+    /// A document's passages as capture would cut them (ADR-0081 d3);
+    /// empty for any other kind and from an API that does not serve them.
+    #[serde(default)]
+    pub passages: Vec<PreviewPassage>,
+}
+
+/// One passage of a previewed document: its fragment, its place and its
+/// lines, 1-based and inclusive (ADR-0081 d3; ADR-0082 d5).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct PreviewPassage {
+    pub fragment: String,
+    pub ordinal: u32,
+    pub start_line: u32,
+    pub end_line: u32,
+    #[serde(default)]
+    pub heading_path: Vec<String>,
+}
+
+/// The refusal a preview answers inside its body (ADR-0082 d10).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct PreviewRefusal {
+    pub code: String,
+    pub message: String,
+    #[serde(default)]
+    pub details: Option<Value>,
+}
+
+/// A skill's own fields, as a version carries them (openapi.yaml
+/// `SkillFields`).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct SkillFields {
+    pub name: String,
+    pub description: String,
+}
+
+/// A document's own fields, as a version carries them (openapi.yaml
+/// `DocumentFields`).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct DocumentFields {
+    #[serde(default)]
+    pub title: Option<String>,
+}
+
+/// A same-named skill along a previewed skill's chain (ADR-0080 d5).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct SkillShadow {
+    pub workspace: String,
+    /// `shadows` or `shadowed_by`.
+    pub relation: String,
+}
+
+/// A guardrail's set size after the previewed version, against the cap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct SetAfter {
+    pub size: u64,
+    pub cap: u64,
+}
+
+/// A draft the builder previews: a new item, or with `replaces` an edit or
+/// a retirement of the version it names at the version the form rendered
+/// (ADR-0082 d4, d5).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Draft<'a> {
+    pub kind: &'a str,
+    pub workspace: Option<&'a str>,
+    pub body: &'a str,
+    pub format: Option<&'a str>,
+    /// A skill's name and description.
+    pub skill: Option<(&'a str, &'a str)>,
+    /// A document's title.
+    pub document_title: Option<&'a str>,
+    /// A document's claim key, sent on a new item alone (ADR-0081 d2).
+    pub claim_key: Option<&'a str>,
+    pub severity: Option<&'a str>,
+    pub rule: Option<&'a Value>,
+    /// The version replaced and the version the form rendered.
+    pub replaces: Option<(&'a str, u32)>,
+    pub retirement: bool,
+}
+
+impl Draft<'_> {
+    /// The body submit, supersede and preview share: the kind and its
+    /// fields, and for a supersession the version the form rendered and
+    /// whether it retires; `replaces` itself is preview's alone.
+    fn body(&self) -> Value {
+        let mut body = serde_json::json!({ "kind": self.kind, "body": self.body });
+        if let Some(workspace) = self.workspace {
+            body["workspace"] = Value::from(workspace);
+        }
+        if let Some(format) = self.format {
+            body["format"] = Value::from(format);
+        }
+        if let Some((name, description)) = self.skill {
+            body["skill"] = serde_json::json!({ "name": name, "description": description });
+        }
+        if let Some(title) = self.document_title {
+            body["document"] = serde_json::json!({ "title": title });
+        }
+        if let Some(claim_key) = self.claim_key {
+            body["claim_key"] = Value::from(claim_key);
+        }
+        if let Some(severity) = self.severity {
+            body["severity"] = Value::from(severity);
+        }
+        if let Some(rule) = self.rule {
+            body["rule"] = rule.clone();
+        }
+        if let Some((_, expected_version)) = self.replaces {
+            body["expected_version"] = Value::from(expected_version);
+            body["retirement"] = Value::from(self.retirement);
+        }
+        body
+    }
 }
 
 /// `GET /v1/memories`: one page of memories.
@@ -1141,6 +1317,23 @@ pub struct ReviewQueue {
     pub items: Vec<QueueItem>,
 }
 
+/// `GET /v2/todo/counts`: the To do page's built groups, each counted up
+/// to 1,000 (ADR-0083 d11, d14).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct TodoCounts {
+    /// The To review group: the held rows the person's reviewer key may
+    /// judge.
+    pub review: u64,
+    /// Whether a count passed 1,000.
+    pub truncated: bool,
+}
+
+/// `GET /v2/admin/todo/counts`: no group is built yet (ADR-0083 d14).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct AdminTodoCounts {
+    pub truncated: bool,
+}
+
 /// A grant as a listed key carries it: the role and the workspace's path.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct ListedGrant {
@@ -1305,11 +1498,19 @@ pub struct Workspace {
     pub path: String,
 }
 
-/// The Memories list's filters for `GET /v1/memories` with `with_own`.
+/// The Memories list's filters for `GET /v1/memories` with `with_own`, or
+/// with `mine` the caller's own key set alone (ADR-0083 d3).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MemoryQuery<'a> {
+    /// `mine=true`: the caller's own rows, with no scoped part.
+    pub mine: bool,
     pub workspace: Option<&'a str>,
+    /// A comma list of states.
     pub state: Option<&'a str>,
+    /// A comma list of kinds (ADR-0082 d8 item 3; ADR-0092 d6).
+    pub kinds: Option<&'a str>,
+    /// Only the promoted rows approved at or after this RFC 3339 instant.
+    pub promoted_since: Option<&'a str>,
     pub origin: Option<&'a str>,
     pub author: Option<&'a str>,
     pub limit: u32,
@@ -1336,6 +1537,9 @@ pub struct RecallQuery<'a> {
     pub k: u32,
     pub workspace: Option<&'a str>,
     pub origin: Option<&'a str>,
+    /// Sent as `include_unreviewed`, always, so an in-progress scope's
+    /// default of `true` never applies unasked (ADR-0030 d4; ADR-0083 d1).
+    pub include_unreviewed: bool,
 }
 
 /// The admin read's filters.
@@ -1346,6 +1550,9 @@ pub struct AdminSearch<'a> {
     pub state: Option<&'a str>,
     pub origin_kind: Option<&'a str>,
     pub author: Option<&'a str>,
+    /// A comma list of kinds, sent as the body's `kinds` array (ADR-0083
+    /// d5; ADR-0092 d6).
+    pub kinds: Option<&'a str>,
     pub limit: u32,
     pub cursor: Option<&'a str>,
 }
@@ -1714,8 +1921,9 @@ impl<T: Transport> Client<T> {
         .await
     }
 
-    /// `GET /v1/memories` with `with_own=true` and `include_text=true`: the
-    /// caller's merged listing with each item's text.
+    /// `GET /v1/memories` with `with_own=true`, or `mine=true`, and
+    /// `include_text=true`: the caller's merged listing, or its own rows
+    /// alone, with each item's text.
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
@@ -1725,13 +1933,16 @@ impl<T: Transport> Client<T> {
         query: &MemoryQuery<'_>,
     ) -> Result<MemoryPage, Error> {
         let mut path = format!(
-            "/v1/memories?with_own=true&include_text=true&limit={}",
+            "/v1/memories?{}=true&include_text=true&limit={}",
+            if query.mine { "mine" } else { "with_own" },
             query.limit
         );
         for (name, value) in [
             ("author", query.author),
             ("workspace", query.workspace),
             ("state", query.state),
+            ("kinds", query.kinds),
+            ("promoted_since", query.promoted_since),
             ("origin_kinds", query.origin),
             ("cursor", query.cursor),
         ] {
@@ -1769,8 +1980,8 @@ impl<T: Transport> Client<T> {
     }
 
     /// `POST /v1/memories/recall`: memories and derived facts with their
-    /// text, the caller's own held ones among them. Read-shaped: no
-    /// idempotency key.
+    /// text, held ones only where `include_unreviewed` asks for them.
+    /// Read-shaped: no idempotency key.
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
@@ -1784,7 +1995,7 @@ impl<T: Transport> Client<T> {
             "k": query.k,
             "kinds": ["memory", "derived_fact"],
             "include_text": true,
-            "include_unreviewed": true,
+            "include_unreviewed": query.include_unreviewed,
         });
         if let Some(workspace) = query.workspace {
             body["workspace"] = serde_json::json!(workspace);
@@ -1824,6 +2035,9 @@ impl<T: Transport> Client<T> {
             if let Some(value) = value {
                 body[name] = serde_json::json!(value);
             }
+        }
+        if let Some(kinds) = search.kinds {
+            body["kinds"] = serde_json::json!(kinds.split(',').collect::<Vec<_>>());
         }
         self.send(
             Method::POST,
@@ -1976,6 +2190,34 @@ impl<T: Transport> Client<T> {
     /// The API's refusal, or no usable answer.
     pub async fn review_queue(&self, call: &Call<'_>) -> Result<ReviewQueue, Error> {
         self.get(Some(call), "/v2/review/queue".to_owned()).await
+    }
+
+    /// `GET /v2/todo/counts`: the To do page's counts, as a person's web
+    /// session key reads them, at `workspace` and below or across every
+    /// workspace (ADR-0083 d11).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn todo_counts(
+        &self,
+        call: &Call<'_>,
+        workspace: Option<&str>,
+    ) -> Result<TodoCounts, Error> {
+        let path = match workspace {
+            Some(w) => format!("/v2/todo/counts?workspace={}", encode(w)),
+            None => "/v2/todo/counts".to_owned(),
+        };
+        self.get(Some(call), path).await
+    }
+
+    /// `GET /v2/admin/todo/counts`: the administration To do page's
+    /// counts. An admin key's (ADR-0083 d11).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn admin_todo_counts(&self, call: &Call<'_>) -> Result<AdminTodoCounts, Error> {
+        self.get(Some(call), "/v2/admin/todo/counts".to_owned())
+            .await
     }
 
     /// `GET /v2/keys`: one page of `limit` keys after `cursor`; `user`
@@ -2173,6 +2415,80 @@ impl<T: Transport> Client<T> {
         }
         self.post(call, "/v1/memories".to_owned(), idempotency_key, &body)
             .await
+    }
+
+    /// `POST /v1/memories/preview`: what capture would decide for a draft,
+    /// written nowhere and metered nowhere. Read-shaped: no idempotency key.
+    ///
+    /// # Errors
+    /// The API's refusal of authority, or no usable answer; a refusal
+    /// capture would make is the answer's `refusal`.
+    pub async fn preview(
+        &self,
+        call: &Call<'_>,
+        draft: &Draft<'_>,
+    ) -> Result<MemoryPreview, Error> {
+        let mut body = draft.body();
+        if let Some((artifact_id, _)) = draft.replaces {
+            body["replaces"] = Value::from(artifact_id);
+        }
+        self.send(
+            Method::POST,
+            Some(call),
+            "/v1/memories/preview".to_owned(),
+            None,
+            Some(&body),
+        )
+        .await
+    }
+
+    /// `POST /v1/memories` with a draft's kind and fields: a new skill,
+    /// guardrail or document, held until reviewed (ADR-0082 d2, d4).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn submit(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        draft: &Draft<'_>,
+    ) -> Result<Accepted, Error> {
+        self.post(
+            call,
+            "/v1/memories".to_owned(),
+            idempotency_key,
+            &draft.body(),
+        )
+        .await
+    }
+
+    /// `POST /v1/memories/{artifact_id}/supersede` with a draft's fields,
+    /// re-sent on every version: the edit or the retirement of the version
+    /// `replaces` names, at the version the form rendered, held until
+    /// reviewed (ADR-0082 d2, d3, d4; ADR-0037 d10).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer; a draft that names no
+    /// version it replaces is refused before any call.
+    pub async fn supersede_draft(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        draft: &Draft<'_>,
+    ) -> Result<Accepted, Error> {
+        let Some((artifact_id, _)) = draft.replaces else {
+            return Err(Error::Decode {
+                status: 0,
+                why: "a supersession names the version it replaces".to_owned(),
+            });
+        };
+        self.post(
+            call,
+            format!("/v1/memories/{}/supersede", encode(artifact_id)),
+            idempotency_key,
+            &draft.body(),
+        )
+        .await
     }
 
     /// `POST /v1/memories/{artifact_id}/supersede`: a new version of the
@@ -2670,6 +2986,8 @@ mod tests {
                     .await,
             ),
             decodes(&client.review_queue(&CALL).await),
+            decodes(&client.todo_counts(&CALL, Some("alice")).await),
+            decodes(&client.admin_todo_counts(&CALL).await),
             decodes(
                 &client
                     .issue_key(&CALL, "idem-7", "alice-laptop", "writer", false, None)
@@ -2704,6 +3022,20 @@ mod tests {
             decodes(
                 &client
                     .supersede(&CALL, "idem-11", "m-1", "new text", 1, false)
+                    .await,
+            ),
+            decodes(
+                &client
+                    .preview(
+                        &CALL,
+                        &Draft {
+                            kind: "skill",
+                            body: "Cite every source.",
+                            skill: Some(("cite", "Cite sources.")),
+                            replaces: Some(("m-1", 1)),
+                            ..Draft::default()
+                        },
+                    )
                     .await,
             ),
             decodes(
@@ -2814,7 +3146,7 @@ mod tests {
         assert_eq!(seen[18].uri(), "/v2/review/held?limit=50&workspace=alice");
         assert_eq!(seen[19].uri(), "/v2/review/held?ids=a,b");
         assert_eq!(
-            std::str::from_utf8(seen[22].body()).unwrap(),
+            std::str::from_utf8(seen[24].body()).unwrap(),
             r#"{"connect_code":false,"name":"alice-laptop","role":"writer"}"#
         );
     }
@@ -2850,6 +3182,30 @@ mod tests {
         assert_eq!(page.items[0].name.as_deref(), Some("deploy"));
         assert_eq!(page.items[0].prompt, None);
         assert_eq!(page.next_cursor.as_deref(), Some("c2"));
+    }
+
+    /// The admin search sends its kinds as the body's `kinds` array, as
+    /// recall's body takes them, never v0.8.0's draft `kind` (ADR-0083 d5;
+    /// ADR-0092 d6).
+    #[tokio::test]
+    async fn the_admin_search_sends_its_kinds_as_a_kinds_array() {
+        let (client, seen) = recording(200, r#"{"items":[],"next_cursor":null}"#);
+        client
+            .admin_search(
+                &CALL,
+                &AdminSearch {
+                    state: Some("promoted"),
+                    kinds: Some("skill,guardrail"),
+                    limit: 50,
+                    ..AdminSearch::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            std::str::from_utf8(seen.lock().unwrap()[0].body()).unwrap(),
+            r#"{"kinds":["skill","guardrail"],"limit":50,"state":"promoted"}"#
+        );
     }
 
     #[tokio::test]

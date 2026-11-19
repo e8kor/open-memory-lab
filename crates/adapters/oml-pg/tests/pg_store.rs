@@ -6401,8 +6401,8 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 62,
-        "every migration through 0062, the highest version"
+        applied, 65,
+        "every migration through 0065_session_key_account"
     );
     drop(conn);
     drop_dbs(&created).await;
@@ -7860,8 +7860,8 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 62,
-        "every migration through 0062, the highest version"
+        applied, 65,
+        "every migration through 0065_session_key_account"
     );
     drop(conn);
 
@@ -8867,8 +8867,8 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 62,
-        "every migration through 0062, the highest version"
+        applied, 65,
+        "every migration through 0065_session_key_account"
     );
     drop(conn);
 
@@ -13568,7 +13568,10 @@ async fn migrations_0059_and_0060_apply_over_0058_with_a_document_row_and_count_
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(applied, 62, "0059 to 0062 apply over 0058");
+    assert_eq!(
+        applied, 65,
+        "every migration through 0065_session_key_account"
+    );
     let (partitions, attached, valid, carries, validated): (i64, i64, bool, bool, bool) =
         sqlx::query_as(
             "SELECT (SELECT count(*) FROM pg_inherits WHERE inhparent = 'search_postings'::regclass), \
