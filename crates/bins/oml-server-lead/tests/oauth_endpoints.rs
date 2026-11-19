@@ -1396,7 +1396,7 @@ async fn a_reviewer_code_is_minted_for_a_confined_key_and_named_on_the_key() {
         .workspace_id;
     let connector = |name: &str, node| IssueKeyRequest {
         profile: None,
-        role: Role::Contributor,
+        role: Role::Submitter,
         name: Name::parse(name).expect("a name"),
         principal: format!("crew/{name}"),
         used_by: Some(UsedBy::Agent),

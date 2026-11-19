@@ -1473,8 +1473,9 @@ async fn full_happy_path_over_http() {
             .starts_with("sha256:")
     );
 
-    // Roles do not nest: the writer key holds no reader grant, so its scope
-    // is not readable and recall answers as absence (ADR-0025 d1).
+    // Roles do not nest: the submitter key holds no reader grant and its
+    // role admits none, so recall is refused at its ceiling (ADR-0025 d1;
+    // ADR-0093 d2).
     let (status, _, body) = send(
         router,
         "POST",
@@ -1482,8 +1483,8 @@ async fn full_happy_path_over_http() {
         Call::auth(&writer).body(json!({"query": "quote"})),
     )
     .await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
-    assert_envelope(&body, "access.not_found");
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_envelope(&body, "access.verb_ceiling");
 
     // Events tail: seq ascending from after_seq, filtered to what the
     // reader may see, so gaps are normal; head_seq for lag and
@@ -3060,7 +3061,7 @@ async fn the_issuance_response_echoes_stored_grant_ids_and_epochs() {
     );
     assert_eq!(issued["epoch"].as_u64(), Some(stored.issued_seq + 2));
     assert_eq!(head_seq(&rig, tenant).await, stored.issued_seq + 2);
-    assert_eq!(issued["grants"][0]["role"], "contributor");
+    assert_eq!(issued["grants"][0]["role"], "submitter");
     assert_eq!(issued["grants"][1]["role"], "reader");
     assert_eq!(issued["grants"][0]["workspace_node_id"], crew.to_string());
     // The default the server chose and the attestation as journalled: none
@@ -3180,7 +3181,7 @@ async fn a_key_issuance_without_a_name_is_request_validation_naming_name_and_jou
     let router = &rig.router;
     let (admin, tenant, crew) = crew_tenant(router).await;
     let head = head_seq(&rig, tenant).await;
-    let grants = json!([{ "workspace": crew, "role": "submitter" }]);
+    let grants = json!([{ "workspace": crew, "role": "submitter" }, { "workspace": crew, "role": "reader" }]);
     for (n, name) in [
         Value::Null,
         json!("Claude Laptop"),
@@ -3230,7 +3231,7 @@ async fn a_key_issuance_without_a_name_is_request_validation_naming_name_and_jou
         .expect("the key row");
     assert_eq!(
         stored.name.as_ref().map(Name::as_str),
-        Some("writer-claude-laptop")
+        Some("contributor-claude-laptop")
     );
     let (status, _, taken) = send(
         router,
@@ -3238,7 +3239,7 @@ async fn a_key_issuance_without_a_name_is_request_validation_naming_name_and_jou
         "/v2/keys",
         Call::auth(&admin).idem("taken").body(json!({
             "role": "contributor",
-            "name": "writer-claude-laptop",
+            "name": "contributor-claude-laptop",
             "principal": "claude/other",
             "grants": grants,
         })),
@@ -6549,11 +6550,14 @@ async fn an_unreadable_workspace_is_not_found() {
     };
     let (status, _, body) = get(&reader, crew.to_string()).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    // A writer-only key, an id that names no node and a name that names no
-    // node all answer as absence (ADR-0026 d4).
+    // A submitter key reads no structure: refused at its ceiling (ADR-0093
+    // d2).
+    let (status, _, body) = get(&writer, crew.to_string()).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_envelope(&body, "access.verb_ceiling");
+    // An id that names no node and a name that names no node answer as
+    // absence (ADR-0026 d4).
     for (token, id) in [
-        (&writer, crew.to_string()),
-        (&reader, Uuid::from_u128(0xDEAD).to_string()),
         (&reader, "no-such-node".to_owned()),
     ] {
         let (status, _, body) = get(token, id).await;
@@ -6849,13 +6853,13 @@ async fn the_own_listing_never_shows_another_keys_row() {
     let (one, _) = key_with(
         router,
         &admin,
-        "contributor",
+        "submitter",
         "crew/agent-7",
         "k-1",
         grants.clone(),
     )
     .await;
-    let (two, _) = key_with(router, &admin, "contributor", "crew/agent-7", "k-2", grants).await;
+    let (two, _) = key_with(router, &admin, "submitter", "crew/agent-7", "k-2", grants).await;
     let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
     let mine = remember(
         router,
@@ -7108,13 +7112,13 @@ async fn a_cursor_from_another_key_or_expired_is_request_validation() {
     let (writer, key_id) = key_with(
         router,
         &admin,
-        "contributor",
+        "submitter",
         "crew/agent-7",
         "k-1",
         grants.clone(),
     )
     .await;
-    let (other, _) = key_with(router, &admin, "contributor", "crew/agent-8", "k-2", grants).await;
+    let (other, _) = key_with(router, &admin, "submitter", "crew/agent-8", "k-2", grants).await;
     let mut written = Vec::new();
     for n in 0..3 {
         written.push(
@@ -7917,7 +7921,7 @@ async fn whoami_serves_each_grant_without_its_deny_masks() {
         json!([{
             "grant_id": issued["grants"][0]["grant_id"],
             "workspace_node_id": crew.to_string(),
-            "role": "contributor",
+            "role": "submitter",
             "covers": "subtree",
             "epoch": issued["grants"][0]["epoch"],
         }]),
@@ -8478,7 +8482,7 @@ async fn every_v0_3_0_reference_spelling_on_the_key_routes_is_refused_naming_its
     issue_key(router, &admin, "submitter", "agent/denied", root).await;
     assert_renamed(
         router,
-        "/v2/keys/writer-agent-denied/denials",
+        "/v2/keys/submitter-agent-denied/denials",
         Call::auth(&admin)
             .idem("old-denial")
             .body(json!({ "workarea_node_id": quarter })),
@@ -8697,7 +8701,7 @@ async fn a_tenant_keys_write_into_a_users_root_is_user_root_refused_and_her_own_
             json!({
                 "role": role, "name": name, "principal": format!("crew/{name}"),
                 "grants": [
-                    { "workspace": workspace, "role": role },
+                    { "workspace": workspace, "role": if role == "contributor" { "submitter" } else { role } },
                     { "workspace": workspace, "role": "reader" },
                 ],
             }),
@@ -10506,7 +10510,7 @@ async fn a_console_request_acts_as_the_key_linked_to_its_person_and_no_other() {
     let (status, again) = link_key(&rig, &ops, "reviewer-bob", Some("alice")).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{again}");
     assert_eq!(again["error"]["details"]["reason"], "already_linked");
-    let (status, refused) = link_key(&rig, &ops, "writer-payments-bot", Some("alice")).await;
+    let (status, refused) = link_key(&rig, &ops, "submitter-payments-bot", Some("alice")).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
     assert_envelope(&refused, "request.validation");
     assert_eq!(refused["error"]["details"]["reason"], "not_used_by_person");

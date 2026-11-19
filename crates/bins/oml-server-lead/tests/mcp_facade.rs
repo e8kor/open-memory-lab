@@ -466,12 +466,12 @@ async fn an_agent_writes_through_mcp_and_reads_only_after_another_identity_ratif
     assert_eq!(before["isError"], false, "{before}");
     assert_eq!(before["structuredContent"]["hits"], json!([]));
 
-    // The writer's key carries no read grant, so its scope is not readable:
-    // the ring's typed refusal, absence (ADR-0025 d1).
+    // The writer's key is a submitter, whose role admits no read grant: the
+    // ring's typed refusal at its ceiling (ADR-0025 d1; ADR-0093 d2).
     let refused = call_tool(&router, &writer, 4, "oml_read", recall.clone()).await;
     assert_eq!(refused["isError"], true, "{refused}");
     assert_eq!(
-        refused["structuredContent"]["error"]["code"], "access.not_found",
+        refused["structuredContent"]["error"]["code"], "access.verb_ceiling",
         "{refused}"
     );
     assert!(refused["structuredContent"]["error"]["rule"].is_string());
@@ -1754,7 +1754,7 @@ async fn oml_write_by_a_tenant_key_starts_no_memory_in_a_users_root_and_its_revi
         let mut body = json!({
             "role": role, "name": name, "principal": name,
             "grants": [
-                {"workspace": workspace, "role": role},
+                {"workspace": workspace, "role": if role == "contributor" { "submitter" } else { role }},
                 {"workspace": workspace, "role": "reader"},
             ],
         });
@@ -2075,11 +2075,11 @@ async fn oml_read_recall_and_scoped_listing_are_refused_without_a_reader_grant_a
     let recall = json!({"query": "aluminium price"});
     let scoped = json!({"own": false});
     for (id, (mode, args)) in (1..).zip([("recall", &recall), ("listing", &scoped)]) {
-        // Reader is not effective on the writer's default workspace, so the
-        // read answers step 4 of the refusal order: the node is not found,
-        // never named as refused (roles-and-keys.md, refusal order).
+        // A submitter's role admits no reader grant, so the read answers
+        // step 1 of the refusal order (roles-and-keys.md, refusal order;
+        // ADR-0093 d2).
         let refused = call_tool(&router, &writer, id, "oml_read", args.clone()).await;
-        assert_eq!(refusal_code(&refused), "access.not_found", "{mode}");
+        assert_eq!(refusal_code(&refused), "access.verb_ceiling", "{mode}");
         // An admin key reads no claim content, whatever its grants: step 1
         // (errors.md, access.verb_ceiling; ADR-0026 d15).
         let refused = call_tool(&router, &admin, 10 + id, "oml_read", args.clone()).await;
@@ -2457,7 +2457,7 @@ async fn oml_workspace_without_an_argument_describes_the_default_workspace() {
     // is absence, as on the ring; an unknown argument is validation.
     for (id, token, args, code) in [
         (4, &unscoped, json!({}), "request.workspace_unresolved"),
-        (5, &writer, json!({}), "access.not_found"),
+        (5, &writer, json!({}), "access.verb_ceiling"),
         (6, &agent, json!({"workspace": root}), "access.not_found"),
         (
             7,
