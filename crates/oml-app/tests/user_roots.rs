@@ -3565,6 +3565,52 @@ fn metered(probe: TestApp, tenant_id: Uuid, quotas: oml_app::domain::signup::Quo
         .with_quota_profiles(oml_app::types::QuotaProfiles::only(quotas))
 }
 
+/// A person's review key's write is charged to that person's account: a
+/// claim it starts in a shared workspace counts against their memories, so
+/// with a quota of two their web key writes one more and is refused the
+/// next (ADR-0071 d1, d3; ADR-0082 d10, note of 2026-11-19).
+#[tokio::test]
+async fn a_persons_review_key_write_moves_their_usage() {
+    use oml_app::domain::signup::{Quota, Quotas};
+    let (probe, _store) = rig();
+    let boot = bootstrap(&probe).await;
+    let app = metered(
+        probe,
+        boot.tenant_id,
+        Quotas::default().with(Quota::Memories, 2),
+    );
+    let admin = boot.admin_key.value.as_str();
+    let (alice, review, _writer, _bob) =
+        team_with_alices_session_and_bobs_writer(&app, admin).await;
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    app.submit_memory(
+        Bearer::Session(&review),
+        &submit("r1", "Releases freeze on Thursdays.", Some("team")),
+    )
+    .await
+    .expect("alice's review key starts a claim in team");
+    app.submit_memory(
+        Bearer::Session(&web),
+        &submit("w1", "Builds run on push.", Some("alice")),
+    )
+    .await
+    .expect("alice's second memory");
+    let err = app
+        .submit_memory(
+            Bearer::Session(&web),
+            &submit("w2", "Tests run nightly.", Some("alice")),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, AppError::QuotaReached(r) if r.quota == Quota::Memories),
+        "the review key's claim counts: {err:?}"
+    );
+}
+
 /// A person's review key is held to that person's limits wherever it
 /// writes: past their memories quota its new claim in a shared workspace
 /// is refused `limit.quota`, and past their monthly writes its proposal is

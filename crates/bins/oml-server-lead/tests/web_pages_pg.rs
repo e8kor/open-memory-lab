@@ -889,6 +889,8 @@ async fn bulk_review_lists_confirms_by_id_and_records_each_outcome_once() {
 struct Cockpit {
     db: String,
     router: Router,
+    admin: String,
+    root: uuid::Uuid,
     cookie: String,
     loader: String,
     laptop: String,
@@ -954,6 +956,8 @@ async fn cockpit() -> Option<Cockpit> {
     Some(Cockpit {
         db,
         router,
+        admin,
+        root: boot.root_workspace_id,
         cookie,
         loader,
         laptop,
@@ -1046,6 +1050,87 @@ impl Cockpit {
         assert_eq!(status, StatusCode::OK, "{body}");
         body
     }
+}
+
+/// A claim a person's review key starts in a shared workspace is charged
+/// to that person's account under Postgres: their memories meter moves by
+/// one, and the drift report, which recomputes every account from the rows,
+/// finds nothing to report (ADR-0071 d1, note of 2026-11-19; migration
+/// 0065; ADR-0082 d10).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_persons_review_key_claim_is_charged_to_their_account_and_drifts_nothing() {
+    let Some(c) = cockpit().await else {
+        return;
+    };
+    let (status, _, team) = send(
+        &c.router,
+        json_post_under(
+            "ws-team",
+            "/v2/workspaces",
+            &c.admin,
+            json!({"parent": c.root, "name": "team"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{team}");
+    let team: Value = serde_json::from_str(&team).expect("JSON");
+    let (status, _, granted) = send(
+        &c.router,
+        json_post_under(
+            "cap-review",
+            "/v2/web/users/alice/capacities",
+            &c.admin,
+            json!({"capacity": "review", "workspaces": [team["id"]]}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{granted}");
+    let memories = |usage: &str| -> u64 {
+        let usage: Value = serde_json::from_str(usage).expect("JSON");
+        usage["meters"]
+            .as_array()
+            .expect("meters")
+            .iter()
+            .find(|m| m["meter"] == "memories")
+            .expect("the memories meter")["used"]
+            .as_u64()
+            .expect("a count")
+    };
+    async fn usage(c: &Cockpit) -> (StatusCode, HeaderMap, String) {
+        let request = Request::get("/v2/admin/accounts/alice/usage")
+            .header(header::AUTHORIZATION, format!("Bearer {}", c.admin))
+            .body(Body::empty())
+            .expect("a request");
+        send(&c.router, request).await
+    }
+    let (status, _, before) = usage(&c).await;
+    assert_eq!(status, StatusCode::OK, "{before}");
+    let (status, _, written) = send(
+        &c.router,
+        as_web(
+            &c.cookie,
+            "review",
+            "POST",
+            "/v1/memories",
+            Some((
+                "r-team",
+                json!({"body": "Team ships on Fridays.", "workspace": "team"}),
+            )),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{written}");
+    let (_, _, after) = usage(&c).await;
+    assert_eq!(memories(&after), memories(&before) + 1, "{after}");
+    let request = Request::get("/v2/admin/usage/drift")
+        .header(header::AUTHORIZATION, format!("Bearer {}", c.admin))
+        .body(Body::empty())
+        .expect("a request");
+    let (status, _, drift) = send(&c.router, request).await;
+    assert_eq!(status, StatusCode::OK, "{drift}");
+    let drift: Value = serde_json::from_str(&drift).expect("JSON");
+    assert_eq!(drift["drift"], json!([]), "{drift}");
+    drop_db(&c.db).await;
 }
 
 /// Approved under Postgres, as `oml-web` reads it: the merged listing with

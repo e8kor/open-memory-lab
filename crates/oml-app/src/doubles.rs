@@ -2146,7 +2146,7 @@ fn apply_fold(
                 f.event_seq = Some(seq);
                 state.findings.push((memory.memory_id, f));
             }
-            if let Some(root) = state.keys.get(&memory.author_key_id).and_then(|k| k.user) {
+            if let Some(root) = key_account(&state, &memory.author_key_id) {
                 // Counted on the day of the row's own clock read, which
                 // the month's stored versions are read by (ADR-0071 d2).
                 let day = oml_domain::usage::day_of(&memory.created_at).to_owned();
@@ -2739,12 +2739,29 @@ fn assign_names_fold(
 /// One account's meters recomputed from the rows by ADR-0071 d2's
 /// definitions, the flows of `month`: the double keeps no counters, so it
 /// is the definition the Postgres counters are held to.
+/// The account a key's writes are charged to (ADR-0071 d1): a user key's
+/// root, and a person's session key of no root, `<user>-review` or
+/// `<user>-curate`, its person's root, as `oml_key_account` reads it
+/// (migration 0065; ADR-0082 d10, note of 2026-11-19).
+fn key_account(state: &TenantState, key_id: &Uuid) -> Option<Uuid> {
+    let key = state.keys.get(key_id)?;
+    if key.user.is_some() || key.credential != Credential::Session {
+        return key.user;
+    }
+    let person = key.session_user.as_ref()?;
+    state
+        .workspaces
+        .values()
+        .find(|w| w.user_root && &w.name == person)
+        .map(|w| w.workspace_id)
+}
+
 fn account_usage(
     state: &TenantState,
     root: Uuid,
     month: oml_domain::usage::Month,
 ) -> crate::types::UserUsage {
-    let account_of = |key_id: &Uuid| state.keys.get(key_id).and_then(|k| k.user);
+    let account_of = |key_id: &Uuid| key_account(state, key_id);
     let mut chains: BTreeMap<(Uuid, &str), Vec<&MemoryRecord>> = BTreeMap::new();
     for m in state.memories.values() {
         chains

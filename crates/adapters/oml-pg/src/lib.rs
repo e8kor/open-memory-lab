@@ -5637,19 +5637,26 @@ struct TrackedChain {
     live_before: bool,
 }
 
-/// The account a key belongs to, if any (ADR-0071 d1).
+/// The account a key belongs to, if any: its user root, or a person's
+/// session key's person's (ADR-0071 d1, note of 2026-11-19; migration 0065).
 async fn author_account(
     tx: &mut Transaction<'_, Postgres>,
     tenant_id: Uuid,
     key_id: Uuid,
 ) -> Result<Option<Uuid>, StoreError> {
-    let root: Option<Option<Uuid>> =
-        sqlx::query_scalar("SELECT user_root_id FROM api_keys WHERE tenant_id = $1 AND id = $2")
-            .bind(tenant_id)
-            .bind(key_id)
-            .fetch_optional(&mut **tx)
-            .await
-            .map_err(backend)?;
+    // `oml_key_account` written out, so a store reads it on a schema
+    // before 0065 too.
+    let root: Option<Option<Uuid>> = sqlx::query_scalar(
+        "SELECT coalesce(k.user_root_id, \
+                (SELECT w.id FROM workspaces w \
+                  WHERE w.tenant_id = k.tenant_id AND w.user_root AND w.name = k.session_for)) \
+           FROM api_keys k WHERE k.tenant_id = $1 AND k.id = $2",
+    )
+    .bind(tenant_id)
+    .bind(key_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(backend)?;
     Ok(root.flatten())
 }
 
@@ -8766,10 +8773,11 @@ impl JournalStore for PgStore {
         set_tenant(&mut tx, tenant_id).await?;
         let rows: Vec<DriftRow> = sqlx::query_as(
             "WITH src AS (SELECT * FROM oml_account_source($1)), \
-                  held AS (SELECT k.user_root_id AS user_root, count(*)::bigint AS writes \
-                             FROM memories m JOIN api_keys k \
-                               ON k.tenant_id = m.tenant_id AND k.id = m.author_key_id \
-                            WHERE m.tenant_id = $1 AND k.user_root_id IS NOT NULL \
+                  held AS (SELECT a.user_root, count(*)::bigint AS writes \
+                             FROM memories m CROSS JOIN LATERAL \
+                                  (SELECT oml_key_account(m.tenant_id, m.author_key_id) \
+                                          AS user_root) a \
+                            WHERE m.tenant_id = $1 AND a.user_root IS NOT NULL \
                               AND m.created_at >= ($2)::date::timestamp AT TIME ZONE 'UTC' \
                               AND m.created_at < ($3)::date::timestamp AT TIME ZONE 'UTC' \
                             GROUP BY 1), \
