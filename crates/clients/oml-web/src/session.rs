@@ -278,6 +278,14 @@ impl Session {
         oml_web_credential::act_idempotency_key(&self.token, nonce)
     }
 
+    /// The key a builder form's preview stamp is signed with: the act key
+    /// of `preview/<nonce>`, derived apart from the `Idempotency-Key` the
+    /// write is sent under (the review of PR #494).
+    #[must_use]
+    pub fn preview_key(&self, nonce: &str) -> String {
+        self.act_key(&format!("preview/{nonce}"))
+    }
+
     /// The header's "who": the person and their organisation, as the lead's
     /// pages name them.
     #[must_use]
@@ -321,31 +329,54 @@ pub fn call_as<'a>(credential: &'a str, ids: &'a CallIds, acting: Option<&'a str
 /// that had no answer included: the lead's act decides whether a session
 /// stands behind it (#327).
 pub async fn load(State(web): State<Web>, mut req: Request, next: Next) -> Response {
-    let calls = req
-        .extensions()
+    // A builder post's session, resolved before its body was read
+    // (`middleware::same_origin`), is not resolved again.
+    if req.extensions().get::<Session>().is_none() {
+        let calls = page_calls(req.extensions());
+        match resolve_request(&web, &calls, req.headers(), req.uri()).await {
+            Ok(session) => {
+                req.extensions_mut().insert(session);
+            }
+            Err(answer) => return *answer,
+        }
+    }
+    next.run(req).await
+}
+
+/// The page's record of its calls, which layer 1 puts on the request.
+pub(crate) fn page_calls(extensions: &http::Extensions) -> Arc<PageCalls> {
+    extensions
         .get::<Arc<PageCalls>>()
         .cloned()
-        .unwrap_or_else(|| Arc::new(PageCalls::new("page")));
-    let page = req
-        .uri()
+        .unwrap_or_else(|| Arc::new(PageCalls::new("page")))
+}
+
+/// Layer 3's read of the session a request carries, or the page's answer
+/// when there is none: sign in without a cookie, and the whoami's refusal
+/// for a session that does not resolve.
+pub(crate) async fn resolve_request(
+    web: &Web,
+    calls: &PageCalls,
+    headers: &HeaderMap,
+    uri: &http::Uri,
+) -> Result<Session, Box<Response>> {
+    let page = uri
         .path_and_query()
         .map_or_else(|| "/web".to_owned(), |pq| pq.as_str().to_owned());
-    let Some(token) = cookie(req.headers(), SESSION_COOKIE) else {
-        return outcome::sign_in(&page);
+    let Some(token) = cookie(headers, SESSION_COOKIE) else {
+        return Err(Box::new(outcome::sign_in(&page)));
     };
-    calls.carries_session(&token, req.uri().path());
+    calls.carries_session(&token, uri.path());
     // The badge's counts read, beside whoami in one round, on every page
     // request: a form's post that draws a page (Preview, a refusal, a
     // rebase) carries the number as a GET does (ADR-0083 d6; the review of
     // PR #494, 11).
-    let counts = Some(Scope::of_path(req.uri().path(), true));
-    let session = match resolve_with_counts(&web, &calls, token, counts).await {
-        Ok(session) => session,
-        Err(e) => return outcome::page(&e, &calls, &page),
-    };
+    let counts = Some(Scope::of_path(uri.path(), true));
+    let session = resolve_with_counts(web, calls, token, counts)
+        .await
+        .map_err(|e| Box::new(outcome::page(&e, calls, &page)))?;
     calls.signed_in(&session);
-    req.extensions_mut().insert(session);
-    next.run(req).await
+    Ok(session)
 }
 
 /// The session `token` names, checked by `GET /v2/whoami` under its `web`

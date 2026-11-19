@@ -1184,11 +1184,19 @@ struct Values {
     eol: String,
 }
 
+/// The lead of every claim key the server derives, which a writer may not
+/// send (ADR-0039 d6; `oml_domain::DERIVED_CLAIM_KEY_PREFIX`, which the
+/// console's wall keeps out of reach).
+const DERIVED_KEY_LEAD: &str = "auto-";
+
 /// A claim key from a name, by the slug rule a document's key takes from
 /// its title (ADR-0081 d2): lower case, letters and digits of `a-z 0-9`
 /// kept, `.`/`_` kept, every run of anything else one `-`, no leading or
 /// trailing `-`; past 64 characters the first 47, `-`, and the first 16
 /// hex digits of the SHA-256 of the whole slug. Empty when nothing is left.
+/// An `auto-` lead, the prefix only the server derives (ADR-0039 d6), is
+/// stripped, so "Auto deploy" is `deploy` rather than a key the API
+/// refuses (the review of PR #494, re-verification).
 fn key_slug(name: &str) -> String {
     let mut slug = String::new();
     for c in name.to_lowercase().chars() {
@@ -1198,7 +1206,10 @@ fn key_slug(name: &str) -> String {
             slug.push('-');
         }
     }
-    let slug = slug.trim_end_matches('-').to_owned();
+    let slug = slug
+        .trim_end_matches('-')
+        .trim_start_matches(DERIVED_KEY_LEAD)
+        .to_owned();
     if slug.len() <= 64 {
         return slug;
     }
@@ -1293,9 +1304,10 @@ impl Values {
     }
 
     /// A digest of what a write would send, so Propose writes only the
-    /// values a preview answered: keyed by the form's act key, which only
-    /// the session can compute, over the workspace and the expected
-    /// version too (the review of PR #494, 7).
+    /// values a preview answered: keyed by the form's preview key, which
+    /// only the session can compute and which is not the act's
+    /// `Idempotency-Key`, over the workspace and the expected version too
+    /// (the review of PR #494, 7).
     #[allow(clippy::too_many_arguments)]
     fn digest(
         &self,
@@ -1514,7 +1526,9 @@ impl Form<'_> {
 
     fn textarea(&self, name: &str, label: &str, value: &str, hint: &str) -> String {
         format!(
-            r#"<label>{}<textarea name="{name}" required>{}</textarea></label>{}{}"#,
+            // The line break after `<textarea>` is the one an HTML parser
+            // drops, so a body that starts with its own keeps it.
+            "<label>{}<textarea name=\"{name}\" required>\n{}</textarea></label>{}{}",
             text(label),
             // HTML escaped alone: a CR or a bidi mark is the text's own and
             // round-trips; `text` would turn it into U+FFFD (C-B5).
@@ -1945,7 +1959,7 @@ impl Form<'_> {
                     target,
                     &workspace,
                     &expected,
-                    &session.act_key(self.nonce),
+                    &session.preview_key(self.nonce),
                 ),
             ));
         }
@@ -2513,7 +2527,7 @@ async fn form_act(
                         &target_id,
                         fields.get("workspace").unwrap_or_default(),
                         fields.get("expected").unwrap_or_default(),
-                        &session.act_key(&nonce),
+                        &session.preview_key(&nonce),
                     )
                     .as_str(),
             );

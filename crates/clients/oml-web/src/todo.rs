@@ -590,16 +590,20 @@ fn defined(action: &str, name: &str) -> bool {
     }
 }
 
-/// The rows Next reads to find the one after the item left: a page of the
-/// queue, so Next walks the first 50 rows in order. A constant of the
-/// build, unmeasured.
+/// The rows of one page Next reads to find the one after the item left.
+/// A constant of the build, unmeasured.
 const NEXT_SCAN_ROWS: u32 = 50;
 
-/// `POST /web/todo`, Next (ADR-0083 d11, d14): one read of the held
-/// listing under the form's workspace, oldest first, and a `303` to the
-/// Judge page of the row after `after`, the item the person leaves
-/// unjudged, or of the oldest row past the last; with none, back to To do
-/// with its notice. It records nothing.
+/// The pages Next reads at most to find the item left: past them it opens
+/// the oldest row, so Next walks the first 1,000 rows of the queue in
+/// order. A constant of the build, unmeasured.
+const NEXT_SCAN_PAGES: usize = 20;
+
+/// `POST /web/todo`, Next (ADR-0083 d11, d14): the held listing under the
+/// form's workspace, oldest first, read a page at a time until the row
+/// after `after`, the item the person leaves unjudged, is found, and a
+/// `303` to its Judge page, or to the oldest row's past the last; with
+/// none, back to To do with its notice. It records nothing.
 pub async fn user_act(
     State(web): State<Web>,
     Extension(session): Extension<Session>,
@@ -622,37 +626,65 @@ pub async fn user_act(
     };
     let workspace = fields.given("workspace");
     let credential = session.credential(Capacity::Review);
-    let ids = calls.next_ids();
     let filters: Vec<(&str, &str)> = workspace.map(|w| ("workspace", w)).into_iter().collect();
-    // One page of the queue, oldest first: Next opens the row after the
-    // one left unjudged, so it walks the queue instead of cycling between
-    // the two oldest; past the last it starts over at the oldest (the
-    // review of PR #494, 6).
-    let page = match web
-        .api
-        .review_held(
-            &call_as(&credential, &ids, acting),
-            &filters,
-            NEXT_SCAN_ROWS,
-            None,
-        )
-        .await
-    {
-        Ok(page) => page,
-        Err(e) => return outcome::page(&e, &calls, TODO_PATH),
-    };
+    // The queue a page at a time, oldest first: Next opens the row after
+    // the one left unjudged, so it walks the queue instead of cycling
+    // between the two oldest, and pages on past the first page so a row
+    // left there is not followed by the oldest again; past the last it
+    // starts over at the oldest (the review of PR #494, 6 and its
+    // re-verification).
+    let mut oldest: Option<String> = None;
+    let mut next: Option<String> = None;
+    let mut left_seen = false;
+    let mut cursor: Option<String> = None;
+    for _ in 0..NEXT_SCAN_PAGES {
+        let ids = calls.next_ids();
+        let page = match web
+            .api
+            .review_held(
+                &call_as(&credential, &ids, acting),
+                &filters,
+                NEXT_SCAN_ROWS,
+                cursor.as_deref(),
+            )
+            .await
+        {
+            Ok(page) => page,
+            Err(e) => return outcome::page(&e, &calls, TODO_PATH),
+        };
+        let rows: Vec<&str> = page
+            .items
+            .iter()
+            .map(|i| i.memory().artifact_id.as_str())
+            .collect();
+        if oldest.is_none() {
+            oldest = rows
+                .iter()
+                .find(|id| Some(**id) != after)
+                .map(|id| (*id).to_owned());
+        }
+        let from = if left_seen {
+            Some(0)
+        } else {
+            after
+                .and_then(|a| rows.iter().position(|id| *id == a))
+                .map(|i| i + 1)
+        };
+        if let Some(from) = from {
+            left_seen = true;
+            if let Some(id) = rows.get(from) {
+                next = Some((*id).to_owned());
+                break;
+            }
+        }
+        match (after, page.next_cursor) {
+            (Some(_), Some(more)) => cursor = Some(more),
+            _ => break,
+        }
+    }
+    let next = next.or(oldest);
     let kept_acting = acting.map_or_else(String::new, |id| format!("&as={}", encode(id)));
-    let rows: Vec<&str> = page
-        .items
-        .iter()
-        .map(|i| i.memory().artifact_id.as_str())
-        .collect();
-    let left = after.and_then(|a| rows.iter().position(|id| *id == a));
-    let next = left
-        .and_then(|i| rows.get(i + 1))
-        .or_else(|| rows.iter().find(|id| Some(**id) != after))
-        .copied();
-    match next {
+    match next.as_deref() {
         Some(id) => acts::see_other(
             &format!("{TODO_JUDGE_PATH}?memory={}{kept_acting}", encode(id)),
             &[],

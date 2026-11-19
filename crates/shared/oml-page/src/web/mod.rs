@@ -497,7 +497,9 @@ pub fn input(name: &str, label: &str, value: &str, required: bool) -> String {
 #[must_use]
 pub fn textarea(name: &str, label: &str, value: &str) -> String {
     format!(
-        r#"<label class="wide">{}<textarea name="{name}" required>{}</textarea></label>"#,
+        // The line break after `<textarea>` is the one an HTML parser
+        // drops, so a text that starts with its own keeps it.
+        "<label class=\"wide\">{}<textarea name=\"{name}\" required>\n{}</textarea></label>",
         escape(label),
         text(value)
     )

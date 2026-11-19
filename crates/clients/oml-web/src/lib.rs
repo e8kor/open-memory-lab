@@ -442,7 +442,7 @@ pub fn router(web: Web) -> Router {
                 ))
                 .layer(axum::middleware::from_fn(middleware::person_only))
                 .layer(axum::middleware::from_fn_with_state(
-                    web.layers,
+                    web,
                     middleware::same_origin,
                 ))
                 .layer(axum::middleware::from_fn(middleware::headers)),
