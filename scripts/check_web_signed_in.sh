@@ -8,7 +8,9 @@
 #
 #   1. POST /web/sign-in for GitHub, from the issuer's origin, next the page;
 #   2. the provider's callback with the sealed state, which opens a session;
-#   3. GET /web/guardrails with that session: 200 and the view's content;
+#   3. GET /web/guardrails with that session: oml-web's 308 to the
+#      workspace page's Guardrails kind (ADR-0083 d12), which answers 200
+#      with In force here;
 #   4. GET /web?view=guardrails: 404 with no redirect, the old URL's 303
 #      deleted in v0.7.1 (ADR-0070, "The old URLs deleted");
 #   5. GET /web/workspaces: 200 and the Workspaces view, from oml-web;
@@ -22,8 +24,9 @@
 #   9. GET /web: the lead's 303 to /web/keys; GET /web/keys from oml-web, and
 #      one act: issuing a reader key, whose value is shown once on the
 #      redirect target, carried there in a sealed cookie and never in the URL;
-#  10. GET /web?view=review: 404 with no redirect; GET /web/review
-#      from oml-web, and one act: review next, which lands back on the view.
+#  10. GET /web?view=review: 404 with no redirect; GET /web/review: oml-web's
+#      308 to /web/todo (ADR-0083 d6); GET /web/todo from oml-web, and one
+#      act: Next, which lands on To do's notice or on Judge.
 #
 # Usage: scripts/check_web_signed_in.sh <origin the router answers> <oauth.issuer>
 set -euo pipefail
@@ -60,11 +63,14 @@ code="$(curl -s -o "$work/callback.html" -D "$work/callback" -w '%{http_code}' \
 session="$(cookie "$work/callback" __Host-oml_session)"
 [ -n "$session" ] || fail "the callback opened no session"
 
-code="$(curl -s -o "$work/page.html" -D "$work/page" -w '%{http_code}' \
+code="$(curl -s -o /dev/null -D "$work/moved" -w '%{http_code}' \
     -H "Cookie: __Host-oml_session=$session" "$origin/web/guardrails")"
-[ "$code" = 200 ] || fail "GET /web/guardrails answered $code: $(head -c 400 "$work/page.html")"
-grep -q 'Rules in force at' "$work/page.html" || fail "GET /web/guardrails did not draw the Guardrails view"
-grep -q '<a href="/web/guardrails" class="on"' "$work/page.html" || fail "the Guardrails tab is not the current one"
+location="$(header "$work/moved" location)"
+[ "$code $location" = "308 /web/workspace?kind=guardrail" ] || fail "GET /web/guardrails answered '$code $location'"
+code="$(curl -s -o "$work/page.html" -w '%{http_code}' \
+    -H "Cookie: __Host-oml_session=$session" "$origin$location")"
+[ "$code" = 200 ] || fail "GET $location answered $code: $(head -c 400 "$work/page.html")"
+grep -q '<h2 id="in-force">In force here</h2>' "$work/page.html" || fail "GET $location did not draw In force here"
 
 code="$(curl -s -o /dev/null -D "$work/old" -w '%{http_code}' \
     -H "Cookie: __Host-oml_session=$session" "$origin/web?view=guardrails")"
@@ -160,20 +166,21 @@ grep -qi '^set-cookie: __Host-oml_once=;' "$work/shown" || fail "the redirect ta
 code="$(curl -s -o /dev/null -D "$work/old-review" -w '%{http_code}' -H "$jar" "$origin/web?view=review")"
 location="$(header "$work/old-review" location || true)"
 [ "$code $location" = "404 " ] || fail "GET /web?view=review answered '$code $location'"
-code="$(curl -s -o "$work/review.html" -w '%{http_code}' -H "$jar" "$origin/web/review")"
-[ "$code" = 200 ] || fail "GET /web/review answered $code: $(head -c 400 "$work/review.html")"
-grep -q '<a href="/web/review" class="on"' "$work/review.html" || fail "the Review tab is not the current one"
-nonce="$(field "$work/review.html" nonce)"
-[ -n "$nonce" ] || fail "the Review view's form carries no nonce"
+code="$(curl -s -o /dev/null -D "$work/review" -w '%{http_code}' -H "$jar" "$origin/web/review")"
+location="$(header "$work/review" location)"
+[ "$code $location" = "308 /web/todo" ] || fail "GET /web/review answered '$code $location'"
+code="$(curl -s -o "$work/todo.html" -w '%{http_code}' -H "$jar" "$origin/web/todo")"
+[ "$code" = 200 ] || fail "GET /web/todo answered $code: $(head -c 400 "$work/todo.html")"
+grep -q '<h1>To do</h1>' "$work/todo.html" || fail "GET /web/todo did not draw To do"
 code="$(curl -s -o "$work/next.html" -D "$work/next" -w '%{http_code}' -X POST -H "$jar" \
     -H "Origin: $issuer" -H 'Content-Type: application/x-www-form-urlencoded' \
-    --data "action=review_next&csrf_token=$csrf&nonce=$nonce" "$origin/web/review")"
+    --data "action=next&csrf_token=$csrf" "$origin/web/todo")"
 location="$(header "$work/next" location)"
 case "$code $location" in
-    "303 /web/review?done=empty" | "303 /web/review?serve="*) ;;
-    *) fail "POST /web/review review_next answered '$code $location': $(head -c 400 "$work/next.html")" ;;
+    "303 /web/todo?done=empty" | "303 /web/todo/judge?memory="*) ;;
+    *) fail "POST /web/todo next answered '$code $location': $(head -c 400 "$work/next.html")" ;;
 esac
 code="$(curl -s -o /dev/null -w '%{http_code}' -H "$jar" "$origin$location")"
 [ "$code" = 200 ] || fail "GET $location answered $code"
 
-echo "signed-in page: $origin served /web/guardrails, /web/workspaces, /web/memories, /web/atlas, /web/keys and /web/review to a signed-in session through oml-web, ran acts on the Workspaces, Keys and Review views through the API, and the old ?view= URLs are not found"
+echo "signed-in page: $origin served the workspace page, /web/workspaces, /web/memories, /web/atlas, /web/keys and /web/todo to a signed-in session through oml-web, moved /web/guardrails and /web/review, ran acts on the Workspaces, Keys and To do views through the API, and the old ?view= URLs are not found"
