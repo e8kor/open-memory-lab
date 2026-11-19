@@ -9600,6 +9600,15 @@ where
         // the version the caller names is refused before the tip check,
         // nothing captured; another author's held version never changes the
         // answer (ADR-0057 d19; R3).
+        // A preview knows the version it replaces before any version check
+        // refuses, so its kind decides `needs_person` beside that refusal
+        // (ADR-0082 d5; the review of PR #494, L2).
+        if let Some(facts) = preview.as_deref_mut() {
+            facts.workspace_id = Some(target.workspace_id);
+            facts.kind =
+                Some(successor_kind(target.kind, req.kind, req.retirement).unwrap_or(target.kind));
+            facts.replaces = Some(target.clone());
+        }
         let claim_state = self
             .journal
             .claim_key_state(key.tenant_id, target.workspace_id, &target.claim_key)
