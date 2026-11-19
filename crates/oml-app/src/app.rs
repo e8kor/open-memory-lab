@@ -119,7 +119,7 @@ use crate::telemetry::{HITS_STORED, Label, RecallEvent, Remembered, Telemetry, T
 use crate::types::{
     AdminTodoCounts, BULK_VERDICT_MAX, BulkItem, BulkVerdictRequest, FindingVerdict, FoundBy,
     HELD_PAGE_MAX, HeldFilter, HeldItem, HeldListingRequest, HeldPage, ReviewLane, TODO_COUNT_CAP,
-    TodoCounts, VersionFinding,
+    TODO_SCAN_ROWS_MAX, TodoCounts, VersionFinding,
 };
 use crate::types::{
     AppError, Approval, AssignedNames, AuthorizationRecord, AuthorizeOutcome, AuthorizePage,
@@ -6556,6 +6556,7 @@ where
         let mut users: BTreeMap<Uuid, bool> = BTreeMap::new();
         let mut after: Option<ListingPosition> = None;
         let mut review = 0u64;
+        let mut scanned = 0usize;
         loop {
             let rows = self
                 .journal
@@ -6569,6 +6570,17 @@ where
                 )
                 .await?;
             for row in &rows {
+                // The scan is bounded as the count is: rows the person may
+                // not judge are read and never counted, so past
+                // `TODO_SCAN_ROWS_MAX` read the count stops and says so
+                // (ADR-0083 d11; the review of PR #494, L4).
+                if scanned == TODO_SCAN_ROWS_MAX {
+                    return Ok(TodoCounts {
+                        review,
+                        truncated: true,
+                    });
+                }
+                scanned += 1;
                 if self
                     .held_admits(key, &filter, &walked, &mut users, &row.memory)
                     .await?
@@ -6599,15 +6611,23 @@ where
         })
     }
 
-    /// The administration To do counts read (ADR-0083 d11, d14): an admin
-    /// key's, and no group of it is built yet, so it answers `truncated`
+    /// The administration To do counts read (ADR-0083 d11, d14): a
+    /// person's `<user>-admin` session key's, and no group of it is built yet, so it answers `truncated`
     /// alone, false; each group joins with its feature (ADR-0089).
     pub async fn admin_todo_counts(
         &self,
         bearer: impl Into<Bearer<'_>>,
     ) -> Result<AdminTodoCounts, AppError> {
         let caller = self.authenticate_bearer(bearer.into()).await?;
-        require_role(&caller.key, Role::Admin, "admin_todo_counts")?;
+        // The administration capacity's session key alone: `<user>-curate`
+        // and a tenant admin key share the role, not the capacity (ADR-0083
+        // d11; the review of PR #494, L5).
+        if !auth::is_admin_session_key(&caller.key) {
+            return Err(AppError::VerbCeiling {
+                role: caller.key.role,
+                verb: "admin_todo_counts",
+            });
+        }
         Ok(AdminTodoCounts::default())
     }
 

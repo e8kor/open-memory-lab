@@ -4321,7 +4321,11 @@ async fn a_guardrail_keeps_the_claim_key_it_is_sent_and_derives_one_without() {
         )
         .await
         .expect("an unnamed guardrail");
-    assert!(unnamed.receipt.claim_key.starts_with("auto-"), "{}", unnamed.receipt.claim_key);
+    assert!(
+        unnamed.receipt.claim_key.starts_with("auto-"),
+        "{}",
+        unnamed.receipt.claim_key
+    );
 }
 
 /// A person's web key supersedes a row their linked tenant key wrote in
@@ -4357,7 +4361,12 @@ async fn a_persons_web_key_supersedes_their_linked_tenant_keys_row_held() {
     app.link_key_to_person(Bearer::Session(&ops), linked.key_id.into(), &name("alice"))
         .await
         .expect("linked");
-    let id = written(&app, &linked.value, &submit("l1", "Builds run on push.", Some("alice"))).await;
+    let id = written(
+        &app,
+        &linked.value,
+        &submit("l1", "Builds run on push.", Some("alice")),
+    )
+    .await;
     let review = app
         .web_caller(&alice, Capacity::Review)
         .await
@@ -4673,30 +4682,29 @@ async fn todo_counts_past_the_cap_answer_the_cap_with_truncated_across_pages() {
     assert!(counts.truncated);
 }
 
-/// A To do count stops after scanning [`TODO_SCAN_ROWS_MAX`] rows of the
+/// A To do count stops after reading [`TODO_SCAN_ROWS_MAX`] rows of the
 /// held listing, counted or not, and says so with `truncated`: rows the
-/// person may not judge, their own linked key's outside their root, are
-/// scanned and never counted, so they cannot make the badge's read
-/// unbounded (ADR-0083 d11; the review of PR #494, L4).
+/// store answers and the core's own check drops (here queued rows no
+/// longer held, as a regressed store would answer them) are read and never
+/// counted, so they cannot make the badge's read unbounded (ADR-0083 d11,
+/// d16; the review of PR #494, L4).
 #[tokio::test]
-async fn todo_counts_stop_after_their_scan_cap_with_truncated() {
+async fn todo_counts_stop_after_their_scan_bound_with_truncated() {
     use oml_app::types::TODO_SCAN_ROWS_MAX;
     let (app, store) = rig();
     let boot = bootstrap(&app).await;
     let admin = boot.admin_key.value.as_str();
-    let (alice, _review, writer, _bob) =
+    let (alice, _review, _writer, bob) =
         team_with_alices_session_and_bobs_writer(&app, admin).await;
-    let held = written(
-        &app,
-        &writer.value,
-        &submit("a0", "Alice's note.", Some("team")),
-    )
-    .await;
-    store.seed_copies(
+    let held = written(&app, &bob.value, &submit("b0", "Bob's note.", Some("team"))).await;
+    let copies = store.seed_copies(
         boot.tenant_id,
         held,
-        u32::try_from(TODO_SCAN_ROWS_MAX).expect("a small cap"),
+        u32::try_from(TODO_SCAN_ROWS_MAX).expect("a small bound"),
     );
+    for id in copies {
+        store.set_status(boot.tenant_id, id, MemoryStatus::Rejected);
+    }
     let web = app
         .web_caller(&alice, Capacity::Web)
         .await
@@ -4705,8 +4713,8 @@ async fn todo_counts_stop_after_their_scan_cap_with_truncated() {
         .todo_counts(Bearer::Session(&web), None)
         .await
         .expect("the counts");
-    assert_eq!(counts.review, 0, "alice judges none of her own rows");
-    assert!(counts.truncated, "the scan stopped at its cap");
+    assert_eq!(counts.review, 1, "bob's one held row");
+    assert!(counts.truncated, "the read stopped at its bound");
 }
 
 /// The administration To do counts answer only a person's admin session

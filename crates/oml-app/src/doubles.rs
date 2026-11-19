@@ -580,15 +580,16 @@ impl MemStore {
     /// served tip of its own claim, inserted with no event: a large
     /// workspace for a timing law, built in one step (ADR-0072 d13 test 7).
     /// A held template's copies wait in the review queue, as a large queue
-    /// for a count's bound.
-    pub fn seed_copies(&self, tenant_id: Uuid, memory_id: Uuid, n: u32) {
+    /// for a count's bound. Answers the copies' ids.
+    pub fn seed_copies(&self, tenant_id: Uuid, memory_id: Uuid, n: u32) -> Vec<Uuid> {
         let Some(tenant) = self.tenant_existing(tenant_id) else {
-            return;
+            return Vec::new();
         };
         let mut state = tenant.lock().expect("tenant lock");
         let Some(template) = state.memories.get(&memory_id).cloned() else {
-            return;
+            return Vec::new();
         };
+        let mut ids = Vec::new();
         for i in 0..n {
             let mut copy = template.clone();
             copy.memory_id =
@@ -607,8 +608,10 @@ impl MemStore {
                     claimed_by: None,
                 });
             }
+            ids.push(copy.memory_id);
             state.memories.insert(copy.memory_id, copy);
         }
+        ids
     }
 
     /// How many memory rows the recall path's reads (`retrieve`, the

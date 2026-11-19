@@ -726,7 +726,7 @@ Requires: admin key role; every other key answers access.verb_ceiling (amending)
 
 The To do page's counts for a person's web session key; no content.
 
-Requires: a person's web session key, <user>-web, through its capacity credential; any other key answers access.verb_ceiling with details.reason session_key_only. review is the number of rows GET /v2/review/held would serve the person's reviewer key, <user>-review, at workspace and below it, or across every workspace without workspace, computed under the same grants, lineage exclusions and author fences as that listing; counted up to 1,000, with truncated true past it.
+Requires: a person's web session key, <user>-web, through its capacity credential; any other key answers access.verb_ceiling with details.reason session_key_only. review is the number of rows GET /v2/review/held would serve the person's reviewer key, <user>-review, at workspace and below it, or across every workspace without workspace, computed under the same grants, lineage exclusions and author fences as that listing; counted up to 1,000, with truncated true past it, and read up to 2,000 held rows, counted or not, with truncated true and the count so far once that bound stops the read.
 
 | Parameter | In | Type | Required | Meaning |
 |---|---|---|---|---|
@@ -739,7 +739,7 @@ Requires: a person's web session key, <user>-web, through its capacity credentia
 
 The administration To do page's counts; no content.
 
-Requires: admin key role; every other key answers access.verb_ceiling.
+Requires: a person's admin session key, <user>-admin, through its capacity credential; any other key, <user>-curate and a tenant admin key included, answers access.verb_ceiling with details.reason session_key_only.
 
 **Responses.** `200` The counts.; `403` A 403-class refusal naming its rule (access.*, review.*, simulation.audience_refused).; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
 

@@ -281,7 +281,7 @@ paths:
       operationId: previewMemory
       parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }]
       summary: What capture would decide for a submit's body or a supersession's, without capturing.
-      description: 'Requires: the grant submit would need, or, with replaces, the grant supersede would need on that target (ADR-0082 d5). The body is submit''s, or supersede''s with replaces naming the version it replaces. Every check capture makes runs through the same pipeline, which stops before anything is journalled, held or metered: no version, no event, no counter moves (ADR-0071 d2), and no Idempotency-Key is read, so nothing is recorded or replayed. A refusal of authority is the HTTP error submit or supersede would answer: auth.*, limit.rate, access.verb_ceiling, every access.* grant refusal, and access.not_found for a target the key cannot read, replaces that names no row included. Every other refusal capture would make, the body''s shape, size, the scan''s veto, a quota''s headroom, a name taken, submission.version_conflict, submission.tip_conflict, workspace.frozen and a guardrail rule that does not parse among them, answers 200 with would_capture false and refusal in the error object''s shape, beside what was read before it (ADR-0082 d10). The request rate is charged once (ADR-0079). Read-shaped POST. A document''s passages are not served in this release. Since v0.8.0.'
+      description: 'Requires: the grant submit would need, or, with replaces, the grant supersede would need on that target (ADR-0082 d5). The body is submit''s, or supersede''s with replaces naming the version it replaces. Every check capture makes runs through the same pipeline, which stops before anything is journalled, held or metered: no version, no event, no counter moves (ADR-0071 d2), and no Idempotency-Key is read, so nothing is recorded or replayed. A refusal of authority is the HTTP error submit or supersede would answer: auth.*, limit.rate, access.verb_ceiling, every access.* grant refusal, and access.not_found for a target the key cannot read, replaces that names no row included. Every other refusal capture would make, the body''s shape, size, the scan''s veto, a quota''s headroom, a name taken, submission.version_conflict, submission.tip_conflict, workspace.frozen and a guardrail rule that does not parse among them, answers 200 with would_capture false and refusal in the error object''s shape, beside what was read before it (ADR-0082 d10). The request rate is charged once (ADR-0079). Read-shaped POST. Since v0.8.0.'
       requestBody:
         required: true
         content:
@@ -1494,7 +1494,7 @@ paths:
       tags: [review]
       operationId: todoCounts
       summary: The To do page's counts for a person's web session key; no content.
-      description: 'Requires: a person''s web session key, <user>-web, through its capacity credential; any other key answers access.verb_ceiling with details.reason session_key_only (ADR-0083 d11). review is the number of rows GET /v2/review/held would serve the person''s reviewer key, <user>-review, at workspace and below it, or across every workspace without workspace, computed under the same grants, lineage exclusions and author fences as that listing; counted up to 1,000, with truncated true past it. A person with no live reviewer key or no reviewer grant counts 0, and so does a workspace that key cannot read or that does not exist, which is never named or refused. No memory id, text, claim key or name. Journals nothing. The other groups (fixes, ratify, withdrawals, overrides, imports) join with their features (ADR-0083 d14). Since v0.8.0.'
+      description: 'Requires: a person''s web session key, <user>-web, through its capacity credential; any other key answers access.verb_ceiling with details.reason session_key_only (ADR-0083 d11). review is the number of rows GET /v2/review/held would serve the person''s reviewer key, <user>-review, at workspace and below it, or across every workspace without workspace, computed under the same grants, lineage exclusions and author fences as that listing; counted up to 1,000, with truncated true past it, and read up to 2,000 held rows, counted or not, with truncated true and the count so far once that bound stops the read (ADR-0083 d16). A person with no live reviewer key or no reviewer grant counts 0, and so does a workspace that key cannot read or that does not exist, which is never named or refused. No memory id, text, claim key or name. Journals nothing. The other groups (fixes, ratify, withdrawals, overrides, imports) join with their features (ADR-0083 d14). Since v0.8.0.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -1520,7 +1520,7 @@ paths:
                 required: [review, truncated]
                 properties:
                   review: { type: integer, minimum: 0, maximum: 1000, description: "The To review group's length: the held rows the person's reviewer key may judge." }
-                  truncated: { type: boolean, description: "Whether a count passed 1,000 and answers 1,000." }
+                  truncated: { type: boolean, description: "Whether a count passed 1,000 and answers 1,000, or stopped after reading 2,000 held rows and answers what it counted." }
         '403': { $ref: '#/components/responses/Forbidden' }
         default: { $ref: '#/components/responses/Error' }
 
@@ -1529,7 +1529,7 @@ paths:
       tags: [review]
       operationId: adminTodoCounts
       summary: The administration To do page's counts; no content.
-      description: 'Requires: admin key role; every other key answers access.verb_ceiling (ADR-0083 d11). Its groups (unconfirmed admin fixes, guardrail-loosening alerts, open investigations) join with ADR-0089''s acts; until then it answers truncated alone, false (ADR-0083 d14). Takes no query parameter. Journals nothing. Since v0.8.0.'
+      description: 'Requires: a person''s admin session key, <user>-admin, through its capacity credential; any other key, <user>-curate and a tenant admin key included, answers access.verb_ceiling with details.reason session_key_only (ADR-0083 d11). Its groups (unconfirmed admin fixes, guardrail-loosening alerts, open investigations) join with ADR-0089''s acts; until then it answers truncated alone, false (ADR-0083 d14). Takes no query parameter. Journals nothing. Since v0.8.0.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }

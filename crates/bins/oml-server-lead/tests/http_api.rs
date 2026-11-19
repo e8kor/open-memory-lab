@@ -11908,3 +11908,35 @@ async fn the_author_withdraws_its_held_version_over_http_and_the_route_refuses_b
 
     drop_db(&rig.db_name).await;
 }
+
+/// `GET /v2/admin/todo/counts` answers a person's `<user>-admin` session
+/// key alone: a tenant admin key shares its role, not its capacity, and is
+/// refused `access.verb_ceiling` with `session_key_only` (ADR-0083 d11; the
+/// review of PR #494, L5).
+#[tokio::test]
+async fn the_admin_todo_counts_answer_only_the_admin_session_key() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let token = rig.signed_in("ada@example.com", "ada", true).await;
+    let (status, _, body) = send(
+        &rig.router,
+        "GET",
+        "/v2/admin/todo/counts",
+        web_call(&credential(&token, "admin")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["truncated"], false);
+    let (status, _, body) = send(
+        &rig.router,
+        "GET",
+        "/v2/admin/todo/counts",
+        Call::auth(&rig.admin),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_envelope(&body, "access.verb_ceiling");
+    assert_eq!(body["error"]["details"]["reason"], "session_key_only");
+    drop_db(&rig.db_name).await;
+}

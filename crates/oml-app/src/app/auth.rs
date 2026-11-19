@@ -51,6 +51,15 @@ pub(super) fn is_web_session_key(key: &KeyRecord) -> bool {
         })
 }
 
+/// Whether `key` is a person's `<user>-admin` session key (ADR-0083 d11).
+pub(super) fn is_admin_session_key(key: &KeyRecord) -> bool {
+    key.credential == Credential::Session
+        && key.role == Role::Admin
+        && key.session_user.as_ref().is_some_and(|user| {
+            key_name(user, Capacity::Admin.suffix()).ok().as_ref() == key.name.as_ref()
+        })
+}
+
 /// Whether `key` is the session key `name` of `session`'s user: the row
 /// holding the name, a session key serving that user, not revoked
 /// (ADR-0045 d6).

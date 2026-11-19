@@ -81,6 +81,20 @@ pub(crate) fn act_digest(user: &str, body: &Bytes) -> String {
     oml_app::domain::Sha256Hash::digest(&bytes).to_prefixed()
 }
 
+/// Whether `caller` is a person's `<user>-admin` session key (ADR-0083
+/// d11).
+fn is_admin_session_key(caller: &Caller) -> bool {
+    caller.key().credential == Credential::Session
+        && caller
+            .key()
+            .name
+            .as_ref()
+            .zip(caller.key().session_user.as_ref())
+            .is_some_and(|(name, user)| {
+                name.as_str() == format!("{}-{}", user.as_str(), Capacity::Admin.suffix())
+            })
+}
+
 /// Whether `caller` is a person's `<user>-web` session key.
 fn is_web_session_key(caller: &Caller) -> bool {
     caller.key().credential == Credential::Session
@@ -804,11 +818,25 @@ where
         finish(&rid, result)
     }
 
-    /// `GET /v2/admin/todo/counts`, admin by key role: the administration
+    /// `GET /v2/admin/todo/counts`, as a person's `<user>-admin` session key
+    /// alone: the administration
     /// To do page's counts; none of its groups is built, so it answers
     /// `{truncated: false}` (ADR-0083 d11, d14).
     async fn admin_todo_counts_inner(st: &Self, headers: &HeaderMap) -> Result<Response, ApiError> {
         let caller = st.console_caller(headers).await?;
+        if !is_admin_session_key(&caller) {
+            return Err(ApiError::new(
+                StatusCode::FORBIDDEN,
+                "access.verb_ceiling",
+                "A person's own acts run only as their session key, so an agent's key never acts as its person (ADR-0045 d16).",
+                "admin_todo_counts runs only as the person's admin session key",
+            )
+            .with_details(json!({
+                "verb": "admin_todo_counts",
+                "role": caller.key().role.as_str(),
+                "reason": "session_key_only",
+            })));
+        }
         let counts = st
             .app
             .admin_todo_counts(Bearer::Session(&caller))
