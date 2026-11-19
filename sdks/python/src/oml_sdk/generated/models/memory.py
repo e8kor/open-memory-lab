@@ -118,7 +118,22 @@ class Memory:
             approving ends nothing (ADR-0059 d4).
         text (str | Unset): The claim's text, decrypted on the serving path only; v0.3.0 named it body (ADR-0039 d7).
             Absent from a recall item sent with include_text false, and from a listing item unless include_text is true
-            (ADR-0070 d5).
+            (ADR-0070 d5). A skill hit's text is its description, never its body (ADR-0092 d3).
+        needs_person (bool | Unset): On a catalog entry, and on a held instruction hit: only a person's verdict promotes
+            the version (ADR-0080 d16; ADR-0092 d3, d6).
+        name (str | Unset): A skill's name, on a skill hit and a skill's catalog entry (ADR-0092 d3, d6).
+        description (str | Unset): A skill's description; on a memory or derived fact's catalog entry, a cut of its text
+            of at most 160 characters, marked preview (ADR-0092 d6, d11 answer 7).
+        preview (bool | Unset): true when description is the server's cut of the text (ADR-0092 d6).
+        uri (str | Unset): A skill's or a document's resource, oml://workspace/<workspace>/skill/<name> or …/doc/<path>
+            (ADR-0080 d7; ADR-0081 d6; ADR-0092 d3, d6).
+        prompt (None | str | Unset): The command prompts/list offers a skill under at the read's scope node; null on a
+            catalog entry the scope does not offer (ADR-0092 d3, d6).
+        in_force (bool | Unset): A guardrail: whether it binds at the read's scope node; true on every guardrail hit,
+            since only an applicable one is a hit (ADR-0092 d3, d6).
+        applies_here (bool | Unset): A steering catalog entry: whether it is in the steering list at the read's scope
+            node (ADR-0092 d6).
+        size (int | Unset): A document catalog entry's body bytes (ADR-0092 d6).
     """
 
     artifact_id: str
@@ -165,6 +180,15 @@ class Memory:
     search_text: str | Unset = UNSET
     replaces_valid_until: str | Unset = UNSET
     text: str | Unset = UNSET
+    needs_person: bool | Unset = UNSET
+    name: str | Unset = UNSET
+    description: str | Unset = UNSET
+    preview: bool | Unset = UNSET
+    uri: str | Unset = UNSET
+    prompt: None | str | Unset = UNSET
+    in_force: bool | Unset = UNSET
+    applies_here: bool | Unset = UNSET
+    size: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -356,6 +380,28 @@ class Memory:
 
         text = self.text
 
+        needs_person = self.needs_person
+
+        name = self.name
+
+        description = self.description
+
+        preview = self.preview
+
+        uri = self.uri
+
+        prompt: None | str | Unset
+        if isinstance(self.prompt, Unset):
+            prompt = UNSET
+        else:
+            prompt = self.prompt
+
+        in_force = self.in_force
+
+        applies_here = self.applies_here
+
+        size = self.size
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -432,6 +478,24 @@ class Memory:
             field_dict["replaces_valid_until"] = replaces_valid_until
         if text is not UNSET:
             field_dict["text"] = text
+        if needs_person is not UNSET:
+            field_dict["needs_person"] = needs_person
+        if name is not UNSET:
+            field_dict["name"] = name
+        if description is not UNSET:
+            field_dict["description"] = description
+        if preview is not UNSET:
+            field_dict["preview"] = preview
+        if uri is not UNSET:
+            field_dict["uri"] = uri
+        if prompt is not UNSET:
+            field_dict["prompt"] = prompt
+        if in_force is not UNSET:
+            field_dict["in_force"] = in_force
+        if applies_here is not UNSET:
+            field_dict["applies_here"] = applies_here
+        if size is not UNSET:
+            field_dict["size"] = size
 
         return field_dict
 
@@ -758,6 +822,31 @@ class Memory:
 
         text = d.pop("text", UNSET)
 
+        needs_person = d.pop("needs_person", UNSET)
+
+        name = d.pop("name", UNSET)
+
+        description = d.pop("description", UNSET)
+
+        preview = d.pop("preview", UNSET)
+
+        uri = d.pop("uri", UNSET)
+
+        def _parse_prompt(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        prompt = _parse_prompt(d.pop("prompt", UNSET))
+
+        in_force = d.pop("in_force", UNSET)
+
+        applies_here = d.pop("applies_here", UNSET)
+
+        size = d.pop("size", UNSET)
+
         memory = cls(
             artifact_id=artifact_id,
             claim_key=claim_key,
@@ -803,6 +892,15 @@ class Memory:
             search_text=search_text,
             replaces_valid_until=replaces_valid_until,
             text=text,
+            needs_person=needs_person,
+            name=name,
+            description=description,
+            preview=preview,
+            uri=uri,
+            prompt=prompt,
+            in_force=in_force,
+            applies_here=applies_here,
+            size=size,
         )
 
         memory.additional_properties = d

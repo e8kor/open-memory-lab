@@ -1752,6 +1752,8 @@ async fn anchor_filter_latency_at_100k() {
         reference: None,
         promoted_nodes: vec![w.node],
         kinds: vec![oml_app::domain::MemoryKind::Memory],
+        instructions: Vec::new(),
+        counted_kinds: vec![oml_app::domain::MemoryKind::Memory],
         own_held: None,
         anchor: filter,
         expired_at: None,

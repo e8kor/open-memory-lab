@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 from attrs import define as _attrs_define
 
 from ..models.recall_search_access import RecallSearchAccess
+from ..models.recall_search_hits import RecallSearchHits
 from ..models.recall_search_match import RecallSearchMatch
 from ..models.recall_search_pipeline import RecallSearchPipeline
 from ..models.rerank_outcome import RerankOutcome
@@ -13,6 +14,7 @@ from ..models.rerank_reason import RerankReason
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.recall_search_matched_by_kind import RecallSearchMatchedByKind
     from ..models.recall_search_widen import RecallSearchWiden
     from ..models.recall_search_window_type_0 import RecallSearchWindowType0
     from ..models.recall_sources import RecallSources
@@ -27,6 +29,8 @@ class RecallSearch:
 
     Attributes:
         pipeline (RecallSearchPipeline):
+        matched_by_kind (RecallSearchMatchedByKind): Per kind, the candidates in the fused list before the k cut,
+            bounded by each list's depth: a lower bound; a kind with none is absent (ADR-0092 d4).
         match (RecallSearchMatch):
         terms (list[str]):
         fallback (None | str): any_term when match all found no row with every word and the any-word hits were served
@@ -49,6 +53,8 @@ class RecallSearch:
             applied; null when none was.
         below_floor (int): How many of the first k candidates the floor withheld; hits empty with below_floor above 0
             means nothing scored above the floor (ADR-0053 d6).
+        hits (RecallSearchHits | Unset): Present when kinds names steering alone: the query ranked nothing (ADR-0092
+            d2).
         window (None | RecallSearchWindowType0 | Unset): The date window read from the query by rule oml-when/1,
             anchored to the recall's now; null when the query names no date (ADR-0059 d6).
         sources (RecallSources | Unset): Under sources wide or a list: what was searched and why (ADR-0072 d8). Every
@@ -61,6 +67,7 @@ class RecallSearch:
     """
 
     pipeline: RecallSearchPipeline
+    matched_by_kind: RecallSearchMatchedByKind
     match: RecallSearchMatch
     terms: list[str]
     fallback: None | str
@@ -71,6 +78,7 @@ class RecallSearch:
     rerank_reason: None | RerankReason
     floor: float | None
     below_floor: int
+    hits: RecallSearchHits | Unset = UNSET
     window: None | RecallSearchWindowType0 | Unset = UNSET
     sources: RecallSources | Unset = UNSET
     widen: RecallSearchWiden | Unset = UNSET
@@ -79,6 +87,8 @@ class RecallSearch:
         from ..models.recall_search_window_type_0 import RecallSearchWindowType0
 
         pipeline = self.pipeline.value
+
+        matched_by_kind = self.matched_by_kind.to_dict()
 
         match = self.match.value
 
@@ -110,6 +120,10 @@ class RecallSearch:
 
         below_floor = self.below_floor
 
+        hits: str | Unset = UNSET
+        if not isinstance(self.hits, Unset):
+            hits = self.hits.value
+
         window: dict[str, Any] | None | Unset
         if isinstance(self.window, Unset):
             window = UNSET
@@ -131,6 +145,7 @@ class RecallSearch:
         field_dict.update(
             {
                 "pipeline": pipeline,
+                "matched_by_kind": matched_by_kind,
                 "match": match,
                 "terms": terms,
                 "fallback": fallback,
@@ -143,6 +158,8 @@ class RecallSearch:
                 "below_floor": below_floor,
             }
         )
+        if hits is not UNSET:
+            field_dict["hits"] = hits
         if window is not UNSET:
             field_dict["window"] = window
         if sources is not UNSET:
@@ -154,12 +171,15 @@ class RecallSearch:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.recall_search_matched_by_kind import RecallSearchMatchedByKind
         from ..models.recall_search_widen import RecallSearchWiden
         from ..models.recall_search_window_type_0 import RecallSearchWindowType0
         from ..models.recall_sources import RecallSources
 
         d = dict(src_dict)
         pipeline = RecallSearchPipeline(d.pop("pipeline"))
+
+        matched_by_kind = RecallSearchMatchedByKind.from_dict(d.pop("matched_by_kind"))
 
         match = RecallSearchMatch(d.pop("match"))
 
@@ -217,6 +237,13 @@ class RecallSearch:
 
         below_floor = d.pop("below_floor")
 
+        _hits = d.pop("hits", UNSET)
+        hits: RecallSearchHits | Unset
+        if isinstance(_hits, Unset):
+            hits = UNSET
+        else:
+            hits = RecallSearchHits(_hits)
+
         def _parse_window(data: object) -> None | RecallSearchWindowType0 | Unset:
             if data is None:
                 return data
@@ -250,6 +277,7 @@ class RecallSearch:
 
         recall_search = cls(
             pipeline=pipeline,
+            matched_by_kind=matched_by_kind,
             match=match,
             terms=terms,
             fallback=fallback,
@@ -260,6 +288,7 @@ class RecallSearch:
             rerank_reason=rerank_reason,
             floor=floor,
             below_floor=below_floor,
+            hits=hits,
             window=window,
             sources=sources,
             widen=widen,

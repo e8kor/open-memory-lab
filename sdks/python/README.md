@@ -41,7 +41,7 @@ with OmlClient() as oml:
     # superseding it while it is held raises SubmissionError (submission.tip_conflict).
     oml.write("Drain, then wait five minutes.", replaces=memory.artifact_id)
 
-    for row in oml.iter_memories(limit=50):  # the key's own rows; follows next_cursor to the end
+    for row in oml.iter_memories(own=True, limit=50):  # the key's own rows; follows next_cursor to the end
         print(row.artifact_id, row.state)
 ```
 

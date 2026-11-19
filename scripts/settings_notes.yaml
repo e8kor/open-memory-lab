@@ -96,6 +96,9 @@ server:
   brief.max_tokens:
     default: "`400`"
     note: The token budget a workspace's brief is cut to when an agent reads the workspace. The first member that does not fit ends the brief.
+  catalog.count_cap:
+    default: "`10000`"
+    note: The count above which a kind's number on the catalog's first page reads as at least this many. Each count reads at most one more row than the cap, so a larger cap costs a larger read on a large workspace; zero or anything but a positive whole number stops the start.
   storage.url:
     default: "`oml-objects`"
     note: Where upload sessions keep their parts, a local directory as a path or a `file://` URL, created owner-only on first use. A production install sets an absolute path the server can write, such as a directory under its unit's `StateDirectory`; the relative default lands in the server's working directory. A directory the server cannot create does not stop it; it starts, logs `upload_store_unavailable` and refuses every upload with `upload.storage_failed` until the directory can be created. Each part is stored encrypted under its session's own key, and the directory holds nothing once every session has ended. Any other scheme stops the server at start.

@@ -125,24 +125,26 @@ use crate::types::{
     ClientAuthentication, ClientDescription, ClientKind, CodeEntryOutcome, ConfirmAction,
     ConfirmOutcome, ConfirmationGrant, ConfirmationView, ConnectCode, ConnectCodeIssued,
     ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord, CreatedWorkspace,
-    Credential, CrewCreateRequest, CrewPage, CrewRecord, CrewUpdate, DenialRecord,
-    EdgeRatification, ExchangeForm, FormatFields, GrantRecord, GuardrailFields, GuardrailRequest,
-    GuardrailSet, GuardrailVerdict, HIT_KINDS, HitPassage, IssueKeyRequest, IssuedKey,
-    IssuedTokens, KeyAccess, KeyDetail, KeyRecord, KindFields, ListRequest, ListingFilter,
-    ListingPosition, ListingScope, LiveConnectCode, MemoryPage, MemoryRecord, MintedToken,
-    NamedRef, NamingRefusal, OAuthClientRecord, OnSimilar, OwnHeldGuardrail, PROVIDER_TENANT,
-    ProposeBriefEdge, ProposeClaimEdge, RecallHit, RecallRequest, RecallResult, RefreshFacts,
-    RefreshForm, RegisteredClient, RerankOutcome, SIMILAR_KINDS, ServedGuardrail, ServedMemory,
-    SimilarItem, SourceCheck, SourceCheckReceipt, SourceCheckRequest, SubmitOutcome, SubmitReceipt,
-    SubmitRequest, SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage,
-    TailedEvent, TenantRow, TokenPair, TransitionRecord, TransitionState, TransitionView, TreeNode,
-    TreePage, UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami,
-    WithdrawReceipt, WithdrawRequest, WorkspaceInfo, WorkspaceRecord, WorkspaceStatusView,
+    Credential, CrewCreateRequest, CrewPage, CrewRecord, CrewUpdate, DEFAULT_HIT_KINDS,
+    DenialRecord, EdgeRatification, ExchangeForm, FormatFields, GrantRecord, GuardrailFields,
+    GuardrailRequest, GuardrailSet, GuardrailVerdict, HIT_KINDS, HitPassage, INSTRUCTION_HIT_KINDS,
+    IssueKeyRequest, IssuedKey, IssuedTokens, KeyAccess, KeyDetail, KeyRecord, KindFields,
+    ListRequest, ListingFilter, ListingPosition, ListingScope, LiveConnectCode, MemoryPage,
+    MemoryRecord, MintedToken, NamedRef, NamingRefusal, OAuthClientRecord, OnSimilar,
+    OwnHeldGuardrail, PROVIDER_TENANT, ProposeBriefEdge, ProposeClaimEdge, RecallHit,
+    RecallRequest, RecallResult, RefreshFacts, RefreshForm, RegisteredClient, RerankOutcome,
+    SIMILAR_KINDS, ServedGuardrail, ServedMemory, SimilarItem, SkillHit, SourceCheck,
+    SourceCheckReceipt, SourceCheckRequest, SubmitOutcome, SubmitReceipt, SubmitRequest,
+    SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent,
+    TenantRow, TokenPair, TransitionRecord, TransitionState, TransitionView, TreeNode, TreePage,
+    UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami, WithdrawReceipt,
+    WithdrawRequest, WorkspaceInfo, WorkspaceRecord, WorkspaceStatusView,
 };
 use crate::types::{
     BULK_VERDICT_MAX, BulkItem, BulkVerdictRequest, FindingVerdict, FoundBy, HELD_PAGE_MAX,
     HeldFilter, HeldItem, HeldListingRequest, HeldPage, ReviewLane, VersionFinding,
 };
+use crate::types::{CatalogMark, KindCount};
 use crate::types::{ServedSkill, SkillBody, SkillRead, SkillRequest, SkillSet};
 use oml_domain::skills::{SKILL_PAGE, SkillCandidate, offer, skill_uri};
 
@@ -164,6 +166,16 @@ struct PipelineRun {
     fallback: bool,
     access: Access,
     pruned: Vec<String>,
+}
+
+/// The instructions a recall ranks at its scope node (ADR-0092 d3): the
+/// offered skills and the applicable guardrails by version id and kind, in
+/// the states their own reads serve them, and each skill hit's command and
+/// resource.
+#[derive(Debug, Default)]
+struct RecallInstructions {
+    ids: Vec<(Uuid, MemoryKind)>,
+    skills: BTreeMap<Uuid, SkillHit>,
 }
 
 const EVENTS_PAGE: usize = 512;
@@ -573,6 +585,20 @@ fn served_unreviewed(m: &MemoryRecord, current: Option<&str>) -> bool {
         && !m.retirement
         && m.scan_finding.is_none()
         && m.scanned_under.as_deref() == current
+}
+
+/// Whether an offered instruction's row, as the recall hydrated it, is still
+/// served: a promoted tip, or a held version its read serves (unscanned
+/// rows and scan holds never). `recall_instructions` admitted the offered
+/// set by state, and a verdict, a withdrawal or a supersession can land
+/// before the pipeline reads the row again, so the state is read again
+/// here (ADR-0092 d3; ADR-0080 d10, d14).
+fn offered_instruction_still_served(m: &MemoryRecord, current_scanner: Option<&str>) -> bool {
+    match m.status {
+        MemoryStatus::Promoted => m.is_tip,
+        MemoryStatus::Held => served_unreviewed(m, current_scanner),
+        _ => false,
+    }
 }
 
 /// The most held steering versions a recall's steering list carries after
@@ -4728,9 +4754,7 @@ where
         key: &KeyRecord,
         memory: &MemoryRecord,
     ) -> Result<bool, AppError> {
-        Ok(self
-            .same_person(key.tenant_id, memory.author_key_id, key)
-            .await?
+        Ok(self.same_person_as_author(memory, key).await?
             && !self.in_own_root(key, memory.workspace_id).await?)
     }
 
@@ -4754,6 +4778,21 @@ where
             self.person_of(reviewer).await?,
         );
         Ok(same_user(a.as_ref(), r.as_ref()))
+    }
+
+    /// Whether `memory`'s author and `reviewer` act for one person, the
+    /// author read as recorded at the write (`author_person`), so an unlink
+    /// of the author key between the write and this act clears neither the
+    /// `same_user` mark nor R2 by person (ADR-0085 d16, amended 2026-11-18;
+    /// #448). The reviewer is read as it stands, as [`Self::same_person`]
+    /// reads it.
+    async fn same_person_as_author(
+        &self,
+        memory: &MemoryRecord,
+        reviewer: &KeyRecord,
+    ) -> Result<bool, AppError> {
+        let r = self.person_of(reviewer).await?;
+        Ok(same_user(memory.author_person.as_ref(), r.as_ref()))
     }
 
     /// A user key's edge with an endpoint in `universe` is refused
@@ -5358,12 +5397,17 @@ where
             .as_deref()
             .map(|cursor| ListingCursor::resume(cursor, key.key_id, &now))
             .transpose()?;
+        let scoped_node = match &scope {
+            ListingScope::Tips { .. } => Some(()),
+            ListingScope::Own { .. } => None,
+        };
         let filter = ListingFilter {
             scope,
             subtree,
             state: req.state,
-            kind: req.kind,
+            kinds: req.kinds.clone(),
             claim_key: req.claim_key.clone(),
+            prefix: req.prefix.clone(),
             since: req.since.clone(),
             until: req.until.clone(),
             anchor: req.anchor.clone(),
@@ -5431,11 +5475,134 @@ where
                             && served_unreviewed(&m, self.scanner.version())))
                 }
             };
-            if admitted {
+            // The kinds and the prefix re-checked, as the scope is (R3).
+            let filtered = (filter.kinds.is_empty() || filter.kinds.contains(&m.kind))
+                && filter
+                    .prefix
+                    .as_ref()
+                    .is_none_or(|p| m.claim_key.as_bytes().starts_with(p.as_bytes()));
+            if admitted && filtered {
                 items.push(self.served(&caller, m).await?);
             }
         }
-        Ok(MemoryPage { items, next_cursor })
+        // The catalog's counts, on a scoped read's first page only, capped;
+        // over exactly the rows the page's predicate admits, every filter
+        // but `kinds` applied (ADR-0092 d6).
+        let cap = self.search.catalog_count_cap();
+        let counts = match (req.counts, scoped_node, &req.cursor) {
+            (true, Some(()), None) => Some(
+                self.journal
+                    .count_memories(tenant_id, &filter, &MemoryKind::ALL, cap)
+                    .await?
+                    .into_iter()
+                    .map(|(kind, n)| {
+                        (
+                            kind,
+                            if n > cap {
+                                KindCount::AtLeast(cap)
+                            } else {
+                                KindCount::Exact(n)
+                            },
+                        )
+                    })
+                    .collect(),
+            ),
+            _ => None,
+        };
+        // Whether each instruction or steering item applies at the scope
+        // node, read only when the page holds one (ADR-0092 d6).
+        let marks = if scoped_node.is_some() {
+            self.catalog_marks(&caller, req.workspace.as_ref(), &items)
+                .await?
+        } else {
+            BTreeMap::new()
+        };
+        Ok(MemoryPage {
+            items,
+            next_cursor,
+            counts,
+            marks,
+        })
+    }
+
+    /// Per skill, guardrail and steering item of a catalog page, whether it
+    /// applies at the read's scope node (ADR-0092 d6): a skill's offered
+    /// command there, a guardrail's `in_force` under the key's
+    /// `guardrail_scope`, a steering row's place in the steering list
+    /// there. The sets are read only for the kinds the page holds.
+    async fn catalog_marks(
+        &self,
+        caller: &Caller,
+        workspace: Option<&Reference>,
+        items: &[ServedMemory],
+    ) -> Result<BTreeMap<Uuid, CatalogMark>, AppError> {
+        let has = |k: MemoryKind| items.iter().any(|i| i.memory.kind == k);
+        let mut marks = BTreeMap::new();
+        if !has(MemoryKind::Skill) && !has(MemoryKind::Guardrail) && !has(MemoryKind::Steering) {
+            return Ok(marks);
+        }
+        let key = &caller.key;
+        let scope = self.target_workspace(key, workspace).await?;
+        let chain = self
+            .journal
+            .workspace_ancestry(key.tenant_id, scope)
+            .await?
+            .unwrap_or_default();
+        if has(MemoryKind::Skill) || has(MemoryKind::Guardrail) {
+            let offered = self
+                .recall_instructions(caller, workspace, &chain, false, true, None)
+                .await?;
+            let applies: BTreeSet<Uuid> = offered.ids.iter().map(|(id, _)| *id).collect();
+            for item in items {
+                let id = item.memory.memory_id;
+                match item.memory.kind {
+                    MemoryKind::Skill => {
+                        marks.insert(
+                            id,
+                            CatalogMark::Skill {
+                                prompt: offered.skills.get(&id).map(|s| s.prompt.clone()),
+                            },
+                        );
+                    }
+                    MemoryKind::Guardrail => {
+                        marks.insert(
+                            id,
+                            CatalogMark::Guardrail {
+                                in_force: applies.contains(&id),
+                            },
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if has(MemoryKind::Steering) {
+            let ids: Vec<Uuid> = chain.iter().map(|w| w.workspace_id).collect();
+            let applicable: Vec<Uuid> = (0..ids.len())
+                .rev()
+                .filter(|&i| caller.effective(&ids[i..]).contains(&Role::Reader))
+                .map(|i| ids[i])
+                .collect();
+            let in_force: BTreeSet<Uuid> = self
+                .journal
+                .steering_in_force(key.tenant_id, &applicable)
+                .await?
+                .into_iter()
+                .filter(|m| m.is_tip && !m.retirement && m.status == MemoryStatus::Promoted)
+                .map(|m| m.memory_id)
+                .collect();
+            for item in items {
+                if item.memory.kind == MemoryKind::Steering {
+                    marks.insert(
+                        item.memory.memory_id,
+                        CatalogMark::Steering {
+                            applies_here: in_force.contains(&item.memory.memory_id),
+                        },
+                    );
+                }
+            }
+        }
+        Ok(marks)
     }
 
     /// The rows of a stored `similar` list the caller can still read: a
@@ -5509,6 +5676,8 @@ where
             reference: None,
             promoted_nodes: hit_nodes.clone(),
             kinds: SIMILAR_KINDS.to_vec(),
+            instructions: Vec::new(),
+            counted_kinds: SIMILAR_KINDS.to_vec(),
             own_held: Some(OwnHeldScope {
                 author_key_ids: vec![key.key_id],
                 nodes: readable.clone(),
@@ -5901,6 +6070,7 @@ where
             replaces: None,
             author_principal: key.principal.clone(),
             author_key_id: key.key_id,
+            author_person: self.person_of(key).await?,
             derives_from: req.derives_from.clone(),
             lineage_principals: principals.into_iter().collect(),
             lineage_key_ids: key_ids.into_iter().collect(),
@@ -6242,7 +6412,7 @@ where
             .encode()
         });
         let mut ancestries = BTreeMap::new();
-        let mut users: BTreeMap<Uuid, bool> = BTreeMap::new();
+        let reviewer_person = self.person_of(key).await?;
         let mut items = Vec::with_capacity(rows.len());
         for row in rows {
             let m = &row.memory;
@@ -6254,14 +6424,9 @@ where
             {
                 continue;
             }
-            let same = match users.get(&m.author_key_id) {
-                Some(same) => *same,
-                None => {
-                    let same = self.same_person(tenant_id, m.author_key_id, key).await?;
-                    users.insert(m.author_key_id, same);
-                    same
-                }
-            };
+            // The author's person as recorded at the write (ADR-0085 d16,
+            // amended 2026-11-18; #448).
+            let same = same_user(m.author_person.as_ref(), reviewer_person.as_ref());
             // R2 by person: a row the reviewer's own person wrote outside
             // that person's root is not theirs to judge, so it is not
             // listed (ADR-0001 d5; ADR-0082 d7).
@@ -6569,9 +6734,7 @@ where
         // A claim's ratification is marked as a transition's and an edge's
         // are: whether the reviewing key and the authoring key name one
         // user (ADR-0046 d2, ADR-0055 d7).
-        let same_user = self
-            .same_person(key.tenant_id, memory.author_key_id, key)
-            .await?;
+        let same_user = self.same_person_as_author(&memory, key).await?;
         // R2 by person: outside the author's person's own root, a key acting
         // for that person counts no verdict, approve or reject (ADR-0001 d5;
         // ADR-0082 d7). Inside the root the verdict stands, marked
@@ -7018,7 +7181,14 @@ where
         // tip in force, never a retirement version (ADR-0025 d8, d11).
         // At an instant, the steering tips then, promoted today (ADR-0059
         // d15, d18).
+        // `kinds` decides whether the steering list is served: absent, or
+        // naming `steering`; and whether hits are: absent, or naming any
+        // other kind (ADR-0092 d2).
+        let steering_requested = req.kinds.is_empty() || req.kinds.contains(&MemoryKind::Steering);
+        let hits_requested =
+            req.kinds.is_empty() || req.kinds.iter().any(|k| *k != MemoryKind::Steering);
         let steering_rows = match &req.as_of {
+            _ if !steering_requested => Vec::new(),
             None => {
                 self.journal
                     .steering_in_force(key.tenant_id, &applicable)
@@ -7069,17 +7239,19 @@ where
             inside,
         } = self.served_nodes(caller, scope).await?;
         let include_unreviewed = req.include_unreviewed.unwrap_or(!inside.is_empty());
-        steering.extend(
-            self.held_steering(
-                caller,
-                &scope_ancestry,
-                &applicable,
-                include_unreviewed,
-                own_everywhere,
-                req,
-            )
-            .await?,
-        );
+        if steering_requested {
+            steering.extend(
+                self.held_steering(
+                    caller,
+                    &scope_ancestry,
+                    &applicable,
+                    include_unreviewed,
+                    own_everywhere,
+                    req,
+                )
+                .await?,
+            );
+        }
         // A scope inside a user root also searches `universe`'s own claims
         // where the key reads that node, ranked with the scope's own; own
         // held rows never include them (ADR-0044 d10).
@@ -7091,10 +7263,44 @@ where
         {
             hit_nodes.push(universe);
         }
-        let kinds: Vec<MemoryKind> = HIT_KINDS
+        // The hit kinds: those named, or with none named every hit kind but
+        // the vocabulary kinds, which join only by a workspace's opt-in,
+        // unbuilt (ADR-0092 d1, d12 reading 2). The statistics count the
+        // knowledge kinds and any vocabulary kind named, whatever else
+        // `kinds` names, and the offered instructions by id (d4).
+        let kinds: Vec<MemoryKind> = if req.kinds.is_empty() {
+            DEFAULT_HIT_KINDS.to_vec()
+        } else {
+            HIT_KINDS
+                .into_iter()
+                .filter(|kind| req.kinds.contains(kind))
+                .collect()
+        };
+        let counted_kinds: Vec<MemoryKind> = HIT_KINDS
             .into_iter()
-            .filter(|kind| req.kinds.is_empty() || req.kinds.contains(kind))
+            .filter(|kind| {
+                !INSTRUCTION_HIT_KINDS.contains(kind)
+                    && (DEFAULT_HIT_KINDS.contains(kind) || kinds.contains(kind))
+            })
             .collect();
+        // The offered skills and the applicable guardrails at the scope
+        // node, the only rows of those kinds that are candidates; read
+        // whatever `kinds` names, since they count in the statistics
+        // (ADR-0092 d3, d4). An as-of recall reads its scope's knowledge
+        // alone: the offered set is today's.
+        let offered = if hits_requested && req.as_of.is_none() {
+            self.recall_instructions(
+                caller,
+                req.workspace.as_ref(),
+                &scope_ancestry,
+                own_everywhere,
+                include_unreviewed,
+                (!req.include_expired).then_some(now_us),
+            )
+            .await?
+        } else {
+            RecallInstructions::default()
+        };
         // A recall naming no `sources` reads the tenant's default with its
         // default pipeline, off one row; one naming them reads only the
         // pipeline's default, as before federation (ADR-0072 d12).
@@ -7120,7 +7326,15 @@ where
         let expired_at = (!req.include_expired).then_some(now_us);
         let plan = self
             .plan_sources(
-                caller, req, policy, scope, &hit_nodes, &kinds, pipeline, &query, expired_at,
+                caller,
+                req,
+                policy,
+                scope,
+                &hit_nodes,
+                &counted_kinds,
+                pipeline,
+                &query,
+                expired_at,
             )
             .await?;
         let promoted: BTreeSet<Uuid> = plan.promoted.iter().copied().collect();
@@ -7153,6 +7367,8 @@ where
             reference: plan.reference.clone(),
             promoted_nodes: plan.promoted.clone(),
             kinds: kinds.clone(),
+            instructions: offered.ids.clone(),
+            counted_kinds: counted_kinds.clone(),
             own_held: include_unreviewed.then(|| OwnHeldScope {
                 author_key_ids: caller.own_key_ids(),
                 // The key's own held rows on every served node, and every
@@ -7181,8 +7397,8 @@ where
             },
             _ => candidate_scope.clone(),
         };
-        let ran = self
-            .run_pipeline(
+        let ran = if hits_requested {
+            self.run_pipeline(
                 key.tenant_id,
                 pipeline,
                 &retrieval_scope,
@@ -7191,7 +7407,11 @@ where
                 req,
                 &mut timings,
             )
-            .await?;
+            .await?
+        } else {
+            // `kinds: ["steering"]` ranks nothing (ADR-0092 d2).
+            PipelineRun::default()
+        };
         let mut lap = std::time::Instant::now();
         let (mut candidates, terms, fallback) = (ran.fused, ran.terms, ran.fallback);
         // The core's re-check at an instant: which candidates were their
@@ -7226,7 +7446,19 @@ where
         // hit; a retirement version is never in force (ADR-0025 d4, d8).
         // The reranker is handed only rows this admits (ADR-0053 d2).
         let own = caller.own_key_ids();
+        let instruction_ids: BTreeSet<Uuid> = offered.ids.iter().map(|(id, _)| *id).collect();
         let admits = |m: &MemoryRecord| {
+            // An instruction is a hit only as one of the offered set, which
+            // `recall_instructions` admitted by state; a verdict landing
+            // before the pipeline hydrates the row is read again here
+            // (ADR-0092 d3).
+            if INSTRUCTION_HIT_KINDS.contains(&m.kind) {
+                return instruction_ids.contains(&m.memory_id)
+                    && offered_instruction_still_served(m, self.scanner.version())
+                    && !m.retirement
+                    && kinds.contains(&m.kind)
+                    && (req.include_expired || !m.valid.expired_at(now_us));
+            }
             let admitted = match m.status {
                 MemoryStatus::Promoted => {
                     (if req.as_of.is_some() {
@@ -7270,6 +7502,14 @@ where
             candidates.retain(|c| rows.contains_key(&c.memory_id));
             lap = timings.lap(Stage::Hydrate, lap);
         }
+        // Per kind, the candidates of the fused list before the `k` cut,
+        // counted after a reference set's list is restricted to the searched
+        // nodes, so no row outside them is counted (ADR-0092 d4).
+        let matched_by_kind: Vec<(MemoryKind, u64)> = HIT_KINDS
+            .into_iter()
+            .map(|k| (k, candidates.iter().filter(|c| c.kind == k).count() as u64))
+            .filter(|(_, n)| *n > 0)
+            .collect();
         let mut rerank = RerankOutcome::NotRun;
         if pipeline.reranks()
             && let Some(reranker) = self.reranker.as_deref()
@@ -7388,7 +7628,7 @@ where
                 caller,
                 scope,
                 &hit_nodes,
-                &kinds,
+                &counted_kinds,
                 req.include_expired,
                 prunes,
                 &query,
@@ -7474,6 +7714,7 @@ where
                 let home = m.workspace_id;
                 // A document's hit is its best passage: its text, bytes
                 // and place (ADR-0081 d4).
+                let skill = offered.skills.get(&m.memory_id).cloned();
                 let unit = passage_unit(&m, candidate.ordinal);
                 let mut served = self.served_in(caller, m, &mut ancestries).await?;
                 let passage = unit.map(|unit| {
@@ -7507,6 +7748,7 @@ where
                     ))
                 });
                 hits.push(RecallHit {
+                    skill,
                     served,
                     passage,
                     uri,
@@ -7532,6 +7774,9 @@ where
         }
         timings.lap(Stage::Hydrate, lap);
         Ok(RecallResult {
+            steering_requested,
+            hits_requested,
+            matched_by_kind,
             recall_id: self.ids.new_id(),
             scope_workspace_id: scope,
             steering: served_steering,
@@ -7775,6 +8020,103 @@ where
             own_held,
             served_ids,
         })
+    }
+
+    /// The instructions a recall at `workspace` ranks (ADR-0092 d3): the
+    /// skills ADR-0080 d4 and d5 offer there, and the guardrails ADR-0037 d4
+    /// applies there under the key's `guardrail_scope`, each a promoted tip
+    /// in force or a held version its own read serves: to its author key
+    /// under `include_unreviewed: true` (`own_held`) and inside an
+    /// in-progress subtree when `include_unreviewed` is not false
+    /// (`audience`), never one the scan held or has not scanned (ADR-0080
+    /// d10, d14, d16). A version whose valid time ended at `expired_at` is
+    /// left out. No descendant outside an in-progress root, wide source or
+    /// federation source contributes (d11 answer 5).
+    async fn recall_instructions(
+        &self,
+        caller: &Caller,
+        workspace: Option<&Reference>,
+        chain: &[WorkspaceRecord],
+        own_held: bool,
+        audience: bool,
+        expired_at: Option<i64>,
+    ) -> Result<RecallInstructions, AppError> {
+        let key = &caller.key;
+        let live = |m: &MemoryRecord| !expired_at.is_some_and(|now| m.valid.expired_at(now));
+        let mut found = RecallInstructions::default();
+        let (scope, offer, rows) = self.offered_skills(caller, workspace, own_held).await?;
+        for o in &offer.offered {
+            let Some(row) = rows.get(&o.candidate.artifact_id) else {
+                continue;
+            };
+            if (o.candidate.held && !(audience || own_held)) || !live(row) {
+                continue;
+            }
+            let Some(name) = scope.names.get(&row.workspace_id) else {
+                continue;
+            };
+            found.ids.push((row.memory_id, MemoryKind::Skill));
+            found.skills.insert(
+                row.memory_id,
+                SkillHit {
+                    prompt: o.command.clone(),
+                    uri: skill_uri(name, &o.command),
+                },
+            );
+        }
+        // The guardrails: the chain node to root, bounded by the key's
+        // scope, on each node the key reads (ADR-0037 d4).
+        let ids: Vec<Uuid> = chain.iter().map(|w| w.workspace_id).collect();
+        let bound = match key.guardrail_scope {
+            GuardrailScope::Workspace => ids.len().min(1),
+            GuardrailScope::Ancestors => ids.len(),
+        };
+        let listed: Vec<Uuid> = (0..bound)
+            .filter(|&i| caller.effective(&ids[i..]).contains(&Role::Reader))
+            .map(|i| ids[i])
+            .collect();
+        if listed.is_empty() {
+            return Ok(found);
+        }
+        let inside: Vec<Uuid> = (0..bound)
+            .filter(|&i| listed.contains(&ids[i]))
+            .filter(|&i| in_progress_root_in(&chain[i..]).is_some())
+            .map(|i| ids[i])
+            .collect();
+        let rows = self
+            .journal
+            .instruction_rows(
+                key.tenant_id,
+                MemoryKind::Guardrail,
+                &listed,
+                key.key_id,
+                &inside,
+                true,
+            )
+            .await?;
+        for m in rows {
+            if m.kind != MemoryKind::Guardrail
+                || m.retirement
+                || m.guardrail.is_none()
+                || !listed.contains(&m.workspace_id)
+                || !live(&m)
+            {
+                continue;
+            }
+            let served = match m.status {
+                MemoryStatus::Promoted => m.is_tip && m.promoted_at.is_some(),
+                MemoryStatus::Held => {
+                    served_unreviewed(&m, self.scanner.version())
+                        && ((m.author_key_id == key.key_id && own_held)
+                            || (audience && inside.contains(&m.workspace_id)))
+                }
+                _ => false,
+            };
+            if served {
+                found.ids.push((m.memory_id, MemoryKind::Guardrail));
+            }
+        }
+        Ok(found)
     }
 
     /// The offered skill set at the scope node, before paging (ADR-0080 d4,
@@ -8084,8 +8426,9 @@ where
             scope,
             subtree: Some(applicable.to_vec()),
             state: Some(MemoryStatus::Held),
-            kind: Some(MemoryKind::Steering),
+            kinds: vec![MemoryKind::Steering],
             claim_key: None,
+            prefix: None,
             since: None,
             until: None,
             anchor: crate::types::AnchorFilter::default(),
@@ -8879,9 +9222,7 @@ where
         let by = if target.author_key_id == key.key_id {
             Withdrawer::AuthorKey
         } else if key.credential == Credential::Session
-            && self
-                .same_person(key.tenant_id, target.author_key_id, key)
-                .await?
+            && self.same_person_as_author(&target, key).await?
         {
             Withdrawer::PersonSession
         } else {
@@ -9297,6 +9638,7 @@ where
             replaces: Some(target.memory_id),
             author_principal: key.principal.clone(),
             author_key_id: key.key_id,
+            author_person: self.person_of(key).await?,
             derives_from: derives_from.clone(),
             lineage_principals: principals.into_iter().collect(),
             lineage_key_ids: key_ids.into_iter().collect(),
@@ -11734,4 +12076,72 @@ fn served_payload(envelope: &Envelope, claim: bool, names_actor: bool, names_nod
         }
     }
     payload
+}
+
+#[cfg(test)]
+mod offered_instruction_tests {
+    use super::*;
+
+    fn skill(status: MemoryStatus, is_tip: bool) -> MemoryRecord {
+        MemoryRecord {
+            memory_id: Uuid::from_u128(1),
+            tenant_id: Uuid::from_u128(2),
+            workspace_id: Uuid::from_u128(3),
+            claim_key: "skill/deploy".to_owned(),
+            version: 1,
+            kind: MemoryKind::Skill,
+            body: "deploy".to_owned(),
+            body_digest: String::new(),
+            body_bytes: 6,
+            status,
+            is_tip,
+            promoted_at: None,
+            retirement: false,
+            replaces: None,
+            author_principal: "acme/agent".to_owned(),
+            author_key_id: Uuid::from_u128(4),
+            author_person: None,
+            derives_from: Vec::new(),
+            lineage_principals: Vec::new(),
+            lineage_key_ids: Vec::new(),
+            scan_finding: None,
+            scanned_under: Some("rules-1".to_owned()),
+            created_at: EventTime::parse("2026-11-19T10:00:00.000000Z").expect("time"),
+            guardrail: None,
+            kind_fields: None,
+            valid: Box::default(),
+            anchor: None,
+            origin_kind: None,
+            source_check: None,
+            approval: None,
+            format: Box::default(),
+        }
+    }
+
+    /// A held skill offered at the instructions read and rejected, withdrawn
+    /// or replaced before the pipeline hydrates it is no hit; a promoted tip
+    /// and a scanned held version still are.
+    #[test]
+    fn an_offered_instruction_decided_before_the_pipeline_reads_it_is_no_hit() {
+        let scanner = Some("rules-1");
+        for (status, is_tip, served) in [
+            (MemoryStatus::Promoted, true, true),
+            (MemoryStatus::Held, false, true),
+            (MemoryStatus::Rejected, false, false),
+            (MemoryStatus::Withdrawn, false, false),
+            (MemoryStatus::Demoted, false, false),
+            (MemoryStatus::Promoted, false, false),
+        ] {
+            assert_eq!(
+                offered_instruction_still_served(&skill(status, is_tip), scanner),
+                served,
+                "{status:?} tip {is_tip}"
+            );
+        }
+        let held_unscanned = MemoryRecord {
+            scanned_under: None,
+            ..skill(MemoryStatus::Held, false)
+        };
+        assert!(!offered_instruction_still_served(&held_unscanned, scanner));
+    }
 }

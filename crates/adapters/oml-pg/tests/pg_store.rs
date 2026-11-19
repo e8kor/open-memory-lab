@@ -803,6 +803,8 @@ async fn keyword_all_returns_exactly_the_v0_5_0_rows_and_order() {
                         anchor: oml_app::types::AnchorFilter::default(),
                         promoted_nodes: vec![wa],
                         kinds: vec![MemoryKind::Memory, MemoryKind::DerivedFact],
+                        instructions: Vec::new(),
+                        counted_kinds: vec![MemoryKind::Memory, MemoryKind::DerivedFact],
                         own_held: Some(OwnHeldScope {
                             any_author_nodes: Vec::new(),
                             author_key_ids: vec![own],
@@ -3050,7 +3052,9 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // d1; ADR-0081 d1; ADR-0086 d1); 0055 adds the import provenance,
             // null on every version not imported (ADR-0084 d4); 0058 adds the
             // end a ratified supersession replaced, false and null on every
-            // existing row (ADR-0089 d16).
+            // existing row (ADR-0089 d16); 0061 adds the author's person,
+            // null for the PoC's agent keys, which act for no person
+            // (ADR-0085 d16).
             (true, "memories") => {
                 "to_jsonb(t) - 'severity' - 'rule' - 'search_vector' - 'search_len' \
                  - 'anchor_repo' - 'anchor_uri' - 'anchor_rev' - 'anchor_path' \
@@ -3062,7 +3066,8 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
                  - 'approver_used_by' - 'approver_same_user' - 'approved_at' \
                  - 'skill_name' - 'skill_description' - 'document_title' - 'test_shape' \
                  - 'import_provenance' \
-                 - 'valid_until_ratified' - 'valid_until_before' - 'valid_until_before_us'"
+                 - 'valid_until_ratified' - 'valid_until_before' - 'valid_until_before_us' \
+                 - 'author_person'"
             }
             (true, "key_denials") => "to_jsonb(t) - 'lifted_epoch'",
             _ => "to_jsonb(t)",
@@ -6396,8 +6401,8 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 60,
-        "every migration through 0060_document_passages_served_index"
+        applied, 62,
+        "every migration through 0062, the highest version"
     );
     drop(conn);
     drop_dbs(&created).await;
@@ -7755,6 +7760,8 @@ async fn bm25_list(
                 anchor: oml_app::types::AnchorFilter::default(),
                 promoted_nodes: vec![wa],
                 kinds: oml_app::types::HIT_KINDS.to_vec(),
+                instructions: Vec::new(),
+                counted_kinds: oml_app::types::HIT_KINDS.to_vec(),
                 own_held: None,
                 expired_at: None,
                 as_of: None,
@@ -7853,8 +7860,8 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 60,
-        "every migration through 0060_document_passages_served_index"
+        applied, 62,
+        "every migration through 0062, the highest version"
     );
     drop(conn);
 
@@ -8860,8 +8867,8 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 60,
-        "every migration through 0060_document_passages_served_index"
+        applied, 62,
+        "every migration through 0062, the highest version"
     );
     drop(conn);
 
@@ -8892,6 +8899,8 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
                         anchor: oml_app::types::AnchorFilter::default(),
                         promoted_nodes: vec![wa, Uuid::from_u128(0xE3)],
                         kinds: oml_app::types::HIT_KINDS.to_vec(),
+                        instructions: Vec::new(),
+                        counted_kinds: oml_app::types::HIT_KINDS.to_vec(),
                         own_held: Some(OwnHeldScope {
                             any_author_nodes: Vec::new(),
                             author_key_ids: vec![Uuid::from_u128(0xE5)],
@@ -13559,7 +13568,7 @@ async fn migrations_0059_and_0060_apply_over_0058_with_a_document_row_and_count_
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(applied, 60);
+    assert_eq!(applied, 62, "0059 to 0062 apply over 0058");
     let (partitions, attached, valid, carries, validated): (i64, i64, bool, bool, bool) =
         sqlx::query_as(
             "SELECT (SELECT count(*) FROM pg_inherits WHERE inhparent = 'search_postings'::regclass), \
@@ -13646,6 +13655,12 @@ async fn migrations_0059_and_0060_apply_over_0058_with_a_document_row_and_count_
                 anchor: oml_app::types::AnchorFilter::default(),
                 promoted_nodes: vec![wa],
                 kinds: vec![
+                    MemoryKind::Memory,
+                    MemoryKind::DerivedFact,
+                    MemoryKind::Document,
+                ],
+                instructions: Vec::new(),
+                counted_kinds: vec![
                     MemoryKind::Memory,
                     MemoryKind::DerivedFact,
                     MemoryKind::Document,

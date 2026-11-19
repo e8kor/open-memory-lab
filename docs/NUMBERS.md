@@ -175,3 +175,5 @@ branch that reserved later renumbers.
 | migration | 0058 | `main` |  | valid until before supersession | used |
 | migration | 0059 | `bulk/v080-c` |  | document passages as search units (ADR-0081 d3, d4, #405) | reserved |
 | migration | 0060 | `bulk/v080-c` |  | document passages: the served index rebuilt partition by partition and the kind check validated (ADR-0081 R14, #405) | reserved |
+| migration | 0061 | `bulk/v080-e` |  | a version records its author's person at write (ADR-0085 d16, #448) | reserved |
+| migration | 0062 | `bulk/v080-e` |  | postings and counts for every hit kind, and the catalog index (ADR-0092 d4, d9, #443) | reserved |

@@ -63,7 +63,7 @@ enum Cmd {
         maintain_every_s: u64,
         /// VACUUM retention: the lake erasure bound (default 7 days).
         #[arg(long, default_value_t = 168)]
-        retention_hours: i64,
+        retention_hours: u64,
     },
     /// Drain until caught up once, under the lease, and exit.
     DrainOnce {
@@ -258,7 +258,7 @@ async fn dispatch(cli: Cli) -> Result<ExitCode, String> {
                 poll: Duration::from_millis(poll_ms),
                 telemetry_every: Duration::from_secs(telemetry_every_s),
                 maintain_every: Duration::from_secs(maintain_every_s),
-                retention: chrono::Duration::hours(retention_hours),
+                retention: Duration::from_secs(retention_hours.saturating_mul(3600)),
             };
             run(
                 Writer::new(src, lake, keys, Settings { max_batch }),
@@ -290,7 +290,7 @@ struct Loop {
     poll: Duration,
     telemetry_every: Duration,
     maintain_every: Duration,
-    retention: chrono::Duration,
+    retention: std::time::Duration,
 }
 
 async fn run(mut writer: Writer, cfg: Loop) -> Result<ExitCode, String> {
@@ -350,7 +350,7 @@ async fn run(mut writer: Writer, cfg: Loop) -> Result<ExitCode, String> {
             if last_maintain.elapsed() >= cfg.maintain_every {
                 writer.maintain(cfg.retention).await?;
                 last_maintain = Instant::now();
-                status.last_maintenance_at = Some(chrono::Utc::now().timestamp());
+                status.last_maintenance_at = Some(jiff::Timestamp::now().as_second());
             }
             Ok::<(), WriterError>(())
         }
@@ -358,10 +358,10 @@ async fn run(mut writer: Writer, cfg: Loop) -> Result<ExitCode, String> {
         if let Err(e) = result {
             status.failed_commits += 1;
             status.last_failure_class = Some(e.class().to_owned());
-            status.last_failure_at = Some(chrono::Utc::now().timestamp());
+            status.last_failure_at = Some(jiff::Timestamp::now().as_second());
             tracing::warn!(event = "lake_tick_failed", class = e.class());
         }
-        status.at = chrono::Utc::now().timestamp();
+        status.at = jiff::Timestamp::now().as_second();
         status.frontier = writer.metrics.frontier.get();
         status.horizon = writer.metrics.horizon.get();
         if let Err(e) = status.write(&writer.lake) {
@@ -511,7 +511,7 @@ async fn doctor(
             "the writer has written no status".to_owned(),
         ),
         Some(s) => {
-            let age = chrono::Utc::now().timestamp() - s.at;
+            let age = jiff::Timestamp::now().as_second() - s.at;
             line(
                 if age > 60 { "fail" } else { "ok" },
                 "lake.heartbeat",
@@ -542,7 +542,7 @@ async fn doctor(
                 "lake.maintenance",
                 s.last_maintenance_at
                     .map_or("not run since start".to_owned(), |t| {
-                        format!("last ran {} s ago", chrono::Utc::now().timestamp() - t)
+                        format!("last ran {} s ago", jiff::Timestamp::now().as_second() - t)
                     }),
             );
         }

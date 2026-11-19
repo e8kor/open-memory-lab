@@ -392,8 +392,13 @@ impl Lake {
         &self,
         prefix: Prefix,
         spec: &Spec,
-        retention: chrono::Duration,
+        retention: std::time::Duration,
     ) -> Result<Maintained, LakeError> {
+        // deltalake's VACUUM takes chrono's duration; the conversion stays at
+        // its call, so no workspace crate names chrono (#445).
+        let retention = deltalake::arrow::temporal_conversions::duration_us_to_duration(
+            i64::try_from(retention.as_micros()).unwrap_or(i64::MAX),
+        );
         let Some(table) = self.open(prefix, spec).await? else {
             return Ok(Maintained::default());
         };

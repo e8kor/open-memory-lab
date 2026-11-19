@@ -2045,7 +2045,7 @@ async fn every_signed_in_page_draws_the_sign_out_control_in_its_header() {
         );
         drawn += 1;
     }
-    assert_eq!(drawn, 18, "every page route of oml_web::PAGES was read");
+    assert_eq!(drawn, 19, "every page route of oml_web::PAGES was read");
     // A page an act answers is drawn by the same chrome.
     let (status, _, page) = act(
         &rig,
@@ -7664,9 +7664,10 @@ fn side_nav(label: &str, tabs: &[(&str, &str)], current: &str) -> String {
     nav + "</nav>"
 }
 
-const PERSONAL: [(&str, &str); 7] = [
+const PERSONAL: [(&str, &str); 8] = [
     ("/web/start", "Start"),
     ("/web/memories", "Memories"),
+    ("/web/catalog", "Catalog"),
     ("/web/review", "Review"),
     ("/web/atlas", "Atlas"),
     ("/web/keys", "Keys"),
@@ -8650,4 +8651,354 @@ async fn a_person_withdraws_their_agents_held_write_from_the_memories_list_after
     // Withdrawn, the row offers Withdraw no more.
     let (_, _, list) = send(&rig.router, get("/web/memories", Some(&cookie))).await;
     assert!(!list.contains(&link), "{list}");
+}
+
+// -- the Catalog page (ADR-0092 d7) ---------------------------------------------
+
+/// A skill `name` the agent key `value` proposes in `workspace`, held until a
+/// person's reviewer key approves it.
+async fn agent_skill_in(rig: &Rig, value: &str, name: &str, workspace: &str) -> uuid::Uuid {
+    rig.app
+        .submit_memory(
+            value,
+            &oml_app::types::SubmitRequest {
+                on_similar: Default::default(),
+                anchor: None,
+                origin: None,
+                idempotency_key: format!("skill-{name}"),
+                claim_key: None,
+                verb: None,
+                kind: oml_app::domain::MemoryKind::Skill,
+                body: format!("Run the {name} script, then check the health page."),
+                workspace: Some(
+                    oml_app::domain::name::Reference::parse(workspace).expect("a reference"),
+                ),
+                derives_from: Vec::new(),
+                severity: None,
+                rule: None,
+                kind_fields: Some(oml_app::types::KindFields::Skill {
+                    name: name.to_owned(),
+                    description: format!("Runs {name} and checks it."),
+                }),
+                valid_from: None,
+                valid_until: None,
+                format: None,
+                title: None,
+            },
+        )
+        .await
+        .expect("the agent proposes a skill")
+        .receipt
+        .memory_id
+}
+
+/// The signed-in person's reviewer key approves `id` on the Review page.
+async fn person_approves(rig: &Rig, cookie: &str, id: uuid::Uuid) {
+    let (status, _, page) = act_and_follow(
+        rig,
+        cookie,
+        "/web/review",
+        &[
+            ("action", "verdict"),
+            ("serve_id", &format!("srv_{}", id.simple())),
+            ("verdict", "approve"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("is now approved"), "{page}");
+}
+
+/// `n` memories alice's agent writes in her root, each approved by a
+/// tenant reviewer agent key.
+async fn approved_memories(rig: &Rig, value: &str, n: usize) {
+    let helper = reviewer_in_alices_root(rig).await;
+    for i in 0..n {
+        let id = agent_writes(
+            rig,
+            value,
+            &format!("The service in area {i} logs one line per request and rotates its log daily at midnight UTC, keeping fourteen days of history on the node before the shipper moves it."),
+        )
+        .await;
+        rig.app
+            .post_verdict(&helper.value, id, oml_app::types::Verdict::Approve, None)
+            .await
+            .expect("the tenant reviewer approves");
+    }
+}
+
+#[tokio::test]
+async fn the_catalog_is_a_personal_tab_after_memories_headed_catalog_under_its_breadcrumb() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (status, _, page) = send(&rig.router, get("/web/catalog", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let page = markup(&page);
+    assert!(
+        page.contains(r#"<a href="/web/memories">Memories</a><a href="/web/catalog" class="on" aria-current="page">Catalog</a><a href="/web/review">Review</a>"#),
+        "{page}"
+    );
+    assert!(
+        page.contains(r#"<p class="oml-crumbs"><a href="/web/start">Personal</a> / Catalog</p>"#),
+        "{page}"
+    );
+    assert_eq!(between(&page, "<h1>", "</h1>"), "Catalog");
+    assert!(
+        page.contains("Read as <code>alice-web</code>: one row per claim, newest version first."),
+        "{page}"
+    );
+    // A GET form and links only: the page writes nothing and runs no script.
+    assert!(!page.contains("<script"), "{page}");
+    assert!(
+        !page.contains(r#"method="post" action="/web/catalog""#),
+        "{page}"
+    );
+    assert!(
+        page.contains(r#"<form class="filters" method="get" action="/web/catalog">"#),
+        "{page}"
+    );
+    assert!(
+        page.contains("skill/, doc/runbooks/ or any claim key"),
+        "{page}"
+    );
+}
+
+#[tokio::test]
+async fn the_kind_tabs_show_each_kinds_count_and_a_zero_tab_is_greyed_and_still_a_link() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    approved_memories(&rig, &value, 2).await;
+    let (status, _, page) = send(&rig.router, get("/web/catalog", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let tabs = between(
+        &page,
+        r#"<nav class="oml-views kinds" aria-label="Kinds">"#,
+        "</nav>",
+    );
+    assert!(
+        tabs.starts_with(r#"<a href="/web/catalog" aria-current="page">All <span class="n">2</span></a><a href="/web/catalog?kinds=memory">Memories <span class="n">2</span></a>"#),
+        "{tabs}"
+    );
+    assert!(
+        tabs.contains(
+            r#"<a href="/web/catalog?kinds=skill" class="zero">Skills <span class="n">0</span></a>"#
+        ),
+        "{tabs}"
+    );
+    assert!(
+        tabs.ends_with(r#"<a href="/web/catalog?kinds=term%2Cterm_mapping%2Cvocab_release" class="zero">Terms <span class="n">0</span></a>"#),
+        "{tabs}"
+    );
+    // The zero tab is a link to an empty table, not a dead end.
+    let (status, _, empty) =
+        send(&rig.router, get("/web/catalog?kinds=skill", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{empty}");
+    assert!(
+        empty.contains(r#"<a href="/web/catalog?kinds=skill" class="zero" aria-current="page">Skills <span class="n">0</span></a>"#),
+        "{empty}"
+    );
+}
+
+#[tokio::test]
+async fn every_filter_carries_across_the_kind_tabs_and_the_form_keeps_the_tab() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (status, _, page) = send(
+        &rig.router,
+        get(
+            "/web/catalog?workspace=alice&kinds=skill&prefix=skill%2Fde&state=approved",
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(
+        page.contains(r#"<a href="/web/catalog?workspace=alice&amp;kinds=guardrail&amp;prefix=skill%2Fde&amp;state=approved" class="zero">Guardrails"#),
+        "{page}"
+    );
+    assert!(
+        page.contains(r#"<input type="hidden" name="kinds" value="skill">"#),
+        "{page}"
+    );
+    assert!(page.contains(r#"name="prefix" value="skill/de""#), "{page}");
+}
+
+#[tokio::test]
+async fn a_memory_row_marks_its_description_as_the_servers_preview_and_names_its_reviewers_kind() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    approved_memories(&rig, &value, 1).await;
+    let (_, _, page) = send(&rig.router, get("/web/catalog", Some(&cookie))).await;
+    assert!(
+        page.contains(r#"<td class="c-desc"><span class="tag oml-chip is-quiet">preview</span>The service in area 0 logs one line per request"#),
+        "{page}"
+    );
+    let state = between(&page, r#"<td class="c-state">"#, "</td>");
+    assert!(state.contains("approved"), "{state}");
+    assert!(state.contains(" by an agent reviewer</span>"), "{state}");
+    assert!(
+        page.contains(r#"<td class="c-ver c-meta">v1</td>"#),
+        "{page}"
+    );
+}
+
+#[tokio::test]
+async fn a_skill_row_says_offered_here_or_not_offered_at_the_workspace_read() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    alice_proj(&rig, &cookie).await;
+    let here = agent_skill_in(&rig, &value, "deploy", "alice").await;
+    let below = agent_skill_in(&rig, &value, "bump", "alice.proj").await;
+    person_approves(&rig, &cookie, here).await;
+    person_approves(&rig, &cookie, below).await;
+    let (status, _, page) = send(&rig.router, get("/web/catalog?kinds=skill", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let row_of = |name: &str| {
+        let at = page
+            .find(&format!(">{name}</a>"))
+            .unwrap_or_else(|| panic!("a row named {name}: {page}"));
+        let start = page[..at].rfind("<tr>").expect("its row");
+        let end = page[at..].find("</tr>").expect("its end") + at;
+        page[start..end].to_owned()
+    };
+    let deploy = row_of("deploy");
+    assert!(
+        deploy.contains(r#"<span class="key">skill/deploy</span>"#),
+        "{deploy}"
+    );
+    assert!(deploy.contains("offered here</span>"), "{deploy}");
+    assert!(deploy.contains("Runs deploy and checks it."), "{deploy}");
+    assert!(deploy.contains(" by a person reviewer</span>"), "{deploy}");
+    let bump = row_of("bump");
+    assert!(
+        bump.contains(r#"<span class="mark">not offered at <code>alice</code></span>"#),
+        "{bump}"
+    );
+    assert!(
+        bump.contains(r#"<a href="/web/workspaces?workspace=alice.proj">alice.proj</a>"#),
+        "{bump}"
+    );
+}
+
+#[tokio::test]
+async fn a_guardrail_row_leads_with_its_severity_word_and_says_in_force_here() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    let id = agent_guardrail(&rig, &value, "Run the tests before every commit.").await;
+    person_approves(&rig, &cookie, id).await;
+    let (status, _, page) = send(
+        &rig.router,
+        get("/web/catalog?kinds=guardrail", Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(
+        page.contains(r#"<td class="c-desc"><b class="sev">must</b></td>"#),
+        "{page}"
+    );
+    assert!(page.contains("in force here</span>"), "{page}");
+    assert!(!page.contains("not in force at"), "{page}");
+}
+
+#[tokio::test]
+async fn a_held_skill_in_a_development_workspace_is_served_unreviewed_and_needs_a_person() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    alice_proj(&rig, &cookie).await;
+    let (status, _, _) = act(
+        &rig,
+        &cookie,
+        "/web/workspaces",
+        &[
+            ("action", "workspace_mode"),
+            ("workspace", "alice.proj"),
+            ("mode", "in_progress"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    agent_skill_in(&rig, &value, "bump-deps", "alice.proj").await;
+    let (status, _, page) = send(&rig.router, get("/web/catalog", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let state = between(&page, r#"<td class="c-state">"#, "</td>");
+    assert!(state.contains("unreviewed"), "{state}");
+    assert!(
+        state.contains(r#"<span class="when">served here, unreviewed</span>"#),
+        "{state}"
+    );
+    assert!(state.contains("needs a person</span>"), "{state}");
+    // The read serves held rows here, so State offers Unreviewed.
+    assert!(
+        page.contains(r#"<option value="unreviewed">Unreviewed</option>"#),
+        "{page}"
+    );
+}
+
+#[tokio::test]
+async fn an_empty_tab_says_nothing_of_this_kind_is_read_in_the_workspace_and_offers_no_unreviewed()
+{
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (status, _, page) = send(
+        &rig.router,
+        get("/web/catalog?kinds=guardrail", Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(
+        page.contains(r#"<div class="oml-empty"><p>Nothing of this kind in <code>alice</code> that this key reads.</p></div>"#),
+        "{page}"
+    );
+    assert!(!page.contains("<table"), "{page}");
+    assert!(!page.contains(r#"value="unreviewed""#), "{page}");
+    assert!(!page.contains("Next page"), "{page}");
+}
+
+#[tokio::test]
+async fn the_next_page_follows_the_cursor_without_page_numbers_and_counts_ride_the_first_page_only()
+{
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    approved_memories(&rig, &value, 51).await;
+    let (_, _, first) = send(&rig.router, get("/web/catalog", Some(&cookie))).await;
+    assert_eq!(
+        first.matches("<tr><td class=\"c-name\">").count(),
+        50,
+        "{first}"
+    );
+    assert!(
+        first.contains(r#"All <span class="n">51</span>"#),
+        "{first}"
+    );
+    let marker = r#"<a rel="next" href="/web/catalog?cursor="#;
+    let at = first.find(marker).expect("a next page") + marker.len();
+    let cursor = &first[at..at + first[at..].find('"').expect("a quote")];
+    let (status, _, second) = send(
+        &rig.router,
+        get(&format!("/web/catalog?cursor={cursor}"), Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{second}");
+    assert_eq!(
+        second.matches("<tr><td class=\"c-name\">").count(),
+        1,
+        "{second}"
+    );
+    assert!(
+        second.contains(r#"<a href="/web/catalog">First page</a>"#),
+        "{second}"
+    );
+    assert!(!second.contains("Next page"), "{second}");
+    // Counts come with the first page only; the tabs stay links.
+    assert!(!second.contains(r#"<span class="n">"#), "{second}");
+    assert!(
+        second.contains(r#"<a href="/web/catalog?kinds=memory">Memories</a>"#),
+        "{second}"
+    );
 }

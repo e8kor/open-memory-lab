@@ -7,7 +7,8 @@
 # writer and a reader grant, and a reviewer key (the reviewer, a different
 # identity). Then checks
 # the agent plugin end to end over /mcp on the agent's one key, through
-# oml_write and oml_read alone: write -> held in its own work -> its held row
+# oml_write and oml_read alone: write -> held in its own work (`own: true`,
+# ADR-0092 d6) -> its held row
 # in its own recall -> approved by the reviewer, as its own work's state says ->
 # recalled (docs/api/mcp-plugin.md, "Wiring it into your agent"; ADR-0025,
 # ADR-0039 d2). Then an upload session of three bytes opens, takes its part,
@@ -112,7 +113,7 @@ tools="$(rpc 1 tools/list '{}' | jq -r '[.result.tools[].name] | join(", ")')"
 held="$(call 2 oml_write '{"text":"The quickstart wrote this memory through the agent plugin.","idempotency_key":"quickstart/1"}')"
 [ "$(jq -r .result.structuredContent.state <<<"$held")" = "held" ] || fail "oml_write did not hold the write: $held"
 artifact="$(jq -r .result.structuredContent.artifact_id <<<"$held")"
-claim="$(jq -c '{claim_key: .result.structuredContent.claim_key}' <<<"$held")"
+claim="$(jq -c '{claim_key: .result.structuredContent.claim_key, own: true}' <<<"$held")"
 
 work="$(call 3 oml_read "$claim")"
 [ "$(state_of items "$artifact" "$work")" = "held" ] || fail "oml_read does not list the write as held in its own work: $work"
@@ -121,7 +122,7 @@ own="$(call 4 oml_read '{"query":"quickstart wrote","include_unreviewed":true}')
 
 oml --url "$CLI_SERVER" --api-key "$reviewer" review next >/dev/null
 oml --url "$CLI_SERVER" --api-key "$reviewer" review approve >/dev/null
-approved="$(call 5 oml_read '{"state":"promoted"}')"
+approved="$(call 5 oml_read '{"state":"promoted","own":true}')"
 [ "$(state_of items "$artifact" "$approved")" = "promoted" ] || fail "oml_read with state promoted does not list the approved write: $approved"
 recalled="$(call 6 oml_read '{"query":"quickstart wrote"}')"
 [ "$(state_of hits "$artifact" "$recalled")" = "promoted" ] || fail "the approved memory did not come back from oml_read: $recalled"

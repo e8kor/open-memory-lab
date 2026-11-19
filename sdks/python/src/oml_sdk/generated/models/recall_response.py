@@ -7,6 +7,7 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.recall_response_steering_type_1 import RecallResponseSteeringType1
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -25,8 +26,9 @@ class RecallResponse:
     """
     Attributes:
         recall_id (UUID): The recall's id: the feedback member of a later read names it (ADR-0054 d6).
-        steering (list[Memory]): Applicable steering, ordered structurally and never cut by a budget — membership and
-            order declared in docs/architecture/retrieval.md (ADR-0025 d8).
+        steering (list[Memory] | RecallResponseSteeringType1): Applicable steering, ordered structurally and never cut
+            by a budget — membership and order declared in docs/architecture/retrieval.md (ADR-0025 d8); "not_requested"
+            when kinds does not name steering (ADR-0092 d2).
         hits (list[RecallResponseHitsItem]):
         query_digest (str): SHA-256 of plaintext unless a field says ciphertext.
         search (RecallSearch): What ran and how the query was read (ADR-0049 d5, d6; ADR-0052 d11; ADR-0053 d5-d7).
@@ -40,7 +42,7 @@ class RecallResponse:
     """
 
     recall_id: UUID
-    steering: list[Memory]
+    steering: list[Memory] | RecallResponseSteeringType1
     hits: list[RecallResponseHitsItem]
     query_digest: str
     search: RecallSearch
@@ -51,10 +53,15 @@ class RecallResponse:
     def to_dict(self) -> dict[str, Any]:
         recall_id = str(self.recall_id)
 
-        steering = []
-        for steering_item_data in self.steering:
-            steering_item = steering_item_data.to_dict()
-            steering.append(steering_item)
+        steering: list[dict[str, Any]] | str
+        if isinstance(self.steering, list):
+            steering = []
+            for steering_type_0_item_data in self.steering:
+                steering_type_0_item = steering_type_0_item_data.to_dict()
+                steering.append(steering_type_0_item)
+
+        else:
+            steering = self.steering.value
 
         hits = []
         for hits_item_data in self.hits:
@@ -102,12 +109,27 @@ class RecallResponse:
         d = dict(src_dict)
         recall_id = UUID(d.pop("recall_id"))
 
-        steering = []
-        _steering = d.pop("steering")
-        for steering_item_data in _steering:
-            steering_item = Memory.from_dict(steering_item_data)
+        def _parse_steering(data: object) -> list[Memory] | RecallResponseSteeringType1:
+            try:
+                if not isinstance(data, list):
+                    raise TypeError()
+                steering_type_0 = []
+                _steering_type_0 = data
+                for steering_type_0_item_data in _steering_type_0:
+                    steering_type_0_item = Memory.from_dict(steering_type_0_item_data)
 
-            steering.append(steering_item)
+                    steering_type_0.append(steering_type_0_item)
+
+                return steering_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            if not isinstance(data, str):
+                raise TypeError()
+            steering_type_1 = RecallResponseSteeringType1(data)
+
+            return steering_type_1
+
+        steering = _parse_steering(d.pop("steering"))
 
         hits = []
         _hits = d.pop("hits")

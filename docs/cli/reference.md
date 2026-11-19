@@ -862,16 +862,16 @@ oml read [OPTIONS] [ARTIFACT_ID]
 |---|---|
 | `--query <QUERY>` | Recall ranked promoted rows, steering first |
 | `--k <K>` | Number of recall hits, 1 to 100; defaults to 8 |
-| `--kinds <KINDS>` | Recall only memory or derived_fact kinds; repeatable |
+| `--kinds <KINDS>` | Only these kinds, in recall and in the catalog; repeatable or comma-separated. Recall without steering among them serves no steering list [possible values: memory, derived_fact, steering, term, term_mapping, vocab_release, guardrail, skill, document, test] |
 | `--include-unreviewed` | Include this key's own held rows beside promoted hits |
 | `--search <SEARCH>` | Served search pipeline to run (see `oml search show`); defaults to the tenant's default |
 | `--match <MATCH_MODE>` | any (default) or all. all requires every query word; if no memory matches them all, any-word hits are returned and marked fallback |
 | `--sources <SOURCES>` | Where to search: scope (default), wide (also the protected workspaces this key reads elsewhere), or comma-separated workspace names searched alone. Needs federation on (`oml search federation`) |
 | `--workspace <WORKSPACE>` | Subtree (id or name) to read; defaults to the key's workspace, or all workspaces this key wrote in for --own |
-| `--own` | List this key's own rows in every state (default listing) |
-| `--all` | List promoted tips in the workspace subtree instead |
+| `--own` | List this key's own rows in every state, with their text, instead of the catalog |
 | `--state <STATE>` | Filter by state: held, promoted, demoted, rejected, or erased |
-| `--kind <KIND>` | Filter by kind |
+| `--prefix <PREFIX>` | Only claim keys starting with this prefix, such as skill/ or doc/runbooks/ |
+| `--text` | Print each catalog entry's text |
 | `--since <SINCE>` | List versions written at or after this RFC 3339 instant |
 | `--until <UNTIL>` | List versions written before this RFC 3339 instant |
 | `--limit <LIMIT>` | Listing page size |

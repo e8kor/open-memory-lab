@@ -5,10 +5,28 @@
 //! (delta-tables.md: "the lake-writer already iterates per tenant under an
 //! RLS-scoped session role").
 
-use chrono::{DateTime, NaiveDate, Utc};
+use jiff::Timestamp;
+use jiff::civil::Date;
 use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions};
 use sqlx::{Connection as _, Postgres, Row as _, Transaction};
 use uuid::Uuid;
+
+/// A timestamp column read as Unix microseconds, the precision PostgreSQL
+/// stores, so the writer decodes it without a date library in sqlx (#445).
+macro_rules! micros {
+    ($col:literal) => {
+        concat!("(extract(epoch FROM ", $col, ") * 1000000)::int8")
+    };
+}
+
+/// A timestamp column's microseconds as a [`Timestamp`]; one outside
+/// jiff's range is a decode error, never clamped.
+///
+/// # Errors
+/// `us` lies outside the range a [`Timestamp`] holds.
+pub fn timestamp_of(us: i64) -> Result<Timestamp, sqlx::Error> {
+    Timestamp::from_microsecond(us).map_err(|e| sqlx::Error::Decode(Box::new(e)))
+}
 
 /// The session advisory lock that is the writer's lease (ADR-0060 d5):
 /// "oml_lake" in ASCII.
@@ -38,7 +56,7 @@ pub struct Event {
     pub journal_seq: i64,
     pub event_id: Uuid,
     pub event_type: String,
-    pub at: DateTime<Utc>,
+    pub at: Timestamp,
     pub prev_hash: Vec<u8>,
     pub hash: Vec<u8>,
     pub sig: Vec<u8>,
@@ -65,8 +83,8 @@ pub struct Memory {
     pub body: String,
     pub digest: Vec<u8>,
     pub body_bytes: i64,
-    pub created_at: DateTime<Utc>,
-    pub promoted_at: Option<DateTime<Utc>>,
+    pub created_at: Timestamp,
+    pub promoted_at: Option<Timestamp>,
     pub derives_from: Vec<Uuid>,
 }
 
@@ -81,7 +99,7 @@ pub struct Edge {
     pub ratified: bool,
     pub proposer: Uuid,
     pub ratifier: Option<Uuid>,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 /// One version's key row.
@@ -94,7 +112,7 @@ pub struct KeyRow {
 /// One day's recall aggregate for one pipeline and access path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecallDay {
-    pub day: NaiveDate,
+    pub day: Date,
     pub pipeline: String,
     pub access: String,
     pub counts: [i64; 11],
@@ -237,12 +255,14 @@ impl Source {
         upto: i64,
     ) -> Result<Vec<Event>, SourceError> {
         let mut tx = self.tenant_tx(tenant).await?;
-        let rows = sqlx::query(
-            "SELECT o.seq, j.seq AS journal_seq, j.event_id, j.event_type, j.at, j.prev_hash, \
+        let rows = sqlx::query(concat!(
+            "SELECT o.seq, j.seq AS journal_seq, j.event_id, j.event_type, ",
+            micros!("j.at"),
+            " AS at, j.prev_hash, \
                     j.signed_bytes_hash, j.sig, j.signed_bytes, j.payload, j.principal, j.api_key_id \
              FROM outbox o JOIN journal j ON j.tenant_id = o.tenant_id AND j.seq = o.tenant_seq \
              WHERE o.tenant_id = $1 AND o.seq > $2 AND o.seq <= $3 ORDER BY o.seq",
-        )
+        ))
         .bind(tenant)
         .bind(after)
         .bind(upto)
@@ -256,7 +276,7 @@ impl Source {
                     journal_seq: r.try_get("journal_seq")?,
                     event_id: r.try_get("event_id")?,
                     event_type: r.try_get("event_type")?,
-                    at: r.try_get("at")?,
+                    at: timestamp_of(r.try_get("at")?)?,
                     prev_hash: r.try_get("prev_hash")?,
                     hash: r.try_get("signed_bytes_hash")?,
                     sig: r.try_get("sig")?,
@@ -280,17 +300,19 @@ impl Source {
         &self,
         tenant: Uuid,
         after: i64,
-    ) -> Result<Option<DateTime<Utc>>, SourceError> {
+    ) -> Result<Option<Timestamp>, SourceError> {
         let mut tx = self.tenant_tx(tenant).await?;
-        let at = sqlx::query_scalar(
-            "SELECT min(created_at) FROM outbox WHERE tenant_id = $1 AND seq > $2",
-        )
+        let at: Option<i64> = sqlx::query_scalar(concat!(
+            "SELECT ",
+            micros!("min(created_at)"),
+            " FROM outbox WHERE tenant_id = $1 AND seq > $2",
+        ))
         .bind(tenant)
         .bind(after)
         .fetch_one(&mut *tx)
         .await?;
         tx.rollback().await?;
-        Ok(at)
+        Ok(at.map(timestamp_of).transpose()?)
     }
 
     /// The claim version `id`.
@@ -299,12 +321,16 @@ impl Source {
     /// The query fails.
     pub async fn memory(&self, tenant: Uuid, id: Uuid) -> Result<Option<Memory>, SourceError> {
         let mut tx = self.tenant_tx(tenant).await?;
-        let row = sqlx::query(
+        let row = sqlx::query(concat!(
             "SELECT id, version, claim_key, kind, status, is_tip, workspace_id, author_key_id, \
                     author_principal, retirement, replaces_artifact_id, claim, claim_digest, \
-                    body_bytes, created_at, promoted_at, derives_from \
+                    body_bytes, ",
+            micros!("created_at"),
+            " AS created_at, ",
+            micros!("promoted_at"),
+            " AS promoted_at, derives_from \
              FROM memories WHERE tenant_id = $1 AND id = $2",
-        )
+        ))
         .bind(tenant)
         .bind(id)
         .fetch_optional(&mut *tx)
@@ -326,8 +352,11 @@ impl Source {
             body: r.try_get("claim")?,
             digest: r.try_get("claim_digest")?,
             body_bytes: i64::from(r.try_get::<i32, _>("body_bytes")?),
-            created_at: r.try_get("created_at")?,
-            promoted_at: r.try_get("promoted_at")?,
+            created_at: timestamp_of(r.try_get("created_at")?)?,
+            promoted_at: r
+                .try_get::<Option<i64>, _>("promoted_at")?
+                .map(timestamp_of)
+                .transpose()?,
             derives_from: r.try_get("derives_from")?,
         }))
     }
@@ -338,10 +367,12 @@ impl Source {
     /// The query fails.
     pub async fn edge(&self, tenant: Uuid, id: Uuid) -> Result<Option<Edge>, SourceError> {
         let mut tx = self.tenant_tx(tenant).await?;
-        let claim = sqlx::query(
+        let claim = sqlx::query(concat!(
             "SELECT id, label, src_artifact_id, dst_artifact_id, state, proposer_key_id, \
-                    ratifier_key_id, created_at FROM claim_edges WHERE tenant_id = $1 AND id = $2",
-        )
+                    ratifier_key_id, ",
+            micros!("created_at"),
+            " AS created_at FROM claim_edges WHERE tenant_id = $1 AND id = $2",
+        ))
         .bind(tenant)
         .bind(id)
         .fetch_optional(&mut *tx)
@@ -356,13 +387,14 @@ impl Source {
                 ratified: r.try_get::<String, _>("state")? == "ratified",
                 proposer: r.try_get("proposer_key_id")?,
                 ratifier: r.try_get("ratifier_key_id")?,
-                created_at: r.try_get("created_at")?,
+                created_at: timestamp_of(r.try_get("created_at")?)?,
             })
         } else {
-            let brief = sqlx::query(
-                "SELECT id, artifact_id, workspace_id, state, proposer_key_id, ratifier_key_id, \
-                        created_at FROM brief_edges WHERE tenant_id = $1 AND id = $2",
-            )
+            let brief = sqlx::query(concat!(
+                "SELECT id, artifact_id, workspace_id, state, proposer_key_id, ratifier_key_id, ",
+                micros!("created_at"),
+                " AS created_at FROM brief_edges WHERE tenant_id = $1 AND id = $2",
+            ))
             .bind(tenant)
             .bind(id)
             .fetch_optional(&mut *tx)
@@ -378,7 +410,7 @@ impl Source {
                     ratified: r.try_get::<String, _>("state")? == "ratified",
                     proposer: r.try_get("proposer_key_id")?,
                     ratifier: r.try_get("ratifier_key_id")?,
-                    created_at: r.try_get("created_at")?,
+                    created_at: timestamp_of(r.try_get("created_at")?)?,
                 }),
             }
         };
@@ -595,7 +627,7 @@ impl Source {
     pub async fn recall_days(&self, tenant: Uuid) -> Result<Vec<RecallDay>, SourceError> {
         let mut tx = self.tenant_tx(tenant).await?;
         let rows = sqlx::query(
-            "SELECT (e.created_at AT TIME ZONE 'UTC')::date AS day, e.pipeline, e.access, \
+            "SELECT ((e.created_at AT TIME ZONE 'UTC')::date)::text AS day, e.pipeline, e.access, \
                count(*)::bigint AS recalls, \
                coalesce(sum(cardinality(e.hit_ids)), 0)::bigint AS hits, \
                (count(*) FILTER (WHERE cardinality(e.hit_ids) = 0))::bigint AS empty, \
@@ -646,7 +678,10 @@ impl Source {
                     counts[i] = r.try_get(*c)?;
                 }
                 Ok(RecallDay {
-                    day: r.try_get("day")?,
+                    day: r
+                        .try_get::<String, _>("day")?
+                        .parse()
+                        .map_err(|e: jiff::Error| sqlx::Error::Decode(Box::new(e)))?,
                     pipeline: r.try_get("pipeline")?,
                     access: r.try_get("access")?,
                     counts,

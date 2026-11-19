@@ -528,6 +528,7 @@ pub fn held_memory(
         replaces: None,
         author_principal: author_principal.to_owned(),
         author_key_id,
+        author_person: None,
         derives_from: Vec::new(),
         lineage_principals: vec![author_principal.to_owned()],
         lineage_key_ids: vec![author_key_id],
@@ -1070,6 +1071,51 @@ pub async fn journal_memory_fold_and_lookup<S: JournalStore>(store: &S) {
     );
 }
 
+/// A version reads back the author's person its write recorded, and one
+/// whose author acts for no person reads back none (ADR-0085 d16, amended
+/// 2026-11-18; #448).
+pub async fn a_versions_author_person_reads_back_as_its_write_recorded_it<S: JournalStore>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(4);
+    rig.seed_chain(store, 0).await;
+    let workspace = Uuid::from_u128(0xB1);
+    for (n, person) in [(0xC1_u128, Some("alice")), (0xC2, None)] {
+        let memory_id = Uuid::from_u128(n);
+        let memory = MemoryRecord {
+            author_person: person.map(|p| Name::parse(p).expect("a name")),
+            ..held_memory(
+                rig.tenant_id,
+                workspace,
+                memory_id,
+                "wanda",
+                Uuid::from_u128(0xD1),
+                "held body",
+            )
+        };
+        rig.commit(
+            store,
+            event_types::SUBMISSION_REMEMBER,
+            json!({ "artifact_id": memory_id.to_string() }),
+            MetadataFold::MemoryHeld {
+                imported: None,
+                memory,
+                enqueue: true,
+                findings: Box::default(),
+            },
+            None,
+        )
+        .await
+        .expect("commit held");
+        let read = store
+            .memory(rig.tenant_id, memory_id)
+            .await
+            .expect("memory")
+            .expect("the fold landed");
+        assert_eq!(read.author_person.as_ref().map(Name::as_str), person);
+    }
+}
+
 /// Holds `memory`, a claim's first version, and promotes it through the
 /// rig: the claim's served tip until a ratified successor takes it.
 pub async fn hold_and_promote<S: JournalStore>(
@@ -1151,6 +1197,8 @@ pub trait KeywordAllReads: Retriever {
             anchor: oml_app::types::AnchorFilter::default(),
             promoted_nodes: readable.to_vec(),
             kinds: kinds.to_vec(),
+            instructions: Vec::new(),
+            counted_kinds: kinds.to_vec(),
             own_held: None,
             expired_at: None,
             as_of: None,
@@ -1189,6 +1237,8 @@ pub trait KeywordAllReads: Retriever {
             anchor: oml_app::types::AnchorFilter::default(),
             promoted_nodes: Vec::new(),
             kinds: kinds.to_vec(),
+            instructions: Vec::new(),
+            counted_kinds: kinds.to_vec(),
             own_held: Some(OwnHeldScope {
                 any_author_nodes: Vec::new(),
                 author_key_ids: author_key_ids.to_vec(),
@@ -1804,6 +1854,12 @@ pub async fn held_rows_of_every_author_are_read_on_the_named_nodes_alone<S: Jour
             MemoryKind::DerivedFact,
             MemoryKind::Steering,
         ],
+        instructions: Vec::new(),
+        counted_kinds: vec![
+            MemoryKind::Memory,
+            MemoryKind::DerivedFact,
+            MemoryKind::Steering,
+        ],
         own_held: Some(OwnHeldScope {
             author_key_ids: Vec::new(),
             any_author_nodes: nodes.clone(),
@@ -2358,15 +2414,33 @@ pub async fn the_review_queue_serves_no_row_its_own_person_wrote_outside_their_r
     rig.commit(store, event_types::KEY_LINKED_PERSON, payload, fold, None)
         .await
         .expect("the link commits");
+    // Each row records the person its author key acted for at the write,
+    // as the application sets it (ADR-0085 d16, amended 2026-11-18).
     let rows = [
-        (Uuid::from_u128(0x6120), project.workspace_id, &user_key),
-        (Uuid::from_u128(0x6121), team.workspace_id, &linked),
-        (Uuid::from_u128(0x6122), team.workspace_id, &session),
-        (Uuid::from_u128(0x6123), team.workspace_id, &other),
+        (
+            Uuid::from_u128(0x6120),
+            project.workspace_id,
+            &user_key,
+            Some("alice"),
+        ),
+        (
+            Uuid::from_u128(0x6121),
+            team.workspace_id,
+            &linked,
+            Some("alice"),
+        ),
+        (
+            Uuid::from_u128(0x6122),
+            team.workspace_id,
+            &session,
+            Some("alice"),
+        ),
+        (Uuid::from_u128(0x6123), team.workspace_id, &other, None),
     ];
-    for (id, workspace, key) in rows {
+    for (id, workspace, key, person) in rows {
         let mut memory = held_memory(t, workspace, id, &key.principal, key.key_id, "body");
         memory.claim_key = format!("person-{id}");
+        memory.author_person = person.map(name);
         rig.commit(
             store,
             event_types::SUBMISSION_REMEMBER,
@@ -5968,7 +6042,8 @@ fn listing(scope: ListingScope) -> ListingFilter {
         scope,
         subtree: None,
         state: None,
-        kind: None,
+        kinds: Vec::new(),
+        prefix: None,
         claim_key: None,
         since: None,
         until: None,
@@ -6099,7 +6174,8 @@ pub async fn an_own_listing_holds_every_state_of_the_key_sets_rows_off_masked_no
     assert_eq!(
         list(ListingFilter {
             anchor: oml_app::types::AnchorFilter::default(),
-            kind: Some(MemoryKind::Steering),
+            kinds: vec![MemoryKind::Steering],
+            prefix: None,
             ..own(Vec::new())
         })
         .await,
@@ -6216,6 +6292,121 @@ pub async fn a_tips_listing_holds_only_the_promoted_tips_on_its_nodes<S: Journal
         .await
         .is_empty(),
         "no filter reaches a held row through the tips scope"
+    );
+}
+
+/// The catalog's filters and counts (ADR-0092 d6, d9): `kinds` narrows the
+/// page to those kinds; `prefix` lists the claim keys starting with its
+/// bytes and no other; and the counts are each kind's rows under every
+/// filter but `kinds`, over exactly the rows the page's scope admits,
+/// counted to at most the cap plus one.
+pub async fn the_catalog_lists_by_kinds_and_prefix_and_counts_each_kind_under_every_other_filter<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(63);
+    rig.seed_chain(store, 0).await;
+    let (wa, elsewhere) = (Uuid::from_u128(0xB63), Uuid::from_u128(0xB64));
+    let author = Uuid::from_u128(0xD63);
+    let row = |n: u128, node: Uuid, kind: MemoryKind, key: &str, second: u8| MemoryRecord {
+        kind,
+        claim_key: key.to_owned(),
+        ..listed_row(63, n, node, author, second)
+    };
+    let rows = [
+        row(0xC61, wa, MemoryKind::Memory, "notes/a", 1),
+        row(0xC62, wa, MemoryKind::Memory, "notes/b", 2),
+        row(0xC63, wa, MemoryKind::DerivedFact, "notes/c", 3),
+        row(0xC64, wa, MemoryKind::Test, "skill/x-test", 4),
+        // Byte neighbours of the prefix `notes/`: `notes.` sorts before
+        // it and `notes0` after it, so neither is listed under it.
+        row(0xC65, wa, MemoryKind::Memory, "notes.", 5),
+        row(0xC66, wa, MemoryKind::Memory, "notes0", 6),
+        row(0xC67, elsewhere, MemoryKind::Memory, "notes/z", 7),
+    ];
+    for m in &rows {
+        hold(&mut rig, store, m.clone()).await.expect("hold");
+        promote(&mut rig, store, m.memory_id)
+            .await
+            .expect("promote");
+    }
+    let held = row(0xC68, wa, MemoryKind::Memory, "notes/held", 8);
+    hold(&mut rig, store, held).await.expect("hold");
+    let tips = ListingFilter {
+        ..listing(ListingScope::Tips {
+            nodes: vec![wa],
+            held: Vec::new(),
+            current_scanner: None,
+        })
+    };
+    let list = |filter: ListingFilter| async move {
+        page_ids(
+            &store
+                .list_memories(rig_tenant(63), &filter, None, 50)
+                .await
+                .expect("list"),
+        )
+    };
+    let id = |n: u128| Uuid::from_u128(n);
+    assert_eq!(
+        list(ListingFilter {
+            kinds: vec![MemoryKind::DerivedFact, MemoryKind::Test],
+            ..tips.clone()
+        })
+        .await,
+        vec![id(0xC64), id(0xC63)],
+        "kinds narrows the page to those kinds"
+    );
+    assert_eq!(
+        list(ListingFilter {
+            prefix: Some("notes/".to_owned()),
+            ..tips.clone()
+        })
+        .await,
+        vec![id(0xC63), id(0xC62), id(0xC61)],
+        "a prefix is a byte range on the claim key"
+    );
+    let count = |filter: ListingFilter, cap: u64| async move {
+        store
+            .count_memories(
+                rig_tenant(63),
+                &filter,
+                &[
+                    MemoryKind::Memory,
+                    MemoryKind::DerivedFact,
+                    MemoryKind::Test,
+                    MemoryKind::Skill,
+                ],
+                cap,
+            )
+            .await
+            .expect("count")
+    };
+    let narrowed = ListingFilter {
+        kinds: vec![MemoryKind::Test],
+        prefix: Some("notes/".to_owned()),
+        ..tips.clone()
+    };
+    assert_eq!(
+        count(narrowed.clone(), 100).await,
+        vec![
+            (MemoryKind::Memory, 2),
+            (MemoryKind::DerivedFact, 1),
+            (MemoryKind::Test, 0),
+            (MemoryKind::Skill, 0),
+        ],
+        "every filter but kinds: the prefix narrows, the kinds do not, the held row and the other node are not counted"
+    );
+    assert_eq!(
+        count(narrowed, 1).await,
+        vec![
+            (MemoryKind::Memory, 2),
+            (MemoryKind::DerivedFact, 1),
+            (MemoryKind::Test, 0),
+            (MemoryKind::Skill, 0),
+        ],
+        "a count stops at the cap plus one"
     );
 }
 
@@ -9666,6 +9857,8 @@ where
     )
     .await;
     Box::pin(journal_memory_fold_and_lookup(&new_store().await)).await;
+    Box::pin(a_versions_author_person_reads_back_as_its_write_recorded_it(&new_store().await))
+        .await;
     Box::pin(a_ratified_end_is_written_with_the_tip_move_or_not_at_all(
         &new_store().await,
     ))
@@ -9874,6 +10067,12 @@ where
     Box::pin(a_tips_listing_holds_only_the_promoted_tips_on_its_nodes(
         &new_store().await,
     ))
+    .await;
+    Box::pin(
+        the_catalog_lists_by_kinds_and_prefix_and_counts_each_kind_under_every_other_filter(
+            &new_store().await,
+        ),
+    )
     .await;
     Box::pin(
         a_listing_pages_newest_first_and_resumes_strictly_after_its_position(&new_store().await),
@@ -12720,6 +12919,8 @@ fn scope_of(wa: Uuid, own: Option<Uuid>) -> CandidateScope {
         anchor: oml_app::types::AnchorFilter::default(),
         promoted_nodes: vec![wa],
         kinds: HIT_KINDS.to_vec(),
+        instructions: Vec::new(),
+        counted_kinds: HIT_KINDS.to_vec(),
         own_held: own.map(|key| OwnHeldScope {
             any_author_nodes: Vec::new(),
             author_key_ids: vec![key],
@@ -12834,6 +13035,8 @@ pub async fn a_retriever_never_returns_a_row_outside_the_scope<S: JournalStore>(
                     anchor: oml_app::types::AnchorFilter::default(),
                     promoted_nodes: Vec::new(),
                     kinds: HIT_KINDS.to_vec(),
+                    instructions: Vec::new(),
+                    counted_kinds: HIT_KINDS.to_vec(),
                     own_held: None,
                     expired_at: None,
                     as_of: None,
@@ -12928,6 +13131,277 @@ where
             }
         }
     }
+}
+
+/// The instruction rows of the kind-filter laws (ADR-0092 d3, d4), beside
+/// [`retriever_fixture`]'s memories on `wa`: an offered skill and an
+/// applicable guardrail on `wa`, an offered skill on `elsewhere`, a skill
+/// and a guardrail on `wa` that are not offered, a derived fact and a test
+/// on `wa`. Each says the law queries' words. Returns the offered set.
+async fn instruction_fixture<S: JournalStore>(
+    rig: &mut ChainRig,
+    store: &S,
+    wa: Uuid,
+) -> Vec<(Uuid, MemoryKind)> {
+    let tenant = rig.tenant_id;
+    let elsewhere = Uuid::from_u128(0xE3);
+    let other = Uuid::from_u128(0xE5);
+    let skill = |node: Uuid, id: u128, name: &str, body: &str| MemoryRecord {
+        kind: MemoryKind::Skill,
+        kind_fields: Some(Box::new(KindFields::Skill {
+            name: name.to_owned(),
+            description: "Ships the billing service".to_owned(),
+        })),
+        claim_key: format!("skill/{name}"),
+        ..held_memory(tenant, node, Uuid::from_u128(id), "rita", other, body)
+    };
+    let rail = |id: u128, body: &str| MemoryRecord {
+        kind: MemoryKind::Guardrail,
+        guardrail: Some(Box::new(GuardrailFields {
+            severity: Severity::Must,
+            rule: None,
+        })),
+        ..held_memory(tenant, wa, Uuid::from_u128(id), "rita", other, body)
+    };
+    let kinded = |kind: MemoryKind, id: u128, body: &str| MemoryRecord {
+        kind,
+        ..held_memory(tenant, wa, Uuid::from_u128(id), "rita", other, body)
+    };
+    let offered_here = skill(wa, 0xF41, "deploy", "deploy the billing service on friday");
+    let offered_there = skill(
+        elsewhere,
+        0xF42,
+        "release",
+        "rollback the release on friday",
+    );
+    let not_offered = skill(wa, 0xF43, "invoice", "billing invoices per tenant deploy");
+    let applicable = rail(0xF44, "never deploy billing on friday");
+    let not_applicable = rail(0xF45, "invoices billing release friday");
+    for row in [
+        offered_here.clone(),
+        offered_there.clone(),
+        not_offered,
+        applicable.clone(),
+        not_applicable,
+        kinded(
+            MemoryKind::DerivedFact,
+            0xF46,
+            "billing invoices follow the release",
+        ),
+        kinded(MemoryKind::Test, 0xF47, "deploy rollback test on friday"),
+        // A document, searched by its passages (ADR-0081 d4).
+        MemoryRecord {
+            kind: MemoryKind::Document,
+            claim_key: "doc/billing".to_owned(),
+            kind_fields: Some(Box::new(KindFields::Document {
+                title: Some("billing".to_owned()),
+            })),
+            format: Box::new(oml_app::types::FormatFields {
+                media_type: "text/markdown".to_owned(),
+                ..Default::default()
+            }),
+            ..held_memory(
+                tenant,
+                wa,
+                Uuid::from_u128(0xF48),
+                "rita",
+                other,
+                "# billing\n\nThe billing service deploys on friday.\n\n## Release\n\nRollback the release with invoices.\n",
+            )
+        },
+    ] {
+        hold_and_promote(rig, store, row).await;
+    }
+    vec![
+        (offered_here.memory_id, MemoryKind::Skill),
+        (offered_there.memory_id, MemoryKind::Skill),
+        (applicable.memory_id, MemoryKind::Guardrail),
+    ]
+}
+
+/// The candidate scope of the kind-filter laws: the scope's knowledge
+/// kinds counted, `kinds` asked, and the offered instructions.
+fn kinds_scope(wa: Uuid, offered: &[(Uuid, MemoryKind)], kinds: &[MemoryKind]) -> CandidateScope {
+    CandidateScope {
+        kinds: kinds.to_vec(),
+        instructions: offered.to_vec(),
+        counted_kinds: vec![
+            MemoryKind::Memory,
+            MemoryKind::DerivedFact,
+            MemoryKind::Document,
+        ],
+        ..scope_of(wa, None)
+    }
+}
+
+/// Under a single retriever, a `kinds` filter inside the reference set
+/// gives the unfiltered answer restricted to those kinds: the same rows in
+/// the same order with the same scores, since every statistic is taken
+/// before the filter narrows the candidates (ADR-0092 d4).
+pub async fn a_kinds_filter_inside_the_reference_set_restricts_the_unfiltered_answer_under_a_single_retriever<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(404);
+    rig.seed_chain(store, 0).await;
+    let (_, _, wa, _) = retriever_fixture(&mut rig, store, false).await;
+    let offered = instruction_fixture(&mut rig, store, wa).await;
+    let every = [
+        MemoryKind::Memory,
+        MemoryKind::DerivedFact,
+        MemoryKind::Document,
+        MemoryKind::Skill,
+        MemoryKind::Guardrail,
+    ];
+    let filters: [&[MemoryKind]; 7] = [
+        &[MemoryKind::Memory],
+        &[MemoryKind::Document],
+        &[MemoryKind::Document, MemoryKind::Skill],
+        &[MemoryKind::Skill],
+        &[MemoryKind::Guardrail, MemoryKind::DerivedFact],
+        &[MemoryKind::DerivedFact, MemoryKind::Memory],
+        &[MemoryKind::Skill, MemoryKind::Guardrail],
+    ];
+    for kind in store.retrievers() {
+        for query in LAW_QUERIES {
+            let whole = run(
+                store,
+                rig.tenant_id,
+                kind,
+                &kinds_scope(wa, &offered, &every),
+                query,
+                MatchMode::Any,
+            )
+            .await;
+            for filter in filters {
+                let narrowed = run(
+                    store,
+                    rig.tenant_id,
+                    kind,
+                    &kinds_scope(wa, &offered, filter),
+                    query,
+                    MatchMode::Any,
+                )
+                .await;
+                let restricted: Vec<Candidate> = whole
+                    .candidates
+                    .iter()
+                    .filter(|c| filter.contains(&c.kind))
+                    .cloned()
+                    .collect();
+                assert_eq!(
+                    narrowed.candidates, restricted,
+                    "{kind:?} {query:?} {filter:?}: the filtered list is the whole one restricted"
+                );
+            }
+        }
+    }
+}
+
+/// A test case is never a hit and never counts in the statistics, even when
+/// a scope names its kind among those asked and those counted: the store
+/// answers exactly what it answers without it, the same rows with the same
+/// scores, and no row of kind `test` (ADR-0086 d1; ADR-0092 d12 reading 4).
+pub async fn a_test_is_never_a_hit_and_never_counts_even_when_the_scope_names_its_kind<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(406);
+    rig.seed_chain(store, 0).await;
+    let (_, _, wa, _) = retriever_fixture(&mut rig, store, false).await;
+    let offered = instruction_fixture(&mut rig, store, wa).await;
+    let asked = [
+        MemoryKind::Memory,
+        MemoryKind::DerivedFact,
+        MemoryKind::Document,
+        MemoryKind::Skill,
+        MemoryKind::Guardrail,
+    ];
+    let with_test: Vec<MemoryKind> = asked.iter().copied().chain([MemoryKind::Test]).collect();
+    for kind in store.retrievers() {
+        for query in LAW_QUERIES.iter().copied().chain(["rollback test"]) {
+            let without = run(
+                store,
+                rig.tenant_id,
+                kind,
+                &kinds_scope(wa, &offered, &asked),
+                query,
+                MatchMode::Any,
+            )
+            .await;
+            let mut naming = kinds_scope(wa, &offered, &with_test);
+            naming.counted_kinds.push(MemoryKind::Test);
+            let named = run(store, rig.tenant_id, kind, &naming, query, MatchMode::Any).await;
+            assert!(
+                named.candidates.iter().all(|c| c.kind != MemoryKind::Test),
+                "{kind:?} {query:?}: a test was a hit"
+            );
+            assert_eq!(
+                named.candidates, without.candidates,
+                "{kind:?} {query:?}: naming test moved the answer"
+            );
+        }
+    }
+}
+
+/// A skill or guardrail outside the offered set is never a candidate,
+/// whatever its node and however well it matches; an offered one is,
+/// wherever it lives (ADR-0092 d3).
+pub async fn an_instruction_outside_the_offered_set_is_never_a_hit<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(405);
+    rig.seed_chain(store, 0).await;
+    let (_, _, wa, _) = retriever_fixture(&mut rig, store, false).await;
+    let offered = instruction_fixture(&mut rig, store, wa).await;
+    let asked = [MemoryKind::Memory, MemoryKind::Skill, MemoryKind::Guardrail];
+    let mut seen_elsewhere = false;
+    for kind in store.retrievers() {
+        for query in LAW_QUERIES
+            .iter()
+            .copied()
+            .chain(["rollback release friday"])
+        {
+            let read = run(
+                store,
+                rig.tenant_id,
+                kind,
+                &kinds_scope(wa, &offered, &asked),
+                query,
+                MatchMode::Any,
+            )
+            .await;
+            for c in &read.candidates {
+                if matches!(c.kind, MemoryKind::Skill | MemoryKind::Guardrail) {
+                    assert!(
+                        offered.iter().any(|(id, _)| *id == c.memory_id),
+                        "{kind:?} {query:?}: {c:?} is an instruction outside the offered set"
+                    );
+                }
+                seen_elsewhere |= c.memory_id == Uuid::from_u128(0xF42);
+            }
+            // With no instruction offered, no instruction row is a hit.
+            let none = run(
+                store,
+                rig.tenant_id,
+                kind,
+                &kinds_scope(wa, &[], &asked),
+                query,
+                MatchMode::Any,
+            )
+            .await;
+            assert!(
+                none.candidates
+                    .iter()
+                    .all(|c| !matches!(c.kind, MemoryKind::Skill | MemoryKind::Guardrail)),
+                "{kind:?} {query:?}: an instruction was a hit with none offered"
+            );
+        }
+    }
+    assert!(
+        seen_elsewhere,
+        "the offered skill on another node is a candidate by its id"
+    );
 }
 
 /// The words every leak class of [`crowd`] says: those of the law queries.
@@ -13655,6 +14129,8 @@ pub async fn bm25_postings_ranks_as_bm25_does_when_nothing_is_pruned<S: JournalS
                         reference: None,
                         anchor: oml_app::types::AnchorFilter::default(),
                         kinds: kinds.clone(),
+                        instructions: Vec::new(),
+                        counted_kinds: kinds.clone(),
                         ..scope_of(wa, own_held)
                     };
                     let ask = |kind| {
@@ -14824,6 +15300,8 @@ pub async fn the_time_leg_never_returns_a_row_outside_the_scope<S: JournalStore>
         reference: None,
         promoted_nodes: Vec::new(),
         kinds: HIT_KINDS.to_vec(),
+        instructions: Vec::new(),
+        counted_kinds: HIT_KINDS.to_vec(),
         own_held: None,
         expired_at: None,
         anchor: oml_app::types::AnchorFilter::default(),
@@ -14990,6 +15468,13 @@ where
     a_retriever_never_returns_a_row_outside_the_scope(&new_store().await).await;
     a_retriever_orders_deterministically_by_score_then_id(&new_store().await).await;
     a_row_outside_the_scope_never_changes_a_candidates_score(&new_store).await;
+    a_kinds_filter_inside_the_reference_set_restricts_the_unfiltered_answer_under_a_single_retriever(
+        &new_store().await,
+    )
+    .await;
+    an_instruction_outside_the_offered_set_is_never_a_hit(&new_store().await).await;
+    a_test_is_never_a_hit_and_never_counts_even_when_the_scope_names_its_kind(&new_store().await)
+        .await;
     the_keyword_retrievers_match_all_or_any_word_on_every_store(&new_store().await).await;
     bm25_finds_an_identifier_by_its_parts_and_a_word_by_its_stem(&new_store().await).await;
     bm25_reads_a_query_without_its_english_stop_words_unless_it_has_no_other(&new_store().await)
@@ -15101,6 +15586,12 @@ pub async fn similar_candidates_are_the_scopes_served_tips_and_own_held_rows_hol
         reference: None,
         promoted_nodes: nodes.clone(),
         kinds: vec![
+            MemoryKind::Memory,
+            MemoryKind::DerivedFact,
+            MemoryKind::Steering,
+        ],
+        instructions: Vec::new(),
+        counted_kinds: vec![
             MemoryKind::Memory,
             MemoryKind::DerivedFact,
             MemoryKind::Steering,

@@ -12,8 +12,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Structured, paginated listing of memory summaries.
-         * @description Requires: reader effective access; own=true admits any tenant role except operator (access.verb_ceiling) for its own rows only — every row the calling key authored, in every state, across all workspaces minus its globally denied subtrees, no grant needed (ADR-0025 d13). With own=true and no workspace it lists every workspace the key wrote in. Without own, the listing returns promoted served tips within reader effective access in the workspace's subtree, defaulting to the key's default_workspace (ADR-0039 d4) — a self_signed version only when the scope node is its own workspace; a retired claim's tip, its retirement version, among them, flagged retirement true; others' held rows are never returned (R3). workspace is the subtree read (see the parameter); v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workspace in details.renamed_to (ADR-0039 d7). Ordered created_at descending, then artifact_id descending; the cursor is bound to the calling key and expires under api.cursor_ttl.
+         * The catalog of what a key reads, or the key's own work; paginated, with per-kind counts.
+         * @description Requires: reader effective access; own=true admits any tenant role except operator (access.verb_ceiling) for its own rows only — every row the calling key authored, in every state, across all workspaces minus its globally denied subtrees, no grant needed (ADR-0025 d13). With own=true and no workspace it lists every workspace the key wrote in. Without own, the listing returns promoted served tips within reader effective access in the workspace's subtree, defaulting to the key's default_workspace (ADR-0039 d4) — a self_signed version only when the scope node is its own workspace; a retired claim's tip, its retirement version, among them, flagged retirement true; others' held rows are never returned (R3). workspace is the subtree read (see the parameter); v0.3.0's workarea_id parameter and X-OML-Workarea header are request.validation naming workspace in details.renamed_to (ADR-0039 d7). Without own the read is the catalog (ADR-0092 d6): every kind the key reads in the subtree, each entry with the projection of its kind and no text unless include_text, and on the first page `counts`, each kind's entries under every filter but kinds, capped at catalog.count_cap and served as {"at_least": cap} above it. Ordered created_at descending, then artifact_id descending; the cursor is bound to the calling key and expires under api.cursor_ttl.
          */
         get: operations["listMemories"];
         put?: never;
@@ -2004,12 +2004,43 @@ export interface components {
         /** @description YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six fractional digits. A period is read in UTC: 2026-11-05 runs from 00:00 to 24:00 UTC (ADR-0059 d2). */
         ValidEnd: string;
         Memory: components["schemas"]["MemorySummary"] & {
-            /** @description The claim's text, decrypted on the serving path only; v0.3.0 named it body (ADR-0039 d7). Absent from a recall item sent with include_text false, and from a listing item unless include_text is true (ADR-0070 d5). */
+            /** @description The claim's text, decrypted on the serving path only; v0.3.0 named it body (ADR-0039 d7). Absent from a recall item sent with include_text false, and from a listing item unless include_text is true (ADR-0070 d5). A skill hit's text is its description, never its body (ADR-0092 d3). */
             text?: string;
+            /** @description On a catalog entry, and on a held instruction hit: only a person's verdict promotes the version (ADR-0080 d16; ADR-0092 d3, d6). */
+            needs_person?: boolean;
+            /** @description A skill's name, on a skill hit and a skill's catalog entry (ADR-0092 d3, d6). */
+            name?: string;
+            /** @description A skill's description; on a memory or derived fact's catalog entry, a cut of its text of at most 160 characters, marked preview (ADR-0092 d6, d11 answer 7). */
+            description?: string;
+            /** @description true when description is the server's cut of the text (ADR-0092 d6). */
+            preview?: boolean;
+            /** @description A skill's or a document's resource, oml://workspace/<workspace>/skill/<name> or …/doc/<path> (ADR-0080 d7; ADR-0081 d6; ADR-0092 d3, d6). */
+            uri?: string;
+            /** @description The command prompts/list offers a skill under at the read's scope node; null on a catalog entry the scope does not offer (ADR-0092 d3, d6). */
+            prompt?: string | null;
+            /** @description A guardrail: whether it binds at the read's scope node; true on every guardrail hit, since only an applicable one is a hit (ADR-0092 d3, d6). */
+            in_force?: boolean;
+            /** @description A steering catalog entry: whether it is in the steering list at the read's scope node (ADR-0092 d6). */
+            applies_here?: boolean;
+            /** @description A document catalog entry's body bytes (ADR-0092 d6). */
+            size?: number;
+        };
+        /**
+         * @description Every kind a claim may be (ADR-0080 d16; ADR-0092 d1).
+         * @enum {string}
+         */
+        ClaimKind: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release" | "guardrail" | "skill" | "document" | "test";
+        /** @description A kind's entries, exact up to catalog.count_cap and {at_least: cap} above it (ADR-0092 d6, d11 answer 6). */
+        CatalogCount: number | {
+            at_least: number;
         };
         MemoryPage: {
             items: components["schemas"]["Memory"][];
             next_cursor: string | null;
+            /** @description The catalog's first page only: per kind, the entries every filter but kinds admits, over exactly the rows the page's predicate admits (ADR-0092 d6). */
+            counts?: {
+                [key: string]: components["schemas"]["CatalogCount"];
+            };
         };
         /** @description The scope is workspace's subtree, else the key's default_workspace's (ADR-0039 d4). Unknown fields are refused (request.validation), and so are the designed vocabulary filter's terms and expand_terms, declared in openapi-designed.yaml (ADR-0039 d9); v0.3.0's include_bodies and include_own_held are request.validation naming include_text and include_unreviewed in details.renamed_to (ADR-0039 d7). */
         RecallRequest: {
@@ -2018,8 +2049,8 @@ export interface components {
             workspace?: components["schemas"]["WorkspaceRef"];
             /** @default 8 */
             k?: number;
-            /** @description Filters hits only; an empty array is refused (request.validation), so only an absent kinds means no filter, every hit kind, documents included (ADR-0081 d4). Deliberately excludes steering (never ranked, always first) and the vocabulary kinds (excluded from the shared recall indexes by default — ADR-0021 d9); where a vocabulary workspace's journalled policy opts them in, they are hits only of a recall that omits kinds. */
-            kinds?: ("memory" | "derived_fact" | "document")[];
+            /** @description Any kind but test, which is never a hit (ADR-0086 d1); an empty array, an unknown kind or test is refused (request.validation naming /kinds), so only an absent kinds means no filter (ADR-0092 d1). Absent, hits are every kind but steering, test and the vocabulary kinds, which join only by a workspace's opt-in (ADR-0021 d9). kinds decides whether the steering list is served: naming steering, or absent, it is; otherwise the answer's steering is "not_requested"; steering alone serves the list and ranks nothing (search.hits "not_requested"). A skill is a hit only as one the scope offers, and a guardrail only as one applicable there; a document's hit is its best passage (ADR-0092 d2, d3; ADR-0081 d4). */
+            kinds?: components["schemas"]["ClaimKind"][];
             /**
              * @description Whether each served item carries its text (ADR-0039 d7).
              * @default true
@@ -2078,8 +2109,8 @@ export interface components {
              * @description The recall's id: the feedback member of a later read names it (ADR-0054 d6).
              */
             recall_id: string;
-            /** @description Applicable steering, ordered structurally and never cut by a budget — membership and order declared in docs/architecture/retrieval.md (ADR-0025 d8). */
-            steering: components["schemas"]["Memory"][];
+            /** @description Applicable steering, ordered structurally and never cut by a budget — membership and order declared in docs/architecture/retrieval.md (ADR-0025 d8); "not_requested" when kinds does not name steering (ADR-0092 d2). */
+            steering: components["schemas"]["Memory"][] | "not_requested";
             hits: {
                 memory: components["schemas"]["Memory"];
                 /** @description The pipeline's score, comparable within one answer only; ties break by artifact_id ascending. */
@@ -2142,6 +2173,15 @@ export interface components {
         RecallSearch: {
             /** @enum {string} */
             pipeline: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings" | "bm25-rerank" | "sparse" | "bm25-sparse" | "bm25-sparse-rrf" | "bm25-postings-time";
+            /** @description Per kind, the candidates in the fused list before the k cut, bounded by each list's depth: a lower bound; a kind with none is absent (ADR-0092 d4). */
+            matched_by_kind: {
+                [key: string]: number;
+            };
+            /**
+             * @description Present when kinds names steering alone: the query ranked nothing (ADR-0092 d2).
+             * @enum {string}
+             */
+            hits?: "not_requested";
             /** @enum {string} */
             match: "any" | "all";
             terms: string[];
@@ -3893,13 +3933,16 @@ export interface operations {
                 workspace?: components["schemas"]["WorkspaceRef"];
                 claim_key?: string;
                 state?: "held" | "promoted" | "demoted" | "rejected" | "erased" | "withdrawn";
-                kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release" | "skill" | "document" | "test";
+                /** @description Comma-separated or repeated: only these kinds. The counts ignore it. v0.7's single kind is request.validation naming kinds in details.renamed_to (ADR-0092 d6). */
+                kinds?: components["schemas"]["ClaimKind"][];
+                /** @description Only claim keys starting with these bytes, such as skill/ or doc/runbooks/; read as a byte range, never a pattern (ADR-0092 d6, d9). */
+                prefix?: string;
                 own?: boolean;
                 /** @description true: the scoped listing (at workspace, else universe) and the caller's own rows, every key naming its user's for a person's web session key, merged newest first under one cursor, a row in both once (ADR-0045 d22, d23; ADR-0070 d5). Combines only with author, include_text, workspace, state (held, promoted, rejected, superseded, demoted), one origin_kinds, limit and cursor; any other parameter is request.validation. Since v0.6.4. */
                 with_own?: boolean;
                 /** @description One of the caller's own keys, by name: the caller's rows by that key alone, the scoped part dropped; a key that is not the caller's is access.not_found. Implies the with_own listing (ADR-0045 d23; ADR-0070 d5). Since v0.6.4. */
                 author?: string;
-                /** @description With with_own or author alone: true serves each item with its text, as the web console's Memories list shows it (ADR-0045 d22; ADR-0070 d5); false or absent, summaries. Since v0.7.0. */
+                /** @description true serves each item with its text: on the catalog (ADR-0092 d6), and with with_own or author, as the web console's Memories list shows it (ADR-0045 d22; ADR-0070 d5); false or absent, entries without text. */
                 include_text?: boolean;
                 /** @description Rows whose anchor names this repository, with own or without it; unanchored rows are left out (ADR-0057 d4). Malformed is request.validation naming anchor_repo. */
                 anchor_repo?: components["schemas"]["AnchorRepo"];
