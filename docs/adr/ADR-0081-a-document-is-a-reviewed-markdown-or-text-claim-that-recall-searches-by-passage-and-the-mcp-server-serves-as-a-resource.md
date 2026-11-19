@@ -10,7 +10,7 @@ answers: why a document is a kind and not a memory with a markdown format; which
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, every default as
 drafted · proposed the same day, tracking #374 · amended by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) (d4, 2026-11-15) · d2 amended 2026-11-18 (the long-title cut and the one slug rule, #405) · [the build's readings of 2026-11-18](#the-builds-readings-of-2026-11-18), proposed for the operator's batch; [the review's readings of 2026-11-18](#the-reviews-readings-of-2026-11-18-pr-475), decided by the coordinator, for the operator's batch
 
-**Release:** built in v0.8.3 (#405, #406)
+**Release:** built in v0.8.3 (#405, #406), except d6's escaping and d9's files
 
 **Twin parts** (ADR-0090 d18, PR #388): a document is a `memories` row, so its body and search
 text are parts and its fold is the journal's; its passages are derived, cut again by the same rule
