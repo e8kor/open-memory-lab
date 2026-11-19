@@ -9,6 +9,7 @@
 //! node of a top label a row names that the names leave unknown. Every
 //! control is a link or a GET form, and nothing on the page writes.
 
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::sync::Arc;
 
@@ -17,8 +18,8 @@ use axum::extract::State;
 use axum::response::Response;
 use http::{StatusCode, Uri};
 use oml_page::web::{
-    USER_CATALOG_PATH, USER_MEMORY_PATH, USER_WORKSPACES_PATH, attr, glyph_svg, hidden, input,
-    select, shell, state_tag, text,
+    TODO_JUDGE_PATH, USER_CATALOG_PATH, USER_MEMORY_PATH, USER_WORKSPACES_PATH, attr, glyph_svg,
+    hidden, input, select, shell, state_tag, text,
 };
 use oml_sdk::{CatalogCount, CatalogEntry, CatalogPage, CatalogQuery};
 
@@ -164,6 +165,42 @@ async fn read(
     Ok(web.api.catalog(&call(&credential, &ids), &query).await?)
 }
 
+/// The most held rows the Judge it read asks for: one page of the held
+/// listing at its largest (`HELD_PAGE_MAX`).
+const JUDGE_SCAN_ROWS: u32 = 200;
+
+/// The held instruction rows of `page` that `<user>-review` may judge, by
+/// id: one read of the held listing in the person lane at `workspace`, as
+/// the reviewer key, made only where the page holds such a row. The link
+/// is a way in, not a verdict: a read that fails leaves every row with its
+/// "needs a person" chip alone (ADR-0092 d7; ADR-0083 d2).
+async fn judgeable(
+    web: &Web,
+    session: &Session,
+    calls: &PageCalls,
+    page: &CatalogPage,
+    workspace: &str,
+) -> BTreeSet<String> {
+    if !page.items.iter().any(|e| e.unreviewed && e.needs_person) {
+        return BTreeSet::new();
+    }
+    let credential = session.credential(Capacity::Review);
+    let ids = calls.next_ids();
+    let filters = [("workspace", workspace), ("needs", "person")];
+    match web
+        .api
+        .review_held(&call(&credential, &ids), &filters, JUDGE_SCAN_ROWS, None)
+        .await
+    {
+        Ok(held) => held
+            .items
+            .iter()
+            .map(|i| i.memory().artifact_id.clone())
+            .collect(),
+        Err(_) => BTreeSet::new(),
+    }
+}
+
 /// A count as a tab shows it: digits grouped by thousands, `+` after a
 /// lower bound.
 fn count_word(n: u64, capped: bool) -> String {
@@ -256,9 +293,10 @@ fn rule_words(rule: Option<&serde_json::Value>) -> Option<String> {
 }
 
 /// The State cell (ADR-0092 d7; ADR-0077 d2's words): retired; held and
-/// served here, with "needs a person" on an instruction; approved with the
-/// instant and the reviewer's kind; any other state as its chip.
-fn state_cell(e: &CatalogEntry) -> String {
+/// served here, with "needs a person" on an instruction and **Judge it**
+/// where `<user>-review` may judge it (`judge`); approved with the instant
+/// and the reviewer's kind; any other state as its chip.
+fn state_cell(e: &CatalogEntry, judge: bool) -> String {
     if e.retirement {
         return state_tag("retired");
     }
@@ -273,6 +311,13 @@ fn state_cell(e: &CatalogEntry) -> String {
                 r#" <span class="tag oml-chip is-quiet">{}needs a person</span>"#,
                 glyph_svg("person")
             );
+            if judge {
+                let _ = write!(
+                    out,
+                    r#" <a href="{TODO_JUDGE_PATH}?memory={}">Judge it</a>"#,
+                    attr(&e.artifact_id)
+                );
+            }
         }
         return out;
     }
@@ -295,7 +340,7 @@ fn state_cell(e: &CatalogEntry) -> String {
 }
 
 /// One row: Name, Kind, Description, Workspace, Version, State, Changed.
-fn row(e: &CatalogEntry, scope: &str, roots: &Roots) -> String {
+fn row(e: &CatalogEntry, scope: &str, roots: &Roots, judge: &BTreeSet<String>) -> String {
     let path = e.workspace_path.as_deref().unwrap_or_default();
     let reference = roots.reference(path);
     let workspace_link = format!(
@@ -383,7 +428,7 @@ fn row(e: &CatalogEntry, scope: &str, roots: &Roots) -> String {
         r#"<tr><td class="c-name">{name}</td><td class="c-kind"><span class="cell">{kind}</span></td><td class="c-desc">{description}</td><td class="c-ws c-meta"><a href="{workspace_link}">{}</a></td><td class="c-ver c-meta">v{}</td><td class="c-state">{}</td><td class="c-when c-meta">{}</td></tr>"#,
         text(&reference),
         e.version,
-        state_cell(e),
+        state_cell(e, judge.contains(&e.artifact_id)),
         instant(&e.created_at),
     )
 }
@@ -396,6 +441,7 @@ fn body(
     field: &str,
     scope: &str,
     page: Option<(&CatalogPage, &Roots)>,
+    judge: &BTreeSet<String>,
 ) -> String {
     let web_key = session
         .whoami
@@ -445,7 +491,7 @@ fn body(
     } else {
         out.push_str(r#"<table class="oml-table cat"><thead><tr><th scope="col">Name</th><th scope="col">Kind</th><th scope="col">Description</th><th scope="col">Workspace</th><th scope="col">Version</th><th scope="col">State</th><th scope="col">Changed</th></tr></thead><tbody>"#);
         for e in &page.items {
-            out.push_str(&row(e, scope, roots));
+            out.push_str(&row(e, scope, roots, judge));
         }
         out.push_str("</tbody></table>");
     }
@@ -539,6 +585,10 @@ pub async fn page(
         }
         None => names.roots().clone(),
     };
+    let judge = match &page {
+        Some(page) => judgeable(&web, &session, &calls, page, &scope).await,
+        None => BTreeSet::new(),
+    };
     let keep = q.keep();
     let field = picker_field(&keep, &chosen, &names, browse.as_ref());
     let drawn = body(
@@ -547,6 +597,7 @@ pub async fn page(
         &field,
         &scope,
         page.as_ref().map(|p| (p, &roots)),
+        &judge,
     );
     with_status(
         outcome::html(
@@ -580,6 +631,26 @@ fn picker_field(
 
 #[cfg(test)]
 mod tests {
+
+    /// A held instruction row links Judge it only where the review key may
+    /// judge it; elsewhere it keeps the "needs a person" chip alone
+    /// (ADR-0092 d7).
+    #[test]
+    fn a_held_instruction_row_links_judge_it_only_where_the_review_key_may_judge_it() {
+        let e: CatalogEntry = serde_json::from_value(serde_json::json!({
+            "artifact_id": "a1", "claim_key": "skill/deploy", "kind": "skill", "version": 1,
+            "workspace_path": "universe.alice.proj", "state": "held", "unreviewed": true,
+            "needs_person": true, "created_at": "2026-11-19T10:00:00Z"
+        }))
+        .expect("an entry");
+        let link = r#"<a href="/web/todo/judge?memory=a1">Judge it</a>"#;
+        assert!(super::state_cell(&e, true).contains(link));
+        let alone = super::state_cell(&e, false);
+        assert!(
+            alone.contains("needs a person") && !alone.contains("Judge it"),
+            "{alone}"
+        );
+    }
     use super::*;
 
     fn parsed(pairs: &[(&str, &str)]) -> Result<Query, String> {
