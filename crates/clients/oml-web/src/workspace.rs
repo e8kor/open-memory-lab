@@ -474,8 +474,11 @@ fn day(at: &str) -> &str {
 /// act (ADR-0082 d1; ADR-0083 d13).
 fn table(place: &Place, kind: Kind, claims: &[Vec<Row>], admin: bool) -> String {
     let guardrail = kind == Kind::Guardrail;
-    let mut out =
-        String::from(r#"<table class="oml-stack t-items"><tr><th>Name</th><th>State</th>"#);
+    let mut out = String::from(if admin {
+        r#"<table class="oml-stack t-items t-lineage"><tr><th>Name</th><th>State</th>"#
+    } else {
+        r#"<table class="oml-stack t-items t-acts"><tr><th>Name</th><th>State</th>"#
+    });
     out.push_str(if guardrail {
         "<th>Severity</th><th>Rule</th>"
     } else {
@@ -527,7 +530,9 @@ fn table(place: &Place, kind: Kind, claims: &[Vec<Row>], admin: bool) -> String 
                 }
             }
             let held = m.state == "held";
-            let mut state = state_tag(&m.state);
+            // A promoted version that is no longer the tip reads superseded,
+            // as the card names it (ADR-0045 d21).
+            let mut state = state_tag(crate::card::row_state(&m.state, m.tip));
             if held {
                 let _ = write!(state, " {}", text(&decision(m, kind)));
                 if place.in_progress() {
@@ -557,6 +562,9 @@ fn table(place: &Place, kind: Kind, claims: &[Vec<Row>], admin: bool) -> String 
                 match &m.replaces {
                     Some(r) if m.retirement => format!("retires v{}", r.version),
                     Some(r) => format!("replaces v{}", r.version),
+                    // The admin search serves no `replaces`: a later version
+                    // follows the one before it in the claim's ordinals.
+                    None if m.version > 1 => format!("follows v{}", m.version - 1),
                     None => "first version".to_owned(),
                 }
             } else {
