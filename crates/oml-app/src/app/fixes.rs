@@ -803,6 +803,7 @@ where
             replaces: Some(replaced.memory_id),
             author_principal: author.principal.clone(),
             author_key_id: author.key_id,
+            author_person: self.person_of(author).await?,
             derives_from: v.derives_from,
             lineage_principals: principals.into_iter().collect(),
             lineage_key_ids: key_ids.into_iter().collect(),

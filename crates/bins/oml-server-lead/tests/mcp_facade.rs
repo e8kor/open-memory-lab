@@ -527,7 +527,7 @@ async fn oml_read_state_shows_a_ratified_write_where_the_events_tail_showed_its_
     .await;
     assert_eq!(held["isError"], false, "{held}");
     let artifact = held["structuredContent"]["artifact_id"].clone();
-    let promoted = json!({"state": "promoted"});
+    let promoted = json!({"own": true, "state": "promoted"});
     let before = call_tool(&router, &writer, 2, "oml_read", promoted.clone()).await;
     assert_eq!(before["structuredContent"]["items"], json!([]), "{before}");
     approve_as(&router, &reviewer, "v1").await;
@@ -552,7 +552,7 @@ async fn oml_read_state_shows_a_ratified_write_where_the_events_tail_showed_its_
         &reader,
         4,
         "oml_read",
-        json!({"state": "promoted"}),
+        json!({"own": true, "state": "promoted"}),
     )
     .await;
     assert_eq!(theirs["structuredContent"]["items"], json!([]), "{theirs}");
@@ -1016,7 +1016,14 @@ const REVISED: &str =
 async fn ratified(router: &Router, writer: &str, reviewer: &str) -> String {
     remember_all(router, writer, &[(CLAIM, "memory", QUOTE)]).await;
     approve_as(router, reviewer, "v1").await;
-    let work = call_tool(router, writer, 90, "oml_read", json!({"claim_key": CLAIM})).await;
+    let work = call_tool(
+        router,
+        writer,
+        90,
+        "oml_read",
+        json!({"own": true, "claim_key": CLAIM}),
+    )
+    .await;
     let items = work["structuredContent"]["items"]
         .as_array()
         .expect("items");
@@ -1046,7 +1053,7 @@ async fn oml_read_get_returns_the_authors_held_row_to_its_author_and_not_found_t
     // (roles-and-keys.md#own; ADR-0025 d3).
     let (writer, reviewer, reader, crew) = crew(&router).await;
     remember_all(&router, &writer, &[(CLAIM, "memory", QUOTE)]).await;
-    let work = call_tool(&router, &writer, 1, "oml_read", json!({})).await;
+    let work = call_tool(&router, &writer, 1, "oml_read", json!({"own": true})).await;
     let id = work["structuredContent"]["items"][0]["artifact_id"]
         .as_str()
         .expect("artifact id")
@@ -1370,7 +1377,14 @@ async fn a_replayed_oml_write_supersession_is_an_idempotent_replay() {
     let late = call_tool(&router, &writer, 3, "oml_write", args.clone()).await;
     assert_eq!(late["isError"], false, "{late}");
     assert_eq!(late["structuredContent"], expected);
-    let work = call_tool(&router, &writer, 4, "oml_read", json!({"claim_key": CLAIM})).await;
+    let work = call_tool(
+        &router,
+        &writer,
+        4,
+        "oml_read",
+        json!({"own": true, "claim_key": CLAIM}),
+    )
+    .await;
     assert_eq!(
         work["structuredContent"]["items"]
             .as_array()
@@ -1409,7 +1423,7 @@ async fn oml_write_refuses_a_vocabulary_kind_target_that_the_http_api_supersedes
         )],
     )
     .await;
-    let work = call_tool(&router, &writer, 1, "oml_read", json!({})).await;
+    let work = call_tool(&router, &writer, 1, "oml_read", json!({"own": true})).await;
     let term = work["structuredContent"]["items"][0]["artifact_id"]
         .as_str()
         .expect("artifact id")
@@ -1496,7 +1510,7 @@ async fn capture_events(router: &Router, token: &str, artifact_id: &str) -> Vec<
 
 /// The number of claim versions the key's own-work listing holds.
 async fn own_versions(router: &Router, token: &str) -> usize {
-    let work = call_tool(router, token, 99, "oml_read", json!({})).await;
+    let work = call_tool(router, token, 99, "oml_read", json!({"own": true})).await;
     work["structuredContent"]["items"]
         .as_array()
         .expect("items")
@@ -1950,7 +1964,7 @@ async fn oml_write_refuses_a_vocabulary_kind_target() {
     )
     .await;
     approve_as(&router, &reviewer, "term").await;
-    let work = call_tool(&router, &writer, 1, "oml_read", json!({})).await;
+    let work = call_tool(&router, &writer, 1, "oml_read", json!({"own": true})).await;
     let term = work["structuredContent"]["items"][0]["artifact_id"]
         .as_str()
         .expect("artifact id")
@@ -2065,7 +2079,7 @@ async fn oml_read_recall_and_scoped_listing_are_refused_without_a_reader_grant_a
         assert_eq!(refusal_code(&refused), "access.verb_ceiling", "{mode}");
     }
     // The writer's own listing is not a scoped read and still answers.
-    let own = call_tool(&router, &writer, 20, "oml_read", json!({})).await;
+    let own = call_tool(&router, &writer, 20, "oml_read", json!({"own": true})).await;
     assert_eq!(own["isError"], false, "{own}");
 
     drop_db(&db).await;
@@ -2265,7 +2279,7 @@ async fn oml_write_with_a_workspace_name_submits_into_it() {
         &agent,
         2,
         "oml_read",
-        json!({"workspace": "metals-crew"}),
+        json!({"own": true, "workspace": "metals-crew"}),
     )
     .await;
     assert_eq!(mine["isError"], false, "{mine}");
@@ -2540,7 +2554,14 @@ async fn oml_read_listing_pages_with_a_client_held_cursor() {
     written.reverse();
 
     // The first page, newest first, and a cursor the client holds.
-    let first = call_tool(&router, &writer, 4, "oml_read", json!({"limit": 2})).await;
+    let first = call_tool(
+        &router,
+        &writer,
+        4,
+        "oml_read",
+        json!({"own": true, "limit": 2}),
+    )
+    .await;
     assert_eq!(first["isError"], false, "{first}");
     let page = &first["structuredContent"];
     let items = page["items"].as_array().expect("items");
@@ -2569,10 +2590,13 @@ async fn oml_read_listing_pages_with_a_client_held_cursor() {
             "artifact_id",
             "claim_key",
             "created_at",
+            "description",
             "format",
             "held_expires_at",
             "kind",
+            "needs_person",
             "origin",
+            "preview",
             "promoted_at",
             "replaces",
             "retirement",
@@ -2608,7 +2632,7 @@ async fn oml_read_listing_pages_with_a_client_held_cursor() {
         &writer,
         5,
         "oml_read",
-        json!({"limit": 2, "cursor": cursor}),
+        json!({"own": true, "limit": 2, "cursor": cursor}),
     )
     .await;
     assert_eq!(second["isError"], false, "{second}");
@@ -2630,7 +2654,7 @@ async fn oml_read_listing_pages_with_a_client_held_cursor() {
         &writer,
         6,
         "oml_read",
-        json!({"workspace": crew, "state": "held", "claim_key": "supplier-quote-am-7742"}),
+        json!({"own": true, "workspace": crew, "state": "held", "claim_key": "supplier-quote-am-7742"}),
     )
     .await;
     let items = one["structuredContent"]["items"].as_array().expect("items");
@@ -2638,10 +2662,17 @@ async fn oml_read_listing_pages_with_a_client_held_cursor() {
     assert_eq!(items[0]["claim_key"], "supplier-quote-am-7742");
 
     // Own work is the calling key's alone, and its cursor answers no other.
-    let theirs = call_tool(&router, &reader, 7, "oml_read", json!({})).await;
+    let theirs = call_tool(&router, &reader, 7, "oml_read", json!({"own": true})).await;
     assert_eq!(theirs["isError"], false, "{theirs}");
     assert_eq!(theirs["structuredContent"]["items"], json!([]));
-    let foreign = call_tool(&router, &reader, 8, "oml_read", json!({"cursor": cursor})).await;
+    let foreign = call_tool(
+        &router,
+        &reader,
+        8,
+        "oml_read",
+        json!({"own": true, "cursor": cursor}),
+    )
+    .await;
     assert_eq!(foreign["isError"], true, "{foreign}");
     assert_eq!(
         foreign["structuredContent"]["error"]["code"],
@@ -2672,9 +2703,23 @@ async fn oml_read_listing_limit_is_at_most_200_as_on_the_ring() {
     assert_eq!(limit["minimum"], 1, "{limit}");
     assert_eq!(limit["maximum"], 200, "{limit}");
 
-    let at_bound = call_tool(&router, &writer, 2, "oml_read", json!({"limit": 200})).await;
+    let at_bound = call_tool(
+        &router,
+        &writer,
+        2,
+        "oml_read",
+        json!({"own": true, "limit": 200}),
+    )
+    .await;
     assert_eq!(at_bound["isError"], false, "{at_bound}");
-    let refused = call_tool(&router, &writer, 3, "oml_read", json!({"limit": 201})).await;
+    let refused = call_tool(
+        &router,
+        &writer,
+        3,
+        "oml_read",
+        json!({"own": true, "limit": 201}),
+    )
+    .await;
     assert_eq!(refused["isError"], true, "{refused}");
     assert_eq!(
         refused["structuredContent"]["error"]["code"], "request.validation",
@@ -3300,7 +3345,7 @@ async fn a_read_argument_outside_its_mode_is_refused_naming_it() {
             json!({"include_unreviewed": true}),
             "/include_unreviewed",
         ),
-        (9, json!({"kinds": ["memory"]}), "/kinds"),
+        (9, json!({"kind": "memory"}), "/kind"),
         // The lineage read is designed, not routed: its fields are refused
         // by name in every mode (ADR-0039 d2, d4, d9).
         (
@@ -3317,8 +3362,68 @@ async fn a_read_argument_outside_its_mode_is_refused_naming_it() {
     }
 
     // A field no mode declares is outside the schema, as on every tool.
-    let undeclared = call_tool(&router, &agent, 13, "oml_read", json!({"scope": "x"})).await;
+    let undeclared = call_tool(
+        &router,
+        &agent,
+        13,
+        "oml_read",
+        json!({"own": true, "scope": "x"}),
+    )
+    .await;
     assert!(outside_the_input_schema(&undeclared), "{undeclared}");
+
+    drop_db(&db).await;
+}
+
+/// The listing's single `kind` is refused in every mode naming its
+/// successor, `details.renamed_to: /kinds`, a `null` one too; an empty
+/// `kinds` is refused in the listing as recall refuses it, and `kinds:
+/// ["test"]` is refused in recall naming that a test is never a hit
+/// (ADR-0092 d6; ADR-0039 d11; ADR-0086 d1).
+#[tokio::test]
+async fn oml_read_refuses_kind_naming_kinds_an_empty_kinds_in_every_mode_and_a_test_hit() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let (agent, _, _, _) = agent_crew(&router).await;
+    for (id, args) in [
+        (1, json!({"kind": "memory"})),
+        (2, json!({"kind": null})),
+        (3, json!({"query": "aluminium", "kind": "memory"})),
+        (4, json!({"query": "aluminium", "kind": null})),
+    ] {
+        let refused = call_tool(&router, &agent, id, "oml_read", args.clone()).await;
+        refused_naming(&refused, "/kind");
+        assert_eq!(
+            refused["structuredContent"]["error"]["details"]["renamed_to"], "/kinds",
+            "{args}: {refused}"
+        );
+    }
+    let mut messages = Vec::new();
+    for (id, args) in [
+        (5, json!({"kinds": []})),
+        (6, json!({"query": "aluminium", "kinds": []})),
+    ] {
+        let refused = call_tool(&router, &agent, id, "oml_read", args.clone()).await;
+        refused_naming(&refused, "/kinds");
+        messages.push(refused["structuredContent"]["error"]["message"].clone());
+    }
+    assert_eq!(messages[0], messages[1], "one refusal for an empty kinds");
+    let refused = call_tool(
+        &router,
+        &agent,
+        7,
+        "oml_read",
+        json!({"query": "aluminium", "kinds": ["test"]}),
+    )
+    .await;
+    refused_naming(&refused, "/kinds");
+    let message = refused["structuredContent"]["error"]["message"]
+        .as_str()
+        .expect("message");
+    assert!(message.contains("never a recall hit"), "{refused}");
+    // The catalog lists tests by kind.
+    read(&router, &agent, 8, json!({"kinds": ["test"]})).await;
 
     drop_db(&db).await;
 }
@@ -3356,9 +3461,9 @@ async fn oml_read_with_no_mode_argument_lists_the_keys_own_work() {
     let first = write(&router, &writer, 1, QUOTE).await;
     let second = write(&router, &writer, 2, ALLOY).await;
 
-    // own defaults to true: everything the key wrote, newest first, held
-    // rows included, and nothing another key wrote (ADR-0039 d4).
-    let own = read(&router, &writer, 1, json!({})).await;
+    // own true: everything the key wrote, newest first, held rows
+    // included, and nothing another key wrote (ADR-0039 d4; ADR-0092 d6).
+    let own = read(&router, &writer, 1, json!({"own": true})).await;
     assert_eq!(own["mode"], "listing", "{own}");
     assert_eq!(item_ids(&own), [second.clone(), first.clone()], "{own}");
     let items = own["items"].as_array().expect("items");
@@ -3368,23 +3473,29 @@ async fn oml_read_with_no_mode_argument_lists_the_keys_own_work() {
     assert_eq!(
         read(&router, &writer, 2, json!({"own": true})).await,
         own,
-        "own: true is the default"
+        "own: true reads the same again"
     );
-    let theirs = read(&router, &reader, 3, json!({})).await;
+    let theirs = read(&router, &reader, 3, json!({"own": true})).await;
     assert_eq!(theirs["items"], json!([]), "{theirs}");
 
     // The listing filters and the client-held cursor pass through.
-    let page = read(&router, &writer, 4, json!({"limit": 1})).await;
+    let page = read(&router, &writer, 4, json!({"own": true, "limit": 1})).await;
     assert_eq!(item_ids(&page), std::slice::from_ref(&second), "{page}");
     let cursor = page["next_cursor"].as_str().expect("a next page");
-    let next = read(&router, &writer, 5, json!({"limit": 1, "cursor": cursor})).await;
+    let next = read(
+        &router,
+        &writer,
+        5,
+        json!({"own": true, "limit": 1, "cursor": cursor}),
+    )
+    .await;
     assert_eq!(item_ids(&next), std::slice::from_ref(&first), "{next}");
     for (id, args) in [
-        (6, json!({"kind": "steering"})),
-        (7, json!({"since": "2999-01-01T00:00:00Z"})),
-        (8, json!({"until": "2000-01-01T00:00:00Z"})),
-        (9, json!({"state": "promoted"})),
-        (10, json!({"claim_key": "no-such-claim"})),
+        (6, json!({"own": true, "kinds": ["steering"]})),
+        (7, json!({"own": true, "since": "2999-01-01T00:00:00Z"})),
+        (8, json!({"own": true, "until": "2000-01-01T00:00:00Z"})),
+        (9, json!({"own": true, "state": "promoted"})),
+        (10, json!({"own": true, "claim_key": "no-such-claim"})),
     ] {
         let none = read(&router, &writer, id, args).await;
         assert_eq!(none["items"], json!([]), "{none}");
@@ -3393,7 +3504,7 @@ async fn oml_read_with_no_mode_argument_lists_the_keys_own_work() {
         &router,
         &writer,
         11,
-        json!({"kind": "memory", "workspace": "metals-crew", "since": "2000-01-01T00:00:00Z", "until": "2999-01-01T00:00:00Z"}),
+        json!({"own": true, "kinds": ["memory"], "workspace": "metals-crew", "since": "2000-01-01T00:00:00Z", "until": "2999-01-01T00:00:00Z"}),
     )
     .await;
     assert_eq!(item_ids(&mine), [second, first], "{mine}");
@@ -3438,26 +3549,32 @@ async fn oml_read_until_leaves_out_a_version_written_at_its_instant_and_since_ta
     };
     let (writer, _, _, _) = crew(&router).await;
     let stored = write(&router, &writer, 1, QUOTE).await;
-    let own = read(&router, &writer, 1, json!({})).await;
+    let own = read(&router, &writer, 1, json!({"own": true})).await;
     assert_eq!(item_ids(&own), std::slice::from_ref(&stored), "{own}");
     let at = own["items"][0]["created_at"]
         .as_str()
         .expect("created_at")
         .to_owned();
 
-    let until = read(&router, &writer, 2, json!({"until": at})).await;
+    let until = read(&router, &writer, 2, json!({"own": true, "until": at})).await;
     assert_eq!(
         until["items"],
         json!([]),
         "until excludes its instant: {until}"
     );
-    let since = read(&router, &writer, 3, json!({"since": at})).await;
+    let since = read(&router, &writer, 3, json!({"own": true, "since": at})).await;
     assert_eq!(
         item_ids(&since),
         std::slice::from_ref(&stored),
         "since includes its instant: {since}"
     );
-    let both = read(&router, &writer, 4, json!({"since": at, "until": at})).await;
+    let both = read(
+        &router,
+        &writer,
+        4,
+        json!({"own": true, "since": at, "until": at}),
+    )
+    .await;
     assert_eq!(both["items"], json!([]), "{both}");
 
     drop_db(&db).await;
@@ -3491,7 +3608,7 @@ async fn oml_read_with_own_false_lists_the_default_workspace() {
     );
     assert!(!item_ids(&scoped).contains(&held), "{scoped}");
     // The same key's own listing is another read: it wrote nothing.
-    let own = read(&router, &reader, 2, json!({})).await;
+    let own = read(&router, &reader, 2, json!({"own": true})).await;
     assert_eq!(own["items"], json!([]), "{own}");
     // Naming the default workspace is the same listing.
     let named = read(
@@ -3516,9 +3633,15 @@ async fn oml_read_state_tells_an_agent_whether_its_write_was_approved() {
     let second = write(&router, &writer, 2, ALLOY).await;
 
     // Before any verdict both writes are held, and none is approved.
-    let held = read(&router, &writer, 1, json!({"state": "held"})).await;
+    let held = read(&router, &writer, 1, json!({"own": true, "state": "held"})).await;
     assert_eq!(item_ids(&held), [second.clone(), first.clone()], "{held}");
-    let promoted = read(&router, &writer, 2, json!({"state": "promoted"})).await;
+    let promoted = read(
+        &router,
+        &writer,
+        2,
+        json!({"own": true, "state": "promoted"}),
+    )
+    .await;
     assert_eq!(promoted["items"], json!([]), "{promoted}");
 
     // One approved and one rejected: the state filter over the key's own
@@ -3535,7 +3658,7 @@ async fn oml_read_state_tells_an_agent_whether_its_write_was_approved() {
         (4, "rejected", vec![rejected]),
         (5, "held", Vec::new()),
     ] {
-        let page = read(&router, &writer, id, json!({"state": state})).await;
+        let page = read(&router, &writer, id, json!({"own": true, "state": state})).await;
         assert_eq!(item_ids(&page), expected, "{state}: {page}");
         assert!(
             page["items"]
@@ -3620,14 +3743,27 @@ async fn every_oml_read_mode_returns_claim_items_with_text_under_mode() {
     assert_eq!(fields(hit), with(&["matched", "score"]));
     assert_eq!(hit["text"], QUOTE);
 
-    for (id, token, args) in [(3, &writer, json!({})), (4, &reader, json!({"own": false}))] {
-        let listed = read(&router, token, id, args).await;
-        assert_eq!(listed["mode"], "listing", "{listed}");
-        assert_eq!(fields(&listed), ["items", "mode", "next_cursor"]);
-        assert_eq!(item_ids(&listed), std::slice::from_ref(&stored), "{listed}");
-        assert_eq!(fields(&listed["items"][0]), with(&["held_expires_at"]));
-        assert_eq!(listed["items"][0]["text"], QUOTE);
-    }
+    // The own-work list carries text; the catalog, the default, carries
+    // the projection and counts and no text (ADR-0092 d6, d12 reading 3).
+    let own = read(&router, &writer, 3, json!({"own": true})).await;
+    assert_eq!(own["mode"], "listing", "{own}");
+    assert_eq!(fields(&own), ["items", "mode", "next_cursor"]);
+    assert_eq!(item_ids(&own), std::slice::from_ref(&stored), "{own}");
+    assert_eq!(
+        fields(&own["items"][0]),
+        with(&["description", "held_expires_at", "needs_person", "preview"])
+    );
+    assert_eq!(own["items"][0]["text"], QUOTE);
+    let catalog = read(&router, &reader, 4, json!({})).await;
+    assert_eq!(fields(&catalog), ["counts", "items", "mode", "next_cursor"]);
+    assert_eq!(
+        item_ids(&catalog),
+        std::slice::from_ref(&stored),
+        "{catalog}"
+    );
+    assert_eq!(catalog["counts"]["memory"], 1, "{catalog}");
+    assert!(catalog["items"][0].get("text").is_none(), "{catalog}");
+    assert_eq!(catalog["items"][0]["preview"], true, "{catalog}");
 
     drop_db(&db).await;
 }

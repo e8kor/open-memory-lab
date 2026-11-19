@@ -1123,6 +1123,22 @@ pub async fn a_hits_score_never_depends_on_selection_at<S: JournalStore + Clone>
                 got, restricted,
                 "{search} at max_sources {max} for {query:?}: the answer is not the union's restricted to its searched set"
             );
+            // `search.matched_by_kind` counts the candidates after the list
+            // is restricted to the searched nodes, so no row of an
+            // unsearched source is counted (ADR-0092 d4). Read as deep as
+            // the union, the count is the union's hits in the searched set.
+            if k >= 100 {
+                let in_searched = union
+                    .hits
+                    .iter()
+                    .filter(|h| searched.contains(&h.served.memory.workspace_id))
+                    .count() as u64;
+                let counted: u64 = capped.matched_by_kind.iter().map(|(_, n)| n).sum();
+                assert_eq!(
+                    counted, in_searched,
+                    "{search} at max_sources {max} for {query:?}: matched_by_kind counted a row outside the searched set"
+                );
+            }
             assert_eq!(
                 capped.pruned, union.pruned,
                 "the pruned words moved with the selection"

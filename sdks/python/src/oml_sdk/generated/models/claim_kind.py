@@ -1,9 +1,10 @@
 from enum import StrEnum
 
 
-class ListMemoriesKind(StrEnum):
+class ClaimKind(StrEnum):
     DERIVED_FACT = "derived_fact"
     DOCUMENT = "document"
+    GUARDRAIL = "guardrail"
     MEMORY = "memory"
     SKILL = "skill"
     STEERING = "steering"

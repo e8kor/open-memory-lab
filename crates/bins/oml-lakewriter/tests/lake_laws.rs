@@ -612,7 +612,7 @@ async fn an_erased_body_opens_in_no_lake_version_its_text_is_in_no_lake_file_and
         "an old version still holds the ciphertext before VACUUM"
     );
     writer
-        .maintain(chrono::Duration::zero())
+        .maintain(std::time::Duration::ZERO)
         .await
         .expect("maintain");
     assert!(
@@ -1117,6 +1117,60 @@ async fn drain_throughput_is_measured() {
         events as f64 / drained.as_secs_f64()
     );
     assert_eq!(writer.lag_seconds().await.expect("lag"), 0);
+    w.drop().await;
+}
+
+/// A version's times and its event's, read by the writer as jiff
+/// timestamps, equal PostgreSQL's own rendering of the stored values to the
+/// microsecond (#445: the writer names no chrono and sqlx decodes no date).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_writers_timestamps_round_trip_postgres_to_the_microsecond() {
+    let Some(w) = World::new("timestamps").await else {
+        return;
+    };
+    let (t, ids) = tenant(&w.app, "acme", "timestamp canary", 1).await;
+    let src = Source::connect(&w.lake_url).await.expect("connect");
+    let m = src
+        .memory(t, ids[0])
+        .await
+        .expect("read")
+        .expect("the version");
+    let events = src.events(t, 0, i64::MAX).await.expect("events");
+    let mut c = w.owner().await;
+    let mut tx = c.begin().await.expect("tx");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(t.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("t");
+    let render = "'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'";
+    let (created, promoted): (String, String) = sqlx::query_as(&format!(
+        "SELECT to_char(created_at AT TIME ZONE 'UTC', {render}), \
+                to_char(promoted_at AT TIME ZONE 'UTC', {render}) \
+           FROM memories WHERE tenant_id = $1 AND id = $2"
+    ))
+    .bind(t)
+    .bind(ids[0])
+    .fetch_one(&mut *tx)
+    .await
+    .expect("postgres's rendering");
+    let fmt = |ts: jiff::Timestamp| ts.strftime("%Y-%m-%dT%H:%M:%S%.6fZ").to_string();
+    assert_eq!(fmt(m.created_at), created);
+    assert_eq!(m.promoted_at.map(fmt), Some(promoted));
+    assert!(!events.is_empty(), "the tenant's events");
+    for e in &events {
+        let at: String = sqlx::query_scalar(&format!(
+            "SELECT to_char(at AT TIME ZONE 'UTC', {render}) FROM journal \
+              WHERE tenant_id = $1 AND seq = $2"
+        ))
+        .bind(t)
+        .bind(e.journal_seq)
+        .fetch_one(&mut *tx)
+        .await
+        .expect("the event's time");
+        assert_eq!(fmt(e.at), at, "event {}", e.journal_seq);
+    }
+    tx.rollback().await.expect("rollback");
     w.drop().await;
 }
 

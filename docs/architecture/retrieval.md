@@ -12,7 +12,7 @@ A recall returns promoted memories that the key can read, ranked by the chosen s
 
 A recall returns promoted memories inside the key's effective access ([workspaces](workspaces.md)). It hides two kinds of row:
 
-- **Held memories** are visible to their author (`oml read`, and recall with `--include-unreviewed`), to the reviewer a memory is served to, to an admin through the journaled admin read, and, inside an in-progress workspace, to its readers and to readers of the workspaces above it, when the scan raised no finding.
+- **Held memories** are visible to their author (`oml read --own`, and recall with `--include-unreviewed`), to the reviewer a memory is served to, to an admin through the journaled admin read, and, inside an in-progress workspace, to its readers and to readers of the workspaces above it, when the scan raised no finding.
 - **Demoted and erased memories** are not served.
 
 Superseded versions stay readable by id as history. They are never hits.
@@ -25,7 +25,7 @@ Each flag below belongs to `oml read`. The same fields exist on the `oml_read` M
 |---|---|---|
 | Ranked hits for a query | `--query "<words>"` | none |
 | More or fewer hits | `--k` | 8; range 1 to 100 |
-| Only some kinds | `--kinds memory` or `--kinds derived_fact`, repeatable | all hits |
+| Only some kinds | `--kinds skill`, repeatable or comma-separated, any of the ten kinds ([search by kind](#search-by-kind-and-the-catalog)) | every kind but steering and vocabulary; steering served |
 | A different subtree | `--workspace <id or name>` | the key's default workspace |
 | A different search pipeline | `--search <name>` | the tenant's default |
 | Every word to match | `--match all` | `any` |
@@ -34,7 +34,7 @@ Each flag below belongs to `oml read`. The same fields exist on the `oml_read` M
 | Memories from one origin | `--origin-kind`, repeatable | no filter |
 | Workspaces beyond the scope | `--sources wide` or `--sources legal,product` | `scope`; needs federation on |
 
-The API also takes `max_tokens` and `include_text` ([token budgets](#token-budgets)). Without `--query`, `oml read` lists instead of searching. Run `oml read --help` for the listing flags.
+The API also takes `max_tokens` and `include_text` ([token budgets](#token-budgets)). Without `--query`, `oml read` lists [the catalog](#search-by-kind-and-the-catalog) instead of searching, and `--own` lists the key's own work. Run `oml read --help` for the listing flags.
 
 ## How a recall runs
 
@@ -124,7 +124,7 @@ Under `bm25-postings`, a very common word can be left out of the index read. `se
 A recall returns two segments in a fixed order.
 
 1. **Steering.** Every promoted steering memory of the workspace and its ancestors, in order of depth from `universe`, then promotion time. The query does not rank steering, and the `k` cut and the token budget never remove it. A descendant's steering does not apply at an ancestor.
-2. **Hits.** Promoted memories of kind `memory` or `derived_fact`, by score, highest first. Ties break by artifact id.
+2. **Hits.** Promoted claims of every kind `kinds` admits, steering aside, by score, highest first. Ties break by artifact id. With no `kinds`: memories, derived facts, documents, offered skills and applicable guardrails ([search by kind](#search-by-kind-and-the-catalog)).
 
 Steering comes first because a standing instruction that relevance could bury fails when an agent needs it most. Nothing a client sends changes that order.
 
@@ -188,34 +188,50 @@ A `document` is ranked by its passages ([ADR-0081](https://github.com/e8kor/open
 
 A document contributes one hit, its best passage by score, then by its place in the document, so `k` still counts claims. The hit's `text` is that passage's lines, byte for byte, and its tokens are the passage's. It also carries `passage` (its fragment, ordinal, first and last line, and the headings above it), `more_passages` and `uri`, `oml://workspace/<workspace>/doc/<path>?passage=<fragment>`, which the MCP server's `resources/read` serves. `more_passages` counts the document's other passages in the fused list before the `k` cut. It is a lower bound, bounded by each list's depth. A recall that names no `kinds` includes documents; `kinds: ["memory", "derived_fact"]` leaves them out.
 
-## Search by kind and the catalog (designed, not built)
+## Search by kind and the catalog
 
-[ADR-0092](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md), accepted on 2026-11-15 and planned for v0.8.0, changes what a recall returns and what a read without a query lists. Documents ranked by passage are built (above); the rest is not, and this build serves what the sections above describe.
+[ADR-0092](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) sets what a recall returns across kinds and what a read without a query lists.
 
-**Every kind can be searched.** `kinds` takes any of the ten kinds: `memory`, `derived_fact`, `document`, `test`, `steering`, `guardrail`, `skill`, `term`, `term_mapping` and `vocab_release`. A recall that names no kind returns hits of every kind the key reads, each marked with its `kind`. The three vocabulary kinds join by default only where a workspace opted them in; named in `kinds`, they are served anywhere the key reads.
+**Every kind but test can be named.** `kinds` takes `memory`, `derived_fact`, `document`, `steering`, `guardrail`, `skill`, `term`, `term_mapping` and `vocab_release`. An empty `kinds`, an unknown kind or `test` is refused with `request.validation` naming `/kinds`: a test case is never a hit, gets no postings and never counts in the statistics ([ADR-0086](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0086-a-workspaces-tests-are-reviewed-claims-the-server-runs-under-the-callers-key-and-a-release-is-published-only-through-ordered-gates.md) d1); the catalog lists tests. A recall that names no kind returns hits of every kind but steering, test and the three vocabulary kinds, each marked with its `kind`. The vocabulary kinds are hits only when `kinds` names them, and then wherever the key reads: the per-workspace opt-in that would admit them by default is not built. A document is ranked by its passages and answers with its best one, as the section above says.
 
-**Steering keeps its place.** With no `kinds`, steering comes first, unranked and never cut, as today. `kinds` decides whether the steering list is served: `["steering"]` returns the list alone, and a `kinds` that leaves steering out returns no list and says `steering: "not_requested"`. Steering is never a ranked hit.
+**Steering keeps its place.** `kinds` decides whether the steering list is served. With no `kinds`, or a `kinds` naming `steering`, the list comes first, unranked and never cut. A `kinds` that leaves steering out serves no list and says `steering: "not_requested"`, so an empty list is never read as none in force. `kinds: ["steering"]` serves the list alone and ranks nothing: `search.hits` says `"not_requested"`. Steering is never a ranked hit.
 
-**Skills and guardrails rank as data.** A skill offered at the recall's workspace, or a guardrail that applies there, is ranked by the same pipeline as a memory. A skill hit carries its name, description, resource URI and prompt name, never its body. A guardrail hit carries its text, severity and rule. A hit describes an instruction and never runs or binds one: guardrails bind through the guardrail read and the hooks alone, and a skill runs only as a prompt or a resource read. A skill or guardrail from a child workspace, a wide source or federation is never a hit.
+**Skills and guardrails rank as data.** A skill is a candidate only when it is offered at the recall's scope node, the key's default workspace or `workspace`; a guardrail only when it applies there under the key's `guardrail_scope`. A skill or guardrail of a child workspace outside that set, of a wide source or of federation is never a hit.
 
-**Documents rank by passage.** A document competes by its best passage and contributes one hit, so `k` still counts claims.
+| Hit kind | Carries |
+|---|---|
+| `skill` | `name`, `description`, `prompt`, `uri` (`oml://workspace/<workspace>/skill/<name>`), and as `text` the description, never the body |
+| `guardrail` | `severity`, `rule`, `text` and `in_force: true` |
+| held `skill` or `guardrail` | also `unreviewed: true` and `needs_person: true`, since only a person's verdict promotes an instruction |
 
-**One ranking.** No kind is boosted, and ranking reads no verdict and no kind. The BM25 statistics come from one fixed set: every row the key reads in the scope, of every kind but steering, with vocabulary counted only where a workspace opted in. Skills and guardrails the key reads but is not offered count too. The set is fixed before `kinds` narrows the candidates, so a row's score does not depend on which kinds were asked. Under a single retriever, a filtered answer is the unfiltered answer restricted to those kinds, with one exception: naming a vocabulary kind outside the opt-in adds rows outside the set. One `k` covers every kind, and `search.matched_by_kind` gives a lower bound per kind of what matched before the cut. The same query, key, rows and settings still give the same answer.
+A hit describes an instruction and never runs or binds one. A guardrail binds through `GET /v1/guardrails`, the plugin's hooks and the `guardrails` prompt alone, whatever a query ranks; a skill runs only as a prompt or a resource read. A skill's body is one read of its `artifact_id` or its resource away.
 
-**Cost.** Every hit counts against `k` and `max_tokens`. A skill hit costs its description, at most 1,024 characters; a guardrail hit its text; a document hit its passage. An agent that wants knowledge alone sends `kinds: ["memory", "derived_fact"]`. Recalled text of every kind is data to check, never instructions to follow.
+**One ranking.** One pipeline ranks every candidate kind in one list. No kind is boosted, and ranking reads no verdict and no kind. A skill is searched by its name, description and body under `bm25` and `bm25-postings`; the keyword and trigram retrievers read its body, as they read every kind's text. The BM25 statistics are fixed before `kinds` narrows the candidates. They count the knowledge kinds (`memory`, `derived_fact`, `document`) on the readable hit nodes, any vocabulary kind the request names, and every offered skill and applicable guardrail, an ancestor's included; never a test. So, unless the request names a vocabulary kind, a row's score does not depend on which kinds were asked, and under a single retriever a filtered answer is the unfiltered answer restricted to those kinds. Naming a vocabulary kind adds its rows to the counted set, so memory scores move and that answer is not a restriction. One `k` covers every kind. `search.matched_by_kind` gives, per kind, the candidates in the fused list before the `k` cut, a lower bound bounded by each retriever's depth. The same query, key, rows and settings give the same answer.
 
-**The catalog.** A read without a query lists what the key reads, across kinds. With neither a query nor `own`, `oml_read` returns the catalog; `own: true` returns the key's own work, which is the MCP default today.
+**Cost.** Every hit counts against `k` and `max_tokens`. A skill hit costs its description, at most 1,024 characters; a guardrail hit its text. An agent that wants knowledge alone sends `kinds: ["memory", "derived_fact"]`. Recalled text of every kind is data to check, never instructions to follow.
+
+**The catalog.** A read without a query lists what the key reads in the workspace's subtree, across kinds: `oml_read` with neither `query` nor `artifact_id`, `GET /v1/memories` without `own`, and `oml read` without `--query`. On MCP `own` defaults to `false`; `own: true` is the key's own work in every state, with its text.
 
 | Filter or field | What it does |
 |---|---|
-| `kinds` | The kinds listed; replaces the listing's single `kind` |
-| `workspace` | The subtree read, as today |
-| `prefix` | A claim key prefix: `skill/`, `doc/runbooks/` or any leading bytes of a key |
-| `state` | As today |
-| `include_text` | Adds each entry's body; without it, no body is served |
-| `counts` | Per kind, the entries under every filter but `kinds`, on the first page only, exact up to `catalog.count_cap` (10,000 shipped) |
+| `kinds` | The kinds listed; the single `kind` is refused, naming `kinds` |
+| `workspace` | The subtree read |
+| `prefix` | A claim key prefix: `skill/`, `doc/runbooks/` or any leading bytes of a key, read as a byte range |
+| `state`, origin filters | As on every listing |
+| `include_text` | Adds each entry's text; without it, no text is served |
+| `counts` | On the first page only, per kind, the entries under every filter but `kinds`, exact up to `catalog.count_cap` (10,000 by default) and `{"at_least": 10000}` above it |
 
-Each entry carries its kind, name, title or description (a memory's is a preview of at most 160 characters, marked `preview: true`), workspace, version, state and approval. A skill adds its URI and prompt; a guardrail its severity, rule and whether it is in force here; a document its title, URI, size and passage count. The catalog serves exactly the rows the scoped listing serves, so it never widens what a key reads. Held versions appear only to their author and, inside an in-progress workspace, to keys in its subtree and at its ancestors, marked unreviewed; a held skill, guardrail or steering version is also marked as needing a person's review. A key bound to the latest or a pinned release lists that release's members. The console's Catalog page draws the same read.
+Each entry carries its kind, workspace, version, state and approval, and its kind's projection:
+
+| Kind | Projection |
+|---|---|
+| `skill` | `name`, `description`, `uri`, `prompt`; `prompt` is null when the skill is not offered at the scope node |
+| `guardrail` | `in_force`, true when it binds at the key's scope node |
+| `steering` | `applies_here`, true when it is in the key's steering list at its scope node |
+| `document` | `title`, `uri`, `size` in body bytes |
+| `memory`, `derived_fact` | `description`, a preview of at most 160 characters marked `preview: true` |
+
+The catalog serves exactly the rows the scoped listing serves, so it never widens what a key reads. A skill or guardrail outside the key's offered set is listed as a row of its workspace, and `prompt` or `in_force` says whether it applies here. Held versions appear only to their author and, inside an in-progress workspace, to keys in its subtree and at its ancestors, marked `unreviewed`; a held instruction also carries `needs_person: true`. The `binding` field, naming the release a key reads, waits on releases, which are not built: every key reads tips.
 
 ## What search does not do
 

@@ -507,7 +507,13 @@ async fn a_connector_key_issued_by_the_cli_connects_by_code_and_acts_at_mcp_as_i
         .as_str()
         .expect("an artifact_id")
         .to_owned();
-    let own = tool(&lead.url, &connected.access_token, "oml_read", json!({})).await;
+    let own = tool(
+        &lead.url,
+        &connected.access_token,
+        "oml_read",
+        json!({"own": true}),
+    )
+    .await;
     assert_eq!(own["isError"], false, "{own}");
     assert!(
         own.to_string().contains(&artifact_id),

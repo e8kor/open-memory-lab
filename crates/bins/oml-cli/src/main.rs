@@ -1122,8 +1122,10 @@ struct ReadArgs {
     /// Number of recall hits, 1 to 100; defaults to 8.
     #[arg(long, requires = "query")]
     k: Option<u32>,
-    /// Recall only memory or derived_fact kinds; repeatable.
-    #[arg(long, requires = "query")]
+    /// Only these kinds, in recall and in the catalog; repeatable or
+    /// comma-separated. Recall without steering among them serves no
+    /// steering list.
+    #[arg(long, value_delimiter = ',', value_parser = KINDS, conflicts_with = "artifact_id")]
     kinds: Vec<String>,
     /// Include this key's own held rows beside promoted hits.
     #[arg(long, requires = "query")]
@@ -1145,18 +1147,20 @@ struct ReadArgs {
     /// workspaces this key wrote in for --own.
     #[arg(long, conflicts_with = "artifact_id")]
     workspace: Option<String>,
-    /// List this key's own rows in every state (default listing).
-    #[arg(long, conflicts_with_all = ["artifact_id", "query", "all"])]
-    own: bool,
-    /// List promoted tips in the workspace subtree instead.
+    /// List this key's own rows in every state, with their text, instead
+    /// of the catalog.
     #[arg(long, conflicts_with_all = ["artifact_id", "query"])]
-    all: bool,
+    own: bool,
     /// Filter by state: held, promoted, demoted, rejected, or erased.
     #[arg(long, conflicts_with_all = ["artifact_id", "query"])]
     state: Option<String>,
-    /// Filter by kind.
+    /// Only claim keys starting with this prefix, such as skill/ or
+    /// doc/runbooks/.
     #[arg(long, conflicts_with_all = ["artifact_id", "query"])]
-    kind: Option<String>,
+    prefix: Option<String>,
+    /// Print each catalog entry's text.
+    #[arg(long, conflicts_with_all = ["artifact_id", "query"])]
+    text: bool,
     /// List versions written at or after this RFC 3339 instant.
     #[arg(long, conflicts_with_all = ["artifact_id", "query"])]
     since: Option<String>,
@@ -1180,6 +1184,20 @@ struct ReadArgs {
     #[arg(long = "origin-kind", value_parser = ORIGIN_KINDS, conflicts_with = "artifact_id")]
     origin_kinds: Vec<String>,
 }
+
+/// Every claim kind, which `--kinds` takes (ADR-0092 d1, d6).
+const KINDS: [&str; 10] = [
+    "memory",
+    "derived_fact",
+    "steering",
+    "term",
+    "term_mapping",
+    "vocab_release",
+    "guardrail",
+    "skill",
+    "document",
+    "test",
+];
 
 /// The closed set of `origin.kind` (ADR-0063 d1).
 const ORIGIN_KINDS: [&str; 7] = ["repo", "doc", "code", "lake", "chat", "web", "manual"];
@@ -2596,7 +2614,7 @@ fn document_doctor(client: &Client) -> Vec<String> {
         return lines;
     };
     let Ok((_, page)) = client.get(&format!(
-        "/v1/memories?kind=document&anchor_repo={}&limit=100",
+        "/v1/memories?kinds=document&anchor_repo={}&limit=100",
         encode(&repo)
     )) else {
         return lines;
@@ -3042,7 +3060,8 @@ fn run_withdraw(
 /// `oml read`, in `oml_read`'s three modes (ADR-0039 d4): with an artifact
 /// id one `GET /v1/memories/{artifact_id}`, with `--query` one `POST
 /// /v1/memories/recall` with the text, and with neither one `GET
-/// /v1/memories`, `own=true` unless `--all`. A flag outside the mode its
+/// /v1/memories`, the catalog unless `--own` (ADR-0092 d6). A flag outside
+/// the mode its
 /// arguments choose, `--query` beside an artifact id among them, is refused
 /// by clap, naming it, before anything is sent.
 fn run_read(cli: &Cli, stored: &Credentials, args: &ReadArgs) -> Result<ExitCode, CliError> {
@@ -3092,11 +3111,15 @@ fn run_read(cli: &Cli, stored: &Credentials, args: &ReadArgs) -> Result<ExitCode
         client.post("/v1/memories/recall", &body, &read)?.1
     } else {
         let limit = args.limit.map(|l| l.to_string());
-        let mut params = vec![("own", (!args.all).to_string())];
+        let kinds = (!args.kinds.is_empty()).then(|| args.kinds.join(","));
+        let text = (args.text || args.own).then(|| "true".to_owned());
+        let mut params = vec![("own", args.own.to_string())];
         for (name, value) in [
             ("workspace", args.workspace.as_ref()),
             ("state", args.state.as_ref()),
-            ("kind", args.kind.as_ref()),
+            ("kinds", kinds.as_ref()),
+            ("prefix", args.prefix.as_ref()),
+            ("include_text", text.as_ref()),
             ("since", args.since.as_ref()),
             ("until", args.until.as_ref()),
             ("limit", limit.as_ref()),
@@ -3156,6 +3179,25 @@ fn run_read(cli: &Cli, stored: &Credentials, args: &ReadArgs) -> Result<ExitCode
             println!("    | {}", field(memory, "text").replace('\n', "\n    | "));
         }
     } else {
+        // The catalog's counts first, on its first page (ADR-0092 d8).
+        if let Some(counts) = response["counts"].as_object() {
+            let line: Vec<String> = counts
+                .iter()
+                .filter(|(_, n)| n.as_u64() != Some(0))
+                .map(|(kind, n)| match n.get("at_least") {
+                    Some(cap) => format!("{kind} {cap}+"),
+                    None => format!("{kind} {n}"),
+                })
+                .collect();
+            println!(
+                "counts: {}",
+                if line.is_empty() {
+                    "none".to_owned()
+                } else {
+                    line.join(", ")
+                }
+            );
+        }
         for item in response["items"].as_array().into_iter().flatten() {
             println!(
                 "{}  {}  v{}  {}  {}  {}  {}",
@@ -3167,6 +3209,9 @@ fn run_read(cli: &Cli, stored: &Credentials, args: &ReadArgs) -> Result<ExitCode
                 field(item, "workspace_path"),
                 field(item, "created_at")
             );
+            if let Some(text) = item["text"].as_str() {
+                println!("  | {}", text.replace('\n', "\n  | "));
+            }
         }
         if let Some(cursor) = response["next_cursor"].as_str() {
             println!("more: --cursor {cursor}");

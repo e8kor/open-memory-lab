@@ -937,8 +937,10 @@ where
             own,
             workspace,
             state,
-            kind: None,
+            kinds: Vec::new(),
             claim_key: None,
+            prefix: None,
+            counts: false,
             since: None,
             until: None,
             limit: req.limit,
@@ -990,6 +992,8 @@ where
         Ok(MemoryPage {
             items: rows,
             next_cursor,
+            counts: None,
+            marks: std::collections::BTreeMap::new(),
         })
     }
 

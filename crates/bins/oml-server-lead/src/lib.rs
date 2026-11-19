@@ -534,6 +534,7 @@ pub const WEB_CLIENT_SECRET_MIN: usize = oml_web_credential::CLIENT_SECRET_MIN;
 /// measured.
 pub const WEB_CLIENT_ROTATION_MAX_US: i64 = 7 * 86_400 * 1_000_000;
 const KEY_BRIEF_MAX_TOKENS: &str = "brief.max_tokens";
+const KEY_CATALOG_COUNT_CAP: &str = "catalog.count_cap";
 const KEY_STORAGE_URL: &str = "storage.url";
 const KEY_UPLOADS_MAX_BYTES: &str = "uploads.max_bytes";
 const KEY_UPLOADS_TENANT_MAX_BYTES: &str = "uploads.tenant_max_bytes";
@@ -1173,10 +1174,21 @@ impl Config {
                 )));
             }
         };
+        // A cap of zero would count nothing: zero and anything but a
+        // positive whole number stop the start (ADR-0092 d6).
+        let catalog_count_cap = match lookup(KEY_CATALOG_COUNT_CAP) {
+            None => oml_app::search::CATALOG_COUNT_CAP_DEFAULT,
+            Some(value) => value.trim().parse::<u64>().ok().filter(|n| *n > 0).ok_or_else(|| {
+                ConfigError::Invalid(format!(
+                    "{KEY_CATALOG_COUNT_CAP} {value:?} is not a positive whole number (configuration.md)"
+                ))
+            })?,
+        };
         let search = SearchConfig::new(&enabled, default)
             .map_err(|e| ConfigError::Invalid(e.to_string()))?
             .with_rerank(policy)
-            .with_timings(timings);
+            .with_timings(timings)
+            .with_catalog_count_cap(catalog_count_cap);
         Ok(Self {
             postgres_url,
             postgres_owner_url,

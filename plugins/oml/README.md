@@ -125,12 +125,12 @@ On that one key the agent:
 2. recalls before it acts with `oml_read` and a `query`, reading the `steering` rows first;
 3. writes with `oml_write`, adding `derives_from` for a conclusion drawn from memories it
    holds, and gets `state: "held"` back; the server derives the `claim_key`;
-4. lists its own writes with `oml_read` and no `query`, reads one back with its
+4. lists its own writes with `oml_read`, `own: true` and no `query`, reads one back with its
    `artifact_id`, and searches them beside the approved memories by passing
    `include_unreviewed: true` with the `query`; no other key reads or recalls them before
    approval;
-5. learns whether a different identity approved them by listing its own work with `state`,
-   after which every key that reads the workspace recalls them;
+5. learns whether a different identity approved them by listing its own work with `own: true`
+   and `state`, after which every key that reads the workspace recalls them;
 6. revises or retires a memory with `oml_write`, `replaces` and the `expected_version` it read,
    which is held and approved like any write while recall keeps serving the version it
    replaces.
@@ -348,7 +348,7 @@ written for the 0.3 read tools, `oml_recall`, `oml_get`, `oml_my_work`, `oml_wor
 `oml_events_tail`, allow nothing any more: replace them with the two rules above, or with
 `mcp__plugin_oml_oml`. Run `claude plugin update oml@open-memory-lab` and install the 0.4.0
 CLI, so the skill and the session-start hook name the new tools. The events tail is no longer a
-tool: an agent learns what became of its writes with `oml_read` and `state`, and an auditor reads
+tool: an agent learns what became of its writes with `oml_read`, `own: true` and `state`, and an auditor reads
 `GET /v2/events`.
 
 ## What is served today

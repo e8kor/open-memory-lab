@@ -44,11 +44,12 @@ use crate::types::{
     ClaimEdgeRecord, ClaimEdgeSelection, ClaimKeyState, ClientDescription, ClientKind,
     ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord, Credential, Crew,
     CrewRecord, DenialRecord, DocumentCaching, GrantRecord, HIT_KINDS, HeldFilter, HeldRow,
-    KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition, ListingScope,
-    MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, PersonReviewer, PinOutcome,
-    ProviderAnswer, ProviderFailure, QueueDepth, RefreshFacts, RefreshOutcome, ReviewLane,
-    SIMILAR_KINDS, SourceCheck, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord,
-    TransitionState, UnnamedRows, WebEntry, WebSessionRecord, WorkspaceRecord, WorkspaceRef,
+    INSTRUCTION_HIT_KINDS, KeyAccess, KeyRecord, KeyReferences, KindFields, ListingFilter,
+    ListingPosition, ListingScope, MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT,
+    PersonReviewer, PinOutcome, ProviderAnswer, ProviderFailure, QueueDepth, RefreshFacts,
+    RefreshOutcome, ReviewLane, SIMILAR_KINDS, SourceCheck, SweepReport, TenantRow, TokenPair,
+    TokenRecord, TransitionRecord, TransitionState, UnnamedRows, WebEntry, WebSessionRecord,
+    WorkspaceRecord, WorkspaceRef,
 };
 use oml_domain::web::Provider;
 
@@ -108,6 +109,18 @@ fn words(text: &str) -> BTreeSet<String> {
         .collect()
 }
 
+/// The text a row is searched by: its body, and for a skill its name and
+/// description before it, as migration 0062's vector fold reads them
+/// (ADR-0092 d3, d12 reading 1).
+fn searched_text(m: &MemoryRecord) -> std::borrow::Cow<'_, str> {
+    match m.kind_fields.as_deref() {
+        Some(KindFields::Skill { name, description }) => {
+            std::borrow::Cow::Owned(format!("{name} {description} {}", m.body))
+        }
+        _ => std::borrow::Cow::Borrowed(m.body.as_str()),
+    }
+}
+
 /// The keyword retrievers over `rows`, with PostgreSQL's semantics on the
 /// `simple` index for plain words (ADR-0049 d7): `KeywordAll` keeps a row
 /// holding every query term, `KeywordAny` one holding any, and `match: all`
@@ -141,6 +154,7 @@ fn keyword_ranked<'a>(
             let score = matched.len() as f32;
             keep.then_some(Candidate {
                 memory_id: u.m.memory_id,
+                kind: u.m.kind,
                 ordinal: u.ordinal,
                 body_bytes: u.bytes,
                 score,
@@ -183,7 +197,7 @@ fn units(m: &MemoryRecord) -> Vec<Unit<'_>> {
         return vec![Unit {
             m,
             ordinal: -1,
-            text: std::borrow::Cow::Borrowed(&m.body),
+            text: searched_text(m),
             bytes: m.body_bytes,
         }];
     }
@@ -214,6 +228,7 @@ fn form_key(word: &str) -> i64 {
 fn reference_row(m: &MemoryRecord, kinds: &[MemoryKind], expired_at: Option<i64>) -> bool {
     served_tip(m)
         && HIT_KINDS.contains(&m.kind)
+        && !INSTRUCTION_HIT_KINDS.contains(&m.kind)
         && kinds.contains(&m.kind)
         && !expired_at.is_some_and(|now| m.valid.expired_at(now))
 }
@@ -296,6 +311,7 @@ fn bm25_over_reference<'a>(
             let score = score as f32;
             keep.then_some(Candidate {
                 memory_id: u.m.memory_id,
+                kind: u.m.kind,
                 ordinal: u.ordinal,
                 body_bytes: u.bytes,
                 score,
@@ -3020,13 +3036,34 @@ impl Retriever for MemStore {
         let rows_of = |nodes: &BTreeSet<Uuid>| -> Vec<&MemoryRecord> {
             self.rows_on(&state, nodes.iter()).collect()
         };
-        let scoped = rows_of(&nodes);
+        let mut scoped = rows_of(&nodes);
+        // The offered instructions, read by id wherever they live (ADR-0092
+        // d3).
+        for (id, _) in &scope.instructions {
+            if let Some(m) = state.memories.get(id)
+                && !nodes.contains(&m.workspace_id)
+            {
+                scoped.push(m);
+            }
+        }
         // The scope is the core's: promoted served tips on its nodes, and
         // the own held rows of its keys on theirs; the state and author
         // predicates are this read's own, never the caller's to forget
         // (ADR-0025 d4, d5, d8).
+        // An offered instruction is a candidate by id, whatever its node,
+        // and no other row of its kind is (ADR-0092 d3).
+        let instructions = scope.instruction_candidates();
+        let node_kinds = scope.node_kinds();
         let admitted = |m: &&MemoryRecord| {
             if m.retirement || !HIT_KINDS.contains(&m.kind) || !scope.kinds.contains(&m.kind) {
+                return false;
+            }
+            if INSTRUCTION_HIT_KINDS.contains(&m.kind) {
+                return instructions.contains(&m.memory_id)
+                    && (kind == RetrieverKind::KeywordAll
+                        || !scope.expired_at.is_some_and(|now| m.valid.expired_at(now)));
+            }
+            if !node_kinds.contains(&m.kind) {
                 return false;
             }
             // An ended version is outside the scope unless asked for
@@ -3082,6 +3119,7 @@ impl Retriever for MemStore {
                     let score = (1.0 / (1.0 + days)) as f32;
                     Some(Candidate {
                         memory_id: m.memory_id,
+                        kind: m.kind,
                         ordinal: -1,
                         body_bytes: m.body_bytes,
                         score,
@@ -3105,7 +3143,7 @@ impl Retriever for MemStore {
         {
             let r: Vec<&MemoryRecord> = rows_of(&reference.iter().copied().collect())
                 .into_iter()
-                .filter(|m| reference_row(m, &scope.kinds, scope.expired_at))
+                .filter(|m| reference_row(m, &scope.counted_kinds, scope.expired_at))
                 .collect();
             return Ok(bm25_over_reference(
                 scoped.iter().copied().filter(admitted),
@@ -4530,8 +4568,14 @@ impl JournalStore for MemStore {
                     .is_none_or(|nodes| nodes.contains(&m.workspace_id))
             })
             .filter(|m| filter.state.is_none_or(|s| m.status == s))
-            .filter(|m| filter.kind.is_none_or(|k| m.kind == k))
+            .filter(|m| filter.kinds.is_empty() || filter.kinds.contains(&m.kind))
             .filter(|m| filter.claim_key.as_ref().is_none_or(|c| &m.claim_key == c))
+            .filter(|m| {
+                filter
+                    .prefix
+                    .as_ref()
+                    .is_none_or(|p| m.claim_key.as_bytes().starts_with(p.as_bytes()))
+            })
             .filter(|m| filter.anchor.admits_row(m.anchor.as_deref(), m.origin_kind))
             .filter(|m| filter.author.is_none_or(|a| m.author_key_id == a))
             .filter(|m| filter.tip.is_none_or(|t| m.is_tip == t))
@@ -4557,6 +4601,29 @@ impl JournalStore for MemStore {
         rows.sort_by_key(|m| std::cmp::Reverse(position(m)));
         rows.truncate(limit);
         Ok(rows)
+    }
+
+    async fn count_memories(
+        &self,
+        tenant_id: Uuid,
+        filter: &ListingFilter,
+        kinds: &[MemoryKind],
+        cap: u64,
+    ) -> Result<Vec<(MemoryKind, u64)>, StoreError> {
+        let every = ListingFilter {
+            kinds: Vec::new(),
+            ..filter.clone()
+        };
+        let rows = self
+            .list_memories(tenant_id, &every, None, usize::MAX)
+            .await?;
+        Ok(kinds
+            .iter()
+            .map(|k| {
+                let n = rows.iter().filter(|m| m.kind == *k).count() as u64;
+                (*k, n.min(cap.saturating_add(1)))
+            })
+            .collect())
     }
 
     async fn claim_key_state(
@@ -4958,7 +5025,7 @@ impl JournalStore for MemStore {
             }
             // R2 by person: a row the reviewer's own person wrote is served
             // only inside that person's root (ADR-0001 d5; ADR-0082 d7).
-            if same_person_outside_root(keys, nodes, person_root, memory) {
+            if same_person_outside_root(nodes, person_root, memory) {
                 continue;
             }
             candidates.push((position, memory.author_key_id));
@@ -5079,7 +5146,7 @@ impl JournalStore for MemStore {
             .filter(|m| filter.lane.admits(needs_person_row(memories, m)))
             // R2 by person, as review_claim_next serves it (ADR-0001 d5;
             // ADR-0082 d7).
-            .filter(|m| !same_person_outside_root(&state.keys, &state.workspaces, person_root, m))
+            .filter(|m| !same_person_outside_root(&state.workspaces, person_root, m))
             .filter(|m| {
                 after.is_none_or(|a| {
                     (m.created_at.as_str(), m.memory_id) > (a.created_at.as_str(), a.artifact_id)
@@ -5710,12 +5777,11 @@ fn person_root_in(nodes: &BTreeMap<Uuid, WorkspaceRecord>, key: &KeyRecord) -> O
     })
 }
 
-/// R2 by person over the double's rows: whether `memory`'s author key
-/// acts for the person whose user root is `person_root` (the reviewer's)
+/// R2 by person over the double's rows: whether `memory`'s author, as
+/// recorded at its write, is the person whose user root is `person_root` (the reviewer's)
 /// and the row sits outside that root (ADR-0001 d5; ADR-0082 d7). A
 /// reviewer acting for no person is never narrowed.
 fn same_person_outside_root(
-    keys: &BTreeMap<Uuid, KeyRecord>,
     nodes: &BTreeMap<Uuid, WorkspaceRecord>,
     person_root: Option<Uuid>,
     memory: &MemoryRecord,
@@ -5723,9 +5789,14 @@ fn same_person_outside_root(
     let Some(root) = person_root else {
         return false;
     };
-    keys.get(&memory.author_key_id)
-        .and_then(|k| person_root_in(nodes, k))
-        == Some(root)
+    // The author's person as recorded at the write, by name (ADR-0085 d16,
+    // amended 2026-11-18; #448).
+    memory.author_person.as_ref().and_then(|person| {
+        nodes
+            .values()
+            .find(|w| w.user_root && &w.name == person)
+            .map(|w| w.workspace_id)
+    }) == Some(root)
         && nodes
             .get(&memory.workspace_id)
             .and_then(WorkspaceRecord::user)

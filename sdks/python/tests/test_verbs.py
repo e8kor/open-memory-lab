@@ -109,24 +109,30 @@ def test_a_read_argument_outside_its_mode_raises_before_sending(arguments, field
     assert requests == []
 
 
-def test_read_with_neither_lists_the_keys_own_rows():
+def test_read_with_neither_reads_the_catalog_and_own_true_the_keys_own_rows_with_text():
     requests, transport = recording(200, {"items": [], "next_cursor": None})
     with client(transport) as oml:
         page = oml.read(limit=5)
+        oml.read(own=True, kinds=["skill"], prefix="skill/")
     assert page.items == []
     assert [(r.method, r.url.path, dict(r.url.params)) for r in requests] == [
-        ("GET", "/v1/memories", {"own": "true", "limit": "5"})
+        ("GET", "/v1/memories", {"own": "false", "limit": "5"}),
+        (
+            "GET",
+            "/v1/memories",
+            {"own": "true", "kinds": "skill", "prefix": "skill/", "include_text": "true"},
+        ),
     ]
 
 
-def test_the_listing_iterators_send_own_true_unless_the_caller_passes_own_false():
+def test_the_listing_iterators_read_the_catalog_unless_the_caller_passes_own_true():
     requests, transport = recording(200, {"items": [], "next_cursor": None})
     with client(transport) as oml:
         list(oml.iter_memories(limit=5))
-        list(oml.pages(own=False, limit=5))
+        list(oml.pages(own=True, limit=5))
     assert [dict(r.url.params) for r in requests] == [
-        {"own": "true", "limit": "5"},
         {"own": "false", "limit": "5"},
+        {"own": "true", "include_text": "true", "limit": "5"},
     ]
 
 

@@ -66,6 +66,10 @@ pub fn content_security_policy(form_origins: &[&str], frame_src: Option<&str>) -
 /// The user page's Memories list, which `oml-web` serves (ADR-0070 d7 (b)).
 pub const USER_MEMORIES_PATH: &str = "/web/memories";
 
+/// The Personal side's Catalog: every kind of claim the person's web key
+/// reads in a workspace subtree, which `oml-web` serves (ADR-0092 d7).
+pub const USER_CATALOG_PATH: &str = "/web/catalog";
+
 /// The user page's Atlas, which `oml-web` serves (ADR-0070 d7 (b)).
 pub const USER_ATLAS_PATH: &str = "/web/atlas";
 
@@ -116,9 +120,10 @@ pub const ADMIN_PEOPLE_PATH: &str = "/web/admin/people";
 /// The Personal side's nav, `(href, word)`, in the order the design
 /// system's BrandHeader draws it; the lead's pages and `oml-web`'s draw the
 /// same nav. No tab leads to the other side: that is the switch.
-pub const PERSONAL_TABS: [(&str, &str); 7] = [
+pub const PERSONAL_TABS: [(&str, &str); 8] = [
     (START_PATH, "Start"),
     (USER_MEMORIES_PATH, "Memories"),
+    (USER_CATALOG_PATH, "Catalog"),
     (USER_REVIEW_PATH, "Review"),
     (USER_ATLAS_PATH, "Atlas"),
     (USER_KEYS_PATH, "Keys"),
@@ -709,7 +714,7 @@ mod tests {
         );
         assert_eq!(
             nav(&personal),
-            r#"<nav aria-label="Personal"><a href="/web/start">Start</a><a href="/web/memories">Memories</a><a href="/web/review">Review</a><a href="/web/atlas">Atlas</a><a href="/web/keys" class="on" aria-current="page">Keys</a><a href="/web/workspaces">Workspaces</a><a href="/web/guardrails">Guardrails</a></nav>"#
+            r#"<nav aria-label="Personal"><a href="/web/start">Start</a><a href="/web/memories">Memories</a><a href="/web/catalog">Catalog</a><a href="/web/review">Review</a><a href="/web/atlas">Atlas</a><a href="/web/keys" class="on" aria-current="page">Keys</a><a href="/web/workspaces">Workspaces</a><a href="/web/guardrails">Guardrails</a></nav>"#
         );
         let admin = shell("", &bar(Scope::Administration), ADMIN_ATLAS_PATH, None, "");
         assert_eq!(

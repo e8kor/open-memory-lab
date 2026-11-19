@@ -803,6 +803,8 @@ async fn keyword_all_returns_exactly_the_v0_5_0_rows_and_order() {
                         anchor: oml_app::types::AnchorFilter::default(),
                         promoted_nodes: vec![wa],
                         kinds: vec![MemoryKind::Memory, MemoryKind::DerivedFact],
+                        instructions: Vec::new(),
+                        counted_kinds: vec![MemoryKind::Memory, MemoryKind::DerivedFact],
                         own_held: Some(OwnHeldScope {
                             any_author_nodes: Vec::new(),
                             author_key_ids: vec![own],
@@ -3050,8 +3052,10 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // d1; ADR-0081 d1; ADR-0086 d1); 0055 adds the import provenance,
             // null on every version not imported (ADR-0084 d4); 0058 adds the
             // end a ratified supersession replaced, false and null on every
-            // existing row (ADR-0089 d16); 0064 adds the fix mark, null on
-            // every existing row (ADR-0089 d7).
+            // existing row (ADR-0089 d16); 0061 adds the author's person,
+            // null for the PoC's agent keys, which act for no person
+            // (ADR-0085 d16); 0064 adds the fix mark, null on every existing
+            // row (ADR-0089 d7).
             (true, "memories") => {
                 "to_jsonb(t) - 'severity' - 'rule' - 'search_vector' - 'search_len' \
                  - 'anchor_repo' - 'anchor_uri' - 'anchor_rev' - 'anchor_path' \
@@ -3064,6 +3068,7 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
                  - 'skill_name' - 'skill_description' - 'document_title' - 'test_shape' \
                  - 'import_provenance' \
                  - 'valid_until_ratified' - 'valid_until_before' - 'valid_until_before_us' \
+                 - 'author_person' \
                  - 'admin_fix_id' - 'admin_fix_confirmed' - 'admin_fix_same_user'"
             }
             (true, "key_denials") => "to_jsonb(t) - 'lifted_epoch'",
@@ -7754,6 +7759,8 @@ async fn bm25_list(
                 anchor: oml_app::types::AnchorFilter::default(),
                 promoted_nodes: vec![wa],
                 kinds: oml_app::types::HIT_KINDS.to_vec(),
+                instructions: Vec::new(),
+                counted_kinds: oml_app::types::HIT_KINDS.to_vec(),
                 own_held: None,
                 expired_at: None,
                 as_of: None,
@@ -8885,6 +8892,8 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
                         anchor: oml_app::types::AnchorFilter::default(),
                         promoted_nodes: vec![wa, Uuid::from_u128(0xE3)],
                         kinds: oml_app::types::HIT_KINDS.to_vec(),
+                        instructions: Vec::new(),
+                        counted_kinds: oml_app::types::HIT_KINDS.to_vec(),
                         own_held: Some(OwnHeldScope {
                             any_author_nodes: Vec::new(),
                             author_key_ids: vec![Uuid::from_u128(0xE5)],
@@ -13552,7 +13561,7 @@ async fn migrations_0059_and_0060_apply_over_0058_with_a_document_row_and_count_
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(applied, 64);
+    assert_eq!(applied, 64, "0059 to 0064 apply over 0058");
     let (partitions, attached, valid, carries, validated): (i64, i64, bool, bool, bool) =
         sqlx::query_as(
             "SELECT (SELECT count(*) FROM pg_inherits WHERE inhparent = 'search_postings'::regclass), \
@@ -13639,6 +13648,12 @@ async fn migrations_0059_and_0060_apply_over_0058_with_a_document_row_and_count_
                 anchor: oml_app::types::AnchorFilter::default(),
                 promoted_nodes: vec![wa],
                 kinds: vec![
+                    MemoryKind::Memory,
+                    MemoryKind::DerivedFact,
+                    MemoryKind::Document,
+                ],
+                instructions: Vec::new(),
+                counted_kinds: vec![
                     MemoryKind::Memory,
                     MemoryKind::DerivedFact,
                     MemoryKind::Document,

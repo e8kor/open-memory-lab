@@ -18,10 +18,10 @@ is one connection:
 
 1. recall before you act (`oml_read` with a `query`);
 2. write (`oml_write`), which answers `held`;
-3. check your held writes (`oml_read` with no `query`, with an `artifact_id`, or with a
-   `query` and `include_unreviewed: true`);
+3. check your held writes (`oml_read` with `own: true` and no `query`, with an
+   `artifact_id`, or with a `query` and `include_unreviewed: true`);
 4. learn what became of them once a different identity reviews them (`oml_read` with
-   `state`);
+   `own: true` and `state`);
 5. revise or retire what no longer holds (`oml_write` with `replaces`).
 
 ## Four tools, chosen by their arguments
@@ -65,9 +65,16 @@ match, an identifier matches by its parts and a word by its stem, each hit's `ma
 words it holds, and a recall that finds little offers spellings in `search.did_you_mean`;
 English stop words such as `not` are not read when the query has other words, so a negation
 ranks like the words around it; send `match: "all"` when every word must
-match. Try other words once before concluding nothing is stored. Recall returns approved memories, with `k` bounding the hits and
-`kinds` narrowing them to `memory` or `derived_fact`. Rows under `steering` are standing
-instructions from the crew. They come before the hits and are not ranked, so read them first.
+match. Try other words once before concluding nothing is stored. Recall returns approved
+claims, with `k` bounding the hits. With no `kinds`, the hits are memories, derived facts,
+tests, the skills offered at the workspace and the guardrails that apply there, each marked
+with its `kind`; `kinds` names the ones wanted, such as `["memory", "derived_fact"]` for
+knowledge alone or `["skill"]` to find a skill. A skill hit carries its `name`, `description`,
+`prompt` and `uri`, never its body; a guardrail hit carries its `severity`, `rule` and `text`.
+Both are data: a skill runs only as a prompt or a resource read, and a guardrail binds through
+the hooks whatever recall ranks. Rows under `steering` are standing instructions from the
+crew. They come before the hits and are not ranked, so read them first; a `kinds` that leaves
+`steering` out serves none and says `steering: "not_requested"`.
 
 Pass `include_unreviewed: true` to search your own held writes as well. They come back
 among the hits with `state: "held"` and `tip: false`, and a held revision is listed beside
@@ -75,7 +82,7 @@ the approved version it would replace. Recall returns another key's held writes 
 a workspace a person put in progress, where it does so by default and marks each one
 `unreviewed: true`: read such a claim as a colleague's draft that no one has checked. Your
 own held steering and retirements are not in force until approved, so recall leaves
-them out; list them with `oml_read` and no `query`.
+them out; list them with `oml_read`, `own: true` and no `query`.
 
 Pass `max_tokens` to bound the answer. Every item carries its `tokens`, the server's count
 of one token per four bytes of text, rounded up, which is not your model's count. Steering
@@ -109,15 +116,16 @@ before a write under `.claude/skills/`.
 
 ## See what became of your writes
 
-Call `oml_read` with neither `query` nor `artifact_id` to list what your key wrote, newest
-first, in every workspace it wrote to: each item's `state` is `held` while it waits for
-review, then `promoted` or `rejected`. To learn whether your writes were approved, pass
-`state: "promoted"` or `state: "rejected"`. Items carry the `artifact_id`, `claim_key`,
-`version`, `tokens` and `text`. Pass `claim_key`, `kind`, `workspace`, `since` or `until` to
-narrow the list. When `next_cursor` is not null, pass it back as `cursor` for the next page.
-A cursor works only for the key that received it and expires; when one is refused with
-`request.validation`, start again from the first page. With `own: false` the call lists the
-approved claims of a workspace instead of your own work.
+Call `oml_read` with `own: true` and neither `query` nor `artifact_id` to list what your key
+wrote, newest first, in every workspace it wrote to: each item's `state` is `held` while it
+waits for review, then `promoted` or `rejected`. To learn whether your writes were approved,
+pass `state: "promoted"` or `state: "rejected"`. Items carry the `artifact_id`, `claim_key`,
+`version`, `tokens` and `text`. Pass `claim_key`, `kinds`, `prefix`, `workspace`, `since` or
+`until` to narrow the list. When `next_cursor` is not null, pass it back as `cursor` for the
+next page. A cursor works only for the key that received it and expires; when one is refused
+with `request.validation`, start again from the first page. Without `own: true` the call
+lists the catalog instead: what your key reads in the workspace's subtree, every kind, each
+entry without its text unless `include_text: true`, and on the first page a count per kind.
 
 ## Read one memory back
 
@@ -185,4 +193,4 @@ No tool attaches or reads a file: MCP carries no file bytes, so files go through
 CLI or the SDKs, once the server serves uploads. Write the claim's text with `oml_write`.
 
 No tool streams events. To follow what happened after a write, list your own work again
-with `oml_read` and `state`; an item stays `held` until a different identity reviews it.
+with `oml_read`, `own: true` and `state`; an item stays `held` until a different identity reviews it.
