@@ -12,7 +12,7 @@ taken with the request (d1, d3, d6) and twelve answers the same day, every one a
 recommendation (d11) · proposed the same day · amended 2026-11-18 (d12: the readings the
 build took, recorded before the code and marked for the operator's batch, #443) · amended
 2026-11-19 (d12: reading 4 restated as built, readings 6 to 8, and the note that this record does
-not amend ADR-0086)
+not amend ADR-0086) · built in v0.8.3, except `binding`, which waits for ADR-0085's releases
 
 **Note, 2026-11-19.** This record does not amend
 [ADR-0086](ADR-0086-a-workspaces-tests-are-reviewed-claims-the-server-runs-under-the-callers-key-and-a-release-is-published-only-through-ordered-gates.md)
@@ -22,7 +22,7 @@ reads nine: `kinds` naming `test` is refused (`request.validation`, `details.fie
 test gets no postings and never counts in the statistics, and the catalog still lists tests (d6).
 The coordinator took this reading on the review of #443 by the accepted record.
 
-**Release:** planned for v0.8.0; not built
+**Release:** built in v0.8.3; `binding` waits for ADR-0085
 
 **Twin parts** (ADR-0090 d18): this record adds no state. The postings and counts it extends to
 more kinds are derived, rebuilt from the replayed bodies as ADR-0052's are; the catalog and the
@@ -79,14 +79,14 @@ What exists today (2026-11-15, `main` at a5eb6876):
   are summaries without text unless `include_text` asks, which today combines only with
   `with_own` or `author`; MCP's listing mode answers claim items with their text (ADR-0039 d4).
   Neither answers counts.
-- **Built in v0.8.0:** passages (ADR-0081 d3, d4, #405), `GET /v1/skills`, the MCP `prompts`
+- **Built in v0.8.3:** passages (ADR-0081 d3, d4, #405), `GET /v1/skills`, the MCP `prompts`
   and the `resources` capability (ADR-0080 d5 to d11, ADR-0081 d6; #403, #404, #405). **Not
   built:** releases and bindings (ADR-0085).
 
 An agent that wants "the skill that fits this task" or "the runbook for this error" has no search
 for it: recall refuses the kinds, and the listing has no query. A person who wants to see what a
 workspace holds across kinds has the workspace page's contents by kind for one workspace
-(ADR-0082 d1) and no view over a subtree. Decided; built in v0.8.0 (#443, the Catalog page in
+(ADR-0082 d1) and no view over a subtree. Decided; built in v0.8.3 (#443, the Catalog page in
 #494).
 
 ## Decision

@@ -12,8 +12,8 @@ recommendations and every other default as drafted · proposed the same day · t
 pinned" of its file name is ADR-0088, which is deferred · the format built as the crate `oml-bundle`, with its readings and the
 operator's R1 decision of 2026-11-17 and the integration readings I1–I9 recorded at the end of this record; of d15, `history`-mode export (the route and `oml workspaces export`) is built (#425), and the import (`POST /v2/imports`, `GET /v2/imports/{id}`, `oml workspaces import`, the `imports` doctor line) is built (#426); the rest is not built · amendment of d6 of 2026-11-18 (imports into any open or protected workspace, the operator's answer D4 to the lifecycle review; #429), accepted 2026-11-19 by the operator
 
-**Release:** not scheduled; after ADR-0085, whose release manifest `release` mode exports. A
-trusted source server, the "unless" of the title, is the deferred ADR-0088.
+**Release:** imports built in v0.8.3 (#426); release mode waits for ADR-0085, whose release
+manifest `release` mode exports. A trusted source server, the "unless" of the title, is the deferred ADR-0088.
 
 **Twin parts** (ADR-0090 d18, PR #388): the import ledger, the erasure notices and the `export`
 policy are journal or part, never excluded. The per-import staging keys are excluded: they are

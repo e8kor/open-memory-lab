@@ -21,7 +21,7 @@ into v0.8.0", so that clients take one breaking upgrade): the statuses `committe
 `validated` become `protected` and `frozen` (d14), and the key field `held_by` becomes `used_by`,
 its value `human` becoming `person` (d15); and accepted decision 3 of the lifecycle review, its display names (d16).
 
-**Release:** planned for v0.8.0; built in PR #431, not released, except the law of d5, which waits for ADR-0090's compare (implementation notes)
+**Release:** built in v0.8.3 (PR #431), except the law of d5, which waits for ADR-0090's compare (implementation notes)
 
 **Twin parts** (ADR-0090 d18): this record adds no state. It changes the names the twin's parts
 carry from the release on and adds the former-name map (d4) to `fold_of`; d5 shows the twin's

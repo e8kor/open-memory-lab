@@ -1,7 +1,7 @@
 <!--
 id: adr/ADR-0074-the-scan-names-a-threat-class-for-every-finding-refuses-only-what-can-never-be-safe-holds-or-annotates-the-rest-and-recall-serves-every-hit-as-data-with-its-findings
 tier: engineering
-status: accepted in part (built in phase 1: d6, d14, d15, d17, d18, d20, d21, d23, d28; and d26, limited to the own root's development scopes; d19 (lane, instruction class), accepted 2026-11-15 and built in v0.8.0); d24 superseded by ADR-0080 d16; proposed (d1–d5, d7–d13, d16, the rest of d19, d22, d25, d27)
+status: accepted in part (built in phase 1: d6, d14, d15, d17, d18, d20, d21, d23, d28; and d26, limited to the own root's development scopes; d19 (lane, instruction class), accepted 2026-11-15 and built in v0.8.3); d24 superseded by ADR-0080 d16; proposed (d1–d5, d7–d13, d16, the rest of d19, d22, d25, d27)
 answers: which threats a stored memory can carry beyond leaked secrets; what the scan does today, rule by rule, and where it stops; for each threat class whether a deterministic rule or an optional model detects it, whether it refuses, holds with a finding or annotates, how false positives are handled and whether the reviewer sees the finding; what oml-scan/2 adds; what a hold finding changes about who may approve; how an upgrade rescans stored memories without silently changing a verdict; how recall serves findings and hidden characters; the opt-in model tier; the write-time budget; the red-team corpus and how precision and recall are reported; who counts as a person and the person lane; the tenant scan policy; the findings list; the normalisation order; the in-progress exclusion; the phases and their issues; the operator's open questions
 -->
 

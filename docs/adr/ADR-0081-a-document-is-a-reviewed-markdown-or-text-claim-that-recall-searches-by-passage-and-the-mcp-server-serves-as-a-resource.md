@@ -10,7 +10,7 @@ answers: why a document is a kind and not a memory with a markdown format; which
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, every default as
 drafted · proposed the same day, tracking #374 · amended by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) (d4, 2026-11-15) · d2 amended 2026-11-18 (the long-title cut and the one slug rule, #405) · [the build's readings of 2026-11-18](#the-builds-readings-of-2026-11-18), proposed for the operator's batch; [the review's readings of 2026-11-18](#the-reviews-readings-of-2026-11-18-pr-475), decided by the coordinator, for the operator's batch
 
-**Release:** built in v0.8.0 (#405, #406)
+**Release:** built in v0.8.3 (#405, #406)
 
 **Twin parts** (ADR-0090 d18, PR #388): a document is a `memories` row, so its body and search
 text are parts and its fold is the journal's; its passages are derived, cut again by the same rule
@@ -57,7 +57,7 @@ What exists today:
   resources" ([code.claude.com/docs/en/mcp](https://code.claude.com/docs/en/mcp), fetched
   2026-11-14), so the model can read a document without a person naming it.
 
-Decided 2026-11-14; built in v0.8.0 (#405, #406), with the readings below. Not built: d6's escaping of hidden characters in a read's text content, which serves the stored bytes unescaped; d9's files.
+Decided 2026-11-14; built in v0.8.3 (#405, #406), with the readings below. Not built: d6's escaping of hidden characters in a read's text content, which serves the stored bytes unescaped; d9's files.
 
 ## Decision
 
@@ -165,7 +165,7 @@ Decided 2026-11-14; built in v0.8.0 (#405, #406), with the readings below. Not b
       provenance and data framing travel in `_meta` and the list's `description`, never inside the
       text, so the bytes stay the signed source (ADR-0074 d12 keeps the JSON text byte for byte for
       the same reason); hidden characters are escaped in the text content as ADR-0074 d12 escapes
-      them for a model (not built in v0.8.0: the text is served unescaped). A missing, unreadable, held-and-not-served or malformed URI answers one
+      them for a model (not built in v0.8.3: the text is served unescaped). A missing, unreadable, held-and-not-served or malformed URI answers one
       error, `-32002` "Resource not found" with `data: {uri}`, so a read never discloses a row the
       key cannot read; a URI whose segment holds a `%` or a reserved character is `-32602`,
       `details.field: uri`, as proposed ADR-0036 d5 has it. Reads are logged as recall is
