@@ -11730,3 +11730,108 @@ async fn the_author_withdraws_its_held_version_over_http_and_the_route_refuses_b
 
     drop_db(&rig.db_name).await;
 }
+
+/// An admin's edit serves at once over HTTP marked `approver.act:
+/// admin_fix`, `confirmed: false`; a person's reviewer key lists it with
+/// both acts and never the admin, confirms it, and a second confirm is
+/// `admin.fix_settled` (ADR-0089 d3, d7, d8, d15).
+#[tokio::test]
+async fn an_admin_fix_serves_marked_and_a_person_confirms_it_over_http() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    let (admin, _tenant, root) = bootstrap(router).await;
+    let crew = create_workspace(router, &admin, root, "fixes").await;
+    let writer = issue_key(router, &admin, "writer", "fx/agent", crew).await;
+    let reviewer = issue_key_with(
+        router,
+        &admin,
+        "reviewer",
+        "fx/dana",
+        json!([{ "workspace": crew, "role": "reviewer" }, { "workspace": crew, "role": "reader" }]),
+    )
+    .await["value"]
+        .as_str()
+        .expect("value")
+        .to_owned();
+    let id = promoted_over_http(
+        router,
+        &writer,
+        &reviewer,
+        "fx-1",
+        "the canary drains first",
+    )
+    .await;
+    let (status, _, fix) = send(
+        router,
+        "POST",
+        "/v2/admin/fixes",
+        Call::auth(&admin).body(json!({
+            "act": "edit", "target": id, "reason": "ticket 41",
+            "body": "the canary drains and settles first",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{fix}");
+    assert_eq!(fix["state"], "unconfirmed");
+    let served = fix["served_artifact_id"]
+        .as_str()
+        .expect("served")
+        .to_owned();
+    let fix_id = fix["fix_id"].as_str().expect("id").to_owned();
+    let (status, _, got) = send(
+        router,
+        "GET",
+        &format!("/v1/memories/{served}"),
+        Call::auth(&reviewer),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{got}");
+    assert_eq!(got["approver"]["act"], "admin_fix", "{got}");
+    assert_eq!(got["approver"]["confirmed"], false, "{got}");
+    let (status, _, listed) = send(router, "GET", "/v2/review/fixes", Call::auth(&reviewer)).await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert_eq!(
+        listed["items"][0]["acts"],
+        json!(["confirm", "revert"]),
+        "{listed}"
+    );
+    assert!(listed["items"][0].get("admin_key_id").is_none(), "{listed}");
+    let (status, _, confirmed) = send(
+        router,
+        "POST",
+        &format!("/v2/review/fixes/{fix_id}/confirm"),
+        Call::auth(&reviewer).body(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{confirmed}");
+    assert_eq!(confirmed["state"], "confirmed");
+    let (_, _, got) = send(
+        router,
+        "GET",
+        &format!("/v1/memories/{served}"),
+        Call::auth(&reviewer),
+    )
+    .await;
+    assert_eq!(got["approver"]["confirmed"], true, "{got}");
+    let (status, _, again) = send(
+        router,
+        "POST",
+        &format!("/v2/review/fixes/{fix_id}/confirm"),
+        Call::auth(&reviewer).body(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{again}");
+    assert_envelope(&again, "admin.fix_settled");
+    let (status, _, all) = send(
+        router,
+        "GET",
+        "/v2/admin/fixes?state=all",
+        Call::auth(&admin),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{all}");
+    assert_eq!(all["items"].as_array().map(Vec::len), Some(1), "{all}");
+    drop_db(&rig.db_name).await;
+}

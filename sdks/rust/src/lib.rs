@@ -527,6 +527,13 @@ pub struct Attachment {
 pub struct Approver {
     pub used_by: String,
     pub same_user: bool,
+    /// `verdict`, or `admin_fix` for a version served because of an
+    /// admin's fix (ADR-0089 d7); absent from a server before v0.8.3.
+    #[serde(default)]
+    pub act: Option<String>,
+    /// Whether a person confirmed the fix; null for a verdict (ADR-0089 d7).
+    #[serde(default)]
+    pub confirmed: Option<bool>,
 }
 
 /// One finding of a version's findings list (openapi.yaml `ScanFinding`;

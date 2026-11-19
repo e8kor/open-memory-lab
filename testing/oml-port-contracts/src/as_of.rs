@@ -1338,6 +1338,171 @@ pub async fn an_as_of_after_the_leads_clock_is_refused<S: JournalStore + Clone>(
 }
 
 /// Every law but the erasure one, which needs a store-specific act.
+/// A user's key on its own root, named `user`, of `role`.
+async fn user_key<S: JournalStore + Clone>(
+    w: &AsOfWorld<S>,
+    user: &Name,
+    role: Role,
+    roles: &[Role],
+) -> IssuedKey {
+    w.app
+        .issue_key(
+            w.admin.as_str(),
+            &IssueKeyRequest {
+                profile: None,
+                role,
+                name: fresh("asof-user-key"),
+                principal: format!("asof-{}", NAMES.fetch_add(1, Ordering::Relaxed)),
+                used_by: Some(if role == Role::Reviewer {
+                    UsedBy::Person
+                } else {
+                    UsedBy::Agent
+                }),
+                default_workspace: None,
+                crew: None,
+                grants: roles
+                    .iter()
+                    .map(|r| GrantRequest {
+                        node: Reference::Name(user.clone()),
+                        role: *r,
+                        deny: Vec::new(),
+                        covers: Covers::Subtree,
+                    })
+                    .collect(),
+                connect_code: false,
+                user: Some(user.clone()),
+                guardrail_scope: None,
+                expiry: None,
+                requests_per_minute: None,
+            },
+        )
+        .await
+        .expect("a user key")
+}
+
+/// `a_claim_whose_approved_versions_are_all_demoted_takes_a_new_version_continuing_its_numbers`
+/// (ADR-0089 d16, O8 of 2026-11-19): demoting every approved version of a
+/// claim releases its key, a new write to it continues the chain's version
+/// numbers, and the usage meter counts the chain as the one live memory it
+/// was before, never a second.
+pub async fn a_claim_whose_approved_versions_are_all_demoted_takes_a_new_version_continuing_its_numbers<
+    S: JournalStore + Clone,
+>(
+    store: S,
+    searches: &[&str],
+) {
+    let w = AsOfWorld::new(store.clone(), searches).await;
+    let ada = fresh("ada");
+    let writer = user_key(&w, &ada, Role::Writer, &[Role::Writer, Role::Reader]).await;
+    let reviewer = user_key(&w, &ada, Role::Reviewer, &[Role::Reviewer, Role::Reader]).await;
+    let root = store
+        .resolve_name(w.tenant, oml_app::domain::name::NamedKind::Workspace, &ada)
+        .await
+        .expect("resolve")
+        .expect("ada's root");
+    let approve = |id: Uuid| {
+        let app = &w.app;
+        let reviewer = reviewer.value.clone();
+        async move {
+            app.post_verdict(reviewer.as_str(), id, Verdict::Approve, None)
+                .await
+                .expect("ada's reviewer approves");
+        }
+    };
+    let memories = || async {
+        store
+            .user_usage(w.tenant, root, &w.instant())
+            .await
+            .expect("usage")
+            .memories
+    };
+    let v1 = w
+        .hold_by(
+            &writer,
+            root,
+            "cache",
+            MemoryKind::Memory,
+            "the cache holds a day",
+        )
+        .await;
+    approve(v1).await;
+    let v2 = w
+        .app
+        .supersede(
+            writer.value.as_str(),
+            &SupersedeRequest {
+                on_similar: Default::default(),
+                anchor: None,
+                origin: None,
+                expected_version: 1,
+                idempotency_key: "asof-o8-v2".to_owned(),
+                target_id: v1,
+                body: "the cache holds two days".to_owned(),
+                kind: None,
+                retirement: false,
+                derives_from: Vec::new(),
+                reason: None,
+                workspace: None,
+                refuse_vocabulary_target: false,
+                severity: None,
+                rule: None,
+                kind_fields: None,
+                valid_from: None,
+                valid_until: None,
+                format: None,
+                title: None,
+            },
+        )
+        .await
+        .expect("supersede")
+        .receipt
+        .memory_id;
+    approve(v2).await;
+    assert_eq!(memories().await, 1, "one chain, one memory");
+    for id in [v2, v1] {
+        w.app
+            .demote_version(w.admin.as_str(), id)
+            .await
+            .expect("demote");
+    }
+    assert_eq!(memories().await, 1, "a demoted chain still counts");
+    let v3 = w
+        .hold_by(
+            &writer,
+            root,
+            "cache",
+            MemoryKind::Memory,
+            "the cache holds an hour",
+        )
+        .await;
+    let row = store.memory(w.tenant, v3).await.expect("read").expect("v3");
+    assert_eq!(
+        row.version, 3,
+        "the new version continues the claim's numbers"
+    );
+    assert_eq!(row.claim_key, "cache");
+    approve(v3).await;
+    let row = store.memory(w.tenant, v3).await.expect("read").expect("v3");
+    assert!(row.is_tip, "the continued claim serves");
+    assert_eq!(
+        memories().await,
+        1,
+        "the meter counts the chain live again, as the one memory it was"
+    );
+    for id in [v1, v2] {
+        let old = store
+            .memory(w.tenant, id)
+            .await
+            .expect("read")
+            .expect("row");
+        assert_eq!(
+            old.status,
+            oml_app::domain::MemoryStatus::Demoted,
+            "R4: kept"
+        );
+    }
+}
+
 pub async fn run_as_of_suite<S, F, Fut>(make: F, searches: &[&str])
 where
     S: JournalStore + Clone,
@@ -1366,4 +1531,9 @@ where
     )
     .await;
     the_demote_event_names_what_the_store_wrote_in_either_order(&make, searches).await;
+    a_claim_whose_approved_versions_are_all_demoted_takes_a_new_version_continuing_its_numbers(
+        make().await,
+        searches,
+    )
+    .await;
 }

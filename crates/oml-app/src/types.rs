@@ -1340,6 +1340,37 @@ pub struct Approval {
     pub same_user: Option<bool>,
     /// The verdict's `at`.
     pub at: EventTime,
+    /// The admin fix the version is served because of: `approver.act` is
+    /// `admin_fix` and `confirmed` whether a person confirmed it; `None`
+    /// for a version a verdict promoted, `act: verdict` (ADR-0089 d7).
+    pub fix: Option<FixMark>,
+}
+
+impl Approval {
+    /// `approver.act`: `admin_fix` for a version served because of a fix,
+    /// `verdict` for one a verdict promoted (ADR-0089 d7).
+    #[must_use]
+    pub fn act(&self) -> &'static str {
+        if self.fix.is_some() {
+            "admin_fix"
+        } else {
+            "verdict"
+        }
+    }
+
+    /// `approver.confirmed`: whether a person confirmed the fix; `None` for
+    /// a verdict (ADR-0089 d7).
+    #[must_use]
+    pub fn confirmed(&self) -> Option<bool> {
+        self.fix.map(|f| f.confirmed)
+    }
+}
+
+/// The mark of a version served because of an admin fix (ADR-0089 d7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixMark {
+    pub fix_id: Uuid,
+    pub confirmed: bool,
 }
 
 /// A source check as stored on its version: the latest `source.checked`
@@ -1477,10 +1508,14 @@ pub struct ClaimKeyState {
     /// The greatest `version` of any row of the key, whatever its state;
     /// `None` when no row carries the key.
     pub greatest_version: Option<u32>,
-    /// Whether a held, promoted or demoted version holds the key: a new
-    /// claim (version 1) collides then. A key whose every version is
-    /// rejected or erased is released.
+    /// Whether a held or promoted version holds the key: a new claim
+    /// collides then. A key whose every version is rejected, demoted or
+    /// erased is released (ADR-0089 d16, O8 of 2026-11-19).
     pub live: bool,
+    /// Whether a demoted version keeps its ordinal under the key: a new
+    /// claim then continues the chain's numbers, the greatest plus one,
+    /// rather than starting at version 1 (ADR-0089 d16, O8).
+    pub demoted: bool,
 }
 
 /// A version a supersession replaces, as served: its id and its ordinal
@@ -3282,6 +3317,97 @@ pub struct DeletionRequest {
     pub requested_at: EventTime,
 }
 
+/// A fix act an admin takes (ADR-0089 d2). Release and import rollbacks
+/// wait for releases (ADR-0085, #429) and are not built.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FixAct {
+    Demote,
+    Edit,
+    Retire,
+    Erase,
+}
+
+impl FixAct {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Demote => "demote",
+            Self::Edit => "edit",
+            Self::Retire => "retire",
+            Self::Erase => "erase",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "demote" => Some(Self::Demote),
+            "edit" => Some(Self::Edit),
+            "retire" => Some(Self::Retire),
+            "erase" => Some(Self::Erase),
+            _ => None,
+        }
+    }
+}
+
+/// Where a fix stands: unconfirmed until a person confirms or reverts it
+/// (ADR-0089 d8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FixState {
+    Unconfirmed,
+    Confirmed,
+    Reverted,
+}
+
+impl FixState {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unconfirmed => "unconfirmed",
+            Self::Confirmed => "confirmed",
+            Self::Reverted => "reverted",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "unconfirmed" => Some(Self::Unconfirmed),
+            "confirmed" => Some(Self::Confirmed),
+            "reverted" => Some(Self::Reverted),
+            _ => None,
+        }
+    }
+}
+
+/// An admin's fix as stored (ADR-0089 d3, d15, d16; migration 0064).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FixRecord {
+    pub fix_id: Uuid,
+    pub act: FixAct,
+    /// The version the request named.
+    pub target_id: Uuid,
+    pub workspace_id: Uuid,
+    pub claim_key: String,
+    /// The version the fix took out of service, where it took one.
+    pub replaced_id: Option<Uuid>,
+    /// The version the fix made the claim's served tip, where it made one.
+    pub served_id: Option<Uuid>,
+    pub reason: String,
+    pub loosens_guardrail: bool,
+    pub admin_key_id: Uuid,
+    /// The lifecycle event the fix caused, which `admin.fix` names.
+    pub lifecycle_event_id: Uuid,
+    pub state: FixState,
+    pub fixed_at: EventTime,
+    pub settled_by_key_id: Option<Uuid>,
+    pub settled_same_user: Option<bool>,
+    pub settled_at: Option<EventTime>,
+    /// The version a revert wrote and promoted, carrying the text the fix
+    /// took out of service (ADR-0089 d8).
+    pub restored_id: Option<Uuid>,
+}
+
 /// An admin key's investigation: the reason its reads of claim text are
 /// made under, open until the key closes it (ADR-0089 d10, d15).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3455,6 +3581,33 @@ pub enum AppError {
         "an admin read of claim text names an open investigation of its key in {field}; open one with a reason first"
     )]
     InvestigationRequired { field: &'static str },
+    /// A fix by an admin key not used by a person
+    /// (`admin.fix_requires_person`; ADR-0089 d1).
+    #[error("a fix is taken by an admin key used by a person; this key is used by {used_by:?}")]
+    FixRequiresPerson { used_by: UsedBy },
+    /// A demotion of a version that is not promoted
+    /// (`admin.fix_target_not_promoted`; ADR-0089 d16).
+    #[error("only an approved version is demoted; this one is {status:?}")]
+    FixTargetNotPromoted { status: MemoryStatus },
+    /// An admin edit whose body a scan finding would hold: a fix serves
+    /// at once, so it is refused rather than held
+    /// (`admin.fix_held_by_scan`; ADR-0089 d4, d17).
+    #[error(
+        "the edit's body carries a scan finding that would hold it ({finding}); a fix serves at once, so demote instead"
+    )]
+    FixScanHold { finding: String },
+    /// A revert of a fix whose claim moved on since: its served version is
+    /// no longer the claim's tip (`admin.fix_superseded`; ADR-0089 d8).
+    #[error("the claim moved on since the fix; a person fixes it forward")]
+    FixSuperseded,
+    /// A revert of an erasure, which is confirmed and never reverted
+    /// (`admin.fix_not_revertible`; ADR-0089 d8, d17).
+    #[error("an erasure is confirmed, never reverted")]
+    FixNotRevertible,
+    /// A confirm or revert of a fix already confirmed or reverted
+    /// (`admin.fix_settled`; ADR-0089 d8, d17).
+    #[error("the fix is already {state}")]
+    FixSettled { state: &'static str },
     /// A field of an admin investigation or fix request that is refused,
     /// as `request.validation` naming the field (ADR-0089 d3, d10).
     #[error("{field}: {message}")]

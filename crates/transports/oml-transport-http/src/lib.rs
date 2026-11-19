@@ -22,6 +22,7 @@ mod console;
 pub mod error;
 mod exports;
 mod federation;
+mod fixes;
 mod imports;
 pub mod mcp;
 mod metering;
@@ -165,6 +166,11 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/admin/investigations"),
     ("GET", "/v2/admin/investigations"),
     ("POST", "/v2/admin/investigations/{investigation_id}/close"),
+    ("POST", "/v2/admin/fixes"),
+    ("GET", "/v2/admin/fixes"),
+    ("GET", "/v2/review/fixes"),
+    ("POST", "/v2/review/fixes/{fix_id}/confirm"),
+    ("POST", "/v2/review/fixes/{fix_id}/revert"),
     ("GET", "/v2/admin/rescan"),
     ("POST", "/v2/admin/rescan"),
     ("GET", "/v2/admin/accounts/{account}/usage"),
@@ -429,6 +435,11 @@ where
             ("POST", "/v2/admin/investigations/{investigation_id}/close") => {
                 post(Self::investigation_close_route)
             }
+            ("POST", "/v2/admin/fixes") => post(Self::fix_route),
+            ("GET", "/v2/admin/fixes") => get(Self::admin_fixes_route),
+            ("GET", "/v2/review/fixes") => get(Self::review_fixes_route),
+            ("POST", "/v2/review/fixes/{fix_id}/confirm") => post(Self::fix_confirm_route),
+            ("POST", "/v2/review/fixes/{fix_id}/revert") => post(Self::fix_revert_route),
             ("GET", "/v2/admin/rescan") => get(Self::rescan_route),
             ("POST", "/v2/admin/rescan") => post(Self::rescan_record_route),
             ("GET", "/v1/account/usage") => get(Self::account_usage_route),
@@ -5329,6 +5340,8 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
         "approver": approval.map(|a| json!({
             "used_by": a.used_by.as_str(),
             "same_user": a.same_user,
+            "act": a.act(),
+            "confirmed": a.confirmed(),
         })),
         // When the version says it holds, as signed (proposed ADR-0059 d2).
         "valid_from": m.valid.from.as_ref().map(ValidEnd::as_str),
@@ -5459,6 +5472,8 @@ pub(crate) fn served_skill_json(s: &oml_app::types::ServedSkill) -> Value {
         "approver": s.approver.as_ref().map(|a| json!({
             "used_by": a.used_by.as_str(),
             "same_user": a.same_user,
+            "act": a.act(),
+            "confirmed": a.confirmed(),
         })),
         "uri": s.uri,
         "unreviewed": s.unreviewed,

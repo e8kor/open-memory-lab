@@ -18,7 +18,7 @@ use crate::traffic::Rid;
 use crate::{ApiState, bearer, finish, json_response, retry_chain};
 
 /// openapi.yaml `RescanReport`.
-fn report_json(r: &RescanReport) -> Value {
+fn report_json(r: &RescanReport, fixes: &oml_app::app::FixStats) -> Value {
     let action = |veto: bool| if veto { "veto" } else { "hold" };
     json!({
         "scanner_version": r.scanner_version,
@@ -50,6 +50,12 @@ fn report_json(r: &RescanReport) -> Value {
         "held_successors_stranded": r.held_successors_stranded,
         "erased_keys_live": r.erased_keys_live,
         "investigations_open_long": r.investigations_open_long,
+        "fixes_unconfirmed": fixes.unconfirmed,
+        "fix_oldest_unconfirmed_seconds": fixes.oldest_unconfirmed_seconds,
+        "fixes_loosening_guardrail": fixes.loosening_guardrail,
+        "fixes_without_person_reviewer": fixes.without_person_reviewer,
+        "fixes_admin_person_only": fixes.admin_person_only,
+        "fixes_reverted": fixes.reverted,
     })
 }
 
@@ -120,7 +126,12 @@ where
                 st.app.rescan(&token, after_seq, limit).await
             }
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-            Ok(json_response(StatusCode::OK, &report_json(&report)))
+            let fixes = st
+                .app
+                .admin_fix_stats(&token)
+                .await
+                .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+            Ok(json_response(StatusCode::OK, &report_json(&report, &fixes)))
         }
         .await;
         finish(rid, result)

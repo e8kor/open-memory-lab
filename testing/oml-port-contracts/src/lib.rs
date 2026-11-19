@@ -554,6 +554,7 @@ pub fn fixture_approval() -> Box<Approval> {
         used_by: UsedBy::Person,
         same_user: Some(false),
         at: EventTime::parse("2026-10-29T14:00:00.000000Z").expect("fixture time"),
+        fix: None,
     })
 }
 
@@ -5730,6 +5731,128 @@ pub async fn an_investigation_counts_its_reads_and_closes_once<S: JournalStore>(
     assert!(all[0].closed_at.is_some());
 }
 
+/// An admin fix (ADR-0089 d3, d7, d8; 0064): its row is stored
+/// unconfirmed and the version it serves reads `act: admin_fix`,
+/// `confirmed: false`, used by a person; a confirmation marks that version
+/// confirmed, and a second settlement commits nothing.
+pub async fn a_fix_marks_its_served_version_and_settles_once<S: JournalStore>(store: &S) {
+    use oml_app::types::{FixAct, FixRecord, FixState};
+    let mut rig = ChainRig::new(489);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0x489A);
+    let v1 = held_memory(
+        tenant,
+        wa,
+        Uuid::from_u128(0x489B),
+        "wanda",
+        Uuid::from_u128(0x489C),
+        "v1",
+    );
+    hold(&mut rig, store, v1.clone()).await.expect("hold");
+    promote(&mut rig, store, v1.memory_id)
+        .await
+        .expect("promote");
+    let fix_id = Uuid::from_u128(0x489D);
+    let fix = FixRecord {
+        fix_id,
+        act: FixAct::Demote,
+        target_id: Uuid::from_u128(0x489E),
+        workspace_id: wa,
+        claim_key: v1.claim_key.clone(),
+        replaced_id: Some(Uuid::from_u128(0x489E)),
+        served_id: Some(v1.memory_id),
+        reason: "ticket 41".to_owned(),
+        loosens_guardrail: false,
+        admin_key_id: Uuid::from_u128(0x489F),
+        lifecycle_event_id: Uuid::from_u128(0x48A0),
+        state: FixState::Unconfirmed,
+        fixed_at: EventTime::parse("2026-11-19T10:00:00.000000Z").expect("time"),
+        settled_by_key_id: None,
+        settled_same_user: None,
+        settled_at: None,
+        restored_id: None,
+    };
+    rig.commit(
+        store,
+        event_types::ADMIN_FIX,
+        json!({ "fix_id": fix_id.to_string() }),
+        MetadataFold::AdminFixRecorded(Box::new(fix.clone())),
+        None,
+    )
+    .await
+    .expect("record the fix");
+    let mark = |m: MemoryRecord| m.approval.expect("approved");
+    let served = mark(
+        store
+            .memory(tenant, v1.memory_id)
+            .await
+            .expect("read")
+            .expect("v1"),
+    );
+    assert_eq!(served.act(), "admin_fix");
+    assert_eq!(served.confirmed(), Some(false));
+    assert_eq!(served.used_by, UsedBy::Person);
+    let stored = store
+        .fix(tenant, fix_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert_eq!(stored.state, FixState::Unconfirmed);
+    assert_eq!(stored.reason, "ticket 41");
+    assert_eq!(stored.served_id, Some(v1.memory_id));
+    assert_eq!(store.fixes(tenant, true).await.expect("list").len(), 1);
+    let settle = || MetadataFold::AdminFixSettled {
+        fix_id,
+        state: FixState::Confirmed,
+        settled_by_key_id: Uuid::from_u128(0x48A1),
+        same_user: false,
+        restored_id: None,
+    };
+    rig.commit(
+        store,
+        event_types::ADMIN_FIX_CONFIRMED,
+        json!({}),
+        settle(),
+        None,
+    )
+    .await
+    .expect("confirm");
+    let served = mark(
+        store
+            .memory(tenant, v1.memory_id)
+            .await
+            .expect("read")
+            .expect("v1"),
+    );
+    assert_eq!(served.confirmed(), Some(true));
+    assert_eq!(served.same_user, Some(false));
+    let head = store.chain_head(tenant).await.expect("head");
+    let again = rig
+        .commit(
+            store,
+            event_types::ADMIN_FIX_CONFIRMED,
+            json!({}),
+            settle(),
+            None,
+        )
+        .await;
+    assert!(
+        matches!(again, Err(StoreError::FixSettled { .. })),
+        "{again:?}"
+    );
+    assert_eq!(store.chain_head(tenant).await.expect("head"), head);
+    let stored = store
+        .fix(tenant, fix_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert_eq!(stored.state, FixState::Confirmed);
+    assert!(stored.settled_at.is_some());
+    assert!(store.fixes(tenant, true).await.expect("list").is_empty());
+    assert_eq!(store.fixes(tenant, false).await.expect("list").len(), 1);
+}
+
 /// The compare-and-set of ratification: a successor takes the tip only
 /// while the version it replaces is still the promoted tip under the
 /// successor's own workspace and claim_key; a lost compare-and-set commits
@@ -6118,6 +6241,7 @@ pub async fn claim_key_state_counts_every_version_and_only_live_ones_hold_the_ke
         ClaimKeyState {
             greatest_version: Some(1),
             live: true,
+            demoted: false,
         },
         "a held version holds the key"
     );
@@ -6135,6 +6259,7 @@ pub async fn claim_key_state_counts_every_version_and_only_live_ones_hold_the_ke
         ClaimKeyState {
             greatest_version: Some(1),
             live: false,
+            demoted: false,
         },
         "a rejected version is counted and releases the key"
     );
@@ -6154,8 +6279,34 @@ pub async fn claim_key_state_counts_every_version_and_only_live_ones_hold_the_ke
         ClaimKeyState {
             greatest_version: Some(3),
             live: true,
+            demoted: false,
         },
         "a promoted version holds the key"
+    );
+
+    // Demoting the only approved version releases the key and keeps its
+    // ordinal: a new claim continues the numbers (ADR-0089 d16, O8).
+    rig.commit(
+        store,
+        event_types::LIFECYCLE_DEMOTE,
+        json!({ "artifact_id": v3.memory_id.to_string() }),
+        MetadataFold::MemoryDemoted {
+            memory_id: v3.memory_id,
+            restored: None,
+            reopened: None,
+        },
+        None,
+    )
+    .await
+    .expect("demote v3");
+    assert_eq!(
+        state(wa).await,
+        ClaimKeyState {
+            greatest_version: Some(3),
+            live: false,
+            demoted: true,
+        },
+        "a demoted version keeps its ordinal and releases the key"
     );
 }
 
@@ -9118,6 +9269,7 @@ pub async fn a_promotion_stores_the_approving_verdict_on_its_row_and_a_held_vers
         used_by: UsedBy::Agent,
         same_user: Some(true),
         at: EventTime::parse("2026-10-29T15:00:00.123456Z").expect("fixture time"),
+        fix: None,
     });
     rig.commit(
         store,
@@ -9841,6 +9993,10 @@ where
     ))
     .await;
     Box::pin(an_investigation_counts_its_reads_and_closes_once(
+        &new_store().await,
+    ))
+    .await;
+    Box::pin(a_fix_marks_its_served_version_and_settles_once(
         &new_store().await,
     ))
     .await;

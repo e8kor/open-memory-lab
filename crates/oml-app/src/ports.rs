@@ -63,6 +63,10 @@ pub enum StoreError {
     /// commit wrote nothing (ADR-0089 d10).
     #[error("investigation {investigation_id} is not open for this key")]
     InvestigationNotOpen { investigation_id: Uuid },
+    /// A confirm or revert found the fix no longer unconfirmed inside the
+    /// committing transaction; the commit wrote nothing (ADR-0089 d8).
+    #[error("fix {fix_id} is no longer unconfirmed")]
+    FixSettled { fix_id: Uuid },
     #[error("prev_hash does not match the stored head at seq {seq}")]
     PrevHashConflict { seq: u64 },
     /// A ratification's compare-and-set found `replaced` no longer the
@@ -493,6 +497,21 @@ pub enum MetadataFold {
     AdminMemoryRead {
         investigation_id: Uuid,
         key_id: Uuid,
+    },
+    /// `admin.fix`: the fix's row, unconfirmed, and the mark on the
+    /// version it made the served tip (`served_id`), in the commit that
+    /// also journals the lifecycle event it caused (ADR-0089 d3, d7, d16).
+    AdminFixRecorded(Box<crate::types::FixRecord>),
+    /// `admin.fix_confirmed` or `admin.fix_reverted`: the fix moves from
+    /// unconfirmed to `state`, compare-and-set, else
+    /// [`StoreError::FixSettled`]; a confirmation also marks the version
+    /// the fix serves `confirmed`, `same_user` as judged (ADR-0089 d7, d8).
+    AdminFixSettled {
+        fix_id: Uuid,
+        state: crate::types::FixState,
+        settled_by_key_id: Uuid,
+        same_user: bool,
+        restored_id: Option<Uuid>,
     },
     /// `admin.investigation_opened`: an admin key's investigation, open
     /// from the event, its reason in clear (ADR-0089 d10, d15).
@@ -1600,6 +1619,21 @@ pub trait JournalStore: Retriever + Send + Sync {
         own_key_ids: &[Uuid],
         reads_promoted: bool,
     ) -> impl Future<Output = Result<Option<u32>, StoreError>> + Send;
+
+    /// One admin fix of the tenant (ADR-0089 d15).
+    fn fix(
+        &self,
+        tenant_id: Uuid,
+        fix_id: Uuid,
+    ) -> impl Future<Output = Result<Option<crate::types::FixRecord>, StoreError>> + Send;
+
+    /// The tenant's admin fixes, oldest first, the unconfirmed ones alone
+    /// when `unconfirmed_only` (ADR-0089 d15).
+    fn fixes(
+        &self,
+        tenant_id: Uuid,
+        unconfirmed_only: bool,
+    ) -> impl Future<Output = Result<Vec<crate::types::FixRecord>, StoreError>> + Send;
 
     /// One investigation of the tenant, open or closed (ADR-0089 d10).
     fn investigation(
@@ -2837,6 +2871,12 @@ pub trait RequestObserver: Send + Sync {
     /// `write` (ADR-0030 d5, d9).
     fn curation(&self, act: &'static str) {
         let _ = act;
+    }
+
+    /// An admin fix committed: its act and whether it loosens a guardrail
+    /// (ADR-0089 d6, d15).
+    fn admin_fix(&self, act: &'static str, loosens_guardrail: bool) {
+        let _ = (act, loosens_guardrail);
     }
 }
 

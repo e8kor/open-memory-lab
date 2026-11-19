@@ -136,7 +136,7 @@ A production agent bound to `latest` reads 1.4.0 from its next request and loads
 
 **Fix forward. Designed** (ADR-0085 d11). `oml workspaces revert --to 1.3.0` drafts held supersessions back to 1.3.0's text, reviewed and cut as 1.4.1.
 
-**Admin fix at once. Designed** ([ADR-0089](../adr/ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md)). At 03:00, with nobody on the team answering, the tenant's admin demotes the bad skill version:
+**Admin fix at once. Built, release overlays designed** ([ADR-0089](../adr/ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md)). At 03:00, with nobody on the team answering, the tenant's admin demotes the bad skill version:
 
 ```sh
 oml admin fix demote <artifact_id> --reason "refund-flow step 3 refunds twice"
@@ -144,9 +144,9 @@ oml admin fix demote <artifact_id> --reason "refund-flow step 3 refunds twice"
 
 - `tip` keys get the previous promoted version at once. Every release that lists the bad version serves the previous one as a marked overlay, `approver.act: "admin_fix"`, `confirmed: false`, and reads `degraded`.
 - No one can cut 1.4.1 over an unconfirmed fix.
-- In the morning bob sees the fix under To do's "Admin fixes to confirm" (ADR-0083 d8), or with `oml review fixes`, reads the reason, and confirms or reverts it. The admin is never named to the reviewer. Under production rules only another person confirms, never the admin's own.
+- In the morning bob sees the fix with `oml review fixes` (the To do group "Admin fixes to confirm", ADR-0083 d8, is designed), reads the reason, and confirms it with `oml review fixes --confirm <fix_id>` or reverts it with `--revert`. The admin is never named to the reviewer. Outside the admin's own root only another person confirms, never the admin's own.
 
-Admin fixes are demote, edit, retire, release rollback, import rollback and erasure. Each takes an admin key used by a person and a reason, is marked to every reader, and is journalled. An admin key never reaches an agent surface.
+Admin fixes are demote, edit, retire and erasure, built; release rollback and import rollback wait for releases. Each takes an admin key used by a person and a reason, is marked to every reader, and is journalled. An admin key never reaches an agent surface.
 
 Built today: rejection and retirement through review. Demotion and erasure are not built.
 

@@ -6,6 +6,10 @@ from .account_usage import AccountUsage
 from .account_usage_meters_item import AccountUsageMetersItem
 from .account_usage_meters_item_meter import AccountUsageMetersItemMeter
 from .account_usage_meters_item_state import AccountUsageMetersItemState
+from .admin_fix_body import AdminFixBody
+from .admin_fix_body_act import AdminFixBodyAct
+from .admin_list_fixes_response_200 import AdminListFixesResponse200
+from .admin_list_fixes_state import AdminListFixesState
 from .admin_list_investigations_response_200 import AdminListInvestigationsResponse200
 from .admin_list_investigations_state import AdminListInvestigationsState
 from .admin_memory import AdminMemory
@@ -25,6 +29,7 @@ from .allow_web_email_body import AllowWebEmailBody
 from .anchor import Anchor
 from .anchor_hasher import AnchorHasher
 from .approver import Approver
+from .approver_act import ApproverAct
 from .approver_used_by import ApproverUsedBy
 from .attachment_descriptor import AttachmentDescriptor
 from .authorization_server_metadata import AuthorizationServerMetadata
@@ -117,6 +122,10 @@ from .federation_settings_default_sources import FederationSettingsDefaultSource
 from .federation_settings_wide_keys_item import FederationSettingsWideKeysItem
 from .federation_settings_widen_signal import FederationSettingsWidenSignal
 from .feedback import Feedback
+from .fix import Fix
+from .fix_act import FixAct
+from .fix_acts_item import FixActsItem
+from .fix_state import FixState
 from .grant import Grant
 from .grant_covers import GrantCovers
 from .grant_deny_item import GrantDenyItem
@@ -268,6 +277,7 @@ from .rescan_report_findings_item import RescanReportFindingsItem
 from .rescan_report_findings_item_action import RescanReportFindingsItemAction
 from .rescan_report_scanned_by_origin import RescanReportScannedByOrigin
 from .review_held_needs import ReviewHeldNeeds
+from .review_list_fixes_response_200 import ReviewListFixesResponse200
 from .review_next_body import ReviewNextBody
 from .review_next_body_needs import ReviewNextBodyNeeds
 from .review_policy import ReviewPolicy
@@ -434,6 +444,10 @@ __all__ = (
     "AccountUsageMetersItem",
     "AccountUsageMetersItemMeter",
     "AccountUsageMetersItemState",
+    "AdminFixBody",
+    "AdminFixBodyAct",
+    "AdminListFixesResponse200",
+    "AdminListFixesState",
     "AdminListInvestigationsResponse200",
     "AdminListInvestigationsState",
     "AdminMemory",
@@ -451,6 +465,7 @@ __all__ = (
     "Anchor",
     "AnchorHasher",
     "Approver",
+    "ApproverAct",
     "ApproverUsedBy",
     "AttachmentDescriptor",
     "AuthorizationServerMetadata",
@@ -523,6 +538,10 @@ __all__ = (
     "FederationSettingsWideKeysItem",
     "FederationSettingsWidenSignal",
     "Feedback",
+    "Fix",
+    "FixAct",
+    "FixActsItem",
+    "FixState",
     "Grant",
     "GrantCovers",
     "GrantDenyItem",
@@ -668,6 +687,7 @@ __all__ = (
     "RescanReportFindingsItemAction",
     "RescanReportScannedByOrigin",
     "ReviewHeldNeeds",
+    "ReviewListFixesResponse200",
     "ReviewNextBody",
     "ReviewNextBodyNeeds",
     "ReviewPolicy",

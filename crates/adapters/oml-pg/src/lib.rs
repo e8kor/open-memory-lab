@@ -2615,7 +2615,7 @@ const MEMORY_COLUMNS: &str = "m.id, m.tenant_id, m.workspace_id, m.claim_key, m.
      AS created_at_signed, \
      to_char(m.promoted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS promoted_at_signed, \
-     m.approver_used_by, m.approver_same_user, \
+     m.approver_used_by, m.approver_same_user, m.admin_fix_id, m.admin_fix_confirmed, m.admin_fix_same_user, \
      to_char(m.approved_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS approved_at_signed";
 
@@ -2910,10 +2910,28 @@ fn approval_from_row(row: &PgRow) -> Result<Option<Approval>, StoreError> {
     let used_by: Option<String> = row.try_get("approver_used_by").map_err(backend)?;
     let used_by = used_by
         .ok_or_else(|| StoreError::Backend("an approval without its attestation".to_owned()))?;
+    // A version served because of an admin fix reads as the fix marks it:
+    // used by a person, unconfirmed until a person confirms it, never
+    // naming which admin (ADR-0089 d7; 0064).
+    let fix_id: Option<Uuid> = row.try_get("admin_fix_id").map_err(backend)?;
+    if let Some(fix_id) = fix_id {
+        let confirmed: Option<bool> = row.try_get("admin_fix_confirmed").map_err(backend)?;
+        let same_user: Option<bool> = row.try_get("admin_fix_same_user").map_err(backend)?;
+        return Ok(Some(Approval {
+            used_by: UsedBy::Person,
+            same_user: Some(same_user.unwrap_or(false)),
+            at: EventTime::parse(&at).map_err(backend)?,
+            fix: Some(oml_app::types::FixMark {
+                fix_id,
+                confirmed: confirmed.unwrap_or(false),
+            }),
+        }));
+    }
     Ok(Some(Approval {
         used_by: used_by_from_str(&used_by)?,
         same_user: row.try_get("approver_same_user").map_err(backend)?,
         at: EventTime::parse(&at).map_err(backend)?,
+        fix: None,
     }))
 }
 
@@ -4340,6 +4358,90 @@ async fn apply_fold(
             .map_err(backend)?;
             if counted.rows_affected() != 1 {
                 return Err(StoreError::InvestigationNotOpen { investigation_id });
+            }
+        }
+        MetadataFold::AdminFixRecorded(fix) => {
+            // The fix's row, unconfirmed, and its mark on the version it
+            // made the served tip: used by a person, unconfirmed, never
+            // naming which admin (ADR-0089 d3, d7; 0064).
+            sqlx::query(
+                "INSERT INTO admin_fixes (tenant_id, id, act, target_id, workspace_id, \
+                        claim_key, replaced_id, served_id, reason, loosens_guardrail, \
+                        admin_key_id, lifecycle_event_id, fixed_at, fixed_seq) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, \
+                        ($13)::timestamptz, $14)",
+            )
+            .bind(tenant_id)
+            .bind(fix.fix_id)
+            .bind(fix.act.as_str())
+            .bind(fix.target_id)
+            .bind(fix.workspace_id)
+            .bind(&fix.claim_key)
+            .bind(fix.replaced_id)
+            .bind(fix.served_id)
+            .bind(&fix.reason)
+            .bind(fix.loosens_guardrail)
+            .bind(fix.admin_key_id)
+            .bind(fix.lifecycle_event_id)
+            .bind(at.as_str())
+            .bind(seq)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if let Some(served) = fix.served_id {
+                sqlx::query(
+                    "UPDATE memories SET admin_fix_id = $3, admin_fix_confirmed = false, \
+                            admin_fix_same_user = false \
+                      WHERE tenant_id = $1 AND id = $2",
+                )
+                .bind(tenant_id)
+                .bind(served)
+                .bind(fix.fix_id)
+                .execute(&mut **tx)
+                .await
+                .map_err(backend)?;
+            }
+        }
+        MetadataFold::AdminFixSettled {
+            fix_id,
+            state,
+            settled_by_key_id,
+            same_user,
+            restored_id,
+        } => {
+            // Compare-and-set: the fix moves once, from unconfirmed
+            // (ADR-0089 d8).
+            let settled = sqlx::query(
+                "UPDATE admin_fixes SET state = $3, settled_by_key_id = $4, \
+                        settled_same_user = $5, settled_at = ($6)::timestamptz, \
+                        settled_seq = $7, restored_id = $8 \
+                  WHERE tenant_id = $1 AND id = $2 AND state = 'unconfirmed'",
+            )
+            .bind(tenant_id)
+            .bind(fix_id)
+            .bind(state.as_str())
+            .bind(settled_by_key_id)
+            .bind(same_user)
+            .bind(at.as_str())
+            .bind(seq)
+            .bind(restored_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if settled.rows_affected() != 1 {
+                return Err(StoreError::FixSettled { fix_id });
+            }
+            if state == oml_app::types::FixState::Confirmed {
+                sqlx::query(
+                    "UPDATE memories SET admin_fix_confirmed = true, admin_fix_same_user = $3 \
+                      WHERE tenant_id = $1 AND admin_fix_id = $2",
+                )
+                .bind(tenant_id)
+                .bind(fix_id)
+                .bind(same_user)
+                .execute(&mut **tx)
+                .await
+                .map_err(backend)?;
             }
         }
         MetadataFold::InvestigationOpened {
@@ -5981,6 +6083,8 @@ async fn meter_plan(
         | MetadataFold::AdminMemoryRead { .. }
         | MetadataFold::InvestigationOpened { .. }
         | MetadataFold::InvestigationClosed { .. }
+        | MetadataFold::AdminFixRecorded(_)
+        | MetadataFold::AdminFixSettled { .. }
         // An import's end moves no meter: each version it wrote was
         // metered by its own commit (ADR-0084 d15).
         | MetadataFold::WorkspaceImported(_)
@@ -9800,7 +9904,8 @@ impl JournalStore for PgStore {
         set_tenant(&mut tx, tenant_id).await?;
         let row = sqlx::query(
             "SELECT max(version) AS greatest, \
-                    coalesce(bool_or(status IN ('held', 'promoted', 'demoted')), false) AS live \
+                    coalesce(bool_or(status IN ('held', 'promoted')), false) AS live, \
+                    coalesce(bool_or(status = 'demoted'), false) AS demoted \
              FROM memories WHERE tenant_id = $1 AND workspace_id = $2 AND claim_key = $3",
         )
         .bind(tenant_id)
@@ -9818,6 +9923,7 @@ impl JournalStore for PgStore {
         Ok(ClaimKeyState {
             greatest_version: greatest.map(version).transpose()?,
             live: row.try_get("live").map_err(backend)?,
+            demoted: row.try_get("demoted").map_err(backend)?,
         })
     }
 
@@ -10031,6 +10137,22 @@ impl JournalStore for PgStore {
                     .map_err(|_| StoreError::Backend(format!("stored version {v} is negative")))
             })
             .transpose()
+    }
+
+    async fn fix(
+        &self,
+        tenant_id: Uuid,
+        fix_id: Uuid,
+    ) -> Result<Option<oml_app::types::FixRecord>, StoreError> {
+        Ok(self.read_fixes(tenant_id, Some(fix_id), false).await?.pop())
+    }
+
+    async fn fixes(
+        &self,
+        tenant_id: Uuid,
+        unconfirmed_only: bool,
+    ) -> Result<Vec<oml_app::types::FixRecord>, StoreError> {
+        self.read_fixes(tenant_id, None, unconfirmed_only).await
     }
 
     async fn investigation(
@@ -11481,6 +11603,71 @@ impl PgStore {
 }
 
 impl PgStore {
+    /// The tenant's admin fixes, oldest first: one by id or every one, the
+    /// unconfirmed ones alone when `unconfirmed_only` (ADR-0089 d15; 0064).
+    async fn read_fixes(
+        &self,
+        tenant_id: Uuid,
+        fix_id: Option<Uuid>,
+        unconfirmed_only: bool,
+    ) -> Result<Vec<oml_app::types::FixRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sqlx::query(
+            "SELECT id, act, target_id, workspace_id, claim_key, replaced_id, served_id, \
+                    reason, loosens_guardrail, admin_key_id, lifecycle_event_id, state, \
+                    to_char(fixed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+                    AS fixed_at_s, settled_by_key_id, settled_same_user, \
+                    to_char(settled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+                    AS settled_at_s, restored_id \
+               FROM admin_fixes \
+              WHERE tenant_id = $1 AND ($2::uuid IS NULL OR id = $2) \
+                AND (NOT $3 OR state = 'unconfirmed') \
+              ORDER BY fixed_at, id",
+        )
+        .bind(tenant_id)
+        .bind(fix_id)
+        .bind(unconfirmed_only)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter()
+            .map(|row| {
+                let act: String = row.try_get("act").map_err(backend)?;
+                let state: String = row.try_get("state").map_err(backend)?;
+                let fixed: String = row.try_get("fixed_at_s").map_err(backend)?;
+                let settled: Option<String> = row.try_get("settled_at_s").map_err(backend)?;
+                Ok(oml_app::types::FixRecord {
+                    fix_id: row.try_get("id").map_err(backend)?,
+                    act: oml_app::types::FixAct::parse(&act)
+                        .ok_or_else(|| StoreError::Backend(format!("unknown fix act {act:?}")))?,
+                    target_id: row.try_get("target_id").map_err(backend)?,
+                    workspace_id: row.try_get("workspace_id").map_err(backend)?,
+                    claim_key: row.try_get("claim_key").map_err(backend)?,
+                    replaced_id: row.try_get("replaced_id").map_err(backend)?,
+                    served_id: row.try_get("served_id").map_err(backend)?,
+                    reason: row.try_get("reason").map_err(backend)?,
+                    loosens_guardrail: row.try_get("loosens_guardrail").map_err(backend)?,
+                    admin_key_id: row.try_get("admin_key_id").map_err(backend)?,
+                    lifecycle_event_id: row.try_get("lifecycle_event_id").map_err(backend)?,
+                    state: oml_app::types::FixState::parse(&state).ok_or_else(|| {
+                        StoreError::Backend(format!("unknown fix state {state:?}"))
+                    })?,
+                    fixed_at: EventTime::parse(&fixed).map_err(backend)?,
+                    settled_by_key_id: row.try_get("settled_by_key_id").map_err(backend)?,
+                    settled_same_user: row.try_get("settled_same_user").map_err(backend)?,
+                    settled_at: settled
+                        .as_deref()
+                        .map(EventTime::parse)
+                        .transpose()
+                        .map_err(backend)?,
+                    restored_id: row.try_get("restored_id").map_err(backend)?,
+                })
+            })
+            .collect()
+    }
+
     /// The tenant's admin investigations, oldest first: one by id, or
     /// `key_id`'s, or every one, the open ones alone when `open_only`
     /// (ADR-0089 d10, d15; 0063).

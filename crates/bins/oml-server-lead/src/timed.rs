@@ -852,6 +852,22 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         )
     }
 
+    fn fix(
+        &self,
+        tenant_id: Uuid,
+        fix_id: Uuid,
+    ) -> impl Future<Output = Result<Option<oml_app::types::FixRecord>, StoreError>> + Send {
+        timed("fix", self.inner.fix(tenant_id, fix_id))
+    }
+
+    fn fixes(
+        &self,
+        tenant_id: Uuid,
+        unconfirmed_only: bool,
+    ) -> impl Future<Output = Result<Vec<oml_app::types::FixRecord>, StoreError>> + Send {
+        timed("fixes", self.inner.fixes(tenant_id, unconfirmed_only))
+    }
+
     fn investigation(
         &self,
         tenant_id: Uuid,

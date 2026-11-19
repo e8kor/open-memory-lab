@@ -1046,6 +1046,50 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "the investigation was closed while the read was made",
         )
         .with_details(json!({ "field": "investigation" })),
+        AppError::FixRequiresPerson { .. } => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "admin.fix_requires_person",
+            "A fix is break-glass: it is taken by an admin key used by a person (ADR-0089 d1).",
+            "this admin key is not used by a person",
+        ),
+        AppError::FixTargetNotPromoted { status } => ApiError::new(
+            StatusCode::CONFLICT,
+            "admin.fix_target_not_promoted",
+            "Only an approved version is demoted: a held one is withdrawn by its author or rejected by a reviewer (ADR-0089 d16).",
+            format!("the version is {}", status.as_str()),
+        )
+        .with_details(json!({ "state": status.as_str() })),
+        AppError::FixScanHold { .. } => ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "admin.fix_held_by_scan",
+            "A fix serves at once, so an edit whose body the scan would hold is refused; demote instead, which serves already-reviewed text (ADR-0089 d4).",
+            "the edit's body carries a finding that would hold it",
+        ),
+        AppError::FixSuperseded => ApiError::new(
+            StatusCode::CONFLICT,
+            "admin.fix_superseded",
+            "A fix whose claim has moved on is not reverted: a person fixes the claim forward (ADR-0089 d8).",
+            "the claim is no longer served by the version the fix made its tip",
+        ),
+        AppError::FixNotRevertible => ApiError::new(
+            StatusCode::CONFLICT,
+            "admin.fix_not_revertible",
+            "An erasure is confirmed and never reverted (ADR-0089 d8).",
+            "the fix is an erasure",
+        ),
+        AppError::FixSettled { state } => ApiError::new(
+            StatusCode::CONFLICT,
+            "admin.fix_settled",
+            "A fix is confirmed or reverted once (ADR-0089 d8).",
+            format!("the fix is already {state}"),
+        )
+        .with_details(json!({ "state": state })),
+        AppError::Store(StoreError::FixSettled { .. }) => ApiError::new(
+            StatusCode::CONFLICT,
+            "admin.fix_settled",
+            "A fix is confirmed or reverted once (ADR-0089 d8).",
+            "the fix was settled while this request was made",
+        ),
         AppError::AdminField { field, message } => ApiError::validation(format!("{field}: {message}"))
             .with_details(json!({ "field": field })),
         AppError::WorkspaceFrozen { workspace_id, op } => ApiError::new(

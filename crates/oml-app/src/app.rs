@@ -27,7 +27,10 @@ mod widen;
 pub use auth::{Callback, CallbackRefusal, WEB_SESSION_TTL_SECS};
 pub use exports::{ExportCounts, ExportRequest, Exported};
 pub use federation::WideKey;
-pub use fixes::{Demotion, Erasure};
+pub use fixes::{
+    Demotion, Erasure, FIX_REASON_MAX_BYTES, FixRequest, FixStats, ReviewedFix,
+    SERVER_KEY_PRINCIPAL,
+};
 pub use imports::{
     ImportAnswer, ImportFinished, ImportJob, ImportPlan, ImportRequest, ImportStart,
 };
@@ -5849,6 +5852,16 @@ where
         if claim_state.live {
             return Err(AppError::ClaimKeyConflict);
         }
+        // A key whose approved versions were all demoted is written again
+        // continuing its numbers, the chain staying the one the meter
+        // counts; any other released key starts at version 1 (ADR-0089
+        // d16, O8 of 2026-11-19; ADR-0025 d18).
+        let version = match claim_state.greatest_version {
+            Some(greatest) if claim_state.demoted => greatest.checked_add(1).ok_or_else(|| {
+                StoreError::Backend(format!("claim_key {claim_key:?} has no next ordinal"))
+            })?,
+            _ => 1,
+        };
 
         // A person of the sign-up tenant writes at most their memories
         // quota, and an account within its bytes and monthly writes;
@@ -5862,7 +5875,11 @@ where
             key.tenant_id,
             ceiling.as_ref(),
             &[
-                (oml_domain::signup::Quota::Memories, 1),
+                // A continued chain is a memory the meter already counts.
+                (
+                    oml_domain::signup::Quota::Memories,
+                    u64::from(!claim_state.demoted),
+                ),
                 (oml_domain::signup::Quota::TextBytes, body.len() as u64),
                 (oml_domain::signup::Quota::WritesPerMonth, 1),
             ],
@@ -5891,7 +5908,7 @@ where
             tenant_id: key.tenant_id,
             workspace_id,
             claim_key: claim_key.clone(),
-            version: 1,
+            version,
             kind: req.kind,
             body,
             body_digest: body_digest.clone(),
@@ -6690,6 +6707,7 @@ where
                     used_by: key.used_by,
                     same_user: Some(same_user),
                     at: verdict_event.envelope.at.clone(),
+                    fix: None,
                 }));
                 let (event_type, payload, fold) = match replaced {
                     None => (

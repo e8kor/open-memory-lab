@@ -439,6 +439,8 @@ struct TenantState {
     valid_until_before: BTreeMap<Uuid, Option<oml_domain::valid_time::ValidEnd>>,
     /// The admin investigations, by id (ADR-0089 d10; 0063).
     investigations: BTreeMap<Uuid, crate::types::Investigation>,
+    /// The admin fixes, by id (ADR-0089 d3; 0064).
+    fixes: BTreeMap<Uuid, crate::types::FixRecord>,
 }
 
 /// BTreeMap journal-and-metadata store with a real lock per tenant: chain
@@ -1570,6 +1572,59 @@ fn apply_fold(
             {
                 Some(i) => i.reads += 1,
                 None => return Err(StoreError::InvestigationNotOpen { investigation_id }),
+            }
+        }
+        MetadataFold::AdminFixRecorded(fix) => {
+            // The served version reads `act: admin_fix`, unconfirmed, used
+            // by a person, never naming which admin (ADR-0089 d7).
+            if let Some(served) = fix.served_id
+                && let Some(memory) = state.memories.get_mut(&served)
+            {
+                let at = memory
+                    .approval
+                    .as_ref()
+                    .map_or_else(|| fix.fixed_at.clone(), |a| a.at.clone());
+                memory.approval = Some(Box::new(crate::types::Approval {
+                    used_by: oml_domain::UsedBy::Person,
+                    same_user: Some(false),
+                    at,
+                    fix: Some(crate::types::FixMark {
+                        fix_id: fix.fix_id,
+                        confirmed: false,
+                    }),
+                }));
+            }
+            state.fixes.insert(fix.fix_id, *fix);
+        }
+        MetadataFold::AdminFixSettled {
+            fix_id,
+            state: settled,
+            settled_by_key_id,
+            same_user,
+            restored_id,
+        } => {
+            let Some(fix) = state
+                .fixes
+                .get_mut(&fix_id)
+                .filter(|f| f.state == crate::types::FixState::Unconfirmed)
+            else {
+                return Err(StoreError::FixSettled { fix_id });
+            };
+            fix.state = settled;
+            fix.settled_by_key_id = Some(settled_by_key_id);
+            fix.settled_same_user = Some(same_user);
+            fix.settled_at = Some(at.clone());
+            fix.restored_id = restored_id;
+            if settled == crate::types::FixState::Confirmed {
+                for memory in state.memories.values_mut() {
+                    if let Some(approval) = memory.approval.as_mut()
+                        && let Some(mark) = approval.fix.as_mut()
+                        && mark.fix_id == fix_id
+                    {
+                        mark.confirmed = true;
+                        approval.same_user = Some(same_user);
+                    }
+                }
             }
         }
         MetadataFold::InvestigationOpened {
@@ -4520,7 +4575,10 @@ impl JournalStore for MemStore {
             .filter(|m| m.workspace_id == workspace_id && m.claim_key == claim_key)
             .fold(ClaimKeyState::default(), |acc, m| ClaimKeyState {
                 greatest_version: acc.greatest_version.max(Some(m.version)),
-                live: acc.live || LIVE.contains(&m.status),
+                // A demoted version keeps its ordinal and releases the key:
+                // a new claim continues the numbers (ADR-0089 d16, O8).
+                live: acc.live || matches!(m.status, MemoryStatus::Held | MemoryStatus::Promoted),
+                demoted: acc.demoted || m.status == MemoryStatus::Demoted,
             }))
     }
 
@@ -4679,6 +4737,40 @@ impl JournalStore for MemStore {
             })
             .map(|m| m.version)
             .max())
+    }
+
+    async fn fix(
+        &self,
+        tenant_id: Uuid,
+        fix_id: Uuid,
+    ) -> Result<Option<crate::types::FixRecord>, StoreError> {
+        Ok(self.tenant_existing(tenant_id).and_then(|tenant| {
+            tenant
+                .lock()
+                .expect("tenant lock")
+                .fixes
+                .get(&fix_id)
+                .cloned()
+        }))
+    }
+
+    async fn fixes(
+        &self,
+        tenant_id: Uuid,
+        unconfirmed_only: bool,
+    ) -> Result<Vec<crate::types::FixRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let mut all: Vec<crate::types::FixRecord> = state
+            .fixes
+            .values()
+            .filter(|f| !unconfirmed_only || f.state == crate::types::FixState::Unconfirmed)
+            .cloned()
+            .collect();
+        all.sort_by(|a, b| (a.fixed_at.as_str(), a.fix_id).cmp(&(b.fixed_at.as_str(), b.fix_id)));
+        Ok(all)
     }
 
     async fn investigation(

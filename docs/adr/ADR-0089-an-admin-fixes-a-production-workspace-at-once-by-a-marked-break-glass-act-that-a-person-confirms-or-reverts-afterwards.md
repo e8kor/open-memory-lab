@@ -10,7 +10,7 @@ answers: which acts an admin key may take on a workspace's content, on which tar
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its five questions decided at their
 recommendations and every other default as drafted, and its amendment of ADR-0001 d5 accepted with
 it · proposed the same day · amended 2026-11-17 by the operator (d16: demote's targets, the
-fix route as the one surface for demote and erase, erase's claim-wide scope, a fix's events; as-of reads skip a demoted version) · readings of 2026-11-18 recorded for the operator's batch (d17) · amendments of d8 proposed 2026-11-18 for the operator's batch (strict confirmation wherever the fixed version is served to production and for any target outside the admin's own root; a cut refuses a `same_user`-only member; #429)
+fix route as the one surface for demote and erase, erase's claim-wide scope, a fix's events; as-of reads skip a demoted version) · readings of 2026-11-18 recorded for the operator's batch (d17) · amendments of d8 proposed 2026-11-18 for the operator's batch (strict confirmation wherever the fixed version is served to production and for any target outside the admin's own root; a cut refuses a `same_user`-only member; #429) · amended 2026-11-19 by the operator (d16, O8: a claim whose approved versions are all demoted is written again, continuing its numbers; #474)
 
 **Release:** not scheduled; with ADR-0085, whose releases a fix overlays
 
@@ -332,13 +332,26 @@ Decided, not built.
       The operator may widen this later.
     - **The author's read of a demoted version.** Its author keeps reading the version by id and
       in their own listing, marked `demoted`; no other read serves it (admission.md).
-    - **Not built: a claim key whose every approved version is demoted.** The reading is that
+    - **Superseded by O8 below: a claim key whose every approved version is demoted.** The reading is that
       `demoted` does not count as live, as `erased` does not, so the key can be written again.
       It is not built in this change: `memories_claim_version` keeps a demoted version's ordinal,
       so a fresh claim cannot start at version 1, and the usage meter (ADR-0071 d2,
       `oml_chain_live` and `oml_chain_account`, migration 0045) counts a chain with a demoted
       version as live and finds its account by its version 1. Freeing the key needs the
       operator to choose where the fresh claim's ordinals start and how the meter counts it.
+    - **O8 — A claim whose approved versions are all demoted is written again, continuing its
+      numbers (the operator, 2026-11-19; #474).** `demoted` no longer holds a claim key: a new
+      write to a key whose every version is demoted, rejected or erased is admitted, and when a
+      demoted version is among them the new version continues the claim's ordinals (v4 after
+      v1 to v3, the demoted ones keeping theirs in `memories_claim_version`) rather than starting
+      at 1. The usage meter keeps counting the chain as one live memory: its account is still its
+      earliest version 1's, it is live again once the new version is held, and the write charges
+      no new memory. No migration: both stores' claim-key read stops counting `demoted` as live,
+      and the meter's definition (migration 0045) already counts the chain. With it the fix route
+      demotes a claim's last approved version too, and d17's `admin.fix_would_lock_claim_key`
+      guard is not built. The law
+      `a_claim_whose_approved_versions_are_all_demoted_takes_a_new_version_continuing_its_numbers`
+      holds it over both stores, the meter included.
     - **Held successors of a demoted tip.** A version held as the successor of a tip that is
       later demoted can never be approved, since its target is no longer the served tip. `oml
       doctor` counts held versions whose target is no longer their claim's promoted tip
@@ -402,14 +415,38 @@ Decided, not built.
     the dispute comment is a follow-up issue.
   - **A fix journals `admin.fix` and the lifecycle event it causes (c12, confirmed; d16),**
     `admin.fix` naming that event's id.
-  - **Demoting the last approved version of a claim is refused, `admin.fix_would_lock_claim_key`
-    (the coordinator, 2026-11-18).** A claim whose every approved version is demoted keeps its
-    claim key locked (d16's note "Not built"), so the fix route refuses a demotion that would
-    leave the claim no promoted, non-demoted version, journals nothing, and names the code. The
-    guard stays until the operator decides where a fresh claim's version ordinals start and how
-    the usage meter counts it (#474's second item); then the guard is lifted in the same change
-    that frees the key. Rejected: demoting it anyway, which locks the key with no way to write the
-    claim again; erasing instead, which destroys text a demotion keeps.
+  - **Demoting the last approved version of a claim (superseded the next day by d16's O8).** The
+    coordinator's reading of 2026-11-18 refused it as `admin.fix_would_lock_claim_key`; the
+    operator decided on 2026-11-19 that the key is released and written again continuing its
+    numbers (d16, O8), so the guard was never shipped.
+  - **The build's readings of #422 (recorded 2026-11-19 with the code, for the operator's batch).**
+    Each names its rejected alternative.
+    - **An edit sends `body` and an optional `title`; a retirement's body is the reason.** The
+      kind, format, guardrail fields and kind fields stay the target's. Rejected: a full
+      supersession body, which would let a fix change a claim's kind.
+    - **The reserved server key is role `reader` with no grant**, since no key record carries
+      "role none"; revoked at issuance, it authenticates nothing either way. Its id is derived
+      from the tenant's, its name the derived form `key-<hex>`, which no created name collides
+      with. Rejected: a fixed name such as `oml-server`, which a tenant's key may already hold.
+    - **A revert of a demotion of a version below the tip is `admin.fix_superseded`:** the claim
+      had moved on before the fix, and serving the demoted text again would replace today's tip.
+      A person confirms such a fix instead. A revert in a frozen workspace is `workspace.frozen`,
+      since it promotes.
+    - **Two codes beyond d4's and d8's:** `admin.fix_not_revertible` for a revert of an erasure,
+      and `admin.fix_settled` for a confirm or revert of a fix already settled, the store
+      compare-and-setting `unconfirmed`. A same-person settlement outside the strict rule's
+      allowance answers `review.author_in_lineage` with `details.reason: same_person`, as R2 by
+      person does elsewhere.
+    - **The person-side read marks each fix with `acts`** (`[confirm, revert]`, `[confirm]` for an
+      erasure, `[]` where this key may take neither), rather than leaving it out, so the
+      admin's own person sees a fix waits on someone else.
+    - **The doctor lines** are `admin.fix_unconfirmed` (with the oldest's age),
+      `admin.fix_loosens_guardrail`, `admin.fix_without_person_reviewer`,
+      `admin.fix_admin_person_only` (d15's "visible only to the admin's own principal", read as
+      no other person holds reviewer there) and `admin.fix_reverted`, from the admin rescan
+      report. The two gauges are set by the lead's upload sweep, as the import gauges are.
+    - **Not built here:** d13's `universe` mark and d5's release overlays, which wait for
+      releases (R3).
   - **A demotion's reopened end is compare-and-set (#474).** `MetadataFold::MemoryDemoted`
     carries the reopened version and its earlier end, and both stores refuse a stale pair as a
     moved tip (d16's note of 2026-11-18).

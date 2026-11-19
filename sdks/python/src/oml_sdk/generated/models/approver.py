@@ -5,7 +5,9 @@ from typing import Any, Self, TypeVar, cast
 
 from attrs import define as _attrs_define
 
+from ..models.approver_act import ApproverAct
 from ..models.approver_used_by import ApproverUsedBy
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="Approver")
 
@@ -23,16 +25,32 @@ class Approver:
             same_user (bool | None): True when the reviewing key and the authoring key act for one person, as the
                 promotion's event marks it (ADR-0055 d7); the reviewing key and principal still differ from the author's
                 (ADR-0044 d8). Null on a version ratified before the mark.
+            act (ApproverAct | Unset): verdict for a version a review promoted; admin_fix for one served because of an
+                admin's fix (ADR-0089 d7). Since v0.8.3.
+            confirmed (bool | None | Unset): For act admin_fix, whether a person confirmed the fix; null for a verdict
+                (ADR-0089 d7). Since v0.8.3.
     """
 
     used_by: ApproverUsedBy
     same_user: bool | None
+    act: ApproverAct | Unset = UNSET
+    confirmed: bool | None | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         used_by = self.used_by.value
 
         same_user: bool | None
         same_user = self.same_user
+
+        act: str | Unset = UNSET
+        if not isinstance(self.act, Unset):
+            act = self.act.value
+
+        confirmed: bool | None | Unset
+        if isinstance(self.confirmed, Unset):
+            confirmed = UNSET
+        else:
+            confirmed = self.confirmed
 
         field_dict: dict[str, Any] = {}
 
@@ -42,6 +60,10 @@ class Approver:
                 "same_user": same_user,
             }
         )
+        if act is not UNSET:
+            field_dict["act"] = act
+        if confirmed is not UNSET:
+            field_dict["confirmed"] = confirmed
 
         return field_dict
 
@@ -57,9 +79,27 @@ class Approver:
 
         same_user = _parse_same_user(d.pop("same_user"))
 
+        _act = d.pop("act", UNSET)
+        act: ApproverAct | Unset
+        if isinstance(_act, Unset):
+            act = UNSET
+        else:
+            act = ApproverAct(_act)
+
+        def _parse_confirmed(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        confirmed = _parse_confirmed(d.pop("confirmed", UNSET))
+
         approver = cls(
             used_by=used_by,
             same_user=same_user,
+            act=act,
+            confirmed=confirmed,
         )
 
         return approver

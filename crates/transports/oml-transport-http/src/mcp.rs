@@ -999,6 +999,8 @@ where
                         "approver": s.approver.as_ref().map(|a| json!({
                             "used_by": a.used_by.as_str(),
                             "same_user": a.same_user,
+                            "act": a.act(),
+                            "confirmed": a.confirmed(),
                         })),
                         "unreviewed": s.unreviewed,
                         "workspace_path": s.workspace_path,
@@ -1115,6 +1117,8 @@ where
                 "approver": approval.map(|a| json!({
                     "used_by": a.used_by.as_str(),
                     "same_user": a.same_user,
+                    "act": a.act(),
+                    "confirmed": a.confirmed(),
                 })),
                 "unreviewed": m.status == oml_app::domain::MemoryStatus::Held,
                 "workspace_path": served.workspace_path,

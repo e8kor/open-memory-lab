@@ -423,7 +423,7 @@ test("the generated SDK carries no operation the server does not route", () => {
     readFileSync(new URL("../../../docs/api/openapi.yaml", import.meta.url), "utf8"),
   );
   assert.ok(declared.has("GET /v2/whoami"));
-  assert.equal(declared.size, 96);
+  assert.equal(declared.size, 101);
   const generated = generatedOperations(
     readFileSync(new URL("../src/generated/schema.ts", import.meta.url), "utf8"),
   );

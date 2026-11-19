@@ -3159,3 +3159,170 @@ async fn a_held_skill_is_offered_to_its_authoring_key_and_no_other_key_of_its_pe
         ),
     }
 }
+
+// -- who confirms an admin fix (ADR-0089, amendment of 2026-11-18; #490) ----
+
+fn fix_req(
+    act: oml_app::types::FixAct,
+    target: Uuid,
+    body: Option<&str>,
+) -> oml_app::app::FixRequest {
+    oml_app::app::FixRequest {
+        act,
+        target,
+        reason: "ticket 7: wrong in production".to_owned(),
+        body: body.map(str::to_owned),
+        title: None,
+    }
+}
+
+/// Outside the admin's own root, open shared workspaces included, the
+/// admin's own person neither confirms nor reverts a fix, and reads it
+/// listed without either; another person confirms it (ADR-0089, amendment
+/// of 2026-11-18; #490).
+#[tokio::test]
+async fn an_admins_own_person_cannot_confirm_a_fix_in_a_shared_workspace() {
+    use oml_app::types::FixAct;
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    app.create_workspace(
+        admin,
+        &name("team"),
+        Some(boot.root_workspace_id.into()),
+        None,
+    )
+    .await
+    .expect("a shared workspace");
+    let writer = tenant_key(
+        &app,
+        admin,
+        Role::Writer,
+        "wanda",
+        vec![
+            grant(by_name("team"), Role::Writer),
+            grant(by_name("team"), Role::Reader),
+        ],
+    )
+    .await;
+    let dana = tenant_key(
+        &app,
+        admin,
+        Role::Reviewer,
+        "dana",
+        vec![
+            grant(by_name("team"), Role::Reviewer),
+            grant(by_name("team"), Role::Reader),
+        ],
+    )
+    .await;
+    let v1 = written(
+        &app,
+        &writer.value,
+        &submit("fx490", "the runbook lives in ops", Some("team")),
+    )
+    .await;
+    approve(&app, &dana.value, v1).await;
+    let alice = signed_in(&app, admin, "alice", true).await;
+    let alice_admin = app
+        .web_caller(&alice, Capacity::Admin)
+        .await
+        .expect("alice-admin");
+    app.grant_review_capacity(&alice_admin, &name("alice"), by_name("team"))
+        .await
+        .expect("alice reviews team");
+    let bob = signed_in(&app, admin, "bob", false).await;
+    app.grant_review_capacity(&alice_admin, &name("bob"), by_name("team"))
+        .await
+        .expect("bob reviews team");
+    let alice_review = app
+        .web_caller(&alice, Capacity::Review)
+        .await
+        .expect("alice-review");
+    let bob_review = app
+        .web_caller(&bob, Capacity::Review)
+        .await
+        .expect("bob-review");
+    let fix = app
+        .admin_fix(
+            Bearer::Session(&alice_admin),
+            &fix_req(FixAct::Edit, v1, Some("the runbook lives in the wiki")),
+        )
+        .await
+        .expect("alice-admin fixes");
+    let listed = app
+        .review_fixes(Bearer::Session(&alice_review))
+        .await
+        .expect("alice-review lists it");
+    assert_eq!(listed.len(), 1);
+    assert!(!listed[0].settles, "listed without confirm and revert");
+    for refused in [
+        app.confirm_fix(Bearer::Session(&alice_review), fix.fix_id)
+            .await,
+        app.revert_fix(Bearer::Session(&alice_review), fix.fix_id)
+            .await,
+    ] {
+        assert!(matches!(refused.unwrap_err(), AppError::SamePerson));
+    }
+    assert!(
+        app.review_fixes(Bearer::Session(&bob_review))
+            .await
+            .expect("bob lists it")[0]
+            .settles
+    );
+    let confirmed = app
+        .confirm_fix(Bearer::Session(&bob_review), fix.fix_id)
+        .await
+        .expect("another person confirms");
+    assert_eq!(confirmed.settled_same_user, Some(false));
+}
+
+/// Inside the admin's own person's root, in a workspace that is a member of
+/// no release, that person's reviewer key confirms the fix, marked
+/// `same_user` (ADR-0089, amendment of 2026-11-18; #490).
+#[tokio::test]
+async fn an_admins_own_person_confirms_a_fix_inside_their_own_root_marked_same_user() {
+    use oml_app::types::FixAct;
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", true).await;
+    let writer = user_writer(&app, admin, "alice", "alice-agent").await;
+    let own_reviewer = user_reviewer(&app, admin, "alice", "alice-reviewer").await;
+    let v1 = written(
+        &app,
+        &writer.value,
+        &submit("fx490r", "the cache holds a day", Some("alice")),
+    )
+    .await;
+    approve(&app, &own_reviewer.value, v1).await;
+    let alice_admin = app
+        .web_caller(&alice, Capacity::Admin)
+        .await
+        .expect("alice-admin");
+    let fix = app
+        .admin_fix(
+            Bearer::Session(&alice_admin),
+            &fix_req(FixAct::Edit, v1, Some("the cache holds an hour")),
+        )
+        .await
+        .expect("alice-admin fixes in her own root");
+    let alice_review = app
+        .web_caller(&alice, Capacity::Review)
+        .await
+        .expect("alice-review");
+    let listed = app
+        .review_fixes(Bearer::Session(&alice_review))
+        .await
+        .expect("listed");
+    assert!(
+        listed
+            .iter()
+            .any(|f| f.fix.fix_id == fix.fix_id && f.settles)
+    );
+    let confirmed = app
+        .confirm_fix(Bearer::Session(&alice_review), fix.fix_id)
+        .await
+        .expect("her own person confirms inside her root");
+    assert_eq!(confirmed.settled_same_user, Some(true));
+}
