@@ -2404,20 +2404,35 @@ pub async fn the_review_queue_serves_no_row_its_own_person_wrote_outside_their_r
     ] {
         rig.issue_key(store, key).await;
     }
-    let link = |key_id: Uuid| {
-        (
-            json!({ "key_id": key_id.to_string() }),
-            MetadataFold::KeyLinked {
-                key_id,
-                user_root: Some(alice.workspace_id),
-                accepted: true,
-            },
-        )
-    };
-    let (payload, fold) = link(linked.key_id);
-    rig.commit(store, event_types::KEY_LINKED_PERSON, payload, fold, None)
-        .await
-        .expect("the link commits");
+    // A console admin's link, then its person's acceptance: the one way a
+    // key other than the bootstrap ceremony's comes to act for a person
+    // (0064's api_keys_link_guard, the operator's decision of 2026-11-19).
+    let payload = || json!({ "key_id": linked.key_id.to_string() });
+    rig.commit(
+        store,
+        event_types::KEY_LINKED_PERSON,
+        payload(),
+        MetadataFold::KeyLinked {
+            key_id: linked.key_id,
+            user_root: Some(alice.workspace_id),
+            accepted: false,
+        },
+        None,
+    )
+    .await
+    .expect("the link commits");
+    rig.commit(
+        store,
+        event_types::KEY_LINK_ACCEPTED,
+        payload(),
+        MetadataFold::KeyLinkAccepted {
+            key_id: linked.key_id,
+            user_root: alice.workspace_id,
+        },
+        None,
+    )
+    .await
+    .expect("alice accepts the link");
     // Each row records the person its author key acted for at the write,
     // as the application sets it (ADR-0085 d16, amended 2026-11-18).
     let rows = [
@@ -2494,10 +2509,32 @@ pub async fn the_review_queue_serves_no_row_its_own_person_wrote_outside_their_r
         };
         rig.issue_key(store, reviewer.clone()).await;
         if n % 3 == 1 {
-            let (payload, fold) = link(reviewer.key_id);
-            rig.commit(store, event_types::KEY_LINKED_PERSON, payload, fold, None)
-                .await
-                .expect("the reviewer's link commits");
+            let payload = || json!({ "key_id": reviewer.key_id.to_string() });
+            rig.commit(
+                store,
+                event_types::KEY_LINKED_PERSON,
+                payload(),
+                MetadataFold::KeyLinked {
+                    key_id: reviewer.key_id,
+                    user_root: Some(alice.workspace_id),
+                    accepted: false,
+                },
+                None,
+            )
+            .await
+            .expect("the reviewer's link commits");
+            rig.commit(
+                store,
+                event_types::KEY_LINK_ACCEPTED,
+                payload(),
+                MetadataFold::KeyLinkAccepted {
+                    key_id: reviewer.key_id,
+                    user_root: alice.workspace_id,
+                },
+                None,
+            )
+            .await
+            .expect("alice accepts the reviewer's link");
         }
         reviewer
     };
