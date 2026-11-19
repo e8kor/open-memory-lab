@@ -47,8 +47,35 @@ CREATE POLICY tenant_isolation ON admin_investigations
     USING (tenant_id = NULLIF(current_setting('oml.tenant_id', true), '')::uuid)
     WITH CHECK (tenant_id = NULLIF(current_setting('oml.tenant_id', true), '')::uuid);
 
+-- The serving role opens an investigation, counts its reads and closes it
+-- once; it never rewrites the key, the reason or when it opened (ADR-0089
+-- d10, d17). Column grants keep those out of its reach, and the guard below
+-- refuses a second close, owner-owned and SECURITY INVOKER as 0057's guard is.
+CREATE OR REPLACE FUNCTION oml_admin_investigations_guard() RETURNS trigger
+    LANGUAGE plpgsql SECURITY INVOKER SET search_path = public, pg_temp AS $$
+BEGIN
+    IF OLD.closed_at IS NOT NULL
+       AND (NEW.closed_at IS DISTINCT FROM OLD.closed_at
+            OR NEW.closed_seq IS DISTINCT FROM OLD.closed_seq
+            OR NEW.reads IS DISTINCT FROM OLD.reads) THEN
+        RAISE EXCEPTION 'admin_investigations_guard: an investigation closes once and is read no more'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END $$;
+
+CREATE TRIGGER admin_investigations_guard
+    BEFORE UPDATE ON admin_investigations
+    FOR EACH ROW EXECUTE FUNCTION oml_admin_investigations_guard();
+
+COMMENT ON FUNCTION oml_admin_investigations_guard() IS
+    'Refuses an update of admin_investigations that changes a closed investigation: it closes '
+    'once and counts no read after (0063; ADR-0089 d10).';
+
 DO $$
 BEGIN
-    EXECUTE format('GRANT SELECT, INSERT, UPDATE ON admin_investigations TO %I',
+    EXECUTE format('GRANT SELECT, INSERT ON admin_investigations TO %I',
+                   current_setting('oml.serving_role'));
+    EXECUTE format('GRANT UPDATE (reads, closed_at, closed_seq) ON admin_investigations TO %I',
                    current_setting('oml.serving_role'));
 END $$;

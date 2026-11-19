@@ -170,7 +170,7 @@ store without conditional put is not a supported lake target.
 
 ## Retracts
 
-A demote or an erase is a Delta `MERGE` on `silver.claims`, applied in outbox order with materialization. The writer folds `lifecycle.demote`, which also refreshes the version it returned as the tip, and `lifecycle.erase`, which names every version of a claim; a version silver never held, because it was never approved, gets only its destroyed key. The admin fix that journals them is built ([ADR-0089](../adr/ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) d16).
+A demote or an erase is a Delta `MERGE` on `silver.claims`, applied in outbox order with materialization. The writer folds `lifecycle.demote`, which also refreshes the version it returned as the tip, and `lifecycle.erase`, which names every version of a claim; a version silver never held, because it was never approved, gets only its destroyed key. The admin fix that journals them is built ([ADR-0089](../adr/ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) d16). Silver carries no fix mark: `approver.act`, `confirmed` and `reverted` are read from PostgreSQL alone, and the `admin.fix`, `admin.fix_confirmed` and `admin.fix_reverted` events reach `bronze.events` only, as every journal event does, with no silver fold of their own.
 Merges are copy-on-write. They rewrite the files that hold matched rows and leave the old files unreferenced.
 
 | Retract | `silver.claims` | `bronze.events` |

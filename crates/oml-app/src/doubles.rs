@@ -1593,9 +1593,18 @@ fn apply_fold(
         MetadataFold::AdminFixRecorded(fix) => {
             // The served version reads `act: admin_fix`, unconfirmed, used
             // by a person, never naming which admin (ADR-0089 d7).
-            if let Some(served) = fix.served_id
-                && let Some(memory) = state.memories.get_mut(&served)
-            {
+            // The mark names a version the store holds, else nothing
+            // commits (ADR-0089 d7), as the store's one-row update.
+            let served = match fix.served_id {
+                Some(id) => Some(
+                    state
+                        .memories
+                        .get_mut(&id)
+                        .ok_or(StoreError::FixVersionMissing { fix_id: fix.fix_id })?,
+                ),
+                None => None,
+            };
+            if let Some(memory) = served {
                 let at = memory
                     .approval
                     .as_ref()
@@ -1607,6 +1616,11 @@ fn apply_fold(
                     fix: Some(crate::types::FixMark {
                         fix_id: fix.fix_id,
                         confirmed: false,
+                        reverted: false,
+                        written: matches!(
+                            fix.act,
+                            crate::types::FixAct::Edit | crate::types::FixAct::Retire
+                        ),
                     }),
                 }));
             }
@@ -1618,6 +1632,7 @@ fn apply_fold(
             settled_by_key_id,
             same_user,
             restored_id,
+            served_id,
         } => {
             let Some(fix) = state
                 .fixes
@@ -1631,16 +1646,28 @@ fn apply_fold(
             fix.settled_same_user = Some(same_user);
             fix.settled_at = Some(at.clone());
             fix.restored_id = restored_id;
-            if settled == crate::types::FixState::Confirmed {
-                for memory in state.memories.values_mut() {
-                    if let Some(approval) = memory.approval.as_mut()
-                        && let Some(mark) = approval.fix.as_mut()
-                        && mark.fix_id == fix_id
-                    {
-                        mark.confirmed = true;
-                        approval.same_user = Some(same_user);
-                    }
+            // The served version, by its id: confirmed and `same_user` as
+            // judged, or marked reverted (ADR-0089 d7, d17).
+            if let Some(served) = served_id {
+                let Some((approval, mark)) = state
+                    .memories
+                    .get_mut(&served)
+                    .and_then(|m| m.approval.as_mut())
+                    .and_then(|a| {
+                        let mark = a.fix.filter(|f| f.fix_id == fix_id)?;
+                        Some((a, mark))
+                    })
+                else {
+                    return Err(StoreError::FixVersionMissing { fix_id });
+                };
+                let mut mark = mark;
+                if settled == crate::types::FixState::Confirmed {
+                    mark.confirmed = true;
+                    approval.same_user = Some(same_user);
+                } else {
+                    mark.reverted = true;
                 }
+                approval.fix = Some(mark);
             }
         }
         MetadataFold::InvestigationOpened {
@@ -4838,6 +4865,15 @@ impl JournalStore for MemStore {
             .collect();
         all.sort_by(|a, b| (a.fixed_at.as_str(), a.fix_id).cmp(&(b.fixed_at.as_str(), b.fix_id)));
         Ok(all)
+    }
+
+    /// No release exists until R3 (ADR-0085), so no version is a member.
+    async fn member_of_no_release(
+        &self,
+        _tenant_id: Uuid,
+        _memory_id: Uuid,
+    ) -> Result<bool, StoreError> {
+        Ok(true)
     }
 
     async fn investigation(

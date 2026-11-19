@@ -1059,6 +1059,7 @@ where
                 settled_by_key_id: key.key_id,
                 same_user,
                 restored_id: None,
+                served_id: fix.served_id,
             },
             None,
         )
@@ -1262,6 +1263,7 @@ where
                 settled_by_key_id: key.key_id,
                 same_user,
                 restored_id: Some(restored_id),
+                served_id: fix.served_id,
             },
             None,
         ));
@@ -1413,7 +1415,10 @@ where
             .is_some_and(|w| w.status == WorkspaceStatus::Development);
         let loose = development
             && self.in_own_root(key, fix.workspace_id).await?
-            && self.member_of_no_release(fix);
+            && self
+                .journal
+                .member_of_no_release(key.tenant_id, fix.target_id)
+                .await?;
         Ok(loose.then_some(true))
     }
 
@@ -1449,15 +1454,6 @@ where
         } else {
             Err(AppError::SamePerson)
         }
-    }
-
-    /// Whether the fix's target is a member of no release, published or
-    /// withdrawn (ADR-0089, amendment of 2026-11-18). Releases are not
-    /// built (ADR-0085, R3), so every target is a member of none; R3 fills
-    /// this check.
-    #[allow(clippy::unused_self, reason = "R3 reads releases here")]
-    fn member_of_no_release(&self, _fix: &FixRecord) -> bool {
-        true
     }
 
     /// A person's reviewer key: reviewer role, used by a person, no crew

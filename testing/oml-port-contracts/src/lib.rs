@@ -5882,6 +5882,7 @@ pub async fn a_fix_marks_its_served_version_and_settles_once<S: JournalStore>(st
         settled_by_key_id: Uuid::from_u128(0x48A1),
         same_user: false,
         restored_id: None,
+        served_id: Some(v1.memory_id),
     };
     rig.commit(
         store,
@@ -5925,6 +5926,235 @@ pub async fn a_fix_marks_its_served_version_and_settles_once<S: JournalStore>(st
     assert!(stored.settled_at.is_some());
     assert!(store.fixes(tenant, true).await.expect("list").is_empty());
     assert_eq!(store.fixes(tenant, false).await.expect("list").len(), 1);
+
+    // An edit fix's version, reverted: it keeps its mark, reads written by
+    // the fix and reverted, never confirmed, and a confirm after the revert
+    // commits nothing (ADR-0089 d7, d17; the decision of 2026-11-19).
+    let v2 = held_memory(
+        tenant,
+        wa,
+        Uuid::from_u128(0x48B0),
+        "wanda",
+        Uuid::from_u128(0x48B1),
+        "v2",
+    );
+    hold(&mut rig, store, v2.clone()).await.expect("hold");
+    promote(&mut rig, store, v2.memory_id)
+        .await
+        .expect("promote");
+    let edit_id = Uuid::from_u128(0x48B2);
+    let edit = FixRecord {
+        fix_id: edit_id,
+        act: FixAct::Edit,
+        target_id: Uuid::from_u128(0x48B3),
+        replaced_id: Some(Uuid::from_u128(0x48B3)),
+        served_id: Some(v2.memory_id),
+        claim_key: v2.claim_key.clone(),
+        ..fix.clone()
+    };
+    rig.commit(
+        store,
+        event_types::ADMIN_FIX,
+        json!({ "fix_id": edit_id.to_string() }),
+        MetadataFold::AdminFixRecorded(Box::new(edit)),
+        None,
+    )
+    .await
+    .expect("record the edit");
+    let read_v2 = async || {
+        mark(
+            store
+                .memory(tenant, v2.memory_id)
+                .await
+                .expect("read")
+                .expect("v2"),
+        )
+    };
+    assert!(
+        read_v2().await.fix_written(),
+        "an edit's version is written by the fix"
+    );
+    assert!(
+        !served.fix_written(),
+        "a demotion's restored version is not"
+    );
+    let settle_edit = |state| MetadataFold::AdminFixSettled {
+        fix_id: edit_id,
+        state,
+        settled_by_key_id: Uuid::from_u128(0x48A1),
+        same_user: false,
+        restored_id: Some(Uuid::from_u128(0x48B4)),
+        served_id: Some(v2.memory_id),
+    };
+    rig.commit(
+        store,
+        event_types::ADMIN_FIX_REVERTED,
+        json!({}),
+        settle_edit(FixState::Reverted),
+        None,
+    )
+    .await
+    .expect("revert");
+    let reverted = read_v2().await;
+    assert_eq!(reverted.act(), "admin_fix");
+    assert_eq!(reverted.confirmed(), Some(false));
+    assert_eq!(reverted.reverted(), Some(true));
+    let head = store.chain_head(tenant).await.expect("head");
+    let late = rig
+        .commit(
+            store,
+            event_types::ADMIN_FIX_CONFIRMED,
+            json!({}),
+            settle_edit(FixState::Confirmed),
+            None,
+        )
+        .await;
+    assert!(
+        matches!(late, Err(StoreError::FixSettled { .. })),
+        "{late:?}"
+    );
+    assert_eq!(store.chain_head(tenant).await.expect("head"), head);
+    assert_eq!(read_v2().await.reverted(), Some(true));
+    assert_eq!(
+        store
+            .fix(tenant, edit_id)
+            .await
+            .expect("read")
+            .expect("held")
+            .state,
+        FixState::Reverted
+    );
+
+    // A fix naming a served version the store does not hold commits
+    // nothing (ADR-0089 d7).
+    let ghost = FixRecord {
+        fix_id: Uuid::from_u128(0x48C0),
+        served_id: Some(Uuid::from_u128(0x48C1)),
+        ..fix.clone()
+    };
+    let head = store.chain_head(tenant).await.expect("head");
+    let missing = rig
+        .commit(
+            store,
+            event_types::ADMIN_FIX,
+            json!({}),
+            MetadataFold::AdminFixRecorded(Box::new(ghost)),
+            None,
+        )
+        .await;
+    assert!(
+        matches!(missing, Err(StoreError::FixVersionMissing { .. })),
+        "{missing:?}"
+    );
+    assert_eq!(store.chain_head(tenant).await.expect("head"), head);
+    assert!(
+        store
+            .fix(tenant, Uuid::from_u128(0x48C0))
+            .await
+            .expect("read")
+            .is_none()
+    );
+}
+
+/// A legacy promoted row that holds no approval reads, once a fix serves
+/// it, as the fix marks it, approved at the fix's time, the same in both
+/// stores (ADR-0089 d7; ADR-0077 d6).
+///
+/// `forget` empties the row's stored approval as a build before ADR-0077 d6
+/// left it, which no fold through the port now writes.
+pub async fn a_fix_marks_a_legacy_row_with_no_approval_at_the_fixs_time<S, F>(
+    store: &S,
+    forget: impl Fn(Uuid, Uuid) -> F,
+) where
+    S: JournalStore,
+    F: std::future::Future<Output = ()>,
+{
+    use oml_app::types::{FixAct, FixRecord, FixState};
+    let mut rig = ChainRig::new(490);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0x490A);
+    let v1 = held_memory(
+        tenant,
+        wa,
+        Uuid::from_u128(0x490B),
+        "wanda",
+        Uuid::from_u128(0x490C),
+        "legacy",
+    );
+    hold(&mut rig, store, v1.clone()).await.expect("hold");
+    promote(&mut rig, store, v1.memory_id)
+        .await
+        .expect("promote");
+    forget(tenant, v1.memory_id).await;
+    assert!(
+        store
+            .memory(tenant, v1.memory_id)
+            .await
+            .expect("read")
+            .expect("v1")
+            .approval
+            .is_none(),
+        "a legacy row holds no approval"
+    );
+    let fix = FixRecord {
+        fix_id: Uuid::from_u128(0x490D),
+        act: FixAct::Demote,
+        target_id: Uuid::from_u128(0x490E),
+        workspace_id: wa,
+        claim_key: v1.claim_key.clone(),
+        replaced_id: Some(Uuid::from_u128(0x490E)),
+        served_id: Some(v1.memory_id),
+        reason: "ticket 42".to_owned(),
+        loosens_guardrail: false,
+        admin_key_id: Uuid::from_u128(0x490F),
+        lifecycle_event_id: Uuid::from_u128(0x4910),
+        state: FixState::Unconfirmed,
+        fixed_at: EventTime::parse("2026-11-19T11:00:00.000000Z").expect("time"),
+        settled_by_key_id: None,
+        settled_same_user: None,
+        settled_at: None,
+        restored_id: None,
+    };
+    rig.commit(
+        store,
+        event_types::ADMIN_FIX,
+        json!({}),
+        MetadataFold::AdminFixRecorded(Box::new(fix)),
+        None,
+    )
+    .await
+    .expect("record the fix");
+    let approval = store
+        .memory(tenant, v1.memory_id)
+        .await
+        .expect("read")
+        .expect("v1")
+        .approval
+        .expect("the fix marks it");
+    assert_eq!(approval.act(), "admin_fix");
+    assert_eq!(approval.confirmed(), Some(false));
+    assert_eq!(approval.used_by, UsedBy::Person);
+    assert_eq!(approval.same_user, Some(false));
+    let stored = store
+        .fix(tenant, Uuid::from_u128(0x490D))
+        .await
+        .expect("read")
+        .expect("the fix");
+    assert_eq!(approval.at, stored.fixed_at, "approved at the fix's time");
+}
+
+/// No version is a member of a release until releases exist (ADR-0085,
+/// R3): the law R3 changes when it builds release membership.
+pub async fn no_version_is_a_release_member_until_releases_exist<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(491);
+    rig.seed_chain(store, 0).await;
+    assert!(
+        store
+            .member_of_no_release(rig.tenant_id, Uuid::from_u128(0x491A))
+            .await
+            .expect("read")
+    );
 }
 
 /// The compare-and-set of ratification: a successor takes the tip only
@@ -10188,6 +10418,10 @@ where
     ))
     .await;
     Box::pin(a_fix_marks_its_served_version_and_settles_once(
+        &new_store().await,
+    ))
+    .await;
+    Box::pin(no_version_is_a_release_member_until_releases_exist(
         &new_store().await,
     ))
     .await;

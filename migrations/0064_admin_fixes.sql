@@ -24,9 +24,15 @@
 --
 -- Run by the owner role, with oml.serving_role set as 0007 requires.
 --
--- What it costs a live database: one new, empty table with one index and
--- its policy, and three nullable columns on memories with no default, which
--- rewrite no row. ALTER TABLE memories takes ACCESS EXCLUSIVE on memories
+-- An admin key is linkable to its person (ADR-0085 d16, the operator's
+-- decision of 2026-11-19): api_keys_linked_user drops its role <> 'admin'
+-- clause. memories.admin_fix_reverted marks a version a reverted fix served
+-- (ADR-0089 d17).
+--
+-- What it costs a live database: one new, empty table with one index, its
+-- policy and its update guard, four nullable columns on memories with no
+-- default, which rewrite no row, and the api_keys check replaced and
+-- validated, one scan of api_keys under its SHARE UPDATE EXCLUSIVE lock. ALTER TABLE memories takes ACCESS EXCLUSIVE on memories
 -- and its partitions for the catalog change only; the foreign key to
 -- tenants takes SHARE ROW EXCLUSIVE on tenants until the commit. A lock is
 -- waited for at most 5 s.
@@ -84,16 +90,37 @@ COMMENT ON COLUMN memories.admin_fix_confirmed IS
 COMMENT ON COLUMN memories.admin_fix_same_user IS
     'Whether that confirmation was by the admin''s own person, in a development scope: approver.same_user (ADR-0089 d7, d8).';
 
-DO $$
+ALTER TABLE memories ADD COLUMN admin_fix_reverted boolean;
+COMMENT ON COLUMN memories.admin_fix_reverted IS
+    'Whether a person reverted the fix that served this version: approver.reverted (ADR-0089 d7, d17; the decision of 2026-11-19).';
+
+-- The serving role inserts a fix and settles it once; it never rewrites what
+-- the fix recorded (ADR-0089 d3, d8). Column grants keep the recorded
+-- columns out of its reach, and the guard below keeps the state moving once,
+-- from unconfirmed to confirmed or reverted, owner-owned and SECURITY
+-- INVOKER as 0057's guard is.
+CREATE OR REPLACE FUNCTION oml_admin_fixes_guard() RETURNS trigger
+    LANGUAGE plpgsql SECURITY INVOKER SET search_path = public, pg_temp AS $$
 BEGIN
-    EXECUTE format('GRANT SELECT, INSERT, UPDATE ON admin_fixes TO %I',
-                   current_setting('oml.serving_role'));
+    IF OLD.state <> 'unconfirmed' OR NEW.state NOT IN ('confirmed', 'reverted') THEN
+        RAISE EXCEPTION 'admin_fixes_guard: a fix moves once, from unconfirmed to confirmed or reverted'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
 END $$;
+
+CREATE TRIGGER admin_fixes_guard
+    BEFORE UPDATE ON admin_fixes
+    FOR EACH ROW EXECUTE FUNCTION oml_admin_fixes_guard();
+
+COMMENT ON FUNCTION oml_admin_fixes_guard() IS
+    'Refuses an update of admin_fixes that does not move state once, from unconfirmed to '
+    'confirmed or reverted (0064; ADR-0089 d8).';
 
 -- An admin key is linked to its person (ADR-0085 d16, the operator's decision
 -- of 2026-11-19): the check keeps the link off session keys and user keys
 -- only. The new check is looser than 0050's, so every stored row meets it;
--- it is added NOT VALID and validated in this transaction, one scan of
+-- it is added NOT VALID and validated in this transaction, a scan of
 -- api_keys, which holds one row per key.
 ALTER TABLE api_keys DROP CONSTRAINT api_keys_linked_user;
 ALTER TABLE api_keys
@@ -102,3 +129,12 @@ ALTER TABLE api_keys
         OR (user_root_id IS NULL AND credential <> 'session')
     ) NOT VALID;
 ALTER TABLE api_keys VALIDATE CONSTRAINT api_keys_linked_user;
+
+DO $$
+BEGIN
+    EXECUTE format('GRANT SELECT, INSERT ON admin_fixes TO %I',
+                   current_setting('oml.serving_role'));
+    EXECUTE format('GRANT UPDATE (state, settled_by_key_id, settled_same_user, settled_at, '
+                   'settled_seq, restored_id) ON admin_fixes TO %I',
+                   current_setting('oml.serving_role'));
+END $$;

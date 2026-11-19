@@ -395,6 +395,37 @@ async fn journal_store_contract_suite() {
     drop_dbs(&created).await;
 }
 
+/// The double's law over the real store: a legacy row with no stored
+/// approval reads, once a fix serves it, approved at the fix's time
+/// (ADR-0089 d7; ADR-0077 d6).
+#[tokio::test]
+async fn a_fix_marks_a_legacy_row_on_postgres_as_on_the_double() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    oml_port_contracts::a_fix_marks_a_legacy_row_with_no_approval_at_the_fixs_time(
+        &store,
+        |tenant, id| {
+            let store = &store;
+            async move {
+                owner_exec(
+                    store,
+                    tenant,
+                    "UPDATE memories SET approved_at = NULL, approver_used_by = NULL, \
+                            approver_same_user = NULL \
+                      WHERE tenant_id = $1 AND id = $2",
+                    id,
+                )
+                .await;
+            }
+        },
+    )
+    .await;
+    drop_dbs(&created).await;
+}
+
 /// The unapproved count is of served tips, over the real store: the same
 /// law the double passes, so the two agree on a count above zero, and the
 /// remedy doctor names brings it to zero (ADR-0077 d6; #311).
@@ -3069,7 +3100,8 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
                  - 'import_provenance' \
                  - 'valid_until_ratified' - 'valid_until_before' - 'valid_until_before_us' \
                  - 'author_person' \
-                 - 'admin_fix_id' - 'admin_fix_confirmed' - 'admin_fix_same_user'"
+                 - 'admin_fix_id' - 'admin_fix_confirmed' - 'admin_fix_same_user' \
+                 - 'admin_fix_reverted'"
             }
             (true, "key_denials") => "to_jsonb(t) - 'lifted_epoch'",
             _ => "to_jsonb(t)",
@@ -13790,6 +13822,78 @@ async fn a_documents_passages_postings_words_and_sparse_entries_go_with_its_eras
             "{pipeline}: {:?}",
             recall.hits.len()
         );
+    }
+    drop_dbs(&created).await;
+}
+
+/// The serving role settles a fix once and closes an investigation once,
+/// and rewrites nothing either recorded: column grants keep the recorded
+/// columns out of its reach, and the guards of 0063 and 0064 refuse a
+/// second settlement and a second close (ADR-0089 d3, d8, d10).
+#[tokio::test]
+async fn the_serving_role_settles_a_fix_once_and_closes_an_investigation_once() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let (_app, tenant, _admin, _writer, _v1, _v2) = two_promoted_pg(&store, "fixguard").await;
+    let fix = Uuid::from_u128(0x4980);
+    owner_exec(
+        &store,
+        tenant,
+        "INSERT INTO admin_fixes (tenant_id, id, act, target_id, workspace_id, claim_key, \
+                reason, loosens_guardrail, admin_key_id, lifecycle_event_id, fixed_at, fixed_seq) \
+         VALUES ($1, $2, 'demote', $2, $2, 'k', 'ticket', false, $2, $2, now(), 1)",
+        fix,
+    )
+    .await;
+    owner_exec(
+        &store,
+        tenant,
+        "INSERT INTO admin_investigations (tenant_id, id, key_id, reason, opened_at, opened_seq) \
+         VALUES ($1, $2, $2, 'ticket', now(), 1)",
+        fix,
+    )
+    .await;
+    for sql in [
+        "UPDATE admin_fixes SET reason = 'other' WHERE tenant_id = $1 AND id = $2",
+        "UPDATE admin_fixes SET admin_key_id = $2 WHERE tenant_id = $1 AND id = $2",
+        "UPDATE admin_fixes SET served_id = $2 WHERE tenant_id = $1 AND id = $2",
+        "DELETE FROM admin_fixes WHERE tenant_id = $1 AND id = $2",
+        "UPDATE admin_investigations SET reason = 'other' WHERE tenant_id = $1 AND id = $2",
+        "UPDATE admin_investigations SET key_id = $2 WHERE tenant_id = $1 AND id = $2",
+        "DELETE FROM admin_investigations WHERE tenant_id = $1 AND id = $2",
+    ] {
+        let err = serving_refusal(&store, tenant, sql, fix)
+            .await
+            .unwrap_or_else(|| panic!("the serving role ran: {sql}"));
+        assert!(err.contains("permission denied"), "{sql}: {err}");
+    }
+    let settle = "UPDATE admin_fixes SET state = 'confirmed', settled_by_key_id = $2, \
+                   settled_same_user = false, settled_at = now(), settled_seq = 2 \
+                   WHERE tenant_id = $1 AND id = $2";
+    assert_eq!(serving_refusal(&store, tenant, settle, fix).await, None);
+    let err = serving_refusal(
+        &store,
+        tenant,
+        "UPDATE admin_fixes SET state = 'reverted' WHERE tenant_id = $1 AND id = $2",
+        fix,
+    )
+    .await
+    .expect("a settled fix moves no further");
+    assert!(err.contains("admin_fixes_guard"), "{err}");
+    let close = "UPDATE admin_investigations SET closed_at = now(), closed_seq = 3 \
+                  WHERE tenant_id = $1 AND id = $2";
+    assert_eq!(serving_refusal(&store, tenant, close, fix).await, None);
+    for sql in [
+        close,
+        "UPDATE admin_investigations SET reads = reads + 1 WHERE tenant_id = $1 AND id = $2",
+    ] {
+        let err = serving_refusal(&store, tenant, sql, fix)
+            .await
+            .unwrap_or_else(|| panic!("a closed investigation changed: {sql}"));
+        assert!(err.contains("admin_investigations_guard"), "{sql}: {err}");
     }
     drop_dbs(&created).await;
 }

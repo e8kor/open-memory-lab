@@ -10,6 +10,16 @@ async fn journal_store_double_passes_the_suite() {
 }
 
 #[tokio::test]
+async fn a_fix_marks_a_legacy_row_on_the_double_as_on_postgres() {
+    let store = MemStore::new();
+    contracts::a_fix_marks_a_legacy_row_with_no_approval_at_the_fixs_time(&store, |t, m| {
+        store.forget_approval(t, m);
+        async {}
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn retriever_double_passes_the_suite() {
     contracts::run_retriever_suite(|| async { MemStore::new() }).await;
 }

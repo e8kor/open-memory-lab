@@ -2637,6 +2637,13 @@ const MEMORY_COLUMNS: &str = "m.id, m.tenant_id, m.workspace_id, m.claim_key, m.
      to_char(m.promoted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS promoted_at_signed, \
      m.approver_used_by, m.approver_same_user, m.admin_fix_id, m.admin_fix_confirmed, m.admin_fix_same_user, \
+     m.admin_fix_reverted, \
+     CASE WHEN m.admin_fix_id IS NOT NULL THEN (SELECT f.act FROM admin_fixes f \
+          WHERE f.tenant_id = m.tenant_id AND f.id = m.admin_fix_id) END AS admin_fix_act, \
+     CASE WHEN m.admin_fix_id IS NOT NULL AND m.approved_at IS NULL THEN \
+          (SELECT to_char(f.fixed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+             FROM admin_fixes f WHERE f.tenant_id = m.tenant_id AND f.id = m.admin_fix_id) \
+     END AS admin_fix_at_signed, \
      to_char(m.approved_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS approved_at_signed";
 
@@ -2922,22 +2929,23 @@ fn source_check_from_row(row: &PgRow) -> Result<Option<SourceCheck>, StoreError>
 /// none; a row that holds its time without its attestation fails closed
 /// (ADR-0077 d6).
 fn approval_from_row(row: &PgRow) -> Result<Option<Approval>, StoreError> {
-    let Some(at) = row
-        .try_get::<Option<String>, _>("approved_at_signed")
-        .map_err(backend)?
-    else {
-        return Ok(None);
-    };
-    let used_by: Option<String> = row.try_get("approver_used_by").map_err(backend)?;
-    let used_by = used_by
-        .ok_or_else(|| StoreError::Backend("an approval without its attestation".to_owned()))?;
+    let approved_at: Option<String> = row.try_get("approved_at_signed").map_err(backend)?;
     // A version served because of an admin fix reads as the fix marks it:
     // used by a person, unconfirmed until a person confirms it, never
-    // naming which admin (ADR-0089 d7; 0064).
+    // naming which admin, approved at the fix's time where the row holds
+    // no approval of its own, as the double reads it (ADR-0089 d7; 0064).
+    // Read before the row's own approval, so a legacy row with none is
+    // still marked.
     let fix_id: Option<Uuid> = row.try_get("admin_fix_id").map_err(backend)?;
     if let Some(fix_id) = fix_id {
         let confirmed: Option<bool> = row.try_get("admin_fix_confirmed").map_err(backend)?;
         let same_user: Option<bool> = row.try_get("admin_fix_same_user").map_err(backend)?;
+        let reverted: Option<bool> = row.try_get("admin_fix_reverted").map_err(backend)?;
+        let act: Option<String> = row.try_get("admin_fix_act").map_err(backend)?;
+        let fixed_at: Option<String> = row.try_get("admin_fix_at_signed").map_err(backend)?;
+        let at = approved_at.or(fixed_at).ok_or_else(|| {
+            StoreError::Backend(format!("fix {fix_id} marks a version with no time"))
+        })?;
         return Ok(Some(Approval {
             used_by: UsedBy::Person,
             same_user: Some(same_user.unwrap_or(false)),
@@ -2945,9 +2953,17 @@ fn approval_from_row(row: &PgRow) -> Result<Option<Approval>, StoreError> {
             fix: Some(oml_app::types::FixMark {
                 fix_id,
                 confirmed: confirmed.unwrap_or(false),
+                reverted: reverted.unwrap_or(false),
+                written: matches!(act.as_deref(), Some("edit" | "retire")),
             }),
         }));
     }
+    let Some(at) = approved_at else {
+        return Ok(None);
+    };
+    let used_by: Option<String> = row.try_get("approver_used_by").map_err(backend)?;
+    let used_by = used_by
+        .ok_or_else(|| StoreError::Backend("an approval without its attestation".to_owned()))?;
     Ok(Some(Approval {
         used_by: used_by_from_str(&used_by)?,
         same_user: row.try_get("approver_same_user").map_err(backend)?,
@@ -4588,9 +4604,9 @@ async fn apply_fold(
             .await
             .map_err(backend)?;
             if let Some(served) = fix.served_id {
-                sqlx::query(
+                let marked = sqlx::query(
                     "UPDATE memories SET admin_fix_id = $3, admin_fix_confirmed = false, \
-                            admin_fix_same_user = false \
+                            admin_fix_same_user = false, admin_fix_reverted = false \
                       WHERE tenant_id = $1 AND id = $2",
                 )
                 .bind(tenant_id)
@@ -4599,6 +4615,10 @@ async fn apply_fold(
                 .execute(&mut **tx)
                 .await
                 .map_err(backend)?;
+                // One row, or the commit aborts by name (ADR-0089 d7).
+                if marked.rows_affected() != 1 {
+                    return Err(StoreError::FixVersionMissing { fix_id: fix.fix_id });
+                }
             }
         }
         MetadataFold::AdminFixSettled {
@@ -4607,6 +4627,7 @@ async fn apply_fold(
             settled_by_key_id,
             same_user,
             restored_id,
+            served_id,
         } => {
             // Compare-and-set: the fix moves once, from unconfirmed
             // (ADR-0089 d8).
@@ -4630,17 +4651,34 @@ async fn apply_fold(
             if settled.rows_affected() != 1 {
                 return Err(StoreError::FixSettled { fix_id });
             }
-            if state == oml_app::types::FixState::Confirmed {
-                sqlx::query(
-                    "UPDATE memories SET admin_fix_confirmed = true, admin_fix_same_user = $3 \
-                      WHERE tenant_id = $1 AND admin_fix_id = $2",
-                )
-                .bind(tenant_id)
-                .bind(fix_id)
-                .bind(same_user)
+            // The served version, by its primary key: confirmed and
+            // same_user as judged, or marked reverted; one row, or the
+            // commit aborts by name (ADR-0089 d7, d17).
+            if let Some(served) = served_id {
+                let marked = if state == oml_app::types::FixState::Confirmed {
+                    sqlx::query(
+                        "UPDATE memories SET admin_fix_confirmed = true, admin_fix_same_user = $4 \
+                          WHERE tenant_id = $1 AND id = $2 AND admin_fix_id = $3",
+                    )
+                    .bind(tenant_id)
+                    .bind(served)
+                    .bind(fix_id)
+                    .bind(same_user)
+                } else {
+                    sqlx::query(
+                        "UPDATE memories SET admin_fix_reverted = true \
+                          WHERE tenant_id = $1 AND id = $2 AND admin_fix_id = $3",
+                    )
+                    .bind(tenant_id)
+                    .bind(served)
+                    .bind(fix_id)
+                }
                 .execute(&mut **tx)
                 .await
                 .map_err(backend)?;
+                if marked.rows_affected() != 1 {
+                    return Err(StoreError::FixVersionMissing { fix_id });
+                }
             }
         }
         MetadataFold::InvestigationOpened {
@@ -10437,6 +10475,16 @@ impl JournalStore for PgStore {
         unconfirmed_only: bool,
     ) -> Result<Vec<oml_app::types::FixRecord>, StoreError> {
         self.read_fixes(tenant_id, None, unconfirmed_only).await
+    }
+
+    /// No release table exists until R3 (ADR-0085), so no version is a
+    /// member; R3 reads its membership here.
+    async fn member_of_no_release(
+        &self,
+        _tenant_id: Uuid,
+        _memory_id: Uuid,
+    ) -> Result<bool, StoreError> {
+        Ok(true)
     }
 
     async fn investigation(

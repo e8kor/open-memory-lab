@@ -651,6 +651,13 @@ KEYS_REFUSED = [
     f"COPY {KEYS} (wrapped_dek) TO STDOUT",
 ]
 KEYS_DESTROY = f"UPDATE {KEYS} SET wrapped_dek = NULL, destroyed_at = now() WHERE destroyed_at IS NULL"
+# 0063, 0064: the serving role settles a fix and counts and closes an investigation, and rewrites
+# nothing either recorded; these are its only UPDATE columns on the two tables (ADR-0089 d3, d8, d10).
+UPDATE_COLUMN_GRANTS = {
+    "admin_fixes": sorted(["restored_id", "settled_at", "settled_by_key_id", "settled_same_user",
+                           "settled_seq", "state"]),
+    "admin_investigations": sorted(["closed_at", "closed_seq", "reads"]),
+}
 
 
 def s3_2_roles() -> Scenario:
@@ -761,6 +768,18 @@ def s3_2(admin_db_ci: str, owner_ci: str, service_ci: str, owner: str, service: 
             "SELECT array_agg(p) FILTER (WHERE has_table_privilege(current_user, %s, p)) FROM unnest(ARRAY["
             "'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p",
             [KEYS]).fetchone()[0]
+        updates = {t: sorted(r[0] for r in conn.execute(
+            "SELECT a.attname FROM pg_attribute a WHERE a.attrelid = %s::regclass AND a.attnum > 0 "
+            "AND NOT a.attisdropped AND has_column_privilege(current_user, a.attrelid, a.attnum, 'UPDATE') "
+            "ORDER BY 1", [t]).fetchall()) for t in UPDATE_COLUMN_GRANTS}
+        s.check(updates == UPDATE_COLUMN_GRANTS,
+                f"the service role's UPDATE columns on the fix and investigation tables are exactly "
+                f"{UPDATE_COLUMN_GRANTS}: {updates}")
+        wide = {t: conn.execute("SELECT has_table_privilege(current_user, %s, 'UPDATE') "
+                                "OR has_table_privilege(current_user, %s, 'DELETE')", [t, t]).fetchone()[0]
+                for t in UPDATE_COLUMN_GRANTS}
+        s.check(not any(wide.values()),
+                f"the service role holds no table-wide UPDATE or DELETE on the fix and investigation tables: {wide}")
         s.check(not keys_held, f"the service role holds no table-wide privilege on {KEYS}: no SELECT, INSERT, "
                                f"UPDATE, DELETE, TRUNCATE, REFERENCES or TRIGGER (held: {keys_held or 'none'})")
         key_reads = {statement: (copy_sqlstate(conn, statement, a.id) if statement.startswith("COPY")

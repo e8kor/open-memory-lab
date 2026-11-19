@@ -881,6 +881,17 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         timed("fixes", self.inner.fixes(tenant_id, unconfirmed_only))
     }
 
+    fn member_of_no_release(
+        &self,
+        tenant_id: Uuid,
+        memory_id: Uuid,
+    ) -> impl Future<Output = Result<bool, StoreError>> + Send {
+        timed(
+            "member_of_no_release",
+            self.inner.member_of_no_release(tenant_id, memory_id),
+        )
+    }
+
     fn investigation(
         &self,
         tenant_id: Uuid,

@@ -1370,6 +1370,20 @@ impl Approval {
     pub fn confirmed(&self) -> Option<bool> {
         self.fix.map(|f| f.confirmed)
     }
+
+    /// `approver.reverted`: whether a person reverted the fix; `None` for a
+    /// verdict (ADR-0089 d7, d17).
+    #[must_use]
+    pub fn reverted(&self) -> Option<bool> {
+        self.fix.map(|f| f.reverted)
+    }
+
+    /// Whether an admin fix wrote the version this approval serves, so a
+    /// non-admin read names no author (ADR-0089 d7).
+    #[must_use]
+    pub fn fix_written(&self) -> bool {
+        self.fix.is_some_and(|f| f.written)
+    }
 }
 
 /// The mark of a version served because of an admin fix (ADR-0089 d7).
@@ -1377,6 +1391,13 @@ impl Approval {
 pub struct FixMark {
     pub fix_id: Uuid,
     pub confirmed: bool,
+    /// Whether a person reverted the fix: `approver.reverted` (ADR-0089
+    /// d17, the build's reading of 2026-11-19).
+    pub reverted: bool,
+    /// Whether the fix wrote this version, an edit or a retirement by the
+    /// admin key: then no non-admin reader is told who wrote it (ADR-0089
+    /// d7).
+    pub written: bool,
 }
 
 /// A source check as stored on its version: the latest `source.checked`
@@ -2454,6 +2475,9 @@ pub struct ServedGuardrail {
     /// with another severity, in the served order; empty when none
     /// (proposed ADR-0037 d4).
     pub conflict: Vec<Uuid>,
+    /// The mark of a version served because of an admin fix, `None` for one
+    /// a verdict promoted (ADR-0089 d7).
+    pub fix: Option<FixMark>,
 }
 
 /// One of the caller's own held guardrails in the scope node's chain,
