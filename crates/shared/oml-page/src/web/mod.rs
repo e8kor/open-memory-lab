@@ -349,12 +349,28 @@ fn hidden_char(c: char) -> bool {
         )
 }
 
+/// Each character of `value` with whether no reader sees it. A carriage
+/// return a line feed follows is part of that line break, the one a
+/// browser sends for every textarea, so only a lone CR is hidden.
+fn marked(value: &str) -> impl Iterator<Item = (char, bool)> + '_ {
+    let mut chars = value.chars().peekable();
+    std::iter::from_fn(move || {
+        let c = chars.next()?;
+        let hidden = if c == '\r' {
+            chars.peek() != Some(&'\n')
+        } else {
+            hidden_char(c)
+        };
+        Some((c, hidden))
+    })
+}
+
 /// The characters of `value` no reader sees, each once, in order of first
 /// appearance (see [`text_shown`]).
 #[must_use]
 pub fn hidden_chars(value: &str) -> Vec<char> {
     let mut out: Vec<char> = Vec::new();
-    for c in value.chars().filter(|c| hidden_char(*c)) {
+    for (c, _) in marked(value).filter(|(_, hidden)| *hidden) {
         if !out.contains(&c) {
             out.push(c);
         }
@@ -370,8 +386,8 @@ pub fn hidden_chars(value: &str) -> Vec<char> {
 pub fn text_shown(value: &str) -> String {
     let mut out = String::new();
     let mut plain = String::new();
-    for c in value.chars() {
-        if hidden_char(c) {
+    for (c, hidden) in marked(value) {
+        if hidden {
             out.push_str(&escape(&plain));
             plain.clear();
             out.push_str(&format!(
@@ -719,6 +735,14 @@ mod tests {
             "a<code class=\"oml-hidden\">U+200B</code>b<code class=\"oml-hidden\">U+E0041</code>&lt;c&gt;<code class=\"oml-hidden\">U+202E</code>"
         );
         assert_eq!(text_shown("line\nnext"), "line\nnext");
+        // A CR before an LF is the line break; a lone CR is flagged.
+        assert_eq!(text_shown("line\r\nnext"), "line\r\nnext");
+        assert!(hidden_chars("line\r\nnext").is_empty());
+        assert_eq!(
+            text_shown("line\rnext\r"),
+            "line<code class=\"oml-hidden\">U+000D</code>next<code class=\"oml-hidden\">U+000D</code>"
+        );
+        assert_eq!(hidden_chars("a\r\nb\rc"), ['\r']);
         assert_eq!(
             hidden_chars("a\u{200B}b\u{200B}\u{FEFF}"),
             ['\u{200B}', '\u{FEFF}']
