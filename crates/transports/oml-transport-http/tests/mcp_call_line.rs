@@ -33,7 +33,7 @@ async fn agent() -> (Router, String) {
         })
         .await
         .expect("bootstrap");
-    let grants = [Role::Writer, Role::Reader].map(|role| GrantRequest {
+    let grants = [Role::Submitter, Role::Reader].map(|role| GrantRequest {
         node: boot.root_workspace_id.into(),
         role,
         deny: Vec::new(),
@@ -44,7 +44,7 @@ async fn agent() -> (Router, String) {
             &boot.admin_key.value,
             &IssueKeyRequest {
                 profile: None,
-                role: Role::Writer,
+                role: Role::Contributor,
                 name: Name::parse("agent-7").expect("a name"),
                 principal: "crew/agent-7".to_owned(),
                 used_by: Some(UsedBy::Agent),

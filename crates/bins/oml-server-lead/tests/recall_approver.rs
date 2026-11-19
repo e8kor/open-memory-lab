@@ -381,9 +381,9 @@ impl World {
             r,
             &admin,
             "ann-writer",
-            "writer",
+            "contributor",
             json!({ "used_by": "agent", "default_workspace": crew,
-                    "grants": grants(&root, &["writer", "reader"]) }),
+                    "grants": grants(&root, &["submitter", "reader"]) }),
         )
         .await;
         let reader = issue(
@@ -418,9 +418,9 @@ impl World {
             r,
             &admin,
             "eve-agent",
-            "writer",
+            "contributor",
             json!({ "used_by": "agent", "user": "eve",
-                    "grants": grants("eve", &["writer", "reader"]) }),
+                    "grants": grants("eve", &["submitter", "reader"]) }),
         )
         .await;
         let eve_review = issue(

@@ -105,7 +105,7 @@ fn issued(code: Option<&str>) -> Value {
     json!({
         "key_id": "key_01J9ZK",
         "name": "claude-mobile",
-        "role": "writer",
+        "role": "contributor",
         "principal": "crew/claude-mobile",
         "default_workspace_id": "metals",
         "grants": [],

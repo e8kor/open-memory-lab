@@ -445,6 +445,10 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         } => ApiError::validation(format!(
             "grant {grant_index}'s deny names {subtree_node}, which lies outside the grant's subtree"
         )),
+        AppError::ContributorGrants => ApiError::validation(
+            "a contributor key carries at least one reader grant and one submitter grant; the server takes exactly the grants it is sent and adds none",
+        )
+        .with_details(json!({ "field": "/grants", "reason": "contributor_grants" })),
         AppError::DefaultUncovered { workspace } => ApiError::validation(format!(
             "default_workspace_id {workspace} is covered by no grant of the key"
         )),
@@ -484,9 +488,9 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         AppError::ImportPersonOnly { role, used_by } => ApiError::new(
             StatusCode::FORBIDDEN,
             "access.verb_ceiling",
-            "R1: the surface an agent can call never imports; a person's writer key imports (ADR-0084 d11).",
+            "R1: the surface an agent can call never imports; a person's contributor key imports (ADR-0084 d11; ADR-0093 d6).",
             format!(
-                "an import needs a writer key used by a person, and this is a {} key used by {}",
+                "an import needs a contributor key used by a person, and this is a {} key used by {}",
                 role.as_str(),
                 used_by.as_str()
             ),
@@ -597,8 +601,8 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         AppError::AuthorOnly => ApiError::new(
             StatusCode::FORBIDDEN,
             "access.author_only",
-            "A writer proposes supersessions of its own claims only (D9).",
-            "a writer key may supersede only its own claims",
+            "A submitter proposes supersessions of its own claims only (D9).",
+            "a key without the reviewer role may supersede only its own claims",
         ),
         AppError::Withdraw(WithdrawRefusal::AuthorOnly) => ApiError::new(
             StatusCode::FORBIDDEN,
@@ -933,8 +937,8 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         AppError::SimilarExists(similar) => ApiError::new(
             StatusCode::CONFLICT,
             "submission.similar_exists",
-            "The similar check names what the writer may already read and decides nothing: with on_similar refuse the writer reads the named rows and chooses, before anything waits for review (ADR-0050 d1).",
-            "on_similar is refuse and the writer may already read a row with the same text or a near copy",
+            "The similar check names what the writing key may already read and decides nothing: with on_similar refuse the writing key reads the named rows and chooses, before anything waits for review (ADR-0050 d1).",
+            "on_similar is refuse and the writing key may already read a row with the same text or a near copy",
         )
         .with_details(json!({ "similar": crate::similar_json(&similar) })),
         AppError::ScanVeto(finding) => ApiError::new(

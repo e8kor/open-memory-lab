@@ -139,8 +139,8 @@ async fn tenant(router: &Router) -> Tenant {
     let writer = issue(
         router,
         &admin,
-        json!({"role": "writer", "name": "writer", "principal": "crew/agent-7",
-               "grants": [{"workspace": crew, "role": "writer"}, {"workspace": crew, "role": "reader"}]}),
+        json!({"role": "contributor", "name": "contributor", "principal": "crew/agent-7",
+               "grants": [{"workspace": crew, "role": "submitter"}, {"workspace": crew, "role": "reader"}]}),
     )
     .await["value"]
         .as_str()

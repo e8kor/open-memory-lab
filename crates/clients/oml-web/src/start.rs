@@ -503,7 +503,7 @@ pub async fn act(
                 &call(&credential, &ids),
                 &attempt_key(&key, n),
                 &name,
-                "writer",
+                "contributor",
                 client == Client::ClaudeAi,
                 // The one-button issue sets no date: the Keys page's forms
                 // take one (ADR-0079, the operator's answer 3).

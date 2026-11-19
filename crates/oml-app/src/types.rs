@@ -3627,6 +3627,13 @@ pub enum AppError {
         grant_index: usize,
         subtree_node: Reference,
     },
+    /// A contributor key issued without a reader or without a submitter
+    /// grant: the server refuses and never adds one (ADR-0093 d2;
+    /// request.validation, field `/grants`, reason `contributor_grants`).
+    #[error(
+        "a contributor key carries at least one reader and one submitter grant (ADR-0093 d2, request.validation)"
+    )]
+    ContributorGrants,
     /// The default as the request spelled it.
     #[error(
         "no grant of the key covers default workspace {workspace} (roles-and-keys.md issuance order, request.validation)"

@@ -91,13 +91,13 @@ async fn rig<S: JournalStore + Clone>(store: S) -> Rig<S> {
     let admin = boot.admin_key.value.clone();
     let issue = |user: &str, used_by: UsedBy| IssueKeyRequest {
         profile: None,
-        role: Role::Writer,
+        role: Role::Contributor,
         name: fresh("import-key"),
         principal: format!("{user}/{}", NAMES.fetch_add(1, Ordering::Relaxed)),
         used_by: Some(used_by),
         default_workspace: None,
         crew: None,
-        grants: [Role::Writer, Role::Reader]
+        grants: [Role::Submitter, Role::Reader]
             .into_iter()
             .map(|role| GrantRequest {
                 node: Reference::parse(user).expect("a reference"),

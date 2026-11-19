@@ -521,7 +521,7 @@ async fn laptop_key(rig: &Rig, cookie: &str) -> String {
         &[
             ("action", "issue_key"),
             ("name", "laptop"),
-            ("role", "writer"),
+            ("role", "contributor"),
         ],
     )
     .await;
@@ -1250,7 +1250,7 @@ async fn person_with_agent(rig: &Rig, subject: &str, email: &str) -> (String, St
         &[
             ("action", "issue_key"),
             ("name", "laptop"),
-            ("role", "writer"),
+            ("role", "contributor"),
         ],
     )
     .await;
@@ -2208,7 +2208,7 @@ async fn every_refusal_page_of_a_signed_in_person_draws_the_sign_out_control_in_
             &[
                 ("action", "issue_key"),
                 ("name", "tablet"),
-                ("role", "writer"),
+                ("role", "contributor"),
             ],
         )
         .await,
@@ -2491,7 +2491,7 @@ async fn person_with_a_diagram(rig: &Rig) -> (String, uuid::Uuid) {
         &[
             ("action", "issue_key"),
             ("name", "laptop"),
-            ("role", "writer"),
+            ("role", "contributor"),
         ],
     )
     .await;
@@ -3121,7 +3121,7 @@ async fn a_person_reaches_nothing_of_another_persons_root_on_oml_webs_pages() {
         &[
             ("action", "issue_key"),
             ("name", "desk"),
-            ("role", "writer"),
+            ("role", "contributor"),
         ],
     )
     .await;
@@ -3718,7 +3718,7 @@ async fn an_issue_whose_name_a_stopped_attempt_holds_issues_no_next_name() {
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect();
-    let body = json!({"name": "alice-claude-code-2", "role": "writer", "connect_code": false});
+    let body = json!({"name": "alice-claude-code-2", "role": "contributor", "connect_code": false});
     let mut bytes = b"\n".to_vec();
     bytes.extend_from_slice(body.to_string().as_bytes());
     let web_key = key_named(&rig, "alice-web").await;
@@ -3959,7 +3959,7 @@ async fn a_user_issues_a_key_only_inside_its_root() {
         &[
             ("action", "issue_key"),
             ("name", "laptop"),
-            ("role", "writer"),
+            ("role", "contributor"),
         ],
     )
     .await;
@@ -3983,7 +3983,7 @@ async fn a_user_issues_a_key_only_inside_its_root() {
             "{g:?}"
         );
     }
-    for (name, role) in [("review", "writer"), ("phone", "reviewer")] {
+    for (name, role) in [("review", "contributor"), ("phone", "reviewer")] {
         let (status, _, body) = act_and_follow(
             &rig,
             &cookie,
@@ -4034,7 +4034,7 @@ async fn a_connector_key_shows_its_connect_code_once() {
         &[
             ("action", "connect_key"),
             ("name", "phone"),
-            ("role", "writer"),
+            ("role", "contributor"),
         ],
     )
     .await;
@@ -4066,7 +4066,7 @@ async fn the_user_page_opens_its_agents_held_rows_and_a_person_approves_their_ow
         &[
             ("action", "issue_key"),
             ("name", "laptop"),
-            ("role", "writer"),
+            ("role", "contributor"),
         ],
     )
     .await;
@@ -4158,7 +4158,7 @@ async fn removing_the_last_email_leaves_the_agents_keys_working() {
         &[
             ("action", "issue_key"),
             ("name", "laptop"),
-            ("role", "writer"),
+            ("role", "contributor"),
         ],
     )
     .await;
@@ -4210,7 +4210,7 @@ async fn review_acts_as_the_persons_reviewer_key_and_the_admin_key_is_never_offe
         &[
             ("action", "issue_key"),
             ("name", "laptop"),
-            ("role", "writer"),
+            ("role", "contributor"),
         ],
     )
     .await;
@@ -4264,7 +4264,7 @@ async fn a_curated_claim_is_held_until_a_key_outside_its_lineage_approves_and_th
         &[
             ("action", "issue_key"),
             ("name", "laptop"),
-            ("role", "writer"),
+            ("role", "contributor"),
         ],
     )
     .await;
@@ -4371,7 +4371,7 @@ async fn an_anonymous_universe_row_shows_no_scan_finding_to_a_reader_outside_its
         &[
             ("action", "issue_key"),
             ("name", "laptop"),
-            ("role", "writer"),
+            ("role", "contributor"),
         ],
     )
     .await;
@@ -4491,7 +4491,7 @@ async fn a_key_issued_on_the_user_page_takes_the_default_guardrail_scope_and_the
         &[
             ("action", "issue_key"),
             ("name", "narrow"),
-            ("role", "writer"),
+            ("role", "contributor"),
             ("guardrail_scope", "workspace"),
         ],
     )
@@ -4696,7 +4696,7 @@ async fn a_key_value_is_shown_once_on_the_redirect_target_and_never_in_a_url_or_
         &[
             ("action", "issue_key"),
             ("name", "laptop"),
-            ("role", "writer"),
+            ("role", "contributor"),
         ],
     )
     .await;
@@ -4759,7 +4759,7 @@ async fn an_issue_sent_twice_at_once_issues_one_key_and_the_surviving_cookie_ope
         ("action", "issue_key".to_owned()),
         ("csrf_token", csrf_of(&page)),
         ("name", "laptop".to_owned()),
-        ("role", "writer".to_owned()),
+        ("role", "contributor".to_owned()),
         ("nonce", field_of(&page, "nonce")),
     ];
     let fields: Vec<(&str, &str)> = fields.iter().map(|(n, v)| (*n, v.as_str())).collect();
@@ -4800,7 +4800,7 @@ async fn an_issue_sent_twice_at_once_issues_one_key_and_the_surviving_cookie_ope
         &[
             ("action", "connect_key"),
             ("name", "phone"),
-            ("role", "writer"),
+            ("role", "contributor"),
         ],
     )
     .await;
@@ -4836,7 +4836,7 @@ async fn a_connect_code_is_shown_once_on_the_redirect_target() {
         &[
             ("action", "connect_key"),
             ("name", "phone"),
-            ("role", "writer"),
+            ("role", "contributor"),
         ],
     )
     .await;
@@ -5560,7 +5560,7 @@ async fn a_cut_off_persons_key_acts_are_refused_on_the_page_as_the_api_refuses_t
         &[
             ("action", "connect_key"),
             ("name", "phone"),
-            ("role", "writer"),
+            ("role", "contributor"),
         ],
     )
     .await;
@@ -5582,20 +5582,20 @@ async fn a_cut_off_persons_key_acts_are_refused_on_the_page_as_the_api_refuses_t
     let cases: [(&str, Value, Fields<'_>); 4] = [
         (
             "/v2/keys",
-            json!({"name": "alice-tablet", "role": "writer", "connect_code": false}),
+            json!({"name": "alice-tablet", "role": "contributor", "connect_code": false}),
             &[
                 ("action", "issue_key"),
                 ("name", "tablet"),
-                ("role", "writer"),
+                ("role", "contributor"),
             ],
         ),
         (
             "/v2/keys",
-            json!({"name": "alice-watch", "role": "writer", "connect_code": true}),
+            json!({"name": "alice-watch", "role": "contributor", "connect_code": true}),
             &[
                 ("action", "connect_key"),
                 ("name", "watch"),
-                ("role", "writer"),
+                ("role", "contributor"),
             ],
         ),
         (
@@ -5834,7 +5834,7 @@ async fn the_keys_pages_show_a_keys_expiry_expired_mark_and_rate_as_the_api_serv
         &issuer,
         &rig,
         "alice-both",
-        Role::Writer,
+        Role::Contributor,
         false,
         Some(late),
         Some(60),
@@ -5864,7 +5864,7 @@ async fn the_keys_pages_show_a_keys_expiry_expired_mark_and_rate_as_the_api_serv
         &issuer,
         &rig,
         "alice-phone",
-        Role::Writer,
+        Role::Contributor,
         true,
         Some(soon),
         None,
@@ -5874,7 +5874,7 @@ async fn the_keys_pages_show_a_keys_expiry_expired_mark_and_rate_as_the_api_serv
         &issuer,
         &rig,
         "alice-open",
-        Role::Writer,
+        Role::Contributor,
         true,
         Some(late),
         None,
@@ -5884,7 +5884,7 @@ async fn the_keys_pages_show_a_keys_expiry_expired_mark_and_rate_as_the_api_serv
         &issuer,
         &rig,
         "alice-plain",
-        Role::Writer,
+        Role::Contributor,
         false,
         None,
         None,
@@ -6027,7 +6027,7 @@ async fn a_person_issues_a_key_with_an_expiry_date_from_the_keys_page() {
             "/v2/keys",
             json!({
                 "name": format!("alice-{name}"),
-                "role": "writer",
+                "role": "contributor",
                 "connect_code": false,
                 "expiry": format!("{day}T23:59:59Z"),
             }),
@@ -6045,7 +6045,7 @@ async fn a_person_issues_a_key_with_an_expiry_date_from_the_keys_page() {
                 &[
                     ("action", action),
                     ("name", name),
-                    ("role", "writer"),
+                    ("role", "contributor"),
                     ("expires", day),
                 ],
             )
@@ -6073,7 +6073,7 @@ async fn a_person_issues_a_key_with_an_expiry_date_from_the_keys_page() {
             &[
                 ("action", action),
                 ("name", name),
-                ("role", "writer"),
+                ("role", "contributor"),
                 ("expires", day),
             ],
         )
@@ -6143,7 +6143,7 @@ async fn a_denied_persons_keys_and_start_pages_state_the_refusal_and_draw_no_key
             &[
                 ("action", "connect_key"),
                 ("name", "phone"),
-                ("role", "writer"),
+                ("role", "contributor"),
             ],
         )
         .await;
@@ -6241,11 +6241,11 @@ async fn a_denied_persons_keys_and_start_pages_state_the_refusal_and_draw_no_key
         for (api_path, body, fields) in [
             (
                 "/v2/keys",
-                json!({"name": "alice-tablet", "role": "writer", "connect_code": false}),
+                json!({"name": "alice-tablet", "role": "contributor", "connect_code": false}),
                 vec![
                     ("action", "issue_key"),
                     ("name", "tablet"),
-                    ("role", "writer"),
+                    ("role", "contributor"),
                 ],
             ),
             (
@@ -6425,7 +6425,7 @@ async fn the_old_review_and_keys_urls_move_or_are_not_found_and_their_acts_run_n
             &rig,
             &cookie,
             page,
-            &[("action", action), ("name", "laptop"), ("role", "writer")],
+            &[("action", action), ("name", "laptop"), ("role", "contributor")],
         )
         .await;
         assert_eq!(status, refused, "{page} {action}");
@@ -6670,7 +6670,7 @@ async fn other_tenant_writes(rig: &Rig, body: &str) {
             &boot.admin_key.value,
             &IssueKeyRequest {
                 profile: None,
-                role: Role::Writer,
+                role: Role::Contributor,
                 name: Name::parse("rival-agent").expect("a name"),
                 principal: "rival-agent".to_owned(),
                 used_by: Some(UsedBy::Agent),
@@ -6678,7 +6678,7 @@ async fn other_tenant_writes(rig: &Rig, body: &str) {
                 crew: None,
                 grants: vec![GrantRequest {
                     node: team.into(),
-                    role: Role::Writer,
+                    role: Role::Submitter,
                     deny: Vec::new(),
                     covers: oml_app::domain::access::Covers::Subtree,
                 }],
@@ -7038,7 +7038,7 @@ async fn the_filters_narrow_the_list() {
         &[
             ("action", "issue_key"),
             ("name", "phone"),
-            ("role", "writer"),
+            ("role", "contributor"),
         ],
     )
     .await;
@@ -8135,13 +8135,13 @@ async fn held_in_a_nested_shared_workspace(rig: &Rig) -> (String, String, uuid::
             admin,
             &IssueKeyRequest {
                 profile: None,
-                role: Role::Writer,
+                role: Role::Contributor,
                 name: name("pager"),
                 principal: "pager".to_owned(),
                 used_by: Some(UsedBy::Agent),
                 default_workspace: None,
                 crew: None,
-                grants: [Role::Writer, Role::Reader]
+                grants: [Role::Submitter, Role::Reader]
                     .into_iter()
                     .map(|role| GrantRequest {
                         node: name("oncall").into(),
@@ -8550,9 +8550,9 @@ async fn the_console_judges_in_a_shared_workspace_with_the_linked_key() {
     let bot = team_key(
         &rig,
         "team-bot",
-        Role::Writer,
+        Role::Contributor,
         UsedBy::Agent,
-        &[Role::Writer],
+        &[Role::Contributor],
     )
     .await;
     let memory = agent_writes_in(&rig, &bot.value, "The team ships on Fridays.", "team").await;
@@ -8752,7 +8752,7 @@ async fn a_person_withdraws_their_agents_held_write_from_submitted_after_a_confi
         &[
             ("action", "issue_key"),
             ("name", "laptop"),
-            ("role", "writer"),
+            ("role", "contributor"),
         ],
     )
     .await;

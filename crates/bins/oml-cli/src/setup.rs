@@ -254,7 +254,7 @@ mod tests {
         for role in ["admin", "operator"] {
             assert!(refuses_role(role));
         }
-        for role in ["reader", "writer", "reviewer"] {
+        for role in ["reader", "contributor", "submitter", "reviewer"] {
             assert!(!refuses_role(role));
         }
     }

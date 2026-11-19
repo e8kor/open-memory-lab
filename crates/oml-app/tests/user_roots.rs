@@ -117,11 +117,11 @@ async fn user_writer(app: &TestApp, admin: &str, user: &str, principal: &str) ->
     app.issue_key(
         admin,
         &user_req(
-            Role::Writer,
+            Role::Contributor,
             user,
             principal,
             vec![
-                grant(by_name(user), Role::Writer),
+                grant(by_name(user), Role::Submitter),
                 grant(by_name(user), Role::Reader),
             ],
         ),
@@ -167,11 +167,11 @@ async fn tenant_key(
 /// and reader grants on what it curates (ADR-0044 d7).
 async fn curator(app: &TestApp, admin: &str, reads: &[&str]) -> IssuedKey {
     let mut grants = vec![
-        node_grant(by_name("universe"), Role::Writer),
+        node_grant(by_name("universe"), Role::Submitter),
         node_grant(by_name("universe"), Role::Reader),
     ];
     grants.extend(reads.iter().map(|r| grant(by_name(r), Role::Reader)));
-    tenant_key(app, admin, Role::Writer, "curator", grants).await
+    tenant_key(app, admin, Role::Contributor, "curator", grants).await
 }
 
 /// A tenant reviewer on the `universe` node: the second identity curation
@@ -419,10 +419,10 @@ async fn a_user_named_like_a_shared_workspace_is_name_taken() {
         .issue_key(
             admin,
             &user_req(
-                Role::Writer,
+                Role::Contributor,
                 "crew",
                 "crew/laptop",
-                vec![grant(by_name("crew"), Role::Writer)],
+                vec![grant(by_name("crew"), Role::Submitter)],
             ),
         )
         .await
@@ -432,7 +432,7 @@ async fn a_user_named_like_a_shared_workspace_is_name_taken() {
         "{err:?}"
     );
     let err = app
-        .issue_key(admin, &user_req(Role::Writer, "universe", "u", Vec::new()))
+        .issue_key(admin, &user_req(Role::Contributor, "universe", "u", Vec::new()))
         .await
         .expect_err("universe is no user");
     assert!(matches!(err, AppError::UserRefused(_)), "{err:?}");
@@ -490,11 +490,11 @@ async fn a_user_keys_grant_outside_its_root_is_refused_as_issuer_ceiling() {
             .issue_key(
                 admin,
                 &user_req(
-                    Role::Writer,
+                    Role::Contributor,
                     "alice",
                     "alice/laptop",
                     vec![
-                        grant(by_name("alice"), Role::Writer),
+                        grant(by_name("alice"), Role::Submitter),
                         // A user key's bare names resolve in its own
                         // namespace, so a shared node is named by id.
                         grant(
@@ -530,7 +530,7 @@ async fn a_user_keys_grant_outside_its_root_is_refused_as_issuer_ceiling() {
                 assert_eq!(role, Role::Reader);
                 assert_eq!(grant_index, 1);
                 assert_eq!(user.as_str(), "alice");
-                assert_eq!(admissible, &[Role::Reader, Role::Writer]);
+                assert_eq!(admissible, &[Role::Reader, Role::Submitter]);
             }
             other => panic!("{outside}: {other:?}"),
         }
@@ -755,7 +755,7 @@ async fn a_user_key_cannot_create_outside_its_root() {
         matches!(
             err,
             AppError::GrantRefused {
-                needed_role: Role::Writer,
+                needed_role: Role::Contributor,
                 ..
             }
         ),
@@ -801,9 +801,9 @@ async fn a_user_key_cannot_create_outside_its_root() {
     let tenant_writer = tenant_key(
         &app,
         admin,
-        Role::Writer,
+        Role::Contributor,
         "tw",
-        vec![grant(by_name("crew"), Role::Writer)],
+        vec![grant(by_name("crew"), Role::Submitter)],
     )
     .await;
     assert!(matches!(
@@ -839,7 +839,7 @@ async fn a_user_keys_write_into_universe_is_universe_refused() {
     let tenant = tenant_key(
         &app,
         &boot.admin_key.value,
-        Role::Writer,
+        Role::Contributor,
         "tw",
         vec![node_grant(by_name("universe"), Role::Reader)],
     )
@@ -1820,10 +1820,10 @@ async fn same_user_is_one_rule_for_claim_approvals_transitions_and_edges() {
     let crew_writer = tenant_key(
         &app,
         admin,
-        Role::Writer,
+        Role::Contributor,
         "crew/loader",
         vec![
-            grant(by_name("alice"), Role::Writer),
+            grant(by_name("alice"), Role::Submitter),
             grant(by_name("alice"), Role::Reader),
         ],
     )
@@ -2065,7 +2065,7 @@ async fn each_session_key_of_a_person_is_read_in_a_user_root_as_that_persons_key
             }
             Err(AppError::NotFound) => Answer::NotFound,
             Err(AppError::GrantRefused {
-                needed_role: Role::Writer,
+                needed_role: Role::Contributor,
                 ..
             }) => Answer::GrantRefused,
             Err(AppError::UserRootRefused) => Answer::UserRootRefused,
@@ -2180,7 +2180,7 @@ async fn linking_an_agent_held_key_is_refused() {
     let admin = boot.admin_key.value.as_str();
     let ops = console_admin(&app, admin, "ops").await;
     signed_in(&app, admin, "alice", false).await;
-    let agent = tenant_key(&app, admin, Role::Writer, "alice/agent", Vec::new()).await;
+    let agent = tenant_key(&app, admin, Role::Contributor, "alice/agent", Vec::new()).await;
     let user_key = user_writer(&app, admin, "alice", "alice/laptop").await;
     let head = store
         .events_range(boot.tenant_id, 1, 10_000)
@@ -2528,10 +2528,10 @@ async fn a_linked_key_writes_into_its_persons_root_and_an_unlinked_one_is_refuse
                 user: None,
                 used_by: Some(UsedBy::Person),
                 ..user_req(
-                    Role::Writer,
+                    Role::Contributor,
                     "unused",
                     "alice/desk",
-                    vec![grant(by_name("alice"), Role::Writer)],
+                    vec![grant(by_name("alice"), Role::Submitter)],
                 )
             },
         )
@@ -2679,11 +2679,11 @@ async fn team_with_alices_linked_writer(
                 user: None,
                 used_by: Some(UsedBy::Person),
                 ..user_req(
-                    Role::Writer,
+                    Role::Contributor,
                     "unused",
                     "alice/team",
                     vec![
-                        grant(by_name("team"), Role::Writer),
+                        grant(by_name("team"), Role::Submitter),
                         grant(by_name("team"), Role::Reader),
                     ],
                 )
@@ -2796,11 +2796,11 @@ async fn the_same_user_mark_survives_an_unlink_between_the_write_and_the_approva
                 user: None,
                 used_by: Some(UsedBy::Person),
                 ..user_req(
-                    Role::Writer,
+                    Role::Contributor,
                     "unused",
                     "alice/desk",
                     vec![
-                        grant(by_name("alice"), Role::Writer),
+                        grant(by_name("alice"), Role::Submitter),
                         grant(by_name("alice"), Role::Reader),
                     ],
                 )
@@ -3031,11 +3031,11 @@ async fn team_with_alices_session_and_bobs_writer(
                 user: None,
                 used_by: Some(UsedBy::Person),
                 ..user_req(
-                    Role::Writer,
+                    Role::Contributor,
                     "unused",
                     "bob/team",
                     vec![
-                        grant(by_name("team"), Role::Writer),
+                        grant(by_name("team"), Role::Submitter),
                         grant(by_name("team"), Role::Reader),
                     ],
                 )
@@ -4487,9 +4487,9 @@ async fn a_writer_that_cannot_read_its_workspace_previews_a_guardrail_with_no_se
     let writer = tenant_key(
         &app,
         admin,
-        Role::Writer,
+        Role::Contributor,
         "team-writer",
-        vec![grant(by_name("team"), Role::Writer)],
+        vec![grant(by_name("team"), Role::Submitter)],
     )
     .await;
     let req = guardrail("g1", "Never force-push.", Some("team"));
@@ -4565,11 +4565,11 @@ async fn a_persons_web_key_supersedes_their_linked_tenant_keys_row_held() {
                 user: None,
                 used_by: Some(UsedBy::Person),
                 ..user_req(
-                    Role::Writer,
+                    Role::Contributor,
                     "unused",
                     "alice/desk",
                     vec![
-                        grant(by_name("alice"), Role::Writer),
+                        grant(by_name("alice"), Role::Submitter),
                         grant(by_name("alice"), Role::Reader),
                     ],
                 )
@@ -4703,12 +4703,12 @@ async fn a_skill_preview_never_names_a_skill_the_key_cannot_read() {
         .to_string();
     let rw = |node: &str| {
         vec![
-            grant(by_name(node), Role::Writer),
+            grant(by_name(node), Role::Submitter),
             grant(by_name(node), Role::Reader),
         ]
     };
-    let team_writer = tenant_key(&app, admin, Role::Writer, "team/writer", rw("team")).await;
-    let sub_writer = tenant_key(&app, admin, Role::Writer, "sub/writer", rw(&sub)).await;
+    let team_writer = tenant_key(&app, admin, Role::Contributor, "team/writer", rw("team")).await;
+    let sub_writer = tenant_key(&app, admin, Role::Contributor, "sub/writer", rw(&sub)).await;
     let reviewer = person_tenant_key(
         &app,
         admin,
@@ -4989,11 +4989,11 @@ async fn todo_counts_never_count_an_unreadable_workspace() {
                 user: None,
                 used_by: Some(UsedBy::Person),
                 ..user_req(
-                    Role::Writer,
+                    Role::Contributor,
                     "unused",
                     "bob/other",
                     vec![
-                        grant(by_name("other"), Role::Writer),
+                        grant(by_name("other"), Role::Submitter),
                         grant(by_name("other"), Role::Reader),
                     ],
                 )

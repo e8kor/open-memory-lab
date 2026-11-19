@@ -717,7 +717,7 @@ async fn held_in_workspaces(rig: &Rig, n: usize) {
             rig.admin.as_str(),
             &IssueKeyRequest {
                 profile: None,
-                role: Role::Writer,
+                role: Role::Contributor,
                 name: Name::parse("alice-bench-writer").expect("a name"),
                 principal: "bench/writer".to_owned(),
                 used_by: Some(UsedBy::Agent),
@@ -725,7 +725,7 @@ async fn held_in_workspaces(rig: &Rig, n: usize) {
                 crew: None,
                 grants: vec![GrantRequest {
                     node: root.clone(),
-                    role: Role::Writer,
+                    role: Role::Submitter,
                     deny: Vec::new(),
                     covers: Covers::Subtree,
                 }],
@@ -1067,7 +1067,7 @@ async fn the_catalog_pages_read_costs_the_gate_the_listing_and_on_the_first_page
             rig.admin.as_str(),
             &IssueKeyRequest {
                 profile: None,
-                role: Role::Writer,
+                role: Role::Contributor,
                 name: Name::parse("alice-catalog-writer").expect("a name"),
                 principal: "catalog/writer".to_owned(),
                 used_by: Some(UsedBy::Agent),
@@ -1075,7 +1075,7 @@ async fn the_catalog_pages_read_costs_the_gate_the_listing_and_on_the_first_page
                 crew: None,
                 grants: vec![GrantRequest {
                     node: root.clone(),
-                    role: Role::Writer,
+                    role: Role::Submitter,
                     deny: Vec::new(),
                     covers: Covers::Subtree,
                 }],

@@ -544,7 +544,7 @@ fn whoami_fixture_counting(
         .expect("a listener on an ephemeral port");
     let server = format!("http://{}", listener.local_addr().expect("its address"));
     let mut me = serde_json::json!({
-        "key_id": "key_w", "name": "writer", "role": "writer", "principal": "p",
+        "key_id": "key_w", "name": "contributor", "role": "contributor", "principal": "p",
         "used_by": "agent", "tenant": {"id": "t1", "name": "oml"},
         "default_workspace": null, "crew": null, "user": null, "grants": [],
     });

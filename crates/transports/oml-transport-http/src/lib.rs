@@ -4572,26 +4572,27 @@ fn parse_covers(index: usize, covers: Option<&str>) -> Result<Covers, ApiError> 
 fn parse_role(role: &str) -> Result<Role, ApiError> {
     match role {
         "reader" => Ok(Role::Reader),
-        "writer" => Ok(Role::Writer),
+        "contributor" => Ok(Role::Contributor),
+        "submitter" => Ok(Role::Submitter),
         "reviewer" => Ok(Role::Reviewer),
         "admin" => Ok(Role::Admin),
         "operator" => Ok(Role::Operator),
         other => Err(ApiError::validation(format!(
-            "role must be one of reader, writer, reviewer, admin, operator — not {other:?}"
+            "role must be one of reader, contributor, submitter, reviewer, admin, operator — not {other:?}"
         ))),
     }
 }
 
-/// A grant role is reader, writer or reviewer, never admin or operator
-/// (openapi.yaml `GrantRequest.role`); whether the key role admits it is the
-/// app's issuance check.
+/// A grant role is reader, submitter or reviewer, never contributor, admin
+/// or operator (openapi.yaml `GrantRequest.role`; ADR-0093 d1); whether the
+/// key role admits it is the app's issuance check.
 fn parse_grant_role(role: &str) -> Result<Role, ApiError> {
     match role {
         "reader" => Ok(Role::Reader),
-        "writer" => Ok(Role::Writer),
+        "submitter" => Ok(Role::Submitter),
         "reviewer" => Ok(Role::Reviewer),
         other => Err(ApiError::validation(format!(
-            "a grant role is one of reader, writer, reviewer — not {other:?}"
+            "a grant role is one of reader, submitter, reviewer — not {other:?}"
         ))),
     }
 }
@@ -6133,7 +6134,7 @@ mod tests {
             grant: Grant {
                 grant_id: Uuid::from_u128(1),
                 node: Uuid::from_u128(2),
-                role: Role::Writer,
+                role: Role::Submitter,
                 deny: vec![sealed],
                 covers: Covers::Subtree,
             },
@@ -6144,7 +6145,7 @@ mod tests {
             json!({
                 "grant_id": Uuid::from_u128(1),
                 "workspace_node_id": Uuid::from_u128(2),
-                "role": "writer",
+                "role": "submitter",
                 "covers": "subtree",
                 "epoch": 41,
             })

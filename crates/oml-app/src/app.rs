@@ -705,12 +705,12 @@ fn require_admissible(key: &KeyRecord, needed: Role, verb: &'static str) -> Resu
     }
 }
 
-/// The role the refusal order reads for `needed`: a curator key's writer
-/// grants confer the writer verbs, which a reviewer's ceiling would refuse
-/// (ADR-0030 d8).
+/// The role the refusal order reads for `needed`: a curator key's submitter
+/// grants confer the submitter verbs, which a reviewer's ceiling would refuse
+/// (ADR-0030 d8; ADR-0093 d6).
 fn ceiling_role(key: &KeyRecord, needed: Role) -> Role {
-    if key.profile == Some(KeyProfile::Curator) && needed == Role::Writer {
-        Role::Writer
+    if key.profile == Some(KeyProfile::Curator) && needed == Role::Submitter {
+        Role::Submitter
     } else {
         key.role
     }
@@ -814,6 +814,7 @@ fn issuance_refusal(refusal: IssuanceRefusal) -> AppError {
             admissible,
             grant_index,
         },
+        IssuanceRefusal::ContributorGrants => AppError::ContributorGrants,
     }
 }
 
@@ -3477,7 +3478,7 @@ where
         let checked: Vec<Grant> = if req.profile == Some(KeyProfile::Curator) {
             grants
                 .iter()
-                .filter(|g| g.role != Role::Writer)
+                .filter(|g| g.role != Role::Submitter)
                 .cloned()
                 .collect()
         } else {
@@ -3857,11 +3858,12 @@ where
         in_progress: bool,
     ) -> Result<CreatedWorkspace, AppError> {
         let key = &caller.key;
-        // A user key with the writer role creates inside its own root, by
-        // its effective access on the parent; every other key by the admin
-        // key role (ADR-0044 d6).
+        // A user key with the contributor role creates inside its own root,
+        // by its effective access on the parent, since it acts on a tree it
+        // must read; every other key by the admin key role (ADR-0044 d6;
+        // ADR-0093 d6).
         let parent_id = match key.user {
-            Some(root) if key.role == Role::Writer => {
+            Some(root) if key.role == Role::Contributor => {
                 // Crew metadata stays a governed admin act (ADR-0044 d6).
                 if crew.is_some() {
                     return Err(AppError::VerbCeiling {
@@ -3873,7 +3875,7 @@ where
                     Some(parent) => self.resolve(key, NamedKind::Workspace, parent).await?,
                     None => root,
                 };
-                self.require_access(caller, parent_id, Role::Writer, "create_workspace")
+                self.require_access(caller, parent_id, Role::Submitter, "create_workspace")
                     .await?;
                 Some(parent_id)
             }
@@ -5895,7 +5897,7 @@ where
         // reviewer key keeps the verb ceiling (ADR-0082 d2, d8 item 5, d10).
         let session_reviewer = session_reviewer_starts_claims(key);
         if !session_reviewer {
-            require_admissible(key, Role::Writer, "submit")?;
+            require_admissible(key, Role::Submitter, "submit")?;
         }
         // The body's workspace, by id or name, resolves after step 1 and
         // before the record is looked up, so either spelling is one request
@@ -5913,7 +5915,7 @@ where
                 refused => refused,
             }
         } else {
-            self.require_access(&caller, workspace_id, Role::Writer, "submit")
+            self.require_access(&caller, workspace_id, Role::Submitter, "submit")
                 .await
         };
         // A memory is started in a user root by its own user's keys only.
@@ -9339,7 +9341,7 @@ where
         let key = &caller.key;
         let admissible = admissible_grant_roles(key.role);
         let reviewer = admissible.contains(&Role::Reviewer);
-        if !reviewer && !admissible.contains(&Role::Writer) {
+        if !reviewer && !admissible.contains(&Role::Submitter) {
             return Err(AppError::VerbCeiling {
                 role: key.role,
                 verb: "source_check",
@@ -9387,7 +9389,7 @@ where
             if target.author_key_id != key.key_id {
                 return Err(AppError::AuthorOnly);
             }
-            self.require_access(&caller, target.workspace_id, Role::Writer, "source_check")
+            self.require_access(&caller, target.workspace_id, Role::Submitter, "source_check")
                 .await?;
         }
         let invalid = |reason: &str| AppError::SourceCheckInvalid {
@@ -9861,7 +9863,7 @@ where
         let key = &caller.key;
         let admissible = admissible_grant_roles(key.role);
         let reviewer = admissible.contains(&Role::Reviewer);
-        if !reviewer && !admissible.contains(&Role::Writer) {
+        if !reviewer && !admissible.contains(&Role::Submitter) {
             return Err(AppError::VerbCeiling {
                 role: key.role,
                 verb: "supersede",
@@ -9951,7 +9953,7 @@ where
             if !own {
                 return Err(AppError::AuthorOnly);
             }
-            self.require_access(&caller, target.workspace_id, Role::Writer, "supersede")
+            self.require_access(&caller, target.workspace_id, Role::Submitter, "supersede")
                 .await?;
         }
         // Step 5, in its order: the scope is the target's workspace, the
@@ -11894,7 +11896,7 @@ where
             let ids: Vec<Uuid> = ancestry.iter().map(|w| w.workspace_id).collect();
             let effective = effective_roles(&grants, &denials, &ids);
             for (role, names) in [
-                (Role::Writer, &mut view.writes_in),
+                (Role::Submitter, &mut view.writes_in),
                 (Role::Reader, &mut view.reads_in),
                 (Role::Reviewer, &mut view.proposes_in),
             ] {

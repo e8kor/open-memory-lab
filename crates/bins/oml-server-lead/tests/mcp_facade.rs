@@ -138,13 +138,13 @@ async fn call_tool(router: &Router, token: &str, id: u64, name: &str, args: Valu
 
 /// Bootstrap, one crew workspace, and a writer, reviewer and reader key on it.
 async fn crew(router: &Router) -> (String, String, String, Uuid) {
-    crew_with_writer_grants(router, &["writer"]).await
+    crew_with_writer_grants(router, &["submitter"]).await
 }
 
 /// The crew of [`crew`] with its writer an agent that remembers and recalls
 /// on one key: a writer-role key admits reader grants (ADR-0025 d1).
 async fn agent_crew(router: &Router) -> (String, String, String, Uuid) {
-    crew_with_writer_grants(router, &["writer", "reader"]).await
+    crew_with_writer_grants(router, &["submitter", "reader"]).await
 }
 
 async fn crew_with_writer_grants(
@@ -185,7 +185,7 @@ async fn crew_and_admin(
     let crew = Uuid::parse_str(wa["id"].as_str().expect("workspace id")).expect("uuid");
     let mut keys = Vec::new();
     for (role, principal, grants) in [
-        ("writer", "crew/agent-7", writer_grants),
+        ("contributor", "crew/agent-7", writer_grants),
         ("reviewer", "crew/reviewer-3", &["reviewer"][..]),
         ("reader", "crew/agent-recall", &["reader"][..]),
     ] {
@@ -212,7 +212,7 @@ async fn crew_and_admin(
     }
     let reader = keys.pop().expect("reader");
     let reviewer = keys.pop().expect("reviewer");
-    let writer = keys.pop().expect("writer");
+    let writer = keys.pop().expect("contributor");
     ((writer, reviewer, reader, crew), admin)
 }
 
@@ -1736,12 +1736,12 @@ async fn oml_write_by_a_tenant_key_starts_no_memory_in_a_users_root_and_its_revi
     let Some((router, db)) = fresh_router().await else {
         return;
     };
-    let (_, admin) = crew_and_admin(&router, &["writer"]).await;
+    let (_, admin) = crew_and_admin(&router, &["contributor"]).await;
     let mut keys = Vec::new();
     for (name, role, user, workspace) in [
-        ("alice-laptop", "writer", Some("alice"), "alice"),
+        ("alice-laptop", "contributor", Some("alice"), "alice"),
         ("alice-review", "reviewer", Some("alice"), "alice"),
-        ("crew-loader", "writer", None, "universe"),
+        ("crew-loader", "contributor", None, "universe"),
         ("crew-editor", "reviewer", None, "universe"),
     ] {
         let mut body = json!({
@@ -2062,7 +2062,7 @@ async fn oml_read_recall_and_scoped_listing_are_refused_without_a_reader_grant_a
         return;
     };
     // The writer here holds a writer grant alone.
-    let ((writer, reviewer, _, _), admin) = crew_and_admin(&router, &["writer"]).await;
+    let ((writer, reviewer, _, _), admin) = crew_and_admin(&router, &["contributor"]).await;
     ratified(&router, &writer, &reviewer).await;
 
     let recall = json!({"query": "aluminium price"});
@@ -2376,17 +2376,17 @@ async fn oml_workspace_without_an_argument_describes_the_default_workspace() {
     };
     let agent = issue(
         "agent",
-        "writer",
+        "contributor",
         json!([
-            {"workspace": crew, "role": "writer"},
+            {"workspace": crew, "role": "submitter"},
             {"workspace": crew, "role": "reader"},
         ]),
     )
     .await;
     let writer = issue(
-        "writer",
-        "writer",
-        json!([{"workspace": crew, "role": "writer"}]),
+        "contributor",
+        "contributor",
+        json!([{"workspace": crew, "role": "submitter"}]),
     )
     .await;
     let unscoped = issue("unscoped", "reader", json!([])).await;
@@ -3873,7 +3873,7 @@ async fn oml_workspace_serves_the_policy_the_live_proposals_and_the_brief_as_cla
         return;
     };
     let ((writer, reviewer, _reader, crew), admin) =
-        crew_and_admin(&router, &["writer", "reader"]).await;
+        crew_and_admin(&router, &["contributor", "reader"]).await;
     let artifact = ratified(&router, &writer, &reviewer).await;
     let mut curators = Vec::new();
     for name in ["dora", "dan"] {

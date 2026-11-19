@@ -227,10 +227,10 @@ async fn world() -> Option<World> {
             &rig.router,
             &admin,
             "scribe",
-            "writer",
+            "contributor",
             "crew/scribe",
             "agent",
-            on(&["writer", "reader"]),
+            on(&["contributor", "reader"]),
         )
         .await,
     );
@@ -693,10 +693,10 @@ async fn the_rescan_finds_what_admission_finds_in_a_titled_json_claim() {
             &rig.router,
             &admin,
             "scribe",
-            "writer",
+            "contributor",
             "crew/scribe",
             "agent",
-            on(&["writer", "reader"]),
+            on(&["contributor", "reader"]),
         )
         .await,
     );

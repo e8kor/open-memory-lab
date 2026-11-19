@@ -337,7 +337,7 @@ async fn issue_key(rig: &Rig, cookie: &str, suffix: &str) -> (StatusCode, Value)
             "web",
             "POST",
             "/v2/keys",
-            Some(json!({"name": format!("{user}-{suffix}"), "role": "writer"})),
+            Some(json!({"name": format!("{user}-{suffix}"), "role": "contributor"})),
         ),
     )
     .await;
@@ -1457,7 +1457,7 @@ async fn issue_key_under(
         "web",
         "POST",
         "/v2/keys",
-        Some(json!({"name": format!("{user}-{suffix}"), "role": "writer"})),
+        Some(json!({"name": format!("{user}-{suffix}"), "role": "contributor"})),
     );
     request
         .headers_mut()

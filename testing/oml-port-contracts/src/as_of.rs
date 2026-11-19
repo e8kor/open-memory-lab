@@ -109,9 +109,9 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
         let writer = issue(
             &app,
             &admin,
-            Role::Writer,
+            Role::Contributor,
             UsedBy::Agent,
-            vec![grant(root, Role::Writer), grant(root, Role::Reader)],
+            vec![grant(root, Role::Submitter), grant(root, Role::Reader)],
         )
         .await;
         let reviewer = issue(
@@ -1006,9 +1006,9 @@ pub async fn a_read_at_an_ancestor_serves_a_descendant_in_progress_subtree_besid
     let second = issue(
         &w.app,
         &w.admin,
-        Role::Writer,
+        Role::Contributor,
         UsedBy::Agent,
-        vec![grant(w.home, Role::Writer), grant(w.home, Role::Reader)],
+        vec![grant(w.home, Role::Submitter), grant(w.home, Role::Reader)],
     )
     .await;
     let inside = w

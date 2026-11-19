@@ -150,9 +150,9 @@ async fn tenant(app: &LeadApp, name: &str) -> Tenant {
     let writer = issue(
         app,
         &boot,
-        "writer",
-        Role::Writer,
-        &[Role::Writer, Role::Reader],
+        "contributor",
+        Role::Contributor,
+        &[Role::Submitter, Role::Reader],
     )
     .await;
     let reader = issue(app, &boot, "reader", Role::Reader, &[Role::Reader]).await;

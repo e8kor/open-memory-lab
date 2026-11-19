@@ -622,7 +622,7 @@ async fn the_startup_names_check_passes_on_a_deployment_this_build_bootstrapped(
     let router = &rig.router;
     let (admin, _tenant, root) = bootstrap(router).await;
     let crew = create_workspace(router, &admin, root, "metals-crew").await;
-    issue_key(router, &admin, "writer", "crew/agent-7", crew).await;
+    issue_key(router, &admin, "contributor", "crew/agent-7", crew).await;
 
     let tenants = enumerate_tenants(rig.store.pool()).await.expect("tenants");
     assert_eq!(startup_names_check(&rig.store, &tenants).await, Ok(()));
@@ -1143,7 +1143,7 @@ async fn full_happy_path_over_http() {
     assert_envelope(&body, "access.role_exclusive");
 
     let quotes = create_workspace(router, &admin, crew, "quotes").await;
-    let writer = issue_key(router, &admin, "writer", "crew/agent-7", crew).await;
+    let writer = issue_key(router, &admin, "contributor", "crew/agent-7", crew).await;
     let reviewer = issue_key(router, &admin, "reviewer", "crew/reviewer-3", crew).await;
     let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
 
@@ -1776,7 +1776,7 @@ async fn workspace_unresolved_is_422() {
 
     // A zero-grant key has no default workspace, and never inherits the
     // issuer's (ADR-0025 d2).
-    let issued = issue_key_with(router, &admin, "writer", "crew/no-default", json!([])).await;
+    let issued = issue_key_with(router, &admin, "contributor", "crew/no-default", json!([])).await;
     assert_eq!(issued["default_workspace_id"], Value::Null, "{issued}");
     assert_eq!(issued["grants"], json!([]), "{issued}");
     let token = issued["value"].as_str().expect("show-once value");
@@ -1995,10 +1995,10 @@ async fn agent_on(router: &Router, admin: &str, principal: &str, node: Uuid) -> 
     issue_key_with(
         router,
         admin,
-        "writer",
+        "contributor",
         principal,
         json!([
-            { "workspace": node, "role": "writer" },
+            { "workspace": node, "role": "submitter" },
             { "workspace": node, "role": "reader" },
         ]),
     )
@@ -2251,8 +2251,8 @@ async fn a_value_that_is_neither_an_id_nor_a_name_is_request_validation_naming_i
             "/v2/keys".to_owned(),
             issue(
                 "key-grant",
-                json!({ "role": "writer", "name": "agent-1", "grants": [
-                    { "workspace": crew, "role": "writer" },
+                json!({ "role": "contributor", "name": "agent-1", "grants": [
+                    { "workspace": crew, "role": "submitter" },
                     { "workspace": path, "role": "reader" },
                 ] }),
             ),
@@ -2263,8 +2263,8 @@ async fn a_value_that_is_neither_an_id_nor_a_name_is_request_validation_naming_i
             "/v2/keys".to_owned(),
             issue(
                 "key-deny",
-                json!({ "role": "writer", "name": "agent-2", "grants": [
-                    { "workspace": crew, "role": "writer", "deny": [{ "workspace": version_8 }] },
+                json!({ "role": "contributor", "name": "agent-2", "grants": [
+                    { "workspace": crew, "role": "submitter", "deny": [{ "workspace": version_8 }] },
                 ] }),
             ),
             "/grants/0/deny/0/workspace",
@@ -2274,8 +2274,8 @@ async fn a_value_that_is_neither_an_id_nor_a_name_is_request_validation_naming_i
             "/v2/keys".to_owned(),
             issue(
                 "key-default",
-                json!({ "role": "writer", "name": "agent-3", "default_workspace": path, "grants": [
-                    { "workspace": crew, "role": "writer" },
+                json!({ "role": "contributor", "name": "agent-3", "default_workspace": path, "grants": [
+                    { "workspace": crew, "role": "submitter" },
                 ] }),
             ),
             "/default_workspace",
@@ -2285,7 +2285,7 @@ async fn a_value_that_is_neither_an_id_nor_a_name_is_request_validation_naming_i
             "/v2/keys".to_owned(),
             issue(
                 "key-crew",
-                json!({ "role": "writer", "name": "agent-4", "crew": path, "grants": [] }),
+                json!({ "role": "contributor", "name": "agent-4", "crew": path, "grants": [] }),
             ),
             "/crew",
         ),
@@ -2435,13 +2435,13 @@ async fn get_v2_keys_by_name_answers_the_key() {
         "POST",
         "/v2/keys",
         Call::auth(&admin).idem("issue-laptop").body(json!({
-            "role": "writer",
+            "role": "contributor",
             "name": "claude-laptop",
             "principal": "claude/laptop",
             "used_by": "agent",
             "crew": "metals-crew",
             "grants": [
-                { "workspace": "metals-crew", "role": "writer" },
+                { "workspace": "metals-crew", "role": "submitter" },
                 { "workspace": "metals-crew", "role": "reader" },
             ],
             "default_workspace": "q1-2027",
@@ -2482,7 +2482,7 @@ async fn get_v2_keys_by_name_answers_the_key() {
         json!({
             "key_id": key_id,
             "name": "claude-laptop",
-            "role": "writer",
+            "role": "contributor",
             "principal": "claude/laptop",
             "crew_id": crew_record["crew_id"],
             "user": null,
@@ -2614,9 +2614,9 @@ async fn get_v2_keys_by_name_answers_a_revoked_key_with_its_revoked_at() {
     let issued = issue_key_with(
         router,
         &admin,
-        "writer",
+        "contributor",
         "claude/laptop",
-        json!([{ "workspace": crew, "role": "writer" }]),
+        json!([{ "workspace": crew, "role": "submitter" }]),
     )
     .await;
     let key_id = Uuid::parse_str(issued["key_id"].as_str().expect("key id")).expect("uuid");
@@ -3021,10 +3021,10 @@ async fn the_issuance_response_echoes_stored_grant_ids_and_epochs() {
     let issued = issue_key_with(
         router,
         &admin,
-        "writer",
+        "contributor",
         "crew/agent-7",
         json!([
-            { "workspace": crew, "role": "writer" },
+            { "workspace": crew, "role": "submitter" },
             { "workspace": crew, "role": "reader" },
         ]),
     )
@@ -3060,7 +3060,7 @@ async fn the_issuance_response_echoes_stored_grant_ids_and_epochs() {
     );
     assert_eq!(issued["epoch"].as_u64(), Some(stored.issued_seq + 2));
     assert_eq!(head_seq(&rig, tenant).await, stored.issued_seq + 2);
-    assert_eq!(issued["grants"][0]["role"], "writer");
+    assert_eq!(issued["grants"][0]["role"], "contributor");
     assert_eq!(issued["grants"][1]["role"], "reader");
     assert_eq!(issued["grants"][0]["workspace_node_id"], crew.to_string());
     // The default the server chose and the attestation as journalled: none
@@ -3084,10 +3084,10 @@ async fn a_deny_mask_on_issuance_is_stored_never_dropped() {
     let issued = issue_key_with(
         router,
         &admin,
-        "writer",
+        "contributor",
         "crew/agent-7",
         json!([
-            { "workspace": crew, "role": "writer", "deny": [{ "workspace": sealed }] },
+            { "workspace": crew, "role": "submitter", "deny": [{ "workspace": sealed }] },
             { "workspace": crew, "role": "reader", "deny": [{ "workspace": sealed }] },
         ]),
     )
@@ -3145,9 +3145,9 @@ async fn an_unknown_issuance_field_is_request_validation() {
     // ignored, so no field the issuer meant is silently dropped (ADR-0025
     // d16).
     for (n, body) in [
-        json!({ "role": "writer", "name": "agent-1", "scopes": ["all"] }),
-        json!({ "role": "writer", "name": "agent-2", "grants": [{ "workspace": crew, "role": "writer", "expires": "never" }] }),
-        json!({ "role": "writer", "name": "agent-3", "grants": [{ "workspace": crew, "role": "writer", "deny": [{ "node": crew }] }] }),
+        json!({ "role": "contributor", "name": "agent-1", "scopes": ["all"] }),
+        json!({ "role": "submitter", "name": "agent-2", "grants": [{ "workspace": crew, "role": "submitter", "expires": "never" }] }),
+        json!({ "role": "submitter", "name": "agent-3", "grants": [{ "workspace": crew, "role": "submitter", "deny": [{ "node": crew }] }] }),
     ]
     .into_iter()
     .enumerate()
@@ -3180,7 +3180,7 @@ async fn a_key_issuance_without_a_name_is_request_validation_naming_name_and_jou
     let router = &rig.router;
     let (admin, tenant, crew) = crew_tenant(router).await;
     let head = head_seq(&rig, tenant).await;
-    let grants = json!([{ "workspace": crew, "role": "writer" }]);
+    let grants = json!([{ "workspace": crew, "role": "submitter" }]);
     for (n, name) in [
         Value::Null,
         json!("Claude Laptop"),
@@ -3189,7 +3189,7 @@ async fn a_key_issuance_without_a_name_is_request_validation_naming_name_and_jou
     .into_iter()
     .enumerate()
     {
-        let mut body = json!({ "role": "writer", "principal": "claude/laptop", "grants": grants });
+        let mut body = json!({ "role": "contributor", "principal": "claude/laptop", "grants": grants });
         if !name.is_null() {
             body["name"] = name;
         }
@@ -3220,7 +3220,7 @@ async fn a_key_issuance_without_a_name_is_request_validation_naming_name_and_jou
     assert_eq!(refused["error"]["details"]["field"], "/name", "{refused}");
     assert_eq!(head_seq(&rig, tenant).await, head, "nothing journalled");
 
-    let issued = issue_key_with(router, &admin, "writer", "claude/laptop", grants.clone()).await;
+    let issued = issue_key_with(router, &admin, "contributor", "claude/laptop", grants.clone()).await;
     let key_id = Uuid::parse_str(issued["key_id"].as_str().expect("key id")).expect("uuid");
     let stored = rig
         .store
@@ -3237,7 +3237,7 @@ async fn a_key_issuance_without_a_name_is_request_validation_naming_name_and_jou
         "POST",
         "/v2/keys",
         Call::auth(&admin).idem("taken").body(json!({
-            "role": "writer",
+            "role": "contributor",
             "name": "writer-claude-laptop",
             "principal": "claude/other",
             "grants": grants,
@@ -3350,7 +3350,7 @@ async fn access_refusals_carry_their_recovery_details() {
         "POST",
         "/v2/keys",
         Call::auth(&admin).idem("k-1").body(json!({
-            "role": "writer",
+            "role": "contributor",
             "name": "k-1",
             "grants": [
                 { "workspace": crew, "role": "reader" },
@@ -3363,7 +3363,7 @@ async fn access_refusals_carry_their_recovery_details() {
     assert_envelope(&body, "access.issuer_ceiling");
     assert_eq!(
         body["error"]["details"],
-        json!({ "role": "reviewer", "admissible": ["reader", "writer"], "grant_index": 1 })
+        json!({ "role": "reviewer", "admissible": ["reader", "contributor"], "grant_index": 1 })
     );
     // A key role above the issuer's: the requested role and the issuable set.
     let (status, _, body) = send(
@@ -3379,17 +3379,17 @@ async fn access_refusals_carry_their_recovery_details() {
     assert_envelope(&body, "access.issuer_ceiling");
     assert_eq!(
         body["error"]["details"],
-        json!({ "role": "operator", "admissible": ["reader", "writer", "reviewer", "admin"] })
+        json!({ "role": "operator", "admissible": ["reader", "contributor", "reviewer", "admin"] })
     );
     // A deny outside its grant, and a default no grant covers.
     for (idem, body) in [
         (
             "k-3",
-            json!({ "role": "writer", "name": "k-3", "grants": [{ "workspace": quotes, "role": "writer", "deny": [{ "workspace": crew }] }] }),
+            json!({ "role": "submitter", "name": "k-3", "grants": [{ "workspace": quotes, "role": "submitter", "deny": [{ "workspace": crew }] }] }),
         ),
         (
             "k-4",
-            json!({ "role": "writer", "name": "k-4", "grants": [{ "workspace": quotes, "role": "writer" }], "default_workspace": crew }),
+            json!({ "role": "submitter", "name": "k-4", "grants": [{ "workspace": quotes, "role": "submitter" }], "default_workspace": crew }),
         ),
     ] {
         let (status, _, refused) = send(
@@ -3407,11 +3407,11 @@ async fn access_refusals_carry_their_recovery_details() {
     let issued = issue_key_with(
         router,
         &admin,
-        "writer",
+        "contributor",
         "crew/agent-7",
         json!([
             { "workspace": crew, "role": "reader" },
-            { "workspace": quotes, "role": "writer" },
+            { "workspace": quotes, "role": "submitter" },
         ]),
     )
     .await;
@@ -3428,7 +3428,7 @@ async fn access_refusals_carry_their_recovery_details() {
     assert_envelope(&body, "access.grant_refused");
     assert_eq!(
         body["error"]["details"],
-        json!({ "workspace_id": crew.to_string(), "needed_role": "writer" })
+        json!({ "workspace_id": crew.to_string(), "needed_role": "contributor" })
     );
 
     drop_db(&rig.db_name).await;
@@ -3575,19 +3575,19 @@ async fn tail_rig() -> Option<TailRig> {
     let agent = tail_key(
         router,
         &admin,
-        "writer",
+        "contributor",
         "crew/agent-7",
         "issue-agent",
-        on_crew(&["writer", "reader"]),
+        on_crew(&["contributor", "reader"]),
     )
     .await;
     let twin = tail_key(
         router,
         &admin,
-        "writer",
+        "contributor",
         "crew/agent-7",
         "issue-twin",
-        on_crew(&["writer", "reader"]),
+        on_crew(&["contributor", "reader"]),
     )
     .await;
     let reviewer = tail_key(
@@ -4196,7 +4196,7 @@ async fn steering_rig() -> Option<(Rig, String, Uuid, Uuid, String, String)> {
     let rig = fresh_rig().await?;
     let (admin, _tenant, crew) = crew_tenant(&rig.router).await;
     let quotes = create_workspace(&rig.router, &admin, crew, "quotes").await;
-    let writer = issue_key(&rig.router, &admin, "writer", "crew/agent-7", crew).await;
+    let writer = issue_key(&rig.router, &admin, "contributor", "crew/agent-7", crew).await;
     let reviewer = issue_key(&rig.router, &admin, "reviewer", "crew/reviewer-3", crew).await;
     Some((rig, admin, crew, quotes, writer, reviewer))
 }
@@ -5415,11 +5415,11 @@ async fn include_unreviewed_never_widens_the_workspaces_served() {
     let (agent, key_id) = key_with(
         router,
         &admin,
-        "writer",
+        "contributor",
         "crew/agent-7",
         "issue-agent",
         json!([
-            { "workspace": crew, "role": "writer" },
+            { "workspace": crew, "role": "submitter" },
             { "workspace": quotes, "role": "reader" },
         ]),
     )
@@ -5862,10 +5862,10 @@ async fn responses_carry_real_version_kind_tokens_and_workspace_path() {
     let agent = issue_key_with(
         router,
         &admin,
-        "writer",
+        "contributor",
         "crew/agent-7",
         json!([
-            { "workspace": crew, "role": "writer" },
+            { "workspace": crew, "role": "submitter" },
             { "workspace": crew, "role": "reader" },
         ]),
     )
@@ -6024,7 +6024,7 @@ async fn the_body_limit_counts_the_nfc_text() {
     };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
-    let writer = issue_key(router, &admin, "writer", "crew/agent-7", crew).await;
+    let writer = issue_key(router, &admin, "contributor", "crew/agent-7", crew).await;
     let submit = |idem: &str, claim_key: &str, body: String| {
         let call = Call::auth(&writer).idem(idem).body(json!({
             "verb": "remember", "claim_key": claim_key, "kind": "memory", "body": body,
@@ -6114,10 +6114,10 @@ async fn crew_given_at_create_is_persisted_and_returned() {
     let agent = issue_key_with(
         router,
         &admin,
-        "writer",
+        "contributor",
         "crew/agent-7",
         json!([
-            { "workspace": crew, "role": "writer" },
+            { "workspace": crew, "role": "submitter" },
             { "workspace": crew, "role": "reader" },
         ]),
     )
@@ -6495,7 +6495,7 @@ async fn a_workspace_on_review_next_is_refused_by_name_until_the_filter_is_built
     };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
-    let writer = issue_key(router, &admin, "writer", "crew/agent-7", crew).await;
+    let writer = issue_key(router, &admin, "contributor", "crew/agent-7", crew).await;
     let reviewer = issue_key(router, &admin, "reviewer", "crew/reviewer-1", crew).await;
     let artifact = remember(router, &writer, "filter-1", "copper closes at 4182", None).await;
 
@@ -6540,7 +6540,7 @@ async fn an_unreadable_workspace_is_not_found() {
     };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
-    let writer = issue_key(router, &admin, "writer", "crew/agent-7", crew).await;
+    let writer = issue_key(router, &admin, "contributor", "crew/agent-7", crew).await;
     let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
 
     let get = |token: &str, id: String| {
@@ -6692,7 +6692,7 @@ async fn own_true_lists_every_state_of_the_keys_own_rows_newest_first() {
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
     // A writer-only key: the own-work listing needs no reader grant.
-    let writer = issue_key(router, &admin, "writer", "crew/agent-7", crew).await;
+    let writer = issue_key(router, &admin, "contributor", "crew/agent-7", crew).await;
     let reviewer = issue_key(router, &admin, "reviewer", "crew/reviewer-3", crew).await;
     let first = remember(
         router,
@@ -6777,11 +6777,11 @@ async fn the_own_listing_covers_every_workspace_the_key_wrote_to() {
     let writer = issue_key_with(
         router,
         &admin,
-        "writer",
+        "contributor",
         "crew/agent-7",
         json!([
-            { "workspace": crew, "role": "writer" },
-            { "workspace": alloys, "role": "writer" },
+            { "workspace": crew, "role": "submitter" },
+            { "workspace": alloys, "role": "submitter" },
         ]),
     )
     .await["value"]
@@ -6845,17 +6845,17 @@ async fn the_own_listing_never_shows_another_keys_row() {
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
     // Two keys of one principal: principal equality never makes a row own.
-    let grants = json!([{ "workspace": crew, "role": "writer" }]);
+    let grants = json!([{ "workspace": crew, "role": "submitter" }]);
     let (one, _) = key_with(
         router,
         &admin,
-        "writer",
+        "contributor",
         "crew/agent-7",
         "k-1",
         grants.clone(),
     )
     .await;
-    let (two, _) = key_with(router, &admin, "writer", "crew/agent-7", "k-2", grants).await;
+    let (two, _) = key_with(router, &admin, "contributor", "crew/agent-7", "k-2", grants).await;
     let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
     let mine = remember(
         router,
@@ -6899,12 +6899,12 @@ async fn a_global_denial_masks_own_rows_in_the_listing() {
     let (writer, key_id) = key_with(
         router,
         &admin,
-        "writer",
+        "contributor",
         "crew/agent-7",
         "k-1",
         json!([
-            { "workspace": crew, "role": "writer" },
-            { "workspace": alloys, "role": "writer" },
+            { "workspace": crew, "role": "submitter" },
+            { "workspace": alloys, "role": "submitter" },
         ]),
     )
     .await;
@@ -6965,12 +6965,12 @@ async fn a_listing_without_own_returns_promoted_tips_in_scope_only() {
     let writer = issue_key_with(
         router,
         &admin,
-        "writer",
+        "contributor",
         "crew/agent-7",
         json!([
-            { "workspace": crew, "role": "writer" },
+            { "workspace": crew, "role": "submitter" },
             { "workspace": crew, "role": "reader" },
-            { "workspace": alloys, "role": "writer" },
+            { "workspace": alloys, "role": "submitter" },
         ]),
     )
     .await["value"]
@@ -7104,17 +7104,17 @@ async fn a_cursor_from_another_key_or_expired_is_request_validation() {
     };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
-    let grants = json!([{ "workspace": crew, "role": "writer" }]);
+    let grants = json!([{ "workspace": crew, "role": "submitter" }]);
     let (writer, key_id) = key_with(
         router,
         &admin,
-        "writer",
+        "contributor",
         "crew/agent-7",
         "k-1",
         grants.clone(),
     )
     .await;
-    let (other, _) = key_with(router, &admin, "writer", "crew/agent-8", "k-2", grants).await;
+    let (other, _) = key_with(router, &admin, "contributor", "crew/agent-8", "k-2", grants).await;
     let mut written = Vec::new();
     for n in 0..3 {
         written.push(
@@ -7243,7 +7243,7 @@ async fn an_operator_key_is_refused_get_with_verb_ceiling() {
     };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
-    let writer = issue_key(router, &admin, "writer", "crew/agent-7", crew).await;
+    let writer = issue_key(router, &admin, "contributor", "crew/agent-7", crew).await;
     let written = remember(
         router,
         &writer,
@@ -7280,7 +7280,7 @@ async fn a_get_with_x_oml_workspace_is_request_validation() {
     };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
-    let writer = issue_key(router, &admin, "writer", "crew/agent-7", crew).await;
+    let writer = issue_key(router, &admin, "contributor", "crew/agent-7", crew).await;
     let written = remember(
         router,
         &writer,
@@ -7322,10 +7322,10 @@ async fn claim_key_filter_lists_one_claims_versions() {
     let writer = issue_key_with(
         router,
         &admin,
-        "writer",
+        "contributor",
         "crew/agent-7",
         json!([
-            { "workspace": crew, "role": "writer" },
+            { "workspace": crew, "role": "submitter" },
             { "workspace": crew, "role": "reader" },
         ]),
     )
@@ -7401,10 +7401,10 @@ async fn supersession_keys(router: &Router, admin: &str, crew: Uuid) -> (String,
         issue_key_with(
             router,
             admin,
-            "writer",
+            "contributor",
             "crew/agent-7",
             json!([
-                { "workspace": crew, "role": "writer" },
+                { "workspace": crew, "role": "submitter" },
                 { "workspace": crew, "role": "reader" },
             ]),
         )
@@ -7748,13 +7748,13 @@ async fn whoami_tenant(router: &Router) -> (String, Uuid, Uuid, Uuid, Value, Val
         "POST",
         "/v2/keys",
         Call::auth(&admin).idem("issue-laptop").body(json!({
-            "role": "writer",
+            "role": "contributor",
             "name": "claude-laptop",
             "principal": "claude/laptop",
             "used_by": "agent",
             "crew": "metals-crew",
             "grants": [
-                { "workspace": "metals-crew", "role": "writer" },
+                { "workspace": "metals-crew", "role": "submitter" },
                 { "workspace": "metals-crew", "role": "reader" },
             ],
             "default_workspace": "q1-2027",
@@ -7786,7 +7786,7 @@ async fn whoami_answers_any_live_key_with_its_tenant_role_name_and_default_works
         json!({
             "key_id": issued["key_id"],
             "name": "claude-laptop",
-            "role": "writer",
+            "role": "contributor",
             "principal": "claude/laptop",
             "used_by": "agent",
             "tenant": { "id": tenant, "name": "test-tenant" },
@@ -7897,10 +7897,10 @@ async fn whoami_serves_each_grant_without_its_deny_masks() {
     let issued = issue_key_with(
         router,
         &admin,
-        "writer",
+        "contributor",
         "crew/agent-7",
         json!([
-            { "workspace": crew, "role": "writer", "deny": [{ "workspace": sealed }] },
+            { "workspace": crew, "role": "submitter", "deny": [{ "workspace": sealed }] },
         ]),
     )
     .await;
@@ -7917,7 +7917,7 @@ async fn whoami_serves_each_grant_without_its_deny_masks() {
         json!([{
             "grant_id": issued["grants"][0]["grant_id"],
             "workspace_node_id": crew.to_string(),
-            "role": "writer",
+            "role": "contributor",
             "covers": "subtree",
             "epoch": issued["grants"][0]["epoch"],
         }]),
@@ -8234,7 +8234,7 @@ async fn a_designed_field_sent_to_a_served_operation_answers_its_v0_3_0_code() {
 
     let router = &doubles_router();
     let (admin, _, root) = bootstrap(router).await;
-    let writer = issue_key(router, &admin, "writer", "agent/sim", root).await;
+    let writer = issue_key(router, &admin, "contributor", "agent/sim", root).await;
     let (status, _, refused) = send(
         router,
         "POST",
@@ -8449,7 +8449,7 @@ async fn every_v0_3_0_reference_spelling_on_the_key_routes_is_refused_naming_its
             1,
             json!({ "role": "reader", "name": "agent-1", "grants": [
                 { "workspace": root, "role": "reader" },
-                { "workarea_node_id": root, "role": "writer" },
+                { "workarea_node_id": root, "role": "contributor" },
             ] }),
             "/grants/1/workarea_node_id",
             "/grants/1/workspace",
@@ -8475,7 +8475,7 @@ async fn every_v0_3_0_reference_spelling_on_the_key_routes_is_refused_naming_its
         )
         .await;
     }
-    issue_key(router, &admin, "writer", "agent/denied", root).await;
+    issue_key(router, &admin, "contributor", "agent/denied", root).await;
     assert_renamed(
         router,
         "/v2/keys/writer-agent-denied/denials",
@@ -8665,10 +8665,10 @@ async fn a_tenant_keys_write_into_a_users_root_is_user_root_refused_and_her_own_
     let alice = issue(
         "alice",
         json!({
-            "role": "writer", "name": "alice-laptop", "principal": "alice/laptop",
+            "role": "contributor", "name": "alice-laptop", "principal": "alice/laptop",
             "user": "alice",
             "grants": [
-                { "workspace": "alice", "role": "writer" },
+                { "workspace": "alice", "role": "submitter" },
                 { "workspace": "alice", "role": "reader" },
             ],
         }),
@@ -8707,7 +8707,7 @@ async fn a_tenant_keys_write_into_a_users_root_is_user_root_refused_and_her_own_
             .expect("value")
             .to_owned()
     };
-    let crew_writer = tenant_key("crew-writer", "writer", root.to_string()).await;
+    let crew_writer = tenant_key("crew-writer", "contributor", root.to_string()).await;
     let crew_reviewer = tenant_key("crew-reviewer", "reviewer", root.to_string()).await;
     let (status, _, shared) = send(
         router,
@@ -8721,7 +8721,7 @@ async fn a_tenant_keys_write_into_a_users_root_is_user_root_refused_and_her_own_
     assert_eq!(status, StatusCode::CREATED, "{shared}");
     let stranger = tenant_key(
         "stranger",
-        "writer",
+        "contributor",
         shared["id"].as_str().expect("id").to_owned(),
     )
     .await;
@@ -8915,12 +8915,12 @@ async fn user_roots_ride_the_wire() {
         &admin,
         "alice",
         json!({
-            "role": "writer",
+            "role": "contributor",
             "name": "alice-laptop",
             "principal": "alice/laptop",
             "user": "alice",
             "grants": [
-                { "workspace": "alice", "role": "writer" },
+                { "workspace": "alice", "role": "submitter" },
                 { "workspace": "alice", "role": "reader" },
             ],
         }),
@@ -9101,11 +9101,11 @@ async fn user_roots_ride_the_wire() {
         &admin,
         "curator",
         json!({
-            "role": "writer",
+            "role": "contributor",
             "name": "curator",
             "principal": "curator",
             "grants": [
-                { "workspace": "universe", "role": "writer", "covers": "node" },
+                { "workspace": "universe", "role": "submitter", "covers": "node" },
                 { "workspace": alice_root, "role": "reader" },
             ],
         }),
@@ -10159,12 +10159,12 @@ impl WebRig {
             Call::auth(&self.admin)
                 .idem(&format!("agent-{name}"))
                 .body(json!({
-                    "role": "writer",
+                    "role": "contributor",
                     "name": name,
                     "principal": name,
                     "user": user,
                     "grants": [
-                        { "workspace": user, "role": "writer" },
+                        { "workspace": user, "role": "submitter" },
                         { "workspace": user, "role": "reader" },
                     ],
                 })),
@@ -10478,9 +10478,9 @@ async fn a_console_request_acts_as_the_key_linked_to_its_person_and_no_other() {
     let agent = issue_key_with(
         &rig.router,
         &rig.admin,
-        "writer",
+        "contributor",
         "payments-bot",
-        json!([{ "workspace": payments, "role": "writer" }]),
+        json!([{ "workspace": payments, "role": "submitter" }]),
     )
     .await;
     let id = |key: &Value| key["key_id"].as_str().expect("key id").to_owned();
@@ -11545,20 +11545,20 @@ async fn a_web_session_key_issues_connects_and_cuts_off_its_own_keys() {
         "/v2/keys",
         web_call(&web)
             .idem("issue-phone")
-            .body(json!({ "name": "alice-phone", "role": "writer" })),
+            .body(json!({ "name": "alice-phone", "role": "contributor" })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{issued}");
     assert_eq!(issued["name"], "alice-phone");
     assert!(issued["value"].is_string(), "{issued}");
     for (body, field) in [
-        (json!({ "name": "phone", "role": "writer" }), "/name"),
+        (json!({ "name": "phone", "role": "contributor" }), "/name"),
         (
-            json!({ "name": "alice-x", "role": "writer", "grants": [{ "workspace": "universe", "role": "writer" }] }),
+            json!({ "name": "alice-x", "role": "submitter", "grants": [{ "workspace": "universe", "role": "submitter" }] }),
             "/grants",
         ),
         (
-            json!({ "name": "alice-y", "role": "writer", "user": "bob" }),
+            json!({ "name": "alice-y", "role": "contributor", "user": "bob" }),
             "/user",
         ),
     ] {
@@ -11959,10 +11959,10 @@ async fn the_widen_hint_is_the_same_over_http_and_mcp_once_the_lead_builds_its_s
     let writer = issue_key_with(
         router,
         &admin,
-        "writer",
+        "contributor",
         "orchard/writer",
         json!([
-            { "workspace": root, "role": "writer" },
+            { "workspace": root, "role": "submitter" },
             { "workspace": root, "role": "reader" },
         ]),
     )

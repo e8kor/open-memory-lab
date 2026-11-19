@@ -657,7 +657,7 @@ pub async fn a_withdrawn_version_leaves_every_review_queue_and_is_kept<S: Journa
     for w in [universe, workspace.clone()] {
         rig.create_workspace(store, w).await;
     }
-    let author = key_record(t, Uuid::from_u128(0x6210), Role::Writer, None);
+    let author = key_record(t, Uuid::from_u128(0x6210), Role::Contributor, None);
     let reviewer = key_record(t, Uuid::from_u128(0x6211), Role::Reviewer, None);
     for key in [author.clone(), reviewer.clone()] {
         rig.issue_key(store, key).await;
@@ -2380,19 +2380,19 @@ pub async fn the_review_queue_serves_no_row_its_own_person_wrote_outside_their_r
     }
     let user_key = KeyRecord {
         user: Some(alice.workspace_id),
-        ..key_record(t, Uuid::from_u128(0x6110), Role::Writer, None)
+        ..key_record(t, Uuid::from_u128(0x6110), Role::Contributor, None)
     };
     let linked = KeyRecord {
         used_by: UsedBy::Person,
-        ..key_record(t, Uuid::from_u128(0x6111), Role::Writer, None)
+        ..key_record(t, Uuid::from_u128(0x6111), Role::Contributor, None)
     };
     let session = KeyRecord {
         credential: Credential::Session,
         key_hash: None,
         session_user: Some(name("alice")),
-        ..key_record(t, Uuid::from_u128(0x6112), Role::Writer, None)
+        ..key_record(t, Uuid::from_u128(0x6112), Role::Contributor, None)
     };
-    let other = key_record(t, Uuid::from_u128(0x6113), Role::Writer, None);
+    let other = key_record(t, Uuid::from_u128(0x6113), Role::Contributor, None);
     for key in [
         user_key.clone(),
         linked.clone(),
@@ -3059,7 +3059,7 @@ pub async fn journal_key_lookup_by_hash<S: JournalStore>(store: &S) {
         profile: None,
         key_id: Uuid::from_u128(0xD9),
         tenant_id: rig.tenant_id,
-        role: oml_app::domain::Role::Writer,
+        role: oml_app::domain::Role::Contributor,
         principal: "wanda".to_owned(),
         used_by: oml_app::domain::UsedBy::Agent,
         default_workspace: None,
@@ -3105,7 +3105,7 @@ pub async fn journal_key_lookup_by_hash<S: JournalStore>(store: &S) {
 pub async fn a_revoked_key_no_longer_resolves_by_its_hash<S: JournalStore>(store: &S) {
     let mut rig = ChainRig::new(21);
     rig.seed_chain(store, 0).await;
-    let key = key_record(rig.tenant_id, Uuid::from_u128(0xDA), Role::Writer, None);
+    let key = key_record(rig.tenant_id, Uuid::from_u128(0xDA), Role::Contributor, None);
     rig.issue_key(store, key.clone()).await;
     assert_eq!(
         store
@@ -3227,7 +3227,7 @@ pub async fn a_keys_limits_fold_with_its_issuance_and_are_replaced_by_key_limits
         key_hash: None,
         name: Some(name("alice-web")),
         session_user: Some(name("alice")),
-        ..key_record(rig.tenant_id, Uuid::from_u128(0xE2), Role::Writer, None)
+        ..key_record(rig.tenant_id, Uuid::from_u128(0xE2), Role::Contributor, None)
     };
     rig.issue_key(store, session.clone()).await;
     let head = store
@@ -3711,7 +3711,7 @@ pub async fn grants_and_denials_round_trip_through_their_folds_and_key_access<S:
         rig.create_workspace(store, w).await;
     }
     let admin = key_record(t, Uuid::from_u128(0xD10), Role::Admin, None);
-    let agent = key_record(t, Uuid::from_u128(0xD11), Role::Writer, Some(admin.key_id));
+    let agent = key_record(t, Uuid::from_u128(0xD11), Role::Contributor, Some(admin.key_id));
     let admin_issued = rig.issue_key(store, admin.clone()).await;
     let agent_issued = rig.issue_key(store, agent.clone()).await;
 
@@ -3720,7 +3720,7 @@ pub async fn grants_and_denials_round_trip_through_their_folds_and_key_access<S:
     let writer_grant = Grant {
         grant_id: Uuid::from_u128(0xF11),
         node: crew_a,
-        role: Role::Writer,
+        role: Role::Submitter,
         deny: vec![masked, masked_too],
         covers: Covers::Subtree,
     };
@@ -3818,7 +3818,7 @@ pub async fn a_grant_epoch_is_its_event_seq<S: JournalStore>(store: &S) {
     let node = Uuid::from_u128(0xB20);
     rig.create_workspace(store, workspace_record(t, node, None, "universe"))
         .await; // seq 4
-    let key = key_record(t, Uuid::from_u128(0xD20), Role::Writer, None);
+    let key = key_record(t, Uuid::from_u128(0xD20), Role::Contributor, None);
     let issued = rig.issue_key(store, key.clone()).await; // seq 5
     rig.filler(store).await; // seq 6
     rig.filler(store).await; // seq 7
@@ -3884,7 +3884,7 @@ pub async fn a_grant_or_denial_the_schema_refuses_commits_nothing<S: JournalStor
     let node = Uuid::from_u128(0xB30);
     rig.create_workspace(store, workspace_record(t, node, None, "universe"))
         .await;
-    let key = key_record(t, Uuid::from_u128(0xD30), Role::Writer, None);
+    let key = key_record(t, Uuid::from_u128(0xD30), Role::Contributor, None);
     rig.issue_key(store, key.clone()).await;
     let mut other = ChainRig::new(20);
     other.seed_chain(store, 0).await;
@@ -3895,7 +3895,7 @@ pub async fn a_grant_or_denial_the_schema_refuses_commits_nothing<S: JournalStor
             workspace_record(other.tenant_id, foreign_node, None, "universe"),
         )
         .await;
-    let foreign_key = key_record(other.tenant_id, Uuid::from_u128(0xD31), Role::Writer, None);
+    let foreign_key = key_record(other.tenant_id, Uuid::from_u128(0xD31), Role::Contributor, None);
     other.issue_key(store, foreign_key.clone()).await;
     let head = store.chain_head(t).await.expect("head");
     let unknown = Uuid::from_u128(0xBFF);
@@ -4016,8 +4016,8 @@ pub async fn a_lifted_denial_masks_nothing_and_its_lift_moves_the_permission_epo
         .await;
     rig.create_workspace(store, workspace_record(t, team, Some(universe), "team"))
         .await;
-    let key = key_record(t, Uuid::from_u128(0xD460), Role::Writer, None);
-    let other_key = key_record(t, Uuid::from_u128(0xD461), Role::Writer, None);
+    let key = key_record(t, Uuid::from_u128(0xD460), Role::Contributor, None);
+    let other_key = key_record(t, Uuid::from_u128(0xD461), Role::Contributor, None);
     let issued = rig.issue_key(store, key.clone()).await;
     rig.issue_key(store, other_key.clone()).await;
     let denial = |id: u128, node| KeyDenial {
@@ -6713,7 +6713,7 @@ pub async fn workspace_names_are_unique_per_namespace_and_resolve_in_their_own<S
     let key = KeyRecord {
         user: Some(alice.workspace_id),
         name: Some(name("alice-laptop")),
-        ..key_record(t, Uuid::from_u128(0xD310), Role::Writer, None)
+        ..key_record(t, Uuid::from_u128(0xD310), Role::Contributor, None)
     };
     rig.issue_key(store, key.clone()).await;
     assert_eq!(
@@ -6939,7 +6939,7 @@ pub async fn a_name_resolves_to_its_rows_id_in_the_callers_tenant_and_to_nothing
     a.create_crew(store, redline.clone()).await.expect("crew");
     let laptop = KeyRecord {
         name: Some(name("claude-laptop")),
-        ..key_record(ta, Uuid::from_u128(0xD320), Role::Writer, None)
+        ..key_record(ta, Uuid::from_u128(0xD320), Role::Contributor, None)
     };
     a.issue_key(store, laptop.clone()).await;
     let their_root = Uuid::from_u128(0xB330);
@@ -7007,7 +7007,7 @@ pub async fn a_revoked_keys_name_still_resolves<S: JournalStore>(store: &S) {
     let t = rig.tenant_id;
     let laptop = KeyRecord {
         name: Some(name("claude-laptop")),
-        ..key_record(t, Uuid::from_u128(0xD340), Role::Writer, None)
+        ..key_record(t, Uuid::from_u128(0xD340), Role::Contributor, None)
     };
     rig.issue_key(store, laptop.clone()).await;
     rig.revoke_key(store, laptop.key_id).await.expect("revoke");
@@ -7028,7 +7028,7 @@ pub async fn a_revoked_keys_name_still_resolves<S: JournalStore>(store: &S) {
     let head = store.chain_head(t).await.expect("head");
     let reissued = KeyRecord {
         name: Some(name("claude-laptop")),
-        ..key_record(t, Uuid::from_u128(0xD341), Role::Writer, None)
+        ..key_record(t, Uuid::from_u128(0xD341), Role::Contributor, None)
     };
     let refused = rig
         .commit(
@@ -7144,7 +7144,7 @@ pub async fn a_crew_record_round_trips_and_only_its_own_tenants_rows_name_it<S: 
     );
     let member = KeyRecord {
         crew_id: Some(redline.crew_id),
-        ..key_record(ta, Uuid::from_u128(0xD350), Role::Writer, None)
+        ..key_record(ta, Uuid::from_u128(0xD350), Role::Contributor, None)
     };
     a.issue_key(store, member.clone()).await;
     assert_eq!(
@@ -7181,7 +7181,7 @@ pub async fn a_crew_record_round_trips_and_only_its_own_tenants_rows_name_it<S: 
         );
         let stray_key = KeyRecord {
             crew_id: Some(crew_id),
-            ..key_record(ta, Uuid::from_u128(0xD351), Role::Writer, None)
+            ..key_record(ta, Uuid::from_u128(0xD351), Role::Contributor, None)
         };
         let refused = a
             .commit(
@@ -7449,10 +7449,10 @@ pub async fn every_row_a_creation_folds_is_named_and_a_key_with_no_name_is_liste
     rig.create_workspace(store, universe).await;
     let named = KeyRecord {
         name: Some(name("named-key")),
-        ..key_record(t, Uuid::from_u128(0xD450), Role::Writer, None)
+        ..key_record(t, Uuid::from_u128(0xD450), Role::Contributor, None)
     };
     rig.issue_key(store, named).await;
-    let unnamed = key_record(t, Uuid::from_u128(0xD451), Role::Writer, None);
+    let unnamed = key_record(t, Uuid::from_u128(0xD451), Role::Contributor, None);
     rig.issue_key(store, unnamed.clone()).await;
     assert_eq!(
         store.unnamed_rows(t).await.expect("read"),
@@ -9471,7 +9471,7 @@ pub async fn a_commit_past_its_ceiling_writes_nothing_and_the_usage_read_is_the_
         store,
         KeyRecord {
             user: Some(account),
-            ..key_record(t, key_id, Role::Writer, None)
+            ..key_record(t, key_id, Role::Contributor, None)
         },
     )
     .await;
@@ -9630,7 +9630,7 @@ pub async fn a_versions_write_is_counted_on_the_day_its_row_was_stored<S: Journa
         store,
         KeyRecord {
             user: Some(account),
-            ..key_record(t, key_id, Role::Writer, None)
+            ..key_record(t, key_id, Role::Contributor, None)
         },
     )
     .await;
@@ -9721,11 +9721,11 @@ pub async fn a_claim_captured_under_a_released_key_counts_on_the_account_that_st
         store,
         KeyRecord {
             user: Some(account),
-            ..key_record(t, ada_key, Role::Writer, None)
+            ..key_record(t, ada_key, Role::Contributor, None)
         },
     )
     .await;
-    rig.issue_key(store, key_record(t, tenant_key, Role::Writer, None))
+    rig.issue_key(store, key_record(t, tenant_key, Role::Contributor, None))
         .await;
     let at = fixture_time("2026-10-29T13:00:00.000000Z");
     // Each claim_key's two versions 1, the first rejected before the second.
@@ -9820,7 +9820,7 @@ pub async fn a_commit_under_a_recorded_idempotency_key_moves_no_meter_and_is_ref
         store,
         KeyRecord {
             user: Some(account),
-            ..key_record(t, key_id, Role::Writer, None)
+            ..key_record(t, key_id, Role::Contributor, None)
         },
     )
     .await;
@@ -10306,7 +10306,7 @@ pub fn connector_key(tenant_id: Uuid, key_id: Uuid) -> KeyRecord {
     KeyRecord {
         credential: Credential::Connection,
         key_hash: None,
-        ..key_record(tenant_id, key_id, Role::Writer, None)
+        ..key_record(tenant_id, key_id, Role::Contributor, None)
     }
 }
 

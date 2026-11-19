@@ -370,8 +370,8 @@ where
             let name = key_name(&entry.user, capacity.suffix())?;
             let (role, grants, user) = match capacity {
                 Capacity::Web => (
-                    Role::Writer,
-                    vec![grant(Role::Writer), grant(Role::Reader)],
+                    Role::Contributor,
+                    vec![grant(Role::Submitter), grant(Role::Reader)],
                     Some(entry.user.clone()),
                 ),
                 Capacity::Review => (

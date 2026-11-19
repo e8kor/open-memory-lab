@@ -1908,7 +1908,7 @@ async fn grants_of_another_tenant_are_invisible_under_rls() {
         workspace_record(a.tenant_id, node, None, "universe"),
     )
     .await;
-    let key = key_record(a.tenant_id, Uuid::from_u128(0xD92), Role::Writer, None);
+    let key = key_record(a.tenant_id, Uuid::from_u128(0xD92), Role::Contributor, None);
     a.issue_key(&store, key.clone()).await;
     a.issue_grant(
         &store,
@@ -3545,7 +3545,7 @@ async fn rows_that_predate_names_are_reported_per_table_and_rows_created_since_a
         &store,
         KeyRecord {
             name: Some(name("agent-7")),
-            ..key_record(t, key, Role::Writer, None)
+            ..key_record(t, key, Role::Contributor, None)
         },
     )
     .await;
@@ -3950,9 +3950,9 @@ async fn under_tenant_a_a_reference_to_tenant_bs_row_fails_as_one_to_a_random_id
     )
     .await;
     let (a_key, b_key) = (Uuid::from_u128(0xD180), Uuid::from_u128(0xD190));
-    a.issue_key(&store, key_record(a.tenant_id, a_key, Role::Writer, None))
+    a.issue_key(&store, key_record(a.tenant_id, a_key, Role::Contributor, None))
         .await;
-    b.issue_key(&store, key_record(b.tenant_id, b_key, Role::Writer, None))
+    b.issue_key(&store, key_record(b.tenant_id, b_key, Role::Contributor, None))
         .await;
     let (a_memory, b_memory) = (Uuid::from_u128(0xC180), Uuid::from_u128(0xC190));
     // Tenant B's memory holds no review_queue row: review_queue's primary key
@@ -5249,7 +5249,7 @@ async fn a_connector_key_row_has_no_hash_and_a_bearer_key_row_holding_its_hash_c
     let (store, tenant, connector) = connector_rig(&created, 120).await;
     let mut rig = ChainRig::new(121);
     rig.seed_chain(&store, 0).await;
-    let bearer = key_record(rig.tenant_id, Uuid::from_u128(0xB0B1), Role::Writer, None);
+    let bearer = key_record(rig.tenant_id, Uuid::from_u128(0xB0B1), Role::Contributor, None);
     rig.issue_key(&store, bearer.clone()).await;
 
     let mut tx = store.pool().begin().await.expect("begin");
@@ -7098,7 +7098,7 @@ async fn edge_tenant(store: &PgStore, seed: u64, base: u128) -> EdgeTenant {
     .await;
     let (proposer, ratifier) = (Uuid::from_u128(base + 1), Uuid::from_u128(base + 2));
     for key in [proposer, ratifier] {
-        rig.issue_key(store, key_record(rig.tenant_id, key, Role::Writer, None))
+        rig.issue_key(store, key_record(rig.tenant_id, key, Role::Contributor, None))
             .await;
     }
     let (src, dst) = (Uuid::from_u128(base + 3), Uuid::from_u128(base + 4));
@@ -11415,7 +11415,7 @@ async fn migration_0045_fills_each_accounts_meters_from_the_rows_stored_before_i
             &seed,
             KeyRecord {
                 user,
-                ..key_record(t, key_id, Role::Writer, None)
+                ..key_record(t, key_id, Role::Contributor, None)
             },
         )
         .await;
@@ -11736,7 +11736,7 @@ async fn a_tenant_keys_first_version_commits_without_touching_the_meters() {
     let crew = workspace_record(t, Uuid::from_u128(0x4520), None, "universe");
     rig.create_workspace(&store, crew.clone()).await;
     let tenant_key = Uuid::from_u128(0x4521);
-    rig.issue_key(&store, key_record(t, tenant_key, Role::Writer, None))
+    rig.issue_key(&store, key_record(t, tenant_key, Role::Contributor, None))
         .await;
     let held = |n: u128| {
         held_memory(
@@ -11857,7 +11857,7 @@ async fn a_counter_never_goes_below_zero_and_a_fold_on_a_drifted_one_still_commi
         &store,
         KeyRecord {
             user: Some(account),
-            ..key_record(t, key_id, Role::Writer, None)
+            ..key_record(t, key_id, Role::Contributor, None)
         },
     )
     .await;
@@ -11956,7 +11956,7 @@ async fn writers_that_skip_the_pre_check_are_held_by_the_commits_own_ceiling() {
         &store,
         KeyRecord {
             user: Some(account),
-            ..key_record(t, key_id, Role::Writer, None)
+            ..key_record(t, key_id, Role::Contributor, None)
         },
     )
     .await;
@@ -12044,13 +12044,13 @@ async fn writer_pg(app: &PgApp, admin: &str, node: Uuid) -> String {
         admin,
         &oml_app::types::IssueKeyRequest {
             profile: None,
-            role: Role::Writer,
+            role: Role::Contributor,
             name: name("kinds-writer"),
             principal: "kinds/agent".to_owned(),
             used_by: Some(oml_app::domain::UsedBy::Agent),
             default_workspace: Some(node.into()),
             crew: None,
-            grants: [Role::Writer, Role::Reader]
+            grants: [Role::Submitter, Role::Reader]
                 .into_iter()
                 .map(|role| oml_app::types::GrantRequest {
                     node: node.into(),

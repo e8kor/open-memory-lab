@@ -185,11 +185,11 @@ struct Alice {
 async fn alice(app: &TestApp) -> Alice {
     let boot = bootstrap(app).await;
     let admin = &boot.admin_key.value;
-    let rw = || vec![grant("alice", Role::Writer), grant("alice", Role::Reader)];
+    let rw = || vec![grant("alice", Role::Submitter), grant("alice", Role::Reader)];
     let person = issue(
         app,
         admin,
-        Role::Writer,
+        Role::Contributor,
         UsedBy::Person,
         Some("alice"),
         "alice/desk",
@@ -199,7 +199,7 @@ async fn alice(app: &TestApp) -> Alice {
     let agent = issue(
         app,
         admin,
-        Role::Writer,
+        Role::Contributor,
         UsedBy::Agent,
         Some("alice"),
         "alice/agent",
@@ -263,7 +263,7 @@ async fn an_agent_key_is_refused_export() {
     let (app, _) = rig();
     let a = alice(&app).await;
     for (key, role, used_by) in [
-        (&a.agent.value, Role::Writer, UsedBy::Agent),
+        (&a.agent.value, Role::Contributor, UsedBy::Agent),
         (&a.boot.admin_key.value, Role::Admin, UsedBy::Person),
     ] {
         let err = app
@@ -912,7 +912,7 @@ async fn a_linked_key_exports_none_of_its_persons_other_keys_held_rows() {
     let bob = issue(
         &app,
         admin,
-        Role::Writer,
+        Role::Contributor,
         UsedBy::Person,
         None,
         "bob/laptop",

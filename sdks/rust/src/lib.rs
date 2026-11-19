@@ -2927,7 +2927,7 @@ mod tests {
         for replay in [true, false] {
             let client = Client::new(Replaying { replay, body: BODY });
             let issued = client
-                .issue_key(&CALL, "idem", "alice-laptop", "writer", false, None)
+                .issue_key(&CALL, "idem", "alice-laptop", "contributor", false, None)
                 .await
                 .unwrap();
             assert_eq!(issued.replayed(), replay);
@@ -2948,7 +2948,7 @@ mod tests {
         let (client, seen) = recording(201, BODY);
         for expiry in [None, Some("2026-12-01T23:59:59Z")] {
             client
-                .issue_key(&CALL, "idem", "alice-laptop", "writer", false, expiry)
+                .issue_key(&CALL, "idem", "alice-laptop", "contributor", false, expiry)
                 .await
                 .unwrap();
         }
@@ -2961,10 +2961,10 @@ mod tests {
         assert_eq!(
             sent,
             [
-                serde_json::json!({"name": "alice-laptop", "role": "writer", "connect_code": false}),
+                serde_json::json!({"name": "alice-laptop", "role": "contributor", "connect_code": false}),
                 serde_json::json!({
                     "name": "alice-laptop",
-                    "role": "writer",
+                    "role": "contributor",
                     "connect_code": false,
                     "expiry": "2026-12-01T23:59:59Z",
                 }),
@@ -3102,7 +3102,7 @@ mod tests {
             decodes(&client.admin_todo_counts(&CALL).await),
             decodes(
                 &client
-                    .issue_key(&CALL, "idem-7", "alice-laptop", "writer", false, None)
+                    .issue_key(&CALL, "idem-7", "alice-laptop", "contributor", false, None)
                     .await,
             ),
             decodes(
@@ -3264,7 +3264,7 @@ mod tests {
         assert_eq!(seen[19].uri(), "/v2/review/held?ids=a,b");
         assert_eq!(
             std::str::from_utf8(seen[24].body()).unwrap(),
-            r#"{"connect_code":false,"name":"alice-laptop","role":"writer"}"#
+            r#"{"connect_code":false,"name":"alice-laptop","role":"contributor"}"#
         );
     }
 

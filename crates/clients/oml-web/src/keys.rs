@@ -4,7 +4,7 @@
 //! for the path (`tests/web_pages.rs`).
 //!
 //! On the user page the person's `<user>-web` key lists their keys, issues
-//! a reader or writer key or a connector key on their root, mints a
+//! a contributor or reader key or a connector key on their root, mints a
 //! connector key's connect code and cuts a key off, each through its
 //! documented operation (`listKeys`, `issueKey`, `mintConnectCode`,
 //! `addDenial`). On the admin page `<user>-admin` lists one person's keys,
@@ -86,6 +86,9 @@ const DENIED_STILL_WORKS: &str =
 /// The word [`DENIED_SESSION`] uses, which marks the session's own key in
 /// the table.
 const RESTRICTED: &str = "restricted";
+
+/// The mark of a contributor key that holds no reader grant (ADR-0093 d3).
+const NO_RECALL: &str = "no recall";
 
 /// The sentence and its muted line as the pages draw them.
 pub(crate) fn denied_notice() -> String {
@@ -207,6 +210,12 @@ fn row(key: &ListedKey, side: Side, csrf: &str, user: &str, denied: Option<&str>
     }
     if key.expired {
         marks.push("expired");
+    }
+    // A contributor with no reader grant: a writer key issued with
+    // `--write-only` before v0.8.4, which works as before and is replaced by
+    // a submitter key (ADR-0093 d3).
+    if key.role == "contributor" && !key.grants.iter().any(|g| g.role == "reader") {
+        marks.push(NO_RECALL);
     }
     // The session's own key, where it carries a denial, in the word the
     // page's sentence uses: `GET /v2/keys` says `cut_off` for a denial on
@@ -570,7 +579,7 @@ async fn user_view(
                 select(
                     "role",
                     "role",
-                    &[("writer", "writer"), ("reader", "reader")]
+                    &[("contributor", "contributor"), ("reader", "reader")]
                 ),
                 acts::nonce_field()
             ),
@@ -834,9 +843,11 @@ async fn act(
     let call = call(&credential, &ids);
     let secret = match action {
         "issue_key" | "connect_key" => {
-            let role = match fields.given("role").unwrap_or("writer") {
-                role @ ("reader" | "writer") => role,
-                _ => return acts::invalid("role is reader or writer", &calls),
+            // The form offers a contributor, the default, and a reader; a
+            // submitter key is an act of the CLI and the admin (ADR-0093 d6).
+            let role = match fields.given("role").unwrap_or("contributor") {
+                role @ ("contributor" | "reader") => role,
+                _ => return acts::invalid("role is contributor or reader", &calls),
             };
             let user = session.whoami.user.as_ref().map_or("", |u| u.name.as_str());
             let name = format!("{user}-{}", fields.given("name").unwrap_or_default());

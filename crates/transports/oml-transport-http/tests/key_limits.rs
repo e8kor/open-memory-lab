@@ -177,11 +177,11 @@ impl World {
     /// merged into its issuance: its `201`'s body and its connect code.
     async fn connector(&self, name: &str, limits: Value) -> (Value, String) {
         let mut body = json!({
-            "role": "writer",
+            "role": "contributor",
             "name": name,
             "connect_code": true,
             "grants": [
-                { "workspace": "universe", "role": "writer" },
+                { "workspace": "universe", "role": "submitter" },
                 { "workspace": "universe", "role": "reader" },
             ],
         });
@@ -607,7 +607,7 @@ async fn an_agent_key_changes_no_limits_and_an_admin_key_never_its_own() {
     let agent = w
         .issue(
             "agent",
-            "writer",
+            "contributor",
             json!({ "expiry": EXPIRY_SENT, "requests_per_minute": 30 }),
         )
         .await;
@@ -872,10 +872,10 @@ async fn each_item_of_the_keys_listing_serves_the_keys_expiry_whether_it_has_com
         ("ada-plain", json!({})),
     ] {
         let mut body = json!({
-            "role": "writer",
+            "role": "contributor",
             "name": name,
             "user": "ada",
-            "grants": [{ "workspace": "ada", "role": "writer" }],
+            "grants": [{ "workspace": "ada", "role": "submitter" }],
         });
         for (member, value) in limits.as_object().expect("an object") {
             body[member] = value.clone();

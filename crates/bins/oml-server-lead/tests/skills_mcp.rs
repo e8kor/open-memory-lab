@@ -112,8 +112,8 @@ async fn tenant(router: &Router) -> Tenant {
     let writer = issue(
         router,
         &admin,
-        json!({"role": "writer", "name": "writer", "principal": "crew/agent-7",
-               "grants": [{"workspace": crew, "role": "writer"}, {"workspace": crew, "role": "reader"}]}),
+        json!({"role": "contributor", "name": "contributor", "principal": "crew/agent-7",
+               "grants": [{"workspace": crew, "role": "submitter"}, {"workspace": crew, "role": "reader"}]}),
     )
     .await["value"]
         .as_str()
@@ -306,8 +306,8 @@ async fn an_agent_writes_a_skill_over_oml_write_and_only_its_own_key_is_offered_
     let other = issue(
         &router,
         &t.admin,
-        json!({"role": "writer", "name": "other", "principal": "crew/agent-8",
-               "grants": [{"workspace": t.crew, "role": "writer"}, {"workspace": t.crew, "role": "reader"}]}),
+        json!({"role": "contributor", "name": "other", "principal": "crew/agent-8",
+               "grants": [{"workspace": t.crew, "role": "submitter"}, {"workspace": t.crew, "role": "reader"}]}),
     )
     .await["value"]
         .as_str()
@@ -366,8 +366,8 @@ async fn prompts_get_of_a_skill_not_offered_here_answers_the_same_error_as_an_un
     let other = issue(
         &router,
         &t.admin,
-        json!({"role": "writer", "name": "other", "principal": "crew/agent-8",
-               "grants": [{"workspace": t.crew, "role": "writer"}, {"workspace": t.crew, "role": "reader"}]}),
+        json!({"role": "contributor", "name": "other", "principal": "crew/agent-8",
+               "grants": [{"workspace": t.crew, "role": "submitter"}, {"workspace": t.crew, "role": "reader"}]}),
     )
     .await["value"]
         .as_str()
@@ -656,8 +656,8 @@ async fn the_bare_command_serves_the_approved_skill_when_a_nearer_workspace_hold
     let near = issue(
         &router,
         &t.admin,
-        json!({"role": "writer", "name": "near", "principal": "crew/agent-9", "default_workspace": app,
-               "grants": [{"workspace": app, "role": "writer"}, {"workspace": t.crew, "role": "reader"}]}),
+        json!({"role": "contributor", "name": "near", "principal": "crew/agent-9", "default_workspace": app,
+               "grants": [{"workspace": app, "role": "submitter"}, {"workspace": t.crew, "role": "reader"}]}),
     )
     .await["value"]
         .as_str()

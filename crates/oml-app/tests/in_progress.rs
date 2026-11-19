@@ -129,11 +129,11 @@ async fn world() -> World {
         key(
             &app,
             &admin,
-            Role::Writer,
+            Role::Contributor,
             UsedBy::Agent,
             None,
             p,
-            vec![grant(crew, Role::Writer), grant(crew, Role::Reader)],
+            vec![grant(crew, Role::Submitter), grant(crew, Role::Reader)],
         )
     };
     let ann = agent("ann").await.expect("ann");
@@ -158,7 +158,7 @@ async fn world() -> World {
         "cora",
         vec![
             grant(crew, Role::Reader),
-            grant(crew, Role::Writer),
+            grant(crew, Role::Submitter),
             grant(crew, Role::Reviewer),
         ],
     )
@@ -900,7 +900,7 @@ async fn the_curator_profile_needs_a_reviewer_key_used_by_an_agent() {
     let admin = w.boot.admin_key.value.clone();
     for (role, used_by) in [
         (Role::Reviewer, UsedBy::Person),
-        (Role::Writer, UsedBy::Agent),
+        (Role::Contributor, UsedBy::Agent),
     ] {
         let err = key(
             &w.app,
@@ -1334,11 +1334,11 @@ async fn a_curator_never_flags_a_row_its_principal_wrote_through_another_key() {
     let twin = key(
         &w.app,
         &w.boot.admin_key.value,
-        Role::Writer,
+        Role::Contributor,
         UsedBy::Agent,
         None,
         "cora",
-        vec![grant(w.crew, Role::Writer), grant(w.crew, Role::Reader)],
+        vec![grant(w.crew, Role::Submitter), grant(w.crew, Role::Reader)],
     )
     .await
     .expect("same principal, another key");

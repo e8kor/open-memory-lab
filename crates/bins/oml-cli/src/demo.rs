@@ -246,10 +246,10 @@ pub fn seed(admin: &Client, workspace: &str, parent: &str) -> Result<Report, Cli
         let author = issue(
             admin,
             &identities[0],
-            "writer",
+            "contributor",
             "agent",
             workspace,
-            &["writer", "reader"],
+            &["submitter", "reader"],
         )?;
         issued.push(identities[0].clone());
         let first = issue(

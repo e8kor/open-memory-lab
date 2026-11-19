@@ -339,10 +339,10 @@ async fn world_with(anchor_first_max: Option<usize>) -> Option<World> {
             &rig.router,
             &admin,
             "sync",
-            "writer",
+            "contributor",
             "crew/sync",
             "agent",
-            on(node, &["writer", "reader"]),
+            on(node, &["contributor", "reader"]),
         )
         .await,
     );
@@ -351,10 +351,10 @@ async fn world_with(anchor_first_max: Option<usize>) -> Option<World> {
             &rig.router,
             &admin,
             "sync-two",
-            "writer",
+            "contributor",
             "crew/sync-two",
             "agent",
-            on(node, &["writer", "reader"]),
+            on(node, &["contributor", "reader"]),
         )
         .await,
     );
@@ -375,10 +375,10 @@ async fn world_with(anchor_first_max: Option<usize>) -> Option<World> {
             &rig.router,
             &admin,
             "outsider",
-            "writer",
+            "contributor",
             "crew/outsider",
             "agent",
-            on(other, &["writer", "reader"]),
+            on(other, &["contributor", "reader"]),
         )
         .await,
     );
@@ -2259,9 +2259,9 @@ async fn an_agent_key_cannot_open_a_persons_chat_workspace_and_the_persons_key_c
                 Some(&admin),
                 Some(&format!("issue-{name}")),
                 Some(json!({
-                    "role": "writer", "name": name, "principal": format!("eugene/{name}"),
+                    "role": "contributor", "name": name, "principal": format!("eugene/{name}"),
                     "user": "eugene", "used_by": used_by,
-                    "grants": [{ "workspace": "eugene", "role": "writer" }, { "workspace": "eugene", "role": "reader" }],
+                    "grants": [{ "workspace": "eugene", "role": "submitter" }, { "workspace": "eugene", "role": "reader" }],
                 })),
             )
             .await;
@@ -2323,9 +2323,9 @@ async fn an_agent_key_cannot_take_the_name_chat_anywhere_under_a_user_root() {
                 Some(&admin),
                 Some(&format!("issue-{name}")),
                 Some(json!({
-                    "role": "writer", "name": name, "principal": format!("eugene/{name}"),
+                    "role": "contributor", "name": name, "principal": format!("eugene/{name}"),
                     "user": "eugene", "used_by": used_by,
-                    "grants": [{ "workspace": "eugene", "role": "writer" }, { "workspace": "eugene", "role": "reader" }],
+                    "grants": [{ "workspace": "eugene", "role": "submitter" }, { "workspace": "eugene", "role": "reader" }],
                 })),
             )
             .await;

@@ -1212,7 +1212,7 @@ async fn the_allowlist_routes_take_an_admin_key_and_the_email_only_in_a_body() {
             &rig.boot.admin_key.value,
             &IssueKeyRequest {
                 profile: None,
-                role: Role::Writer,
+                role: Role::Contributor,
                 name: Name::parse("agent-7").expect("a name"),
                 principal: "crew/agent-7".to_owned(),
                 used_by: Some(UsedBy::Agent),
@@ -1220,7 +1220,7 @@ async fn the_allowlist_routes_take_an_admin_key_and_the_email_only_in_a_body() {
                 crew: None,
                 grants: vec![GrantRequest {
                     node: rig.boot.root_workspace_id.into(),
-                    role: Role::Writer,
+                    role: Role::Submitter,
                     deny: Vec::new(),
                     covers: Default::default(),
                 }],
@@ -1455,7 +1455,7 @@ async fn issued(rig: &Rig, cookie: &str, name: &str) -> String {
         cookie,
         "web",
         "/v2/keys",
-        json!({"name": format!("{user}-{name}"), "role": "writer", "connect_code": false}),
+        json!({"name": format!("{user}-{name}"), "role": "contributor", "connect_code": false}),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{key}");
@@ -1604,7 +1604,7 @@ async fn a_persons_own_issuance_takes_an_expiry_and_no_rate() {
         ("expiry", json!("2999-01-01T00:00:00")),
         ("expiry", json!("2000-01-01T00:00:00Z")),
     ] {
-        let mut body = json!({"name": "alice-laptop", "role": "writer", "connect_code": false});
+        let mut body = json!({"name": "alice-laptop", "role": "contributor", "connect_code": false});
         body[member] = value.clone();
         let (status, answer) = as_web(&rig, &cookie, "web", "/v2/keys", body).await;
         assert_eq!(
@@ -1641,7 +1641,7 @@ async fn a_persons_own_issuance_takes_an_expiry_and_no_rate() {
             "/v2/keys",
             json!({
                 "name": name,
-                "role": "writer",
+                "role": "contributor",
                 "connect_code": connect_code,
                 "expiry": "2999-01-01T00:00:00+01:00",
             }),
@@ -2275,7 +2275,7 @@ async fn alice_denied_on(rig: &Rig, workspace: &str) -> String {
         &cookie,
         "web",
         "/v2/keys",
-        json!({"name": "alice-phone", "role": "writer", "connect_code": true}),
+        json!({"name": "alice-phone", "role": "contributor", "connect_code": true}),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{phone}");
@@ -2318,7 +2318,7 @@ async fn a_cut_off_session_key_issues_no_key() {
                 &cookie,
                 "web",
                 "/v2/keys",
-                json!({"name": name, "role": "writer", "connect_code": connect_code}),
+                json!({"name": name, "role": "contributor", "connect_code": connect_code}),
             )
             .await;
             assert_session_key_denied(status, &answer, "issue_key");
@@ -2394,7 +2394,7 @@ async fn a_denied_session_key_is_still_refused_after_its_entry_is_removed_added_
         &cookie,
         "web",
         "/v2/keys",
-        json!({"name": "alice-phone", "role": "writer", "connect_code": true}),
+        json!({"name": "alice-phone", "role": "contributor", "connect_code": true}),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{phone}");
@@ -2420,7 +2420,7 @@ async fn a_denied_session_key_is_still_refused_after_its_entry_is_removed_added_
             for (path, body, verb) in [
                 (
                     "/v2/keys",
-                    json!({"name": tablet, "role": "writer", "connect_code": false}),
+                    json!({"name": tablet, "role": "contributor", "connect_code": false}),
                     "issue_key",
                 ),
                 (
@@ -2490,7 +2490,7 @@ async fn alice_with_a_connector(rig: &Rig) -> String {
         &cookie,
         "web",
         "/v2/keys",
-        json!({"name": "alice-phone", "role": "writer", "connect_code": true}),
+        json!({"name": "alice-phone", "role": "contributor", "connect_code": true}),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{phone}");
@@ -2502,7 +2502,7 @@ fn session_key_acts() -> [(&'static str, Value, &'static str); 3] {
     [
         (
             "/v2/keys",
-            json!({"name": "alice-tablet", "role": "writer", "connect_code": false}),
+            json!({"name": "alice-tablet", "role": "contributor", "connect_code": false}),
             "issue_key",
         ),
         (
@@ -2785,7 +2785,7 @@ async fn whoami_says_denied_exactly_when_the_key_acts_are_refused() {
                 &cookie,
                 "web",
                 "/v2/keys",
-                json!({"name": name, "role": "writer", "connect_code": false}),
+                json!({"name": name, "role": "contributor", "connect_code": false}),
             )
         };
         let (status, me) = get_as_web(&rig, &cookie, "/v2/whoami?person=false").await;
@@ -2847,7 +2847,7 @@ async fn a_denied_session_key_still_downloads_its_export() {
             &cookie,
             "web",
             "/v2/keys",
-            json!({"name": "alice-tablet", "role": "writer", "connect_code": false}),
+            json!({"name": "alice-tablet", "role": "contributor", "connect_code": false}),
         )
         .await;
         assert_session_key_denied(status, &refused, "issue_key");

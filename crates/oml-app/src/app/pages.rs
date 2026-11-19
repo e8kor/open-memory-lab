@@ -525,9 +525,9 @@ where
             covers: Covers::Subtree,
         };
         let grants = match role {
-            Role::Writer => vec![grant(Role::Writer), grant(Role::Reader)],
+            Role::Contributor => vec![grant(Role::Submitter), grant(Role::Reader)],
             Role::Reader => vec![grant(Role::Reader)],
-            _ => return Err(field("role", "an issued key is a reader or a writer")),
+            _ => return Err(field("role", "an issued key is a contributor or a reader")),
         };
         let req = IssueKeyRequest {
             profile: None,
@@ -749,7 +749,7 @@ where
             // The issuance default; a page offers no scope (ADR-0037
             // d17, d18 Q5).
             guardrail_scope: None,
-            role: Role::Writer,
+            role: Role::Contributor,
             principal: name.as_str().to_owned(),
             name,
             used_by: Some(UsedBy::Person),
@@ -758,7 +758,7 @@ where
             grants: vec![
                 GrantRequest {
                     node: Reference::Name(Name::parse(UNIVERSE).expect("universe is a name")),
-                    role: Role::Writer,
+                    role: Role::Submitter,
                     deny: Vec::new(),
                     covers: Covers::Node,
                 },

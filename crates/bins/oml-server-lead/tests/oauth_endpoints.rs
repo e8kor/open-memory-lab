@@ -578,7 +578,7 @@ async fn issue_connector(rig: &Rig) -> String {
             &boot.admin_key.value,
             &IssueKeyRequest {
                 profile: None,
-                role: Role::Writer,
+                role: Role::Contributor,
                 name: Name::parse("claude-mobile").expect("a name"),
                 principal: "crew/claude-mobile".to_owned(),
                 used_by: Some(UsedBy::Agent),
@@ -586,7 +586,7 @@ async fn issue_connector(rig: &Rig) -> String {
                 crew: None,
                 grants: vec![GrantRequest {
                     node: boot.root_workspace_id.into(),
-                    role: Role::Writer,
+                    role: Role::Submitter,
                     deny: Vec::new(),
                     covers: Covers::Subtree,
                 }],
@@ -1110,8 +1110,8 @@ async fn the_pages_sentences_match_connect_page_md_word_for_word() {
         tenant_name: name("acme"),
         key_name: Some(name("claude-mobile")),
         principal: "crew/claude-mobile".to_owned(),
-        role: Role::Writer,
-        grants: vec![grant("alpha", Role::Writer), grant("beta", Role::Reader)],
+        role: Role::Contributor,
+        grants: vec![grant("alpha", Role::Submitter), grant("beta", Role::Reader)],
         writes_in: vec![name("alpha"), name("gamma")],
         reads_in: vec![name("beta")],
         proposes_in: vec![name("delta")],
@@ -1396,7 +1396,7 @@ async fn a_reviewer_code_is_minted_for_a_confined_key_and_named_on_the_key() {
         .workspace_id;
     let connector = |name: &str, node| IssueKeyRequest {
         profile: None,
-        role: Role::Writer,
+        role: Role::Contributor,
         name: Name::parse(name).expect("a name"),
         principal: format!("crew/{name}"),
         used_by: Some(UsedBy::Agent),
@@ -1404,7 +1404,7 @@ async fn a_reviewer_code_is_minted_for_a_confined_key_and_named_on_the_key() {
         crew: None,
         grants: vec![GrantRequest {
             node,
-            role: Role::Writer,
+            role: Role::Submitter,
             deny: Vec::new(),
             covers: Covers::Subtree,
         }],

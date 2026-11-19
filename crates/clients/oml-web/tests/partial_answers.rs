@@ -369,7 +369,7 @@ async fn an_allowlist_cursor_cycle_is_refused_as_an_api_fault_at_its_first_repea
 /// One agent key of the person `first`, as `GET /v2/keys` lists it.
 fn agent_key() -> Value {
     json!({
-        "id": "k-agent", "name": "first-agent", "role": "writer", "used_by": "agent",
+        "id": "k-agent", "name": "first-agent", "role": "contributor", "used_by": "agent",
         "credential": "bearer", "revoked": false, "cut_off": false, "grants": [],
     })
 }

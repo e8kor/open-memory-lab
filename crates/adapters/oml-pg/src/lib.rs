@@ -2599,7 +2599,8 @@ fn unsigned<T: TryFrom<i32>>(row: &PgRow, column: &str) -> Result<T, StoreError>
 fn role_from_str(s: &str) -> Result<Role, StoreError> {
     match s {
         "reader" => Ok(Role::Reader),
-        "writer" => Ok(Role::Writer),
+        "contributor" => Ok(Role::Contributor),
+        "submitter" => Ok(Role::Submitter),
         "reviewer" => Ok(Role::Reviewer),
         "admin" => Ok(Role::Admin),
         "operator" => Ok(Role::Operator),
