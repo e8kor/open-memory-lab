@@ -31,7 +31,7 @@ class WhoamiPerson:
             pending (ADR-0068 d6).
         linked_keys (list[WhoamiRef] | Unset): The live tenant keys an admin linked to the person (not revoked, not past
             their expiry, used_by person), by id and name, in name order: the keys oml-web may name in OML-Acting-Key for
-            this person (ADR-0085 d16). Since v0.8.0.
+            this person (ADR-0085 d16). Since v0.8.3.
         pending_links (list[WhoamiRef] | Unset): The live tenant keys an admin linked to the person that wait on the
             person's acceptance, by id and name, in name order; each acts for no one until the person accepts it with POST
             /v2/keys/{key}/accept_link (ADR-0085 d16, the operator's decision of 2026-11-19). Since v0.8.4.

@@ -46,7 +46,7 @@ class MemorySummary:
         workspace_path (None | str): Derived at read time; grants bind to node ids. Null wherever workspace_id is.
         kind (MemorySummaryKind):
         state (MemorySummaryState): withdrawn is a held version its author retracted, kept and never served (ADR-0083
-            d13; since v0.8.0).
+            d13; since v0.8.3).
         unreviewed (bool): True exactly when the served version is held: the caller's own held version, or, inside a
             workspace a person put in progress, another author's held memory served to a reader there (ADR-0030 d3, d4).
         tokens (int): Budget tokens of the body (counter oml-tc/1): ceil(UTF-8 bytes of the NFC body / 4); not any

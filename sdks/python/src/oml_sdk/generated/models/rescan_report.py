@@ -45,7 +45,7 @@ class RescanReport:
             that carry no approval: approved before an instruction became a person's to approve. A person reviews one again
             by superseding it; the replaced version is then no tip and not counted. Read off the row's approver_used_by, so
             a person's key that had a crew is not counted. Doctor's instruction_approvals (ADR-0080 d16, #436). Since
-            v0.8.2.
+            v0.8.3.
     """
 
     scanner_version: None | str

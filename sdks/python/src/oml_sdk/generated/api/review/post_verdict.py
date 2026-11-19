@@ -119,7 +119,7 @@ def sync_detailed(
     Idempotency-Replay: true and never applies to another item. Outside a person's own root, a verdict
     from a key acting for the person whose key wrote the version, approve or reject, is
     review.author_in_lineage with details.reason same_person; inside it the verdict counts, marked
-    same_user (ADR-0001 d5; ADR-0082 d7; since v0.8.0).
+    same_user (ADR-0001 d5; ADR-0082 d7; since v0.8.3).
 
     Args:
         x_request_id (str | Unset):
@@ -183,7 +183,7 @@ def sync(
     Idempotency-Replay: true and never applies to another item. Outside a person's own root, a verdict
     from a key acting for the person whose key wrote the version, approve or reject, is
     review.author_in_lineage with details.reason same_person; inside it the verdict counts, marked
-    same_user (ADR-0001 d5; ADR-0082 d7; since v0.8.0).
+    same_user (ADR-0001 d5; ADR-0082 d7; since v0.8.3).
 
     Args:
         x_request_id (str | Unset):
@@ -242,7 +242,7 @@ async def asyncio_detailed(
     Idempotency-Replay: true and never applies to another item. Outside a person's own root, a verdict
     from a key acting for the person whose key wrote the version, approve or reject, is
     review.author_in_lineage with details.reason same_person; inside it the verdict counts, marked
-    same_user (ADR-0001 d5; ADR-0082 d7; since v0.8.0).
+    same_user (ADR-0001 d5; ADR-0082 d7; since v0.8.3).
 
     Args:
         x_request_id (str | Unset):
@@ -304,7 +304,7 @@ async def asyncio(
     Idempotency-Replay: true and never applies to another item. Outside a person's own root, a verdict
     from a key acting for the person whose key wrote the version, approve or reject, is
     review.author_in_lineage with details.reason same_person; inside it the verdict counts, marked
-    same_user (ADR-0001 d5; ADR-0082 d7; since v0.8.0).
+    same_user (ADR-0001 d5; ADR-0082 d7; since v0.8.3).
 
     Args:
         x_request_id (str | Unset):

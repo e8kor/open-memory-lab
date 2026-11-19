@@ -102,7 +102,7 @@ def sync_detailed(
     the session, nulls its key, removes its parts and answers 422 upload.digest_mismatch. A match
     completes it: it is unbound until a verb such as an import binds it, and expires 24 hours after
     completion. A session that is not open is upload.session_invalid; past its expiry, 410
-    upload.expired. Nothing is journalled. Since v0.8.2.
+    upload.expired. Nothing is journalled. Since v0.8.3.
 
     Args:
         upload_id (str):
@@ -147,7 +147,7 @@ def sync(
     the session, nulls its key, removes its parts and answers 422 upload.digest_mismatch. A match
     completes it: it is unbound until a verb such as an import binds it, and expires 24 hours after
     completion. A session that is not open is upload.session_invalid; past its expiry, 410
-    upload.expired. Nothing is journalled. Since v0.8.2.
+    upload.expired. Nothing is journalled. Since v0.8.3.
 
     Args:
         upload_id (str):
@@ -187,7 +187,7 @@ async def asyncio_detailed(
     the session, nulls its key, removes its parts and answers 422 upload.digest_mismatch. A match
     completes it: it is unbound until a verb such as an import binds it, and expires 24 hours after
     completion. A session that is not open is upload.session_invalid; past its expiry, 410
-    upload.expired. Nothing is journalled. Since v0.8.2.
+    upload.expired. Nothing is journalled. Since v0.8.3.
 
     Args:
         upload_id (str):
@@ -230,7 +230,7 @@ async def asyncio(
     the session, nulls its key, removes its parts and answers 422 upload.digest_mismatch. A match
     completes it: it is unbound until a verb such as an import binds it, and expires 24 hours after
     completion. A session that is not open is upload.session_invalid; past its expiry, 410
-    upload.expired. Nothing is journalled. Since v0.8.2.
+    upload.expired. Nothing is journalled. Since v0.8.3.
 
     Args:
         upload_id (str):

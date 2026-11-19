@@ -28,8 +28,8 @@ class AdminSearchMemoriesBody:
         author (str | Unset): The authoring key of the tenant, by name or id (ADR-0045 d24; ADR-0070 d5). Since v0.6.4.
         kinds (list[ClaimKind] | Unset): Only these kinds, each named once, as recall's kinds: a row of any of them is
             served (ADR-0083 d5; ADR-0082 d8 item 3; ADR-0092 d6). An empty array, an unknown kind or any other value is
-            request.validation naming /kinds; v0.8.0's draft kind is request.validation naming /kinds in details.renamed_to.
-            Since v0.8.0.
+            request.validation naming /kinds; a single kind, the spelling of an unreleased draft, is request.validation
+            naming /kinds in details.renamed_to. Since v0.8.3.
         limit (int | Unset): At most 200, the console list's largest page (ADR-0045 d22; raised from 100 in v0.7.0).
         cursor (str | Unset):
         investigation (UUID | Unset): An open investigation of the admin key, from POST /v2/admin/investigations;

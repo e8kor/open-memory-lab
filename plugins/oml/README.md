@@ -162,7 +162,7 @@ conversation. See the
 the `PATH`. One line installs it for the current user alone and checks the download:
 
 ```sh
-curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.7.3/scripts/install/install.sh | sh
+curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.8.3/scripts/install/install.sh | sh
 ```
 
 v0.4.0 is the first release to carry the installer. Windows, the inspect-first form and the
@@ -275,7 +275,7 @@ run. See the
 
 ## Skills
 
-*Since v0.8.0 · [releases](https://e8kor.github.io/open-memory-lab/changelog/)*
+*Since v0.8.3 · [releases](https://e8kor.github.io/open-memory-lab/changelog/)*
 
 A skill is a reviewed set of markdown instructions stored in OML and offered as a command:
 Claude Code lists each skill offered at the key's workspace as `/oml:<name> (MCP)`, and the model

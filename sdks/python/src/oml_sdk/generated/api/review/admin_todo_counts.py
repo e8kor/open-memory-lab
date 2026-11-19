@@ -76,7 +76,7 @@ def sync_detailed(
     key, <user>-curate and a tenant admin key included, answers access.verb_ceiling with details.reason
     session_key_only (ADR-0083 d11). Its groups (unconfirmed admin fixes, guardrail-loosening alerts,
     open investigations) join with ADR-0089's acts; until then it answers truncated alone, false
-    (ADR-0083 d14). Takes no query parameter. Journals nothing. Since v0.8.0.
+    (ADR-0083 d14). Takes no query parameter. Journals nothing. Since v0.8.3.
 
     Args:
         x_request_id (str | Unset):
@@ -117,7 +117,7 @@ def sync(
     key, <user>-curate and a tenant admin key included, answers access.verb_ceiling with details.reason
     session_key_only (ADR-0083 d11). Its groups (unconfirmed admin fixes, guardrail-loosening alerts,
     open investigations) join with ADR-0089's acts; until then it answers truncated alone, false
-    (ADR-0083 d14). Takes no query parameter. Journals nothing. Since v0.8.0.
+    (ADR-0083 d14). Takes no query parameter. Journals nothing. Since v0.8.3.
 
     Args:
         x_request_id (str | Unset):
@@ -153,7 +153,7 @@ async def asyncio_detailed(
     key, <user>-curate and a tenant admin key included, answers access.verb_ceiling with details.reason
     session_key_only (ADR-0083 d11). Its groups (unconfirmed admin fixes, guardrail-loosening alerts,
     open investigations) join with ADR-0089's acts; until then it answers truncated alone, false
-    (ADR-0083 d14). Takes no query parameter. Journals nothing. Since v0.8.0.
+    (ADR-0083 d14). Takes no query parameter. Journals nothing. Since v0.8.3.
 
     Args:
         x_request_id (str | Unset):
@@ -192,7 +192,7 @@ async def asyncio(
     key, <user>-curate and a tenant admin key included, answers access.verb_ceiling with details.reason
     session_key_only (ADR-0083 d11). Its groups (unconfirmed admin fixes, guardrail-loosening alerts,
     open investigations) join with ADR-0089's acts; until then it answers truncated alone, false
-    (ADR-0083 d14). Takes no query parameter. Journals nothing. Since v0.8.0.
+    (ADR-0083 d14). Takes no query parameter. Journals nothing. Since v0.8.3.
 
     Args:
         x_request_id (str | Unset):

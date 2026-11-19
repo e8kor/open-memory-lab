@@ -46,7 +46,7 @@ class HeldPageItemsItem:
         workspace_path (None | str): Derived at read time; grants bind to node ids. Null wherever workspace_id is.
         kind (MemorySummaryKind):
         state (MemorySummaryState): withdrawn is a held version its author retracted, kept and never served (ADR-0083
-            d13; since v0.8.0).
+            d13; since v0.8.3).
         unreviewed (bool): True exactly when the served version is held: the caller's own held version, or, inside a
             workspace a person put in progress, another author's held memory served to a reader there (ADR-0030 d3, d4).
         tokens (int): Budget tokens of the body (counter oml-tc/1): ceil(UTF-8 bytes of the NFC body / 4); not any
@@ -69,11 +69,11 @@ class HeldPageItemsItem:
             (ADR-0057 d5).
         needs_person (bool): true for an instruction-class version (steering, guardrail), or a successor of another kind
             that replaces one: only a person's reviewer key approves it, and any other key is refused review.person_required
-            (ADR-0080 d3, d16). Since v0.8.0.
+            (ADR-0080 d3, d16). Since v0.8.3.
         held_since (datetime.datetime): When the row entered the review queue.
         same_user (bool): Whether the calling key and the authoring key name one user (ADR-0055 d7).
         needs_person_reason (None | str): instruction_needs_person when needs_person is true; null when it is false
-            (ADR-0080 d16). Since v0.8.0.
+            (ADR-0080 d16). Since v0.8.3.
         severity (MemorySummarySeverity | Unset): On kind guardrail alone, except a retirement version (ADR-0037 d2).
         rule (Any | Unset): On kind guardrail alone: its oml-gr/1 rule, or null when it has none (ADR-0037 d8).
         skill (SkillFields | Unset): A skill's name and description, signed with the version (ADR-0080 d1).

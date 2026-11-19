@@ -59,7 +59,7 @@ export interface paths {
         put?: never;
         /**
          * What capture would decide for a submit's body or a supersession's, without capturing.
-         * @description Requires: the grant submit would need, or, with replaces, the grant supersede would need on that target (ADR-0082 d5). The body is submit's, or supersede's with replaces naming the version it replaces. Every check capture makes runs through the same pipeline, which stops before anything is journalled, held or metered: no version, no event, no counter moves (ADR-0071 d2), and no Idempotency-Key is read, so nothing is recorded or replayed. A refusal of authority is the HTTP error submit or supersede would answer: auth.*, limit.rate, access.verb_ceiling, every access.* grant refusal, and access.not_found for a target the key cannot read, replaces that names no row included. Every other refusal capture would make, the body's shape, size, the scan's veto, a quota's headroom, a name taken, submission.version_conflict, submission.tip_conflict, workspace.frozen and a guardrail rule that does not parse among them, answers 200 with would_capture false and refusal in the error object's shape, beside what was read before it (ADR-0082 d10). The request rate is charged once (ADR-0079). Read-shaped POST. Since v0.8.0.
+         * @description Requires: the grant submit would need, or, with replaces, the grant supersede would need on that target (ADR-0082 d5). The body is submit's, or supersede's with replaces naming the version it replaces. Every check capture makes runs through the same pipeline, which stops before anything is journalled, held or metered: no version, no event, no counter moves (ADR-0071 d2), and no Idempotency-Key is read, so nothing is recorded or replayed. A refusal of authority is the HTTP error submit or supersede would answer: auth.*, limit.rate, access.verb_ceiling, every access.* grant refusal, and access.not_found for a target the key cannot read, replaces that names no row included. Every other refusal capture would make, the body's shape, size, the scan's veto, a quota's headroom, a name taken, submission.version_conflict, submission.tip_conflict, workspace.frozen and a guardrail rule that does not parse among them, answers 200 with would_capture false and refusal in the error object's shape, beside what was read before it (ADR-0082 d10). The request rate is charged once (ADR-0079). Read-shaped POST. Since v0.8.3.
          */
         post: operations["previewMemory"];
         delete?: never;
@@ -177,7 +177,7 @@ export interface paths {
         };
         /**
          * The skills offered at the scope node, 50 a page, without bodies.
-         * @description Requires: reader on the scope node. Offers the promoted skill tips on the node and, under guardrail_scope ancestors, on each ancestor the key reads and, inside a workspace a person put in progress, on each node below the scope node in that subtree; never a skill in a child workspace outside one. Inside an in-progress subtree every author's held skill is offered too, and under include_own_held the key's own: marked unreviewed, never a held retirement or a version the scan held. A name held in two workspaces goes to the one nearer the scope node by tree distance, an ancestor winning a tie and then the smaller path; the nearer names the farther in overrides. Ordered by depth, then name; any parameter other than workspace, include_own_held and cursor is request.validation naming it. Serving the set is a read, not a recall (docs/api/http-api.md, Skills; ADR-0080 d4, d5, d10, d11, d12, d14, d16; since v0.8.0).
+         * @description Requires: reader on the scope node. Offers the promoted skill tips on the node and, under guardrail_scope ancestors, on each ancestor the key reads and, inside a workspace a person put in progress, on each node below the scope node in that subtree; never a skill in a child workspace outside one. Inside an in-progress subtree every author's held skill is offered too, and under include_own_held the key's own: marked unreviewed, never a held retirement or a version the scan held. A name held in two workspaces goes to the one nearer the scope node by tree distance, an ancestor winning a tie and then the smaller path; the nearer names the farther in overrides. Ordered by depth, then name; any parameter other than workspace, include_own_held and cursor is request.validation naming it. Serving the set is a read, not a recall (docs/api/http-api.md, Skills; ADR-0080 d4, d5, d10, d11, d12, d14, d16; since v0.8.3).
          */
         get: operations["getSkills"];
         put?: never;
@@ -359,7 +359,7 @@ export interface paths {
         put?: never;
         /**
          * A person exports a workspace's subtree as a signed bundle encrypted to named age recipients (ADR-0084).
-         * @description Requires: a key used_by person that is not an admin key and carries no profile, with reader effective access on every node of the subtree. Any other key is refused before any lookup with access.verb_ceiling, details.reason export_person_only. No recipient, or one that is not an age X25519 public key, is bundle.unencrypted, checked before anything is read. The answer is the bundle, format oml-bundle/1, as a binary age file (docs/data/bundle-format.md). history mode carries every version ever promoted and the exporter's own held, rejected, demoted and withdrawn versions, never another key's; an erased version travels as a marker. mode release, release and since are refused request.validation, details.reason releases_unbuilt, until releases are built; history is the default in a user root and must be named elsewhere. The tenant's export policy (own_root by default) refuses with export.disabled; a subtree node the key cannot read refuses the whole export with export.not_readable. Journals workspace.exported with the manifest digest, the counts and the recipients' fingerprints, and counts the bytes on the exports meter. Each call exports again under a new salt, so it takes no Idempotency-Key. Since v0.8.2.
+         * @description Requires: a key used_by person that is not an admin key and carries no profile, with reader effective access on every node of the subtree. Any other key is refused before any lookup with access.verb_ceiling, details.reason export_person_only. No recipient, or one that is not an age X25519 public key, is bundle.unencrypted, checked before anything is read. The answer is the bundle, format oml-bundle/1, as a binary age file (docs/data/bundle-format.md). history mode carries every version ever promoted and the exporter's own held, rejected, demoted and withdrawn versions, never another key's; an erased version travels as a marker. mode release, release and since are refused request.validation, details.reason releases_unbuilt, until releases are built; history is the default in a user root and must be named elsewhere. The tenant's export policy (own_root by default) refuses with export.disabled; a subtree node the key cannot read refuses the whole export with export.not_readable. Journals workspace.exported with the manifest digest, the counts and the recipients' fingerprints, and counts the bytes on the exports meter. Each call exports again under a new salt, so it takes no Idempotency-Key. Since v0.8.3.
          */
         post: operations["exportWorkspace"];
         delete?: never;
@@ -547,7 +547,7 @@ export interface paths {
         put?: never;
         /**
          * Serve exactly one held item — body, ALL attachments, the replaced version for a supersession — under an expiring serve_id.
-         * @description Requires: reviewer(review). Serves only rows within the key's reviewer effective access on the row's workspace; 204 when nothing in scope waits. Never serves a steering, guardrail or skill version, or a successor of another kind that replaces one, to a key that cannot approve it: until #214, a key that is not a reviewer key used_by person with no crew and no profile (ADR-0074 d19, accepted for the instruction class by ADR-0080 d16). A used_by: service key is refused with access.verb_ceiling before any lookup, as on every review-class verb and status-transition ratify (ADR-0025 d1). Serve bound server-side to (reviewer key, artifact version, attachment digest set); refused per item on lineage collision (review.author_in_lineage). Never serves a key acting for a person a row any key of that person wrote outside that person's own root (ADR-0082 d7; since v0.8.0).
+         * @description Requires: reviewer(review). Serves only rows within the key's reviewer effective access on the row's workspace; 204 when nothing in scope waits. Never serves a steering, guardrail or skill version, or a successor of another kind that replaces one, to a key that cannot approve it: until #214, a key that is not a reviewer key used_by person with no crew and no profile (ADR-0074 d19, accepted for the instruction class by ADR-0080 d16). A used_by: service key is refused with access.verb_ceiling before any lookup, as on every review-class verb and status-transition ratify (ADR-0025 d1). Serve bound server-side to (reviewer key, artifact version, attachment digest set); refused per item on lineage collision (review.author_in_lineage). Never serves a key acting for a person a row any key of that person wrote outside that person's own root (ADR-0082 d7; since v0.8.3).
          */
         post: operations["reviewNext"];
         delete?: never;
@@ -567,7 +567,7 @@ export interface paths {
         put?: never;
         /**
          * Verdict against a valid serve; the journalled verdict records the served digests.
-         * @description Requires: reviewer(review), valid unexpired unconsumed serve bound to this key (review.serve_invalid names the failure), and reviewer effective access on the row's workspace, resolved by the refusal order of docs/architecture/roles-and-keys.md: access.grant_refused with needed_role reviewer where reader is effective there, access.not_found otherwise (ADR-0025 d1); a used_by: service key is refused with access.verb_ceiling before any lookup. An approve that would ratify a supersession whose target is no longer the tip of the successor's own workspace and claim_key is refused with 409 submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id is not consumed (ADR-0025 d10). An approval of a steering or guardrail version, an instruction, or of a successor of another kind that replaces one, counts only from a person's reviewer key (used_by person, no crew, no profile); any other key is refused 403 review.person_required, details.reason instruction_needs_person and details.kind the instruction's kind, the replaced version's for such a successor, nothing is journalled and the version stays held, while a reject from it is admitted (ADR-0080 d3, d16). Resulting state: promoted, held (more verdicts needed) or rejected. serve_id is optional: omitted, the verdict applies to the one review item this key has claimed through review next, and with none or several it is refused with request.validation, details.field /serve_id, nothing journalled; the default rests on the claimed queue row, not on a serve record (#130; ADR-0039 d10). The Idempotency-Key record, scoped to the key and a nil workspace, is looked up before the default resolves: a retry of a committed verdict replays its stored response with Idempotency-Replay: true and never applies to another item. Outside a person's own root, a verdict from a key acting for the person whose key wrote the version, approve or reject, is review.author_in_lineage with details.reason same_person; inside it the verdict counts, marked same_user (ADR-0001 d5; ADR-0082 d7; since v0.8.0).
+         * @description Requires: reviewer(review), valid unexpired unconsumed serve bound to this key (review.serve_invalid names the failure), and reviewer effective access on the row's workspace, resolved by the refusal order of docs/architecture/roles-and-keys.md: access.grant_refused with needed_role reviewer where reader is effective there, access.not_found otherwise (ADR-0025 d1); a used_by: service key is refused with access.verb_ceiling before any lookup. An approve that would ratify a supersession whose target is no longer the tip of the successor's own workspace and claim_key is refused with 409 submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id is not consumed (ADR-0025 d10). An approval of a steering or guardrail version, an instruction, or of a successor of another kind that replaces one, counts only from a person's reviewer key (used_by person, no crew, no profile); any other key is refused 403 review.person_required, details.reason instruction_needs_person and details.kind the instruction's kind, the replaced version's for such a successor, nothing is journalled and the version stays held, while a reject from it is admitted (ADR-0080 d3, d16). Resulting state: promoted, held (more verdicts needed) or rejected. serve_id is optional: omitted, the verdict applies to the one review item this key has claimed through review next, and with none or several it is refused with request.validation, details.field /serve_id, nothing journalled; the default rests on the claimed queue row, not on a serve record (#130; ADR-0039 d10). The Idempotency-Key record, scoped to the key and a nil workspace, is looked up before the default resolves: a retry of a committed verdict replays its stored response with Idempotency-Replay: true and never applies to another item. Outside a person's own root, a verdict from a key acting for the person whose key wrote the version, approve or reject, is review.author_in_lineage with details.reason same_person; inside it the verdict counts, marked same_user (ADR-0001 d5; ADR-0082 d7; since v0.8.3).
          */
         post: operations["postVerdict"];
         delete?: never;
@@ -605,7 +605,7 @@ export interface paths {
         };
         /**
          * The review queue's depth and oldest held row per workspace, tenant-wide; no content.
-         * @description Requires: admin key role; every other key answers access.verb_ceiling (ADR-0045 d10, amending ADR-0026 d15). One item per workspace holding a held row: its id, path, held count, the held instruction-class versions among them (held_instructions), the live person's reviewer keys whose grants and denials confer reviewer there (person_reviewers: reviewer keys used_by person with no crew and no profile, not revoked or expired, the only keys that approve an instruction; ADR-0080 d16, #435; a key whose person wrote the held instructions is counted though outside that person's own root it cannot approve them) and the oldest held row's time, by path. No memory id, text, author or key. Journals nothing. Since v0.6.4; the two counts since v0.8.2.
+         * @description Requires: admin key role; every other key answers access.verb_ceiling (ADR-0045 d10, amending ADR-0026 d15). One item per workspace holding a held row: its id, path, held count, the held instruction-class versions among them (held_instructions), the live person's reviewer keys whose grants and denials confer reviewer there (person_reviewers: reviewer keys used_by person with no crew and no profile, not revoked or expired, the only keys that approve an instruction; ADR-0080 d16, #435; a key whose person wrote the held instructions is counted though outside that person's own root it cannot approve them) and the oldest held row's time, by path. No memory id, text, author or key. Journals nothing. Since v0.6.4; the two counts since v0.8.3.
          */
         get: operations["reviewQueue"];
         put?: never;
@@ -625,7 +625,7 @@ export interface paths {
         };
         /**
          * The To do page's counts for a person's web session key; no content.
-         * @description Requires: a person's web session key, <user>-web, through its capacity credential; any other key answers access.verb_ceiling with details.reason session_key_only (ADR-0083 d11). review is the number of rows GET /v2/review/held would serve the person's reviewer key, <user>-review, at workspace and below it, or across every workspace without workspace, computed under the same grants, lineage exclusions and author fences as that listing; counted up to 1,000, with truncated true past it, and read up to 2,000 held rows, counted or not, with truncated true and the count so far once that bound stops the read (ADR-0083 d16). A person with no live reviewer key or no reviewer grant counts 0, and so does a workspace that key cannot read or that does not exist, which is never named or refused. No memory id, text, claim key or name. Journals nothing. The other groups (fixes, ratify, withdrawals, overrides, imports) join with their features (ADR-0083 d14). Since v0.8.0.
+         * @description Requires: a person's web session key, <user>-web, through its capacity credential; any other key answers access.verb_ceiling with details.reason session_key_only (ADR-0083 d11). review is the number of rows GET /v2/review/held would serve the person's reviewer key, <user>-review, at workspace and below it, or across every workspace without workspace, computed under the same grants, lineage exclusions and author fences as that listing; counted up to 1,000, with truncated true past it, and read up to 2,000 held rows, counted or not, with truncated true and the count so far once that bound stops the read (ADR-0083 d16). A person with no live reviewer key or no reviewer grant counts 0, and so does a workspace that key cannot read or that does not exist, which is never named or refused. No memory id, text, claim key or name. Journals nothing. The other groups (fixes, ratify, withdrawals, overrides, imports) join with their features (ADR-0083 d14). Since v0.8.3.
          */
         get: operations["todoCounts"];
         put?: never;
@@ -645,7 +645,7 @@ export interface paths {
         };
         /**
          * The administration To do page's counts; no content.
-         * @description Requires: a person's admin session key, <user>-admin, through its capacity credential; any other key, <user>-curate and a tenant admin key included, answers access.verb_ceiling with details.reason session_key_only (ADR-0083 d11). Its groups (unconfirmed admin fixes, guardrail-loosening alerts, open investigations) join with ADR-0089's acts; until then it answers truncated alone, false (ADR-0083 d14). Takes no query parameter. Journals nothing. Since v0.8.0.
+         * @description Requires: a person's admin session key, <user>-admin, through its capacity credential; any other key, <user>-curate and a tenant admin key included, answers access.verb_ceiling with details.reason session_key_only (ADR-0083 d11). Its groups (unconfirmed admin fixes, guardrail-loosening alerts, open investigations) join with ADR-0089's acts; until then it answers truncated alone, false (ADR-0083 d14). Takes no query parameter. Journals nothing. Since v0.8.3.
          */
         get: operations["adminTodoCounts"];
         put?: never;
@@ -791,7 +791,7 @@ export interface paths {
         put?: never;
         /**
          * Link a person's tenant key to the user who signs in, so the console acts with it in shared workspaces.
-         * @description Requires: a console admin session, <user>-admin through its capacity credential, in the key's own tenant; another role is access.verb_ceiling, a bearer admin key, which names no person, is request.validation with details.field key and details.reason session_admin_only, and no MCP tool or CLI command reaches the route (the operator, 2026-11-17: "Console only"). user names a user of the tenant with a user root and a web entry, none of it disabled, and never the calling admin's own person; otherwise request.validation with details.field /user and details.reason user_unknown, user_disabled or self_link. The key is a live tenant bearer key used_by person that holds no link; otherwise request.validation with details.field key and details.reason revoked (a key past its expiry too), already_linked (unlink it first), admin_key, not_a_tenant_key (a user key, a session key or a connector key) or not_used_by_person. Journalled as key.linked_person, with accepted false: the link is pending, and the key acts for no one, until that user accepts it from their own console session with POST /v2/keys/{key}/accept_link (the operator's decision of 2026-11-19). The key is refused already_linked while a link pends too. From the acceptance on, the key writes into that user's root as their key wherever its grants allow, and oml-web may name it in OML-Acting-Key beside that user's capacity credential on the console's acting routes (GET /v2/whoami, GET /v2/review/held, GET /v1/memories/{artifact_id}, POST /v2/review/verdicts/bulk): the request runs as the key, with its grants and verb ceilings. The header sent twice, on another route, without a capacity credential, or naming a key the link no longer admits answers auth.invalid with details.reason acting_key_not_linked and runs nothing (ADR-0085 d16, amended 2026-11-17). The Idempotency-Key is required and not replayed. Since v0.8.0.
+         * @description Requires: a console admin session, <user>-admin through its capacity credential, in the key's own tenant; another role is access.verb_ceiling, a bearer admin key, which names no person, is request.validation with details.field key and details.reason session_admin_only, and no MCP tool or CLI command reaches the route (the operator, 2026-11-17: "Console only"). user names a user of the tenant with a user root and a web entry, none of it disabled, and never the calling admin's own person; otherwise request.validation with details.field /user and details.reason user_unknown, user_disabled or self_link. The key is a live tenant bearer key used_by person that holds no link; otherwise request.validation with details.field key and details.reason revoked (a key past its expiry too), already_linked (unlink it first), admin_key, not_a_tenant_key (a user key, a session key or a connector key) or not_used_by_person. Journalled as key.linked_person, with accepted false: the link is pending, and the key acts for no one, until that user accepts it from their own console session with POST /v2/keys/{key}/accept_link (the operator's decision of 2026-11-19). The key is refused already_linked while a link pends too. From the acceptance on, the key writes into that user's root as their key wherever its grants allow, and oml-web may name it in OML-Acting-Key beside that user's capacity credential on the console's acting routes (GET /v2/whoami, GET /v2/review/held, GET /v1/memories/{artifact_id}, POST /v2/review/verdicts/bulk): the request runs as the key, with its grants and verb ceilings. The header sent twice, on another route, without a capacity credential, or naming a key the link no longer admits answers auth.invalid with details.reason acting_key_not_linked and runs nothing (ADR-0085 d16, amended 2026-11-17). The Idempotency-Key is required and not replayed. Since v0.8.3.
          */
         post: operations["linkKey"];
         delete?: never;
@@ -811,7 +811,7 @@ export interface paths {
         put?: never;
         /**
          * End a key's link to a person.
-         * @description Requires: a console admin session, <user>-admin through its capacity credential, in the key's own tenant; another role is access.verb_ceiling, a bearer admin key, which names no person, is request.validation with details.field key and details.reason session_admin_only, and no MCP tool or CLI command reaches the route (the operator, 2026-11-17: "Console only"). A key without a link or a pending one is request.validation with details.field key and details.reason not_linked. Journalled as key.unlinked_person, which also withdraws a link still pending; the console's next act with the key answers auth.invalid with details.reason acting_key_not_linked, and the key no longer writes into the user's root. A revoked key is unlinked too. The Idempotency-Key is required and not replayed (ADR-0085 d16). Since v0.8.0.
+         * @description Requires: a console admin session, <user>-admin through its capacity credential, in the key's own tenant; another role is access.verb_ceiling, a bearer admin key, which names no person, is request.validation with details.field key and details.reason session_admin_only, and no MCP tool or CLI command reaches the route (the operator, 2026-11-17: "Console only"). A key without a link or a pending one is request.validation with details.field key and details.reason not_linked. Journalled as key.unlinked_person, which also withdraws a link still pending; the console's next act with the key answers auth.invalid with details.reason acting_key_not_linked, and the key no longer writes into the user's root. A revoked key is unlinked too. The Idempotency-Key is required and not replayed (ADR-0085 d16). Since v0.8.3.
          */
         post: operations["unlinkKey"];
         delete?: never;
@@ -1745,7 +1745,7 @@ export interface paths {
         put?: never;
         /**
          * Open a resumable upload session for bytes of a declared size and SHA-256.
-         * @description Requires: a writer key; any other role is access.verb_ceiling (ADR-0004 d3, as amended 2026-11-17). purpose is import, the one purpose built; size is 1 byte to uploads.max_bytes (1 GiB by default), or 413 upload.too_large; sha256 is the plaintext's SHA-256 as 64 lowercase hex digits. A key holding 4 sessions that are open, or completed and unbound, is upload.session_limit; a tenant whose open and unbound sessions would declare more than uploads.tenant_max_bytes (4 GiB by default) is upload.tenant_limit; an object store that fails is 503 upload.storage_failed. The session takes parts of 8 MiB, the last the remainder, and expires 24 hours after its opening or its last part and never later than 72 hours after it opened. Only this key is ever served it. Nothing is journalled, and no Idempotency-Key is taken: a repeated open opens another session. Since v0.8.2.
+         * @description Requires: a writer key; any other role is access.verb_ceiling (ADR-0004 d3, as amended 2026-11-17). purpose is import, the one purpose built; size is 1 byte to uploads.max_bytes (1 GiB by default), or 413 upload.too_large; sha256 is the plaintext's SHA-256 as 64 lowercase hex digits. A key holding 4 sessions that are open, or completed and unbound, is upload.session_limit; a tenant whose open and unbound sessions would declare more than uploads.tenant_max_bytes (4 GiB by default) is upload.tenant_limit; an object store that fails is 503 upload.storage_failed. The session takes parts of 8 MiB, the last the remainder, and expires 24 hours after its opening or its last part and never later than 72 hours after it opened. Only this key is ever served it. Nothing is journalled, and no Idempotency-Key is taken: a repeated open opens another session. Since v0.8.3.
          */
         post: operations["openUpload"];
         delete?: never;
@@ -1763,14 +1763,14 @@ export interface paths {
         };
         /**
          * Read an upload session's state, the parts received and missing, and its expiry.
-         * @description Requires: the key that opened the session; any other key, and an id no session has, answers access.not_found (ADR-0004 d3, as amended 2026-11-17). A session past its expiry that no sweep has reached yet reads expired. The session's key is never answered. Since v0.8.2.
+         * @description Requires: the key that opened the session; any other key, and an id no session has, answers access.not_found (ADR-0004 d3, as amended 2026-11-17). A session past its expiry that no sweep has reached yet reads expired. The session's key is never answered. Since v0.8.3.
          */
         get: operations["getUpload"];
         put?: never;
         post?: never;
         /**
          * Abandon an upload session, shredding its key and removing its parts.
-         * @description Requires: the key that opened the session, or access.not_found (ADR-0004 d3, as amended 2026-11-17). An open, completed or failed session is abandoned: its key is nulled, then its parts are removed. One already abandoned or expired answers the same; a bound one belongs to the verb that bound it and is upload.session_invalid. Nothing is journalled. Since v0.8.2.
+         * @description Requires: the key that opened the session, or access.not_found (ADR-0004 d3, as amended 2026-11-17). An open, completed or failed session is abandoned: its key is nulled, then its parts are removed. One already abandoned or expired answers the same; a bound one belongs to the verb that bound it and is upload.session_invalid. Nothing is journalled. Since v0.8.3.
          */
         delete: operations["abandonUpload"];
         options?: never;
@@ -1788,7 +1788,7 @@ export interface paths {
         get?: never;
         /**
          * Store one part of an open session; sending a part again replaces it.
-         * @description Requires: the key that opened the session, or access.not_found (ADR-0004 d3, as amended 2026-11-17). part counts from 1; outside 1 to the part count is 422 upload.part_number. Every part is 8,388,608 bytes but the last, which is the remainder; another length is 422 upload.part_size. A session that is not open is upload.session_invalid with details.state, and one past its expiry 410 upload.expired. The part is stored as XChaCha20-Poly1305 ciphertext under the session's own key, and the session's expiry moves to 24 hours on, never past 72 hours after it opened. A part is addressed by its number, so no Idempotency-Key is taken: a retry after an interruption sends the parts GET /v2/uploads/{upload_id} names missing. Since v0.8.2.
+         * @description Requires: the key that opened the session, or access.not_found (ADR-0004 d3, as amended 2026-11-17). part counts from 1; outside 1 to the part count is 422 upload.part_number. Every part is 8,388,608 bytes but the last, which is the remainder; another length is 422 upload.part_size. A session that is not open is upload.session_invalid with details.state, and one past its expiry 410 upload.expired. The part is stored as XChaCha20-Poly1305 ciphertext under the session's own key, and the session's expiry moves to 24 hours on, never past 72 hours after it opened. A part is addressed by its number, so no Idempotency-Key is taken: a retry after an interruption sends the parts GET /v2/uploads/{upload_id} names missing. Since v0.8.3.
          */
         put: operations["putUploadPart"];
         post?: never;
@@ -1809,7 +1809,7 @@ export interface paths {
         put?: never;
         /**
          * Read the parts in order and check their SHA-256 against the declared one.
-         * @description Requires: the key that opened the session, or access.not_found (ADR-0004 d3, as amended 2026-11-17). Parts missing are upload.incomplete with details.missing, the first 100. A digest that differs fails the session, nulls its key, removes its parts and answers 422 upload.digest_mismatch. A match completes it: it is unbound until a verb such as an import binds it, and expires 24 hours after completion. A session that is not open is upload.session_invalid; past its expiry, 410 upload.expired. Nothing is journalled. Since v0.8.2.
+         * @description Requires: the key that opened the session, or access.not_found (ADR-0004 d3, as amended 2026-11-17). Parts missing are upload.incomplete with details.missing, the first 100. A digest that differs fails the session, nulls its key, removes its parts and answers 422 upload.digest_mismatch. A match completes it: it is unbound until a verb such as an import binds it, and expires 24 hours after completion. A session that is not open is upload.session_invalid; past its expiry, 410 upload.expired. Nothing is journalled. Since v0.8.3.
          */
         post: operations["completeUpload"];
         delete?: never;
@@ -1829,7 +1829,7 @@ export interface paths {
         put?: never;
         /**
          * Plan or run an import of a completed upload into an in-progress workspace; every version lands held.
-         * @description Requires: a writer key used by a person; any other key is access.verb_ceiling with details.reason import_person_only (ADR-0084 d11). upload_id is a completed upload session of purpose import that this key opened (ADR-0004 d3), holding the decrypted bundle; another key's is access.not_found, one in another state upload.session_invalid, one past its expiry 410 upload.expired. target is a development workspace in progress the key writes, or a bare name this key may create, which the import creates in progress; any other target is 409 import.target_not_in_progress, and a taken name name.taken (ADR-0084 d6, d9). The bundle is verified before anything is written, each check under its own bundle.* code (d7). expect_key is the source key's fingerprint, 64 hex digits; the first import from a source requires it (request.validation, details.field /expect_key, details.reason first_import) and pins it, and a later bundle under another key, or with none named, is 409 import.source_key_changed (R11). A bundle older than the last imported from its source is 409 import.bundle_older unless allow_older (d8). A plan that does not fit the account's meters is 429 import.over_quota and writes nothing. dry_run answers the plan and binds nothing. Otherwise the upload binds once, each claim key is written as the plan says, held by this key with the source's origin kind and its import_provenance, under the idempotency key import:<target>:<source server>:<source tenant>:<artifact>:<version>, so the same bundle again writes nothing; a version the target's scan or rules refuse is skipped and named in refusals. A claim edge whose two ends the target carries is proposed by this key where its verb ceiling allows, which a writer key's does not; every edge not proposed is counted in edges_reported, and a refused proposal is named in refusals as edge:<src>:<dst>. One import or dry run per tenant runs at a time, and two in the server; another is 409 import.busy, retryable. A dry run answers 200 with the plan. Otherwise the upload binds, the source key is pinned, and the answer is 202 with the import running; the run goes on after the answer, and GET /v2/imports/{id} answers its state until it is done or failed. The import journals workspace.imported, listing each version it wrote, and the upload's key is nulled when it ends; an import running for more than an hour that the server is not running ends failed at the next sweep. No Idempotency-Key is taken: the upload binds once. Since v0.8.2.
+         * @description Requires: a writer key used by a person; any other key is access.verb_ceiling with details.reason import_person_only (ADR-0084 d11). upload_id is a completed upload session of purpose import that this key opened (ADR-0004 d3), holding the decrypted bundle; another key's is access.not_found, one in another state upload.session_invalid, one past its expiry 410 upload.expired. target is a development workspace in progress the key writes, or a bare name this key may create, which the import creates in progress; any other target is 409 import.target_not_in_progress, and a taken name name.taken (ADR-0084 d6, d9). The bundle is verified before anything is written, each check under its own bundle.* code (d7). expect_key is the source key's fingerprint, 64 hex digits; the first import from a source requires it (request.validation, details.field /expect_key, details.reason first_import) and pins it, and a later bundle under another key, or with none named, is 409 import.source_key_changed (R11). A bundle older than the last imported from its source is 409 import.bundle_older unless allow_older (d8). A plan that does not fit the account's meters is 429 import.over_quota and writes nothing. dry_run answers the plan and binds nothing. Otherwise the upload binds once, each claim key is written as the plan says, held by this key with the source's origin kind and its import_provenance, under the idempotency key import:<target>:<source server>:<source tenant>:<artifact>:<version>, so the same bundle again writes nothing; a version the target's scan or rules refuse is skipped and named in refusals. A claim edge whose two ends the target carries is proposed by this key where its verb ceiling allows, which a writer key's does not; every edge not proposed is counted in edges_reported, and a refused proposal is named in refusals as edge:<src>:<dst>. One import or dry run per tenant runs at a time, and two in the server; another is 409 import.busy, retryable. A dry run answers 200 with the plan. Otherwise the upload binds, the source key is pinned, and the answer is 202 with the import running; the run goes on after the answer, and GET /v2/imports/{id} answers its state until it is done or failed. The import journals workspace.imported, listing each version it wrote, and the upload's key is nulled when it ends; an import running for more than an hour that the server is not running ends failed at the next sweep. No Idempotency-Key is taken: the upload binds once. Since v0.8.3.
          */
         post: operations["importBundle"];
         delete?: never;
@@ -1847,7 +1847,7 @@ export interface paths {
         };
         /**
          * An import's state, position, counts and refusals.
-         * @description Requires: the key that ran the import; any other key, and an id no import has, answers access.not_found (ADR-0084 d15). state is running, done or failed; a running import outlives no request, so one read running stopped when the server did, and position is the versions it recorded. Since v0.8.2.
+         * @description Requires: the key that ran the import; any other key, and an id no import has, answers access.not_found (ADR-0084 d15). state is running, done or failed; a running import outlives no request, so one read running stopped when the server did, and position is the versions it recorded. Since v0.8.3.
          */
         get: operations["getImport"];
         put?: never;
@@ -2181,11 +2181,11 @@ export interface components {
             valid_until?: components["schemas"]["ValidEnd"];
             severity?: components["schemas"]["Severity"];
             rule?: components["schemas"]["GuardrailRule"];
-            /** @description Required on kind skill, refused on every other kind (ADR-0080 d1). Since v0.8.0. */
+            /** @description Required on kind skill, refused on every other kind (ADR-0080 d1). Since v0.8.3. */
             skill?: components["schemas"]["SkillFields"];
-            /** @description Optional on kind document, refused on every other kind (ADR-0081 d1). Since v0.8.0. */
+            /** @description Optional on kind document, refused on every other kind (ADR-0081 d1). Since v0.8.3. */
             document?: components["schemas"]["DocumentFields"];
-            /** @description Required on kind test, refused on every other kind (ADR-0086 d1). Since v0.8.0. */
+            /** @description Required on kind test, refused on every other kind (ADR-0086 d1). Since v0.8.3. */
             test?: components["schemas"]["TestFields"];
             /** @description Text body — claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body; larger is 413 request.payload_too_large (http-api.md Limits). Binary content goes through the designed attachments (openapi-designed.yaml). */
             body: string;
@@ -2279,7 +2279,7 @@ export interface components {
             /** @enum {string} */
             kind: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release" | "guardrail" | "skill" | "document" | "test";
             /**
-             * @description withdrawn is a held version its author retracted, kept and never served (ADR-0083 d13; since v0.8.0).
+             * @description withdrawn is a held version its author retracted, kept and never served (ADR-0083 d13; since v0.8.3).
              * @enum {string}
              */
             state: "held" | "promoted" | "demoted" | "rejected" | "erased" | "withdrawn";
@@ -2292,11 +2292,11 @@ export interface components {
             severity?: "never" | "must" | "should";
             /** @description On kind guardrail alone: its oml-gr/1 rule, or null when it has none (ADR-0037 d8). */
             rule?: unknown;
-            /** @description On kind skill alone, except a retirement version (ADR-0080 d1; since v0.8.0). */
+            /** @description On kind skill alone, except a retirement version (ADR-0080 d1; since v0.8.3). */
             skill?: components["schemas"]["SkillFields"];
-            /** @description On kind document alone, except a retirement version; its title as sent, else the first level-1 heading, else the claim key's last segment (ADR-0081 d1; since v0.8.0). */
+            /** @description On kind document alone, except a retirement version; its title as sent, else the first level-1 heading, else the claim key's last segment (ADR-0081 d1; since v0.8.3). */
             document?: components["schemas"]["DocumentFields"];
-            /** @description On kind test alone, except a retirement version (ADR-0086 d1; since v0.8.0). */
+            /** @description On kind test alone, except a retirement version (ADR-0086 d1; since v0.8.3). */
             test?: components["schemas"]["TestFields"];
             /** @description On a held guardrail alone: every reader of it is told that every key reading its workspace will load the rule once it binds (ADR-0037 d10). */
             load_warning?: string;
@@ -2838,11 +2838,11 @@ export interface components {
             reason?: string;
             severity?: components["schemas"]["Severity"];
             rule?: components["schemas"]["GuardrailRule"];
-            /** @description Required on a skill successor unless it retires; its name is the target's, a renamed skill being a retirement and a new claim (ADR-0080 d2). Since v0.8.0. */
+            /** @description Required on a skill successor unless it retires; its name is the target's, a renamed skill being a retirement and a new claim (ADR-0080 d2). Since v0.8.3. */
             skill?: components["schemas"]["SkillFields"];
-            /** @description Optional on a document successor, refused on a retirement (ADR-0081 d1). Since v0.8.0. */
+            /** @description Optional on a document successor, refused on a retirement (ADR-0081 d1). Since v0.8.3. */
             document?: components["schemas"]["DocumentFields"];
-            /** @description Required on a test successor unless it retires (ADR-0086 d1). Since v0.8.0. */
+            /** @description Required on a test successor unless it retires (ADR-0086 d1). Since v0.8.3. */
             test?: components["schemas"]["TestFields"];
             /**
              * @description Omitted, hold. What the write does when the similar check names a row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims no idempotency record. A retirement is never checked, and the claim superseded is never named. Not part of the request digest. Since v0.5.9.
@@ -3030,7 +3030,7 @@ export interface components {
             in_progress_root?: components["schemas"]["WhoamiRef"] | null;
             /** @description The promoted served tips on this node whose latest source check found the source changed or removed (ADR-0057 d5, d17); 0 for an admin key, which reads no claim. oml doctor reports it for the key's default workspace. */
             stale_versions: number;
-            /** @description The approved claims on this node alone, not its subtree, by kind: a claim counts once when its tip is promoted and is not a retirement, so a replaced version or a held successor adds nothing. Only kinds with at least one approved claim are named (ADR-0082 d8 item 7, d10). Since v0.8.0. */
+            /** @description The approved claims on this node alone, not its subtree, by kind: a claim counts once when its tip is promoted and is not a retirement, so a replaced version or a held successor adds nothing. Only kinds with at least one approved claim are named (ADR-0082 d8 item 7, d10). Since v0.8.3. */
             approved_by_kind: {
                 [key: string]: number;
             };
@@ -3235,13 +3235,13 @@ export interface components {
                 held_since: string;
                 /** @description Whether the calling key and the authoring key name one user (ADR-0055 d7). */
                 same_user: boolean;
-                /** @description true for an instruction-class version (steering, guardrail), or a successor of another kind that replaces one: only a person's reviewer key approves it, and any other key is refused review.person_required (ADR-0080 d3, d16). Since v0.8.0. */
+                /** @description true for an instruction-class version (steering, guardrail), or a successor of another kind that replaces one: only a person's reviewer key approves it, and any other key is refused review.person_required (ADR-0080 d3, d16). Since v0.8.3. */
                 needs_person: boolean;
-                /** @description instruction_needs_person when needs_person is true; null when it is false (ADR-0080 d16). Since v0.8.0. */
+                /** @description instruction_needs_person when needs_person is true; null when it is false (ADR-0080 d16). Since v0.8.3. */
                 needs_person_reason: string | null;
             })[];
             next_cursor: string | null;
-            /** @description With needs=person, the lane's rows per author key, in author key id order; null otherwise (ADR-0074 d19). Since v0.8.0. */
+            /** @description With needs=person, the lane's rows per author key, in author key id order; null otherwise (ADR-0074 d19). Since v0.8.3. */
             lane_authors?: {
                 /** Format: uuid */
                 author_key_id: string;
@@ -3811,7 +3811,7 @@ export interface components {
              * @description When the person asked for deletion, while the request is pending (ADR-0068 d6).
              */
             deletion_requested_at: string | null;
-            /** @description The live tenant keys an admin linked to the person (not revoked, not past their expiry, used_by person), by id and name, in name order: the keys oml-web may name in OML-Acting-Key for this person (ADR-0085 d16). Since v0.8.0. */
+            /** @description The live tenant keys an admin linked to the person (not revoked, not past their expiry, used_by person), by id and name, in name order: the keys oml-web may name in OML-Acting-Key for this person (ADR-0085 d16). Since v0.8.3. */
             linked_keys?: components["schemas"]["WhoamiRef"][];
             /** @description The live tenant keys an admin linked to the person that wait on the person's acceptance, by id and name, in name order; each acts for no one until the person accepts it with POST /v2/keys/{key}/accept_link (ADR-0085 d16, the operator's decision of 2026-11-19). Since v0.8.4. */
             pending_links?: components["schemas"]["WhoamiRef"][];
@@ -3859,7 +3859,7 @@ export interface components {
             items: {
                 /** Format: uuid */
                 id: string;
-                /** @description true when only a person's reviewer key approves the row: it, or the version it replaces, is steering or a guardrail (ADR-0080 d16); false when item is null. Since v0.8.0. */
+                /** @description true when only a person's reviewer key approves the row: it, or the version it replaces, is steering or a guardrail (ADR-0080 d16); false when item is null. Since v0.8.3. */
                 needs_person: boolean;
                 /** @description The row as the held listing serves its text, or null when it is no longer held or no longer the key's to judge. */
                 item: components["schemas"]["Memory"] | null;
@@ -4171,7 +4171,7 @@ export interface components {
             findings_unlisted?: number;
             /** @description After this call, served versions (promoted tips) with no approval: their approved_at is null because migration 0044's fill could not match the verdict their promotion names. A version a ratified successor replaced is not counted. Doctor's approval_unmatched (ADR-0077 d6). A count, never a list. */
             promoted_unapproved?: number;
-            /** @description After this call, served instruction-class versions (promoted steering, guardrail and skill tips, retirements aside) whose approving key was not a person's reviewer key, or that carry no approval: approved before an instruction became a person's to approve. A person reviews one again by superseding it; the replaced version is then no tip and not counted. Read off the row's approver_used_by, so a person's key that had a crew is not counted. Doctor's instruction_approvals (ADR-0080 d16, #436). Since v0.8.2. */
+            /** @description After this call, served instruction-class versions (promoted steering, guardrail and skill tips, retirements aside) whose approving key was not a person's reviewer key, or that carry no approval: approved before an instruction became a person's to approve. A person reviews one again by superseding it; the replaced version is then no tip and not counted. Read off the row's approver_used_by, so a person's key that had a crew is not counted. Doctor's instruction_approvals (ADR-0080 d16, #436). Since v0.8.3. */
             instructions_without_person_approval?: number;
         };
         /** @description The build that answered (http-api.md "Health"). Times are UTC, YYYY-MM-DDTHH:MM:SSZ; a field nothing could supply is the string unknown. */
@@ -4344,9 +4344,9 @@ export interface operations {
                 own?: boolean;
                 /** @description true: the scoped listing (at workspace, else universe) and the caller's own rows, every key of the person for a person's session key (as for `mine`), merged newest first under one cursor, a row in both once (ADR-0045 d22, d23; ADR-0070 d5). Combines only with `mine`, author, include_text, own=false, workspace, state (a comma list of held, promoted, superseded, rejected, demoted and withdrawn), kinds, promoted_since, one origin_kinds, limit and cursor; any other parameter is request.validation. Since v0.6.4. */
                 with_own?: boolean;
-                /** @description true: the caller's own rows alone, with no scoped part, under one cursor: every key of the person for a person's session key (the keys naming their root and their web, review and curate session keys, never a linked tenant key), the key alone for any other key, in every state, off the subtrees the key's global denials cover (ADR-0083 d3, d14). Combines as with_own does; author narrows it to one own key. Since v0.8.0. */
+                /** @description true: the caller's own rows alone, with no scoped part, under one cursor: every key of the person for a person's session key (the keys naming their root and their web, review and curate session keys, never a linked tenant key), the key alone for any other key, in every state, off the subtrees the key's global denials cover (ADR-0083 d3, d14). Combines as with_own does; author narrows it to one own key. Since v0.8.3. */
                 mine?: boolean;
-                /** @description With with_own, `mine` or author: only the promoted rows approved at or after this instant, the rows of every other state left whole; with no state, every state is listed (ADR-0083 d3). Not an RFC 3339 date-time with an offset and at most microsecond precision is request.validation naming promoted_since. Since v0.8.0. */
+                /** @description With with_own, `mine` or author: only the promoted rows approved at or after this instant, the rows of every other state left whole; with no state, every state is listed (ADR-0083 d3). Not an RFC 3339 date-time with an offset and at most microsecond precision is request.validation naming promoted_since. Since v0.8.3. */
                 promoted_since?: string;
                 /** @description One of the caller's own keys, by name: the caller's rows by that key alone, the scoped part dropped; a key that is not the caller's is access.not_found. Implies the with_own listing (ADR-0045 d23; ADR-0070 d5). Since v0.6.4. */
                 author?: string;
@@ -6050,7 +6050,7 @@ export interface operations {
                 /** @example {} */
                 "application/json": {
                     /**
-                     * @description person serves the person lane alone: steering, guardrail and skill versions and a successor of another kind that replaces one, round-robin across author keys, each row's turn its place among its author's lane rows in age order, the lowest turn first and the older row first within a turn; a key that cannot approve them is served none, 204. reviewer serves the rows any reviewer may approve. Omitted, a person's reviewer key is served every row and any other key the rows it may approve (ADR-0074 d19; ADR-0080 d16). Since v0.8.0.
+                     * @description person serves the person lane alone: steering, guardrail and skill versions and a successor of another kind that replaces one, round-robin across author keys, each row's turn its place among its author's lane rows in age order, the lowest turn first and the older row first within a turn; a key that cannot approve them is served none, 204. reviewer serves the rows any reviewer may approve. Omitted, a person's reviewer key is served every row and any other key the rows it may approve (ADR-0074 d19; ADR-0080 d16). Since v0.8.3.
                      * @enum {string}
                      */
                     needs?: "person" | "reviewer";
@@ -6185,7 +6185,7 @@ export interface operations {
                 author_key?: string;
                 /** @description A literal prefix of the claim key. */
                 claim_key_prefix?: string;
-                /** @description person lists the person lane alone and counts it per author key in lane_authors; reviewer the rows any reviewer may approve. A key that cannot approve an instruction is listed none of the lane (ADR-0074 d19; ADR-0080 d16). Since v0.8.0. */
+                /** @description person lists the person lane alone and counts it per author key in lane_authors; reviewer the rows any reviewer may approve. A key that cannot approve an instruction is listed none of the lane (ADR-0074 d19; ADR-0080 d16). Since v0.8.3. */
                 needs?: "person" | "reviewer";
                 /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
                 limit?: components["parameters"]["Limit"];
@@ -8860,7 +8860,7 @@ export interface operations {
                     origin_kind?: "repo" | "doc" | "code" | "lake" | "chat" | "web" | "manual";
                     /** @description The authoring key of the tenant, by name or id (ADR-0045 d24; ADR-0070 d5). Since v0.6.4. */
                     author?: string;
-                    /** @description Only these kinds, each named once, as recall's kinds: a row of any of them is served (ADR-0083 d5; ADR-0082 d8 item 3; ADR-0092 d6). An empty array, an unknown kind or any other value is request.validation naming /kinds; v0.8.0's draft kind is request.validation naming /kinds in details.renamed_to. Since v0.8.0. */
+                    /** @description Only these kinds, each named once, as recall's kinds: a row of any of them is served (ADR-0083 d5; ADR-0082 d8 item 3; ADR-0092 d6). An empty array, an unknown kind or any other value is request.validation naming /kinds; a single kind, the spelling of an unreleased draft, is request.validation naming /kinds in details.renamed_to. Since v0.8.3. */
                     kinds?: components["schemas"]["ClaimKind"][];
                     /** @description At most 200, the console list's largest page (ADR-0045 d22; raised from 100 in v0.7.0). */
                     limit?: number;

@@ -78,7 +78,7 @@ Writes enter held. Nothing in this family makes anything readable to anyone new:
 | `lifecycle.demote` | `artifact_id`, `version`, `workspace_id`, `claim_key`, `restored_artifact_id`, `restored_version`, `reopened_artifact_id`, `restored_valid_until`, `demoted_by_key_id` | An admin's fix stops serving a promoted version and keeps its bytes. When it was the tip, the latest earlier approved version that is not demoted is the tip again and is named in `restored_artifact_id`; otherwise that field is null. When the demoted version's ratification gave the version it replaced an end, and that version is still approved, `reopened_artifact_id` names it and `restored_valid_until` is the end it gets back, null for an open end; with no such version both are null. No read serves a demoted version at any instant ([ADR-0089](../adr/ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) d16). |
 | `lifecycle.erase` | `artifact_id`, `version`, `workspace_id`, `claim_key`, `artifact_ids`, `dek_destroyed`, `copy_classes`, `erased_by_key_id` | An admin's fix erases a claim: `artifact_id` names the version asked for, and `artifact_ids` every version of its claim. In the same commit each version's text and the index rows derived from it are emptied, its search telemetry is erased and its encryption key destroyed. `copy_classes` names the copies affected. The text in database backups and lake ciphertext persists until its window ends ([ADR-0005](../adr/ADR-0005-erasure-by-crypto-shredding.md) d2, d4). |
 
-`policy` holds the review policy the promotion or supersession was decided under: `k`, `required_roles`, `class` (`knowledge`, `instruction` or `vocabulary`), the class whose rule the verdict met: the version's own, or the replaced version's where that is an instruction, and `human_required`, true for an instruction, whose approval counts only from a person's reviewer key ([ADR-0080](../adr/ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) d16). A promotion journalled before v0.8.0 carries `k` and `required_roles` only.
+`policy` holds the review policy the promotion or supersession was decided under: `k`, `required_roles`, `class` (`knowledge`, `instruction` or `vocabulary`), the class whose rule the verdict met: the version's own, or the replaced version's where that is an instruction, and `human_required`, true for an instruction, whose approval counts only from a person's reviewer key ([ADR-0080](../adr/ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) d16). A promotion journalled before v0.8.3 carries `k` and `required_roles` only.
 
 ## Workspaces and crews
 
@@ -153,11 +153,11 @@ Issuing an access token and refreshing are not events. They change no authority.
 
 ## Former names
 
-Events signed before v0.8.0 keep the names they were signed with, and every reader (replay, the
+Events signed before v0.8.3 keep the names they were signed with, and every reader (replay, the
 lake writer's projection, the events tail and its visibility, `oml events`) reads them through
 one map, after the stored bytes are verified as they stand
 ([ADR-0091](../adr/ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md)
-d4). The map is the identity on every event v0.8.0 writes. A `workarea.*` type outside the first
+d4). The map is the identity on every event v0.8.3 writes. A `workarea.*` type outside the first
 table fails the reader closed, named `journal_unmapped_former_name`, as does an object that holds a
 former key beside its successor. This table is the only place
 the catalog spells the former names.
