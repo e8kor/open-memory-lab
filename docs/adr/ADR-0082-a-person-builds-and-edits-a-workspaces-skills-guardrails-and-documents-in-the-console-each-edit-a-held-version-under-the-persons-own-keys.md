@@ -278,6 +278,14 @@ Decided; built in v0.8.0: the API in #409, the console in #410 (the workspace pa
       key of the author's person counts a verdict on it outside the person's root (d7). Every other
       reviewer key keeps `access.verb_ceiling`. Rejected: reviewer alone, which would let a key
       start a claim it cannot read back.
+      *(Note of 2026-11-19, the review of PR #494, H1: inside the person's own root the session
+      reviewer key starts no claim. d2 routes every new item there through `<user>-web`, the key
+      whose writes count on the person's account (ADR-0071 d1), so a start there as `<user>-review`
+      is refused `access.verb_ceiling` with `details.reason: review_key_in_own_root`, preview
+      answers the same HTTP error, and the key lists no `remember` on a node of that root. Outside
+      the root the start stands as above, and the write is checked against the person's limits
+      (ADR-0071 d3). Rejected: leaving the start open in the root, where a key of no account
+      wrote past the person's quota.)*
     - **The shape of `approved_by_kind` (d8 item 7).** An object keyed by kind naming only kinds
       with at least one approved claim: a claim counts when its tip is promoted and is not a
       retirement, one per claim, on that workspace alone. The workspace page's Memories count is

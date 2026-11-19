@@ -3622,6 +3622,15 @@ async fn a_persons_review_key_past_their_quota_is_refused_limit_quota_for_a_clai
         matches!(&err, AppError::QuotaReached(r) if r.quota == Quota::Memories),
         "past alice's memories: {err:?}"
     );
+    assert_eq!(
+        store
+            .events_range(boot.tenant_id, 1, 10_000)
+            .await
+            .expect("journal")
+            .len(),
+        head,
+        "a refusal journals nothing"
+    );
     // Alice's web key revises her own row: her second write this month.
     app.post_verdict(Bearer::Session(&review), own, Verdict::Approve, None)
         .await
@@ -3632,7 +3641,11 @@ async fn a_persons_review_key_past_their_quota_is_refused_limit_quota_for_a_clai
     )
     .await
     .expect("alice's second write");
-    let head = head + 2;
+    let head = store
+        .events_range(boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal")
+        .len();
     let err = app
         .supersede(
             Bearer::Session(&review),

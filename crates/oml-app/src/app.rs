@@ -4743,6 +4743,17 @@ where
         self.person_root_of(&unlinked).await
     }
 
+    /// The account whose limits a write by `key` is held to: a user key's
+    /// own, and for a person's session key of no account, `<user>-review`
+    /// or `<user>-curate`, its person's; `None` for a tenant key, a linked
+    /// one included (ADR-0071 d1, d3; ADR-0082 d10, note of 2026-11-19).
+    async fn limits_root_of(&self, key: &KeyRecord) -> Result<Option<Uuid>, AppError> {
+        if key.user.is_some() || key.credential != Credential::Session {
+            return Ok(key.user);
+        }
+        self.own_set_root_of(key).await
+    }
+
     /// Whether `workspace` sits inside the user root of the person `key`
     /// acts for; false for a key that acts for no person (ADR-0082 d7).
     async fn in_own_root(&self, key: &KeyRecord, workspace: Uuid) -> Result<bool, AppError> {
@@ -5834,8 +5845,11 @@ where
         // The account's limits, read once and before the head: the check
         // below and the commit's ceiling hold to the same ones, and nothing
         // is looked up in the window a conflicting commit reopens
-        // (ADR-0071 d3).
-        let ceiling = self.ceiling_for(key.tenant_id, key.user).await?;
+        // (ADR-0071 d3). A person's session key is held to its person's
+        // (ADR-0082 d10, note of 2026-11-19).
+        let ceiling = self
+            .ceiling_for(key.tenant_id, self.limits_root_of(key).await?)
+            .await?;
 
         // The head first, then the node's status, the ancestors' closures,
         // which a claim edge's proposal widens, and the claim_key read: a
@@ -9510,8 +9524,11 @@ where
             }));
         }
         // The account's limits, read once and before the head, as a
-        // submit's are (ADR-0071 d3).
-        let ceiling = self.ceiling_for(key.tenant_id, key.user).await?;
+        // submit's are, a session key's its person's (ADR-0071 d3;
+        // ADR-0082 d10, note of 2026-11-19).
+        let ceiling = self
+            .ceiling_for(key.tenant_id, self.limits_root_of(key).await?)
+            .await?;
 
         // The head first, then the target, whose closure a claim edge's
         // proposal widens, the ancestors and the ordinal: a commit landing in
