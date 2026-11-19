@@ -11335,6 +11335,78 @@ async fn the_changed_operations_serve_the_merged_listing_counts_offers_and_named
     drop_db(&rig.db_name).await;
 }
 
+/// `kinds` repeated, as a generated client explodes a list, answers every
+/// kind it names on the `mine` and `with_own` listings, each named once,
+/// as the catalog does; `own=false`, the default a generated client sends,
+/// reads as absent beside them (ADR-0092 d6; ADR-0082 d8 item 3).
+#[tokio::test]
+async fn kinds_repeated_on_the_mine_listing_answers_every_kind_it_names() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let token = rig.signed_in("alice@example.com", "alice", false).await;
+    let web = credential(&token, "web");
+    let laptop = rig.agent_key("alice", "alice-laptop").await;
+    let note = rig.held(&laptop, "alice", "laptop-note").await;
+    let (status, _, steering) = send(
+        &rig.router,
+        "POST",
+        "/v1/memories",
+        Call::auth(&laptop)
+            .idem("w-steer")
+            .workspace("alice")
+            .body(json!({
+                "verb": "remember",
+                "claim_key": "steer",
+                "kind": "steering",
+                "body": "Every note names its source.",
+            })),
+    )
+    .await;
+    assert!(status.is_success(), "{steering}");
+    let steer = steering["artifact_id"].as_str().expect("id").to_owned();
+    let ids = |page: &Value| -> Vec<String> {
+        page["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .map(|m| m["artifact_id"].as_str().expect("id").to_owned())
+            .collect()
+    };
+    for query in [
+        "/v1/memories?mine=true&kinds=memory&kinds=steering",
+        "/v1/memories?with_own=true&kinds=steering&kinds=memory,steering",
+        "/v1/memories?mine=true&kinds=memory&kinds=memory&kinds=steering",
+        "/v1/memories?own=false&mine=true&kinds=memory&kinds=steering&limit=50",
+    ] {
+        let (status, _, body) = send(&rig.router, "GET", query, web_call(&web)).await;
+        assert_eq!(status, StatusCode::OK, "{query}: {body}");
+        assert_eq!(ids(&body), [steer.clone(), note.clone()], "{query}: {body}");
+    }
+    let (status, _, body) = send(
+        &rig.router,
+        "GET",
+        "/v1/memories?mine=true&kinds=memory&kinds=nope",
+        web_call(&web),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["details"]["field"], "kinds", "{body}");
+    let (status, _, body) = send(
+        &rig.router,
+        "GET",
+        "/v1/memories?own=true&mine=true",
+        web_call(&web),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "own=true still does not combine: {body}"
+    );
+    drop_db(&rig.db_name).await;
+}
+
 /// `keep_an_admin` refuses removing or un-flagging the tenant's last admin
 /// entry, `request.validation` naming `admin`, and changes nothing
 /// (ADR-0070 d5; ADR-0045 d10).

@@ -814,6 +814,19 @@ where
         };
         let mut seen = HashSet::new();
         for (name, value) in params {
+            // A comma list of kinds (ADR-0082 d8 item 3), named `kinds` and
+            // sent comma-separated or repeated, every kind named once in the
+            // filter, as the catalog's is (ADR-0092 d6).
+            if name == "kinds" {
+                for kind in value.split(',') {
+                    let kind = parse_kind(kind)
+                        .map_err(|e| e.with_details(json!({ "field": "kinds" })))?;
+                    if !req.kinds.contains(&kind) {
+                        req.kinds.push(kind);
+                    }
+                }
+                continue;
+            }
             if !seen.insert(name.as_str()) {
                 return Err(ApiError::validation(format!(
                     "the query parameter {name} is given more than once"
@@ -822,6 +835,9 @@ where
             match name.as_str() {
                 "with_own" if value == "true" || value == "false" => {}
                 "with_own" => return Err(ApiError::validation("with_own must be true or false")),
+                // own's default, which a generated client sends, reads as
+                // absent; own=true stays its own listing.
+                "own" if value == "false" => {}
                 // Each item with its text, as the console's list shows it
                 // (ADR-0070 d5).
                 "include_text" if value == "true" => include_text = true,
@@ -854,16 +870,6 @@ where
                                 )
                                 .with_details(json!({ "field": "state" }))
                             })
-                        })
-                        .collect::<Result<_, _>>()?;
-                }
-                // A comma list of kinds (ADR-0082 d8 item 3), named `kinds`
-                // as the catalog's is (ADR-0092 d6).
-                "kinds" => {
-                    req.kinds = value
-                        .split(',')
-                        .map(|v| {
-                            parse_kind(v).map_err(|e| e.with_details(json!({ "field": "kinds" })))
                         })
                         .collect::<Result<_, _>>()?;
                 }
