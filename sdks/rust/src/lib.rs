@@ -1608,8 +1608,10 @@ pub struct RecallQuery<'a> {
     pub query: &'a str,
     pub k: u32,
     /// A comma list of kinds, sent as the body's `kinds` array; `None`
-    /// sends `memory` and `derived_fact`. `document` serves each document's
-    /// best passage (ADR-0081 d4; ADR-0092 d6).
+    /// sends no `kinds`, so the server serves every hit kind but steering,
+    /// test and the vocabulary kinds, with the steering list (ADR-0092 d1).
+    /// `document` serves each document's best passage (ADR-0081 d4;
+    /// ADR-0092 d6).
     pub kinds: Option<&'a str>,
     pub workspace: Option<&'a str>,
     pub origin: Option<&'a str>,
@@ -2087,7 +2089,7 @@ impl<T: Transport> Client<T> {
         self.get(Some(call), path).await
     }
 
-    /// `POST /v1/memories/recall`: memories and derived facts with their
+    /// `POST /v1/memories/recall`: the server's default kinds with their
     /// text, or the kinds `kinds` names, held ones only where
     /// `include_unreviewed` asks for them. Read-shaped: no idempotency key.
     ///
@@ -2098,17 +2100,15 @@ impl<T: Transport> Client<T> {
         call: &Call<'_>,
         query: &RecallQuery<'_>,
     ) -> Result<RecallResponse, Error> {
-        let kinds: Vec<&str> = query.kinds.map_or_else(
-            || vec!["memory", "derived_fact"],
-            |k| k.split(',').collect(),
-        );
         let mut body = serde_json::json!({
             "query": query.query,
             "k": query.k,
-            "kinds": kinds,
             "include_text": true,
             "include_unreviewed": query.include_unreviewed,
         });
+        if let Some(kinds) = query.kinds {
+            body["kinds"] = serde_json::json!(kinds.split(',').collect::<Vec<_>>());
+        }
         if let Some(workspace) = query.workspace {
             body["workspace"] = serde_json::json!(workspace);
         }

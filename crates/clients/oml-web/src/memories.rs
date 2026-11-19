@@ -526,7 +526,7 @@ async fn user_cards(
     let recall = RecallQuery {
         query: text_query,
         k: q.limit.min(RECALL_MAX),
-        kinds: None,
+        kinds: Some("memory,derived_fact"),
         workspace: q.workspace.as_deref(),
         origin: q.origin.as_deref(),
         include_unreviewed: false,
