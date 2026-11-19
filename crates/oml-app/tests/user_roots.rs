@@ -3548,6 +3548,113 @@ async fn a_session_reviewer_key_starts_no_claim_in_its_persons_own_root() {
     );
 }
 
+/// The app of `probe` under open sign-up into `tenant_id`, its accounts on
+/// `quotas` (ADR-0071 d5).
+fn metered(probe: TestApp, tenant_id: Uuid, quotas: oml_app::domain::signup::Quotas) -> TestApp {
+    probe
+        .with_signup(oml_app::types::SignupPolicy {
+            mode: oml_app::domain::signup::SignupMode::Open,
+            tenant_id,
+            issuer: name("root-admin"),
+            terms_version: "2026-11-06".to_owned(),
+            terms_url: "https://example.com/terms".to_owned(),
+            privacy_url: "https://example.com/privacy".to_owned(),
+            per_ip_per_hour: 100,
+            quotas,
+        })
+        .with_quota_profiles(oml_app::types::QuotaProfiles::only(quotas))
+}
+
+/// A person's review key is held to that person's limits wherever it
+/// writes: past their memories quota its new claim in a shared workspace
+/// is refused `limit.quota`, and past their monthly writes its proposal is
+/// too, journalling nothing (ADR-0071 d3; ADR-0082 d10, note of
+/// 2026-11-19).
+#[tokio::test]
+async fn a_persons_review_key_past_their_quota_is_refused_limit_quota_for_a_claim_and_a_proposal() {
+    use oml_app::domain::signup::{Quota, Quotas};
+    let (probe, store) = rig();
+    let boot = bootstrap(&probe).await;
+    let app = metered(
+        probe,
+        boot.tenant_id,
+        Quotas::default()
+            .with(Quota::Memories, 1)
+            .with(Quota::WritesPerMonth, 2),
+    );
+    let admin = boot.admin_key.value.as_str();
+    let (alice, review, _writer, bob) = team_with_alices_session_and_bobs_writer(&app, admin).await;
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let own = app
+        .submit_memory(
+            Bearer::Session(&web),
+            &submit("w1", "Builds run on push.", Some("alice")),
+        )
+        .await
+        .expect("alice's one memory")
+        .receipt
+        .memory_id;
+    let team = written(
+        &app,
+        &bob.value,
+        &submit("b1", "Team ships on Fridays.", Some("team")),
+    )
+    .await;
+    app.post_verdict(Bearer::Session(&review), team, Verdict::Approve, None)
+        .await
+        .expect("alice approves bob's row");
+    let head = store
+        .events_range(boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal")
+        .len();
+    let err = app
+        .submit_memory(
+            Bearer::Session(&review),
+            &submit("r1", "Releases freeze on Thursdays.", Some("team")),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, AppError::QuotaReached(r) if r.quota == Quota::Memories),
+        "past alice's memories: {err:?}"
+    );
+    // Alice's web key revises her own row: her second write this month.
+    app.post_verdict(Bearer::Session(&review), own, Verdict::Approve, None)
+        .await
+        .expect("alice approves her own row in her root");
+    app.supersede(
+        Bearer::Session(&web),
+        &supersede_req("w2", own, "Builds run on every push."),
+    )
+    .await
+    .expect("alice's second write");
+    let head = head + 2;
+    let err = app
+        .supersede(
+            Bearer::Session(&review),
+            &supersede_req("r2", team, "Team ships on Thursdays."),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, AppError::QuotaReached(r) if r.quota == Quota::WritesPerMonth),
+        "past alice's monthly writes: {err:?}"
+    );
+    assert_eq!(
+        store
+            .events_range(boot.tenant_id, 1, 10_000)
+            .await
+            .expect("journal")
+            .len(),
+        head,
+        "a refusal journals nothing"
+    );
+}
+
 /// The claim a person's session reviewer key started is judged by no key of
 /// that person outside their root: the key itself is in its lineage, and
 /// the person's linked reviewer key is refused `same_person`; another
