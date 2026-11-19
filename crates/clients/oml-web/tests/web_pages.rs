@@ -10229,3 +10229,81 @@ async fn a_guardrails_name_becomes_its_claim_key_and_none_leaves_it_derived() {
         }
     }
 }
+
+/// A carriage return before a line feed is part of the line break a
+/// browser sends for every textarea: a CRLF body shows no `U+000D` marker
+/// on its card, on Judge or in the builder's preview, while a lone CR,
+/// which no reader sees, is still flagged on each (the review of PR #494,
+/// re-verification).
+#[tokio::test]
+async fn a_crlf_body_shows_no_carriage_return_marker_and_a_lone_cr_is_still_flagged() {
+    const CR: &str = "U+000D";
+    let rig = rig().await;
+    let (alice, agent) = person_with_agent(&rig, "sub-1", EMAIL).await;
+    let crlf = agent_writes(
+        &rig,
+        &agent,
+        "Deploys run on Tuesdays.\r\nThe standup is first.",
+    )
+    .await;
+    let (_, _, cards) = send(
+        &rig.router,
+        get("/web/memories?view=submitted", Some(&alice)),
+    )
+    .await;
+    assert!(cards.contains("Deploys run on Tuesdays."), "{cards}");
+    assert!(!cards.contains(CR), "a CRLF card: {cards}");
+    let (_, _, judge) = send(
+        &rig.router,
+        get(&format!("/web/todo/judge?memory={crlf}"), Some(&alice)),
+    )
+    .await;
+    assert!(judge.contains("Deploys run on Tuesdays."), "{judge}");
+    assert!(!judge.contains(CR), "a CRLF body on Judge: {judge}");
+    let lone = agent_writes(&rig, &agent, "Rollbacks are manual.\rNo script runs them.").await;
+    let (_, _, cards) = send(
+        &rig.router,
+        get("/web/memories?view=submitted", Some(&alice)),
+    )
+    .await;
+    assert_eq!(cards.matches(CR).count(), 1, "the lone CR's card: {cards}");
+    let (_, _, judge) = send(
+        &rig.router,
+        get(&format!("/web/todo/judge?memory={lone}"), Some(&alice)),
+    )
+    .await;
+    assert!(judge.contains(CR), "a lone CR on Judge: {judge}");
+    let (status, _, first) = send(
+        &rig.router,
+        get("/web/workspace/new?kind=guardrail", Some(&alice)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    for (body, flagged) in [
+        ("Never deploy on Fridays.\r\nAsk first.", false),
+        ("Never deploy on Fridays.\rAsk first.", true),
+    ] {
+        let mut values = form_values(&first);
+        for (name, value) in &mut values {
+            match name.as_str() {
+                "name" => *value = "fridays".to_owned(),
+                "body" => *value = body.to_owned(),
+                _ => {}
+            }
+        }
+        let (status, _, previewed) = post_form(
+            &rig,
+            &alice,
+            "/web/workspace/new",
+            &values,
+            &[("step", "preview"), ("severity", "never")],
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{previewed}");
+        assert!(
+            previewed.contains(r#"<h2 id="preview">Preview</h2>"#),
+            "{previewed}"
+        );
+        assert_eq!(previewed.contains(CR), flagged, "{body:?}: {previewed}");
+    }
+}
