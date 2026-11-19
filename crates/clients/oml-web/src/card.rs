@@ -125,7 +125,7 @@ pub(crate) fn row_state(state: &str, tip: bool) -> &'static str {
     match state {
         "held" => "held",
         "promoted" if tip => "promoted",
-        "promoted" => "superseded",
+        "promoted" | "superseded" => "superseded",
         "rejected" => "rejected",
         "withdrawn" => "withdrawn",
         _ => "demoted",
@@ -497,7 +497,7 @@ impl Card {
                 // session runs (ADR-0083 d15; ADR-0080 d5).
                 match (self.kind.as_deref(), self.skill_name.as_deref()) {
                     (Some("skill"), Some(name)) => format!(
-                        "Approved{on} and published as <code>/mcp__oml__{}</code>.",
+                        "Approved{on} and published as <code>/mcp__&lt;server&gt;__{}</code>.",
                         text(name)
                     ),
                     _ => format!(
@@ -857,7 +857,10 @@ impl Card {
             .map_or_else(String::new, |t| format!("<b>{}</b>\n", text(t)));
         format!(
             r#"<span class="mc-tx{mono}">{title}{}</span>"#,
-            text(&self.body)
+            // Hidden characters are drawn as marked code points, so an
+            // invisible instruction shows to the reviewer (the review of
+            // PR #494, 8).
+            oml_page::web::text_shown(&self.body)
         )
     }
 

@@ -332,6 +332,60 @@ pub fn text(value: &str) -> String {
     escape(&cleaned)
 }
 
+/// Whether `c` is a character no reader sees: a control but a line break
+/// or a tab, a bidi mark, override or isolate, a zero-width character or a
+/// tag character (the CLI's set, `oml-cli` skills.rs, with tags).
+fn hidden_char(c: char) -> bool {
+    (c.is_control() && c != '\n' && c != '\t')
+        || matches!(
+            c,
+            '\u{061C}'
+                | '\u{200B}'..='\u{200F}'
+                | '\u{202A}'..='\u{202E}'
+                | '\u{2060}'
+                | '\u{2066}'..='\u{2069}'
+                | '\u{FEFF}'
+                | '\u{E0000}'..='\u{E007F}'
+        )
+}
+
+/// The characters of `value` no reader sees, each once, in order of first
+/// appearance (see [`text_shown`]).
+#[must_use]
+pub fn hidden_chars(value: &str) -> Vec<char> {
+    let mut out: Vec<char> = Vec::new();
+    for c in value.chars().filter(|c| hidden_char(*c)) {
+        if !out.contains(&c) {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// [`text`] for a reviewer: every character no reader sees is drawn as its
+/// code point, `<code class="oml-hidden">U+200B</code>`, so an invisible
+/// instruction in a skill or a guardrail shows on Judge, in a change and on
+/// the builder (the review of PR #494, 8).
+#[must_use]
+pub fn text_shown(value: &str) -> String {
+    let mut out = String::new();
+    let mut plain = String::new();
+    for c in value.chars() {
+        if hidden_char(c) {
+            out.push_str(&escape(&plain));
+            plain.clear();
+            out.push_str(&format!(
+                r#"<code class="oml-hidden">U+{:04X}</code>"#,
+                u32::from(c)
+            ));
+        } else {
+            plain.push(c);
+        }
+    }
+    out.push_str(&escape(&plain));
+    out
+}
+
 /// An attribute value, escaped.
 #[must_use]
 pub fn attr(value: &str) -> String {
@@ -655,6 +709,21 @@ fn page(title: &str, body: &str, footer: &str) -> String {
 mod tests {
     use super::*;
     use sha2::{Digest as _, Sha256};
+
+    /// A zero-width space, a tag character and a bidi override read as
+    /// their code points; the rest of the text is escaped as `text` does.
+    #[test]
+    fn hidden_characters_are_shown_as_marked_code_points() {
+        assert_eq!(
+            text_shown("a\u{200B}b\u{E0041}<c>\u{202E}"),
+            "a<code class=\"oml-hidden\">U+200B</code>b<code class=\"oml-hidden\">U+E0041</code>&lt;c&gt;<code class=\"oml-hidden\">U+202E</code>"
+        );
+        assert_eq!(text_shown("line\nnext"), "line\nnext");
+        assert_eq!(
+            hidden_chars("a\u{200B}b\u{200B}\u{FEFF}"),
+            ['\u{200B}', '\u{FEFF}']
+        );
+    }
 
     #[test]
     fn the_compile_time_digest_is_sha256_of_the_stylesheet() {

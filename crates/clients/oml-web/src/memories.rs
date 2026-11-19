@@ -1935,5 +1935,7 @@ mod tests {
         assert_eq!(row_state("promoted", true), "promoted");
         assert_eq!(row_state("promoted", false), "superseded");
         assert_eq!(row_state("erased", false), "demoted");
+        // The admin search serves `superseded` as a state of its own.
+        assert_eq!(row_state("superseded", false), "superseded");
     }
 }

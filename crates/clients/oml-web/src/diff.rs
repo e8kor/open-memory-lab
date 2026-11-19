@@ -8,26 +8,72 @@
 
 use std::fmt::Write as _;
 
-use oml_page::web::text;
-
-/// The most words the change compares; past it the two texts are shown
-/// whole without marks, so a page never spends quadratic time on a long
-/// text. A constant of the build, unmeasured.
+/// The most words and line breaks the change compares; past it the two
+/// texts are shown whole without marks and the change says it is too long
+/// to compare word by word, so a page never spends quadratic time on a
+/// long text. A constant of the build, unmeasured.
 const CHANGE_WORDS_MAX: usize = 2_000;
+
+/// A line break, a token of its own so the change keeps the text's lines.
+const BREAK: &str = "\n";
 
 /// The words of `s`, split on whitespace.
 fn words(s: &str) -> Vec<&str> {
     s.split_whitespace().collect()
 }
 
-/// The longest common subsequence of two word lists, as a mark per word of
-/// each: `true` where the word is kept. Past [`CHANGE_WORDS_MAX`] every
-/// word is marked kept, so the texts are shown without marks.
+/// The tokens the change compares: the words of each line, with a
+/// [`BREAK`] between two lines.
+fn tokens(s: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    for (i, line) in s.split('\n').enumerate() {
+        if i > 0 {
+            out.push(BREAK);
+        }
+        out.extend(line.split_whitespace());
+    }
+    out
+}
+
+/// What a comparison of two texts found (the review of PR #494, C-B2):
+/// the same bytes, a change in whitespace alone, texts too long to compare
+/// word by word, or a count of the words removed and added.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Outcome {
+    Unchanged,
+    WhitespaceOnly,
+    TooLong { was: usize, now: usize },
+    Changed { removed: usize, added: usize },
+}
+
+impl Outcome {
+    /// The words a part's label carries after its name, `None` for a
+    /// counted change, whose counts the summary carries.
+    fn label(self) -> Option<String> {
+        match self {
+            Self::Unchanged => Some("unchanged".to_owned()),
+            Self::WhitespaceOnly => Some("whitespace only".to_owned()),
+            Self::TooLong { was, now } => Some(format!(
+                "too long to compare word by word ({was} and {now} words)"
+            )),
+            Self::Changed { .. } => None,
+        }
+    }
+
+    /// The words removed and added, `None` when none were counted.
+    fn counts(self) -> Option<(usize, usize)> {
+        match self {
+            Self::Unchanged | Self::WhitespaceOnly => Some((0, 0)),
+            Self::TooLong { .. } => None,
+            Self::Changed { removed, added } => Some((removed, added)),
+        }
+    }
+}
+
+/// The longest common subsequence of two token lists, as a mark per token
+/// of each: `true` where the token is kept.
 fn kept(was: &[&str], now: &[&str]) -> (Vec<bool>, Vec<bool>) {
     let (n, m) = (was.len(), now.len());
-    if n + m > CHANGE_WORDS_MAX {
-        return (vec![true; n], vec![true; m]);
-    }
     let mut table = vec![vec![0u32; m + 1]; n + 1];
     for i in (0..n).rev() {
         for j in (0..m).rev() {
@@ -55,52 +101,144 @@ fn kept(was: &[&str], now: &[&str]) -> (Vec<bool>, Vec<bool>) {
     (a, b)
 }
 
-/// One side of the change: each word escaped, a dropped one struck through
-/// (`del`) or an added one underlined (`ins`).
-fn side(list: &[&str], marks: &[bool], tag: &str) -> String {
-    list.iter()
-        .zip(marks)
-        .map(|(w, keep)| {
-            if *keep {
-                text(w)
-            } else {
-                format!("<{tag}>{}</{tag}>", text(w))
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+/// Two texts compared: each side's tokens with their marks, and the
+/// outcome. "Unchanged" is decided by the bytes, never by the counts.
+struct Compared<'a> {
+    was: Vec<&'a str>,
+    kept_was: Vec<bool>,
+    now: Vec<&'a str>,
+    kept_now: Vec<bool>,
+    outcome: Outcome,
 }
 
-/// The change of `now` against `was` as one run of words, in order: a kept
-/// word as it is, a removed one struck (`<del>`) and an added one
-/// underlined (`<ins>`), each escaped; with the count of each. Past
-/// [`CHANGE_WORDS_MAX`] the new text whole, unmarked.
-pub(crate) fn word_diff(was: &str, now: &str) -> (String, usize, usize) {
-    let (a, b) = (words(was), words(now));
-    if a.len() + b.len() > CHANGE_WORDS_MAX {
-        return (side(&b, &vec![true; b.len()], "ins"), 0, 0);
+fn compare<'a>(was: &'a str, now: &'a str) -> Compared<'a> {
+    let (a, b) = (tokens(was), tokens(now));
+    let whole = |a: &[&str], b: &[&str]| (vec![true; a.len()], vec![true; b.len()]);
+    let within = a.len() + b.len() <= CHANGE_WORDS_MAX;
+    let (outcome, (ka, kb)) = if was == now {
+        (Outcome::Unchanged, whole(&a, &b))
+    } else if words(was) == words(now) {
+        let marks = if within { kept(&a, &b) } else { whole(&a, &b) };
+        (Outcome::WhitespaceOnly, marks)
+    } else if !within {
+        let count = |t: &[&str]| t.iter().filter(|t| **t != BREAK).count();
+        (
+            Outcome::TooLong {
+                was: count(&a),
+                now: count(&b),
+            },
+            whole(&a, &b),
+        )
+    } else {
+        let (ka, kb) = kept(&a, &b);
+        let dropped = |t: &[&str], k: &[bool]| {
+            t.iter()
+                .zip(k)
+                .filter(|(t, k)| !**k && **t != BREAK)
+                .count()
+        };
+        (
+            Outcome::Changed {
+                removed: dropped(&a, &ka),
+                added: dropped(&b, &kb),
+            },
+            (ka, kb),
+        )
+    };
+    Compared {
+        was: a,
+        kept_was: ka,
+        now: b,
+        kept_now: kb,
+        outcome,
     }
-    let (ka, kb) = kept(&a, &b);
+}
+
+/// Draws a run of `(token, mark)`: a word escaped with hidden characters
+/// shown, a kept break as `<br>`, and a marked token inside `<tag>` (a
+/// marked break as "↵", followed by `<br>` when it is added).
+fn render<'a>(items: impl IntoIterator<Item = (&'a str, Option<&'static str>)>) -> String {
+    let mut out = String::new();
+    let mut line_start = true;
+    for (token, mark) in items {
+        if token == BREAK {
+            match mark {
+                None => out.push_str("<br>"),
+                Some("del") => {
+                    if !line_start {
+                        out.push(' ');
+                    }
+                    out.push_str("<del>↵</del>");
+                    line_start = false;
+                    continue;
+                }
+                Some(tag) => {
+                    if !line_start {
+                        out.push(' ');
+                    }
+                    let _ = write!(out, "<{tag}>↵</{tag}><br>");
+                }
+            }
+            line_start = true;
+            continue;
+        }
+        if !line_start {
+            out.push(' ');
+        }
+        match mark {
+            None => out.push_str(&shown(token)),
+            Some(tag) => {
+                let _ = write!(out, "<{tag}>{}</{tag}>", shown(token));
+            }
+        }
+        line_start = false;
+    }
+    out
+}
+
+/// One side of the change: a dropped token struck through (`del`) or an
+/// added one underlined (`ins`).
+fn side(list: &[&str], marks: &[bool], tag: &'static str) -> String {
+    render(
+        list.iter()
+            .zip(marks)
+            .map(|(t, keep)| (*t, (!keep).then_some(tag))),
+    )
+}
+
+/// The change of `now` against `was` as one run, in order: a kept token as
+/// it is, a removed one struck (`<del>`) and an added one underlined
+/// (`<ins>`), each escaped, the lines kept; with its outcome. Past
+/// [`CHANGE_WORDS_MAX`] the new text whole, unmarked.
+pub(crate) fn word_diff(was: &str, now: &str) -> (String, Outcome) {
+    let c = compare(was, now);
+    let (a, b, ka, kb) = (&c.was, &c.now, &c.kept_was, &c.kept_now);
+    let mut items: Vec<(&str, Option<&'static str>)> = Vec::with_capacity(a.len() + b.len());
     let (mut i, mut j) = (0, 0);
-    let mut out: Vec<String> = Vec::with_capacity(a.len() + b.len());
-    let (mut removed, mut added) = (0, 0);
     while i < a.len() || j < b.len() {
         if i < a.len() && !ka[i] {
-            out.push(format!("<del>{}</del>", text(a[i])));
-            removed += 1;
+            items.push((a[i], Some("del")));
             i += 1;
         } else if j < b.len() && !kb[j] {
-            out.push(format!("<ins>{}</ins>", text(b[j])));
-            added += 1;
+            items.push((b[j], Some("ins")));
             j += 1;
-        } else {
-            // Both kept: the same word at the same place of the subsequence.
-            out.push(text(b[j]));
+        } else if j < b.len() {
+            // Both kept: the same token at the same place of the subsequence.
+            items.push((b[j], None));
             i += 1;
             j += 1;
+        } else {
+            i += 1;
         }
     }
-    (out.join(" "), removed, added)
+    (render(items), c.outcome)
+}
+
+/// A text's hidden characters drawn as marked code points (ADR-0082 d6;
+/// the review of PR #494, 8): zero-width characters and tag characters,
+/// which no reader sees, read as `<span class="oml-hidden">U+200B</span>`.
+pub(crate) fn shown(s: &str) -> String {
+    oml_page::web::text_shown(s)
 }
 
 /// A version's parts as the change compares them: a skill's name and
@@ -119,7 +257,7 @@ pub(crate) struct Parts<'a> {
 /// body, each its own word run; a part that did not change says so.
 pub(crate) fn labelled(was_version: u32, was: Parts<'_>, now: Parts<'_>) -> String {
     let mut blocks = String::new();
-    let (mut removed, mut added) = (0, 0);
+    let mut counts = Some((0, 0));
     for (label, was, now) in [
         ("Name", was.name, now.name),
         ("Description", was.description, now.description),
@@ -129,21 +267,25 @@ pub(crate) fn labelled(was_version: u32, was: Parts<'_>, now: Parts<'_>) -> Stri
             continue;
         }
         let (was, now) = (was.unwrap_or_default(), now.unwrap_or_default());
-        let (run, r, a) = word_diff(was, now);
-        removed += r;
-        added += a;
-        let unchanged = if r + a == 0 {
-            r#" <span class="n">unchanged</span>"#
-        } else {
-            ""
-        };
+        let (run, outcome) = word_diff(was, now);
+        counts = counts
+            .zip(outcome.counts())
+            .map(|((r, a), (r2, a2))| (r + r2, a + a2));
+        let note = outcome
+            .label()
+            .map(|l| format!(r#" <span class="n">{l}</span>"#))
+            .unwrap_or_default();
         let _ = write!(
             blocks,
-            r#"<div class="side"><p class="label">{label}{unchanged}</p><p class="t">{run}</p></div>"#
+            r#"<div class="side"><p class="label">{label}{note}</p><p class="t">{run}</p></div>"#
         );
     }
+    // A part too long to compare draws no counts for the whole change.
+    let counted = counts
+        .map(|(removed, added)| format!(" · {removed} words removed, {added} added"))
+        .unwrap_or_default();
     format!(
-        r#"<details class="oml-diff" open><summary>Change against v{was_version} <span class="n">baseline: v{was_version}, the served tip · {removed} words removed, {added} added</span></summary><div class="sides">{blocks}</div></details>"#
+        r#"<details class="oml-diff" open><summary>Change against v{was_version} <span class="n">baseline: v{was_version}, the served tip{counted}</span></summary><div class="sides">{blocks}</div></details>"#
     )
 }
 
@@ -161,18 +303,21 @@ pub(crate) fn change(
     if retirement {
         return format!(
             r#"<details class="oml-diff" open><summary>What stops being served</summary><div class="sides"><div class="side"><p class="label">Reason · this version</p><p class="t">{}</p></div><div class="side"><p class="label">Stops being served · v{was_version}</p><p class="t">{}</p></div></div></details>"#,
-            text(now),
-            text(was)
+            side(&tokens(now), &vec![true; tokens(now).len()], "ins"),
+            side(&tokens(was), &vec![true; tokens(was).len()], "del")
         );
     }
-    let (a, b) = (words(was), words(now));
-    let (ka, kb) = kept(&a, &b);
-    let removed = ka.iter().filter(|k| !**k).count();
-    let added = kb.iter().filter(|k| !**k).count();
+    let c = compare(was, now);
+    let found = match c.outcome {
+        Outcome::Changed { removed, added } => {
+            format!("{removed} words removed, {added} added")
+        }
+        other => other.label().unwrap_or_default(),
+    };
     format!(
-        r#"<details class="oml-diff" open><summary>Change against v{was_version} <span class="n">baseline: v{was_version} · {removed} words removed, {added} added</span></summary><div class="sides"><div class="side"><p class="label">Was · v{was_version}</p><p class="t">{}</p></div><div class="side"><p class="label">Now · v{now_version}, this version</p><p class="t">{}</p></div></div></details>"#,
-        side(&a, &ka, "del"),
-        side(&b, &kb, "ins"),
+        r#"<details class="oml-diff" open><summary>Change against v{was_version} <span class="n">baseline: v{was_version} · {found}</span></summary><div class="sides"><div class="side"><p class="label">Was · v{was_version}</p><p class="t">{}</p></div><div class="side"><p class="label">Now · v{now_version}, this version</p><p class="t">{}</p></div></div></details>"#,
+        side(&c.was, &c.kept_was, "del"),
+        side(&c.now, &c.kept_now, "ins"),
     )
 }
 
@@ -182,17 +327,79 @@ mod tests {
 
     #[test]
     fn the_word_diff_marks_removed_and_added_words() {
-        let (run, removed, added) = word_diff("runs on ci-small", "runs on ci-medium now");
+        let (run, outcome) = word_diff("runs on ci-small", "runs on ci-medium now");
         assert_eq!(
             run,
             "runs on <del>ci-small</del> <ins>ci-medium</ins> <ins>now</ins>"
         );
-        assert_eq!((removed, added), (1, 2));
+        assert_eq!(
+            outcome,
+            Outcome::Changed {
+                removed: 1,
+                added: 2
+            }
+        );
         // Escaped, word by word: a crafted text puts no markup on the page.
-        let (run, _, _) = word_diff("a <b>", "a <i>");
+        let (run, _) = word_diff("a <b>", "a <i>");
         assert_eq!(run, "a <del>&lt;b&gt;</del> <ins>&lt;i&gt;</ins>");
-        let (same, removed, added) = word_diff("one two", "one  two");
-        assert_eq!((same.as_str(), removed, added), ("one two", 0, 0));
+        let (same, outcome) = word_diff("one two", "one two");
+        assert_eq!((same.as_str(), outcome), ("one two", Outcome::Unchanged));
+    }
+
+    /// "Unchanged" is the same bytes: a change in whitespace alone says so,
+    /// a text past the cap says it is too long to compare and counts
+    /// nothing, and the lines of a text are kept (the review of PR #494,
+    /// C-B2).
+    #[test]
+    fn the_word_diff_says_unchanged_only_for_the_same_text() {
+        let (run, outcome) = word_diff("one two", "one  two");
+        assert_eq!(
+            (run.as_str(), outcome),
+            ("one two", Outcome::WhitespaceOnly)
+        );
+        let (run, outcome) = word_diff("one\ntwo", "one two");
+        assert_eq!(outcome, Outcome::WhitespaceOnly);
+        assert_eq!(run, "one <del>↵</del> two");
+        let (run, outcome) = word_diff("a\nb", "a\nc");
+        assert_eq!(run, "a<br><del>b</del> <ins>c</ins>");
+        assert_eq!(
+            outcome,
+            Outcome::Changed {
+                removed: 1,
+                added: 1
+            }
+        );
+        let long = "word ".repeat(1_500);
+        let longer = format!("{long}more");
+        let (_, outcome) = word_diff(&long, &longer);
+        assert_eq!(
+            outcome,
+            Outcome::TooLong {
+                was: 1_500,
+                now: 1_501
+            }
+        );
+        let block = labelled(
+            1,
+            Parts {
+                body: &long,
+                ..Parts::default()
+            },
+            Parts {
+                body: &longer,
+                ..Parts::default()
+            },
+        );
+        assert!(
+            block.contains("too long to compare word by word (1500 and 1501 words)"),
+            "{block}"
+        );
+        assert!(!block.contains("words removed"), "{block}");
+        assert!(!block.contains("unchanged"), "{block}");
+        let two = change(1, &long, 2, &longer, false);
+        assert!(two.contains("too long to compare word by word"), "{two}");
+        let spaced = change(1, "a b", 2, "a  b", false);
+        assert!(spaced.contains("whitespace only"), "{spaced}");
     }
 
     #[test]
