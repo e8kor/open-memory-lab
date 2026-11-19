@@ -51,6 +51,16 @@ pub(super) fn is_web_session_key(key: &KeyRecord) -> bool {
         })
 }
 
+/// Whether `key` is a person's `<user>-review` session key: the one
+/// session key of no root whose writes are charged to its person's account
+/// (ADR-0071 d1, the operator's decision of 2026-11-19).
+pub(super) fn is_review_session_key(key: &KeyRecord) -> bool {
+    key.credential == Credential::Session
+        && key.session_user.as_ref().is_some_and(|user| {
+            key_name(user, Capacity::Review.suffix()).ok().as_ref() == key.name.as_ref()
+        })
+}
+
 /// Whether `key` is a person's `<user>-admin` session key (ADR-0083 d11).
 pub(super) fn is_admin_session_key(key: &KeyRecord) -> bool {
     key.credential == Credential::Session

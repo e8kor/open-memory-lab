@@ -4744,11 +4744,13 @@ where
     }
 
     /// The account whose limits a write by `key` is held to: a user key's
-    /// own, and for a person's session key of no account, `<user>-review`
-    /// or `<user>-curate`, its person's; `None` for a tenant key, a linked
-    /// one included (ADR-0071 d1, d3; ADR-0082 d10, note of 2026-11-19).
+    /// own, and for a person's `<user>-review`, a session key of no
+    /// account, its person's; `None` for a tenant key, a linked one
+    /// included, and for `<user>-curate` and `<user>-admin`: curation is
+    /// not charged to the person (ADR-0071 d1, d3, the operator's decision
+    /// of 2026-11-19; ADR-0082 d10).
     async fn limits_root_of(&self, key: &KeyRecord) -> Result<Option<Uuid>, AppError> {
-        if key.user.is_some() || key.credential != Credential::Session {
+        if key.user.is_some() || !auth::is_review_session_key(key) {
             return Ok(key.user);
         }
         self.own_set_root_of(key).await

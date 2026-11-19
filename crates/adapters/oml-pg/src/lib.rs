@@ -5637,8 +5637,10 @@ struct TrackedChain {
     live_before: bool,
 }
 
-/// The account a key belongs to, if any: its user root, or a person's
-/// session key's person's (ADR-0071 d1, note of 2026-11-19; migration 0065).
+/// The account a key belongs to, if any: its user root, or for a person's
+/// `<user>-review` session key its person's; `<user>-curate` and
+/// `<user>-admin` belong to none (ADR-0071 d1, the operator's decision of
+/// 2026-11-19; migration 0065).
 async fn author_account(
     tx: &mut Transaction<'_, Postgres>,
     tenant_id: Uuid,
@@ -5647,9 +5649,14 @@ async fn author_account(
     // `oml_key_account` written out, so a store reads it on a schema
     // before 0065 too.
     let root: Option<Option<Uuid>> = sqlx::query_scalar(
-        "SELECT coalesce(k.user_root_id, \
-                (SELECT w.id FROM workspaces w \
-                  WHERE w.tenant_id = k.tenant_id AND w.user_root AND w.name = k.session_for)) \
+        "SELECT CASE \
+                  WHEN k.user_root_id IS NULL AND k.credential = 'session' \
+                       AND k.name = k.session_for || '-review' \
+                  THEN (SELECT w.id FROM workspaces w \
+                         WHERE w.tenant_id = k.tenant_id AND w.user_root \
+                           AND w.name = k.session_for) \
+                  ELSE k.user_root_id \
+                END \
            FROM api_keys k WHERE k.tenant_id = $1 AND k.id = $2",
     )
     .bind(tenant_id)

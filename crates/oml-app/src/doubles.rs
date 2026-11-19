@@ -2740,15 +2740,24 @@ fn assign_names_fold(
 /// definitions, the flows of `month`: the double keeps no counters, so it
 /// is the definition the Postgres counters are held to.
 /// The account a key's writes are charged to (ADR-0071 d1): a user key's
-/// root, and a person's session key of no root, `<user>-review` or
-/// `<user>-curate`, its person's root, as `oml_key_account` reads it
-/// (migration 0065; ADR-0082 d10, note of 2026-11-19).
+/// root, and a person's `<user>-review`, a session key of no root, its
+/// person's root, as `oml_key_account` reads it; `<user>-curate` and
+/// `<user>-admin` are charged to no account (migration 0065; the
+/// operator's decision of 2026-11-19; ADR-0082 d10).
 fn key_account(state: &TenantState, key_id: &Uuid) -> Option<Uuid> {
     let key = state.keys.get(key_id)?;
     if key.user.is_some() || key.credential != Credential::Session {
         return key.user;
     }
     let person = key.session_user.as_ref()?;
+    let review = format!(
+        "{}-{}",
+        person.as_str(),
+        crate::app::Capacity::Review.suffix()
+    );
+    if key.name.as_ref().map(|n| n.as_str()) != Some(review.as_str()) {
+        return None;
+    }
     state
         .workspaces
         .values()

@@ -183,7 +183,8 @@ where
 
     /// [`Self::commit_charged`] of a version `author` wrote: the store is
     /// told what this request already read, the author's account (its key's
-    /// root, or a person's session key's person's) and whether the version starts its chain, so it reads
+    /// root, or a person's `<user>-review` key's person's) and whether the
+    /// version starts its chain, so it reads
     /// neither inside the commit, and a key of no account that starts a
     /// claim touches no meter (ADR-0071 d1, d3).
     pub(crate) async fn commit_written(
@@ -195,8 +196,9 @@ where
         starts_chain: bool,
         ceiling: Option<Ceiling>,
     ) -> Result<CommitReceipt, AppError> {
-        // A person's review or curate session key has no root of its own;
-        // its writes are its person's (ADR-0082 d10, note of 2026-11-19).
+        // A person's review session key has no root of its own; its writes
+        // are its person's. Curation is charged to no one (ADR-0071 d1, the
+        // operator's decision of 2026-11-19; ADR-0082 d10).
         let author_account = self.limits_root_of(author).await?;
         let mut req = super::commit_request(event, fold, idempotency);
         req.ceiling = ceiling;
