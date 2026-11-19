@@ -549,7 +549,8 @@ async fn a_judge_verdict_the_api_records_lands_on_todo_with_its_notice_and_claim
     let past_session: Vec<&String> = answer
         .calls
         .iter()
-        .filter(|c| !c.starts_with("GET /v2/whoami"))
+        // The session load's calls: whoami and the badge's counts.
+        .filter(|c| !c.starts_with("GET /v2/whoami") && !c.starts_with("GET /v2/todo/counts"))
         .collect();
     assert_eq!(
         past_session,
@@ -650,8 +651,10 @@ fn with_counts(review: u64) -> Script {
 }
 
 /// Every page of both sides carries "To do · N" before the account name,
-/// drawn from one counts call per page view, of its own side; an act's
-/// redirect makes none (ADR-0083 d6).
+/// drawn from one counts call per page view, of its own side, and To do
+/// filtered to a workspace from two, the second for its group (ADR-0083
+/// d16 T6); an act's post makes one too, so a page it draws carries the
+/// number (ADR-0083 d6; the review of PR #494, 11, 13).
 #[tokio::test]
 async fn every_console_page_carries_the_todo_badge_with_one_counts_call() {
     for path in [
@@ -662,7 +665,10 @@ async fn every_console_page_carries_the_todo_badge_with_one_counts_call() {
         "/web/keys",
         "/web/workspaces",
         "/web/workspace",
+        "/web/workspace/new?kind=skill",
         "/web/todo",
+        "/web/todo?workspace=alice",
+        "/web/todo/judge",
     ] {
         let page = send(with_counts(4), get(path)).await;
         assert!(
@@ -675,7 +681,7 @@ async fn every_console_page_carries_the_todo_badge_with_one_counts_call() {
         );
         assert_eq!(
             calls_to(&page, "GET /v2/todo/counts"),
-            1,
+            if path.contains("workspace=") { 2 } else { 1 },
             "{path}: {:?}",
             page.calls
         );
@@ -686,6 +692,7 @@ async fn every_console_page_carries_the_todo_badge_with_one_counts_call() {
         "/web/admin/memories?view=held",
         "/web/admin/keys",
         "/web/admin/todo",
+        "/web/admin/workspace?workspace=alice",
     ] {
         let page = send_as(with_counts(4), get(path), true).await;
         assert!(
@@ -701,7 +708,7 @@ async fn every_console_page_carries_the_todo_badge_with_one_counts_call() {
     assert_eq!(next.status, StatusCode::SEE_OTHER, "{}", next.body);
     assert_eq!(
         calls_to(&next, "GET /v2/todo/counts"),
-        0,
+        1,
         "{:?}",
         next.calls
     );

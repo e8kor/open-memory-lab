@@ -81,7 +81,7 @@ in-progress workspace either, so a held row is never listed there. **Submitted**
 person's own keys wrote that is held, rejected or withdrawn, and what was approved in the last 30
 days, each row led by one sentence: "Waiting for review.", "Waiting for review. v2 is still
 served.", "Approved on 2026-11-10 and served as `deploy-window` v3." (for a skill, "Approved on 2026-11-10 and
-published as `/mcp__oml__bump-deps`."), "Rejected." or
+published as `/mcp__<server>__bump-deps`."), "Rejected." or
 "Withdrawn.". A held row offers **Withdraw**, which asks for confirmation first. Submitted has no
 text search, since a held row's text is read only by its author; when a rejection or a withdrawal
 happened is not served to its author, so neither sentence names a day

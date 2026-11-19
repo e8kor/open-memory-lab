@@ -142,7 +142,11 @@ Decided; built in v0.8.0: the API in #409, the console in #410 (the workspace pa
   deleted.** Submit on an existing item supersedes it; the served tip stays the old version until
   the successor promotes (ADR-0025 d10). Retire asks for a confirmation naming what stops when it
   promotes ("the command /oml:`<name>` is no longer offered", "the rule no longer loads", "the
-  document is no longer listed or recalled"), then sends `retirement: true` (ADR-0025 d11). No
+  document is no longer listed or recalled"), then sends `retirement: true` (ADR-0025 d11).
+  *(Note of 2026-11-19, the review of PR #494, 16: the console writes the command one way,
+  `/mcp__<server>__<name>`, on the builder, the retirement confirmation and the card, since the
+  prompt's served name is the skill's bare name (ADR-0080 d5) and the server's name is the one the
+  client gives it; `/oml:<name>` above is out of date.)* No
   control erases, demotes or deletes; rejected versions stay listed to their author under
   Submitted ([ADR-0083](ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md)).
 

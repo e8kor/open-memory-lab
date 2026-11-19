@@ -396,13 +396,22 @@ pub fn router(web: Web) -> Router {
             web.clone(),
             session::load,
         ))
+        // The form extractor reads what the same-origin layer admitted,
+        // whose cap is per path (`middleware::form_max_bytes`).
+        .layer(axum::extract::DefaultBodyLimit::max(
+            middleware::BUILDER_FORM_MAX_BYTES,
+        ))
         .with_state(web.clone());
     // The old Review paths answer their 308 before any session is read: a
     // redirect needs none (ADR-0083 d6).
     let moved = Router::new()
         .route(GUARDRAILS_PATH, get(workspace::moved_guardrails))
-        .route(USER_REVIEW_PATH, get(moved_review))
-        .route(ADMIN_REVIEW_PATH, get(moved_admin_review));
+        // A post to an old Review path is not found, never a 405: the
+        // proxies route every method of these paths here, and a 308 would
+        // carry the verdict form to a page with no such act (ADR-0083 d16
+        // T3; the review of PR #494, 12).
+        .route(USER_REVIEW_PATH, get(moved_review).post(not_found))
+        .route(ADMIN_REVIEW_PATH, get(moved_admin_review).post(not_found));
     // The JSON routes load their own session: no session is not found as
     // data, never a redirect to sign in (ADR-0045 d25).
     let data = Router::new()

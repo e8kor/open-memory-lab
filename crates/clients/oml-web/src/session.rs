@@ -334,13 +334,11 @@ pub async fn load(State(web): State<Web>, mut req: Request, next: Next) -> Respo
         return outcome::sign_in(&page);
     };
     calls.carries_session(&token, req.uri().path());
-    // The badge's counts read, on a page's GET alone: an act answers a
-    // redirect, which draws no header (ADR-0083 d6).
-    let counts = if matches!(*req.method(), http::Method::GET | http::Method::HEAD) {
-        Some(Scope::of_path(req.uri().path(), true))
-    } else {
-        None
-    };
+    // The badge's counts read, beside whoami in one round, on every page
+    // request: a form's post that draws a page (Preview, a refusal, a
+    // rebase) carries the number as a GET does (ADR-0083 d6; the review of
+    // PR #494, 11).
+    let counts = Some(Scope::of_path(req.uri().path(), true));
     let session = match resolve_with_counts(&web, &calls, token, counts).await {
         Ok(session) => session,
         Err(e) => return outcome::page(&e, &calls, &page),

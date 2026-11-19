@@ -103,7 +103,7 @@ impl Kind {
     fn stops(self, name: &str) -> String {
         match self {
             Self::Skill => format!(
-                "the command <code>/oml:{}</code> is no longer offered",
+                "the command <code>/mcp__&lt;server&gt;__{}</code> is no longer offered",
                 text(name)
             ),
             Self::Guardrail => "the rule no longer loads".to_owned(),
@@ -245,7 +245,19 @@ async fn place(
     let named_in_root = sent == user || sent.starts_with(&format!("{user}."));
     let view = match read(Capacity::Web).await {
         Ok(view) if inside(&view.path) => Ok((view, Capacity::Web)),
-        Ok(_) => read(Capacity::Review).await.map(|v| (v, Capacity::Review)),
+        // A shared workspace the review key does not read opens read-only
+        // as the web key read it (ADR-0082 d12 B4; the review of PR #494,
+        // 10).
+        Ok(view) => match read(Capacity::Review).await {
+            Ok(v) => Ok((v, Capacity::Review)),
+            Err(e)
+                if picker::is_not_found(&e)
+                    || matches!(&e, oml_sdk::Error::Api(a) if a.code.starts_with("access.")) =>
+            {
+                Ok((view, Capacity::Web))
+            }
+            Err(e) => Err(e),
+        },
         Err(e) if picker::is_not_found(&e) && !named_in_root => {
             read(Capacity::Review).await.map(|v| (v, Capacity::Review))
         }
@@ -479,7 +491,11 @@ fn table(place: &Place, kind: Kind, claims: &[Vec<Row>], admin: bool) -> String 
     } else {
         r#"<table class="oml-stack t-items t-acts"><tr><th>Name</th><th>State</th>"#
     });
-    out.push_str(if guardrail {
+    // The admin search serves no severity, rule or retirement mark: its
+    // guardrail rows draw the version columns rather than two that could
+    // only read "—" (the review of PR #494, 17).
+    let rule_columns = guardrail && !admin;
+    out.push_str(if rule_columns {
         "<th>Severity</th><th>Rule</th>"
     } else {
         "<th>Version</th><th>Changed</th>"
@@ -545,7 +561,7 @@ fn table(place: &Place, kind: Kind, claims: &[Vec<Row>], admin: bool) -> String 
             } else if m.retirement {
                 state.push_str(" retirement");
             }
-            let middle = if guardrail {
+            let middle = if rule_columns {
                 format!(
                     "<td>{}</td><td>{}</td>",
                     text(m.severity.as_deref().unwrap_or("—")),
@@ -625,7 +641,7 @@ fn act(place: &Place, kind: Kind, claim: &[Row], row: &Row) -> String {
     String::new()
 }
 
-/// The Guardrails kind's opening panel: every guardrail an agent connected
+/// The Guardrails kind's opening panel: every guardrail the session key
 /// here loads, the inherited first, then this workspace's own, with the
 /// counts under the key's guardrail scope (ADR-0083 d12).
 fn in_force(place: &Place, set: &GuardrailSet, claims: &[Vec<Row>]) -> String {
@@ -645,13 +661,17 @@ fn in_force(place: &Place, set: &GuardrailSet, claims: &[Vec<Row>]) -> String {
             .flatten()
             .any(|r| r.m.claim_key == claim_key && r.m.state == "held" && r.m.retirement)
     };
+    // The set is read under the session key, so the line names that key,
+    // never an agent's, whose guardrail scope may differ (the review of PR
+    // #494, 14).
+    let key = text(&place.key_name());
     let counts = match set.guardrail_scope.as_str() {
         "workspace" => format!(
-            "An agent connected here loads the {} from here only: its key's guardrail scope is <code>workspace</code>.",
+            "<code>{key}</code> loads the {} from here only: its guardrail scope is <code>workspace</code>.",
             here.len()
         ),
         scope => format!(
-            "An agent connected here loads {} inherited and {} from here, at most {}: its key's guardrail scope is <code>{}</code>.",
+            "<code>{key}</code> loads {} inherited and {} from here, at most {}: its guardrail scope is <code>{}</code>. An agent's key loads by its own scope.",
             inherited.len(),
             here.len(),
             oml_guardrail_cap(),
@@ -757,10 +777,13 @@ pub async fn user_page(
     let personal = session.credential(Capacity::Web);
     let review = session.credential(Capacity::Review);
     let id = place.view.id.clone();
+    // The `mine` read serves only the person's held rows, the ones Withdraw
+    // reads `own` on (ADR-0082 d12 B5; the review of PR #494, 9).
     let query = |mine: bool| MemoryQuery {
         mine,
         workspace: Some(&id),
         kind: Some(kind.as_str()),
+        state: mine.then_some("held"),
         limit: LIST_LIMIT,
         ..MemoryQuery::default()
     };
@@ -893,6 +916,32 @@ pub async fn user_page(
             place.approves(kind),
         );
     }
+    // The notice after Propose names the version held and links Judge it
+    // where the person's review key may judge it (the review of PR #494,
+    // 16); a version the page does not list keeps the plain notice.
+    let named = fields
+        .get("held")
+        .zip(notice(fields.get("done")))
+        .and_then(|(held, words)| {
+            let row = claims.iter().flatten().find(|r| r.m.artifact_id == held)?;
+            let judge = if row.judge {
+                format!(
+                    r#" <a class="button" href="{TODO_JUDGE_PATH}?memory={}">Judge it</a>"#,
+                    attr(&encode(&row.m.artifact_id))
+                )
+            } else {
+                String::new()
+            };
+            Some(format!(
+                r#"<p class="notice" role="status"><b>{}</b> v{}. {}{judge}</p>"#,
+                text(&name_of(&row.m)),
+                row.m.version,
+                text(words)
+            ))
+        });
+    if let Some(named) = &named {
+        body.insert_str(0, named);
+    }
     if !failed.is_empty() {
         let _ = write!(
             body,
@@ -922,7 +971,10 @@ pub async fn user_page(
             &place.reference,
             &session.personal(),
             USER_WORKSPACES_PATH,
-            notice(fields.get("done")),
+            named
+                .is_none()
+                .then(|| notice(fields.get("done")))
+                .flatten(),
             &body,
         ),
     )
@@ -1006,7 +1058,9 @@ pub async fn admin_page(
         .filter_map(|m| {
             serde_json::from_value(json!({
                 "artifact_id": m.artifact_id, "claim_key": m.claim_key, "version": m.version,
-                "tip": false, "workspace_id": view.id, "workspace_path": m.workspace_path,
+                // The admin search's `promoted` is the served tip (the
+                // review of PR #494, C-B1).
+                "tip": m.state == "promoted", "workspace_id": view.id, "workspace_path": m.workspace_path,
                 "state": m.state, "principal": null, "created_at": m.created_at,
                 "promoted_at": m.promoted_at, "kind": kind.as_str(), "text": m.text,
             }))
@@ -1106,6 +1160,7 @@ const FORM_FIELDS: &[&str] = &[
     "format",
     "claim_key",
     "reason",
+    "eol",
 ];
 
 /// What the person typed, kept through every redraw.
@@ -1122,15 +1177,75 @@ struct Values {
     format: String,
     claim_key: String,
     reason: String,
+    /// A new guardrail's claim key, slugged from its name (B2).
+    guardrail_key: String,
+    /// How the stored body breaks its lines, which a textarea cannot
+    /// carry: `crlf`, `mixed`, or empty for LF alone (C-B5).
+    eol: String,
+}
+
+/// A claim key from a name, by the slug rule a document's key takes from
+/// its title (ADR-0081 d2): lower case, letters and digits of `a-z 0-9`
+/// kept, `.`/`_` kept, every run of anything else one `-`, no leading or
+/// trailing `-`; past 64 characters the first 47, `-`, and the first 16
+/// hex digits of the SHA-256 of the whole slug. Empty when nothing is left.
+fn key_slug(name: &str) -> String {
+    let mut slug = String::new();
+    for c in name.to_lowercase().chars() {
+        if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '_' {
+            slug.push(c);
+        } else if !slug.ends_with('-') && !slug.is_empty() {
+            slug.push('-');
+        }
+    }
+    let slug = slug.trim_end_matches('-').to_owned();
+    if slug.len() <= 64 {
+        return slug;
+    }
+    let digest = ring::digest::digest(&ring::digest::SHA256, slug.as_bytes());
+    let hex: String = digest.as_ref()[..8]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    format!("{}-{hex}", &slug[..47])
+}
+
+/// How `body` breaks its lines: empty for LF alone, `crlf` for CR LF
+/// alone, `mixed` for anything else with a CR (the review of PR #494,
+/// C-B5).
+fn eol_of(body: &str) -> &'static str {
+    if !body.contains('\r') {
+        ""
+    } else if body.replace("\r\n", "").contains(['\r', '\n']) {
+        "mixed"
+    } else {
+        "crlf"
+    }
 }
 
 impl Values {
     fn of(fields: &Fields) -> Self {
         let v = |n: &str| fields.get(n).unwrap_or_default().to_owned();
+        // A browser sends every line break of a textarea as CRLF: the body
+        // is read as LF, and as CRLF again where the stored body was so
+        // the edit keeps its bytes (C-B5).
+        let eol = match v("eol").as_str() {
+            "crlf" => "crlf",
+            "mixed" => "mixed",
+            _ => "",
+        };
+        let body = v("body").replace("\r\n", "\n");
+        let name = v("name").trim().to_owned();
         Self {
+            guardrail_key: key_slug(&name),
             name: v("name").trim().to_owned(),
             description: v("description"),
-            body: v("body").replace("\r\n", "\n"),
+            body: if eol == "crlf" {
+                body.replace('\n', "\r\n")
+            } else {
+                body
+            },
+            eol: eol.to_owned(),
             severity: v("severity"),
             tool: v("tool"),
             pattern: v("pattern"),
@@ -1172,16 +1287,31 @@ impl Values {
             format: m.format.clone().unwrap_or_default(),
             claim_key: m.claim_key.clone(),
             reason: String::new(),
+            eol: eol_of(m.text.as_deref().unwrap_or_default()).to_owned(),
+            guardrail_key: String::new(),
         }
     }
 
     /// A digest of what a write would send, so Propose writes only the
-    /// values a preview answered.
-    fn digest(&self, kind: Kind, act: Act, target: &str) -> String {
+    /// values a preview answered: keyed by the form's act key, which only
+    /// the session can compute, over the workspace and the expected
+    /// version too (the review of PR #494, 7).
+    #[allow(clippy::too_many_arguments)]
+    fn digest(
+        &self,
+        kind: Kind,
+        act: Act,
+        target: &str,
+        workspace: &str,
+        expected: &str,
+        key: &str,
+    ) -> String {
         let joined = [
             kind.as_str(),
             act.action(),
             target,
+            workspace,
+            expected,
             &self.name,
             &self.description,
             &self.body,
@@ -1195,7 +1325,8 @@ impl Values {
             &self.reason,
         ]
         .join("\u{0}");
-        let digest = ring::digest::digest(&ring::digest::SHA256, joined.as_bytes());
+        let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, key.as_bytes());
+        let digest = ring::hmac::sign(&key, joined.as_bytes());
         digest.as_ref()[..16]
             .iter()
             .map(|b| format!("{b:02x}"))
@@ -1385,7 +1516,9 @@ impl Form<'_> {
         format!(
             r#"<label>{}<textarea name="{name}" required>{}</textarea></label>{}{}"#,
             text(label),
-            text(value),
+            // HTML escaped alone: a CR or a bidi mark is the text's own and
+            // round-trips; `text` would turn it into U+FFFD (C-B5).
+            oml_page::escape(value),
             if hint.is_empty() {
                 String::new()
             } else {
@@ -1472,6 +1605,17 @@ impl Form<'_> {
                 out.push_str(&self.textarea("body", "Body (markdown)", &v.body, &self.bytes()));
             }
             Kind::Guardrail => {
+                // B2 (ADR-0082 d4, amended 2026-11-19): an optional name,
+                // the claim key's source; fixed once the claim exists.
+                if self.act == Act::New {
+                    out.push_str(&self.input(
+                        "name",
+                        "Name (optional)",
+                        &v.name,
+                        "It becomes the guardrail's key, in lower case with hyphens; empty, the server derives one.",
+                        false,
+                    ));
+                }
                 out.push_str(&self.radios(
                     "severity",
                     "Severity",
@@ -1550,6 +1694,21 @@ impl Form<'_> {
         let mut out = String::from(
             r#"<section class="card oml-preview" aria-labelledby="preview"><h2 id="preview">Preview</h2><p class="desc">Nothing is written until Propose.</p>"#,
         );
+        // Characters no reader sees, named before anything else, so an
+        // invisible instruction is not proposed unseen (the review of PR
+        // #494, 8).
+        let hidden = oml_page::web::hidden_chars(&v.body);
+        if !hidden.is_empty() {
+            let _ = write!(
+                out,
+                r#"<p class="error" role="alert">The text holds characters no reader sees, kept as typed: {}.</p>"#,
+                hidden
+                    .iter()
+                    .map(|c| format!("<code>U+{:04X}</code>", u32::from(*c)))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
         if self.act == Act::Retire {
             let name = self.target.map(name_of).unwrap_or_default();
             let _ = write!(
@@ -1566,7 +1725,7 @@ impl Form<'_> {
                         r#"<p>A session receives the command <code>/mcp__&lt;server&gt;__{}</code>.</p><p class="label">Its index line</p><pre>- {}: {}</pre><p class="label">Its <code>prompts/list</code> entry</p><pre>{}</pre>"#,
                         text(name),
                         text(name),
-                        text(&v.description),
+                        oml_page::web::text_shown(&v.description),
                         text(
                             &serde_json::to_string(
                                 &json!({"name": name, "description": v.description})
@@ -1596,10 +1755,20 @@ impl Form<'_> {
                         out,
                         r#"<p class="label">Its session-start line</p><pre>- [{}] {}</pre>"#,
                         text(&v.severity),
-                        text(&v.body)
+                        oml_page::web::text_shown(&v.body)
                     );
                     let checks = match &p.rule {
-                        Some(rule) => format!("Its rule checks each {} call: {}.", text(rule["tool"].as_str().unwrap_or("?")), rule_words(Some(rule))),
+                        // The tool is named once (the review of PR #494, 16).
+                        Some(rule) => {
+                            let (member, pattern) =
+                                matcher(rule).unwrap_or(("match", "?".to_owned()));
+                            format!(
+                                "Its rule checks each {} call: {member} <code>{}</code> · {}.",
+                                text(rule["tool"].as_str().unwrap_or("?")),
+                                text(&pattern),
+                                text(rule["effect"].as_str().unwrap_or("?"))
+                            )
+                        }
                         None => "No rule: the line is read at session start and nothing is checked at the tool call.".to_owned(),
                     };
                     let _ = write!(
@@ -1752,18 +1921,32 @@ impl Form<'_> {
             hidden("nonce", self.nonce),
             hidden("kind", self.kind.as_str()),
         );
-        match self.target {
+        let (workspace, expected) = match self.target {
             Some(t) => {
                 out.push_str(&hidden("memory", &t.artifact_id));
                 out.push_str(&hidden("expected", &t.version.to_string()));
+                (String::new(), t.version.to_string())
             }
-            None => out.push_str(&hidden("workspace", &place.reference)),
+            None => {
+                out.push_str(&hidden("workspace", &place.reference));
+                (place.reference.clone(), String::new())
+            }
+        };
+        if !self.values.eol.is_empty() {
+            out.push_str(&hidden("eol", &self.values.eol));
         }
         let previewed = self.previewed();
         if previewed {
             out.push_str(&hidden(
                 "previewed",
-                &self.values.digest(self.kind, self.act, target),
+                &self.values.digest(
+                    self.kind,
+                    self.act,
+                    target,
+                    &workspace,
+                    &expected,
+                    &session.act_key(self.nonce),
+                ),
             ));
         }
         out.push_str(&self.fields());
@@ -1892,6 +2075,9 @@ fn draft<'a>(
                 .filter(|s| !s.is_empty())
                 .map(String::as_str);
             draft.rule = rule;
+            if act == Act::New {
+                draft.claim_key = Some(values.guardrail_key.as_str()).filter(|k| !k.is_empty());
+            }
         }
         Kind::Document => {
             draft.format = Some(values.format_or(kind));
@@ -1977,6 +2163,40 @@ async fn pending(
         .find(|h| h.claim_key == m.claim_key && h.version > m.version && h.state == "held")
 }
 
+/// The page an edit or a retirement of `t` draws while the person's own
+/// `p` waits for review: it links `p` and offers no second proposal
+/// (ADR-0082 d2). A post answers it as `409`, never as a rebase, since a
+/// held version is no tip to rebase onto (the review of PR #494, C-B4).
+fn waiting(
+    status: StatusCode,
+    place: &Place,
+    session: &Session,
+    kind: Kind,
+    t: &Memory,
+    p: &Memory,
+) -> Response {
+    let body = format!(
+        r#"{}<h1>{}</h1><p>In force · <a href="{USER_MEMORY_PATH}?id={}">{} v{} waits for review</a>: a second proposal would race it, so none is offered until it is judged or withdrawn.</p><p><a href="{}">Back to {}</a></p>"#,
+        crumbs(place, kind, Some(&name_of(t)), false),
+        text(&name_of(t)),
+        attr(&encode(&p.artifact_id)),
+        if p.retirement { "retirement" } else { "edit" },
+        p.version,
+        place.page_link(kind),
+        text(&place.reference)
+    );
+    outcome::html(
+        status,
+        shell(
+            &place.reference,
+            &session.personal(),
+            USER_WORKSPACES_PATH,
+            None,
+            &body,
+        ),
+    )
+}
+
 /// A form's first frame: the new item's empty form, or an edit prefilled
 /// from the served tip, or a retirement's confirmation.
 async fn form_page(
@@ -2027,26 +2247,7 @@ async fn form_page(
             );
         }
         if let Some(p) = pending(&web, &session, &calls, t, kind).await {
-            let body = format!(
-                r#"{}<h1>{}</h1><p>In force · <a href="{USER_MEMORY_PATH}?id={}">{} v{} waits for review</a>: a second proposal would race it, so none is offered until it is judged or withdrawn.</p><p><a href="{}">Back to {}</a></p>"#,
-                crumbs(&place, kind, Some(&name_of(t)), false),
-                text(&name_of(t)),
-                attr(&encode(&p.artifact_id)),
-                if p.retirement { "retirement" } else { "edit" },
-                p.version,
-                place.page_link(kind),
-                text(&place.reference)
-            );
-            return outcome::html(
-                StatusCode::OK,
-                shell(
-                    &place.reference,
-                    &session.personal(),
-                    USER_WORKSPACES_PATH,
-                    None,
-                    &body,
-                ),
-            );
+            return waiting(StatusCode::OK, &place, &session, kind, t, &p);
         }
     }
     let values = target.as_ref().map(Values::of_memory).unwrap_or_default();
@@ -2167,6 +2368,13 @@ async fn form_act(
             &calls,
         );
     }
+    // The person's own held version of the claim stops the edit before any
+    // preview: its version conflict is no tip moved (C-B4).
+    if let Some(t) = &target
+        && let Some(p) = pending(&web, &session, &calls, t, kind).await
+    {
+        return waiting(StatusCode::CONFLICT, &place, &session, kind, t, &p);
+    }
     // The version the form rendered: the write's expected_version
     // (ADR-0057 d19). A rebase moves it to the tip the conflict named.
     if fields
@@ -2232,9 +2440,14 @@ async fn form_act(
             .get("expected")
             .and_then(|v| v.parse::<u32>().ok())
             .unwrap_or(t.version);
+        // A retirement's text is its reason (the review of PR #494, 15).
         let probe = Draft {
             kind: kind.as_str(),
-            body: &values.body,
+            body: if act == Act::Retire {
+                &values.reason
+            } else {
+                &values.body
+            },
             replaces: Some((&t.artifact_id, expected)),
             retirement: act == Act::Retire,
             ..Draft::default()
@@ -2261,6 +2474,13 @@ async fn form_act(
         );
         return draw(None, Some(&refusal), target.as_ref());
     }
+    if values.eol == "mixed" && act == Act::Edit {
+        let refusal = Refusal::local(
+            "body",
+            "The stored text breaks its lines in more than one way, which a form cannot keep; edit it from the command line.",
+        );
+        return draw(None, Some(&refusal), target.as_ref());
+    }
     let rule = match (kind, act) {
         (Kind::Guardrail, Act::New | Act::Edit) => match values.rule() {
             Ok(rule) => rule,
@@ -2284,7 +2504,19 @@ async fn form_act(
         .map(|t| t.artifact_id.clone())
         .unwrap_or_default();
     let unchanged = step == "propose"
-        && fields.get("previewed") == Some(values.digest(kind, act, &target_id).as_str());
+        && fields.get("previewed")
+            == Some(
+                values
+                    .digest(
+                        kind,
+                        act,
+                        &target_id,
+                        fields.get("workspace").unwrap_or_default(),
+                        fields.get("expected").unwrap_or_default(),
+                        &session.act_key(&nonce),
+                    )
+                    .as_str(),
+            );
     if !unchanged {
         let ids = calls.next_ids();
         return match web.api.preview(&call(&credential, &ids), &draft).await {
@@ -2310,16 +2542,17 @@ async fn form_act(
         }
     };
     match written {
-        Ok(_) => acts::see_other(
+        Ok(accepted) => acts::see_other(
             &format!(
-                "{WORKSPACE_PATH}?workspace={}&kind={}&done={}",
+                "{WORKSPACE_PATH}?workspace={}&kind={}&done={}&held={}",
                 encode(&place.reference),
                 kind.as_str(),
                 if act == Act::Retire {
                     "retirement"
                 } else {
                     "proposed"
-                }
+                },
+                encode(&accepted.artifact_id)
             ),
             &[],
         ),

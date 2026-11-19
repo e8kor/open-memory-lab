@@ -54,6 +54,9 @@ struct Rig {
     app: Arc<TestApp>,
     /// The path router in front of the lead and `oml-web`.
     router: Router,
+    /// Every request to `oml-web`, whatever its method, as the Caddyfile's
+    /// and compose's path matchers route a moved page's path.
+    direct: Router,
     boot: BootstrapResult,
     providers: MemSignIn,
     /// Every line `oml-web` wrote.
@@ -174,6 +177,7 @@ async fn rig() -> Rig {
         app: Arc::new(test_app(&store)),
         store,
         router: front(lead, web),
+        direct: front(web, web),
         boot,
         providers,
         lines,
@@ -752,7 +756,7 @@ async fn in_force_here_lists_the_roots_rule_as_here_and_on_a_nested_workspace_as
     );
     assert!(page.contains(r#"<h1 class="mono">alice</h1>"#), "{page}");
     assert!(
-        page.contains("An agent connected here loads 0 inherited and 0 from here, at most 12: its key's guardrail scope is <code>ancestors</code>."),
+        page.contains("<code>alice-web</code> loads 0 inherited and 0 from here, at most 12: its guardrail scope is <code>ancestors</code>. An agent's key loads by its own scope."),
         "{page}"
     );
     // The picker names the scope in force by its reference (design notes
@@ -787,7 +791,7 @@ async fn in_force_here_lists_the_roots_rule_as_here_and_on_a_nested_workspace_as
     );
     assert!(page.contains(" · here</span></li>"), "{page}");
     assert!(
-        page.contains("An agent connected here loads 0 inherited and 1 from here"),
+        page.contains("<code>alice-web</code> loads 0 inherited and 1 from here"),
         "{page}"
     );
     assert!(!page.contains("universe.alice"), "{page}");
@@ -5158,8 +5162,9 @@ async fn the_admin_memory_page_shows_the_scan_finding_the_persons_page_shows() {
     );
 }
 
-/// Next opens the oldest held item under the filter, passes over the item
-/// the person leaves unjudged, and records nothing (ADR-0083 d2, d11, d14).
+/// Next opens the oldest held item under the filter, then the item after
+/// the one the person leaves unjudged, the oldest again past the last, and
+/// records nothing (ADR-0083 d2, d11, d14).
 #[tokio::test]
 async fn next_opens_the_oldest_held_item_passes_over_the_one_left_and_records_nothing() {
     let rig = rig().await;
@@ -5167,12 +5172,29 @@ async fn next_opens_the_oldest_held_item_passes_over_the_one_left_and_records_no
     let value = laptop_key(&rig, &cookie).await;
     let first = agent_writes(&rig, &value, "the deploy window is tuesday").await;
     let second = agent_writes(&rig, &value, "the deploy window is thursday").await;
+    let third = agent_writes(&rig, &value, "the deploy window is friday").await;
     let head = rig.head().await;
     assert_eq!(
         next_item(&rig, &cookie).await,
         Some(first.to_string()),
         "the oldest first"
     );
+    // Next walks the queue: from the second the third, not the first again,
+    // and past the last the oldest (the review of PR #494, 6).
+    for (left, opens) in [(second, third), (third, first)] {
+        let (status, headers, body) = act(
+            &rig,
+            &cookie,
+            "/web/todo",
+            &[("action", "next"), ("after", &left.to_string())],
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+        assert_eq!(
+            headers[header::LOCATION].to_str().unwrap(),
+            format!("/web/todo/judge?memory={opens}")
+        );
+    }
     let (status, headers, body) = act(
         &rig,
         &cookie,
@@ -5198,7 +5220,7 @@ async fn next_opens_the_oldest_held_item_passes_over_the_one_left_and_records_no
             .map(|e| &e.envelope.event_type)
             .collect::<Vec<_>>()
     );
-    for id in [first, second] {
+    for id in [first, second, third] {
         let row = rig
             .store
             .memory(rig.boot.tenant_id, id)
@@ -6438,6 +6460,26 @@ async fn the_old_review_and_keys_urls_move_or_are_not_found_and_their_acts_run_n
         )
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+        // The proxies route every method of the old paths to `oml-web`,
+        // which answers the post not found too, never `405` (the review of
+        // PR #494, 12).
+        let (_, _, page) = send(&rig.router, get("/web/keys", Some(&alice))).await;
+        let csrf = csrf_of(&page);
+        let (status, _, _) = send(
+            &rig.direct,
+            post(
+                path,
+                &[
+                    ("csrf_token", csrf.as_str()),
+                    ("action", "judge"),
+                    ("artifact_id", &memory.to_string()),
+                    ("verdict", "approve"),
+                ],
+                Some(&alice),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path} through the proxy");
     }
     assert_eq!(rig.head().await, head, "nothing journalled");
     let held = rig
@@ -9374,6 +9416,9 @@ async fn propose_is_drawn_only_after_a_preview_of_the_same_values() {
         "{previewed}"
     );
     assert_eq!(held_skills(&rig).await, 0, "a preview writes nothing");
+    // A page a post draws carries the badge's number as a GET does (the
+    // review of PR #494, 11).
+    assert!(previewed.contains(">To do · 0</a>"), "{previewed}");
     // A field changed since the preview: the page previews again.
     let mut changed = form_values(&previewed);
     for (name, value) in &mut changed {
@@ -9408,21 +9453,16 @@ async fn propose_is_drawn_only_after_a_preview_of_the_same_values() {
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
-    assert_eq!(
-        headers[header::LOCATION],
-        "/web/workspace?workspace=alice&kind=skill&done=proposed"
+    let location = headers[header::LOCATION].to_str().unwrap().to_owned();
+    assert!(
+        location.starts_with("/web/workspace?workspace=alice&kind=skill&done=proposed&held="),
+        "{location}"
     );
     assert_eq!(held_skills(&rig).await, 1);
-    let (_, _, listed) = send(
-        &rig.router,
-        get(
-            "/web/workspace?workspace=alice&kind=skill&done=proposed",
-            Some(&cookie),
-        ),
-    )
-    .await;
+    let (_, _, listed) = send(&rig.router, get(&location, Some(&cookie))).await;
+    // The notice names the version held (the review of PR #494, 16).
     assert!(
-        listed.contains("Proposed: the new version is held until it is approved"),
+        listed.contains(r#"<p class="notice" role="status"><b>triage</b> v1. Proposed: the new version is held until it is approved"#),
         "{listed}"
     );
     assert!(
@@ -9596,6 +9636,32 @@ async fn an_edit_previews_its_change_and_then_waits_for_review() {
         "{again}"
     );
     assert!(!again.contains(r#"<form class="oml-form""#), "{again}");
+    // The stale form posted again (a second tab, or Back): the person's own
+    // held v2 is no tip to rebase onto, so the post draws the same waiting
+    // page and no rebase (the review of PR #494, C-B4).
+    for step in ["preview", "rebase"] {
+        let (status, _, stale) = post_form(
+            &rig,
+            &cookie,
+            "/web/workspace/edit",
+            &values,
+            &[("step", step)],
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{step}: {stale}");
+        assert!(
+            stale.contains("edit v2 waits for review</a>: a second proposal would race it"),
+            "{step}: {stale}"
+        );
+        assert!(
+            !stale.contains("is now the latest version"),
+            "{step}: {stale}"
+        );
+        assert!(
+            !stale.contains(r#"<form class="oml-form""#),
+            "{step}: {stale}"
+        );
+    }
 }
 
 /// When the tip moved after the form was drawn, nothing is proposed, the
@@ -9715,7 +9781,7 @@ async fn retire_names_what_stops_and_needs_a_reason() {
     assert!(form.contains("<h1>Retire release-checklist</h1>"), "{form}");
     assert!(
         form.contains(
-            "Once approved, the command <code>/oml:release-checklist</code> is no longer offered."
+            "Once approved, the command <code>/mcp__&lt;server&gt;__release-checklist</code> is no longer offered."
         ),
         "{form}"
     );
@@ -9755,9 +9821,13 @@ async fn retire_names_what_stops_and_needs_a_reason() {
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
-    assert_eq!(
-        headers[header::LOCATION],
-        "/web/workspace?workspace=alice&kind=skill&done=retirement"
+    assert!(
+        headers[header::LOCATION]
+            .to_str()
+            .unwrap()
+            .starts_with("/web/workspace?workspace=alice&kind=skill&done=retirement&held="),
+        "{:?}",
+        headers[header::LOCATION]
     );
     let (_, _, page) = send(
         &rig.router,
@@ -9852,9 +9922,7 @@ async fn a_document_and_a_guardrail_preview_draw_what_a_session_receives() {
         "{page}"
     );
     assert!(
-        page.contains(
-            "Its rule checks each shell call: shell · command <code>git push *</code> · deny."
-        ),
+        page.contains("Its rule checks each shell call: command <code>git push *</code> · deny."),
         "{page}"
     );
     assert!(
@@ -9900,6 +9968,10 @@ async fn the_admin_workspace_page_has_no_builder_act() {
     assert!(page.contains(r#"aria-label="Approved contents by kind"><a href="/web/admin/memories?workspace=alice">Memories <span class="n">1</span></a>"#), "{page}");
     assert!(page.contains(">release-checklist</a>"), "{page}");
     assert!(page.contains("first version"), "{page}");
+    // The admin search's `promoted` is the served tip: its chip reads
+    // approved, never superseded (the review of PR #494, C-B1).
+    assert!(page.contains(r#"oml-chip is-promoted"#), "{page}");
+    assert!(!page.contains(r#"oml-chip is-superseded"#), "{page}");
     for act in [
         "New skill",
         "/web/workspace/new",
@@ -9919,4 +9991,241 @@ async fn the_admin_workspace_page_has_no_builder_act() {
         rows.contains(r#"<a href="/web/admin/workspace?workspace=alice">alice</a>"#),
         "{rows}"
     );
+}
+
+/// A builder form carries a body up to the cap the form states, though
+/// form encoding triples punctuation and non-ASCII bytes: a 100 KiB
+/// document of punctuation and a 25 KB Cyrillic skill each answer their
+/// preview, where a 64 KiB form cap answered `413` and lost the typed text
+/// (ADR-0082 d4; the review of PR #494, C-B3).
+#[tokio::test]
+async fn the_builder_previews_a_100_kib_document_and_a_25_kb_cyrillic_skill() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let document = "- [x] #1 (a/b); ".repeat(6_400);
+    assert_eq!(document.len(), 102_400);
+    let skill = "Проверка ".repeat(1_500);
+    assert!(
+        skill.len() > 25_000 && skill.len() < 32_768,
+        "{}",
+        skill.len()
+    );
+    for (kind, fields) in [
+        (
+            "document",
+            vec![("title", "Runbook"), ("body", document.as_str())],
+        ),
+        (
+            "skill",
+            vec![
+                ("name", "triage"),
+                ("description", "Sort an incident."),
+                ("body", skill.as_str()),
+            ],
+        ),
+    ] {
+        let (status, _, first) = send(
+            &rig.router,
+            get(&format!("/web/workspace/new?kind={kind}"), Some(&cookie)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{first}");
+        let mut values = form_values(&first);
+        for (name, value) in &mut values {
+            if let Some((_, v)) = fields.iter().find(|(n, _)| n == name) {
+                *value = (*v).to_owned();
+            }
+        }
+        let (status, _, previewed) = post_form(
+            &rig,
+            &cookie,
+            "/web/workspace/new",
+            &values,
+            &[("step", "preview")],
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "{kind}: {}",
+            &previewed[..previewed.len().min(400)]
+        );
+        assert!(
+            previewed.contains(r#"<h2 id="preview">Preview</h2>"#),
+            "{kind}"
+        );
+    }
+}
+
+/// An edit's prefilled text round-trips: a body with CRLF line breaks and a
+/// right-to-left mark, edited only in its description, is proposed with
+/// the same bytes, as a browser submits a textarea (every line break as
+/// CRLF); nothing becomes U+FFFD (ADR-0082 d4; the review of PR #494, C-B5).
+#[tokio::test]
+async fn an_edit_keeps_a_bodys_crlf_and_bidi_bytes() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    let body = "Tag \u{05E9}\u{05DC}\u{05D5}\u{05DD}\u{200F}.\r\nBuild.\r\nPublish notes.";
+    let id = agent_skill(&rig, &value, "release-checklist", body).await;
+    let (judged, _) = judge_next(&rig, &cookie, "approve", None).await;
+    assert_eq!(judged, id.to_string());
+    let (status, _, form) = send(
+        &rig.router,
+        get(&format!("/web/workspace/edit?memory={id}"), Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{form}");
+    assert!(!form.contains('\u{FFFD}'), "{form}");
+    // As a browser parses and submits a textarea: CR LF and a lone CR read
+    // as LF, and every LF is sent as CRLF.
+    let browser = |v: &str| {
+        v.replace("\r\n", "\n")
+            .replace('\r', "\n")
+            .replace('\n', "\r\n")
+    };
+    let mut values = form_values(&form);
+    for (name, value) in &mut values {
+        match name.as_str() {
+            "description" => *value = "Walk every release step.".to_owned(),
+            "body" => *value = browser(value),
+            _ => {}
+        }
+    }
+    let (status, _, previewed) = post_form(
+        &rig,
+        &cookie,
+        "/web/workspace/edit",
+        &values,
+        &[("step", "preview")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{previewed}");
+    assert!(
+        previewed.contains(r#"<p class="label">Body <span class="n">unchanged</span>"#),
+        "{previewed}"
+    );
+    let mut again = form_values(&previewed);
+    for (name, value) in &mut again {
+        if name == "body" {
+            *value = browser(value);
+        }
+    }
+    let (status, _, _) = post_form(
+        &rig,
+        &cookie,
+        "/web/workspace/edit",
+        &again,
+        &[("step", "propose")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let (_, _, waiting) = send(
+        &rig.router,
+        get(&format!("/web/workspace/edit?memory={id}"), Some(&cookie)),
+    )
+    .await;
+    let at = waiting.find("/web/memory?id=").expect("the held version") + 15;
+    let held: uuid::Uuid = waiting[at..at + 36].parse().expect("an id");
+    let stored = rig
+        .store
+        .memory(rig.boot.tenant_id, held)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.body, body, "the edit keeps the body's bytes");
+}
+
+/// A shared workspace the person's web key reads and their review key does
+/// not, `universe` here, opens read-only instead of being refused: its
+/// contents listed, and no New, Edit or Retire (ADR-0082 d12 B4; the
+/// review of PR #494, 10).
+#[tokio::test]
+async fn a_shared_workspace_only_the_web_key_reads_opens_read_only() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (status, _, page) = send(
+        &rig.router,
+        get(
+            "/web/workspace?workspace=universe&kind=skill",
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_builder_copy(&page);
+    assert!(
+        page.contains("<h1>universe</h1>") || page.contains(">universe<"),
+        "{page}"
+    );
+    for act in ["New skill", "/web/workspace/new", "/web/workspace/edit"] {
+        assert!(!page.contains(act), "{act}: {page}");
+    }
+}
+
+/// A new guardrail's optional Name becomes its claim key by the slug rule
+/// documents use, and with no name the server derives its `auto-…` key
+/// (ADR-0082 d4, amended 2026-11-19 by the operator's decision B2).
+#[tokio::test]
+async fn a_guardrails_name_becomes_its_claim_key_and_none_leaves_it_derived() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    for (name, body, key) in [
+        (
+            "No force push!",
+            "Never force-push to main.",
+            Some("no-force-push"),
+        ),
+        ("", "Never delete a release tag.", None),
+    ] {
+        let (_, _, form) = send(
+            &rig.router,
+            get("/web/workspace/new?kind=guardrail", Some(&cookie)),
+        )
+        .await;
+        assert!(form.contains(r#"<input name="name""#), "{form}");
+        assert!(form.contains("Name (optional)"), "{form}");
+        let mut values = form_values(&form);
+        for (field, value) in &mut values {
+            match field.as_str() {
+                "name" => *value = name.to_owned(),
+                "body" => *value = body.to_owned(),
+                _ => {}
+            }
+        }
+        let extra = [("severity", "never"), ("tool", ""), ("effect", "")];
+        let mut with: Vec<(&str, &str)> = extra.to_vec();
+        with.push(("step", "preview"));
+        let (status, _, previewed) =
+            post_form(&rig, &cookie, "/web/workspace/new", &values, &with).await;
+        assert_eq!(status, StatusCode::OK, "{previewed}");
+        let mut with: Vec<(&str, &str)> = extra.to_vec();
+        with.push(("step", "propose"));
+        let (status, headers, page) = post_form(
+            &rig,
+            &cookie,
+            "/web/workspace/new",
+            &form_values(&previewed),
+            &with,
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
+        let location = headers[header::LOCATION].to_str().unwrap().to_owned();
+        let at = location.find("held=").expect("the held id") + 5;
+        let held: uuid::Uuid = location[at..].parse().expect("an id");
+        let stored = rig
+            .store
+            .memory(rig.boot.tenant_id, held)
+            .await
+            .unwrap()
+            .unwrap();
+        match key {
+            Some(key) => assert_eq!(stored.claim_key, key),
+            None => assert!(
+                stored.claim_key.starts_with("auto-"),
+                "{}",
+                stored.claim_key
+            ),
+        }
+    }
 }

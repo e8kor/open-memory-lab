@@ -913,10 +913,11 @@ async fn the_top_label_read_costs_the_gate_and_one_tree_walk() {
 // The To do badge's counts read (ADR-0083 d6, d11)
 // ---------------------------------------------------------------------------
 
-/// Every console page draws its "To do · N" badge from one counts call per
-/// page view, `GET /v2/todo/counts` as `<user>-web` on the Personal side
-/// and `GET /v2/admin/todo/counts` as `<user>-admin` on the admin side
-/// (`oml-web`'s `partial_answers.rs` holds the one call per page). The
+/// The two reads the "To do · N" badge is drawn from, `GET /v2/todo/counts`
+/// as `<user>-web` on the Personal side and `GET /v2/admin/todo/counts` as
+/// `<user>-admin` on the admin side, cost the same store calls at 6 and 48
+/// workspaces, and the admin read two (that each console page makes one of
+/// them is `oml-web`'s `partial_answers.rs`, which calls every page). The
 /// Personal read counts what the held listing serves `<user>-review`
 /// through the listing's own store read: the gate's call, the reviewer
 /// key's resolution and access, its reviewer walk and one page of held
@@ -924,9 +925,8 @@ async fn the_top_label_read_costs_the_gate_and_one_tree_walk() {
 /// calls do not grow with the workspaces, as the listing's do not. The
 /// admin read is the gate's call and the key's resolution alone: no group
 /// of it is built (d14).
-/// This is the one API call each page of both sides gained.
 #[tokio::test]
-async fn every_console_page_carries_the_todo_badge_with_one_store_call() {
+async fn the_todo_counts_reads_cost_the_same_store_calls_at_6_and_48_workspaces() {
     let mut calls = Vec::new();
     for n in [6, 48] {
         let rig = rig().await;

@@ -40,6 +40,25 @@ pub fn content_security_policy() -> String {
 /// The most a form's body may be; past it the post is refused unread.
 pub const FORM_MAX_BYTES: usize = 64 * 1024;
 
+/// The most a builder form's body may be (`/web/workspace/new`, `edit` and
+/// `retire`, Preview included): a document's 1 MiB body with every byte
+/// percent-encoded, three bytes each, beside the other fields' 64 KiB, so
+/// the cap the form states is the cap that holds (ADR-0082 d4; the review
+/// of PR #494, C-B3).
+pub const BUILDER_FORM_MAX_BYTES: usize = 3 * 1_048_576 + FORM_MAX_BYTES;
+
+/// The cap of a form posted to `path`.
+fn form_max_bytes(path: &str) -> usize {
+    if matches!(
+        path,
+        "/web/workspace/new" | "/web/workspace/edit" | "/web/workspace/retire"
+    ) {
+        BUILDER_FORM_MAX_BYTES
+    } else {
+        FORM_MAX_BYTES
+    }
+}
+
 /// Where the one line per request goes: standard output in the binary, a
 /// buffer in the tests.
 pub type LogSink = Arc<dyn Fn(String) + Send + Sync>;
@@ -258,12 +277,17 @@ pub async fn same_origin(State(layers): State<Layers>, req: Request, next: Next)
         return outcome::sign_in(req.uri().path());
     };
     let (parts, body) = req.into_parts();
-    let Ok(bytes) = axum::body::to_bytes(body, FORM_MAX_BYTES).await else {
+    let cap = form_max_bytes(parts.uri.path());
+    let Ok(bytes) = axum::body::to_bytes(body, cap).await else {
         return refusal(
             &ids,
             StatusCode::PAYLOAD_TOO_LARGE,
             "request.payload_too_large",
-            "A page's form is at most 64 KiB.",
+            if cap == FORM_MAX_BYTES {
+                "A page's form is at most 64 KiB."
+            } else {
+                "A builder form is at most 3 MiB and 64 KiB, a 1 MiB body percent-encoded."
+            },
             "this form is larger than a page sends",
             None,
         );

@@ -590,10 +590,16 @@ fn defined(action: &str, name: &str) -> bool {
     }
 }
 
+/// The rows Next reads to find the one after the item left: a page of the
+/// queue, so Next walks the first 50 rows in order. A constant of the
+/// build, unmeasured.
+const NEXT_SCAN_ROWS: u32 = 50;
+
 /// `POST /web/todo`, Next (ADR-0083 d11, d14): one read of the held
 /// listing under the form's workspace, oldest first, and a `303` to the
-/// first row's Judge page that is not `after`, the item the person leaves
-/// unjudged; with none, back to To do with its notice. It records nothing.
+/// Judge page of the row after `after`, the item the person leaves
+/// unjudged, or of the oldest row past the last; with none, back to To do
+/// with its notice. It records nothing.
 pub async fn user_act(
     State(web): State<Web>,
     Extension(session): Extension<Session>,
@@ -618,22 +624,35 @@ pub async fn user_act(
     let credential = session.credential(Capacity::Review);
     let ids = calls.next_ids();
     let filters: Vec<(&str, &str)> = workspace.map(|w| ("workspace", w)).into_iter().collect();
-    // Two rows, so the item left unjudged is passed over.
+    // One page of the queue, oldest first: Next opens the row after the
+    // one left unjudged, so it walks the queue instead of cycling between
+    // the two oldest; past the last it starts over at the oldest (the
+    // review of PR #494, 6).
     let page = match web
         .api
-        .review_held(&call_as(&credential, &ids, acting), &filters, 2, None)
+        .review_held(
+            &call_as(&credential, &ids, acting),
+            &filters,
+            NEXT_SCAN_ROWS,
+            None,
+        )
         .await
     {
         Ok(page) => page,
         Err(e) => return outcome::page(&e, &calls, TODO_PATH),
     };
     let kept_acting = acting.map_or_else(String::new, |id| format!("&as={}", encode(id)));
-    match page
+    let rows: Vec<&str> = page
         .items
         .iter()
         .map(|i| i.memory().artifact_id.as_str())
-        .find(|id| Some(*id) != after)
-    {
+        .collect();
+    let left = after.and_then(|a| rows.iter().position(|id| *id == a));
+    let next = left
+        .and_then(|i| rows.get(i + 1))
+        .or_else(|| rows.iter().find(|id| Some(**id) != after))
+        .copied();
+    match next {
         Some(id) => acts::see_other(
             &format!("{TODO_JUDGE_PATH}?memory={}{kept_acting}", encode(id)),
             &[],
