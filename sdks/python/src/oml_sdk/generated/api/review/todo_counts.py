@@ -86,10 +86,11 @@ def sync_detailed(
     number of rows GET /v2/review/held would serve the person's reviewer key, <user>-review, at
     workspace and below it, or across every workspace without workspace, computed under the same grants,
     lineage exclusions and author fences as that listing; counted up to 1,000, with truncated true past
-    it. A person with no live reviewer key or no reviewer grant counts 0, and so does a workspace that
-    key cannot read or that does not exist, which is never named or refused. No memory id, text, claim
-    key or name. Journals nothing. The other groups (fixes, ratify, withdrawals, overrides, imports)
-    join with their features (ADR-0083 d14). Since v0.8.0.
+    it, and read up to 2,000 held rows, counted or not, with truncated true and the count so far once
+    that bound stops the read (ADR-0083 d16). A person with no live reviewer key or no reviewer grant
+    counts 0, and so does a workspace that key cannot read or that does not exist, which is never named
+    or refused. No memory id, text, claim key or name. Journals nothing. The other groups (fixes,
+    ratify, withdrawals, overrides, imports) join with their features (ADR-0083 d14). Since v0.8.0.
 
     Args:
         workspace (str | Unset):
@@ -134,10 +135,11 @@ def sync(
     number of rows GET /v2/review/held would serve the person's reviewer key, <user>-review, at
     workspace and below it, or across every workspace without workspace, computed under the same grants,
     lineage exclusions and author fences as that listing; counted up to 1,000, with truncated true past
-    it. A person with no live reviewer key or no reviewer grant counts 0, and so does a workspace that
-    key cannot read or that does not exist, which is never named or refused. No memory id, text, claim
-    key or name. Journals nothing. The other groups (fixes, ratify, withdrawals, overrides, imports)
-    join with their features (ADR-0083 d14). Since v0.8.0.
+    it, and read up to 2,000 held rows, counted or not, with truncated true and the count so far once
+    that bound stops the read (ADR-0083 d16). A person with no live reviewer key or no reviewer grant
+    counts 0, and so does a workspace that key cannot read or that does not exist, which is never named
+    or refused. No memory id, text, claim key or name. Journals nothing. The other groups (fixes,
+    ratify, withdrawals, overrides, imports) join with their features (ADR-0083 d14). Since v0.8.0.
 
     Args:
         workspace (str | Unset):
@@ -177,10 +179,11 @@ async def asyncio_detailed(
     number of rows GET /v2/review/held would serve the person's reviewer key, <user>-review, at
     workspace and below it, or across every workspace without workspace, computed under the same grants,
     lineage exclusions and author fences as that listing; counted up to 1,000, with truncated true past
-    it. A person with no live reviewer key or no reviewer grant counts 0, and so does a workspace that
-    key cannot read or that does not exist, which is never named or refused. No memory id, text, claim
-    key or name. Journals nothing. The other groups (fixes, ratify, withdrawals, overrides, imports)
-    join with their features (ADR-0083 d14). Since v0.8.0.
+    it, and read up to 2,000 held rows, counted or not, with truncated true and the count so far once
+    that bound stops the read (ADR-0083 d16). A person with no live reviewer key or no reviewer grant
+    counts 0, and so does a workspace that key cannot read or that does not exist, which is never named
+    or refused. No memory id, text, claim key or name. Journals nothing. The other groups (fixes,
+    ratify, withdrawals, overrides, imports) join with their features (ADR-0083 d14). Since v0.8.0.
 
     Args:
         workspace (str | Unset):
@@ -223,10 +226,11 @@ async def asyncio(
     number of rows GET /v2/review/held would serve the person's reviewer key, <user>-review, at
     workspace and below it, or across every workspace without workspace, computed under the same grants,
     lineage exclusions and author fences as that listing; counted up to 1,000, with truncated true past
-    it. A person with no live reviewer key or no reviewer grant counts 0, and so does a workspace that
-    key cannot read or that does not exist, which is never named or refused. No memory id, text, claim
-    key or name. Journals nothing. The other groups (fixes, ratify, withdrawals, overrides, imports)
-    join with their features (ADR-0083 d14). Since v0.8.0.
+    it, and read up to 2,000 held rows, counted or not, with truncated true and the count so far once
+    that bound stops the read (ADR-0083 d16). A person with no live reviewer key or no reviewer grant
+    counts 0, and so does a workspace that key cannot read or that does not exist, which is never named
+    or refused. No memory id, text, claim key or name. Journals nothing. The other groups (fixes,
+    ratify, withdrawals, overrides, imports) join with their features (ADR-0083 d14). Since v0.8.0.
 
     Args:
         workspace (str | Unset):

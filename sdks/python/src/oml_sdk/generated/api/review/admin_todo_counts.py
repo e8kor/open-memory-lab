@@ -72,10 +72,11 @@ def sync_detailed(
 ) -> Response[AdminTodoCountsResponse200 | ErrorEnvelope]:
     """The administration To do page's counts; no content.
 
-     Requires: admin key role; every other key answers access.verb_ceiling (ADR-0083 d11). Its groups
-    (unconfirmed admin fixes, guardrail-loosening alerts, open investigations) join with ADR-0089's
-    acts; until then it answers truncated alone, false (ADR-0083 d14). Takes no query parameter.
-    Journals nothing. Since v0.8.0.
+     Requires: a person's admin session key, <user>-admin, through its capacity credential; any other
+    key, <user>-curate and a tenant admin key included, answers access.verb_ceiling with details.reason
+    session_key_only (ADR-0083 d11). Its groups (unconfirmed admin fixes, guardrail-loosening alerts,
+    open investigations) join with ADR-0089's acts; until then it answers truncated alone, false
+    (ADR-0083 d14). Takes no query parameter. Journals nothing. Since v0.8.0.
 
     Args:
         x_request_id (str | Unset):
@@ -112,10 +113,11 @@ def sync(
 ) -> AdminTodoCountsResponse200 | ErrorEnvelope | None:
     """The administration To do page's counts; no content.
 
-     Requires: admin key role; every other key answers access.verb_ceiling (ADR-0083 d11). Its groups
-    (unconfirmed admin fixes, guardrail-loosening alerts, open investigations) join with ADR-0089's
-    acts; until then it answers truncated alone, false (ADR-0083 d14). Takes no query parameter.
-    Journals nothing. Since v0.8.0.
+     Requires: a person's admin session key, <user>-admin, through its capacity credential; any other
+    key, <user>-curate and a tenant admin key included, answers access.verb_ceiling with details.reason
+    session_key_only (ADR-0083 d11). Its groups (unconfirmed admin fixes, guardrail-loosening alerts,
+    open investigations) join with ADR-0089's acts; until then it answers truncated alone, false
+    (ADR-0083 d14). Takes no query parameter. Journals nothing. Since v0.8.0.
 
     Args:
         x_request_id (str | Unset):
@@ -147,10 +149,11 @@ async def asyncio_detailed(
 ) -> Response[AdminTodoCountsResponse200 | ErrorEnvelope]:
     """The administration To do page's counts; no content.
 
-     Requires: admin key role; every other key answers access.verb_ceiling (ADR-0083 d11). Its groups
-    (unconfirmed admin fixes, guardrail-loosening alerts, open investigations) join with ADR-0089's
-    acts; until then it answers truncated alone, false (ADR-0083 d14). Takes no query parameter.
-    Journals nothing. Since v0.8.0.
+     Requires: a person's admin session key, <user>-admin, through its capacity credential; any other
+    key, <user>-curate and a tenant admin key included, answers access.verb_ceiling with details.reason
+    session_key_only (ADR-0083 d11). Its groups (unconfirmed admin fixes, guardrail-loosening alerts,
+    open investigations) join with ADR-0089's acts; until then it answers truncated alone, false
+    (ADR-0083 d14). Takes no query parameter. Journals nothing. Since v0.8.0.
 
     Args:
         x_request_id (str | Unset):
@@ -185,10 +188,11 @@ async def asyncio(
 ) -> AdminTodoCountsResponse200 | ErrorEnvelope | None:
     """The administration To do page's counts; no content.
 
-     Requires: admin key role; every other key answers access.verb_ceiling (ADR-0083 d11). Its groups
-    (unconfirmed admin fixes, guardrail-loosening alerts, open investigations) join with ADR-0089's
-    acts; until then it answers truncated alone, false (ADR-0083 d14). Takes no query parameter.
-    Journals nothing. Since v0.8.0.
+     Requires: a person's admin session key, <user>-admin, through its capacity credential; any other
+    key, <user>-curate and a tenant admin key included, answers access.verb_ceiling with details.reason
+    session_key_only (ADR-0083 d11). Its groups (unconfirmed admin fixes, guardrail-loosening alerts,
+    open investigations) join with ADR-0089's acts; until then it answers truncated alone, false
+    (ADR-0083 d14). Takes no query parameter. Journals nothing. Since v0.8.0.
 
     Args:
         x_request_id (str | Unset):

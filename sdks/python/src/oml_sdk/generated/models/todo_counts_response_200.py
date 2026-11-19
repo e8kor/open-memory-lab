@@ -14,7 +14,8 @@ class TodoCountsResponse200:
     """
     Attributes:
         review (int): The To review group's length: the held rows the person's reviewer key may judge.
-        truncated (bool): Whether a count passed 1,000 and answers 1,000.
+        truncated (bool): Whether a count passed 1,000 and answers 1,000, or stopped after reading 2,000 held rows and
+            answers what it counted.
     """
 
     review: int

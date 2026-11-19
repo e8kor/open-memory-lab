@@ -59,7 +59,7 @@ export interface paths {
         put?: never;
         /**
          * What capture would decide for a submit's body or a supersession's, without capturing.
-         * @description Requires: the grant submit would need, or, with replaces, the grant supersede would need on that target (ADR-0082 d5). The body is submit's, or supersede's with replaces naming the version it replaces. Every check capture makes runs through the same pipeline, which stops before anything is journalled, held or metered: no version, no event, no counter moves (ADR-0071 d2), and no Idempotency-Key is read, so nothing is recorded or replayed. A refusal of authority is the HTTP error submit or supersede would answer: auth.*, limit.rate, access.verb_ceiling, every access.* grant refusal, and access.not_found for a target the key cannot read, replaces that names no row included. Every other refusal capture would make, the body's shape, size, the scan's veto, a quota's headroom, a name taken, submission.version_conflict, submission.tip_conflict, workspace.frozen and a guardrail rule that does not parse among them, answers 200 with would_capture false and refusal in the error object's shape, beside what was read before it (ADR-0082 d10). The request rate is charged once (ADR-0079). Read-shaped POST. A document's passages are not served in this release. Since v0.8.0.
+         * @description Requires: the grant submit would need, or, with replaces, the grant supersede would need on that target (ADR-0082 d5). The body is submit's, or supersede's with replaces naming the version it replaces. Every check capture makes runs through the same pipeline, which stops before anything is journalled, held or metered: no version, no event, no counter moves (ADR-0071 d2), and no Idempotency-Key is read, so nothing is recorded or replayed. A refusal of authority is the HTTP error submit or supersede would answer: auth.*, limit.rate, access.verb_ceiling, every access.* grant refusal, and access.not_found for a target the key cannot read, replaces that names no row included. Every other refusal capture would make, the body's shape, size, the scan's veto, a quota's headroom, a name taken, submission.version_conflict, submission.tip_conflict, workspace.frozen and a guardrail rule that does not parse among them, answers 200 with would_capture false and refusal in the error object's shape, beside what was read before it (ADR-0082 d10). The request rate is charged once (ADR-0079). Read-shaped POST. Since v0.8.0.
          */
         post: operations["previewMemory"];
         delete?: never;
@@ -237,7 +237,7 @@ export interface paths {
         };
         /**
          * One node — id, parent, derived path, status, crew record — with the calling key's view of it.
-         * @description Requires: reader effective access (access.not_found otherwise), or the admin key role, which reads the structure of every workspace in its tenant without grants and never claim content — for an admin key every child and edge is present and my_effective_verbs is empty (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15). children, my_effective_verbs and permission_epoch are relative to the calling key: children (ordered by path_leaf, then id) and edges (ordered by edge_id) outside read access are absent; my_effective_verbs is the union over the grant roles effective on the node (the effective-verbs table in docs/architecture/roles-and-keys.md), with remember for a person's session reviewer key where it holds reviewer and reader (ADR-0082 d11); permission_epoch is the calling key's permission epoch as declared in docs/architecture/workspaces.md (ADR-0025 d14). One call carries all of it.
+         * @description Requires: reader effective access (access.not_found otherwise), or the admin key role, which reads the structure of every workspace in its tenant without grants and never claim content — for an admin key every child and edge is present and my_effective_verbs is empty (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15). children, my_effective_verbs and permission_epoch are relative to the calling key: children (ordered by path_leaf, then id) and edges (ordered by edge_id) outside read access are absent; my_effective_verbs is the union over the grant roles effective on the node (the effective-verbs table in docs/architecture/roles-and-keys.md), with remember for a person's session reviewer key where it holds reviewer and reader outside its person's own root (ADR-0082 d11, d10); permission_epoch is the calling key's permission epoch as declared in docs/architecture/workspaces.md (ADR-0025 d14). One call carries all of it.
          */
         get: operations["getWorkspace"];
         put?: never;
@@ -625,7 +625,7 @@ export interface paths {
         };
         /**
          * The To do page's counts for a person's web session key; no content.
-         * @description Requires: a person's web session key, <user>-web, through its capacity credential; any other key answers access.verb_ceiling with details.reason session_key_only (ADR-0083 d11). review is the number of rows GET /v2/review/held would serve the person's reviewer key, <user>-review, at workspace and below it, or across every workspace without workspace, computed under the same grants, lineage exclusions and author fences as that listing; counted up to 1,000, with truncated true past it. A person with no live reviewer key or no reviewer grant counts 0, and so does a workspace that key cannot read or that does not exist, which is never named or refused. No memory id, text, claim key or name. Journals nothing. The other groups (fixes, ratify, withdrawals, overrides, imports) join with their features (ADR-0083 d14). Since v0.8.0.
+         * @description Requires: a person's web session key, <user>-web, through its capacity credential; any other key answers access.verb_ceiling with details.reason session_key_only (ADR-0083 d11). review is the number of rows GET /v2/review/held would serve the person's reviewer key, <user>-review, at workspace and below it, or across every workspace without workspace, computed under the same grants, lineage exclusions and author fences as that listing; counted up to 1,000, with truncated true past it, and read up to 2,000 held rows, counted or not, with truncated true and the count so far once that bound stops the read (ADR-0083 d16). A person with no live reviewer key or no reviewer grant counts 0, and so does a workspace that key cannot read or that does not exist, which is never named or refused. No memory id, text, claim key or name. Journals nothing. The other groups (fixes, ratify, withdrawals, overrides, imports) join with their features (ADR-0083 d14). Since v0.8.0.
          */
         get: operations["todoCounts"];
         put?: never;
@@ -645,7 +645,7 @@ export interface paths {
         };
         /**
          * The administration To do page's counts; no content.
-         * @description Requires: admin key role; every other key answers access.verb_ceiling (ADR-0083 d11). Its groups (unconfirmed admin fixes, guardrail-loosening alerts, open investigations) join with ADR-0089's acts; until then it answers truncated alone, false (ADR-0083 d14). Takes no query parameter. Journals nothing. Since v0.8.0.
+         * @description Requires: a person's admin session key, <user>-admin, through its capacity credential; any other key, <user>-curate and a tenant admin key included, answers access.verb_ceiling with details.reason session_key_only (ADR-0083 d11). Its groups (unconfirmed admin fixes, guardrail-loosening alerts, open investigations) join with ADR-0089's acts; until then it answers truncated alone, false (ADR-0083 d14). Takes no query parameter. Journals nothing. Since v0.8.0.
          */
         get: operations["adminTodoCounts"];
         put?: never;
@@ -1886,7 +1886,7 @@ export interface components {
                 /** @enum {string} */
                 relation: "shadows" | "shadowed_by";
             }[];
-            /** @description A guardrail's set size at its workspace once the version is approved, the approved rules an agent there loads, against the set cap (ADR-0037 d7). */
+            /** @description A guardrail's set size at its workspace once the version is approved, the approved rules an agent there loads, against the set cap (ADR-0037 d7); absent for a key that does not read the workspace. */
             set_after?: {
                 size: number;
                 cap: number;
@@ -4020,9 +4020,9 @@ export interface operations {
                 /** @description One of memory, derived_fact, steering, guardrail, term, term_mapping, vocab_release, skill, document or test. With with_own, `mine` or author, a comma list of them, a row of any of them listed (ADR-0082 d8 item 3). Any other value is request.validation naming kind. */
                 kind?: string;
                 own?: boolean;
-                /** @description true: the scoped listing (at workspace, else universe) and the caller's own rows, every key naming its user's for a person's web session key, merged newest first under one cursor, a row in both once (ADR-0045 d22, d23; ADR-0070 d5). Combines only with `mine`, author, include_text, workspace, state (a comma list of held, promoted, superseded, rejected, demoted and withdrawn), kind (a comma list), promoted_since, one origin_kinds, limit and cursor; any other parameter is request.validation. Since v0.6.4. */
+                /** @description true: the scoped listing (at workspace, else universe) and the caller's own rows, every key of the person for a person's session key (as for `mine`), merged newest first under one cursor, a row in both once (ADR-0045 d22, d23; ADR-0070 d5). Combines only with `mine`, author, include_text, workspace, state (a comma list of held, promoted, superseded, rejected, demoted and withdrawn), kind (a comma list), promoted_since, one origin_kinds, limit and cursor; any other parameter is request.validation. Since v0.6.4. */
                 with_own?: boolean;
-                /** @description true: the caller's own rows alone, with no scoped part, under one cursor: every key of the person for a person's session key, the key alone for any other key, in every state, off the subtrees the key's global denials cover (ADR-0083 d3, d14). Combines as with_own does; author narrows it to one own key. Since v0.8.0. */
+                /** @description true: the caller's own rows alone, with no scoped part, under one cursor: every key of the person for a person's session key (the keys naming their root and their web, review and curate session keys, never a linked tenant key), the key alone for any other key, in every state, off the subtrees the key's global denials cover (ADR-0083 d3, d14). Combines as with_own does; author narrows it to one own key. Since v0.8.0. */
                 mine?: boolean;
                 /** @description With with_own, `mine` or author: only the promoted rows approved at or after this instant, the rows of every other state left whole; with no state, every state is listed (ADR-0083 d3). Not an RFC 3339 date-time with an offset and at most microsecond precision is request.validation naming promoted_since. Since v0.8.0. */
                 promoted_since?: string;
@@ -5995,7 +5995,7 @@ export interface operations {
                     "application/json": {
                         /** @description The To review group's length: the held rows the person's reviewer key may judge. */
                         review: number;
-                        /** @description Whether a count passed 1,000 and answers 1,000. */
+                        /** @description Whether a count passed 1,000 and answers 1,000, or stopped after reading 2,000 held rows and answers what it counted. */
                         truncated: boolean;
                     };
                 };

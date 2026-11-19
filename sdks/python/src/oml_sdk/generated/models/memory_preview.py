@@ -40,7 +40,8 @@ class MemoryPreview:
             shadows (list[MemoryPreviewShadowsItem] | Unset): A skill's same-named skills along its chain that the key
                 reads: one on an ancestor it shadows, one on a descendant that shadows it there (ADR-0080 d5).
             set_after (MemoryPreviewSetAfter | Unset): A guardrail's set size at its workspace once the version is approved,
-                the approved rules an agent there loads, against the set cap (ADR-0037 d7).
+                the approved rules an agent there loads, against the set cap (ADR-0037 d7); absent for a key that does not read
+                the workspace.
             passages (list[MemoryPreviewPassagesItem] | Unset): A document's passages as capture would cut them, each by its
                 fragment and its lines, as a recall hit names its passage; absent for any other kind and a retirement (ADR-0081
                 d3; ADR-0082 d5).

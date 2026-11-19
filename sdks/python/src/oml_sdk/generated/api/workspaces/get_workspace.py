@@ -84,8 +84,8 @@ def sync_detailed(
     permission_epoch are relative to the calling key: children (ordered by path_leaf, then id) and edges
     (ordered by edge_id) outside read access are absent; my_effective_verbs is the union over the grant
     roles effective on the node (the effective-verbs table in docs/architecture/roles-and-keys.md), with
-    remember for a person's session reviewer key where it holds reviewer and reader (ADR-0082 d11);
-    permission_epoch is the calling key's permission epoch as declared in
+    remember for a person's session reviewer key where it holds reviewer and reader outside its person's
+    own root (ADR-0082 d11, d10); permission_epoch is the calling key's permission epoch as declared in
     docs/architecture/workspaces.md (ADR-0025 d14). One call carries all of it.
 
     Args:
@@ -138,8 +138,8 @@ def sync(
     permission_epoch are relative to the calling key: children (ordered by path_leaf, then id) and edges
     (ordered by edge_id) outside read access are absent; my_effective_verbs is the union over the grant
     roles effective on the node (the effective-verbs table in docs/architecture/roles-and-keys.md), with
-    remember for a person's session reviewer key where it holds reviewer and reader (ADR-0082 d11);
-    permission_epoch is the calling key's permission epoch as declared in
+    remember for a person's session reviewer key where it holds reviewer and reader outside its person's
+    own root (ADR-0082 d11, d10); permission_epoch is the calling key's permission epoch as declared in
     docs/architecture/workspaces.md (ADR-0025 d14). One call carries all of it.
 
     Args:
@@ -187,8 +187,8 @@ async def asyncio_detailed(
     permission_epoch are relative to the calling key: children (ordered by path_leaf, then id) and edges
     (ordered by edge_id) outside read access are absent; my_effective_verbs is the union over the grant
     roles effective on the node (the effective-verbs table in docs/architecture/roles-and-keys.md), with
-    remember for a person's session reviewer key where it holds reviewer and reader (ADR-0082 d11);
-    permission_epoch is the calling key's permission epoch as declared in
+    remember for a person's session reviewer key where it holds reviewer and reader outside its person's
+    own root (ADR-0082 d11, d10); permission_epoch is the calling key's permission epoch as declared in
     docs/architecture/workspaces.md (ADR-0025 d14). One call carries all of it.
 
     Args:
@@ -239,8 +239,8 @@ async def asyncio(
     permission_epoch are relative to the calling key: children (ordered by path_leaf, then id) and edges
     (ordered by edge_id) outside read access are absent; my_effective_verbs is the union over the grant
     roles effective on the node (the effective-verbs table in docs/architecture/roles-and-keys.md), with
-    remember for a person's session reviewer key where it holds reviewer and reader (ADR-0082 d11);
-    permission_epoch is the calling key's permission epoch as declared in
+    remember for a person's session reviewer key where it holds reviewer and reader outside its person's
+    own root (ADR-0082 d11, d10); permission_epoch is the calling key's permission epoch as declared in
     docs/architecture/workspaces.md (ADR-0025 d14). One call carries all of it.
 
     Args:

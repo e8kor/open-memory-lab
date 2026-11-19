@@ -104,8 +104,7 @@ def sync_detailed(
     headroom, a name taken, submission.version_conflict, submission.tip_conflict, workspace.frozen and a
     guardrail rule that does not parse among them, answers 200 with would_capture false and refusal in
     the error object's shape, beside what was read before it (ADR-0082 d10). The request rate is charged
-    once (ADR-0079). Read-shaped POST. A document's passages are not served in this release. Since
-    v0.8.0.
+    once (ADR-0079). Read-shaped POST. Since v0.8.0.
 
     Args:
         x_request_id (str | Unset):
@@ -157,8 +156,7 @@ def sync(
     headroom, a name taken, submission.version_conflict, submission.tip_conflict, workspace.frozen and a
     guardrail rule that does not parse among them, answers 200 with would_capture false and refusal in
     the error object's shape, beside what was read before it (ADR-0082 d10). The request rate is charged
-    once (ADR-0079). Read-shaped POST. A document's passages are not served in this release. Since
-    v0.8.0.
+    once (ADR-0079). Read-shaped POST. Since v0.8.0.
 
     Args:
         x_request_id (str | Unset):
@@ -205,8 +203,7 @@ async def asyncio_detailed(
     headroom, a name taken, submission.version_conflict, submission.tip_conflict, workspace.frozen and a
     guardrail rule that does not parse among them, answers 200 with would_capture false and refusal in
     the error object's shape, beside what was read before it (ADR-0082 d10). The request rate is charged
-    once (ADR-0079). Read-shaped POST. A document's passages are not served in this release. Since
-    v0.8.0.
+    once (ADR-0079). Read-shaped POST. Since v0.8.0.
 
     Args:
         x_request_id (str | Unset):
@@ -256,8 +253,7 @@ async def asyncio(
     headroom, a name taken, submission.version_conflict, submission.tip_conflict, workspace.frozen and a
     guardrail rule that does not parse among them, answers 200 with would_capture false and refusal in
     the error object's shape, beside what was read before it (ADR-0082 d10). The request rate is charged
-    once (ADR-0079). Read-shaped POST. A document's passages are not served in this release. Since
-    v0.8.0.
+    once (ADR-0079). Read-shaped POST. Since v0.8.0.
 
     Args:
         x_request_id (str | Unset):

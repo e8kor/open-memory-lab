@@ -12,7 +12,7 @@ T = TypeVar("T", bound="MemoryPreviewSetAfter")
 @_attrs_define
 class MemoryPreviewSetAfter:
     """A guardrail's set size at its workspace once the version is approved, the approved rules an agent there loads,
-    against the set cap (ADR-0037 d7).
+    against the set cap (ADR-0037 d7); absent for a key that does not read the workspace.
 
         Attributes:
             size (int):
