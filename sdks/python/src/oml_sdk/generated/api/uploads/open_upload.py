@@ -112,7 +112,7 @@ def sync_detailed(
     upload.tenant_limit; an object store that fails is 503 upload.storage_failed. The session takes
     parts of 8 MiB, the last the remainder, and expires 24 hours after its opening or its last part and
     never later than 72 hours after it opened. Only this key is ever served it. Nothing is journalled,
-    and no Idempotency-Key is taken: a repeated open opens another session. Since v0.8.2.
+    and no Idempotency-Key is taken: a repeated open opens another session. Since v0.8.3.
 
     Args:
         x_request_id (str | Unset):
@@ -160,7 +160,7 @@ def sync(
     upload.tenant_limit; an object store that fails is 503 upload.storage_failed. The session takes
     parts of 8 MiB, the last the remainder, and expires 24 hours after its opening or its last part and
     never later than 72 hours after it opened. Only this key is ever served it. Nothing is journalled,
-    and no Idempotency-Key is taken: a repeated open opens another session. Since v0.8.2.
+    and no Idempotency-Key is taken: a repeated open opens another session. Since v0.8.3.
 
     Args:
         x_request_id (str | Unset):
@@ -203,7 +203,7 @@ async def asyncio_detailed(
     upload.tenant_limit; an object store that fails is 503 upload.storage_failed. The session takes
     parts of 8 MiB, the last the remainder, and expires 24 hours after its opening or its last part and
     never later than 72 hours after it opened. Only this key is ever served it. Nothing is journalled,
-    and no Idempotency-Key is taken: a repeated open opens another session. Since v0.8.2.
+    and no Idempotency-Key is taken: a repeated open opens another session. Since v0.8.3.
 
     Args:
         x_request_id (str | Unset):
@@ -249,7 +249,7 @@ async def asyncio(
     upload.tenant_limit; an object store that fails is 503 upload.storage_failed. The session takes
     parts of 8 MiB, the last the remainder, and expires 24 hours after its opening or its last part and
     never later than 72 hours after it opened. Only this key is ever served it. Nothing is journalled,
-    and no Idempotency-Key is taken: a repeated open opens another session. Since v0.8.2.
+    and no Idempotency-Key is taken: a repeated open opens another session. Since v0.8.3.
 
     Args:
         x_request_id (str | Unset):

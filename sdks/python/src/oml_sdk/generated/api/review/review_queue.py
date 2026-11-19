@@ -79,7 +79,7 @@ def sync_detailed(
     crew and no profile, not revoked or expired, the only keys that approve an instruction; ADR-0080
     d16, #435; a key whose person wrote the held instructions is counted though outside that person's
     own root it cannot approve them) and the oldest held row's time, by path. No memory id, text, author
-    or key. Journals nothing. Since v0.6.4; the two counts since v0.8.2.
+    or key. Journals nothing. Since v0.6.4; the two counts since v0.8.3.
 
     Args:
         x_request_id (str | Unset):
@@ -123,7 +123,7 @@ def sync(
     crew and no profile, not revoked or expired, the only keys that approve an instruction; ADR-0080
     d16, #435; a key whose person wrote the held instructions is counted though outside that person's
     own root it cannot approve them) and the oldest held row's time, by path. No memory id, text, author
-    or key. Journals nothing. Since v0.6.4; the two counts since v0.8.2.
+    or key. Journals nothing. Since v0.6.4; the two counts since v0.8.3.
 
     Args:
         x_request_id (str | Unset):
@@ -162,7 +162,7 @@ async def asyncio_detailed(
     crew and no profile, not revoked or expired, the only keys that approve an instruction; ADR-0080
     d16, #435; a key whose person wrote the held instructions is counted though outside that person's
     own root it cannot approve them) and the oldest held row's time, by path. No memory id, text, author
-    or key. Journals nothing. Since v0.6.4; the two counts since v0.8.2.
+    or key. Journals nothing. Since v0.6.4; the two counts since v0.8.3.
 
     Args:
         x_request_id (str | Unset):
@@ -204,7 +204,7 @@ async def asyncio(
     crew and no profile, not revoked or expired, the only keys that approve an instruction; ADR-0080
     d16, #435; a key whose person wrote the held instructions is counted though outside that person's
     own root it cannot approve them) and the oldest held row's time, by path. No memory id, text, author
-    or key. Journals nothing. Since v0.6.4; the two counts since v0.8.2.
+    or key. Journals nothing. Since v0.6.4; the two counts since v0.8.3.
 
     Args:
         x_request_id (str | Unset):

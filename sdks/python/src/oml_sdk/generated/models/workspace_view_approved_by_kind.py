@@ -13,7 +13,7 @@ T = TypeVar("T", bound="WorkspaceViewApprovedByKind")
 class WorkspaceViewApprovedByKind:
     """The approved claims on this node alone, not its subtree, by kind: a claim counts once when its tip is promoted and
     is not a retirement, so a replaced version or a held successor adds nothing. Only kinds with at least one approved
-    claim are named (ADR-0082 d8 item 7, d10). Since v0.8.0.
+    claim are named (ADR-0082 d8 item 7, d10). Since v0.8.3.
 
     """
 

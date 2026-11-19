@@ -83,7 +83,7 @@ def sync_detailed(
      Requires: the key that opened the session, or access.not_found (ADR-0004 d3, as amended 2026-11-17).
     An open, completed or failed session is abandoned: its key is nulled, then its parts are removed.
     One already abandoned or expired answers the same; a bound one belongs to the verb that bound it and
-    is upload.session_invalid. Nothing is journalled. Since v0.8.2.
+    is upload.session_invalid. Nothing is journalled. Since v0.8.3.
 
     Args:
         upload_id (str):
@@ -126,7 +126,7 @@ def sync(
      Requires: the key that opened the session, or access.not_found (ADR-0004 d3, as amended 2026-11-17).
     An open, completed or failed session is abandoned: its key is nulled, then its parts are removed.
     One already abandoned or expired answers the same; a bound one belongs to the verb that bound it and
-    is upload.session_invalid. Nothing is journalled. Since v0.8.2.
+    is upload.session_invalid. Nothing is journalled. Since v0.8.3.
 
     Args:
         upload_id (str):
@@ -164,7 +164,7 @@ async def asyncio_detailed(
      Requires: the key that opened the session, or access.not_found (ADR-0004 d3, as amended 2026-11-17).
     An open, completed or failed session is abandoned: its key is nulled, then its parts are removed.
     One already abandoned or expired answers the same; a bound one belongs to the verb that bound it and
-    is upload.session_invalid. Nothing is journalled. Since v0.8.2.
+    is upload.session_invalid. Nothing is journalled. Since v0.8.3.
 
     Args:
         upload_id (str):
@@ -205,7 +205,7 @@ async def asyncio(
      Requires: the key that opened the session, or access.not_found (ADR-0004 d3, as amended 2026-11-17).
     An open, completed or failed session is abandoned: its key is nulled, then its parts are removed.
     One already abandoned or expired answers the same; a bound one belongs to the verb that bound it and
-    is upload.session_invalid. Nothing is journalled. Since v0.8.2.
+    is upload.session_invalid. Nothing is journalled. Since v0.8.3.
 
     Args:
         upload_id (str):

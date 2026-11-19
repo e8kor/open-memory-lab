@@ -90,7 +90,7 @@ def sync_detailed(
     that bound stops the read (ADR-0083 d16). A person with no live reviewer key or no reviewer grant
     counts 0, and so does a workspace that key cannot read or that does not exist, which is never named
     or refused. No memory id, text, claim key or name. Journals nothing. The other groups (fixes,
-    ratify, withdrawals, overrides, imports) join with their features (ADR-0083 d14). Since v0.8.0.
+    ratify, withdrawals, overrides, imports) join with their features (ADR-0083 d14). Since v0.8.3.
 
     Args:
         workspace (str | Unset):
@@ -139,7 +139,7 @@ def sync(
     that bound stops the read (ADR-0083 d16). A person with no live reviewer key or no reviewer grant
     counts 0, and so does a workspace that key cannot read or that does not exist, which is never named
     or refused. No memory id, text, claim key or name. Journals nothing. The other groups (fixes,
-    ratify, withdrawals, overrides, imports) join with their features (ADR-0083 d14). Since v0.8.0.
+    ratify, withdrawals, overrides, imports) join with their features (ADR-0083 d14). Since v0.8.3.
 
     Args:
         workspace (str | Unset):
@@ -183,7 +183,7 @@ async def asyncio_detailed(
     that bound stops the read (ADR-0083 d16). A person with no live reviewer key or no reviewer grant
     counts 0, and so does a workspace that key cannot read or that does not exist, which is never named
     or refused. No memory id, text, claim key or name. Journals nothing. The other groups (fixes,
-    ratify, withdrawals, overrides, imports) join with their features (ADR-0083 d14). Since v0.8.0.
+    ratify, withdrawals, overrides, imports) join with their features (ADR-0083 d14). Since v0.8.3.
 
     Args:
         workspace (str | Unset):
@@ -230,7 +230,7 @@ async def asyncio(
     that bound stops the read (ADR-0083 d16). A person with no live reviewer key or no reviewer grant
     counts 0, and so does a workspace that key cannot read or that does not exist, which is never named
     or refused. No memory id, text, claim key or name. Journals nothing. The other groups (fixes,
-    ratify, withdrawals, overrides, imports) join with their features (ADR-0083 d14). Since v0.8.0.
+    ratify, withdrawals, overrides, imports) join with their features (ADR-0083 d14). Since v0.8.3.
 
     Args:
         workspace (str | Unset):

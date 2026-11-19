@@ -155,7 +155,7 @@ def sync_detailed(
     answer, and GET /v2/imports/{id} answers its state until it is done or failed. The import journals
     workspace.imported, listing each version it wrote, and the upload's key is nulled when it ends; an
     import running for more than an hour that the server is not running ends failed at the next sweep.
-    No Idempotency-Key is taken: the upload binds once. Since v0.8.2.
+    No Idempotency-Key is taken: the upload binds once. Since v0.8.3.
 
     Args:
         x_request_id (str | Unset):
@@ -220,7 +220,7 @@ def sync(
     answer, and GET /v2/imports/{id} answers its state until it is done or failed. The import journals
     workspace.imported, listing each version it wrote, and the upload's key is nulled when it ends; an
     import running for more than an hour that the server is not running ends failed at the next sweep.
-    No Idempotency-Key is taken: the upload binds once. Since v0.8.2.
+    No Idempotency-Key is taken: the upload binds once. Since v0.8.3.
 
     Args:
         x_request_id (str | Unset):
@@ -280,7 +280,7 @@ async def asyncio_detailed(
     answer, and GET /v2/imports/{id} answers its state until it is done or failed. The import journals
     workspace.imported, listing each version it wrote, and the upload's key is nulled when it ends; an
     import running for more than an hour that the server is not running ends failed at the next sweep.
-    No Idempotency-Key is taken: the upload binds once. Since v0.8.2.
+    No Idempotency-Key is taken: the upload binds once. Since v0.8.3.
 
     Args:
         x_request_id (str | Unset):
@@ -343,7 +343,7 @@ async def asyncio(
     answer, and GET /v2/imports/{id} answers its state until it is done or failed. The import journals
     workspace.imported, listing each version it wrote, and the upload's key is nulled when it ends; an
     import running for more than an hour that the server is not running ends failed at the next sweep.
-    No Idempotency-Key is taken: the upload binds once. Since v0.8.2.
+    No Idempotency-Key is taken: the upload binds once. Since v0.8.3.
 
     Args:
         x_request_id (str | Unset):

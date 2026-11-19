@@ -107,7 +107,7 @@ def sync_detailed(
     before any lookup, as on every review-class verb and status-transition ratify (ADR-0025 d1). Serve
     bound server-side to (reviewer key, artifact version, attachment digest set); refused per item on
     lineage collision (review.author_in_lineage). Never serves a key acting for a person a row any key
-    of that person wrote outside that person's own root (ADR-0082 d7; since v0.8.0).
+    of that person wrote outside that person's own root (ADR-0082 d7; since v0.8.3).
 
     Args:
         x_request_id (str | Unset):
@@ -161,7 +161,7 @@ def sync(
     before any lookup, as on every review-class verb and status-transition ratify (ADR-0025 d1). Serve
     bound server-side to (reviewer key, artifact version, attachment digest set); refused per item on
     lineage collision (review.author_in_lineage). Never serves a key acting for a person a row any key
-    of that person wrote outside that person's own root (ADR-0082 d7; since v0.8.0).
+    of that person wrote outside that person's own root (ADR-0082 d7; since v0.8.3).
 
     Args:
         x_request_id (str | Unset):
@@ -210,7 +210,7 @@ async def asyncio_detailed(
     before any lookup, as on every review-class verb and status-transition ratify (ADR-0025 d1). Serve
     bound server-side to (reviewer key, artifact version, attachment digest set); refused per item on
     lineage collision (review.author_in_lineage). Never serves a key acting for a person a row any key
-    of that person wrote outside that person's own root (ADR-0082 d7; since v0.8.0).
+    of that person wrote outside that person's own root (ADR-0082 d7; since v0.8.3).
 
     Args:
         x_request_id (str | Unset):
@@ -262,7 +262,7 @@ async def asyncio(
     before any lookup, as on every review-class verb and status-transition ratify (ADR-0025 d1). Serve
     bound server-side to (reviewer key, artifact version, attachment digest set); refused per item on
     lineage collision (review.author_in_lineage). Never serves a key acting for a person a row any key
-    of that person wrote outside that person's own root (ADR-0082 d7; since v0.8.0).
+    of that person wrote outside that person's own root (ADR-0082 d7; since v0.8.3).
 
     Args:
         x_request_id (str | Unset):

@@ -5,10 +5,10 @@ A client for the Open Memory Lab HTTP API: types generated from
 `openapi-fetch` typed by them, and a thin hand-written wrapper. What the wrapper covers, the pins
 and the regeneration rule are decided in [docs/engineering/sdks.md](https://e8kor.github.io/open-memory-lab/engineering/sdks/).
 
-From v0.8.0 the client speaks the renamed API (ADR-0091): the `/v2/workspaces` paths and
+From v0.8.3 the client speaks the renamed API (ADR-0091): the `/v2/workspaces` paths and
 `Workspace…` schemas, the role `reviewer`, the statuses `protected` and `frozen`, and `used_by`
 with `person`. Code written against a v0.7 client that names a workarea type, the `dreamer` role
-or `held_by` does not compile against it, and a v0.7 client does not work against a v0.8.0
+or `held_by` does not compile against it, and a v0.7 client does not work against a v0.8.3
 server: upgrade the client before the server.
 
 Node 24 or later. Each release attaches an npm tarball to its GitHub release; install it from the

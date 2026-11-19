@@ -31,7 +31,7 @@ class WhoamiPerson:
             pending (ADR-0068 d6).
         linked_keys (list[WhoamiRef] | Unset): The live tenant keys an admin linked to the person (not revoked, not past
             their expiry, used_by person), by id and name, in name order: the keys oml-web may name in OML-Acting-Key for
-            this person (ADR-0085 d16). Since v0.8.0.
+            this person (ADR-0085 d16). Since v0.8.3.
         start (None | Unset | WhoamiPersonStartType0): With start=true, what the onboarding page waits for: whether one
             of the person's agent keys has connected, and the state of the newest memory of their root, held or promoted,
             else null (ADR-0068 d10; ADR-0070 d5). Absent otherwise. Since v0.7.0.

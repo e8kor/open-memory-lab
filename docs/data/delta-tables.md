@@ -68,7 +68,7 @@ Partitioned by `event_date`.
 | `tenant_id` | STRING | no | Owning tenant |
 | `journal_seq` | LONG | no | Per-tenant chain sequence |
 | `event_id` | STRING | no | Journal event UUID |
-| `event_type` | STRING | no | From the [event catalog](event-catalog.md), as stored: a row signed before v0.8.0 keeps its former type, such as `workarea.create`, so a lake query names both the former and the current type ([event catalog, former names](event-catalog.md#former-names)) |
+| `event_type` | STRING | no | From the [event catalog](event-catalog.md), as stored: a row signed before v0.8.3 keeps its former type, such as `workarea.create`, so a lake query names both the former and the current type ([event catalog, former names](event-catalog.md#former-names)) |
 | `at` | TIMESTAMP | no | Chain timestamp |
 | `event_date` | DATE | no | `at` as a UTC date. The partition column. |
 | `prev_hash` | BINARY | no | Chain predecessor hash |

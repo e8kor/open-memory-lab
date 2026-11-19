@@ -98,7 +98,7 @@ def sync_detailed(
     ancestor winning a tie and then the smaller path; the nearer names the farther in overrides. Ordered
     by depth, then name; any parameter other than workspace, include_own_held and cursor is
     request.validation naming it. Serving the set is a read, not a recall (docs/api/http-api.md, Skills;
-    ADR-0080 d4, d5, d10, d11, d12, d14, d16; since v0.8.0).
+    ADR-0080 d4, d5, d10, d11, d12, d14, d16; since v0.8.3).
 
     Args:
         workspace (str | Unset):
@@ -153,7 +153,7 @@ def sync(
     ancestor winning a tie and then the smaller path; the nearer names the farther in overrides. Ordered
     by depth, then name; any parameter other than workspace, include_own_held and cursor is
     request.validation naming it. Serving the set is a read, not a recall (docs/api/http-api.md, Skills;
-    ADR-0080 d4, d5, d10, d11, d12, d14, d16; since v0.8.0).
+    ADR-0080 d4, d5, d10, d11, d12, d14, d16; since v0.8.3).
 
     Args:
         workspace (str | Unset):
@@ -203,7 +203,7 @@ async def asyncio_detailed(
     ancestor winning a tie and then the smaller path; the nearer names the farther in overrides. Ordered
     by depth, then name; any parameter other than workspace, include_own_held and cursor is
     request.validation naming it. Serving the set is a read, not a recall (docs/api/http-api.md, Skills;
-    ADR-0080 d4, d5, d10, d11, d12, d14, d16; since v0.8.0).
+    ADR-0080 d4, d5, d10, d11, d12, d14, d16; since v0.8.3).
 
     Args:
         workspace (str | Unset):
@@ -256,7 +256,7 @@ async def asyncio(
     ancestor winning a tie and then the smaller path; the nearer names the farther in overrides. Ordered
     by depth, then name; any parameter other than workspace, include_own_held and cursor is
     request.validation naming it. Serving the set is a read, not a recall (docs/api/http-api.md, Skills;
-    ADR-0080 d4, d5, d10, d11, d12, d14, d16; since v0.8.0).
+    ADR-0080 d4, d5, d10, d11, d12, d14, d16; since v0.8.3).
 
     Args:
         workspace (str | Unset):
