@@ -3338,10 +3338,30 @@ mod tests {
         assert_eq!(deploy.uri, "oml://workspace/universe.alice/skill/deploy");
     }
 
-    /// A recall names the kinds it asks for, memories and derived facts
-    /// unless told otherwise, and a document's hit carries the passage it
-    /// serves, how many more matched and the passage's resource (ADR-0081
-    /// d4, d6).
+    /// A recall that names no kinds sends no `kinds`, so the server's
+    /// default applies: every hit kind but steering, test and the vocabulary
+    /// kinds, with the steering list served (ADR-0092 d1).
+    #[tokio::test]
+    async fn a_recall_that_names_no_kinds_sends_no_kinds() {
+        let (client, seen) = recording(200, r#"{"steering":[],"hits":[]}"#);
+        client
+            .recall(
+                &CALL,
+                &RecallQuery {
+                    query: "restart",
+                    k: 5,
+                    ..RecallQuery::default()
+                },
+            )
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_slice(seen.lock().unwrap()[0].body()).unwrap();
+        assert_eq!(body.get("kinds"), None, "{body}");
+    }
+
+    /// A recall names the kinds it asks for, and a document's hit carries
+    /// the passage it serves, how many more matched and the passage's
+    /// resource (ADR-0081 d4, d6).
     #[tokio::test]
     async fn a_document_hit_carries_its_passage_and_the_recall_names_its_kinds() {
         const BODY: &str = r#"{"steering":"not_requested","hits":[{"memory":{"artifact_id":"d1","claim_key":"doc/runbook","version":1,"tip":true,"workspace_path":"universe.alice","state":"promoted","principal":null,"created_at":"2026-11-15T10:00:00Z","promoted_at":"2026-11-15T10:01:00Z","kind":"document","text":"Restart the lead."},"score":0.5,"matched":{"terms":["restart"],"of":1,"via":["bm25"]},"passage":{"fragment":"restart","ordinal":1,"start_line":3,"end_line":3,"heading_path":["Runbook","Restart"]},"more_passages":2,"uri":"oml://workspace/universe.alice/doc/runbook?passage=restart"}]}"#;
@@ -3358,30 +3378,13 @@ mod tests {
             )
             .await
             .unwrap();
-        client
-            .recall(
-                &CALL,
-                &RecallQuery {
-                    query: "restart",
-                    k: 5,
-                    ..RecallQuery::default()
-                },
-            )
-            .await
-            .unwrap();
         let kinds: Vec<Value> = seen
             .lock()
             .unwrap()
             .iter()
             .map(|r| serde_json::from_slice::<Value>(r.body()).unwrap()["kinds"].clone())
             .collect();
-        assert_eq!(
-            kinds,
-            [
-                serde_json::json!(["document"]),
-                serde_json::json!(["memory", "derived_fact"])
-            ]
-        );
+        assert_eq!(kinds, [serde_json::json!(["document"])]);
         let hit = &answer.hits[0];
         let passage = hit.passage.as_ref().expect("a document hit's passage");
         assert_eq!(
