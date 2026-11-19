@@ -15,11 +15,19 @@
 -- compares with read it, as the core and MemStore do, so the counters and
 -- the recount agree.
 --
+-- The fill: a review key could propose an edit before this migration, and
+-- the bytes of those versions were charged to no account, so the source
+-- now counts them where the meters do not. Each account's text_bytes is
+-- recomputed from oml_account_source, as 0045's fill computed it, so the
+-- drift report finds none. The other stocks are left as they are: no
+-- release let a review key start a claim (v0.8.0 is the first), so no chain
+-- whose first version a review key wrote exists before this migration, and
+-- every other key's account is the one it was.
+--
 -- What it costs a live database: two CREATE OR REPLACE FUNCTION and one
--- CREATE FUNCTION, catalog changes only. No row is rewritten and no
--- counter is recomputed: no release let a review key start a claim (v0.8.0
--- is the first), so no chain whose first version a review key wrote exists
--- before this migration, and every other key's account is the one it was.
+-- CREATE FUNCTION, catalog changes, and one UPDATE of account_meters per
+-- tenant, a row per account, under that tenant's row security; no memory
+-- row is rewritten.
 ------------------------------------------------------------------------------
 
 SET LOCAL lock_timeout = '5s';
@@ -99,4 +107,33 @@ CREATE OR REPLACE FUNCTION oml_account_source(t uuid)
       LEFT JOIN bytes ON bytes.root = r.root
       LEFT JOIN ks ON ks.root = r.root
       LEFT JOIN cs ON cs.root = r.root
+$$;
+
+------------------------------------------------------------------------------
+-- The fill: each account's text_bytes from its rows, under each tenant's row
+-- security, the tenants enumerated under 0003's startup policy as 0045's
+-- fill enumerates them. An account with no meter row gets one from the
+-- source; a meter row the source does not name holds no live bytes.
+------------------------------------------------------------------------------
+DO $$
+DECLARE
+    t uuid;
+BEGIN
+    PERFORM set_config('oml.startup_check', 'on', true);
+    FOR t IN SELECT id FROM tenants ORDER BY id LOOP
+        PERFORM set_config('oml.tenant_id', t::text, true);
+        UPDATE account_meters am
+           SET text_bytes = coalesce(s.text_bytes, 0)
+          FROM account_meters m
+          LEFT JOIN oml_account_source(t) s ON s.user_root = m.user_root
+         WHERE am.tenant_id = t AND m.tenant_id = t AND m.user_root = am.user_root
+           AND am.text_bytes IS DISTINCT FROM coalesce(s.text_bytes, 0);
+        INSERT INTO account_meters (tenant_id, user_root, memories, text_bytes, keys, connections)
+        SELECT t, s.user_root, s.memories, s.text_bytes, s.keys, s.connections
+          FROM oml_account_source(t) s
+        ON CONFLICT (tenant_id, user_root) DO NOTHING;
+    END LOOP;
+    PERFORM set_config('oml.tenant_id', '', true);
+    PERFORM set_config('oml.startup_check', '', true);
+END
 $$;
