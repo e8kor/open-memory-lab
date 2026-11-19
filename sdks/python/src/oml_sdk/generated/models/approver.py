@@ -29,12 +29,15 @@ class Approver:
                 admin's fix (ADR-0089 d7). Since v0.8.3.
             confirmed (bool | None | Unset): For act admin_fix, whether a person confirmed the fix; null for a verdict
                 (ADR-0089 d7). Since v0.8.3.
+            reverted (bool | None | Unset): For act admin_fix, whether a person reverted the fix; the version keeps its mark
+                and reads confirmed false; null for a verdict (ADR-0089 d7, d17). Since v0.8.3.
     """
 
     used_by: ApproverUsedBy
     same_user: bool | None
     act: ApproverAct | Unset = UNSET
     confirmed: bool | None | Unset = UNSET
+    reverted: bool | None | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         used_by = self.used_by.value
@@ -52,6 +55,12 @@ class Approver:
         else:
             confirmed = self.confirmed
 
+        reverted: bool | None | Unset
+        if isinstance(self.reverted, Unset):
+            reverted = UNSET
+        else:
+            reverted = self.reverted
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -64,6 +73,8 @@ class Approver:
             field_dict["act"] = act
         if confirmed is not UNSET:
             field_dict["confirmed"] = confirmed
+        if reverted is not UNSET:
+            field_dict["reverted"] = reverted
 
         return field_dict
 
@@ -95,11 +106,21 @@ class Approver:
 
         confirmed = _parse_confirmed(d.pop("confirmed", UNSET))
 
+        def _parse_reverted(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        reverted = _parse_reverted(d.pop("reverted", UNSET))
+
         approver = cls(
             used_by=used_by,
             same_user=same_user,
             act=act,
             confirmed=confirmed,
+            reverted=reverted,
         )
 
         return approver

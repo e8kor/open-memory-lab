@@ -2,6 +2,7 @@ from enum import StrEnum
 
 
 class MemorySummaryProvenance(StrEnum):
+    ADMIN_FIX = "admin_fix"
     AGENT = "agent"
     CONNECTOR = "connector"
     HUMAN = "human"

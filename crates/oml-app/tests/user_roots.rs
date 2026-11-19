@@ -5077,6 +5077,11 @@ async fn the_admin_search_serves_only_the_kinds_its_kind_list_names() {
         },
     )
     .await;
+    let investigation = app
+        .open_investigation(admin, "the kinds filter")
+        .await
+        .expect("an investigation")
+        .investigation_id;
     let search = |kinds: Vec<MemoryKind>| oml_app::app::AdminSearchRequest {
         query: None,
         workspace: Some(by_name("team")),
@@ -5086,6 +5091,7 @@ async fn the_admin_search_serves_only_the_kinds_its_kind_list_names() {
         kinds,
         after: None,
         limit: 50,
+        investigation: Some(investigation),
     };
     let ids = |page: oml_app::app::AdminPage| -> Vec<Uuid> {
         page.items.iter().map(|m| m.memory.memory_id).collect()

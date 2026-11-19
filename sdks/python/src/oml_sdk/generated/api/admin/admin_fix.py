@@ -89,13 +89,14 @@ def sync_detailed(
 ) -> Response[ErrorEnvelope | Fix]:
     """Take a marked break-glass fix that serves at once and waits for a person to confirm or revert it.
 
-     Requires: admin key role, used by a person (ADR-0089 d1); another admin key answers
-    admin.fix_requires_person, every other role access.verb_ceiling. act is demote (an approved version;
-    the claim's tip returns to its latest earlier approved version, or none), edit (body and optional
-    title replace the served tip), retire (the served tip is retired, reason as its body) or erase
-    (every version of the claim is crypto-shredded). reason is 1 to 1,024 bytes, stored in clear and
-    scanned. One commit journals the lifecycle event the act causes, then admin.fix naming it. An edit's
-    body is scanned as its kind requires: a veto answers submission.scan_veto and a hold
+     Requires: admin key role, used by a person and linked to that person (ADR-0089 d1, the operator's
+    decision of 2026-11-19); another admin key answers admin.fix_requires_person, details.reason
+    not_used_by_person or unlinked, every other role access.verb_ceiling. act is demote (an approved
+    version; the claim's tip returns to its latest earlier approved version, or none), edit (body and
+    optional title replace the served tip), retire (the served tip is retired, reason as its body) or
+    erase (every version of the claim is crypto-shredded). reason is 1 to 1,024 bytes, stored in clear
+    and scanned. One commit journals the lifecycle event the act causes, then admin.fix naming it. An
+    edit's body is scanned as its kind requires: a veto answers submission.scan_veto and a hold
     admin.fix_held_by_scan. In a frozen workspace an edit or retirement answers workspace.frozen. A
     demotion of a version that is not approved answers admin.fix_target_not_promoted. Not idempotent.
     Since v0.8.3.
@@ -138,13 +139,14 @@ def sync(
 ) -> ErrorEnvelope | Fix | None:
     """Take a marked break-glass fix that serves at once and waits for a person to confirm or revert it.
 
-     Requires: admin key role, used by a person (ADR-0089 d1); another admin key answers
-    admin.fix_requires_person, every other role access.verb_ceiling. act is demote (an approved version;
-    the claim's tip returns to its latest earlier approved version, or none), edit (body and optional
-    title replace the served tip), retire (the served tip is retired, reason as its body) or erase
-    (every version of the claim is crypto-shredded). reason is 1 to 1,024 bytes, stored in clear and
-    scanned. One commit journals the lifecycle event the act causes, then admin.fix naming it. An edit's
-    body is scanned as its kind requires: a veto answers submission.scan_veto and a hold
+     Requires: admin key role, used by a person and linked to that person (ADR-0089 d1, the operator's
+    decision of 2026-11-19); another admin key answers admin.fix_requires_person, details.reason
+    not_used_by_person or unlinked, every other role access.verb_ceiling. act is demote (an approved
+    version; the claim's tip returns to its latest earlier approved version, or none), edit (body and
+    optional title replace the served tip), retire (the served tip is retired, reason as its body) or
+    erase (every version of the claim is crypto-shredded). reason is 1 to 1,024 bytes, stored in clear
+    and scanned. One commit journals the lifecycle event the act causes, then admin.fix naming it. An
+    edit's body is scanned as its kind requires: a veto answers submission.scan_veto and a hold
     admin.fix_held_by_scan. In a frozen workspace an edit or retirement answers workspace.frozen. A
     demotion of a version that is not approved answers admin.fix_target_not_promoted. Not idempotent.
     Since v0.8.3.
@@ -182,13 +184,14 @@ async def asyncio_detailed(
 ) -> Response[ErrorEnvelope | Fix]:
     """Take a marked break-glass fix that serves at once and waits for a person to confirm or revert it.
 
-     Requires: admin key role, used by a person (ADR-0089 d1); another admin key answers
-    admin.fix_requires_person, every other role access.verb_ceiling. act is demote (an approved version;
-    the claim's tip returns to its latest earlier approved version, or none), edit (body and optional
-    title replace the served tip), retire (the served tip is retired, reason as its body) or erase
-    (every version of the claim is crypto-shredded). reason is 1 to 1,024 bytes, stored in clear and
-    scanned. One commit journals the lifecycle event the act causes, then admin.fix naming it. An edit's
-    body is scanned as its kind requires: a veto answers submission.scan_veto and a hold
+     Requires: admin key role, used by a person and linked to that person (ADR-0089 d1, the operator's
+    decision of 2026-11-19); another admin key answers admin.fix_requires_person, details.reason
+    not_used_by_person or unlinked, every other role access.verb_ceiling. act is demote (an approved
+    version; the claim's tip returns to its latest earlier approved version, or none), edit (body and
+    optional title replace the served tip), retire (the served tip is retired, reason as its body) or
+    erase (every version of the claim is crypto-shredded). reason is 1 to 1,024 bytes, stored in clear
+    and scanned. One commit journals the lifecycle event the act causes, then admin.fix naming it. An
+    edit's body is scanned as its kind requires: a veto answers submission.scan_veto and a hold
     admin.fix_held_by_scan. In a frozen workspace an edit or retirement answers workspace.frozen. A
     demotion of a version that is not approved answers admin.fix_target_not_promoted. Not idempotent.
     Since v0.8.3.
@@ -229,13 +232,14 @@ async def asyncio(
 ) -> ErrorEnvelope | Fix | None:
     """Take a marked break-glass fix that serves at once and waits for a person to confirm or revert it.
 
-     Requires: admin key role, used by a person (ADR-0089 d1); another admin key answers
-    admin.fix_requires_person, every other role access.verb_ceiling. act is demote (an approved version;
-    the claim's tip returns to its latest earlier approved version, or none), edit (body and optional
-    title replace the served tip), retire (the served tip is retired, reason as its body) or erase
-    (every version of the claim is crypto-shredded). reason is 1 to 1,024 bytes, stored in clear and
-    scanned. One commit journals the lifecycle event the act causes, then admin.fix naming it. An edit's
-    body is scanned as its kind requires: a veto answers submission.scan_veto and a hold
+     Requires: admin key role, used by a person and linked to that person (ADR-0089 d1, the operator's
+    decision of 2026-11-19); another admin key answers admin.fix_requires_person, details.reason
+    not_used_by_person or unlinked, every other role access.verb_ceiling. act is demote (an approved
+    version; the claim's tip returns to its latest earlier approved version, or none), edit (body and
+    optional title replace the served tip), retire (the served tip is retired, reason as its body) or
+    erase (every version of the claim is crypto-shredded). reason is 1 to 1,024 bytes, stored in clear
+    and scanned. One commit journals the lifecycle event the act causes, then admin.fix naming it. An
+    edit's body is scanned as its kind requires: a veto answers submission.scan_veto and a hold
     admin.fix_held_by_scan. In a frozen workspace an edit or retirement answers workspace.frozen. A
     demotion of a version that is not approved answers admin.fix_target_not_promoted. Not idempotent.
     Since v0.8.3.

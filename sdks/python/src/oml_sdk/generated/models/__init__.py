@@ -306,6 +306,7 @@ from .search_settings_valid_time import SearchSettingsValidTime
 from .serve import Serve
 from .served_digests import ServedDigests
 from .served_guardrail import ServedGuardrail
+from .served_guardrail_admin_fix_type_0 import ServedGuardrailAdminFixType0
 from .served_guardrail_effect_inside_type_1 import ServedGuardrailEffectInsideType1
 from .served_guardrail_effect_inside_type_2_type_1 import (
     ServedGuardrailEffectInsideType2Type1,
@@ -731,6 +732,7 @@ __all__ = (
     "Serve",
     "ServedDigests",
     "ServedGuardrail",
+    "ServedGuardrailAdminFixType0",
     "ServedGuardrailEffectInsideType1",
     "ServedGuardrailEffectInsideType2Type1",
     "ServedGuardrailEffectInsideType3Type1",

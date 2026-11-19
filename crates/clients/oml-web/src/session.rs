@@ -386,8 +386,8 @@ pub(crate) async fn resolve_request(
     // rebase) carries the number as a GET does (ADR-0083 d6; the review of
     // PR #494, 11).
     let counts = Some(Scope::of_path(uri.path(), true));
-    let investigation = cookie(headers, crate::investigation::INVESTIGATION_COOKIE)
-        .filter(|id| !id.is_empty());
+    let investigation =
+        cookie(headers, crate::investigation::INVESTIGATION_COOKIE).filter(|id| !id.is_empty());
     let session = resolve_with_counts(web, calls, token, counts)
         .await
         .map_err(|e| Box::new(outcome::page(&e, calls, &page)))?

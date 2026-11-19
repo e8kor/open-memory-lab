@@ -1537,7 +1537,7 @@ export interface paths {
         put?: never;
         /**
          * Take a marked break-glass fix that serves at once and waits for a person to confirm or revert it.
-         * @description Requires: admin key role, used by a person (ADR-0089 d1); another admin key answers admin.fix_requires_person, every other role access.verb_ceiling. act is demote (an approved version; the claim's tip returns to its latest earlier approved version, or none), edit (body and optional title replace the served tip), retire (the served tip is retired, reason as its body) or erase (every version of the claim is crypto-shredded). reason is 1 to 1,024 bytes, stored in clear and scanned. One commit journals the lifecycle event the act causes, then admin.fix naming it. An edit's body is scanned as its kind requires: a veto answers submission.scan_veto and a hold admin.fix_held_by_scan. In a frozen workspace an edit or retirement answers workspace.frozen. A demotion of a version that is not approved answers admin.fix_target_not_promoted. Not idempotent. Since v0.8.3.
+         * @description Requires: admin key role, used by a person and linked to that person (ADR-0089 d1, the operator's decision of 2026-11-19); another admin key answers admin.fix_requires_person, details.reason not_used_by_person or unlinked, every other role access.verb_ceiling. act is demote (an approved version; the claim's tip returns to its latest earlier approved version, or none), edit (body and optional title replace the served tip), retire (the served tip is retired, reason as its body) or erase (every version of the claim is crypto-shredded). reason is 1 to 1,024 bytes, stored in clear and scanned. One commit journals the lifecycle event the act causes, then admin.fix naming it. An edit's body is scanned as its kind requires: a veto answers submission.scan_veto and a hold admin.fix_held_by_scan. In a frozen workspace an edit or retirement answers workspace.frozen. A demotion of a version that is not approved answers admin.fix_target_not_promoted. Not idempotent. Since v0.8.3.
          */
         post: operations["adminFix"];
         delete?: never;
@@ -2236,8 +2236,11 @@ export interface components {
             author_key_id?: string | null;
             /** @description Admission's scan finding on the version, class: rule at place, never the matched text; null when the scan found nothing, and null wherever principal is (ADR-0065 d8; ADR-0044 d9; ADR-0070 d5). Since v0.7.0. */
             scan_finding?: string | null;
-            /** @enum {string} */
-            provenance?: "agent" | "human" | "connector" | "simulation";
+            /**
+             * @description admin_fix for a version an admin fix wrote (an edit or a retirement), whose principal and author_key_id are then null: no reader learns which admin (ADR-0089 d7). Since v0.8.3 for admin_fix.
+             * @enum {string}
+             */
+            provenance?: "agent" | "human" | "connector" | "simulation" | "admin_fix";
             simulation_id?: string | null;
             /** @description Marked rows under the bounded development exception; never promote beyond their workspace. */
             self_signed?: boolean;
@@ -2303,6 +2306,8 @@ export interface components {
             act?: "verdict" | "admin_fix";
             /** @description For act admin_fix, whether a person confirmed the fix; null for a verdict (ADR-0089 d7). Since v0.8.3. */
             confirmed?: boolean | null;
+            /** @description For act admin_fix, whether a person reverted the fix; the version keeps its mark and reads confirmed false; null for a verdict (ADR-0089 d7, d17). Since v0.8.3. */
+            reverted?: boolean | null;
             /**
              * @description The reviewing key's attestation, who holds it, when it gave the verdict (docs/architecture/roles-and-keys.md), as a served guardrail's verdicts carry it (ADR-0037 d5).
              * @enum {string}
@@ -3629,6 +3634,11 @@ export interface components {
             }[];
             /** @description The artifact_ids of the served rows of this claim_key with another severity; empty when none. */
             conflict: string[];
+            /** @description The mark of a guardrail an admin fix serves, whether a person confirmed or reverted the fix, never which admin; null for one a verdict promoted (ADR-0089 d7). Since v0.8.3. */
+            admin_fix?: {
+                confirmed: boolean;
+                reverted: boolean;
+            } | null;
         };
         /** @description A row the calling key's record references, by its id and its name (ADR-0039 d15). */
         WhoamiRef: {
