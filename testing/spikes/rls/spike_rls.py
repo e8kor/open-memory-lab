@@ -387,6 +387,19 @@ def seed_after_migrations(conn: psycopg.Connection, t: Tenant) -> None:
             [t.m4, t.id, t.child, claim, hashlib.sha256(claim.encode()).digest(), t.events[9],
              t.principal, t.writer, [t.principal], [t.writer], len(claim.encode()), t.m1],
         )
+        # An admin's investigation (0063) and an unconfirmed fix demoting m1 (0064), each
+        # carrying the tenant's marker in its reason (ADR-0089 d10, d3).
+        seed_insert(
+            conn, "INSERT INTO admin_investigations (tenant_id, id, key_id, reason, opened_at, opened_seq) "
+            "VALUES (%s, %s, %s, %s, now(), 9)",
+            [t.id, uid(t.letter, "investigation"), t.reviewer, f"{t.marker} investigation"],
+        )
+        seed_insert(
+            conn, "INSERT INTO admin_fixes (tenant_id, id, act, target_id, workspace_id, claim_key, "
+            "reason, loosens_guardrail, admin_key_id, lifecycle_event_id, fixed_at, fixed_seq) "
+            "VALUES (%s, %s, 'demote', %s, %s, 'deploy-runbook', %s, false, %s, %s, now(), 9)",
+            [t.id, uid(t.letter, "fix"), t.m1, t.child, f"{t.marker} fix", t.reviewer, t.events[9]],
+        )
 
 
 # ---------------------------------------------------------------------------
