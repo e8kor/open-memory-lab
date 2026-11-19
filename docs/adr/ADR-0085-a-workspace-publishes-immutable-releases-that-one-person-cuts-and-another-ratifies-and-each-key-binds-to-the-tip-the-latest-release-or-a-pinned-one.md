@@ -204,8 +204,8 @@ Decided, not built.
     - the key that issued the key, when it is a person's key;
     - a key of the person the key belongs to (same `user`, or same principal, `used_by: person`)
       that holds reviewer on every workspace the change affects.
-    *(Widened 2026-11-19 by the operator, O7 at the end of this record: a person's reviewer key
-    with reviewer on the pinned workspace may also move a pin to a newer published label.)*
+    - *(Widened 2026-11-19 by the operator, O7 at the end of this record: a person's reviewer key
+      with reviewer on the pinned workspace may also move a pin to a newer published label.)*
   - **Admins only narrow.** An admin key may narrow any key's binding and never widen one after
     issuance.
   - **The key itself** never changes its own binding.
