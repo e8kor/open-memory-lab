@@ -578,7 +578,7 @@ fn issued_without_a_value(replayed: bool) -> Script {
 }
 
 const ISSUE: &str =
-    "action=issue_key&name=laptop&role=writer&nonce=0123456789abcdef0123456789abcdef";
+    "action=issue_key&name=laptop&role=contributor&nonce=0123456789abcdef0123456789abcdef";
 
 #[tokio::test]
 async fn a_replayed_issue_redirects_to_the_keys_and_sets_no_cookie_over_the_first_answers() {

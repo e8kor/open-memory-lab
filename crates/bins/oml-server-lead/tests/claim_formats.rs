@@ -230,7 +230,7 @@ async fn world() -> Option<World> {
             "contributor",
             "crew/scribe",
             "agent",
-            on(&["contributor", "reader"]),
+            on(&["submitter", "reader"]),
         )
         .await,
     );
@@ -696,7 +696,7 @@ async fn the_rescan_finds_what_admission_finds_in_a_titled_json_claim() {
             "contributor",
             "crew/scribe",
             "agent",
-            on(&["contributor", "reader"]),
+            on(&["submitter", "reader"]),
         )
         .await,
     );

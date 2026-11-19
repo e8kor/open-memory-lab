@@ -88,7 +88,7 @@ Two facts about today shape the whole lifecycle:
 ## The running example
 
 The payments team works in the shared workspace `payments.dev`. The admin created it and issued
-each person tenant keys `used_by: person`: `alice-dev` and `bob-dev` (writer) and `alice-dev-review`
+each person tenant keys `used_by: person`: `alice-dev` and `bob-dev` (contributor) and `alice-dev-review`
 and `bob-dev-review` (reviewer). alice marked it in progress with `alice-dev-review`. The admin issued
 the developers' agent keys at `tip`, which ADR-0085 d7 allows because their scope is inside the
 in-progress root, and the production agents' keys at `latest`. In the console, each person acts with

@@ -481,7 +481,7 @@ where
     }
 
     /// `POST /v2/keys` as `<user>-web` (ADR-0070 d5; ADR-0045 d9, d16), the
-    /// console's `issue_key` and `connect_key`: a reader or writer key naming
+    /// console's `issue_key` and `connect_key`: a contributor or reader key naming
     /// the person's user, granted on their root and nothing else, named
     /// `<user>-<name>` with the session suffixes reserved, issued by
     /// `<user>-web`; with `connector`, a connector key and its connect code.
@@ -716,7 +716,7 @@ where
 
     /// `POST /v2/web/users/{user}/capacities` with `capacity: curate` (ADR-0070
     /// d5 #3; ADR-0045 d10, ADR-0044 d7): the user's `<user>-curate`, a tenant
-    /// writer key with writer on the `universe` node alone and reader on
+    /// contributor key with submitter on the `universe` node alone and reader on
     /// `workspace`, created by `<user>-admin` at the first designation and
     /// extended by a reader grant after it.
     pub async fn grant_curation_capacity(

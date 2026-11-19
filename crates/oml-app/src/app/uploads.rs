@@ -124,7 +124,7 @@ where
             .ok_or(AppError::Upload(UploadRefusal::StorageFailed))
     }
 
-    /// `POST /v2/uploads {purpose, size, sha256}`: a writer key opens a
+    /// `POST /v2/uploads {purpose, size, sha256}`: a contributor or submitter key opens a
     /// session for `size` bytes whose SHA-256 is `sha256` (64 lowercase hex
     /// digits, checked by the transport). Over `uploads.max_bytes` is
     /// `upload.too_large`; the key's fifth open or unbound session is

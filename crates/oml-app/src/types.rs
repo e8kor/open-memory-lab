@@ -3669,7 +3669,7 @@ pub enum AppError {
     )]
     NotFound,
     #[error(
-        "a writer may supersede only the claims its own key authored (roles-and-keys.md#own, access.author_only)"
+        "a key without the reviewer role may supersede only the claims its own key authored (roles-and-keys.md#own, access.author_only)"
     )]
     AuthorOnly,
     /// A demotion of a retirement or of a vocabulary version (`term`,
@@ -3873,7 +3873,7 @@ pub enum AppError {
     /// ADR-0084 d6).
     #[error("the import target is not an in-progress development workspace (ADR-0084 d6)")]
     ImportTargetNotInProgress { workspace_id: Uuid },
-    /// Only a writer key used by a person imports (`access.verb_ceiling`,
+    /// Only a contributor key used by a person imports (`access.verb_ceiling`,
     /// `import_person_only`; ADR-0084 d11).
     #[error("an import needs a writer key used by a person (ADR-0084 d11)")]
     ImportPersonOnly {

@@ -167,7 +167,7 @@ async fn writer(router: &Router, admin: &str, name: &str) -> String {
         "/v2/keys",
         Some(admin),
         json!({
-            "role": "contributor",
+            "role": "submitter",
             "name": name,
             "principal": format!("{name}/laptop"),
             "used_by": "person",

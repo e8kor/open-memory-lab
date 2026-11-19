@@ -573,6 +573,39 @@ async fn judge_next(
     (memory, answer)
 }
 
+/// The Keys page's issue form offers a contributor, first and so the
+/// default, and a reader, never a submitter, which stays an act of the CLI
+/// and the admin; a posted `writer` or `submitter` issues nothing, and the
+/// key the form issues is a contributor with a submitter and a reader grant
+/// (ADR-0093 d6).
+#[tokio::test]
+async fn the_keys_page_issues_a_contributor_by_default_or_a_reader_and_nothing_else() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (_, _, page) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+    assert!(
+        page.contains(
+            r#"<select name="role"><option value="contributor">contributor</option><option value="reader">reader</option></select>"#
+        ),
+        "{page}"
+    );
+    assert!(!page.contains(r#"<option value="submitter">"#), "{page}");
+    assert!(!page.contains(r#"<option value="writer">"#), "{page}");
+    for refused in ["writer", "submitter"] {
+        let (_, _, answer) = act_and_follow(
+            &rig,
+            &cookie,
+            "/web/keys",
+            &[("action", "issue_key"), ("name", refused), ("role", refused)],
+        )
+        .await;
+        assert!(answer.contains("role is contributor or reader"), "{refused}: {answer}");
+    }
+    laptop_key(&rig, &cookie).await;
+    let key = key_named(&rig, "alice-laptop").await;
+    assert_eq!(key.role, oml_app::domain::Role::Contributor);
+}
+
 // -- the Guardrails view (ADR-0037 d17), moved to oml-web ------------------
 
 #[tokio::test]

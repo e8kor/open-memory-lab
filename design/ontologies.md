@@ -44,7 +44,7 @@ preview discipline of [cli/reference.md](https://github.com/e8kor/open-memory-la
 preview-every-mass-act rule to irreversible single acts like this one.
 
 Everything inside the vocabulary rides the ordinary machinery. Grants are ordinary: the vocabulary
-workspace grants writer to the crews it serves, reviewer to its curators
+workspace grants submitter to the crews it serves, reviewer to its curators
 ([roles-and-keys](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/roles-and-keys.md)). Status is ordinary: trunk vocabulary lives at `protected`;
 `frozen` is vocabulary **retirement** — a freeze, not a revocation: terms stay
 resolvable forever, and no past verdict is retro-invalidated, because every scan verdict recorded
@@ -136,7 +136,7 @@ workspace edges, stated as an extension of that rule. Cross-tenant mappings are
 
 ## Where the humans sit
 
-Volume is AI work. Any writer key proposes terms — mid-task, at agent speed — and reviewer crews
+Volume is AI work. Any contributor key proposes terms — mid-task, at agent speed — and reviewer crews
 drain the review queue the way they drain every other queue; provenance distinguishes agent from
 human authors without privileging either. The human loop is placed by `human_required_classes`
 exactly where a mistake is expensive and judgment-shaped: by shipped default, a **deprecation with

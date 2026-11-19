@@ -1003,6 +1003,39 @@ mod tests {
         assert_eq!(expiry("soon", 0), "is good until soon");
     }
 
+    /// A contributor key with no reader grant, a writer key issued before
+    /// v0.8.4 without recall, is marked "no recall" on both sides; a
+    /// contributor that recalls and a submitter are not (ADR-0093 d3).
+    #[test]
+    fn a_contributor_key_without_a_reader_grant_is_marked_no_recall() {
+        let listed = |role: &str, grants: &[&str]| -> ListedKey {
+            serde_json::from_value(serde_json::json!({
+                "id": "k1",
+                "name": "alice-ingest",
+                "role": role,
+                "used_by": "agent",
+                "credential": "bearer",
+                "revoked": false,
+                "cut_off": false,
+                "grants": grants.iter().map(|r| serde_json::json!({
+                    "role": r, "workspace_id": "w", "path": "universe.alice",
+                })).collect::<Vec<_>>(),
+            }))
+            .expect("a listed key")
+        };
+        for side in [Side::User, Side::Admin] {
+            let without = row(&listed("contributor", &["submitter"]), side, "csrf", "alice", None);
+            assert!(without.contains(NO_RECALL), "{without}");
+            for (role, grants) in [
+                ("contributor", &["submitter", "reader"][..]),
+                ("submitter", &["submitter"][..]),
+            ] {
+                let shown = row(&listed(role, grants), side, "csrf", "alice", None);
+                assert!(!shown.contains(NO_RECALL), "{role}: {shown}");
+            }
+        }
+    }
+
     /// A new key is shown beside the API's issuer, else beside `oml-web`'s
     /// own public origin, and with neither beside the named `no_server`
     /// line and no URL at all: the page never names another server

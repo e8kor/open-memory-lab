@@ -56,7 +56,7 @@ console form, error details (`needed_role`), the docs and the plugins' key skill
 made the same kind of cut when it renamed the reviewer role (d13); this record follows its rules and states
 only where a split word differs from a renamed one.
 
-Decided, not built.
+Built for v0.8.4; the implementation notes below record the readings the build took.
 
 ## Decision
 
@@ -220,3 +220,40 @@ Decided, not built.
 | **Accept `writer` as an alias of `contributor` for one release** | ADR-0091 d2 rejected aliases. A client that meant write-only would get a key that recalls. |
 | **Edit the applied role checks of migrations 0001, 0004 and 0047** | It changes their sqlx checksums, and an applied migration is never edited. |
 | **v0.9.0** | The operator wants the roles right in v0.8.4, the release that closes this phase, rather than in a later minor release after work parks. |
+
+## Implementation notes
+
+Recorded with the build (branch `feat/role-names`, 2026-11-20). Each is a reading the decisions
+above left open; the operator confirms or amends them in review.
+
+- **The contributor's shape is checked after steps 4 to 6, over the grants sent.** A request that
+  names a node the tenant does not hold, a deny outside its grant or an uncovered default is told
+  that first; then a contributor without a reader or a submitter grant is `contributor_grants`.
+  The check reads the grants the request sent, not the `universe` node read a user key also gets
+  (ADR-0044 d3). Adding grants to an issued key checks step 3 alone, since an added grant cannot
+  take a reader or a submitter grant away.
+- **A submitter reads its own rows by id.** The read by id admits a submitter key at step 1 and
+  serves it its own rows alone (ADR-0025 d3). Every recall-class verb (recall, the listing of a
+  workspace, the events tail, workspace info and tree, the edge listings, skills, guardrails) is
+  `access.verb_ceiling` for a submitter key, where a v0.8.3 writer key without a reader grant was
+  `access.not_found` at step 4; a contributor without recall still answers `access.not_found`.
+- **A term creator is a contributor.** ADR-0027's term-creator profile named the writer key role;
+  it now names `contributor`, as the migration and rule 7 read its existing keys, with the
+  submitter grant in its "must" cell.
+- **The doctor line reads the key doctor runs under.** `key_contributor_without_recall` comes from
+  `whoami`'s role and grants and names that key. No route lists every key of a tenant, so the
+  doctor names each such key when its holder runs it; the console's Keys pages mark each one "no
+  recall" for the person and the admin.
+- **What the migration found to rewrite.** On a database migrated through 0065, `api_keys.role`
+  and `grants.role` are the only role columns and their two checks the only constraints naming the
+  role; no function body compares a role to `writer`; and `required_roles` is stored only in
+  `journal.payload` and `outbox.payload`, which are signed events read through rule 7. Migration
+  0066 therefore rewrites two columns and replaces two checks. A stored idempotency answer keeps
+  the words it was answered with.
+- **The rebuild law waits for ADR-0090's compare, as ADR-0091 d5's does.** Two laws stand in its
+  place: `the_schema_holds_no_writer_role_after_the_role_migration`, and
+  `a_database_migrated_across_the_role_rename_holds_its_rows_in_the_roles_rule_7_reads`, which
+  seeds two v0.8.3 tenants' rows and signed `key.issued` and `grant.issued` events at 0065 and
+  asserts after 0066 that each row's role is the role rule 7 reads its event as.
+- **The vocabulary lint has its own allow list.** `lint_allow/roles.txt` holds the reasons for the
+  former role, apart from `rename.txt`, so an allowed path for one rename never hides the other.

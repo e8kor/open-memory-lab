@@ -342,7 +342,7 @@ async fn world_with(anchor_first_max: Option<usize>) -> Option<World> {
             "contributor",
             "crew/sync",
             "agent",
-            on(node, &["contributor", "reader"]),
+            on(node, &["submitter", "reader"]),
         )
         .await,
     );
@@ -354,7 +354,7 @@ async fn world_with(anchor_first_max: Option<usize>) -> Option<World> {
             "contributor",
             "crew/sync-two",
             "agent",
-            on(node, &["contributor", "reader"]),
+            on(node, &["submitter", "reader"]),
         )
         .await,
     );
@@ -378,7 +378,7 @@ async fn world_with(anchor_first_max: Option<usize>) -> Option<World> {
             "contributor",
             "crew/outsider",
             "agent",
-            on(other, &["contributor", "reader"]),
+            on(other, &["submitter", "reader"]),
         )
         .await,
     );

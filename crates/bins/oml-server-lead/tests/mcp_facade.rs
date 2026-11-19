@@ -184,8 +184,15 @@ async fn crew_and_admin(
     assert_eq!(status, StatusCode::CREATED, "{wa}");
     let crew = Uuid::parse_str(wa["id"].as_str().expect("workspace id")).expect("uuid");
     let mut keys = Vec::new();
+    // The writing key recalls where it holds a reader grant, a contributor;
+    // otherwise it is a submitter (ADR-0093 d2).
+    let writer_role = if writer_grants.contains(&"reader") {
+        "contributor"
+    } else {
+        "submitter"
+    };
     for (role, principal, grants) in [
-        ("contributor", "crew/agent-7", writer_grants),
+        (writer_role, "crew/agent-7", writer_grants),
         ("reviewer", "crew/reviewer-3", &["reviewer"][..]),
         ("reader", "crew/agent-recall", &["reader"][..]),
     ] {
@@ -1736,7 +1743,7 @@ async fn oml_write_by_a_tenant_key_starts_no_memory_in_a_users_root_and_its_revi
     let Some((router, db)) = fresh_router().await else {
         return;
     };
-    let (_, admin) = crew_and_admin(&router, &["contributor"]).await;
+    let (_, admin) = crew_and_admin(&router, &["submitter"]).await;
     let mut keys = Vec::new();
     for (name, role, user, workspace) in [
         ("alice-laptop", "contributor", Some("alice"), "alice"),
@@ -2062,7 +2069,7 @@ async fn oml_read_recall_and_scoped_listing_are_refused_without_a_reader_grant_a
         return;
     };
     // The writer here holds a writer grant alone.
-    let ((writer, reviewer, _, _), admin) = crew_and_admin(&router, &["contributor"]).await;
+    let ((writer, reviewer, _, _), admin) = crew_and_admin(&router, &["submitter"]).await;
     ratified(&router, &writer, &reviewer).await;
 
     let recall = json!({"query": "aluminium price"});
@@ -2384,8 +2391,8 @@ async fn oml_workspace_without_an_argument_describes_the_default_workspace() {
     )
     .await;
     let writer = issue(
-        "contributor",
-        "contributor",
+        "submitter",
+        "submitter",
         json!([{"workspace": crew, "role": "submitter"}]),
     )
     .await;
@@ -3873,7 +3880,7 @@ async fn oml_workspace_serves_the_policy_the_live_proposals_and_the_brief_as_cla
         return;
     };
     let ((writer, reviewer, _reader, crew), admin) =
-        crew_and_admin(&router, &["contributor", "reader"]).await;
+        crew_and_admin(&router, &["submitter", "reader"]).await;
     let artifact = ratified(&router, &writer, &reviewer).await;
     let mut curators = Vec::new();
     for name in ["dora", "dan"] {

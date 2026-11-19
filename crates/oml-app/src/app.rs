@@ -721,7 +721,7 @@ fn ceiling_role(key: &KeyRecord, needed: Role) -> Role {
 const BULK_CHAIN_RETRIES: usize = 16;
 
 /// The listing and the bulk verdict admit a reviewer key a person holds,
-/// and refuse every other key before any lookup (ADR-0055 d1): a writer or
+/// and refuse every other key before any lookup (ADR-0055 d1): a contributor, submitter or
 /// reader key (R1), a service key (ADR-0025 d1) and a reviewer key used by
 /// an agent, whose crew reviews one serve at a time.
 fn require_person_reviewer(key: &KeyRecord) -> Result<(), AppError> {
@@ -3419,7 +3419,7 @@ where
     /// `how`: a plain issuance by an admin or operator key; a session key
     /// for `session_user`, with no value (ADR-0045 d6); or a person's
     /// `<user>-web` issuing a key in its own root, which the web use case
-    /// has bounded to reader and writer keys naming its user (ADR-0045 d9,
+    /// has bounded to reader and contributor keys naming its user (ADR-0045 d9,
     /// d16), the issuer ceiling read as an admin's for those.
     pub(crate) async fn issue_key_by(
         &self,
@@ -3466,7 +3466,7 @@ where
             Issuance::PersonsOwn(_) => Role::Admin,
             Issuance::Plain | Issuance::Session(_) => issuer.role,
         };
-        // A curator is a reviewer key used by an agent, whose writer grants
+        // A curator is a reviewer key used by an agent, whose submitter grants
         // the reviewer's admissible set is read as if absent (ADR-0030 d8).
         if let Some(profile) = req.profile
             && !profile_admits(profile, req.role, req.used_by.unwrap_or(UsedBy::Agent))
@@ -3831,7 +3831,7 @@ where
     /// derived from the parent's stored ancestry, as the read derives it. A
     /// name the namespace already holds, `universe` included, is checked
     /// last, by the store's unique index: `name.taken`, and nothing is
-    /// journalled (ADR-0026 d5, d6). A writer user key creates too, under a
+    /// journalled (ADR-0026 d5, d6). A contributor user key creates too, under a
     /// parent inside its own root where its effective access confers
     /// writer, the root itself when `parent` is omitted, by the refusal
     /// order on the parent; the node's name lands in that root's namespace
@@ -9336,7 +9336,7 @@ where
 
     /// Record a source check on a promoted, anchored served tip (ADR-0057
     /// d5, d18): from its author key (writer), or a reviewer with reviewer
-    /// access on its workspace; a writer that can read it and did not author
+    /// access on its workspace; a contributor that can read it and did not author
     /// it is `access.author_only`, and a key that cannot read it is told
     /// nothing. A held, unanchored or superseded version is
     /// `request.validation` naming `/artifact_id`. Journals `source.checked`
@@ -9603,7 +9603,7 @@ where
     /// up next and replayed whatever the target's state now; the target
     /// readable (step 2), and, where it is a ratified retirement in a user
     /// root, the key that user's own, else `submission.user_root_refused`
-    /// (ADR-0044 d16); a writer's own target and writer on its workspace
+    /// (ADR-0044 d16); a submitting key's own target and submitter on its workspace
     /// (step 3), or a reviewer's reviewer and reader there, whoever authored
     /// it (step 4, edit-as-proposal); then the target-dependent refusals —
     /// `X-OML-Workarea`, the served tip, the kind and retirement checks,

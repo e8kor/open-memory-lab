@@ -446,7 +446,7 @@ impl World {
             &root,
             "contributor",
             "contributor",
-            &["contributor", "reader"],
+            &["submitter", "reader"],
         )
         .await;
         let reviewer = Self::issue(

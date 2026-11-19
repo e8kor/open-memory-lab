@@ -622,7 +622,7 @@ async fn the_startup_names_check_passes_on_a_deployment_this_build_bootstrapped(
     let router = &rig.router;
     let (admin, _tenant, root) = bootstrap(router).await;
     let crew = create_workspace(router, &admin, root, "metals-crew").await;
-    issue_key(router, &admin, "contributor", "crew/agent-7", crew).await;
+    issue_key(router, &admin, "submitter", "crew/agent-7", crew).await;
 
     let tenants = enumerate_tenants(rig.store.pool()).await.expect("tenants");
     assert_eq!(startup_names_check(&rig.store, &tenants).await, Ok(()));
@@ -1143,7 +1143,7 @@ async fn full_happy_path_over_http() {
     assert_envelope(&body, "access.role_exclusive");
 
     let quotes = create_workspace(router, &admin, crew, "quotes").await;
-    let writer = issue_key(router, &admin, "contributor", "crew/agent-7", crew).await;
+    let writer = issue_key(router, &admin, "submitter", "crew/agent-7", crew).await;
     let reviewer = issue_key(router, &admin, "reviewer", "crew/reviewer-3", crew).await;
     let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
 
@@ -1776,7 +1776,7 @@ async fn workspace_unresolved_is_422() {
 
     // A zero-grant key has no default workspace, and never inherits the
     // issuer's (ADR-0025 d2).
-    let issued = issue_key_with(router, &admin, "contributor", "crew/no-default", json!([])).await;
+    let issued = issue_key_with(router, &admin, "submitter", "crew/no-default", json!([])).await;
     assert_eq!(issued["default_workspace_id"], Value::Null, "{issued}");
     assert_eq!(issued["grants"], json!([]), "{issued}");
     let token = issued["value"].as_str().expect("show-once value");
@@ -2614,7 +2614,7 @@ async fn get_v2_keys_by_name_answers_a_revoked_key_with_its_revoked_at() {
     let issued = issue_key_with(
         router,
         &admin,
-        "contributor",
+        "submitter",
         "claude/laptop",
         json!([{ "workspace": crew, "role": "submitter" }]),
     )
@@ -3363,7 +3363,7 @@ async fn access_refusals_carry_their_recovery_details() {
     assert_envelope(&body, "access.issuer_ceiling");
     assert_eq!(
         body["error"]["details"],
-        json!({ "role": "reviewer", "admissible": ["reader", "contributor"], "grant_index": 1 })
+        json!({ "role": "reviewer", "admissible": ["reader", "submitter"], "grant_index": 1 })
     );
     // A key role above the issuer's: the requested role and the issuable set.
     let (status, _, body) = send(
@@ -3379,7 +3379,7 @@ async fn access_refusals_carry_their_recovery_details() {
     assert_envelope(&body, "access.issuer_ceiling");
     assert_eq!(
         body["error"]["details"],
-        json!({ "role": "operator", "admissible": ["reader", "contributor", "reviewer", "admin"] })
+        json!({ "role": "operator", "admissible": ["reader", "contributor", "submitter", "reviewer", "admin"] })
     );
     // A deny outside its grant, and a default no grant covers.
     for (idem, body) in [
@@ -3578,7 +3578,7 @@ async fn tail_rig() -> Option<TailRig> {
         "contributor",
         "crew/agent-7",
         "issue-agent",
-        on_crew(&["contributor", "reader"]),
+        on_crew(&["submitter", "reader"]),
     )
     .await;
     let twin = tail_key(
@@ -3587,7 +3587,7 @@ async fn tail_rig() -> Option<TailRig> {
         "contributor",
         "crew/agent-7",
         "issue-twin",
-        on_crew(&["contributor", "reader"]),
+        on_crew(&["submitter", "reader"]),
     )
     .await;
     let reviewer = tail_key(
@@ -4196,7 +4196,7 @@ async fn steering_rig() -> Option<(Rig, String, Uuid, Uuid, String, String)> {
     let rig = fresh_rig().await?;
     let (admin, _tenant, crew) = crew_tenant(&rig.router).await;
     let quotes = create_workspace(&rig.router, &admin, crew, "quotes").await;
-    let writer = issue_key(&rig.router, &admin, "contributor", "crew/agent-7", crew).await;
+    let writer = issue_key(&rig.router, &admin, "submitter", "crew/agent-7", crew).await;
     let reviewer = issue_key(&rig.router, &admin, "reviewer", "crew/reviewer-3", crew).await;
     Some((rig, admin, crew, quotes, writer, reviewer))
 }
@@ -6024,7 +6024,7 @@ async fn the_body_limit_counts_the_nfc_text() {
     };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
-    let writer = issue_key(router, &admin, "contributor", "crew/agent-7", crew).await;
+    let writer = issue_key(router, &admin, "submitter", "crew/agent-7", crew).await;
     let submit = |idem: &str, claim_key: &str, body: String| {
         let call = Call::auth(&writer).idem(idem).body(json!({
             "verb": "remember", "claim_key": claim_key, "kind": "memory", "body": body,
@@ -6495,7 +6495,7 @@ async fn a_workspace_on_review_next_is_refused_by_name_until_the_filter_is_built
     };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
-    let writer = issue_key(router, &admin, "contributor", "crew/agent-7", crew).await;
+    let writer = issue_key(router, &admin, "submitter", "crew/agent-7", crew).await;
     let reviewer = issue_key(router, &admin, "reviewer", "crew/reviewer-1", crew).await;
     let artifact = remember(router, &writer, "filter-1", "copper closes at 4182", None).await;
 
@@ -6540,7 +6540,7 @@ async fn an_unreadable_workspace_is_not_found() {
     };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
-    let writer = issue_key(router, &admin, "contributor", "crew/agent-7", crew).await;
+    let writer = issue_key(router, &admin, "submitter", "crew/agent-7", crew).await;
     let reader = issue_key(router, &admin, "reader", "crew/agent-recall", crew).await;
 
     let get = |token: &str, id: String| {
@@ -6692,7 +6692,7 @@ async fn own_true_lists_every_state_of_the_keys_own_rows_newest_first() {
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
     // A writer-only key: the own-work listing needs no reader grant.
-    let writer = issue_key(router, &admin, "contributor", "crew/agent-7", crew).await;
+    let writer = issue_key(router, &admin, "submitter", "crew/agent-7", crew).await;
     let reviewer = issue_key(router, &admin, "reviewer", "crew/reviewer-3", crew).await;
     let first = remember(
         router,
@@ -6777,7 +6777,7 @@ async fn the_own_listing_covers_every_workspace_the_key_wrote_to() {
     let writer = issue_key_with(
         router,
         &admin,
-        "contributor",
+        "submitter",
         "crew/agent-7",
         json!([
             { "workspace": crew, "role": "submitter" },
@@ -6899,7 +6899,7 @@ async fn a_global_denial_masks_own_rows_in_the_listing() {
     let (writer, key_id) = key_with(
         router,
         &admin,
-        "contributor",
+        "submitter",
         "crew/agent-7",
         "k-1",
         json!([
@@ -7243,7 +7243,7 @@ async fn an_operator_key_is_refused_get_with_verb_ceiling() {
     };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
-    let writer = issue_key(router, &admin, "contributor", "crew/agent-7", crew).await;
+    let writer = issue_key(router, &admin, "submitter", "crew/agent-7", crew).await;
     let written = remember(
         router,
         &writer,
@@ -7280,7 +7280,7 @@ async fn a_get_with_x_oml_workspace_is_request_validation() {
     };
     let router = &rig.router;
     let (admin, _tenant, crew) = crew_tenant(router).await;
-    let writer = issue_key(router, &admin, "contributor", "crew/agent-7", crew).await;
+    let writer = issue_key(router, &admin, "submitter", "crew/agent-7", crew).await;
     let written = remember(
         router,
         &writer,
@@ -7897,7 +7897,7 @@ async fn whoami_serves_each_grant_without_its_deny_masks() {
     let issued = issue_key_with(
         router,
         &admin,
-        "contributor",
+        "submitter",
         "crew/agent-7",
         json!([
             { "workspace": crew, "role": "submitter", "deny": [{ "workspace": sealed }] },
@@ -8234,7 +8234,7 @@ async fn a_designed_field_sent_to_a_served_operation_answers_its_v0_3_0_code() {
 
     let router = &doubles_router();
     let (admin, _, root) = bootstrap(router).await;
-    let writer = issue_key(router, &admin, "contributor", "agent/sim", root).await;
+    let writer = issue_key(router, &admin, "submitter", "agent/sim", root).await;
     let (status, _, refused) = send(
         router,
         "POST",
@@ -8475,7 +8475,7 @@ async fn every_v0_3_0_reference_spelling_on_the_key_routes_is_refused_naming_its
         )
         .await;
     }
-    issue_key(router, &admin, "contributor", "agent/denied", root).await;
+    issue_key(router, &admin, "submitter", "agent/denied", root).await;
     assert_renamed(
         router,
         "/v2/keys/writer-agent-denied/denials",
@@ -10478,7 +10478,7 @@ async fn a_console_request_acts_as_the_key_linked_to_its_person_and_no_other() {
     let agent = issue_key_with(
         &rig.router,
         &rig.admin,
-        "contributor",
+        "submitter",
         "payments-bot",
         json!([{ "workspace": payments, "role": "submitter" }]),
     )
