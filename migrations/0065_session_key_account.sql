@@ -18,6 +18,8 @@
 -- drifts from its rows by this change.
 ------------------------------------------------------------------------------
 
+SET LOCAL lock_timeout = '5s';
+
 CREATE FUNCTION oml_key_account(t uuid, k uuid) RETURNS uuid
     LANGUAGE sql STABLE AS $$
     SELECT coalesce(a.user_root_id,
