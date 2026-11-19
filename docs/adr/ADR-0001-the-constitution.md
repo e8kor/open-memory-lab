@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0001-the-constitution
 tier: engineering
-status: accepted design · amended by ADR-0025, ADR-0037, ADR-0030, ADR-0044, ADR-0080, ADR-0089
+status: accepted design · amended by ADR-0025, ADR-0037, ADR-0030, ADR-0044, ADR-0080, ADR-0089, ADR-0085
 answers: what the four constitutional rules R1–R4 commit, and what each of the three bounded exceptions permits, marks and requires: an in-progress subtree's held rows to the keys in it and on its ancestor chain, own-root same-person approval, and an admin's fixes with the admin read
 -->
 
 # ADR-0001 — The constitution: four rules, three bounded exceptions
 
-**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md), [ADR-0030](ADR-0030-an-in-progress-workspace-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) (d5, same-person approval named, 2026-11-14), [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) (d5, the in-progress exception widened, 2026-11-14), [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d5, 2026-11-14) · amendment of d5 proposed 2026-11-18 (the place carries the rules, the operator's answer D1 to the lifecycle review; #429)
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md), [ADR-0030](ADR-0030-an-in-progress-workspace-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) (d5, same-person approval named, 2026-11-14), [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) (d5, the in-progress exception widened, 2026-11-14), [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d5, 2026-11-14) · amendment of d5 of 2026-11-18 (the place carries the rules, the operator's answer D1 to the lifecycle review, with exception 3 narrowed in the operator's batch; #429), accepted 2026-11-19 by the operator
 
 **Release:** partly in v0.1.0 and v0.6.0; the rest not built ([releases](../changelog.md))
 
@@ -66,8 +66,8 @@ rest is not built; [releases](../changelog.md) says which part each release buil
   *(Amended 2026-11-14 by the operator: the development self-signing exception of 2026-10-29,
   never built, is retired, and this list replaces the earlier amendments.)*
 
-  *Proposed amendment of 2026-11-18 (the operator's answer D1 to the lifecycle review, recorded by
-  #429; proposed until the operator accepts this text).* **The place carries the rules.** An open
+  *Amendment of 2026-11-18 (the operator's answer D1 to the lifecycle review, recorded by #429;
+  accepted 2026-11-19 by the operator).* **The place carries the rules.** An open
   workspace, that is a `development` one, in progress or not, is a development scope. A `protected`
   or `frozen` workspace is a production scope for every reader. A published release is a
   production scope wherever its workspace sits, so its members and an admin fix's overlay on them
@@ -77,12 +77,14 @@ rest is not built; [releases](../changelog.md) says which part each release buil
   a key reads is production because it is a published release's member or sits in a `protected`
   or `frozen` workspace, never because of the binding; a `latest` key's fallback to the tip in an
   open workspace with no published release reads development content, marked on every hit, and in
-  a `protected` or `frozen` workspace that read is refused (ADR-0085, D2 of 2026-11-18).
+  a `protected` or `frozen` workspace that read is refused (ADR-0085, D2 of 2026-11-18). *(Narrowed
+  2026-11-19 by the operator, ADR-0085 O2: not in `universe`, which is not release-governed, nor
+  in a workspace that holds no approved claim.)*
 
-  *Proposed amendments of 2026-11-18, outside D1* **[operator batch]**. Exception 3 narrows: a fix
+  *Amendments of 2026-11-18, outside D1, accepted 2026-11-19 by the operator* **[operator batch]**. Exception 3 narrows: a fix
   is confirmed by the admin's own person only inside that person's own root and on a member of no
-  release; and a cut refuses a member whose only verdict is `same_user` (ADR-0089, proposed
-  amendments of 2026-11-18).
+  release; and a cut refuses a member whose only verdict is `same_user` (ADR-0089, amendments of
+  2026-11-18).
 
   1. **In-progress sharing** ([ADR-0030](ADR-0030-an-in-progress-workspace-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) d2, d3, widened by
      [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) d16). Of R3's first sentence only, in development scopes only.

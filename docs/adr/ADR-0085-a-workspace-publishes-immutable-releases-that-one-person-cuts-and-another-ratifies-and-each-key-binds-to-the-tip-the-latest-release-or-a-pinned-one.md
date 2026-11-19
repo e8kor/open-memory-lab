@@ -8,7 +8,7 @@ answers: what a workspace release is, when its manifest is fixed and what it may
 # ADR-0085 — A workspace publishes immutable releases that one person cuts and another ratifies, and each key binds to the tip, the latest release or a pinned one
 
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its three questions decided at their
-recommendations and every other default as drafted · proposed the same day · amended 2026-11-17 (d16: how the console acts with a linked key, accepted the same day by the operator, "Session + named key") · amendments of 2026-11-18 proposed (d2, d6, d10: the operator's answers D1 to D3 to the lifecycle review; d1 and the stage tabs for the operator's batch; #429)
+recommendations and every other default as drafted · proposed the same day · amended 2026-11-17 (d16: how the console acts with a linked key, accepted the same day by the operator, "Session + named key") · amendments of 2026-11-18 (d2, d6, d10: the operator's answers D1 to D3 to the lifecycle review; d1 and the stage tabs from the operator's batch; #429), accepted 2026-11-19 by the operator · amended 2026-11-19 by the operator's decisions on the release plan (D2's reach, federated sources at their latest release, a reviewed retirement at the next cut, the release notes' document, a pin moved by a person's reviewer key; the decisions of 2026-11-19 at the end of this record)
 
 **Release:** not scheduled; the first record of the workspace lifecycle
 ([review](https://github.com/e8kor/open-memory-lab/blob/main/design/workspace-lifecycle.md)), before
@@ -35,7 +35,9 @@ twin note and ADR-0090 d18 class it. The build names each column's class under A
 - ADR-0059 (d14: a release read beside `as_of`).
 - ADR-0072:
   - d1: a released in-progress workspace is a federation source at its latest release, d15;
-  - d5: a federated source is read at its latest release.
+  - d5: a federated source is read at its latest release, for every key whatever its binding
+    (confirmed 2026-11-19 by the operator, O3 at the end of this record), except `universe`, read
+    at its promoted rows **[operator batch]**.
 - On their branches:
   - ADR-0047 (d10, proposed);
   - ADR-0080 (d3: a withdrawal may stop a person-approved skill being offered, d9; d10:
@@ -100,12 +102,14 @@ Decided, not built.
   - **A member can drop out after the cut.** It drops out of every release that lists it when it
     is demoted, erased or retired. A demotion has to reach every reader, as `as_of` already
     behaves (ADR-0059 d15). The release then reads `degraded` and names the member.
+    *(Superseded in part 2026-11-19 by the operator, O4 at the end of this record: "or retired"
+    holds only for an admin's retire fix; a reviewed retirement takes effect at the next cut.)*
 
 - **d2 — Vocabulary: "cut" in prose, `propose` in the API, `published` once ratified.**
   - A release is named `<workspace path>@<label>`, with a semantic-version label. The name is
     unique per workspace, immutable and never released for reuse
-    ([ADR-0026](ADR-0026-names-are-keys.md) d1, d10). *(Superseded in part, proposed 2026-11-18,
-    D3 below: a cut makes a candidate named by an id, and the label is bound at publish.)*
+    ([ADR-0026](ADR-0026-names-are-keys.md) d1, d10). *(Superseded in part 2026-11-18, accepted
+    2026-11-19, D3 below: a cut makes a candidate named by an id, and the label is bound at publish.)*
   - Its states are `proposed`, `published`, `withdrawn` and `refused`.
   - "Publish" means ratifying a release, and nothing else. A version is promoted, never published.
   - ADR-0018 d4 lists "published" as a word never used for `promoted`. That stays true for a
@@ -160,8 +164,9 @@ Decided, not built.
   - **A pin** is `{<workspace>: <label>}`. A workspace without an entry resolves as `latest`.
   - **No release yet.** A `latest` key on a workspace with no release is served the promoted tip,
     never another key's held item, and every answer carries `binding_fallback: tip`.
-    *(Superseded, proposed 2026-11-18, D2 below: refused in a `protected` or `frozen` workspace,
-    and marked on every hit in an open one.)*
+    *(Superseded 2026-11-18, accepted 2026-11-19, D2 below: refused in a `protected` or `frozen`
+    workspace, and marked on every hit in an open one; not refused in `universe` or in a workspace
+    that holds no approved claim, O2 of 2026-11-19.)*
   - **A pin to a withdrawn release** keeps being served, marked `withdrawn: true`.
   - **Marks do not apply.** For a `latest` or pinned key, ADR-0030 d2's boundary does not hide a
     member, and ADR-0030 d3's and ADR-0080 d10's serving of held items does not apply. This amends
@@ -200,6 +205,8 @@ Decided, not built.
     - the key that issued the key, when it is a person's key;
     - a key of the person the key belongs to (same `user`, or same principal, `used_by: person`)
       that holds reviewer on every workspace the change affects.
+    - *(Widened 2026-11-19 by the operator, O7 at the end of this record: a person's reviewer key
+      with reviewer on the pinned workspace may also move a pin to a newer published label.)*
   - **Admins only narrow.** An admin key may narrow any key's binding and never widen one after
     issuance.
   - **The key itself** never changes its own binding.
@@ -244,8 +251,11 @@ Decided, not built.
     - a document key removed.
   - **Confirming breaking items.** The proposer must confirm each breaking item. The label must
     raise its major number, or the proposal is refused, reason `label_not_major`. *(Superseded in
-    part, proposed 2026-11-18, D3 below: the label, and so this check, comes at publish.)*
+    part 2026-11-18, accepted 2026-11-19, D3 below: the label, and so this check, comes at publish.)*
   - **Storage.** The notes are stored as the release's own document claim (ADR-0081, proposed).
+    *(Made precise 2026-11-19 by the operator, O6 at the end of this record: the server writes
+    `doc/releases/<label>` at publish, promoted by the publisher's verdict in the same transaction
+    **[operator batch]**.)*
 
 - **d11 — The change set is computed review UI, and a revert drafts the inverse.**
   - A change set is the subtree's versions since the latest published release, shown with a line
@@ -273,8 +283,8 @@ Decided, not built.
     - `oml workspaces revert`;
     - `oml keys bind`.
   - **Console:** a Releases section on a workspace's personal page. No MCP tool (R1).
-  - *(Proposed 2026-11-18, D3 below: until it is published a candidate is addressed by its id,
-    not a label; the stage tabs below are for the operator's batch.)*
+  - *(Amended 2026-11-18, accepted 2026-11-19, D3 below: until it is published a candidate is
+    addressed by its id, not a label; the stage tabs below came from the operator's batch.)*
   - **Events:** `workspace.release_proposed`, `workspace.release_ratified`,
     `workspace.release_withdrawn`, `workspace.release_withdrawal_acknowledged`, `key.binding_set`.
     `recall_events` gains the release a read was served from (ADR-0054).
@@ -415,15 +425,15 @@ Decided, not built.
 | **Admins publish releases** | Publishing is the reviewed path; the admin's acts are fixes, marked and confirmed afterwards (ADR-0089). |
 | **Key binding as its own record** | See Consequences: the read rules and the object they read belong together. |
 
-## The lifecycle review's amendments of 2026-11-18 (proposed, #429)
+## The lifecycle review's amendments of 2026-11-18 (accepted 2026-11-19, #429)
 
 The lifecycle review (artifact `E7ysHcU2MxVsF3pWQ644c5`, the plan on PR #397) left four questions
 for the operator, who answered them on 2026-11-18. D1 to D3 amend this record; D4 amends ADR-0084
-d6. Each is proposed: it records the operator's answer, and the operator accepts the text. Where a
-sentence above contradicts an answer, it stays as written, marked superseded, and the answer below
-governs. The two items marked **[operator batch]** come from the review's model, which the
-operator approved with the proposal; they stand as proposed until the operator confirms or
-reverses them with the rest of the batch.
+d6. Each was proposed: it records the operator's answer, and the operator accepted the text on
+2026-11-19 ("Accept all"). Where a sentence above contradicts an answer, it stays as written,
+marked superseded, and the answer below governs. The items marked **[operator batch]** come from
+the review's model, which the operator approved with the proposal; they stood as proposed until
+the operator confirmed them with the rest of the batch, on 2026-11-19.
 
 - **D1 — The place carries the rules (amends d2, d6; ADR-0001 d5).**
   - An open workspace, a `development` one in progress or not, is development.
@@ -442,14 +452,15 @@ reverses them with the rest of the batch.
   - **In a `protected` or `frozen` workspace, refused.** A read whose served workspaces include a
     `protected` or `frozen` one with no published, not withdrawn release whose subtree holds it is
     refused, and nothing is served from it, so a production reader never reads a set no second
-    person published. A workspace whose every release is withdrawn has none published
-    **[operator batch]**. A pin without an entry for the workspace follows the same rule, since d6
+    person published. *(Narrowed 2026-11-19 by the operator, O2 below: `universe` is not
+    release-governed, and a workspace that holds no approved claim is not refused.)* A workspace
+    whose every release is withdrawn has none published **[operator batch]**. A pin without an entry for the workspace follows the same rule, since d6
     resolves it as `latest`.
   - **In an open workspace, the tip, marked on every hit.** The key is served the promoted tip,
     never another key's held item, as d6 says, and every hit, not only the answer, is marked as not
     from a release (`binding_fallback: tip` on the hit). A read across several workspaces can then
     mix release members with fallback rows, and each hit says which it is.
-  - **The code, proposed: `release.none_published`** (409, not retryable; `details.workspace`
+  - **The code: `release.none_published`** (409, not retryable; `details.workspace`
     names the first such workspace and `details.binding` the key's binding). The errors page
     groups codes by the subject that refuses: `workspace` for structure and status, `bundle` and
     `import` for imports, `upload` for upload sessions. The act refused here is a key's read
@@ -514,3 +525,89 @@ reverses them with the rest of the batch.
 - **Not decided here.** The review's decision 3, its display names, was decided on 2026-11-14 and
   recorded in ADR-0091 d16. Nothing in these amendments is built; the release work builds them
   with this record.
+
+## The operator's decisions of 2026-11-19 (the v0.9.0 release plan)
+
+The release plan for v0.9.0 left nine questions, O1 to O9, for the operator, who answered them on
+2026-11-18 and 2026-11-19. O1 accepted the amendments of 2026-11-18 above, every **[operator
+batch]** item included. O2, O3, O4, O6 and O7 are this record's, and each records the operator's
+decision. Where a sentence above contradicts one, it stays as written, marked superseded, and the
+decision below governs. The eight items marked **[operator batch]** are readings this record takes
+beside a decision, for the operator to confirm or reverse.
+
+- **O2 — D2 refuses only a workspace that holds approved content and has no published release
+  (amends D2).**
+  - **`universe` is not release-governed.** No release is cut there: admins curate it (ADR-0044)
+    and no person holds reviewer in it. A release-bound key reads its promoted rows as every key
+    reads them, and D2 neither refuses nor marks them. Why: `universe` is `protected`, lies on
+    every user root's ancestor chain and is searched by every user-root recall (ADR-0044 d10), so
+    D2 as written would refuse every `latest` key's read, and its guardrail load at session start.
+  - **A `protected` workspace that holds no approved claim is not refused.** Nothing unpublished
+    would be served from it. The test is the workspace's own promoted versions, of any kind; each
+    child is judged on its own, as d6 resolves a binding per workspace. A `frozen` workspace that
+    holds no approved claim is read the same way **[operator batch]**, since D2 treats the two
+    states alike.
+  - **What still refuses.** Only a `protected` workspace with approved content and no published,
+    not withdrawn release refuses a `latest` read, with `release.none_published`, and a `frozen`
+    one with the same reading. D2's whole-read refusal, its doctor line and its code stand.
+  - **Superseded:** D2's first bullet, for `universe` and for a workspace that holds no approved
+    claim; ADR-0001 d5's sentence citing D2 carries the same note.
+
+- **O3 — A federated source is read at its latest release, for every key (confirms the Amends'
+  sentence on ADR-0072 d5, and d15).**
+  - The sentence stands as written: a federated source (ADR-0072 d1) is read at its latest
+    published, not withdrawn release, whatever the reading key's binding, `tip` keys included.
+    The release plan recommended a narrower reading, in which a `tip` key read a source's
+    promoted tip as today; the operator chose the sentence as written.
+  - **The consequence.** A source with no published release serves nothing through federation, to
+    any reader. A source workspace's people must publish a release there before any federated
+    reader sees its content. At the upgrade, every trusted source without a published release
+    stops serving federated recall until a release is published there.
+  - **What the reader gets [operator batch].** Recommended: the source is named in the answer's
+    `search.sources` (ADR-0072 d8) with `none_published` and skipped, and the read is served from
+    the scope and the other sources. Rejected: refusing the read whole, because the server chooses
+    a federated source per query and the key's scope does not name it, so one source without a
+    release would fail every federated recall in its tenant. D2's whole-read refusal still holds
+    for the workspaces the key's own scope serves.
+  - **`universe` as a source **[operator batch]**.** O2 leaves `universe` outside release governance, so where ADR-0072
+    d1 makes it a source it is read as today, at its promoted rows.
+
+- **O4 — A reviewed retirement waits for the next cut; only an admin's fix changes a published
+  release at once (amends d1; supersedes its "retired").**
+  - A retirement written, held and approved like any change takes effect for release-bound keys at
+    the next cut, as every promotion does (d5); until then the published release keeps serving the
+    member, and the next release's notes list the retirement, as d10's Contents lists every claim
+    key retired.
+  - Only a demotion, an erasure or an admin's retire fix (ADR-0089 d2, d16) changes a published
+    release at once, as a marked overlay: the member is replaced or withheld as d6's table says,
+    and, as d6 says beneath that table, the served item is marked `approver.act: "admin_fix"` and
+    the release reads `degraded` until a person confirms the fix.
+  - Why: under d1 as written a reviewed retirement of a guardrail would loosen production with no
+    publish and no alert, past d9's alert on a loosening withdrawal.
+  - **Superseded:** d1's "or retired", except for an admin's retire fix.
+
+- **O6 — The release notes are a document the server writes at publish and the publisher's verdict
+  promotes (amends d10's storage).**
+  - At publish, the server's own identity, the one that authors a revert (ADR-0089 d8), writes the
+    notes as the release's document claim `doc/releases/<label>` in the release's workspace
+    (ADR-0081). The publisher's verdict promotes it in the same transaction **[operator batch]**. Its author
+    is the server and its reviewer the publishing person, so R2 holds **[operator batch]**.
+  - Until publish a candidate has no label (D3), so its notes are generated on read and the
+    ratifier reads them before publishing **[operator batch]**. The manifest is fixed at the cut (d1), so the notes are
+    never a member of the release they describe **[operator batch]**; the next cut lists them like any
+    promoted document.
+  - A person may edit the notes afterwards. An edit is a held supersession of the document,
+    reviewed as any document is in that workspace.
+
+- **O7 — A person's reviewer key on the pinned workspace may move a pin to a newer label (amends
+  d7).**
+  - A person's reviewer key (`used_by: person`) holding reviewer on a pinned workspace may move
+    any key's pin entry for that workspace to a newer published label of it. Two persons already
+    vetted that label by cutting and publishing it. The change is journalled `key.binding_set`, as
+    d7 says.
+  - Why: a team agent key issued by an admin has no issuer person and no own person, so under d7
+    as written its pin could never move, and each release would mean a key rotation.
+  - Widening a pin to `latest` still needs the admin. Since d7 lets an admin set a binding at
+    issuance and never widen one afterwards, the admin does it by issuing a key at `latest`
+    **[operator batch]**.
+  - Every other widening stays as d7 says.
