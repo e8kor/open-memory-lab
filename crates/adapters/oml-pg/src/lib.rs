@@ -4996,14 +4996,20 @@ async fn apply_fold(
             keep_an_admin,
         } => {
             let hash = entry.email.digest().0.to_vec();
-            if keep_an_admin && !entry.admin && last_admin_entry(tx, tenant_id, &hash).await? {
+            // An entry the change leaves pending signs in to nothing, so
+            // making the last admin entry pending is un-flagging it too
+            // (ADR-0045 d10; d2's note of 2026-11-19).
+            if keep_an_admin
+                && (!entry.admin || entry.pending)
+                && last_admin_entry(tx, tenant_id, &hash).await?
+            {
                 return Err(StoreError::LastAdminEntry);
             }
             end_entry_sessions(tx, tenant_id, &hash).await?;
             // A change that leaves the entry pending keeps the time it began
             // to wait; one that makes it pending starts it now.
             let changed = sqlx::query(
-                "UPDATE web_emails SET user_name = $3, admin = $4, \
+                "UPDATE web_emails SET user_name = $3, admin = $4, added_by = $7, \
                  pending_since = CASE WHEN $5 THEN coalesce(pending_since, ($6)::timestamptz) END \
                  WHERE tenant_id = $1 AND email_hash = $2",
             )
@@ -5013,6 +5019,7 @@ async fn apply_fold(
             .bind(entry.admin)
             .bind(entry.pending)
             .bind(at.as_str())
+            .bind(entry.added_by)
             .execute(&mut **tx)
             .await
             .map_err(backend)?;
@@ -5022,23 +5029,31 @@ async fn apply_fold(
                 ));
             }
         }
-        MetadataFold::WebEmailAccepted { email_hash, user } => {
-            // The pending entry naming this user signs in from this commit
-            // on; anything else aborts it (ADR-0045 d2's note of 2026-11-19).
+        MetadataFold::WebEmailAccepted {
+            email_hash,
+            user,
+            admin,
+        } => {
+            // The pending entry naming this user, with the admin flag the
+            // person reviewed, signs in from this commit on; anything else,
+            // a flag flipped since included, aborts it (ADR-0045 d2's note,
+            // the operator's decisions of 2026-11-19 and 2026-11-20).
             let accepted = sqlx::query(
                 "UPDATE web_emails SET pending_since = NULL \
                  WHERE tenant_id = $1 AND email_hash = $2 AND user_name = $3 \
-                 AND pending_since IS NOT NULL",
+                 AND admin = $4 AND pending_since IS NOT NULL",
             )
             .bind(tenant_id)
             .bind(email_hash.0.to_vec())
             .bind(user.as_str())
+            .bind(admin)
             .execute(&mut **tx)
             .await
             .map_err(backend)?;
             if accepted.rows_affected() != 1 {
                 return Err(StoreError::Backend(
-                    "web.email_accepted names no pending entry of this user".to_owned(),
+                    "web.email_accepted names no pending entry of this user with that admin flag"
+                        .to_owned(),
                 ));
             }
         }

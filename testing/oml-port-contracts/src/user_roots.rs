@@ -75,8 +75,34 @@ pub struct RootsWorld<S: JournalStore> {
     idem: AtomicU64,
 }
 
+impl<S: WebStore + Clone> RootsWorld<S> {
+    /// [`RootsWorld::new`] with ada's sign-in entry added before any key
+    /// names her root, so she signs in: an address added for a person a key
+    /// names waits on that person (the operator's decision of 2026-11-20,
+    /// ADR-0045 d2's note).
+    pub async fn new_with_ada_entry(store: S) -> Self {
+        let (app, boot) = Self::boot(&store).await;
+        app.allow_web_email(
+            boot.admin_key.value.as_str(),
+            &WebEmailRequest {
+                email: Email::parse("ada@example.com").expect("an email"),
+                user: Name::parse("ada").expect("a user name"),
+                admin: false,
+            },
+        )
+        .await
+        .expect("ada's entry");
+        Self::built(store, app, boot).await
+    }
+}
+
 impl<S: JournalStore + Clone> RootsWorld<S> {
     pub async fn new(store: S) -> Self {
+        let (app, boot) = Self::boot(&store).await;
+        Self::built(store, app, boot).await
+    }
+
+    async fn boot(store: &S) -> (RootsApp<S>, oml_app::types::BootstrapResult) {
         let app = App::new(
             store.clone(),
             MemSigner::new(TEST_SEED),
@@ -92,6 +118,10 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
             })
             .await
             .expect("bootstrap");
+        (app, boot)
+    }
+
+    async fn built(store: S, app: RootsApp<S>, boot: oml_app::types::BootstrapResult) -> Self {
         let admin = boot.admin_key.value.clone();
         let universe = boot.root_workspace_id;
         let user = Name::parse("ada").expect("a user name");
@@ -1159,7 +1189,7 @@ pub async fn a_persons_session_review_key_puts_a_retired_claim_back_in_its_own_r
 >(
     store: S,
 ) {
-    let w = RootsWorld::new(store).await;
+    let w = RootsWorld::new_with_ada_entry(store).await;
     let ada = w.signed_in("ada", false).await;
     let bo = w.signed_in("bo", true).await;
     for (key, person) in [("ada-review", "ada"), ("bo-review", "bo")] {
@@ -1299,6 +1329,131 @@ where
     a_held_put_back_another_key_proposed_before_the_rule_is_still_ratified_after_it(make().await)
         .await;
     a_pending_email_signs_in_to_nothing_until_its_person_accepts_it(make().await).await;
+    the_last_admin_entry_is_refused_a_change_that_leaves_it_pending(make().await).await;
+    an_accept_whose_admin_flag_the_entry_no_longer_carries_commits_nothing(make().await).await;
+}
+
+/// F3 of the fourth review of #498, on either store: the tenant's last live
+/// admin entry, changed to name another existing person, would wait on that
+/// person and sign in to nothing, so the change is refused as an un-flagging
+/// is (ADR-0045 d10; d2's note of 2026-11-19).
+pub async fn the_last_admin_entry_is_refused_a_change_that_leaves_it_pending<
+    S: WebStore + ConnectionStore + Clone,
+>(
+    store: S,
+) {
+    let w = RootsWorld::new(store).await;
+    w.signed_in("ann", true).await;
+    w.signed_in("bob", false).await;
+    let err = w
+        .app
+        .allow_web_email_keeping(
+            w.admin.as_str(),
+            &WebEmailRequest {
+                email: Email::parse("ann@example.com").expect("an email"),
+                user: Name::parse("bob").expect("a name"),
+                admin: true,
+            },
+            true,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::WebField { field: "admin", .. }),
+        "{err:?}"
+    );
+    let stored = w
+        .store
+        .web_entry_by_email(&Email::parse("ann@example.com").expect("an email").digest())
+        .await
+        .expect("a read")
+        .expect("ann's entry");
+    assert_eq!(stored.user.as_str(), "ann");
+    assert!(stored.admin && !stored.pending, "{stored:?}");
+}
+
+/// F5 of the fourth review of #498, on either store: `web.email_accepted`
+/// folds only over a pending entry whose admin flag is the one the accept
+/// names, so a flag flipped after the person reviewed it commits nothing;
+/// the flag the entry carries commits (the operator's decision of
+/// 2026-11-20).
+pub async fn an_accept_whose_admin_flag_the_entry_no_longer_carries_commits_nothing<
+    S: WebStore + ConnectionStore + Clone,
+>(
+    store: S,
+) {
+    use oml_app::domain::event_types;
+    use oml_app::ports::MetadataFold;
+    use oml_app::types::WebEntry;
+    use serde_json::json;
+    let mut rig = ChainRig::new(4985);
+    rig.seed_chain(&store, 0).await;
+    let t = rig.tenant_id;
+    let admin = crate::key_record(t, Uuid::from_u128(0x4B10), Role::Admin, None);
+    rig.issue_key(&store, admin.clone()).await;
+    let address = Email::parse("ann@elsewhere.example").expect("an email");
+    let ann = Name::parse("ann").expect("a name");
+    rig.commit(
+        &store,
+        event_types::WEB_EMAIL_ALLOWED,
+        json!({ "email_digest": address.digest().to_prefixed() }),
+        MetadataFold::WebEmailAllowed(WebEntry {
+            tenant_id: t,
+            email: address.clone(),
+            user: ann.clone(),
+            admin: true,
+            google_subject: None,
+            github_subject: None,
+            added_by: admin.key_id,
+            terms_version: None,
+            disabled_at: None,
+            pending: true,
+        }),
+        None,
+    )
+    .await
+    .expect("a pending admin entry");
+    let accept = |flag: bool| MetadataFold::WebEmailAccepted {
+        email_hash: address.digest(),
+        user: ann.clone(),
+        admin: flag,
+    };
+    let payload = || json!({ "email_digest": address.digest().to_prefixed() });
+    let head = store.chain_head(t).await.expect("head");
+    assert!(
+        rig.commit(
+            &store,
+            event_types::WEB_EMAIL_ACCEPTED,
+            payload(),
+            accept(false),
+            None
+        )
+        .await
+        .is_err(),
+        "an accept of the flag the entry no longer carries commits nothing"
+    );
+    assert_eq!(store.chain_head(t).await.expect("head"), head);
+    let stored = store
+        .web_entry_by_email(&address.digest())
+        .await
+        .expect("a read")
+        .expect("the entry");
+    assert!(stored.pending, "{stored:?}");
+    rig.commit(
+        &store,
+        event_types::WEB_EMAIL_ACCEPTED,
+        payload(),
+        accept(true),
+        None,
+    )
+    .await
+    .expect("the flag the entry carries commits");
+    let stored = store
+        .web_entry_by_email(&address.digest())
+        .await
+        .expect("a read")
+        .expect("the entry");
+    assert!(!stored.pending, "{stored:?}");
 }
 
 /// The operator's decision of 2026-11-19 (ADR-0045 d2's note), on either
@@ -1371,7 +1526,7 @@ pub async fn a_pending_email_signs_in_to_nothing_until_its_person_accepts_it<
     let web = w.session_key(&ann, Capacity::Web).await;
     let accepted = w
         .app
-        .accept_web_email(Bearer::Session(&web), &added)
+        .accept_web_email(Bearer::Session(&web), &added, true)
         .await
         .expect("ann accepts");
     assert!(!accepted.pending);

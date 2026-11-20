@@ -791,7 +791,7 @@ export interface paths {
         put?: never;
         /**
          * Link a person's tenant key to the user who signs in, so the console acts with it in shared workspaces.
-         * @description Requires: a console admin session, <user>-admin through its capacity credential, in the key's own tenant; another role is access.verb_ceiling, a bearer admin key, which names no person, is request.validation with details.field key and details.reason session_admin_only, and no MCP tool or CLI command reaches the route (the operator, 2026-11-17: "Console only"). user names a user of the tenant with a user root and a web entry, none of it disabled, and never the calling admin's own person; otherwise request.validation with details.field /user and details.reason user_unknown, user_disabled or self_link. The key is a live tenant bearer key used_by person that holds no link; otherwise request.validation with details.field key and details.reason revoked (a key past its expiry too), already_linked (unlink it first), admin_key, not_a_tenant_key (a user key, a session key or a connector key) or not_used_by_person. Journalled as key.linked_person, with accepted false: the link is pending, and the key acts for no one, until that user accepts it from their own console session with POST /v2/keys/{key}/accept_link (the operator's decision of 2026-11-19). The key is refused already_linked while a link pends too. From the acceptance on, the key writes into that user's root as their key wherever its grants allow, and oml-web may name it in OML-Acting-Key beside that user's capacity credential on the console's acting routes (GET /v2/whoami, GET /v2/review/held, GET /v1/memories/{artifact_id}, POST /v2/review/verdicts/bulk): the request runs as the key, with its grants and verb ceilings. The header sent twice, on another route, without a capacity credential, or naming a key the link no longer admits answers auth.invalid with details.reason acting_key_not_linked and runs nothing (ADR-0085 d16, amended 2026-11-17). The Idempotency-Key is required and not replayed. Since v0.8.3.
+         * @description Requires: a console admin session, <user>-admin through its capacity credential, in the key's own tenant; another role is access.verb_ceiling, a bearer admin key, which names no person, is request.validation with details.field key and details.reason session_admin_only, and no MCP tool or CLI command reaches the route (the operator, 2026-11-17: "Console only"). user names a user of the tenant with a user root and a web entry, none of it disabled, and never the calling admin's own person; otherwise request.validation with details.field /user and details.reason user_unknown, user_disabled or self_link. The key is a live tenant bearer key used_by person that holds no link, an admin key's included; otherwise request.validation with details.field key and details.reason revoked (a key past its expiry too), already_linked (unlink it first), not_a_tenant_key (a user key, a session key or a connector key) or not_used_by_person. Journalled as key.linked_person, with accepted false: the link is pending, and the key acts for no one, until that user accepts it from their own console session with POST /v2/keys/{key}/accept_link (the operator's decision of 2026-11-19). The key is refused already_linked while a link pends too. From the acceptance on, the key writes into that user's root as their key wherever its grants allow, and oml-web may name it in OML-Acting-Key beside that user's capacity credential on the console's acting routes (GET /v2/whoami, GET /v2/review/held, GET /v1/memories/{artifact_id}, POST /v2/review/verdicts/bulk): the request runs as the key, with its grants and verb ceilings. The header sent twice, on another route, without a capacity credential, or naming a key the link no longer admits answers auth.invalid with details.reason acting_key_not_linked and runs nothing (ADR-0085 d16, amended 2026-11-17). The Idempotency-Key is required and not replayed. Since v0.8.3.
          */
         post: operations["linkKey"];
         delete?: never;
@@ -1093,7 +1093,7 @@ export interface paths {
         put?: never;
         /**
          * Accept a sign-in email an admin added for the signed-in person, so it signs in as them.
-         * @description Requires: the console session of the person the pending entry names, through its capacity credential (the operator's decision of 2026-11-19, ADR-0045 d2's note). An email an admin adds for a person who signs in already, or an entry changed to name such a person, is pending and signs in to nothing until that person accepts it. Journalled as web.email_accepted with the email's digest; the email signs in as the person from then on. Refused request.validation, details.field /email, with details.reason session_only for a bearer key, an admin key's included, not_named_person for a session of any other person, the adding admin's included, and not_pending for an entry that waits on no one; an email on no entry of the caller's tenant answers access.not_found. A refusal journals nothing. The email is in the body, never the path. Since v0.8.4.
+         * @description Requires: the console session of the person the pending entry names, through its capacity credential (the operator's decision of 2026-11-19, ADR-0045 d2's note). An email an admin adds for a person who signs in already, or an entry changed to name such a person, is pending and signs in to nothing until that person accepts it. Journalled as web.email_accepted with the email's digest; the email signs in as the person from then on. Refused request.validation, details.field /email, with details.reason session_only for a bearer key, an admin key's included, not_named_person for a session of any other person, the adding admin's included, not_pending for an entry that waits on no one, and changed (details.field /admin) for an entry whose admin flag is not the one sent; an email on no entry of the caller's tenant answers access.not_found. A refusal journals nothing. The email is in the body, never the path. Since v0.8.4.
          */
         post: operations["acceptWebEmail"];
         delete?: never;
@@ -3815,8 +3815,16 @@ export interface components {
             linked_keys?: components["schemas"]["WhoamiRef"][];
             /** @description The live tenant keys an admin linked to the person that wait on the person's acceptance, by id and name, in name order; each acts for no one until the person accepts it with POST /v2/keys/{key}/accept_link (ADR-0085 d16, the operator's decision of 2026-11-19). Since v0.8.4. */
             pending_links?: components["schemas"]["WhoamiRef"][];
-            /** @description The sign-in emails an admin added for the person that wait on the person's acceptance, in email order; each signs in to nothing until the person accepts it with POST /v2/web/emails/accept or removes it with POST /v2/web/emails/decline (ADR-0045 d2, the operator's decision of 2026-11-19). Since v0.8.4. */
-            pending_emails?: string[];
+            /** @description The sign-in emails an admin added for the person that wait on the person's acceptance, in email order, each with whether it signs in as an admin and the admin key that added it, or changed it to name the person; each signs in to nothing until the person accepts it with POST /v2/web/emails/accept, naming back the admin flag shown, or removes it with POST /v2/web/emails/decline (ADR-0045 d2, the operator's decision of 2026-11-19). Since v0.8.4. */
+            pending_emails?: {
+                email: string;
+                admin: boolean;
+                added_by: {
+                    id: string;
+                    /** @description The key's name; null for a key issued before names (ADR-0026 d11). */
+                    name: string | null;
+                };
+            }[];
             /** @description With start=true, what the onboarding page waits for: whether one of the person's agent keys has connected, and the state of the newest memory of their root, held or promoted, else null (ADR-0068 d10; ADR-0070 d5). Absent otherwise. Since v0.7.0. */
             start?: {
                 connected?: boolean;
@@ -7110,6 +7118,10 @@ export interface operations {
                     enrollment_token: string;
                     /** @description The root operator key's name, in the provider's namespace (409 name.taken when held — ADR-0026 d9). */
                     name: components["schemas"]["Name"];
+                    /** @description The person the first admin key acts for: the claim creates that person's user root and links the key to it, accepted at once, so the key may take an admin fix (ADR-0089, ADR-0085 d16, the operator's decision of 2026-11-19). Sent with email, or neither is (request.validation naming the one missing). Since v0.8.4. */
+                    person?: components["schemas"]["Name"];
+                    /** @description The sign-in email of the person person names, recorded as that person's accepted admin entry, journalled as web.email_allowed with pending false: the one way the person a claim names gets a first sign-in, since an email an admin adds later for a person a key names waits on that person (ADR-0045 d2's note, the operator's decision of 2026-11-20). An email another tenant's entry holds is web.email_taken. Since v0.8.4. */
+                    email?: string;
                 };
             };
         };
@@ -7816,11 +7828,14 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "email": "alice@work.example"
+                 *       "email": "alice@work.example",
+                 *       "admin": false
                  *     }
                  */
                 "application/json": {
                     email: string;
+                    /** @description The admin flag of the entry as the person reviewed it, from whoami's pending_emails; an entry whose flag is not this one, an admin having changed it since, is refused request.validation, details.field /admin, details.reason changed, and journals nothing (the operator's decision of 2026-11-20). Since v0.8.4. */
+                    admin: boolean;
                 };
             };
         };

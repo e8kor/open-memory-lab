@@ -1119,10 +1119,29 @@ pub struct Person {
     #[serde(default)]
     pub pending_links: Vec<LinkedKey>,
     /// The sign-in emails an admin added for the person that wait on their
-    /// acceptance; empty from an API before v0.8.4 (ADR-0045 d2, the
-    /// operator's decision of 2026-11-19).
+    /// acceptance, each with its admin flag and the key that added it;
+    /// empty from an API before v0.8.4 (ADR-0045 d2, the operator's
+    /// decisions of 2026-11-19 and 2026-11-20).
     #[serde(default)]
-    pub pending_emails: Vec<String>,
+    pub pending_emails: Vec<PendingEmail>,
+}
+
+/// A sign-in email that waits on its person: the address, whether it signs
+/// in as an admin once accepted, and the admin key that added it, whose
+/// name is `None` for a key issued before names (ADR-0045 d2, the
+/// operator's decision of 2026-11-20).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct PendingEmail {
+    pub email: String,
+    pub admin: bool,
+    pub added_by: AddedBy,
+}
+
+/// The admin key that added a pending sign-in email, by id and name.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AddedBy {
+    pub id: String,
+    pub name: Option<String>,
 }
 
 /// `POST /v2/keys/{key}/link`, `/unlink` and `/accept_link`: the key and
@@ -2852,7 +2871,9 @@ impl<T: Transport> Client<T> {
 
     /// `POST /v2/web/emails/accept`: the signed-in person accepts a sign-in
     /// email an admin added for them, so it signs in as them (ADR-0045 d2,
-    /// the operator's decision of 2026-11-19).
+    /// the operator's decision of 2026-11-19). `admin` is the flag the
+    /// person reviewed; an entry whose flag changed since is refused
+    /// `changed` (the operator's decision of 2026-11-20).
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
@@ -2861,12 +2882,13 @@ impl<T: Transport> Client<T> {
         call: &Call<'_>,
         idempotency_key: &str,
         email: &str,
+        admin: bool,
     ) -> Result<WebEmail, Error> {
         self.post(
             call,
             "/v2/web/emails/accept".to_owned(),
             idempotency_key,
-            &serde_json::json!({ "email": email }),
+            &serde_json::json!({ "email": email, "admin": admin }),
         )
         .await
     }

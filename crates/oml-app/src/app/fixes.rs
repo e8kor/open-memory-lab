@@ -429,7 +429,7 @@ where
         // compared at the settlement, never the key's link as it stands
         // then. A link still pending acts for no one (ADR-0089 and ADR-0085
         // d16, the operator's decisions of 2026-11-19).
-        let Some(admin_person) = self.person_of(&admin).await? else {
+        let Some(admin_person) = self.counted_person_of(&admin).await? else {
             return Err(AppError::FixRequiresPerson { reason: "unlinked" });
         };
         let admin_person = &admin_person;
@@ -828,7 +828,7 @@ where
             replaces: Some(replaced.memory_id),
             author_principal: author.principal.clone(),
             author_key_id: author.key_id,
-            author_person: self.person_of(author).await?,
+            author_person: self.counted_person_of(author).await?,
             derives_from: v.derives_from,
             lineage_principals: principals.into_iter().collect(),
             lineage_key_ids: key_ids.into_iter().collect(),
@@ -1419,7 +1419,10 @@ where
         // The admin's person as recorded at the fix, never the admin key's
         // link as it stands now: a relink after the fix moves nothing
         // (ADR-0089, the operator's decision of 2026-11-19).
-        let Some(person) = self.person_of(key).await? else {
+        // The settling key counts as the person its issuer counts as, so a
+        // key an admin mints in another person's root is the admin's
+        // person's here (the operator's decision of 2026-11-20).
+        let Some(person) = self.counted_person_of(key).await? else {
             // Fails closed: a person unknown on the settling side, a key
             // whose link is still pending included, settles nothing
             // (ADR-0089 and ADR-0085 d16, the operator's decisions of
@@ -1434,8 +1437,12 @@ where
             .workspace(key.tenant_id, fix.workspace_id)
             .await?
             .is_some_and(|w| w.status == WorkspaceStatus::Development);
+        // The root of the person the key counts as, never the root it was
+        // issued in (the operator's decision of 2026-11-20).
         let loose = development
-            && self.in_own_root(key, fix.workspace_id).await?
+            && self
+                .in_root_of_person(key.tenant_id, &person, fix.workspace_id)
+                .await?
             && self
                 .journal
                 .member_of_no_release(key.tenant_id, fix.target_id)
@@ -1444,33 +1451,45 @@ where
     }
 
     /// R2 by person over `m`'s lineage: `m`'s author as recorded at its
-    /// write (`author_person`), and every other key in its lineage as it
-    /// stands. When one of them acts for `key`'s person, the settlement is
+    /// write (`author_person`) and by the root its key was issued in, and
+    /// every other key in its lineage as it stands, read both as the person
+    /// it counts as and as the person whose root it was issued in. When one of them acts for
+    /// the person `key` counts as, the settlement is
     /// [`AppError::SamePerson`] outside that person's own root, and marked
     /// `same_user` inside it; otherwise `same_user` as judged before
-    /// (ADR-0089, the operator's decision of 2026-11-19).
+    /// (ADR-0089, the operator's decisions of 2026-11-19 and 2026-11-20).
     async fn lineage_person_rule(
         &self,
         key: &KeyRecord,
         m: &MemoryRecord,
         same_user: bool,
     ) -> Result<bool, AppError> {
-        let Some(person) = self.person_of(key).await? else {
+        let Some(person) = self.counted_person_of(key).await? else {
             return Err(AppError::SamePerson);
         };
         let mut same = m.author_person.as_ref() == Some(&person);
-        for key_id in m.lineage_key_ids.iter().filter(|k| **k != m.author_key_id) {
+        for key_id in &m.lineage_key_ids {
             if same {
                 break;
             }
             if let Some(author) = self.journal.key(key.tenant_id, *key_id).await? {
-                same = self.person_of(&author).await?.as_ref() == Some(&person);
+                // The author as recorded at the write and by the root it was
+                // issued in, never its link as it stands; every other key of
+                // the lineage on both readings as it stands.
+                same = if *key_id == m.author_key_id {
+                    self.issued_in_root_of(&author, &person).await?
+                } else {
+                    self.acts_for(&author, &person).await?
+                };
             }
         }
         if !same {
             return Ok(same_user);
         }
-        if self.in_own_root(key, m.workspace_id).await? {
+        if self
+            .in_root_of_person(key.tenant_id, &person, m.workspace_id)
+            .await?
+        {
             Ok(true)
         } else {
             Err(AppError::SamePerson)
@@ -1588,7 +1607,9 @@ where
                             any = true;
                             // Against the admin's person recorded at
                             // the fix, as the settlement compares it.
-                            if self.person_of(&r.key).await?.as_ref() != Some(&fix.admin_person) {
+                            if self.counted_person_of(&r.key).await?.as_ref()
+                                != Some(&fix.admin_person)
+                            {
                                 other = true;
                             }
                         }

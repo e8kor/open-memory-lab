@@ -13877,6 +13877,64 @@ async fn an_open_investigations_read_count_never_goes_down() {
     drop_dbs(&created).await;
 }
 
+/// F4 of the fourth review of #498: an inserted key carries no link and no
+/// pending link, and the guard's one exception, the bootstrap ceremony's
+/// link of its own first admin key, is reached only while that key is its
+/// tenant's only one; on an established tenant the ceremony's key itself,
+/// like any other key no key issued, is refused a direct link
+/// (0064's api_keys_link_guard; ADR-0085 d16, the operator's decision of
+/// 2026-11-20).
+#[tokio::test]
+async fn the_serving_role_inserts_no_linked_key_and_links_the_ceremony_key_only_while_it_is_alone()
+{
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let (_app, tenant, _admin, _writer, _v1, _v2) = two_promoted_pg(&store, "linkinsert").await;
+    for sql in [
+        "INSERT INTO api_keys (id, tenant_id, role, principal, used_by, issued_by, issued_seq, \
+         credential, linked_user_id) \
+         SELECT $2, $1, 'reviewer', 'p', 'person', k.id, 1, 'bearer', gen_random_uuid() \
+         FROM api_keys k WHERE k.tenant_id = $1 AND k.issued_by IS NULL AND k.role = 'admin'",
+        "INSERT INTO api_keys (id, tenant_id, role, principal, used_by, issued_by, issued_seq, \
+         credential, link_pending_user_id) \
+         SELECT $2, $1, 'reviewer', 'p', 'person', k.id, 1, 'bearer', gen_random_uuid() \
+         FROM api_keys k WHERE k.tenant_id = $1 AND k.issued_by IS NULL AND k.role = 'admin'",
+    ] {
+        let err = serving_refusal(&store, tenant, sql, Uuid::from_u128(0x4F01))
+            .await
+            .unwrap_or_else(|| panic!("the serving role inserted a linked key: {sql}"));
+        assert!(err.contains("api_keys_link_guard"), "{sql}: {err}");
+    }
+    let ceremony: Uuid = {
+        let mut tx = store.pool().begin().await.expect("begin");
+        sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+            .bind(tenant.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("tenant");
+        let id = sqlx::query_scalar(
+            "SELECT id FROM api_keys WHERE tenant_id = $1 AND issued_by IS NULL \
+             AND role = 'admin' AND linked_user_id IS NULL",
+        )
+        .bind(tenant)
+        .fetch_one(&mut *tx)
+        .await
+        .expect("the ceremony's unlinked admin key");
+        tx.commit().await.expect("commit");
+        id
+    };
+    let direct =
+        "UPDATE api_keys SET linked_user_id = gen_random_uuid() WHERE tenant_id = $1 AND id = $2";
+    let err = serving_refusal(&store, tenant, direct, ceremony)
+        .await
+        .expect("the ceremony's key beside other keys is refused a direct link");
+    assert!(err.contains("api_keys_link_guard"), "{err}");
+    drop_dbs(&created).await;
+}
+
 /// A key comes to act for a person only through that person (the
 /// operator's decision of 2026-11-19; ADR-0085 d16): the serving role may
 /// not set a key's link directly, nor accept a pending link to another root

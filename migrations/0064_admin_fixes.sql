@@ -45,8 +45,9 @@
 -- api_keys_link_guard, owner-owned and SECURITY INVOKER as 0057's guard is,
 -- admits a change of linked_user_id only to NULL (an unlink), from the
 -- link pending to the same root (an acceptance), or on the ceremony's own
--- key while it holds no link (the bootstrap's), and refuses any change of
--- issued_by, which marks that key.
+-- key while it holds no link and is its tenant's only key (the bootstrap's),
+-- and refuses any change of issued_by, which marks that key. On insert it
+-- refuses a link or a pending link (the operator's decision of 2026-11-20).
 --
 -- An admin can no longer quietly become a person who signs in already (the
 -- operator's decision of 2026-11-19, ADR-0045 d2's note):
@@ -55,25 +56,29 @@
 -- accepts it from a session they already have, web.email_accepted, which
 -- clears it. A session opens only on an entry with pending_since NULL.
 --
--- A database that applied an earlier draft of this migration (a stage or
--- development database built from the #498 branch before 2026-11-19's third
--- round) is reset and migrated again: sqlx records the file's checksum, and
--- the edited file no longer matches it.
+-- A database that applied an earlier draft of 0063 or 0064 (a stage or
+-- development database built from the #498 branch before 2026-11-20's fourth
+-- round) is reset and migrated again: sqlx records each file's checksum, and
+-- an edited file no longer matches it. No released database holds either:
+-- v0.8.3 ships 0065 without them, and they run after it on upgrade.
 --
 -- What it costs a live database: one new, empty table with one index, its
 -- policy and its update guard, four nullable columns on memories, one on
 -- api_keys and one on web_emails with no default, which rewrite no row, an
--- update guard on api_keys, the linked keys' rows updated per tenant, and
--- the api_keys checks replaced and added NOT VALID, then validated. ALTER
--- TABLE memories takes ACCESS EXCLUSIVE on memories and its partitions for
--- the catalog change only. The DROP CONSTRAINT on api_keys takes ACCESS
--- EXCLUSIVE on api_keys and holds it to the commit, so both VALIDATEs scan
--- api_keys under it: measured at 1,000,000 keys, about 120 ms of scan for
--- one VALIDATE, so with two a key lookup waits about 230 ms; a tenant holds
--- hundreds of keys. ALTER TABLE web_emails takes ACCESS EXCLUSIVE on
--- web_emails for the catalog change only. The foreign key to tenants takes
--- SHARE ROW EXCLUSIVE on tenants until the commit. A lock is waited for at
--- most 5 s.
+-- insert and update guard on api_keys, the linked keys' rows moved per
+-- tenant, and the api_keys checks replaced and added NOT VALID, then
+-- validated. Every lock below is held until the migration commits, as any
+-- lock a transaction takes is. ALTER TABLE memories takes ACCESS EXCLUSIVE
+-- on memories and its partitions; its change is to the catalog alone, so it
+-- scans no row, but reads and writes of memories wait to the commit. The
+-- DROP CONSTRAINT on api_keys takes ACCESS EXCLUSIVE on api_keys, so the
+-- move of the linked keys' rows and both VALIDATEs scan api_keys under it:
+-- the fourth review measured about 400 ms at 1,000,000 keys of which 10,000
+-- are linked, the move's scan included, so a key lookup waits about that
+-- long; a tenant holds hundreds of keys. ALTER TABLE web_emails takes
+-- ACCESS EXCLUSIVE on web_emails, a catalog change, and sign-ins wait to the
+-- commit. The foreign key to tenants takes SHARE ROW EXCLUSIVE on tenants.
+-- A lock is waited for at most 5 s.
 
 SET LOCAL lock_timeout = '5s';
 
@@ -178,8 +183,8 @@ ALTER TABLE api_keys VALIDATE CONSTRAINT api_keys_linked_user;
 -- A console admin's link waits on its person (the operator's decision of
 -- 2026-11-19 on key-to-person links): the user root it names, until that
 -- person accepts it. A key holds a link or a pending one, never both, and
--- neither on a session key or a user key. Every stored row has the new
--- column NULL, so it meets the check, validated under the same lock.
+-- neither on a session key or a user key. The check is validated after the
+-- move below, under the same lock.
 ALTER TABLE api_keys ADD COLUMN link_pending_user_id uuid;
 COMMENT ON COLUMN api_keys.link_pending_user_id IS
     'The user root a console admin linked this key to, until that person accepts the link; the '
@@ -211,18 +216,31 @@ ALTER TABLE api_keys
         link_pending_user_id IS NULL
         OR (linked_user_id IS NULL AND user_root_id IS NULL AND credential <> 'session')
     ) NOT VALID;
--- lint:allow validate the column is new and NULL on every stored row, so no row fails it, and api_keys holds one row per key
+-- lint:allow validate a row the move set was a linked key, so its user_root_id is NULL and it is no session key as api_keys_linked_user held, every other row has the column NULL, and api_keys holds one row per key
 ALTER TABLE api_keys VALIDATE CONSTRAINT api_keys_link_pending;
 
 -- A key comes to act for a person only through the person (the operator's
 -- decision of 2026-11-19): an update that sets linked_user_id is an unlink to
 -- NULL, an acceptance that moves the link pending to the same root, or the
--- bootstrap ceremony's link of its own first admin key, which no key issues;
--- issued_by, which marks that key, never changes. Owner-owned and SECURITY
--- INVOKER, as 0057's guard is.
+-- bootstrap ceremony's link of its own first admin key, which no key issues,
+-- while that key is its tenant's only key, as it is at the ceremony; issued_by,
+-- which marks that key, never changes. An insert carries no link and no
+-- pending link, which only an update sets (the operator's decision of
+-- 2026-11-20); an admin key no key issues and inserted beside other keys is
+-- never its tenant's only key, so the ceremony's exception never reaches it. What stays open: the serving role sets
+-- link_pending_user_id, hash and web_emails.pending_since without a guard of
+-- the database (ADR-0045's limits). Owner-owned and SECURITY INVOKER, as
+-- 0057's guard is; the tenant's other keys are read under its row security.
 CREATE OR REPLACE FUNCTION oml_api_keys_link_guard() RETURNS trigger
     LANGUAGE plpgsql SECURITY INVOKER SET search_path = public, pg_temp AS $$
 BEGIN
+    IF TG_OP = 'INSERT' THEN
+        IF NEW.linked_user_id IS NOT NULL OR NEW.link_pending_user_id IS NOT NULL THEN
+            RAISE EXCEPTION 'api_keys_link_guard: a key is inserted with no link; its person accepts one later'
+                USING ERRCODE = 'check_violation';
+        END IF;
+        RETURN NEW;
+    END IF;
     IF NEW.issued_by IS DISTINCT FROM OLD.issued_by THEN
         RAISE EXCEPTION 'api_keys_link_guard: a key''s issuer never changes'
             USING ERRCODE = 'check_violation';
@@ -237,7 +255,9 @@ BEGIN
         RETURN NEW;
     END IF;
     IF OLD.linked_user_id IS NULL AND OLD.link_pending_user_id IS NULL
-       AND OLD.issued_by IS NULL AND OLD.role = 'admin' THEN
+       AND OLD.issued_by IS NULL AND OLD.role = 'admin'
+       AND NOT EXISTS (SELECT 1 FROM api_keys k
+                        WHERE k.tenant_id = OLD.tenant_id AND k.id <> OLD.id) THEN
         RETURN NEW;
     END IF;
     RAISE EXCEPTION 'api_keys_link_guard: a key acts for a person only once that person accepts its link'
@@ -245,14 +265,14 @@ BEGIN
 END $$;
 
 CREATE TRIGGER api_keys_link_guard
-    BEFORE UPDATE OF linked_user_id, issued_by ON api_keys
+    BEFORE INSERT OR UPDATE OF linked_user_id, issued_by ON api_keys
     FOR EACH ROW EXECUTE FUNCTION oml_api_keys_link_guard();
 
 COMMENT ON FUNCTION oml_api_keys_link_guard() IS
-    'Refuses an update of api_keys that sets linked_user_id other than to NULL, from the link '
-    'pending to the same root, or on the bootstrap ceremony''s first admin key while it holds no '
-    'link, and any change of issued_by (0064; ADR-0085 d16, the operator''s decision of '
-    '2026-11-19).';
+    'Refuses an insert of api_keys with a link or a pending link; an update that sets linked_user_id other than to '
+    'NULL, from the link pending to the same root, or on the bootstrap ceremony''s first admin '
+    'key while it holds no link and is its tenant''s only key; and any change of issued_by '
+    '(0064; ADR-0085 d16, the operator''s decisions of 2026-11-19 and 2026-11-20).';
 
 -- A sign-in email for a person who signs in already waits on that person
 -- (the operator's decision of 2026-11-19, ADR-0045 d2's note): the time it

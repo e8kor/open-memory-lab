@@ -84,7 +84,13 @@ where
             admin: req.admin,
             google_subject: existing.as_ref().and_then(|e| e.google_subject.clone()),
             github_subject: existing.as_ref().and_then(|e| e.github_subject.clone()),
-            added_by: existing.as_ref().map_or(admin.key_id, |e| e.added_by),
+            // A change that makes an entry newly wait on its person records
+            // the admin key that made it, the one the person is shown as
+            // having added it (the operator's decision of 2026-11-20).
+            added_by: match &existing {
+                Some(e) if !(pending && !e.pending) => e.added_by,
+                _ => admin.key_id,
+            },
             terms_version: existing.as_ref().and_then(|e| e.terms_version.clone()),
             disabled_at: existing.as_ref().and_then(|e| e.disabled_at.clone()),
             pending,
@@ -189,14 +195,21 @@ where
     /// [`AppError::WebEmailRefused`]: a caller that is not a console
     /// session, `session_only`; an entry that waits on no one,
     /// `not_pending`; a session of any other person, the adding admin's
-    /// included, `not_named_person`. An email no entry of the caller's
-    /// tenant holds is [`AppError::NotFound`].
+    /// included, `not_named_person`; an entry whose admin flag is not
+    /// `admin`, the flag the person reviewed, `changed` (the operator's
+    /// decision of 2026-11-20). An email no entry of the caller's tenant
+    /// holds is [`AppError::NotFound`]. The fold matches the flag too, so a
+    /// flip between this read and the commit fails the commit.
     pub async fn accept_web_email(
         &self,
         bearer: impl Into<Bearer<'_>>,
         email: &Email,
+        admin: bool,
     ) -> Result<WebEntry, AppError> {
         let (caller, mut entry) = self.pending_entry_of_caller(bearer.into(), email).await?;
+        if entry.admin != admin {
+            return Err(AppError::WebEmailRefused { reason: "changed" });
+        }
         let email_hash = email.digest();
         let prev = self.head_event(caller.tenant_id).await?;
         let event = self.seal(
@@ -208,6 +221,7 @@ where
             json!({
                 "email_digest": email_hash.to_prefixed(),
                 "user": entry.user.as_str(),
+                "admin": entry.admin,
                 "accepted_by_key_id": caller.key_id.to_string(),
             }),
         )?;
@@ -216,6 +230,7 @@ where
             MetadataFold::WebEmailAccepted {
                 email_hash,
                 user: entry.user.clone(),
+                admin: entry.admin,
             },
             None,
         )
@@ -301,18 +316,47 @@ where
         Ok((caller, entry))
     }
 
-    /// Whether `user` is a person who signs in already: an entry of the
-    /// tenant names them, or their session keys exist, which their first
-    /// sign-in made and nothing deletes (ADR-0045 d6). A user root no one
-    /// signed in to takes its first email at once (the build's reading of
-    /// the operator's decision of 2026-11-19, ADR-0045 d2's note).
+    /// Whether `user` is an existing person: an entry of the tenant names
+    /// them, their session keys exist, which their first sign-in made and
+    /// nothing deletes (ADR-0045 d6), or a key names their user root as its
+    /// `user_root_id`, its `linked_user_id` or its `link_pending_user_id`
+    /// (ADR-0044 d2, ADR-0085 d16). Such a person's first email an admin adds
+    /// waits on them; a user root no key names, and a name no root holds,
+    /// take their first email at once (the operator's decisions of
+    /// 2026-11-19 and 2026-11-20, ADR-0045 d2's note).
     async fn person_exists(&self, tenant_id: Uuid, user: &Name) -> Result<bool, AppError> {
         if self.web_user_known(tenant_id, user).await? {
             return Ok(true);
         }
-        Ok(!self
+        if !self
             .journal
             .web_session_keys(tenant_id, user)
+            .await?
+            .is_empty()
+        {
+            return Ok(true);
+        }
+        let Some(id) = self
+            .journal
+            .resolve_name(tenant_id, NamedKind::Workspace, user)
+            .await?
+        else {
+            return Ok(false);
+        };
+        if !self
+            .journal
+            .workspace(tenant_id, id)
+            .await?
+            .is_some_and(|w| w.user_root)
+        {
+            return Ok(false);
+        }
+        if !self.journal.web_user_keys(tenant_id, id).await?.is_empty() {
+            return Ok(true);
+        }
+        Ok(!self
+            .journal
+            .web_linked_keys(tenant_id, id)
             .await?
             .is_empty())
     }

@@ -14,9 +14,9 @@ use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen}
 use oml_app::ports::JournalStore as _;
 use oml_app::ports::WebStore as _;
 use oml_app::types::{
-    AppError, Bearer, BootstrapRequest, BootstrapResult, GrantRequest, GuardrailRequest,
-    GuardrailSet, IssueKeyRequest, IssuedKey, KeyLimitsChange, RecallRequest, SubmitRequest,
-    SupersedeRequest, Verdict, WebEmailRequest, WebSessionRecord,
+    AppError, Bearer, BootstrapPerson, BootstrapRequest, BootstrapResult, GrantRequest,
+    GuardrailRequest, GuardrailSet, IssueKeyRequest, IssuedKey, KeyLimitsChange, RecallRequest,
+    SubmitRequest, SupersedeRequest, Verdict, WebEmailRequest, WebSessionRecord,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
@@ -259,6 +259,10 @@ struct Curated {
 
 async fn curated(app: &TestApp, boot: &BootstrapResult) -> Curated {
     let admin = &boot.admin_key.value;
+    // alice signs in before any key names her root: an address added for a
+    // person a key names waits on her (the operator's decision of
+    // 2026-11-20, ADR-0045 d2's note).
+    signed_in(app, admin, "alice", false).await;
     let alice = user_writer(app, admin, "alice", "alice/laptop").await;
     let alice_review = user_reviewer(app, admin, "alice", "alice/review").await;
     let source = written(
@@ -5406,7 +5410,12 @@ async fn fix_rig_for(person: Option<&str>) -> FixRig {
                 admin_key_name: name("root-admin"),
                 admin_principal: "acme-admin".to_owned(),
             },
-            person.map(name).as_ref(),
+            person
+                .map(|p| BootstrapPerson {
+                    user: name(p),
+                    email: email(&format!("{p}@example.com")),
+                })
+                .as_ref(),
         )
         .await
         .expect("bootstrap");
@@ -6180,7 +6189,7 @@ async fn only_the_named_person_accepts_a_pending_email_and_then_it_signs_in() {
     for caller in [&bob, &r.ops] {
         let err = r
             .app
-            .accept_web_email(Bearer::Session(caller), &address)
+            .accept_web_email(Bearer::Session(caller), &address, false)
             .await
             .unwrap_err();
         assert!(email_refused(&err, "not_named_person"), "{err:?}");
@@ -6189,7 +6198,11 @@ async fn only_the_named_person_accepts_a_pending_email_and_then_it_signs_in() {
         r.alice_review.value.as_str(),
         r.boot.admin_key.value.as_str(),
     ] {
-        let err = r.app.accept_web_email(bearer, &address).await.unwrap_err();
+        let err = r
+            .app
+            .accept_web_email(bearer, &address, false)
+            .await
+            .unwrap_err();
         assert!(email_refused(&err, "session_only"), "{err:?}");
     }
     assert_eq!(
@@ -6204,7 +6217,7 @@ async fn only_the_named_person_accepts_a_pending_email_and_then_it_signs_in() {
     let alice = console_of(&r.app, &r.store, "alice").await;
     let accepted = r
         .app
-        .accept_web_email(Bearer::Session(&alice), &address)
+        .accept_web_email(Bearer::Session(&alice), &address, false)
         .await
         .expect("alice accepts");
     assert!(!accepted.pending);
@@ -6230,7 +6243,7 @@ async fn only_the_named_person_accepts_a_pending_email_and_then_it_signs_in() {
         .expect("the accepted email opens a session");
     let err = r
         .app
-        .accept_web_email(Bearer::Session(&alice), &address)
+        .accept_web_email(Bearer::Session(&alice), &address, false)
         .await
         .unwrap_err();
     assert!(email_refused(&err, "not_pending"), "{err:?}");
@@ -6292,7 +6305,11 @@ async fn a_pending_email_is_listed_counted_and_removed_by_its_person_or_an_admin
         .await
         .expect("whoami")
         .expect("alice's person");
-    let mut listed = person.pending_emails.clone();
+    let mut listed: Vec<Email> = person
+        .pending_emails
+        .iter()
+        .map(|p| p.email.clone())
+        .collect();
     listed.sort_by(|a, b| a.as_str().cmp(b.as_str()));
     assert_eq!(listed, vec![first.clone(), second.clone()]);
     assert_eq!(
@@ -6342,4 +6359,251 @@ async fn a_pending_email_is_listed_counted_and_removed_by_its_person_or_an_admin
         .await
         .unwrap_err();
     assert!(email_refused(&err, "not_pending"), "{err:?}");
+}
+
+// -- a user key counts as its issuer's person (ADR-0089 and ADR-0085 d16, the
+// operator's decision of 2026-11-20: "counts as the issuer") -----------------
+
+/// carol's root, a claim there written by `carol/laptop` and approved by
+/// `carol/review`, both minted by the bootstrap admin key `r` linked to
+/// alice; the claim's id.
+async fn carols_claim_by_admin_minted_keys(r: &FixRig) -> Uuid {
+    let admin = r.boot.admin_key.value.as_str();
+    let writer = user_writer(&r.app, admin, "carol", "carol/laptop").await;
+    let reviewer = user_reviewer(&r.app, admin, "carol", "carol/review").await;
+    let claim = written(
+        &r.app,
+        &writer.value,
+        &submit("cf1", "The nightly export runs at two.", None),
+    )
+    .await;
+    r.app
+        .post_verdict(&reviewer.value, claim, Verdict::Approve, None)
+        .await
+        .expect("approve");
+    claim
+}
+
+/// The reviewer's scenario: an admin key linked to alice demotes carol's
+/// claim, then mints `carol/forged` in carol's root. That key counts as
+/// alice, the admin's person, not as carol, so its confirmation is refused
+/// `same_person`: the fix lies outside alice's own root.
+#[tokio::test]
+async fn a_key_an_admin_mints_in_another_persons_root_counts_as_the_admins_person_at_the_confirm() {
+    let r = fix_rig().await;
+    let admin = r.boot.admin_key.value.as_str();
+    let claim = carols_claim_by_admin_minted_keys(&r).await;
+    let fix = r
+        .app
+        .admin_fix(admin, &fix_req(oml_app::types::FixAct::Demote, claim, None))
+        .await
+        .expect("alice's admin key demotes carol's claim");
+    assert_eq!(fix.admin_person, name("alice"));
+    let forged = user_reviewer(&r.app, admin, "carol", "carol/forged").await;
+    for settle in [true, false] {
+        let err = if settle {
+            r.app.confirm_fix(&forged.value, fix.fix_id).await
+        } else {
+            r.app.revert_fix(&forged.value, fix.fix_id).await
+        }
+        .unwrap_err();
+        assert!(matches!(err, AppError::SamePerson), "{err:?}");
+    }
+}
+
+/// A write records as its author's person the person its key counts as:
+/// a key an admin linked to alice minted in carol's root records alice, and
+/// a key carol's own console session issued records carol.
+#[tokio::test]
+async fn a_write_records_the_person_its_key_counts_as_not_the_root_it_was_issued_in() {
+    let r = fix_rig().await;
+    let admin = r.boot.admin_key.value.as_str();
+    let claim = carols_claim_by_admin_minted_keys(&r).await;
+    let row = r
+        .store
+        .memory(r.boot.tenant_id, claim)
+        .await
+        .expect("read")
+        .expect("the claim");
+    assert_eq!(row.author_person, Some(name("alice")));
+    signed_in(&r.app, admin, "dora", false).await;
+    let web = console_of(&r.app, &r.store, "dora").await;
+    let own = r
+        .app
+        .issue_own_key(&web, "laptop", Role::Writer, false, None)
+        .await
+        .expect("dora issues her own key");
+    let mine = written(
+        &r.app,
+        own.value.as_str(),
+        &submit("cf2", "The tea is green.", Some("dora")),
+    )
+    .await;
+    let row = r
+        .store
+        .memory(r.boot.tenant_id, mine)
+        .await
+        .expect("read")
+        .expect("dora's claim");
+    assert_eq!(row.author_person, Some(name("dora")));
+}
+
+// -- an existing person is any person a key names (ADR-0045 d2's note, the
+// operator's decision of 2026-11-20: "widen + bootstrap email") -------------
+
+/// The reviewer's first probe: an admin issues a key for carol from the CLI,
+/// which makes carol's user root, and then adds an address for carol. carol
+/// has no entry and no session keys, but a key names her root, so she is an
+/// existing person and the address waits on her.
+#[tokio::test]
+async fn a_first_email_for_a_person_whose_root_a_key_names_waits_on_that_person() {
+    let r = fix_rig().await;
+    let admin = r.boot.admin_key.value.as_str();
+    user_writer(&r.app, admin, "carol", "carol/laptop").await;
+    let entry = allowed(&r, "carol@example.com", "carol").await;
+    assert!(entry.pending, "{entry:?}");
+    let err = r
+        .app
+        .web_session_open(&entry, 3600, None)
+        .await
+        .unwrap_err();
+    assert!(pending_refusal(&err), "{err:?}");
+}
+
+/// The reviewer's second probe: the bootstrap claim names alice, which
+/// makes her user root and links the first admin key to it. An address an
+/// admin adds for alice afterwards waits on her.
+#[tokio::test]
+async fn an_email_an_admin_adds_for_the_bootstraps_person_waits_on_that_person() {
+    let (app, store) = rig();
+    let boot = app
+        .bootstrap_tenant_for(
+            &BootstrapRequest {
+                tenant_name: name("acme"),
+                admin_key_name: name("root-admin"),
+                admin_principal: "acme-admin".to_owned(),
+            },
+            Some(&BootstrapPerson {
+                user: name("alice"),
+                email: email("alice@setup.example"),
+            }),
+        )
+        .await
+        .expect("bootstrap");
+    // The claim records alice's own sign-in email, accepted and an admin's,
+    // so she signs in at once.
+    let own = store
+        .web_entry_by_email(&email("alice@setup.example").digest())
+        .await
+        .expect("a read")
+        .expect("the bootstrap's entry");
+    assert!(!own.pending && own.admin, "{own:?}");
+    app.web_ensure_keys(&own).await.expect("her session keys");
+    app.web_session_open(&own, 3600, None)
+        .await
+        .expect("the bootstrap's email signs in");
+    let (entry, _) = app
+        .allow_web_email(
+            boot.admin_key.value.as_str(),
+            &WebEmailRequest {
+                email: email("mallory@example.net"),
+                user: name("alice"),
+                admin: true,
+            },
+        )
+        .await
+        .expect("the admin key adds the entry");
+    assert!(entry.pending, "{entry:?}");
+}
+
+// -- the last admin entry and the reviewed admin flag (ADR-0045 d2's note and
+// d10, the operator's decision of 2026-11-20) --------------------------------
+
+/// The last live admin entry, changed to name another person who exists
+/// already, would wait on that person and sign in to nothing: the console's
+/// change, which keeps an admin, is refused as an un-flagging is.
+#[tokio::test]
+async fn the_last_admin_entry_changed_to_wait_on_another_person_is_refused() {
+    let r = fix_rig().await;
+    let err = r
+        .app
+        .allow_web_email_keeping(
+            r.boot.admin_key.value.as_str(),
+            &WebEmailRequest {
+                email: email("ops@example.com"),
+                user: name("bob"),
+                admin: true,
+            },
+            true,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::WebField { field: "admin", .. }),
+        "{err:?}"
+    );
+}
+
+/// An accept names the admin flag the person reviewed: an admin who flips
+/// the flag after alice saw the entry leaves her accept refused `changed`,
+/// journalling nothing; her person's listing shows the flag and the key
+/// that added it, and an accept of the flag shown then commits.
+#[tokio::test]
+async fn an_accept_of_an_admin_flag_flipped_since_the_review_is_refused_changed() {
+    let r = fix_rig().await;
+    let address = email("alice@work.example");
+    allowed(&r, address.as_str(), "alice").await;
+    let alice = console_of(&r.app, &r.store, "alice").await;
+    let listed = r
+        .app
+        .whoami_person(Bearer::Session(&alice), false)
+        .await
+        .expect("whoami")
+        .expect("alice's person")
+        .pending_emails;
+    assert_eq!(listed.len(), 1);
+    assert!(!listed[0].admin);
+    assert_eq!(listed[0].added_by, r.boot.admin_key.key_id);
+    assert_eq!(listed[0].added_by_name, Some(name("root-admin")));
+    let flipped = r
+        .app
+        .allow_web_email(
+            r.boot.admin_key.value.as_str(),
+            &WebEmailRequest {
+                email: address.clone(),
+                user: name("alice"),
+                admin: true,
+            },
+        )
+        .await
+        .expect("the admin flips the flag")
+        .0;
+    assert!(flipped.pending && flipped.admin, "{flipped:?}");
+    let head = r
+        .store
+        .events_range(r.boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal")
+        .len();
+    let err = r
+        .app
+        .accept_web_email(Bearer::Session(&alice), &address, false)
+        .await
+        .unwrap_err();
+    assert!(email_refused(&err, "changed"), "{err:?}");
+    assert_eq!(
+        r.store
+            .events_range(r.boot.tenant_id, 1, 10_000)
+            .await
+            .expect("journal")
+            .len(),
+        head,
+        "a refused accept journals nothing"
+    );
+    let accepted = r
+        .app
+        .accept_web_email(Bearer::Session(&alice), &address, true)
+        .await
+        .expect("an accept of the flag the entry carries");
+    assert!(!accepted.pending && accepted.admin);
 }

@@ -185,6 +185,21 @@ struct Alice {
 async fn alice(app: &TestApp) -> Alice {
     let boot = bootstrap(app).await;
     let admin = &boot.admin_key.value;
+    // alice's sign-in entry first: an address added for a person a key
+    // names waits on her (the operator's decision of 2026-11-20, ADR-0045
+    // d2's note).
+    let (entry, _) = app
+        .allow_web_email(
+            admin.as_str(),
+            &oml_app::types::WebEmailRequest {
+                email: oml_app::domain::web::Email::parse("alice@example.com").expect("an email"),
+                user: name("alice"),
+                admin: false,
+            },
+        )
+        .await
+        .expect("alice's entry");
+    app.web_ensure_keys(&entry).await.expect("her session keys");
     let rw = || vec![grant("alice", Role::Writer), grant("alice", Role::Reader)];
     let person = issue(
         app,

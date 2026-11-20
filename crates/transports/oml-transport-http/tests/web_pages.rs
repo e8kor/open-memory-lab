@@ -722,7 +722,7 @@ async fn an_email_an_admin_adds_for_a_person_who_signs_in_already_signs_in_only_
         &rig,
         "/v2/web/emails/accept",
         "accept-0",
-        json!({ "email": ADDED }),
+        json!({ "email": ADDED, "admin": false }),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
@@ -737,7 +737,7 @@ async fn an_email_an_admin_adds_for_a_person_who_signs_in_already_signs_in_only_
         &bob,
         "web",
         "/v2/web/emails/accept",
-        json!({ "email": ADDED }),
+        json!({ "email": ADDED, "admin": false }),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
@@ -751,7 +751,7 @@ async fn an_email_an_admin_adds_for_a_person_who_signs_in_already_signs_in_only_
         &alice,
         "web",
         "/v2/web/emails/accept",
-        json!({ "email": ADDED }),
+        json!({ "email": ADDED, "admin": false }),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{accepted}");
@@ -2568,7 +2568,7 @@ async fn a_denied_session_key_is_still_refused_after_its_entry_is_removed_added_
         &cookie,
         "web",
         "/v2/web/emails/accept",
-        json!({ "email": SECOND }),
+        json!({ "email": SECOND, "admin": false }),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{accepted}");
@@ -2588,7 +2588,7 @@ async fn a_denied_session_key_is_still_refused_after_its_entry_is_removed_added_
         &bridge,
         "web",
         "/v2/web/emails/accept",
-        json!({ "email": EMAIL }),
+        json!({ "email": EMAIL, "admin": false }),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{accepted}");

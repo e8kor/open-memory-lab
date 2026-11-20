@@ -1726,6 +1726,18 @@ pub struct BootstrapRequest {
     pub admin_principal: String,
 }
 
+/// The person a bootstrap claim names (`--person`, `--email`): the
+/// ceremony makes their user root, links the first admin key to it and
+/// records their sign-in email, each accepted at its creation because that
+/// person runs the ceremony (ADR-0089 and ADR-0085 d16, the operator's
+/// decision of 2026-11-19; ADR-0045 d2's note, the operator's decision of
+/// 2026-11-20).
+#[derive(Debug, Clone)]
+pub struct BootstrapPerson {
+    pub user: Name,
+    pub email: Email,
+}
+
 /// Show-once: the value is returned exactly here and never stored
 /// (roles-and-keys.md key lifecycle), and only after the key's last
 /// `grant.issued` committed. The rest is the key as `key.issued` journalled

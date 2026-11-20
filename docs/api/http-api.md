@@ -1032,6 +1032,8 @@ Exchange the deployment's single-use enrollment token for the root operator key 
 |---|---|---|---|
 | `enrollment_token` | string | yes |  |
 | `name` | string | yes | The root operator key's name, in the provider's namespace (409 name.taken when held —). |
+| `person` | string | no | The person the first admin key acts for: the claim creates that person's user root and links the key to it, accepted at once, so the key may take an admin fix (the operator's decision of 2026-11-19). |
+| `email` | string | no | The sign-in email of the person person names, recorded as that person's accepted admin entry, journalled as web.email_allowed with pending false: the one way the person a claim names gets a first sign-in, since an email an admin adds later for a person a key names waits on that person ('s note, the operator's decision of 2026-11-20). |
 
 **Responses.** `201` The root operator key, value shown once.; `401` auth.missing or auth.invalid.; `415` 415 request.unsupported_media — the request body's media type is not the application/json the operation declares; not retryable as sent.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
 
@@ -1224,6 +1226,7 @@ Requires: the console session of the person the pending entry names, through its
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `email` | string | yes |  |
+| `admin` | boolean | yes | The admin flag of the entry as the person reviewed it, from whoami's pending_emails; an entry whose flag is not this one, an admin having changed it since, is refused request.validation, details.field /admin, details.reason changed, and journals nothing (the operator's decision of 2026-11-20). |
 
 **Responses.** `200` Accepted; the entry as it stands, pending false.; `404` access.not_found — absent or outside read scope, indistinguishable by design.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
 

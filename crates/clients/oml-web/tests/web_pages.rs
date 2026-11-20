@@ -8661,6 +8661,15 @@ async fn the_keys_page_offers_a_pending_sign_in_email_to_accept_or_remove() {
     assert_eq!(status, StatusCode::OK, "{keys}");
     assert!(keys.contains("<h2>Sign-in emails to accept</h2>"), "{keys}");
     assert!(keys.contains("<code>alice@work.example</code>"), "{keys}");
+    // Each pending email shows whether it signs in as an admin and the
+    // admin key that added it, and its accept names the flag back (the
+    // operator's decision of 2026-11-20).
+    assert!(keys.contains("signs in without admin"), "{keys}");
+    assert!(keys.contains("added by <code>"), "{keys}");
+    assert!(
+        keys.contains(r#"<input type="hidden" name="admin" value="false">"#),
+        "{keys}"
+    );
     assert!(keys.contains(">Accept sign-in email</button>"), "{keys}");
     assert!(keys.contains(">Remove</button>"), "{keys}");
 
@@ -8668,7 +8677,11 @@ async fn the_keys_page_offers_a_pending_sign_in_email_to_accept_or_remove() {
         &rig,
         &cookie,
         "/web/keys",
-        &[("action", "accept_email"), ("email", "alice@work.example")],
+        &[
+            ("action", "accept_email"),
+            ("email", "alice@work.example"),
+            ("admin", "false"),
+        ],
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");

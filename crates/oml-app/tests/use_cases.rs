@@ -117,7 +117,10 @@ async fn fix_tenant(app: &TestApp) -> (BootstrapResult, Uuid) {
                 admin_key_name: Name::parse("root-admin").expect("a name"),
                 admin_principal: "alice-admin".to_owned(),
             },
-            Some(&name("alice")),
+            Some(&oml_app::types::BootstrapPerson {
+                user: name("alice"),
+                email: oml_app::domain::web::Email::parse("alice@example.com").expect("an email"),
+            }),
         )
         .await
         .expect("bootstrap");

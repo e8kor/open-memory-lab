@@ -402,6 +402,10 @@ from .whoami_grant import WhoamiGrant
 from .whoami_grant_covers import WhoamiGrantCovers
 from .whoami_grant_role import WhoamiGrantRole
 from .whoami_person import WhoamiPerson
+from .whoami_person_pending_emails_item import WhoamiPersonPendingEmailsItem
+from .whoami_person_pending_emails_item_added_by import (
+    WhoamiPersonPendingEmailsItemAddedBy,
+)
 from .whoami_person_quotas_type_0 import WhoamiPersonQuotasType0
 from .whoami_person_start_type_0 import WhoamiPersonStartType0
 from .whoami_person_start_type_0_first_memory_type_1 import (
@@ -824,6 +828,8 @@ __all__ = (
     "WhoamiGrantCovers",
     "WhoamiGrantRole",
     "WhoamiPerson",
+    "WhoamiPersonPendingEmailsItem",
+    "WhoamiPersonPendingEmailsItemAddedBy",
     "WhoamiPersonQuotasType0",
     "WhoamiPersonStartType0",
     "WhoamiPersonStartType0FirstMemoryType1",

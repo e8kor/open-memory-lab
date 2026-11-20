@@ -10775,20 +10775,38 @@ pub async fn a_console_link_waits_on_its_persons_acceptance<S: JournalStore>(sto
     .expect("a pending link is withdrawn");
     assert_eq!(read().await, (None, None));
     // The accepted link is the bootstrap ceremony's, of the admin key no
-    // key issues; Postgres's api_keys_link_guard admits a direct link on
-    // that key alone (0064, the operator's decision of 2026-11-19).
+    // key issues, while it is its tenant's only key; Postgres's
+    // api_keys_link_guard admits a direct link on that key alone (0064, the
+    // operator's decisions of 2026-11-19 and 2026-11-20). A tenant of its
+    // own, as the ceremony's is.
+    let mut boot = ChainRig::new(4991);
+    boot.seed_chain(store, 0).await;
+    let bt = boot.tenant_id;
+    let boot_universe = workspace_record(bt, Uuid::from_u128(0x4A20), None, "universe");
+    let dora = WorkspaceRecord {
+        user_root: true,
+        ..workspace_record(
+            bt,
+            Uuid::from_u128(0x4A21),
+            Some(boot_universe.workspace_id),
+            "dora",
+        )
+    };
+    for w in [boot_universe, dora.clone()] {
+        boot.create_workspace(store, w).await;
+    }
     let ceremony = KeyRecord {
         used_by: UsedBy::Person,
-        ..key_record(t, Uuid::from_u128(0x4A11), Role::Admin, None)
+        ..key_record(bt, Uuid::from_u128(0x4A11), Role::Admin, None)
     };
-    rig.issue_key(store, ceremony.clone()).await;
-    rig.commit(
+    boot.issue_key(store, ceremony.clone()).await;
+    boot.commit(
         store,
         event_types::KEY_LINKED_PERSON,
         json!({ "key_id": ceremony.key_id.to_string() }),
         MetadataFold::KeyLinked {
             key_id: ceremony.key_id,
-            user_root: Some(carol.workspace_id),
+            user_root: Some(dora.workspace_id),
             accepted: true,
         },
         None,
@@ -10796,13 +10814,13 @@ pub async fn a_console_link_waits_on_its_persons_acceptance<S: JournalStore>(sto
     .await
     .expect("an accepted link");
     let k = store
-        .key(t, ceremony.key_id)
+        .key(bt, ceremony.key_id)
         .await
         .expect("read")
         .expect("key");
     assert_eq!(
         (k.linked_user, k.link_pending),
-        (Some(carol.workspace_id), None)
+        (Some(dora.workspace_id), None)
     );
 }
 

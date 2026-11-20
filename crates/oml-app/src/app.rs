@@ -43,7 +43,9 @@ pub use pages::{
 };
 pub use rescan::{RESCAN_MAX_EVENTS, RescanHit, RescanReport};
 pub use search::SearchSettings;
-pub use signup::{DRAWS_MAX, Person, PersonAsk, SignupState, StartStatus, UserDisabled, UserRow};
+pub use signup::{
+    DRAWS_MAX, PendingEmail, Person, PersonAsk, SignupState, StartStatus, UserDisabled, UserRow,
+};
 pub use sparse::{SPARSE_BACKFILL_STEP, SparsePass, encode_sparse_pass};
 pub use uploads::{UploadConfig, UploadSweep};
 pub use usage::UsageSettings;
@@ -128,8 +130,8 @@ use crate::types::{
 };
 use crate::types::{
     AppError, Approval, AssignedNames, AuthorizationRecord, AuthorizeOutcome, AuthorizePage,
-    AuthorizeParams, Bearer, BootstrapRequest, BootstrapResult, Brief, BriefEdgePage,
-    BriefEdgeProposalOutcome, BriefEdgeRatification, BriefEdgeRecord, BriefEdgeView,
+    AuthorizeParams, Bearer, BootstrapPerson, BootstrapRequest, BootstrapResult, Brief,
+    BriefEdgePage, BriefEdgeProposalOutcome, BriefEdgeRatification, BriefEdgeRecord, BriefEdgeView,
     ClaimEdgeFilter, ClaimEdgePage, ClaimEdgePosition, ClaimEdgeProposal, ClaimEdgeProposalOutcome,
     ClaimEdgeQuery, ClaimEdgeRatification, ClaimEdgeRecord, ClaimEdgeSelection,
     ClientAuthentication, ClientDescription, ClientKind, CodeEntryOutcome, ConfirmAction,
@@ -147,7 +149,7 @@ use crate::types::{
     SourceCheckReceipt, SourceCheckRequest, StateClause, SubmitOutcome, SubmitReceipt,
     SubmitRequest, SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage,
     TailedEvent, TenantRow, TokenPair, TransitionRecord, TransitionState, TransitionView, TreeNode,
-    TreePage, UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami,
+    TreePage, UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, WebEntry, Whoami,
     WithdrawReceipt, WithdrawRequest, WorkspaceInfo, WorkspaceRecord, WorkspaceStatusView,
 };
 use crate::types::{CatalogMark, KindCount};
@@ -186,6 +188,12 @@ struct RecallInstructions {
 }
 
 const EVENTS_PAGE: usize = 512;
+
+/// The longest `issued_by` chain [`App::counted_person_of`] walks from a
+/// user key before it counts the key as no one: issuance runs from a
+/// session or tenant key down a few user keys at most, so a longer chain
+/// fails closed rather than walking on.
+const COUNTED_PERSON_DEPTH: usize = 32;
 
 /// The review policy in force: the one PoC constant `{k: 1,
 /// required_roles: ["reviewer"]}`. A verdict's ratification and a status
@@ -3276,20 +3284,26 @@ where
     }
 
     /// [`Self::bootstrap_tenant`], the first admin key linked to `person`
-    /// where the claim names one (ADR-0085 d16; ADR-0089, the operator's
-    /// decision of 2026-11-19).
+    /// where the claim names one, and that person's sign-in email recorded
+    /// as accepted (ADR-0085 d16; ADR-0089, the operator's decision of
+    /// 2026-11-19; ADR-0045 d2's note, the operator's decision of
+    /// 2026-11-20).
     ///
     /// # Errors
-    /// As [`Self::bootstrap_tenant`].
+    /// As [`Self::bootstrap_tenant`]; a person whose name is not a user's
+    /// (`universe` included), before anything is journalled.
     pub async fn bootstrap_tenant_for(
         &self,
         req: &BootstrapRequest,
-        person: Option<&Name>,
+        person: Option<&BootstrapPerson>,
     ) -> Result<BootstrapResult, AppError> {
-        if person.is_some_and(|p| p.as_str() == UNIVERSE) {
-            return Err(AppError::UserRefused(
-                "user may not be universe, the tenant's root",
-            ));
+        if let Some(p) = person {
+            if p.user.as_str() == UNIVERSE {
+                return Err(AppError::UserRefused(
+                    "user may not be universe, the tenant's root",
+                ));
+            }
+            oml_domain::web::check_user(&p.user)?;
         }
         let tenant_id = self.ids.new_id();
         self.journal.create_tenant_partitions(tenant_id).await?;
@@ -3407,17 +3421,20 @@ where
 
     /// The ceremony's link of its admin key to `person` (ADR-0085 d16;
     /// ADR-0089, the operator's decision of 2026-11-19): that person's user
-    /// root under `universe`, then `key.linked_person`, both by the
-    /// operator, chained after the key's issuance. The person runs the
+    /// root under `universe`, then `key.linked_person`, then the person's
+    /// sign-in entry as `web.email_allowed`, all by the operator, chained
+    /// after the key's issuance and committed together. The person runs the
     /// ceremony themselves, so the link is accepted at its creation and
-    /// needs no `key.link_accepted` (the operator's decision of 2026-11-19
-    /// on key-to-person links).
+    /// needs no `key.link_accepted`, and the entry, an admin's, is not
+    /// pending (the operator's decisions of 2026-11-19 on key-to-person
+    /// links and of 2026-11-20 on the bootstrap's email). An email another
+    /// tenant's entry holds refuses the commit, `web.email_taken`.
     async fn link_bootstrap_admin(
         &self,
         tenant_id: Uuid,
         universe: Uuid,
         key_id: Uuid,
-        person: &Name,
+        person: &BootstrapPerson,
         prev: SignedEnvelope,
     ) -> Result<(), AppError> {
         let root = WorkspaceRecord {
@@ -3425,7 +3442,7 @@ where
             workspace_id: self.ids.new_id(),
             tenant_id,
             parent_id: Some(universe),
-            name: person.clone(),
+            name: person.user.clone(),
             status: WorkspaceStatus::Development,
             crew: None,
             crew_id: None,
@@ -3449,10 +3466,36 @@ where
             None,
             json!({
                 "key_id": key_id.to_string(),
-                "user": person.as_str(),
+                "user": person.user.as_str(),
                 "user_root_id": root_id.to_string(),
                 "linked_by_key_id": Value::Null,
                 "accepted": true,
+            }),
+        )?;
+        let entry = WebEntry {
+            tenant_id,
+            email: person.email.clone(),
+            user: person.user.clone(),
+            admin: true,
+            google_subject: None,
+            github_subject: None,
+            added_by: key_id,
+            terms_version: None,
+            disabled_at: None,
+            pending: false,
+        };
+        let allowed = self.seal(
+            Some(&linked),
+            tenant_id,
+            event_types::WEB_EMAIL_ALLOWED,
+            "operator",
+            None,
+            json!({
+                "email_digest": person.email.digest().to_prefixed(),
+                "user": person.user.as_str(),
+                "admin": true,
+                "by_key_id": key_id.to_string(),
+                "pending": false,
             }),
         )?;
         self.commit_requests(vec![
@@ -3466,6 +3509,7 @@ where
                 },
                 None,
             ),
+            commit_request(allowed, MetadataFold::WebEmailAllowed(entry), None),
         ])
         .await?;
         Ok(())
@@ -4822,6 +4866,98 @@ where
         }
     }
 
+    /// The person `key` counts as where authority is weighed, an admin
+    /// fix's person, a fix's settlement and a write's recorded
+    /// `author_person`: a session key's `session_user`, a linked key's
+    /// person, and for a user key the person its issuer counts as, walked
+    /// up `issued_by`. A user key counts as its root's person only when a
+    /// key that already counts as that person issued it, the person's own
+    /// session key or a key one issued; one an admin, or another person's
+    /// key, issued for someone's root counts as its issuer's person, and
+    /// as no one where the issuer counts as no one. A chain longer than
+    /// [`COUNTED_PERSON_DEPTH`], or an issuer the tenant does not hold,
+    /// counts as no one, which settles nothing (ADR-0089 and ADR-0085 d16,
+    /// the operator's decision of 2026-11-20: "counts as the issuer").
+    pub(crate) async fn counted_person_of(
+        &self,
+        key: &KeyRecord,
+    ) -> Result<Option<Name>, AppError> {
+        let mut key = key.clone();
+        for _ in 0..COUNTED_PERSON_DEPTH {
+            if key.session_user.is_some() || key.user.is_none() {
+                return self.person_of(&key).await;
+            }
+            let Some(issuer) = key.issued_by else {
+                return Ok(None);
+            };
+            match self.journal.key(key.tenant_id, issuer).await? {
+                Some(next) => key = next,
+                None => return Ok(None),
+            }
+        }
+        Ok(None)
+    }
+
+    /// Whether `workspace` sits inside the user root named `person`
+    /// (ADR-0082 d7): the root a settlement compares against the person a
+    /// key counts as, never the root the key was issued in (the operator's
+    /// decision of 2026-11-20).
+    pub(crate) async fn in_root_of_person(
+        &self,
+        tenant_id: Uuid,
+        person: &Name,
+        workspace: Uuid,
+    ) -> Result<bool, AppError> {
+        let Some(root) = self
+            .journal
+            .workspace(tenant_id, workspace)
+            .await?
+            .and_then(|w| w.user())
+        else {
+            return Ok(false);
+        };
+        Ok(self
+            .journal
+            .workspace(tenant_id, root)
+            .await?
+            .is_some_and(|w| w.user_root && &w.name == person))
+    }
+
+    /// Whether `author` acts for `person` on either reading: as the person
+    /// it counts as ([`Self::counted_person_of`]) or as the person whose
+    /// root it was issued in ([`Self::person_of`]). R2 by person takes the
+    /// union, so neither reading makes a reviewer less the author (ADR-0001
+    /// d5; the operator's decision of 2026-11-20).
+    pub(crate) async fn acts_for(
+        &self,
+        author: &KeyRecord,
+        person: &Name,
+    ) -> Result<bool, AppError> {
+        Ok(self.person_of(author).await?.as_ref() == Some(person)
+            || self.counted_person_of(author).await?.as_ref() == Some(person))
+    }
+
+    /// Whether `author`, a version's author key, acts for `person` beside the
+    /// person its write recorded (`author_person`): as the person whose user
+    /// root it was issued in, which is fixed for the key's life, never its
+    /// link as it stands, so a relink after the write moves nothing
+    /// (ADR-0085 d16, amended 2026-11-18; the operator's decision of
+    /// 2026-11-20).
+    pub(crate) async fn issued_in_root_of(
+        &self,
+        author: &KeyRecord,
+        person: &Name,
+    ) -> Result<bool, AppError> {
+        let Some(root) = author.user else {
+            return Ok(false);
+        };
+        Ok(self
+            .journal
+            .workspace(author.tenant_id, root)
+            .await?
+            .is_some_and(|w| &w.name == person))
+    }
+
     /// The user root of the person `key` acts for, read as
     /// [`Self::person_of`] reads the person: a user key's root, a linked
     /// tenant key's, or the root named as a session key's person; `None`
@@ -4917,11 +5053,14 @@ where
         let Some(author) = self.journal.key(tenant_id, author_key_id).await? else {
             return Ok(false);
         };
-        let (a, r) = (
-            self.person_of(&author).await?,
-            self.person_of(reviewer).await?,
-        );
-        Ok(same_user(a.as_ref(), r.as_ref()))
+        // The author read on either reading, the person whose root it was
+        // issued in and the person it counts as, so a key an admin minted
+        // in a root is no less its root's person here (ADR-0001 d5; the
+        // operator's decision of 2026-11-20).
+        match self.person_of(reviewer).await? {
+            Some(r) => self.acts_for(&author, &r).await,
+            None => Ok(false),
+        }
     }
 
     /// Whether `memory`'s author and `reviewer` act for one person, the
@@ -4935,8 +5074,23 @@ where
         memory: &MemoryRecord,
         reviewer: &KeyRecord,
     ) -> Result<bool, AppError> {
-        let r = self.person_of(reviewer).await?;
-        Ok(same_user(memory.author_person.as_ref(), r.as_ref()))
+        let Some(r) = self.person_of(reviewer).await? else {
+            return Ok(false);
+        };
+        if memory.author_person.as_ref() == Some(&r) {
+            return Ok(true);
+        }
+        // `author_person` records the person the author key counts as; the
+        // person whose root it was issued in is read off the key, so R2 by
+        // person takes both (the operator's decision of 2026-11-20).
+        match self
+            .journal
+            .key(memory.tenant_id, memory.author_key_id)
+            .await?
+        {
+            Some(author) => self.issued_in_root_of(&author, &r).await,
+            None => Ok(false),
+        }
     }
 
     /// A user key's edge with an endpoint in `universe` is refused
@@ -6293,7 +6447,7 @@ where
             replaces: None,
             author_principal: key.principal.clone(),
             author_key_id: key.key_id,
-            author_person: self.person_of(key).await?,
+            author_person: self.counted_person_of(key).await?,
             derives_from: req.derives_from.clone(),
             lineage_principals: principals.into_iter().collect(),
             lineage_key_ids: key_ids.into_iter().collect(),
@@ -6699,7 +6853,20 @@ where
         }
         // The author's person as recorded at the write (ADR-0085 d16,
         // amended 2026-11-18; #448).
-        let same = same_user(m.author_person.as_ref(), reviewer_person);
+        let mut same = same_user(m.author_person.as_ref(), reviewer_person);
+        // `author_person` records the person the author key counts as. A
+        // row in the reviewer's own person's root by a key issued in that
+        // root is that person's too, read off the key only for such a row
+        // (the operator's decision of 2026-11-20).
+        if !same
+            && let Some(person) = reviewer_person
+            && self
+                .in_root_of_person(tenant_id, person, m.workspace_id)
+                .await?
+            && let Some(author) = self.journal.key(tenant_id, m.author_key_id).await?
+        {
+            same = self.issued_in_root_of(&author, person).await?;
+        }
         // R2 by person: a row the reviewer's own person wrote outside
         // that person's root is not theirs to judge, so it is not
         // listed (ADR-0001 d5; ADR-0082 d7).
@@ -10335,7 +10502,7 @@ where
             replaces: Some(target.memory_id),
             author_principal: key.principal.clone(),
             author_key_id: key.key_id,
-            author_person: self.person_of(key).await?,
+            author_person: self.counted_person_of(key).await?,
             derives_from: derives_from.clone(),
             lineage_principals: principals.into_iter().collect(),
             lineage_key_ids: key_ids.into_iter().collect(),

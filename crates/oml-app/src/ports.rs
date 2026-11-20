@@ -497,12 +497,16 @@ pub enum MetadataFold {
         keep_an_admin: bool,
     },
     /// `web.email_accepted`: the pending entry of `email_hash`, naming
-    /// `user`, signs in from this commit on. The store refuses an entry it
-    /// does not hold, one that is not pending, and one that names another
-    /// user (ADR-0045 d2's note of 2026-11-19, the operator's decision).
+    /// `user` with the admin flag `admin`, signs in from this commit on. The
+    /// store refuses an entry it does not hold, one that is not pending, one
+    /// that names another user, and one whose admin flag is not `admin`, so
+    /// a flag flipped after the person reviewed the entry fails the accept
+    /// (ADR-0045 d2's note, the operator's decisions of 2026-11-19 and
+    /// 2026-11-20).
     WebEmailAccepted {
         email_hash: Sha256Hash,
         user: Name,
+        admin: bool,
     },
     /// `web.email_removed`: the entry's row and every session of it, gone
     /// in the same commit; the store refuses an entry it does not hold

@@ -657,27 +657,49 @@ fn pending_section(pending: &[oml_sdk::LinkedKey], csrf: &str) -> String {
 }
 
 /// The sign-in emails an admin added for this account that wait on its
-/// acceptance, each with its **Accept sign-in email** and **Remove** acts;
-/// nothing where none waits. Until accepted an email signs in to nothing
-/// (ADR-0045 d2, the operator's decision of 2026-11-19).
-fn pending_emails_section(emails: &[String], csrf: &str) -> String {
+/// acceptance, each with whether it signs in as an admin and the admin key
+/// that added it, and its **Accept sign-in email** and **Remove** acts;
+/// nothing where none waits. Until accepted an email signs in to nothing.
+/// The accept names back the admin flag shown, so a flag changed since the
+/// page was drawn is refused (ADR-0045 d2, the operator's decisions of
+/// 2026-11-19 and 2026-11-20).
+fn pending_emails_section(emails: &[oml_sdk::PendingEmail], csrf: &str) -> String {
     if emails.is_empty() {
         return String::new();
     }
     let mut out = String::from(
         r#"<h2>Sign-in emails to accept</h2><p class="desc">An admin added these sign-in emails for this account. An email signs in to this account only once it is accepted here; until then it signs in to nothing. An email not asked for is removed here.</p><ul>"#,
     );
-    for email in emails {
-        let fields = format!("{}{}", hidden("email", email), acts::nonce_field());
+    for pending in emails {
+        let email = pending.email.as_str();
+        let admin = if pending.admin { "true" } else { "false" };
+        let accept = format!(
+            "{}{}{}",
+            hidden("email", email),
+            hidden("admin", admin),
+            acts::nonce_field()
+        );
+        let remove = format!("{}{}", hidden("email", email), acts::nonce_field());
+        let adder = pending
+            .added_by
+            .name
+            .as_deref()
+            .unwrap_or(pending.added_by.id.as_str());
         let _ = write!(
             out,
-            "<li><code>{}</code> {} {}</li>",
+            "<li><code>{}</code> · {} · added by <code>{}</code> {} {}</li>",
             text(email),
+            if pending.admin {
+                "signs in as an admin"
+            } else {
+                "signs in without admin"
+            },
+            text(adder),
             form(
                 USER_KEYS_PATH,
                 "accept_email",
                 csrf,
-                &fields,
+                &accept,
                 "Accept sign-in email",
                 false
             ),
@@ -685,7 +707,7 @@ fn pending_emails_section(emails: &[String], csrf: &str) -> String {
                 USER_KEYS_PATH,
                 "decline_email",
                 csrf,
-                &fields,
+                &remove,
                 "Remove",
                 false
             )
@@ -800,7 +822,8 @@ fn defined(side: Side, action: &str, name: &str) -> bool {
         "issue_key" | "connect_key" => matches!(name, "name" | "role" | "expires"),
         "cut_off" => matches!(name, "key" | "confirm") || (side == Side::Admin && name == "user"),
         "link_key" | "unlink_key" => matches!(name, "key" | "user"),
-        "accept_email" | "decline_email" => name == "email",
+        "accept_email" => matches!(name, "email" | "admin"),
+        "decline_email" => name == "email",
         _ => name == "key",
     }
 }
@@ -897,7 +920,8 @@ async fn act(
     let required: &[&str] = match action {
         "issue_key" | "connect_key" => &["name"],
         "link_key" => &["key", "user"],
-        "accept_email" | "decline_email" => &["email"],
+        "accept_email" => &["email", "admin"],
+        "decline_email" => &["email"],
         _ => &["key"],
     };
     if let Some(missing) = required.iter().find(|n| fields.given(n).is_none()) {
@@ -990,8 +1014,9 @@ async fn act(
         "accept_email" | "decline_email" => {
             let email = fields.given("email").unwrap_or_default();
             let (answer, done) = if action == "accept_email" {
+                let admin = fields.given("admin") == Some("true");
                 (
-                    web.api.accept_web_email(&call, &key, email).await,
+                    web.api.accept_web_email(&call, &key, email, admin).await,
                     "email_accepted",
                 )
             } else {

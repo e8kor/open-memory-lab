@@ -1831,7 +1831,13 @@ fn apply_fold(
             keep_an_admin,
         } => {
             let hash = entry.email.digest();
-            if keep_an_admin && !entry.admin && last_admin(&state.web_entries, &hash) {
+            // A change that leaves the entry pending un-flags it as an
+            // un-flagging does: a pending entry signs in to nothing
+            // (ADR-0045 d10; d2's note of 2026-11-19).
+            if keep_an_admin
+                && (!entry.admin || entry.pending)
+                && last_admin(&state.web_entries, &hash)
+            {
                 return Err(StoreError::LastAdminEntry);
             }
             let Some(held) = state.web_entries.get_mut(&hash.0) else {
@@ -1842,18 +1848,23 @@ fn apply_fold(
             held.user = entry.user;
             held.admin = entry.admin;
             held.pending = entry.pending;
+            held.added_by = entry.added_by;
             state.web_sessions.retain(|_, s| s.email_hash != hash);
         }
-        MetadataFold::WebEmailAccepted { email_hash, user } => {
-            match state.web_entries.get_mut(&email_hash.0) {
-                Some(held) if held.pending && held.user == user => held.pending = false,
-                _ => {
-                    return Err(StoreError::Backend(
-                        "web.email_accepted names no pending entry of this user".to_owned(),
-                    ));
-                }
+        MetadataFold::WebEmailAccepted {
+            email_hash,
+            user,
+            admin,
+        } => match state.web_entries.get_mut(&email_hash.0) {
+            Some(held) if held.pending && held.user == user && held.admin == admin => {
+                held.pending = false;
             }
-        }
+            _ => {
+                return Err(StoreError::Backend(
+                    "web.email_accepted names no pending entry of this user".to_owned(),
+                ));
+            }
+        },
         MetadataFold::WebEmailRemoved {
             email_hash,
             keep_an_admin,

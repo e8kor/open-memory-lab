@@ -89,9 +89,10 @@ def sync_detailed(
     until that person accepts it. Journalled as web.email_accepted with the email's digest; the email
     signs in as the person from then on. Refused request.validation, details.field /email, with
     details.reason session_only for a bearer key, an admin key's included, not_named_person for a
-    session of any other person, the adding admin's included, and not_pending for an entry that waits on
-    no one; an email on no entry of the caller's tenant answers access.not_found. A refusal journals
-    nothing. The email is in the body, never the path. Since v0.8.4.
+    session of any other person, the adding admin's included, not_pending for an entry that waits on no
+    one, and changed (details.field /admin) for an entry whose admin flag is not the one sent; an email
+    on no entry of the caller's tenant answers access.not_found. A refusal journals nothing. The email
+    is in the body, never the path. Since v0.8.4.
 
     Args:
         x_request_id (str | Unset):
@@ -140,9 +141,10 @@ def sync(
     until that person accepts it. Journalled as web.email_accepted with the email's digest; the email
     signs in as the person from then on. Refused request.validation, details.field /email, with
     details.reason session_only for a bearer key, an admin key's included, not_named_person for a
-    session of any other person, the adding admin's included, and not_pending for an entry that waits on
-    no one; an email on no entry of the caller's tenant answers access.not_found. A refusal journals
-    nothing. The email is in the body, never the path. Since v0.8.4.
+    session of any other person, the adding admin's included, not_pending for an entry that waits on no
+    one, and changed (details.field /admin) for an entry whose admin flag is not the one sent; an email
+    on no entry of the caller's tenant answers access.not_found. A refusal journals nothing. The email
+    is in the body, never the path. Since v0.8.4.
 
     Args:
         x_request_id (str | Unset):
@@ -186,9 +188,10 @@ async def asyncio_detailed(
     until that person accepts it. Journalled as web.email_accepted with the email's digest; the email
     signs in as the person from then on. Refused request.validation, details.field /email, with
     details.reason session_only for a bearer key, an admin key's included, not_named_person for a
-    session of any other person, the adding admin's included, and not_pending for an entry that waits on
-    no one; an email on no entry of the caller's tenant answers access.not_found. A refusal journals
-    nothing. The email is in the body, never the path. Since v0.8.4.
+    session of any other person, the adding admin's included, not_pending for an entry that waits on no
+    one, and changed (details.field /admin) for an entry whose admin flag is not the one sent; an email
+    on no entry of the caller's tenant answers access.not_found. A refusal journals nothing. The email
+    is in the body, never the path. Since v0.8.4.
 
     Args:
         x_request_id (str | Unset):
@@ -235,9 +238,10 @@ async def asyncio(
     until that person accepts it. Journalled as web.email_accepted with the email's digest; the email
     signs in as the person from then on. Refused request.validation, details.field /email, with
     details.reason session_only for a bearer key, an admin key's included, not_named_person for a
-    session of any other person, the adding admin's included, and not_pending for an entry that waits on
-    no one; an email on no entry of the caller's tenant answers access.not_found. A refusal journals
-    nothing. The email is in the body, never the path. Since v0.8.4.
+    session of any other person, the adding admin's included, not_pending for an entry that waits on no
+    one, and changed (details.field /admin) for an entry whose admin flag is not the one sent; an email
+    on no entry of the caller's tenant answers access.not_found. A refusal journals nothing. The email
+    is in the body, never the path. Since v0.8.4.
 
     Args:
         x_request_id (str | Unset):

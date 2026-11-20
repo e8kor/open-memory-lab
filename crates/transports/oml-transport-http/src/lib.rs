@@ -74,14 +74,14 @@ use oml_app::ports::{
 };
 use oml_app::search::MatchMode;
 use oml_app::types::{
-    AnchorFilter, AppError, Bearer, BootstrapRequest, BriefEdgeView, ClaimEdgeProposal,
-    ClaimEdgeQuery, ConnectCodeIssued, ConnectionRecord, CrewCreateRequest, CrewRecord, CrewUpdate,
-    EdgeRatification, GrantRecord, GrantRequest, GuardrailRequest, GuardrailSet, IssueKeyRequest,
-    IssuedKey, KeyDetail, KeyLimitsChange, KeyRecord, KindFields, ListRequest, MemoryRecord,
-    NamedServe, OnSimilar, ProposeBriefEdge, ProposeClaimEdge, RecallRequest, ServedMemory,
-    SimilarItem, SkillRequest, SkillSet, SourceCheck, SourceCheckRequest, StateClause,
-    SubmitRequest, SubmitVerb, SupersedeRequest, TailedEvent, Verdict, VerdictRequest, Whoami,
-    WithdrawRequest, WorkspaceInfo, WorkspaceRecord,
+    AnchorFilter, AppError, Bearer, BootstrapPerson, BootstrapRequest, BriefEdgeView,
+    ClaimEdgeProposal, ClaimEdgeQuery, ConnectCodeIssued, ConnectionRecord, CrewCreateRequest,
+    CrewRecord, CrewUpdate, EdgeRatification, GrantRecord, GrantRequest, GuardrailRequest,
+    GuardrailSet, IssueKeyRequest, IssuedKey, KeyDetail, KeyLimitsChange, KeyRecord, KindFields,
+    ListRequest, MemoryRecord, NamedServe, OnSimilar, ProposeBriefEdge, ProposeClaimEdge,
+    RecallRequest, ServedMemory, SimilarItem, SkillRequest, SkillSet, SourceCheck,
+    SourceCheckRequest, StateClause, SubmitRequest, SubmitVerb, SupersedeRequest, TailedEvent,
+    Verdict, VerdictRequest, Whoami, WithdrawRequest, WorkspaceInfo, WorkspaceRecord,
 };
 use oml_app::types::{
     BulkItem, BulkVerdictRequest, HELD_PAGE_DEFAULT, HeldListingRequest, HeldPage, ReviewLane,
@@ -3122,11 +3122,32 @@ where
                 "/tenant_name",
                 req.tenant_name.as_deref().unwrap_or("default"),
             )?;
-            let person = req
-                .person
-                .as_deref()
-                .map(|p| creation_name("/person", p))
-                .transpose()?;
+            // The person and their sign-in email travel together: the
+            // ceremony records the email as accepted, the one way a person
+            // the claim names gets a first sign-in (ADR-0045 d2's note, the
+            // operator's decision of 2026-11-20).
+            let person = match (req.person.as_deref(), req.email.as_deref()) {
+                (None, None) => None,
+                (Some(p), Some(e)) => Some(BootstrapPerson {
+                    user: creation_name("/person", p)?,
+                    email: oml_domain::web::Email::parse(e).map_err(|err| {
+                        ApiError::validation(format!("/email: {err}"))
+                            .with_details(json!({ "field": "/email" }))
+                    })?,
+                }),
+                (Some(_), None) => {
+                    return Err(ApiError::validation(
+                        "/email is required with /person: the person's sign-in email",
+                    )
+                    .with_details(json!({ "field": "/email" })));
+                }
+                (None, Some(_)) => {
+                    return Err(ApiError::validation(
+                        "/email names the sign-in of the person /person names, and no /person is sent",
+                    )
+                    .with_details(json!({ "field": "/person" })));
+                }
+            };
             (guard.take(), admin_key_name, tenant_name, person)
         };
         let boot = BootstrapRequest {
@@ -4296,6 +4317,11 @@ struct BootstrapClaimBody {
     /// decision of 2026-11-19).
     #[serde(default)]
     person: Option<String>,
+    /// The sign-in email of the person `person` names, required with it and
+    /// recorded as accepted, an admin's entry (ADR-0045 d2's note, the
+    /// operator's decision of 2026-11-20).
+    #[serde(default)]
+    email: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -4904,7 +4930,16 @@ fn person_json(person: &oml_app::app::Person) -> Value {
         "pending_emails": person
             .pending_emails
             .iter()
-            .map(|e| e.as_str())
+            .map(|e| {
+                json!({
+                    "email": e.email.as_str(),
+                    "admin": e.admin,
+                    "added_by": {
+                        "id": e.added_by,
+                        "name": e.added_by_name.as_ref().map(Name::as_str),
+                    },
+                })
+            })
             .collect::<Vec<_>>(),
     });
     // The onboarding status, only when asked (`start=true`): every page's

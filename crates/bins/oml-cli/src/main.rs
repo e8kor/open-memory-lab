@@ -355,9 +355,14 @@ enum BootstrapCommand {
         principal: Option<String>,
         /// The person the first admin key acts for: the claim creates that
         /// person's user root and links the key to it, so the key may take
-        /// an admin fix.
-        #[arg(long)]
+        /// an admin fix. Requires --email.
+        #[arg(long, requires = "email")]
         person: Option<String>,
+        /// The person's sign-in email, recorded as accepted for the console:
+        /// the one way the person --person names gets a first sign-in.
+        /// Requires --person.
+        #[arg(long, requires = "person")]
+        email: Option<String>,
     },
 }
 
@@ -1643,6 +1648,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                     tenant_name,
                     principal,
                     person,
+                    email,
                 },
         } => {
             let client = resolve_url(cli, &stored)?;
@@ -1656,6 +1662,9 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             }
             if let Some(p) = person {
                 body["person"] = json!(p);
+            }
+            if let Some(e) = email {
+                body["email"] = json!(e);
             }
             let (_, response) = client.post(
                 "/v2/bootstrap/claim",

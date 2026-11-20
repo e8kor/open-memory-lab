@@ -41,6 +41,9 @@ struct RemoveBody {
     email: Option<String>,
     /// Refuse removing the tenant's last admin entry (ADR-0045 d10).
     keep_an_admin: Option<bool>,
+    /// The accept's alone: the admin flag the person reviewed, which the
+    /// entry must still carry (the operator's decision of 2026-11-20).
+    admin: Option<bool>,
 }
 
 fn entry_json(entry: &WebEntry) -> Value {
@@ -306,6 +309,10 @@ where
             crate::console::Claimed::Act(claim) => claim,
         };
         let req: RemoveBody = parse_json(headers, body)?;
+        if req.admin.is_some() {
+            return Err(ApiError::validation("admin is the accept's alone")
+                .with_details(json!({ "field": "/admin" })));
+        }
         let email = email_field(req.email.as_deref())?;
         let keep = req.keep_an_admin == Some(true);
         let st = st.clone();
@@ -383,13 +390,29 @@ where
                     .with_details(json!({ "field": "/keep_an_admin" })),
             );
         }
+        let admin = match (accept, req.admin) {
+            (true, Some(admin)) => admin,
+            (true, None) => {
+                return Err(ApiError::validation(
+                    "admin is required: the admin flag of the entry as the person reviewed it",
+                )
+                .with_details(json!({ "field": "/admin" })));
+            }
+            (false, None) => false,
+            (false, Some(_)) => {
+                return Err(ApiError::validation("admin is the accept's alone")
+                    .with_details(json!({ "field": "/admin" })));
+            }
+        };
         let email = email_field(req.email.as_deref())?;
         let st = st.clone();
         claim
             .run(async move {
                 let entry = retry_chain(|| async {
                     if accept {
-                        st.app.accept_web_email(acting.bearer(), &email).await
+                        st.app
+                            .accept_web_email(acting.bearer(), &email, admin)
+                            .await
                     } else {
                         st.app.decline_web_email(acting.bearer(), &email).await
                     }

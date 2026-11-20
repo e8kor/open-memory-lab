@@ -134,9 +134,26 @@ pub struct Person {
     /// 2026-11-19).
     pub pending_links: Vec<NamedRef>,
     /// The sign-in emails an admin added for the person that wait on their
-    /// acceptance; each signs in to nothing until the person accepts it
-    /// (ADR-0045 d2's note of 2026-11-19, the operator's decision).
-    pub pending_emails: Vec<oml_domain::web::Email>,
+    /// acceptance, each with its admin flag and the key that added it; each
+    /// signs in to nothing until the person accepts it (ADR-0045 d2's note,
+    /// the operator's decisions of 2026-11-19 and 2026-11-20).
+    pub pending_emails: Vec<PendingEmail>,
+}
+
+/// A sign-in email that waits on its person, as [`Person`] lists it: what
+/// the person reviews before accepting it, the admin flag included, which
+/// the accept must name back (ADR-0045 d2's note, the operator's decision
+/// of 2026-11-20).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingEmail {
+    pub email: oml_domain::web::Email,
+    /// Whether the entry signs in as an admin once accepted.
+    pub admin: bool,
+    /// The admin key that added the entry, or changed it to name the person.
+    pub added_by: Uuid,
+    /// That key's name; `None` for a key issued before names (ADR-0026 d11)
+    /// or one the tenant no longer holds.
+    pub added_by_name: Option<Name>,
 }
 
 /// The least per-minute request rate a person's session keys get, whatever
@@ -699,14 +716,26 @@ where
         }
         // The emails an admin added for the person that wait on them (the
         // operator's decision of 2026-11-19, ADR-0045 d2's note).
-        let pending_emails = self
+        let mut pending_emails = Vec::new();
+        for e in self
             .journal
             .web_pending_emails(key.tenant_id)
             .await?
             .into_iter()
             .filter(|e| e.user == user)
-            .map(|e| e.email)
-            .collect();
+        {
+            let added_by_name = self
+                .journal
+                .key(key.tenant_id, e.added_by)
+                .await?
+                .and_then(|k| k.name);
+            pending_emails.push(PendingEmail {
+                email: e.email,
+                admin: e.admin,
+                added_by: e.added_by,
+                added_by_name,
+            });
+        }
         Ok(Person {
             user,
             limits,
