@@ -5400,6 +5400,45 @@ async fn whoami_serves_a_contributor_whose_reader_grant_reaches_none_of_its_subm
     assert!(!served(&bob).await, "a submitter key is not a contributor");
 }
 
+/// A person's `<user>-curate`, issued by the server with submitter on the
+/// `universe` node and a reader grant on another workspace alone, is served
+/// neither by whoami nor among the person's own keys as without recall:
+/// the server issues its session keys and no person reissues one
+/// (ADR-0093 d3, the reading of 2026-11-20; ADR-0044 d7).
+#[tokio::test]
+async fn a_persons_curate_session_key_is_never_served_as_without_recall() {
+    let (app, _) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", true).await;
+    let alice_admin = app
+        .web_caller(&alice, Capacity::Admin)
+        .await
+        .expect("alice-admin");
+    app.grant_curation_capacity(&alice_admin, &name("alice"), by_name("alice"))
+        .await
+        .expect("the curation designation");
+    let curate = app
+        .web_caller(&alice, Capacity::Curate)
+        .await
+        .expect("alice-curate");
+    let (whoami, _) = app
+        .whoami_served(Bearer::Session(&curate), oml_app::app::PersonAsk::Omit)
+        .await
+        .expect("whoami");
+    assert!(!whoami.without_recall, "whoami of alice-curate");
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice-web");
+    let own = app.list_own_keys(&web).await.expect("alice's keys");
+    let listed = own
+        .iter()
+        .find(|k| k.key.key_id == curate.key().key_id)
+        .expect("alice-curate is among alice's keys");
+    assert!(!listed.without_recall, "alice-curate among alice's keys");
+}
+
 // -- who confirms an admin fix (ADR-0089, amendment of 2026-11-18; #490) ----
 
 fn fix_req(
