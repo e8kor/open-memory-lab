@@ -4637,9 +4637,13 @@ where
     /// Whether `key`, holding `access`, is a contributor without recall: a
     /// submitter grant on a node no reader grant of it reaches (ADR-0093 d3,
     /// as read on 2026-11-20), decided by the domain's one definition. A
-    /// submitter grant's ancestry is read only where no reader grant sits on
-    /// its own node, so a key with a reader beside each submitter grant, and
-    /// every key of another role, costs no read.
+    /// session key never is: the server issues a person's `<user>-web`,
+    /// `-review`, `-curate` and `-admin`, their grants follow ADR-0044 d7 by
+    /// design and no person reissues one (ADR-0093 d3, the reading of
+    /// 2026-11-20 on `<user>-curate`). A submitter grant's ancestry is read
+    /// only where no reader grant sits on its own node, so a key with a
+    /// reader beside each submitter grant, every session key and every key
+    /// of another role, costs no read.
     pub(crate) async fn without_recall(
         &self,
         key: &KeyRecord,
@@ -4648,6 +4652,9 @@ where
         let Some(access) = access else {
             return Ok(false);
         };
+        if key.credential == Credential::Session {
+            return Ok(false);
+        }
         let grants: Vec<Grant> = access.grants.iter().map(|g| g.grant.clone()).collect();
         let mut ancestries = BTreeMap::new();
         for node in recall_ancestries_needed(key.role, &grants) {

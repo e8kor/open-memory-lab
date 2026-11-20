@@ -283,3 +283,17 @@ these; the operator confirms or amends them here.
   the console's "no recall" mark read that member and decide nothing of their own, since neither
   `whoami`'s grants nor the listing's carry the ancestry the answer needs.
 
+
+### Second fix round, 2026-11-20 (the coordinator's reading, for the operator to confirm)
+
+The re-verification of PR #506 found that a person's `<user>-curate`, which ADR-0044 d7 and
+`grant_curation_capacity` issue with submitter on the `universe` node and a reader grant on each
+designated workspace alone, was served as without recall, so the Keys page offered a reissue no
+person can make. The coordinator decided this reading; the operator confirms or amends it here.
+
+- **A session key is never without recall.** The keys the server holds for a person's session
+  (`<user>-web`, `-review`, `-curate`, `-admin`, and any key the server issues for a session) are
+  served with `without_recall` false: the server issues them, no person reissues one, and their
+  grants follow ADR-0044 d7 by design. The exemption sits in the one place the answer is computed,
+  so `whoami`, each key of `GET /v2/keys`, the doctor line and the console's mark agree. Every other
+  key keeps the per-node definition above.

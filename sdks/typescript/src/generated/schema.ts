@@ -3780,7 +3780,7 @@ export interface components {
             denied?: boolean;
             /** @description The person the key's user root names; null for a tenant key (ADR-0070 d5). Absent with person=false (#286). */
             person?: components["schemas"]["WhoamiPerson"] | null;
-            /** @description Whether this key is a contributor without recall: a contributor key holding a submitter grant on a node that no reader grant of it reaches, before its deny masks, such as a v0.8.3 writer key issued write-only, user keys whose one reader grant is the universe node grant among them. It works as before; oml doctor names it key_contributor_without_recall. false for every other key; optional here so a client reads an answer without it, from an older server, as false (ADR-0093 d3, as read on 2026-11-20). */
+            /** @description Whether this key is a contributor without recall: a contributor key holding a submitter grant on a node that no reader grant of it reaches, before its deny masks, such as a v0.8.3 writer key issued write-only, user keys whose one reader grant is the universe node grant among them. It works as before; oml doctor names it key_contributor_without_recall. false for every other key, and for every session key the server holds for a person, <user>-curate included; optional here so a client reads an answer without it, from an older server, as false (ADR-0093 d3, as read on 2026-11-20). */
             without_recall?: boolean;
             /** @description Whether the server's admins are not the caller's: true when the operator sets server.shared or opens sign-up. oml sync asks consent of a shared server; a server from this release always sends it; optional here so a client reads an answer without it, from an older server, as false (ADR-0076 d9). */
             shared?: boolean;
@@ -3857,7 +3857,7 @@ export interface components {
             expired?: boolean;
             /** @description The key's own requests per UTC minute; null for none of its own (ADR-0079 d4; since v0.7.3). */
             requests_per_minute?: number | null;
-            /** @description Whether the key is a contributor without recall: a contributor key holding a submitter grant on a node that no reader grant of it reaches, before its deny masks; the console marks it no recall (ADR-0093 d3, as read on 2026-11-20; since v0.8.4). */
+            /** @description Whether the key is a contributor without recall: a contributor key holding a submitter grant on a node that no reader grant of it reaches, before its deny masks, never a session key the server holds for a person; the console marks it no recall (ADR-0093 d3, as read on 2026-11-20; since v0.8.4). */
             without_recall: boolean;
             grants: {
                 role: components["schemas"]["Role"];

@@ -32,8 +32,8 @@ class ListedKey:
         revoked (bool):
         cut_off (bool): A denial on universe cuts the key off (ADR-0045 d9).
         without_recall (bool): Whether the key is a contributor without recall: a contributor key holding a submitter
-            grant on a node that no reader grant of it reaches, before its deny masks; the console marks it no recall
-            (ADR-0093 d3, as read on 2026-11-20; since v0.8.4).
+            grant on a node that no reader grant of it reaches, before its deny masks, never a session key the server holds
+            for a person; the console marks it no recall (ADR-0093 d3, as read on 2026-11-20; since v0.8.4).
         grants (list[ListedKeyGrantsItem]):
         expiry (datetime.datetime | None | Unset): The instant from which the key authenticates nothing; null for a key
             that does not expire (ADR-0079 d3; since v0.7.3).
