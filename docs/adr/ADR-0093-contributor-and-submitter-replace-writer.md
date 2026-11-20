@@ -241,9 +241,9 @@ above left open; the operator confirms or amends them in review.
   it now names `contributor`, as the migration and rule 7 read its existing keys, with the
   submitter grant in its "must" cell.
 - **The doctor line reads the key doctor runs under.** `key_contributor_without_recall` comes from
-  `whoami`'s role and grants and names that key. No route lists every key of a tenant, so the
+  `whoami`'s `without_recall` and names that key. No route lists every key of a tenant, so the
   doctor names each such key when its holder runs it; the console's Keys pages mark each one "no
-  recall" for the person and the admin.
+  recall" for the person and the admin, from the same member of `GET /v2/keys`.
 - **What the migration found to rewrite.** On a database migrated through 0065, `api_keys.role`
   and `grants.role` are the only role columns and their two checks the only constraints naming the
   role; no function body compares a role to `writer`; and `required_roles` is stored only in
@@ -257,3 +257,29 @@ above left open; the operator confirms or amends them in review.
   asserts after 0066 that each row's role is the role rule 7 reads its event as.
 - **The vocabulary lint has its own allow list.** `lint_allow/roles.txt` holds the reasons for the
   former role, apart from `rename.txt`, so an allowed path for one rename never hides the other.
+
+### Fix round, 2026-11-20 (the coordinator's readings, for the operator to confirm)
+
+The review of PR #506 found two readings the build had taken wrongly. The coordinator decided
+these; the operator confirms or amends them here.
+
+- **A submitter key gets no implicit `universe` reader grant.** ADR-0044 d3 adds a reader node
+  grant on `universe` to every user key; a submitter key recalls nothing (d2), so issuance adds it
+  none, and a user's submitter key holds exactly the submitter grants it was sent. A contributor,
+  reader or reviewer user key still gets the grant.
+- **A submitter's read by id serves only the rows that key wrote, whatever its grants.** Any other
+  id, a promoted `universe` claim included, is `access.not_found`, as any unreadable id is. The
+  same holds wherever a submitter key's read of a row is decided (a lineage's ancestors, a
+  refusal's served tip), so a submitter is never told of another key's row.
+- **"Without recall" is per node.** A contributor without recall is a contributor key holding a
+  submitter grant on some node that no reader grant of the same key reaches, not a key with no
+  reader grant at all: a migrated v0.8.3 `--write-only --user` key, whose one reader grant is the
+  `universe` node grant, writes its root without recall and is named. A reader grant reaches a
+  node as `Grant::reaches` reads it, before its deny masks, so the answer names no masked subtree
+  to the key (ADR-0039 d15).
+- **One definition, served.** `oml_domain::access::contributor_without_recall` decides it on the
+  server, which reads a submitter grant's ancestry only where no reader grant sits on its own node.
+  `whoami` and each key of `GET /v2/keys` serve the answer as `without_recall`; the doctor line and
+  the console's "no recall" mark read that member and decide nothing of their own, since neither
+  `whoami`'s grants nor the listing's carry the ancestry the answer needs.
+

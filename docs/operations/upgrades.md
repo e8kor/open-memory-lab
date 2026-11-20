@@ -112,8 +112,12 @@ sent `--write-only`, is refused and issues nothing. The notice to send before th
    Migration 0066 rewrites `api_keys.role` from `writer` to `contributor` and `grants.role` from
    `writer` to `submitter` under each tenant's row security, and replaces the two role checks. It
    reads two small tables, and the stopped server leaves its locks free.
-4. Check `oml doctor` and `oml verify`. Signed events keep `writer` and are read through the
-   former-name map's rule 7; a `writer` the map does not cover fails `journal_unmapped_former_name`.
+4. Check `oml doctor`, `oml verify` and migration 0066's law (ADR-0093 d5): no role check names
+   `writer`, so no role column can hold it. As the database owner,
+   `SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint WHERE conname IN
+   ('api_keys_role_check', 'grants_role_check');` lists the two checks, and neither names `writer`.
+   Signed events keep `writer` and are read through the former-name map's rule 7; a `writer` the
+   map does not cover fails `journal_unmapped_former_name`.
 5. Upgrade the operator's own clients, and reissue any key `oml doctor` names under
    `key_contributor_without_recall`: issue a submitter key with
    `oml keys issue-agent <name> --role submitter` and cut the old one off.

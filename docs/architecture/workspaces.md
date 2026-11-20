@@ -93,7 +93,7 @@ On the example tree, grant A is reader on `research-crew` with a deny on `experi
 | `experiments` | no (denied in A) | yes | yes | **yes** |
 | `run-grid` | no (denied in A) | yes | yes | **no** (global deny) |
 
-A `node` grant covers its node and no descendant. Every user key carries one as a reader on `universe`.
+A `node` grant covers its node and no descendant. Every user key but a submitter key carries one as a reader on `universe`; a submitter key recalls nothing ([ADR-0093](../adr/ADR-0093-contributor-and-submitter-replace-writer.md)).
 
 ### Who may write
 
