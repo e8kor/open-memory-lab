@@ -119,7 +119,8 @@ oml bootstrap claim [OPTIONS] --token-stdin <KEY_NAME>
 | `--token-stdin` | Read the enrollment token from stdin without terminal echo, keeping it out of argv and shell history; required |
 | `--tenant-name <TENANT_NAME>` | Name for the tenant to create |
 | `--principal <PRINCIPAL>` | Principal for the first admin key |
-| `--person <PERSON>` | The person the first admin key acts for: the claim creates that person's user root and links the key to it, so the key may take an admin fix |
+| `--person <PERSON>` | The person the first admin key acts for: the claim creates that person's user root and links the key to it, so the key may take an admin fix. Requires --email |
+| `--email <EMAIL>` | The person's sign-in email, recorded as accepted for the console: the one way the person --person names gets a first sign-in. Requires --person |
 
 
 ## `oml tenants`

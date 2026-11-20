@@ -6791,10 +6791,18 @@ where
         let mut ancestries = BTreeMap::new();
         let reviewer_person = self.person_of(key).await?;
         let mut items = Vec::with_capacity(rows.len());
+        let mut issued_here = BTreeMap::new();
         for row in rows {
             let m = &row.memory;
             let Some(same) = self
-                .held_admits(key, &filter, &walked, reviewer_person.as_ref(), m)
+                .held_admits(
+                    key,
+                    &filter,
+                    &walked,
+                    reviewer_person.as_ref(),
+                    m,
+                    Some(&mut issued_here),
+                )
                 .await?
             else {
                 continue;
@@ -6834,7 +6842,10 @@ where
     /// application layer's half of the listing's rule, which every read
     /// that lists or counts held rows applies to what the store returned
     /// (ADR-0055 d2; ADR-0083 d11). `reviewer_person` is the key's person,
-    /// read once per read.
+    /// read once per read. `issued_here`, a listing's cache by author key of
+    /// whether that key was issued in the reviewer's person's root, is read
+    /// for the `same_user` mark of a row in that root; a count, which serves
+    /// such a row either way, passes `None` and reads no key.
     async fn held_admits(
         &self,
         key: &KeyRecord,
@@ -6842,6 +6853,7 @@ where
         walked: &BTreeMap<Uuid, WorkspaceRecord>,
         reviewer_person: Option<&Name>,
         m: &MemoryRecord,
+        issued_here: Option<&mut BTreeMap<Uuid, bool>>,
     ) -> Result<Option<bool>, AppError> {
         let tenant_id = key.tenant_id;
         // R2 and R3 in depth: nothing the queue would not serve this key
@@ -6856,16 +6868,24 @@ where
         let mut same = same_user(m.author_person.as_ref(), reviewer_person);
         // `author_person` records the person the author key counts as. A
         // row in the reviewer's own person's root by a key issued in that
-        // root is that person's too, read off the key only for such a row
-        // (the operator's decision of 2026-11-20).
+        // root is that person's too: the root from the walk, and the author
+        // key read once per listing (the operator's decision of 2026-11-20).
         if !same
-            && let Some(person) = reviewer_person
-            && self
-                .in_root_of_person(tenant_id, person, m.workspace_id)
-                .await?
-            && let Some(author) = self.journal.key(tenant_id, m.author_key_id).await?
+            && let (Some(person), Some(cache)) = (reviewer_person, issued_here)
+            && let Some(root) = walked.get(&m.workspace_id).and_then(WorkspaceRecord::user)
+            && walked.get(&root).is_some_and(|w| &w.name == person)
         {
-            same = self.issued_in_root_of(&author, person).await?;
+            same = match cache.get(&m.author_key_id) {
+                Some(&issued) => issued,
+                None => {
+                    let issued = match self.journal.key(tenant_id, m.author_key_id).await? {
+                        Some(author) => author.user == Some(root),
+                        None => false,
+                    };
+                    cache.insert(m.author_key_id, issued);
+                    issued
+                }
+            };
         }
         // R2 by person: a row the reviewer's own person wrote outside
         // that person's root is not theirs to judge, so it is not
@@ -7027,7 +7047,14 @@ where
                 }
                 scanned += 1;
                 if self
-                    .held_admits(key, &filter, &walked, reviewer_person.as_ref(), &row.memory)
+                    .held_admits(
+                        key,
+                        &filter,
+                        &walked,
+                        reviewer_person.as_ref(),
+                        &row.memory,
+                        None,
+                    )
                     .await?
                     .is_some()
                 {

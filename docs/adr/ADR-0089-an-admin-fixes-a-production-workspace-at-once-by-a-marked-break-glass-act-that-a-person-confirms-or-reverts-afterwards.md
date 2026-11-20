@@ -660,6 +660,6 @@ carol because of the root it was issued in. The operator decided on 2026-11-20 t
   still marked `same_user`, and the change makes no reviewer less the author.
 - **Where the root still decides.** Which root a key writes in (ADR-0044 d3, the user-root rule)
   is unchanged: a key issued in carol's root writes there, whoever counts for it.
-- The cost: one key read per user key on each of those reads, and one more on an ordinary verdict.
+- The cost: one key read per user key on each of those reads, one more on an ordinary verdict, and one per author key, cached, on a held listing that marks a row in the reviewer's own root (the served listing reads six store calls where it read five, at any number of workspaces).
 
 

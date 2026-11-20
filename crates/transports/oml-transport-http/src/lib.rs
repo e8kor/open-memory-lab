@@ -3130,7 +3130,7 @@ where
                 (None, None) => None,
                 (Some(p), Some(e)) => Some(BootstrapPerson {
                     user: creation_name("/person", p)?,
-                    email: oml_domain::web::Email::parse(e).map_err(|err| {
+                    email: oml_app::domain::web::Email::parse(e).map_err(|err| {
                         ApiError::validation(format!("/email: {err}"))
                             .with_details(json!({ "field": "/email" }))
                     })?,

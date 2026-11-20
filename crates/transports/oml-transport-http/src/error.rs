@@ -705,7 +705,7 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "the sign-in email cannot be accepted or removed here: {reason}"
         ))
         .with_details(json!({
-            "field": if *reason == "changed" { "/admin" } else { "/email" },
+            "field": if reason == "changed" { "/admin" } else { "/email" },
             "reason": reason,
         })),
         AppError::ActingKeyNotLinked => ApiError::auth_invalid("acting_key_not_linked"),

@@ -333,6 +333,7 @@ async fn bootstrap_claim(router: &Router, person: Option<&str>) -> (String, Uuid
     });
     if let Some(person) = person {
         claim["person"] = json!(person);
+        claim["email"] = json!(format!("{person}@setup.example"));
     }
     let (status, _, body) = send(
         router,
@@ -12617,6 +12618,50 @@ async fn the_bootstrap_claim_naming_a_person_links_the_first_admin_key() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{fix}");
+    drop_db(&rig.db_name).await;
+}
+
+/// The bootstrap claim takes the sign-in email of the person it names and
+/// records it as that person's accepted admin entry; a person without an
+/// email, or an email without a person, is refused naming the one missing,
+/// and consumes no token (ADR-0045 d2's note, the operator's decision of
+/// 2026-11-20).
+#[tokio::test]
+async fn the_bootstrap_claim_records_its_persons_email_accepted_and_takes_neither_alone() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    for (extra, field) in [
+        (json!({ "person": "platform" }), "/email"),
+        (json!({ "email": "platform@setup.example" }), "/person"),
+    ] {
+        let mut claim = json!({
+            "enrollment_token": ENROLLMENT,
+            "name": "root-admin",
+            "tenant_name": "test-tenant",
+        });
+        for (k, v) in extra.as_object().expect("an object") {
+            claim[k] = v.clone();
+        }
+        let (status, _, body) = send(
+            &rig.router,
+            "POST",
+            "/v2/bootstrap/claim",
+            Call::default().body(claim),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"]["details"]["field"], field, "{body}");
+    }
+    let (admin, _tenant, _root) = bootstrap_claim(&rig.router, Some("platform")).await;
+    let (status, _, list) = send(&rig.router, "GET", "/v2/web/emails", Call::auth(&admin)).await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    let entries = list["items"].as_array().expect("items");
+    assert_eq!(entries.len(), 1, "{list}");
+    assert_eq!(entries[0]["email"], "platform@setup.example", "{list}");
+    assert_eq!(entries[0]["user"], "platform", "{list}");
+    assert_eq!(entries[0]["admin"], true, "{list}");
+    assert_eq!(entries[0]["pending"], false, "{list}");
     drop_db(&rig.db_name).await;
 }
 

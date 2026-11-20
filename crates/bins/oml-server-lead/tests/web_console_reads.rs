@@ -848,7 +848,12 @@ async fn the_held_listings_store_calls_do_not_grow_with_the_workspaces() {
         );
         calls.push(held.store_calls());
     }
-    assert_eq!(calls, [5, 5], "the held listing's store calls at 6 and 48");
+    // Six: the sixth is the one read of the rows' author key, cached for the
+    // listing, which says whether a row in alice's root that a key an admin
+    // issued there wrote is marked `same_user`: that key counts as the
+    // admin's person, so its recorded author's person is not alice's (the
+    // operator's decision of 2026-11-20, ADR-0089).
+    assert_eq!(calls, [6, 6], "the held listing's store calls at 6 and 48");
 }
 
 // ---------------------------------------------------------------------------
