@@ -7818,6 +7818,9 @@ async fn whoami_answers_any_live_key_with_its_tenant_role_name_and_default_works
             "person": null,
             // No server.shared and no open sign-up (ADR-0076 d9).
             "shared": false,
+            // A reader grant beside its submitter grant: it recalls where
+            // it writes (ADR-0093 d3).
+            "without_recall": false,
         })
     );
 
