@@ -36,6 +36,7 @@ export {
 } from "./client.ts";
 export {
   AccessError,
+  AdminError,
   ApiError,
   type ApiErrorFields,
   AuthError,

@@ -157,6 +157,8 @@ web:
       pathType: Exact
     - path: /web/admin/curate
       pathType: Exact
+    - path: /web/admin/investigation
+      pathType: Exact
     - path: /web/start
       pathType: Exact
     - path: /web/start/status

@@ -33,12 +33,15 @@
 #   OML_ENROLLMENT_TOKEN  the token the server printed at first boot (default: read
 #                         from `docker compose logs oml-server`)
 #   OML_WORKSPACE_NAME     the workspace to create (default: crew)
+#   OML_ADMIN_EMAIL       the sign-in email of the person `platform` the claim names,
+#                         recorded as accepted (default: platform@example.com)
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 OML_URL="${OML_URL:-http://127.0.0.1:8080}"
 WORKSPACE_NAME="${OML_WORKSPACE_NAME:-crew}"
+ADMIN_EMAIL="${OML_ADMIN_EMAIL:-platform@example.com}"
 if [ -n "${OML_CLI:-}" ]; then
     read -r -a CLI <<<"$OML_CLI"
     CLI_SERVER="${OML_CLI_URL:-$OML_URL}"
@@ -79,7 +82,7 @@ fi
 [ -n "$TOKEN" ] || fail "no enrollment token: set OML_ENROLLMENT_TOKEN to the token the server printed at first boot"
 
 # The secret travels on stdin, never in argv (ADR-0039 d10).
-boot="$(printf '%s\n' "$TOKEN" | oml --url "$CLI_SERVER" bootstrap claim quickstart-admin --token-stdin --tenant-name quickstart --principal platform/admin)" \
+boot="$(printf '%s\n' "$TOKEN" | oml --url "$CLI_SERVER" bootstrap claim quickstart-admin --token-stdin --tenant-name quickstart --principal platform/admin --person platform --email "$ADMIN_EMAIL")" \
     || fail "bootstrap claim refused (already claimed? the token is single-use): $boot"
 workspace="$(oml workspaces create universe "$WORKSPACE_NAME" | jq -r .id)"
 

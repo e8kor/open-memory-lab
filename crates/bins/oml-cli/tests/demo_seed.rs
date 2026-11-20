@@ -195,6 +195,17 @@ async fn the_demo_seed_fills_a_workspace_with_approved_superseded_and_held_memor
         "no key value is printed: {stdout}"
     );
 
+    // Every admin read of claim text names an open investigation of its key
+    // (ADR-0089 d10).
+    let (code, opened, why) = lead
+        .oml_json(&["admin", "investigate", "--reason", "the demo seed's rows"])
+        .await;
+    assert_eq!(code, 0, "{why}");
+    let inv = opened["investigation_id"]
+        .as_str()
+        .expect("an investigation id")
+        .to_owned();
+
     // The promoted tips: twenty plain approvals and the four successors, the
     // replaced versions and the held claims absent from them.
     let (code, promoted, why) = lead
@@ -205,6 +216,8 @@ async fn the_demo_seed_fills_a_workspace_with_approved_superseded_and_held_memor
             "reviewer-demo",
             "--state",
             "promoted",
+            "--investigation",
+            &inv,
         ])
         .await;
     assert_eq!(code, 0, "{why}");
@@ -230,6 +243,8 @@ async fn the_demo_seed_fills_a_workspace_with_approved_superseded_and_held_memor
             "reviewer-demo",
             "--state",
             "superseded",
+            "--investigation",
+            &inv,
         ])
         .await;
     assert_eq!(code, 0, "{why}");
@@ -243,6 +258,8 @@ async fn the_demo_seed_fills_a_workspace_with_approved_superseded_and_held_memor
             "reviewer-demo",
             "--state",
             "held",
+            "--investigation",
+            &inv,
         ])
         .await;
     assert_eq!(code, 0, "{why}");
@@ -259,7 +276,9 @@ async fn the_demo_seed_fills_a_workspace_with_approved_superseded_and_held_memor
     let mut reviewers = std::collections::BTreeSet::new();
     for item in promoted["items"].as_array().expect("items") {
         let id = item["artifact_id"].as_str().expect("artifact_id");
-        let (code, memory, why) = lead.oml_json(&["admin", "read", id]).await;
+        let (code, memory, why) = lead
+            .oml_json(&["admin", "read", "--investigation", &inv, id])
+            .await;
         assert_eq!(code, 0, "{why}");
         assert_eq!(memory["principal"], "demo/reviewer-demo-author", "{memory}");
         let verdicts = memory["verdicts"].as_array().expect("verdicts");

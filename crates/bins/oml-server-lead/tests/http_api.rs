@@ -321,16 +321,25 @@ fn assert_envelope(body: &Value, code: &str) {
 /// The bootstrap ceremony over HTTP; returns (admin token, tenant id, root
 /// workspace id).
 async fn bootstrap(router: &Router) -> (String, Uuid, Uuid) {
+    bootstrap_claim(router, None).await
+}
+
+async fn bootstrap_claim(router: &Router, person: Option<&str>) -> (String, Uuid, Uuid) {
+    let mut claim = json!({
+        "enrollment_token": ENROLLMENT,
+        "name": "root-admin",
+        "tenant_name": "test-tenant",
+        "admin_principal": "platform/admin",
+    });
+    if let Some(person) = person {
+        claim["person"] = json!(person);
+        claim["email"] = json!(format!("{person}@setup.example"));
+    }
     let (status, _, body) = send(
         router,
         "POST",
         "/v2/bootstrap/claim",
-        Call::default().body(json!({
-            "enrollment_token": ENROLLMENT,
-            "name": "root-admin",
-            "tenant_name": "test-tenant",
-            "admin_principal": "platform/admin",
-        })),
+        Call::default().body(claim),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "bootstrap claim: {body}");
@@ -8126,8 +8135,8 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     );
     assert_eq!(
         declared.len(),
-        96,
-        "the source check (ADR-0057 d5), the workspace mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the four web routes the lead keeps (ADR-0045 d25; its two JSON routes are oml-web's, ADR-0070 d7 (b), and GET and POST /web/admin are deleted, ADR-0070 \"The old URLs deleted\"), open sign-up's one the lead keeps, POST /web/sign-up (ADR-0068 d10; the onboarding and users pages are oml-web's, ADR-0070 d7 (b)), the web console's ten (ADR-0070 d5), the sign-in page oml-web sends to (ADR-0070 d4) , federation's three (ADR-0072 d5), usage metering's six (ADR-0071 d5, d6), a key's limits (ADR-0079 d5), a key's link and unlink (ADR-0085 d16), the withdrawal (ADR-0083 d13), the skill read (ADR-0080 d11), the five upload routes (ADR-0004 d3), the workspace export and the import and its status (ADR-0084 d15), the preview (ADR-0082 d5), the two To do counts reads (ADR-0083 d11)"
+        107,
+        "the source check (ADR-0057 d5), the workspace mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the four web routes the lead keeps (ADR-0045 d25; its two JSON routes are oml-web's, ADR-0070 d7 (b), and GET and POST /web/admin are deleted, ADR-0070 \"The old URLs deleted\"), open sign-up's one the lead keeps, POST /web/sign-up (ADR-0068 d10; the onboarding and users pages are oml-web's, ADR-0070 d7 (b)), the web console's ten (ADR-0070 d5), the sign-in page oml-web sends to (ADR-0070 d4) , federation's three (ADR-0072 d5), usage metering's six (ADR-0071 d5, d6), a key's limits (ADR-0079 d5), a key's link, unlink and acceptance (ADR-0085 d16), the withdrawal (ADR-0083 d13), the skill read (ADR-0080 d11), the five upload routes (ADR-0004 d3), the workspace export and the import and its status (ADR-0084 d15), the admin investigation's open, list and close (ADR-0089 d10, d15), the five fix routes, the admin's fix and list and a person's list, confirm and revert (ADR-0089 d15), and a pending sign-in email's acceptance and removal by its person (ADR-0045 d2, the operator's decision of 2026-11-19)"
     );
     assert_eq!(oauth.len(), 6, "the six OAuth operations");
 
@@ -10442,6 +10451,20 @@ async fn link_key(rig: &WebRig, admin: &str, key: &str, user: Option<&str>) -> (
     (status, body)
 }
 
+/// `POST /v2/keys/{key}/accept_link` under the person's console
+/// credential `web`; the status and the body (ADR-0085 d16, the operator's
+/// decision of 2026-11-19).
+async fn accept_link(rig: &WebRig, web: &str, key: &str) -> (StatusCode, Value) {
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        &format!("/v2/keys/{key}/accept_link"),
+        web_call(web).idem(&format!("accept-{key}")),
+    )
+    .await;
+    (status, body)
+}
+
 /// A console request beside a person's capacity credential runs as the
 /// tenant key an admin linked to that person, named in `OML-Acting-Key`,
 /// with that key's grants; the header is refused, `auth.invalid`
@@ -10455,7 +10478,7 @@ async fn a_console_request_acts_as_the_key_linked_to_its_person_and_no_other() {
         return;
     };
     let token = rig.signed_in("alice@example.com", "alice", false).await;
-    rig.signed_in("bob@example.com", "bob", false).await;
+    let bob_web = credential(&rig.signed_in("bob@example.com", "bob", false).await, "web");
     let ops = credential(
         &rig.signed_in("ops@example.com", "ops", true).await,
         "admin",
@@ -10488,8 +10511,54 @@ async fn a_console_request_acts_as_the_key_linked_to_its_person_and_no_other() {
     let (status, linked) = link_key(&rig, &ops, "reviewer-alice", Some("alice")).await;
     assert_eq!(status, StatusCode::OK, "{linked}");
     assert_eq!(linked["linked_user"], "alice");
+    assert_eq!(linked["pending"], true);
+    // The link waits on alice (the operator's decision of 2026-11-19): her
+    // block lists it as pending, the console cannot act with it, and only
+    // her own console session accepts it.
+    let (_, _, me) = send(&rig.router, "GET", "/v2/whoami", web_call(&web)).await;
+    assert_eq!(
+        me["person"]["pending_links"],
+        json!([{ "id": id(&alices), "name": "reviewer-alice" }]),
+        "{me}"
+    );
+    assert_eq!(me["person"]["linked_keys"], json!([]), "{me}");
+    let (status, _, body) = send(
+        &rig.router,
+        "GET",
+        "/v2/whoami",
+        web_call(&web).header("oml-acting-key", &id(&alices)),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a pending link acts for no one: {body}"
+    );
+    for (caller, reason) in [
+        (bob_web.as_str(), "not_named_person"),
+        (ops.as_str(), "not_named_person"),
+    ] {
+        let (status, refused) = accept_link(&rig, caller, "reviewer-alice").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+        assert_eq!(refused["error"]["details"]["reason"], reason);
+    }
+    let (status, _, refused) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/reviewer-alice/accept_link",
+        Call::auth(&rig.admin).idem("bearer-accept"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    assert_eq!(refused["error"]["details"]["reason"], "session_only");
+    let (status, accepted) = accept_link(&rig, &web, "reviewer-alice").await;
+    assert_eq!(status, StatusCode::OK, "{accepted}");
+    assert_eq!(accepted["linked_user"], "alice");
+    assert_eq!(accepted["pending"], false);
     let (status, linked) = link_key(&rig, &ops, "reviewer-bob", Some("bob")).await;
     assert_eq!(status, StatusCode::OK, "{linked}");
+    let (status, accepted) = accept_link(&rig, &bob_web, "reviewer-bob").await;
+    assert_eq!(status, StatusCode::OK, "{accepted}");
     // A bearer admin key names no person, so it links nothing (the
     // operator, 2026-11-17: "Console only").
     let (status, _, refused) = send(
@@ -11305,11 +11374,23 @@ async fn the_changed_operations_serve_the_merged_listing_counts_offers_and_named
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 
+    let (status, _, opened) = send(
+        &rig.router,
+        "POST",
+        "/v2/admin/investigations",
+        Call::auth(&rig.admin).body(json!({ "reason": "which phone wrote it" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{opened}");
+    let inv = opened["investigation_id"]
+        .as_str()
+        .expect("an id")
+        .to_owned();
     let (status, _, found) = send(
         &rig.router,
         "POST",
         "/v2/admin/memories/search",
-        Call::auth(&rig.admin).body(json!({ "author": "alice-phone" })),
+        Call::auth(&rig.admin).body(json!({ "author": "alice-phone", "investigation": inv })),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{found}");
@@ -11318,7 +11399,8 @@ async fn the_changed_operations_serve_the_merged_listing_counts_offers_and_named
         &rig.router,
         "POST",
         "/v2/admin/memories/search",
-        Call::auth(&rig.admin).body(json!({ "author": "alice-phone", "origin_kind": "lake" })),
+        Call::auth(&rig.admin)
+            .body(json!({ "author": "alice-phone", "origin_kind": "lake", "investigation": inv })),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{none}");
@@ -11327,7 +11409,8 @@ async fn the_changed_operations_serve_the_merged_listing_counts_offers_and_named
         &rig.router,
         "POST",
         "/v2/admin/memories/search",
-        Call::auth(&rig.admin).body(json!({ "origin_kind": "carrier-pigeon" })),
+        Call::auth(&rig.admin)
+            .body(json!({ "origin_kind": "carrier-pigeon", "investigation": inv })),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
@@ -11443,6 +11526,15 @@ async fn the_admin_search_takes_a_kinds_list_and_refuses_kind_naming_kinds() {
             .map(|m| m["artifact_id"].as_str().expect("id").to_owned())
             .collect()
     };
+    let (status, _, opened) = send(
+        &rig.router,
+        "POST",
+        "/v2/admin/investigations",
+        Call::auth(&rig.admin).body(json!({ "reason": "the kinds filter" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{opened}");
+    let investigation = opened["investigation_id"].clone();
     for (kinds, want) in [
         (
             json!(["memory", "steering"]),
@@ -11455,7 +11547,8 @@ async fn the_admin_search_takes_a_kinds_list_and_refuses_kind_naming_kinds() {
             &rig.router,
             "POST",
             "/v2/admin/memories/search",
-            Call::auth(&rig.admin).body(json!({ "state": "held", "kinds": kinds })),
+            Call::auth(&rig.admin)
+                .body(json!({ "state": "held", "kinds": kinds, "investigation": investigation })),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{kinds}: {found}");
@@ -12186,5 +12279,412 @@ async fn the_admin_todo_counts_answer_only_the_admin_session_key() {
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
     assert_envelope(&body, "access.verb_ceiling");
     assert_eq!(body["error"]["details"]["reason"], "session_key_only");
+    drop_db(&rig.db_name).await;
+}
+
+/// An admin's edit serves at once over HTTP marked `approver.act:
+/// admin_fix`, `confirmed: false`; a person's reviewer key lists it with
+/// both acts and never the admin, confirms it, and a second confirm is
+/// `admin.fix_settled` (ADR-0089 d3, d7, d8, d15).
+#[tokio::test]
+async fn an_admin_fix_serves_marked_and_a_person_confirms_it_over_http() {
+    let Some(fx) = fix_rig().await else {
+        return;
+    };
+    let router = &fx.rig.router;
+    let admin = fx.rig.admin.clone();
+    let (writer, reviewer) = (fx.writer.clone(), fx.reviewer.clone());
+    let id = promoted_over_http(
+        router,
+        &writer,
+        &reviewer,
+        "fx-1",
+        "the canary drains first",
+    )
+    .await;
+    // Only an admin key takes a fix: a writer, a reviewer and an agent's
+    // key are refused at the verb (ADR-0089 d1, d11).
+    let agent = issue_key(router, &admin, "writer", "fx/bot", fx.crew).await;
+    for key in [&writer, &reviewer, &agent] {
+        let (status, _, refused) = send(
+            router,
+            "POST",
+            "/v2/admin/fixes",
+            Call::auth(key).body(json!({
+                "act": "demote", "target": id, "reason": "ticket 40",
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+        assert_envelope(&refused, "access.verb_ceiling");
+    }
+    let (status, _, fix) = send(
+        router,
+        "POST",
+        "/v2/admin/fixes",
+        Call::auth(&admin).body(json!({
+            "act": "edit", "target": id, "reason": "ticket 41",
+            "body": "the canary drains and settles first",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{fix}");
+    assert_eq!(fix["state"], "unconfirmed");
+    let served = fix["served_artifact_id"]
+        .as_str()
+        .expect("served")
+        .to_owned();
+    let fix_id = fix["fix_id"].as_str().expect("id").to_owned();
+    let (status, _, got) = send(
+        router,
+        "GET",
+        &format!("/v1/memories/{served}"),
+        Call::auth(&reviewer),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{got}");
+    assert_eq!(got["approver"]["act"], "admin_fix", "{got}");
+    assert_eq!(got["approver"]["confirmed"], false, "{got}");
+    let mcp_reader = issue_key(router, &admin, "reader", "fx/reader", fx.crew).await;
+    // No reader learns which admin wrote the fixed version (ADR-0089 d7).
+    assert_eq!(got["principal"], Value::Null, "{got}");
+    assert_eq!(got["author_key_id"], Value::Null, "{got}");
+    assert_eq!(got["provenance"], "admin_fix", "{got}");
+    let (status, _, rpc) = send(
+        router,
+        "POST",
+        "/mcp",
+        Call::auth(&mcp_reader).body(json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "oml_read", "arguments": {"query": "canary settles"}},
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{rpc}");
+    let hits = rpc["result"]["structuredContent"]["hits"]
+        .as_array()
+        .unwrap_or_else(|| panic!("hits: {rpc}"))
+        .clone();
+    let hit = hits
+        .iter()
+        .find(|h| h["artifact_id"] == served.as_str())
+        .unwrap_or_else(|| panic!("the fixed version is recalled: {rpc}"));
+    // MCP serves no author of the fixed version either.
+    assert_eq!(hit["principal"], Value::Null, "{hit}");
+    assert_eq!(hit["author_key_id"], Value::Null, "{hit}");
+    assert_eq!(hit["approver"]["act"], "admin_fix", "{hit}");
+    let (status, _, listed) = send(router, "GET", "/v2/review/fixes", Call::auth(&reviewer)).await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert_eq!(
+        listed["items"][0]["acts"],
+        json!(["confirm", "revert"]),
+        "{listed}"
+    );
+    assert!(listed["items"][0].get("admin_key_id").is_none(), "{listed}");
+    let (status, _, confirmed) = send(
+        router,
+        "POST",
+        &format!("/v2/review/fixes/{fix_id}/confirm"),
+        Call::auth(&reviewer).body(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{confirmed}");
+    assert_eq!(confirmed["state"], "confirmed");
+    let (_, _, got) = send(
+        router,
+        "GET",
+        &format!("/v1/memories/{served}"),
+        Call::auth(&reviewer),
+    )
+    .await;
+    assert_eq!(got["approver"]["confirmed"], true, "{got}");
+    let (status, _, again) = send(
+        router,
+        "POST",
+        &format!("/v2/review/fixes/{fix_id}/confirm"),
+        Call::auth(&reviewer).body(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{again}");
+    assert_envelope(&again, "admin.fix_settled");
+    let (status, _, all) = send(
+        router,
+        "GET",
+        "/v2/admin/fixes?state=all",
+        Call::auth(&admin),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{all}");
+    assert_eq!(all["items"].as_array().map(Vec::len), Some(1), "{all}");
+    drop_db(&fx.rig.db_name).await;
+}
+
+/// A console-linked fix rig on PostgreSQL (ADR-0089, the operator's
+/// decision of 2026-11-19): the admin key linked to `platform` through the
+/// console, a workspace `fixes`, an agent writer there, and dana's reviewer
+/// key linked to dana.
+struct FixRig {
+    rig: WebRig,
+    crew: Uuid,
+    writer: String,
+    reviewer: String,
+}
+
+async fn fix_rig() -> Option<FixRig> {
+    let rig = web_rig().await?;
+    let platform = credential(
+        &rig.signed_in("platform@example.com", "platform", false)
+            .await,
+        "web",
+    );
+    let dana_web = credential(
+        &rig.signed_in("dana@example.com", "dana", false).await,
+        "web",
+    );
+    let ops = credential(
+        &rig.signed_in("ops@example.com", "ops", true).await,
+        "admin",
+    );
+    let (status, linked) = link_key(&rig, &ops, "root-admin", Some("platform")).await;
+    assert_eq!(status, StatusCode::OK, "the admin key links: {linked}");
+    let (status, accepted) = accept_link(&rig, &platform, "root-admin").await;
+    assert_eq!(status, StatusCode::OK, "platform accepts: {accepted}");
+    let crew = create_workspace(&rig.router, &rig.admin, rig.root, "fixes").await;
+    let writer = issue_key(&rig.router, &rig.admin, "writer", "fx/agent", crew).await;
+    let dana = issue_key_with(
+        &rig.router,
+        &rig.admin,
+        "reviewer",
+        "fx/dana",
+        json!([{ "workspace": crew, "role": "reviewer" }, { "workspace": crew, "role": "reader" }]),
+    )
+    .await;
+    let name = dana["name"].as_str().expect("name").to_owned();
+    let (status, linked) = link_key(&rig, &ops, &name, Some("dana")).await;
+    assert_eq!(status, StatusCode::OK, "{linked}");
+    let (status, accepted) = accept_link(&rig, &dana_web, &name).await;
+    assert_eq!(status, StatusCode::OK, "dana accepts: {accepted}");
+    Some(FixRig {
+        rig,
+        crew,
+        writer,
+        reviewer: dana["value"].as_str().expect("value").to_owned(),
+    })
+}
+
+/// Takes `act` on `target` under the rig's admin key; the fix as answered.
+async fn fixed(fx: &FixRig, act: &str, target: &str, body: Option<&str>) -> Value {
+    let mut request = json!({ "act": act, "target": target, "reason": "ticket 43" });
+    if let Some(body) = body {
+        request["body"] = json!(body);
+    }
+    let (status, _, fix) = send(
+        &fx.rig.router,
+        "POST",
+        "/v2/admin/fixes",
+        Call::auth(&fx.rig.admin).body(request),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{fix}");
+    fix
+}
+
+/// Reverts `fix` under dana's key; the restored version's id.
+async fn reverted(fx: &FixRig, fix: &Value) -> String {
+    let fix_id = fix["fix_id"].as_str().expect("id");
+    let (status, _, settled) = send(
+        &fx.rig.router,
+        "POST",
+        &format!("/v2/review/fixes/{fix_id}/revert"),
+        Call::auth(&fx.reviewer).body(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{settled}");
+    assert_eq!(settled["state"], "reverted", "{settled}");
+    settled["restored_artifact_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a restored version: {settled}"))
+        .to_owned()
+}
+
+/// On PostgreSQL, a revert of a demotion serves the demoted text again as
+/// the claim's tip, a server-authored version dana's verdict approved
+/// (ADR-0089 d8, d17).
+#[tokio::test]
+async fn a_revert_of_a_demotion_restores_the_claims_tip_on_postgres() {
+    let Some(fx) = fix_rig().await else {
+        return;
+    };
+    let router = &fx.rig.router;
+    let id = promoted_over_http(
+        router,
+        &fx.writer,
+        &fx.reviewer,
+        "fx-d",
+        "the cache holds a day",
+    )
+    .await;
+    let fix = fixed(&fx, "demote", &id.to_string(), None).await;
+    let restored = reverted(&fx, &fix).await;
+    let (status, _, got) = send(
+        router,
+        "GET",
+        &format!("/v1/memories/{restored}"),
+        Call::auth(&fx.reviewer),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{got}");
+    assert_eq!(got["tip"], true, "{got}");
+    assert_eq!(got["text"], "the cache holds a day", "{got}");
+    assert_eq!(got["approver"]["act"], "verdict", "{got}");
+    // Authored by the reserved server key, never by the reverter
+    // (ADR-0089 d17 c5).
+    assert_eq!(got["principal"], "oml:server", "{got}");
+    drop_db(&fx.rig.db_name).await;
+}
+
+/// On PostgreSQL, a revert of an edit serves the earlier text again, and
+/// the edit's version keeps its mark, read reverted (ADR-0089 d7, d8,
+/// d17).
+#[tokio::test]
+async fn a_revert_of_an_edit_serves_the_earlier_text_and_marks_the_edit_reverted_on_postgres() {
+    let Some(fx) = fix_rig().await else {
+        return;
+    };
+    let router = &fx.rig.router;
+    let id = promoted_over_http(
+        router,
+        &fx.writer,
+        &fx.reviewer,
+        "fx-e",
+        "the queue drains nightly",
+    )
+    .await;
+    let fix = fixed(
+        &fx,
+        "edit",
+        &id.to_string(),
+        Some("the queue drains hourly"),
+    )
+    .await;
+    let edited = fix["served_artifact_id"]
+        .as_str()
+        .expect("served")
+        .to_owned();
+    let restored = reverted(&fx, &fix).await;
+    let read = |artifact: String| {
+        let reviewer = fx.reviewer.clone();
+        async move {
+            let (status, _, got) = send(
+                router,
+                "GET",
+                &format!("/v1/memories/{artifact}"),
+                Call::auth(&reviewer),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{got}");
+            got
+        }
+    };
+    let got = read(restored).await;
+    assert_eq!(got["tip"], true, "{got}");
+    assert_eq!(got["text"], "the queue drains nightly", "{got}");
+    let got = read(edited).await;
+    assert_eq!(got["tip"], false, "{got}");
+    assert_eq!(got["approver"]["act"], "admin_fix", "{got}");
+    assert_eq!(got["approver"]["confirmed"], false, "{got}");
+    assert_eq!(got["approver"]["reverted"], true, "{got}");
+    drop_db(&fx.rig.db_name).await;
+}
+
+/// The bootstrap claim that names a person links the first admin key to
+/// that person's user root, so the key may take an admin fix (ADR-0089,
+/// the operator's decision of 2026-11-19; ADR-0085 d16).
+#[tokio::test]
+async fn the_bootstrap_claim_naming_a_person_links_the_first_admin_key() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let (admin, _tenant, _root) = bootstrap_claim(&rig.router, Some("platform")).await;
+    // A linked admin key passes the person check and meets the target's
+    // absence; an unlinked one would answer admin.fix_requires_person.
+    let (status, _, fix) = send(
+        &rig.router,
+        "POST",
+        "/v2/admin/fixes",
+        Call::auth(&admin).body(json!({
+            "act": "demote", "target": Uuid::nil(), "reason": "ticket 44",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{fix}");
+    drop_db(&rig.db_name).await;
+}
+
+/// The bootstrap claim takes the sign-in email of the person it names and
+/// records it as that person's accepted admin entry; a person without an
+/// email, or an email without a person, is refused naming the one missing,
+/// and consumes no token (ADR-0045 d2's note, the operator's decision of
+/// 2026-11-20).
+#[tokio::test]
+async fn the_bootstrap_claim_records_its_persons_email_accepted_and_takes_neither_alone() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    for (extra, field) in [
+        (json!({ "person": "platform" }), "/email"),
+        (json!({ "email": "platform@setup.example" }), "/person"),
+    ] {
+        let mut claim = json!({
+            "enrollment_token": ENROLLMENT,
+            "name": "root-admin",
+            "tenant_name": "test-tenant",
+        });
+        for (k, v) in extra.as_object().expect("an object") {
+            claim[k] = v.clone();
+        }
+        let (status, _, body) = send(
+            &rig.router,
+            "POST",
+            "/v2/bootstrap/claim",
+            Call::default().body(claim),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"]["details"]["field"], field, "{body}");
+    }
+    let (admin, _tenant, _root) = bootstrap_claim(&rig.router, Some("platform")).await;
+    let (status, _, list) = send(&rig.router, "GET", "/v2/web/emails", Call::auth(&admin)).await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    let entries = list["items"].as_array().expect("items");
+    assert_eq!(entries.len(), 1, "{list}");
+    assert_eq!(entries[0]["email"], "platform@setup.example", "{list}");
+    assert_eq!(entries[0]["user"], "platform", "{list}");
+    assert_eq!(entries[0]["admin"], true, "{list}");
+    assert_eq!(entries[0]["pending"], false, "{list}");
+    drop_db(&rig.db_name).await;
+}
+
+/// A bootstrap claim that names no person leaves the first admin key
+/// unlinked, and its fix is refused by name (ADR-0089, the operator's
+/// decision of 2026-11-19).
+#[tokio::test]
+async fn an_unlinked_admin_keys_fix_answers_fix_requires_person_unlinked() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let (admin, _tenant, _root) = bootstrap(&rig.router).await;
+    let (status, _, fix) = send(
+        &rig.router,
+        "POST",
+        "/v2/admin/fixes",
+        Call::auth(&admin).body(json!({
+            "act": "demote", "target": Uuid::nil(), "reason": "ticket 45",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{fix}");
+    assert_envelope(&fix, "admin.fix_requires_person");
+    assert_eq!(fix["error"]["details"]["reason"], "unlinked", "{fix}");
     drop_db(&rig.db_name).await;
 }

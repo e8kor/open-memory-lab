@@ -34,7 +34,15 @@ use crate::session::{PageCalls, Session, call, cookie};
 use crate::{Capacity, Web, acts, outcome, usage};
 
 /// The user page's acts, each the act of one documented operation.
-pub const USER_ACTIONS: &[&str] = &["issue_key", "connect_key", "connect_code", "cut_off"];
+pub const USER_ACTIONS: &[&str] = &[
+    "issue_key",
+    "connect_key",
+    "connect_code",
+    "cut_off",
+    "accept_link",
+    "accept_email",
+    "decline_email",
+];
 
 /// The admin page's acts: the cut-off, and a tenant key's link to the
 /// listed person and its end (ADR-0085 d16).
@@ -131,7 +139,10 @@ const EXPIRES_NOTE: &str = "A key's expiry date is optional; only an admin can c
 fn notice(done: Option<&str>) -> Option<&'static str> {
     match done? {
         "cut off" => Some("cut off"),
-        "linked" => Some("linked: the console acts with the key for this person"),
+        "linked" => Some("linked: the key acts for this person once they accept the link"),
+        "accepted" => Some("accepted: the console acts with the key for this account"),
+        "email_accepted" => Some("accepted: the email signs in to this account"),
+        "email_removed" => Some("removed: the email signs in to nothing"),
         "unlinked" => Some("unlinked: the console no longer acts with the key"),
         _ => None,
     }
@@ -533,26 +544,32 @@ async fn user_view(
     let (card, linked) = match person {
         Ok(found) => (
             found.person.as_ref().and_then(usage::card),
-            found.person.map(|p| p.linked_keys).unwrap_or_default(),
+            found
+                .person
+                .map(|p| (p.linked_keys, p.pending_links, p.pending_emails))
+                .unwrap_or_default(),
         ),
         Err(_) => (
             Some(usage::unavailable(
                 usage_ids.request_id.as_deref().unwrap_or_default(),
             )),
-            Vec::new(),
+            (Vec::new(), Vec::new(), Vec::new()),
         ),
     };
+    let (linked, pending, emails) = linked;
     let csrf = session.csrf();
     // For a session whose key carries a denial the page opens on the
     // sentence, above the table, and draws none of the three forms: the API
     // refuses each one for this session's key, now and for good.
     let denied = denied(session).then_some(session.whoami.key_id.as_str());
     let mut body = format!(
-        r#"<h1>Keys</h1><p class="desc">Keys acting for <code>{}</code>.</p>{}{}{}{}"#,
+        r#"<h1>Keys</h1><p class="desc">Keys acting for <code>{}</code>.</p>{}{}{}{}{}{}"#,
         short(&user),
         denied.map(|_| denied_notice()).unwrap_or_default(),
         card.unwrap_or_default(),
         table(&listed, Side::User, &csrf, "", denied),
+        pending_emails_section(&emails, &csrf),
+        pending_section(&pending, &csrf),
         linked_section(&linked)
     );
     if denied.is_some() {
@@ -603,6 +620,97 @@ fn linked_section(linked: &[oml_sdk::LinkedKey]) -> String {
             r#"<li><code>{}</code> · <a href="{TODO_PATH}?as={}">Judge as this key in To do</a></li>"#,
             short(&key.name),
             attr(&encode(&key.id))
+        );
+    }
+    out.push_str("</ul>");
+    out
+}
+
+/// The links an admin made of tenant keys to this account that wait on its
+/// acceptance, each with its **Accept link** act; nothing where none waits.
+/// Until accepted, a key acts for no one (ADR-0085 d16, the operator's
+/// decision of 2026-11-19).
+fn pending_section(pending: &[oml_sdk::LinkedKey], csrf: &str) -> String {
+    if pending.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from(
+        r#"<h2>Links to accept</h2><p class="desc">An admin linked these tenant keys to this account. A key acts for this account only once the link is accepted here; until then it acts for no one.</p><ul>"#,
+    );
+    for key in pending {
+        let _ = write!(
+            out,
+            "<li><code>{}</code> {}</li>",
+            short(&key.name),
+            form(
+                USER_KEYS_PATH,
+                "accept_link",
+                csrf,
+                &format!("{}{}", hidden("key", &key.name), acts::nonce_field()),
+                "Accept link",
+                false
+            )
+        );
+    }
+    out.push_str("</ul>");
+    out
+}
+
+/// The sign-in emails an admin added for this account that wait on its
+/// acceptance, each with whether it signs in as an admin and the admin key
+/// that added it, and its **Accept sign-in email** and **Remove** acts;
+/// nothing where none waits. Until accepted an email signs in to nothing.
+/// The accept names back the admin flag shown, so a flag changed since the
+/// page was drawn is refused (ADR-0045 d2, the operator's decisions of
+/// 2026-11-19 and 2026-11-20).
+fn pending_emails_section(emails: &[oml_sdk::PendingEmail], csrf: &str) -> String {
+    if emails.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from(
+        r#"<h2>Sign-in emails to accept</h2><p class="desc">An admin added these sign-in emails for this account. An email signs in to this account only once it is accepted here; until then it signs in to nothing. An email not asked for is removed here.</p><ul>"#,
+    );
+    for pending in emails {
+        let email = pending.email.as_str();
+        let admin = if pending.admin { "true" } else { "false" };
+        let accept = format!(
+            "{}{}{}",
+            hidden("email", email),
+            hidden("admin", admin),
+            acts::nonce_field()
+        );
+        let remove = format!("{}{}", hidden("email", email), acts::nonce_field());
+        let adder = pending
+            .added_by
+            .name
+            .as_deref()
+            .unwrap_or(pending.added_by.id.as_str());
+        let _ = write!(
+            out,
+            "<li><code>{}</code> · {} · added by <code>{}</code> {} {}</li>",
+            text(email),
+            if pending.admin {
+                "signs in as an admin"
+            } else {
+                "signs in without admin"
+            },
+            text(adder),
+            form(
+                USER_KEYS_PATH,
+                "accept_email",
+                csrf,
+                &accept,
+                "Accept sign-in email",
+                false
+            ),
+            form(
+                USER_KEYS_PATH,
+                "decline_email",
+                csrf,
+                &remove,
+                "Remove",
+                false
+            )
         );
     }
     out.push_str("</ul>");
@@ -684,7 +792,8 @@ fn link_forms(csrf: &str, user: &str) -> String {
         )
     };
     format!(
-        r#"<h2>Linked tenant key</h2><p class="desc">A live tenant key used by a person, not an admin key, that {} works with in shared workspaces. Linked, the console judges with it for them.</p>{}{}"#,
+        r#"<h2>Linked tenant key</h2><p class="desc">A live tenant key used by a person that {} works with in shared workspaces. The link waits until {} accepts it on their own Keys page; accepted, the key acts for them.</p>{}{}"#,
+        short(user),
         short(user),
         form(
             ADMIN_KEYS_PATH,
@@ -713,6 +822,8 @@ fn defined(side: Side, action: &str, name: &str) -> bool {
         "issue_key" | "connect_key" => matches!(name, "name" | "role" | "expires"),
         "cut_off" => matches!(name, "key" | "confirm") || (side == Side::Admin && name == "user"),
         "link_key" | "unlink_key" => matches!(name, "key" | "user"),
+        "accept_email" => matches!(name, "email" | "admin"),
+        "decline_email" => name == "email",
         _ => name == "key",
     }
 }
@@ -809,6 +920,8 @@ async fn act(
     let required: &[&str] = match action {
         "issue_key" | "connect_key" => &["name"],
         "link_key" => &["key", "user"],
+        "accept_email" => &["email", "admin"],
+        "decline_email" => &["email"],
         _ => &["key"],
     };
     if let Some(missing) = required.iter().find(|n| fields.given(n).is_none()) {
@@ -897,6 +1010,32 @@ async fn act(
                 Ok(_) => return no_secret(&calls),
                 Err(e) => return outcome::page(&e, &calls, page),
             }
+        }
+        "accept_email" | "decline_email" => {
+            let email = fields.given("email").unwrap_or_default();
+            let (answer, done) = if action == "accept_email" {
+                let admin = fields.given("admin") == Some("true");
+                (
+                    web.api.accept_web_email(&call, &key, email, admin).await,
+                    "email_accepted",
+                )
+            } else {
+                (
+                    web.api.decline_web_email(&call, &key, email).await,
+                    "email_removed",
+                )
+            };
+            return match answer {
+                Ok(_) => acts::see_other(&format!("{page}?done={done}"), &[]),
+                Err(e) => outcome::page(&e, &calls, page),
+            };
+        }
+        "accept_link" => {
+            let name = fields.given("key").unwrap_or_default();
+            return match web.api.accept_key_link(&call, &key, name).await {
+                Ok(_) => acts::see_other(&format!("{page}?done=accepted"), &[]),
+                Err(e) => outcome::page(&e, &calls, page),
+            };
         }
         "link_key" | "unlink_key" => {
             let name = fields.given("key").unwrap_or_default();

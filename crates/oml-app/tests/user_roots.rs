@@ -12,10 +12,11 @@ use oml_app::domain::web::Email;
 use oml_app::domain::{MemoryKind, MemoryStatus, Role, UsedBy, event_types};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
 use oml_app::ports::JournalStore as _;
+use oml_app::ports::WebStore as _;
 use oml_app::types::{
-    AppError, Bearer, BootstrapRequest, BootstrapResult, GrantRequest, GuardrailRequest,
-    GuardrailSet, IssueKeyRequest, IssuedKey, KeyLimitsChange, RecallRequest, SubmitRequest,
-    SupersedeRequest, Verdict, WebEmailRequest, WebSessionRecord,
+    AppError, Bearer, BootstrapPerson, BootstrapRequest, BootstrapResult, GrantRequest,
+    GuardrailRequest, GuardrailSet, IssueKeyRequest, IssuedKey, KeyLimitsChange, RecallRequest,
+    SubmitRequest, SupersedeRequest, Verdict, WebEmailRequest, WebSessionRecord,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
@@ -258,6 +259,10 @@ struct Curated {
 
 async fn curated(app: &TestApp, boot: &BootstrapResult) -> Curated {
     let admin = &boot.admin_key.value;
+    // alice signs in before any key names her root: an address added for a
+    // person a key names waits on her (the operator's decision of
+    // 2026-11-20, ADR-0045 d2's note).
+    signed_in(app, admin, "alice", false).await;
     let alice = user_writer(app, admin, "alice", "alice/laptop").await;
     let alice_review = user_reviewer(app, admin, "alice", "alice/review").await;
     let source = written(
@@ -2127,6 +2132,54 @@ fn link_refused(err: &AppError, reason: &str) -> bool {
     matches!(err, AppError::KeyLinkRefused { reason: r } if *r == reason)
 }
 
+/// The person `user`'s own console session, `<user>-web`, opened anew on
+/// the entry `signed_in` added: the one caller that accepts a link pending
+/// to them (ADR-0085 d16, the operator's decision of 2026-11-19).
+async fn console_of(app: &TestApp, store: &MemStore, user: &str) -> oml_app::app::Caller {
+    let email = Email::parse(&format!("{user}@example.com")).expect("an email");
+    let entry = store
+        .web_entry_by_email(&email.digest())
+        .await
+        .expect("a read")
+        .expect("the person's entry");
+    let token = app
+        .web_session_open(&entry, 3600, None)
+        .await
+        .expect("the session opens")
+        .token;
+    let session = app
+        .web_session(&token)
+        .await
+        .expect("a read")
+        .expect("a live session");
+    app.web_caller(&session, Capacity::Web)
+        .await
+        .expect("the person's console session")
+}
+
+/// `user` accepts the link pending to them on `key_id` from their own
+/// console session.
+async fn accept_link(app: &TestApp, store: &MemStore, user: &str, key_id: Uuid) {
+    let console = console_of(app, store, user).await;
+    app.accept_key_link(Bearer::Session(&console), key_id.into())
+        .await
+        .expect("the named person accepts");
+}
+
+/// A console admin's link of `key_id` to `user`, accepted by `user`.
+async fn link_accepted(
+    app: &TestApp,
+    store: &MemStore,
+    ops: &oml_app::app::Caller,
+    key_id: Uuid,
+    user: &str,
+) {
+    app.link_key_to_person(Bearer::Session(ops), key_id.into(), &name(user))
+        .await
+        .expect("linked, pending");
+    accept_link(app, store, user, key_id).await;
+}
+
 #[tokio::test]
 async fn an_admin_links_a_person_tenant_key_and_the_link_is_journalled() {
     let (app, store) = rig();
@@ -2145,7 +2198,10 @@ async fn an_admin_links_a_person_tenant_key_and_the_link_is_journalled() {
         .expect("a read")
         .expect("alice's root")
         .workspace_id;
-    assert_eq!(linked.linked_user, Some(root));
+    // The link waits on alice; it is journalled at once (the operator's
+    // decision of 2026-11-19).
+    assert_eq!(linked.linked_user, None);
+    assert_eq!(linked.link_pending, Some(root));
     let events = store
         .events_range(boot.tenant_id, 1, 10_000)
         .await
@@ -2157,6 +2213,7 @@ async fn an_admin_links_a_person_tenant_key_and_the_link_is_journalled() {
         .expect("key.linked_person");
     assert_eq!(event.envelope.payload["key_id"], key.key_id.to_string());
     assert_eq!(event.envelope.payload["user"], "alice");
+    assert_eq!(event.envelope.payload["accepted"], false);
     // Unlinked, journalled, and the key acts for no one again.
     let unlinked = app
         .unlink_key_from_person(Bearer::Session(&ops), key.key_id.into())
@@ -2190,7 +2247,6 @@ async fn linking_an_agent_held_key_is_refused() {
     for (key, reason) in [
         (agent.key_id, "not_used_by_person"),
         (user_key.key_id, "not_a_tenant_key"),
-        (boot.admin_key.key_id, "admin_key"),
     ] {
         let err = app
             .link_key_to_person(Bearer::Session(&ops), key.into(), &name("alice"))
@@ -2224,7 +2280,7 @@ async fn linking_an_agent_held_key_is_refused() {
 
 #[tokio::test]
 async fn a_linked_keys_approval_of_its_persons_agent_write_is_marked_same_user() {
-    let (app, _store) = rig();
+    let (app, store) = rig();
     let boot = bootstrap(&app).await;
     let admin = boot.admin_key.value.as_str();
     let ops = console_admin(&app, admin, "ops").await;
@@ -2240,13 +2296,7 @@ async fn a_linked_keys_approval_of_its_persons_agent_write_is_marked_same_user()
         ],
     )
     .await;
-    app.link_key_to_person(
-        Bearer::Session(&ops),
-        reviewer.key_id.into(),
-        &name("alice"),
-    )
-    .await
-    .expect("linked");
+    link_accepted(&app, &store, &ops, reviewer.key_id, "alice").await;
     let id = written(&app, &writer.value, &submit("l1", "A linked review.", None)).await;
     let outcome = app
         .post_verdict(&reviewer.value, id, Verdict::Approve, None)
@@ -2257,7 +2307,7 @@ async fn a_linked_keys_approval_of_its_persons_agent_write_is_marked_same_user()
 
 #[tokio::test]
 async fn the_acting_key_resolves_only_for_a_live_key_linked_to_the_sessions_own_user() {
-    let (app, _store) = rig();
+    let (app, store) = rig();
     let boot = bootstrap(&app).await;
     let admin = boot.admin_key.value.as_str();
     let ops = console_admin(&app, admin, "ops").await;
@@ -2270,12 +2320,8 @@ async fn the_acting_key_resolves_only_for_a_live_key_linked_to_the_sessions_own_
     let alices = person_tenant_key(&app, admin, "alice/dev-review", Vec::new()).await;
     let bobs = person_tenant_key(&app, admin, "bob/dev-review", Vec::new()).await;
     let unlinked = person_tenant_key(&app, admin, "alice/spare", Vec::new()).await;
-    app.link_key_to_person(Bearer::Session(&ops), alices.key_id.into(), &name("alice"))
-        .await
-        .expect("linked");
-    app.link_key_to_person(Bearer::Session(&ops), bobs.key_id.into(), &name("bob"))
-        .await
-        .expect("linked");
+    link_accepted(&app, &store, &ops, alices.key_id, "alice").await;
+    link_accepted(&app, &store, &ops, bobs.key_id, "bob").await;
     let acting = app
         .acting_caller(&review, &alice, alices.key_id)
         .await
@@ -2308,7 +2354,7 @@ async fn a_linked_key_past_its_expiry_no_longer_acts_for_its_person() {
     let store = MemStore::new();
     let clock = FixedClock::new();
     let app = App::new(
-        store,
+        store.clone(),
         MemSigner::new(TEST_SEED),
         clock.clone(),
         SeqIdGen::new(),
@@ -2323,9 +2369,7 @@ async fn a_linked_key_past_its_expiry_no_longer_acts_for_its_person() {
         .await
         .expect("alice-review");
     let key = person_tenant_key(&app, admin, "alice/dev-review", Vec::new()).await;
-    app.link_key_to_person(Bearer::Session(&ops), key.key_id.into(), &name("alice"))
-        .await
-        .expect("linked");
+    link_accepted(&app, &store, &ops, key.key_id, "alice").await;
     app.set_key_limits(
         admin,
         key.key_id.into(),
@@ -2433,7 +2477,7 @@ async fn a_link_is_refused_for_a_disabled_person_a_session_key_a_service_key_a_l
         &name("bob"),
     )
     .await
-    .expect("another person's key");
+    .expect("linked, pending");
     let err = app
         .link_key_to_person(Bearer::Session(&ops), key.key_id.into(), &name("alice"))
         .await
@@ -2467,9 +2511,7 @@ async fn a_revoked_or_foreign_linked_key_acts_for_no_one_and_a_revoked_one_is_st
         .await
         .expect("alice-review");
     let key = person_tenant_key(&app, admin, "alice/dev-review", Vec::new()).await;
-    app.link_key_to_person(Bearer::Session(&ops), key.key_id.into(), &name("alice"))
-        .await
-        .expect("linked");
+    link_accepted(&app, &store, &ops, key.key_id, "alice").await;
     store.set_key_revoked(
         boot.tenant_id,
         key.key_id,
@@ -2497,13 +2539,7 @@ async fn a_revoked_or_foreign_linked_key_acts_for_no_one_and_a_revoked_one_is_st
     let other_ops = console_admin(&app, other_admin, "globex-ops").await;
     signed_in(&app, other_admin, "dave", false).await;
     let foreign = person_tenant_key(&app, other_admin, "dave/globex", Vec::new()).await;
-    app.link_key_to_person(
-        Bearer::Session(&other_ops),
-        foreign.key_id.into(),
-        &name("dave"),
-    )
-    .await
-    .expect("linked in its own tenant");
+    link_accepted(&app, &store, &other_ops, foreign.key_id, "dave").await;
     let err = app
         .acting_caller(&review, &alice, foreign.key_id)
         .await
@@ -2516,7 +2552,7 @@ async fn a_revoked_or_foreign_linked_key_acts_for_no_one_and_a_revoked_one_is_st
 /// (the operator, 2026-11-17: "Yes, allow it"; ADR-0044 d16).
 #[tokio::test]
 async fn a_linked_key_writes_into_its_persons_root_and_an_unlinked_one_is_refused() {
-    let (app, _store) = rig();
+    let (app, store) = rig();
     let boot = bootstrap(&app).await;
     let admin = boot.admin_key.value.as_str();
     let ops = console_admin(&app, admin, "ops").await;
@@ -2544,7 +2580,18 @@ async fn a_linked_key_writes_into_its_persons_root_and_an_unlinked_one_is_refuse
     assert!(matches!(err, AppError::UserRootRefused), "{err:?}");
     app.link_key_to_person(Bearer::Session(&ops), writer.key_id.into(), &name("alice"))
         .await
-        .expect("linked");
+        .expect("linked, pending");
+    // A writer key's link waits on its person too: pending, the key writes
+    // nothing into her root (the operator's decision of 2026-11-19).
+    let err = app
+        .submit_memory(
+            &writer.value,
+            &submit("wp", "Not hers yet either.", Some("alice")),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::UserRootRefused), "{err:?}");
+    accept_link(&app, &store, "alice", writer.key_id).await;
     written(
         &app,
         &writer.value,
@@ -2594,7 +2641,7 @@ async fn a_bearer_admin_key_links_nothing_and_a_console_admin_never_links_its_ow
     assert!(link_refused(&err, "self_link"), "{err:?}");
     app.link_key_to_person(Bearer::Session(&ops), key.key_id.into(), &name("alice"))
         .await
-        .expect("a console admin links another person's key");
+        .expect("linked, pending");
     let err = app
         .unlink_key_from_person(admin, key.key_id.into())
         .await
@@ -2693,7 +2740,14 @@ async fn team_with_alices_linked_writer(
         .expect("alice's tenant writer key");
     app.link_key_to_person(Bearer::Session(ops), writer.key_id.into(), &name("alice"))
         .await
-        .expect("linked");
+        .expect("linked, pending");
+    let web = app
+        .web_caller(&alice, Capacity::Web)
+        .await
+        .expect("alice's console");
+    app.accept_key_link(Bearer::Session(&web), writer.key_id.into())
+        .await
+        .expect("alice accepts");
     (alice, writer)
 }
 
@@ -2784,7 +2838,7 @@ async fn a_persons_session_reviewer_key_is_refused_a_verdict_on_their_linked_key
 /// (ADR-0085 d16, amended 2026-11-18; #448).
 #[tokio::test]
 async fn the_same_user_mark_survives_an_unlink_between_the_write_and_the_approval() {
-    let (app, _store) = rig();
+    let (app, store) = rig();
     let boot = bootstrap(&app).await;
     let admin = boot.admin_key.value.as_str();
     let ops = console_admin(&app, admin, "ops").await;
@@ -2808,9 +2862,7 @@ async fn the_same_user_mark_survives_an_unlink_between_the_write_and_the_approva
         )
         .await
         .expect("a tenant writer granted into alice's root");
-    app.link_key_to_person(Bearer::Session(&ops), writer.key_id.into(), &name("alice"))
-        .await
-        .expect("linked");
+    link_accepted(&app, &store, &ops, writer.key_id, "alice").await;
     let id = written(
         &app,
         &writer.value,
@@ -2901,7 +2953,7 @@ async fn an_unlink_between_the_write_and_the_verdict_keeps_the_persons_reviewer_
 /// wrote outside their root: `<user>-curate`'s write in `universe`.
 #[tokio::test]
 async fn a_persons_linked_reviewer_key_is_refused_a_verdict_on_their_session_keys_write() {
-    let (app, _store) = rig();
+    let (app, store) = rig();
     let boot = bootstrap(&app).await;
     let admin = boot.admin_key.value.as_str();
     let ops = console_admin(&app, admin, "ops").await;
@@ -2936,13 +2988,7 @@ async fn a_persons_linked_reviewer_key_is_refused_a_verdict_on_their_session_key
         ],
     )
     .await;
-    app.link_key_to_person(
-        Bearer::Session(&ops),
-        reviewer.key_id.into(),
-        &name("alice"),
-    )
-    .await
-    .expect("linked");
+    link_accepted(&app, &store, &ops, reviewer.key_id, "alice").await;
     let err = app
         .post_verdict(&reviewer.value, id, Verdict::Approve, None)
         .await
@@ -2959,7 +3005,7 @@ async fn a_persons_linked_reviewer_key_is_refused_a_verdict_on_their_session_key
 #[tokio::test]
 async fn inside_the_persons_root_their_linked_key_approves_their_user_keys_write_marked_same_user()
 {
-    let (app, _store) = rig();
+    let (app, store) = rig();
     let boot = bootstrap(&app).await;
     let admin = boot.admin_key.value.as_str();
     let ops = console_admin(&app, admin, "ops").await;
@@ -2975,13 +3021,7 @@ async fn inside_the_persons_root_their_linked_key_approves_their_user_keys_write
         ],
     )
     .await;
-    app.link_key_to_person(
-        Bearer::Session(&ops),
-        reviewer.key_id.into(),
-        &name("alice"),
-    )
-    .await
-    .expect("linked");
+    link_accepted(&app, &store, &ops, reviewer.key_id, "alice").await;
     let id = written(
         &app,
         &writer.value,
@@ -3988,7 +4028,7 @@ async fn mine_lists_the_rows_a_persons_review_key_wrote_and_the_web_key_withdraw
 /// person's reviewer approves it (ADR-0082 d7, d10).
 #[tokio::test]
 async fn a_session_reviewers_claim_is_judged_by_no_key_of_its_person_outside_their_root() {
-    let (app, _store) = rig();
+    let (app, store) = rig();
     let boot = bootstrap(&app).await;
     let admin = boot.admin_key.value.as_str();
     let (review, _writer, _bob) = team_with_alices_reviewer_and_bobs_writer(&app, admin).await;
@@ -4026,9 +4066,7 @@ async fn a_session_reviewers_claim_is_judged_by_no_key_of_its_person_outside_the
         ],
     )
     .await;
-    app.link_key_to_person(Bearer::Session(&ops), linked.key_id.into(), &name("alice"))
-        .await
-        .expect("linked");
+    link_accepted(&app, &store, &ops, linked.key_id, "alice").await;
     let err = app
         .post_verdict(linked.value.as_str(), id, Verdict::Approve, None)
         .await
@@ -4553,7 +4591,7 @@ async fn a_guardrail_keeps_the_claim_key_it_is_sent_and_derives_one_without() {
 /// L7).
 #[tokio::test]
 async fn a_persons_web_key_supersedes_their_linked_tenant_keys_row_held() {
-    let (app, _store) = rig();
+    let (app, store) = rig();
     let boot = bootstrap(&app).await;
     let admin = boot.admin_key.value.as_str();
     let ops = console_admin(&app, admin, "ops").await;
@@ -4577,9 +4615,7 @@ async fn a_persons_web_key_supersedes_their_linked_tenant_keys_row_held() {
         )
         .await
         .expect("alice's tenant writer key");
-    app.link_key_to_person(Bearer::Session(&ops), linked.key_id.into(), &name("alice"))
-        .await
-        .expect("linked");
+    link_accepted(&app, &store, &ops, linked.key_id, "alice").await;
     let id = written(
         &app,
         &linked.value,
@@ -5078,6 +5114,11 @@ async fn the_admin_search_serves_only_the_kinds_its_kind_list_names() {
         },
     )
     .await;
+    let investigation = app
+        .open_investigation(admin, "the kinds filter")
+        .await
+        .expect("an investigation")
+        .investigation_id;
     let search = |kinds: Vec<MemoryKind>| oml_app::app::AdminSearchRequest {
         query: None,
         workspace: Some(by_name("team")),
@@ -5087,6 +5128,7 @@ async fn the_admin_search_serves_only_the_kinds_its_kind_list_names() {
         kinds,
         after: None,
         limit: 50,
+        investigation: Some(investigation),
     };
     let ids = |page: oml_app::app::AdminPage| -> Vec<Uuid> {
         page.items.iter().map(|m| m.memory.memory_id).collect()
@@ -5166,4 +5208,1666 @@ async fn a_document_preview_answers_its_passages_by_fragment_and_lines() {
         .await
         .expect("a preview");
     assert!(memory.passages.is_none(), "only a document is cut");
+}
+
+// -- who confirms an admin fix (ADR-0089, amendment of 2026-11-18; #490) ----
+
+fn fix_req(
+    act: oml_app::types::FixAct,
+    target: Uuid,
+    body: Option<&str>,
+) -> oml_app::app::FixRequest {
+    oml_app::app::FixRequest {
+        act,
+        target,
+        reason: "ticket 7: wrong in production".to_owned(),
+        body: body.map(str::to_owned),
+        title: None,
+    }
+}
+
+/// Outside the admin's own root, open shared workspaces included, the
+/// admin's own person neither confirms nor reverts a fix, and reads it
+/// listed without either; another person confirms it (ADR-0089, amendment
+/// of 2026-11-18; #490).
+#[tokio::test]
+async fn an_admins_own_person_cannot_confirm_a_fix_in_a_shared_workspace() {
+    use oml_app::types::FixAct;
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    app.create_workspace(
+        admin,
+        &name("team"),
+        Some(boot.root_workspace_id.into()),
+        None,
+    )
+    .await
+    .expect("a shared workspace");
+    let writer = tenant_key(
+        &app,
+        admin,
+        Role::Writer,
+        "wanda",
+        vec![
+            grant(by_name("team"), Role::Writer),
+            grant(by_name("team"), Role::Reader),
+        ],
+    )
+    .await;
+    let dana = tenant_key(
+        &app,
+        admin,
+        Role::Reviewer,
+        "dana",
+        vec![
+            grant(by_name("team"), Role::Reviewer),
+            grant(by_name("team"), Role::Reader),
+        ],
+    )
+    .await;
+    let v1 = written(
+        &app,
+        &writer.value,
+        &submit("fx490", "the runbook lives in ops", Some("team")),
+    )
+    .await;
+    approve(&app, &dana.value, v1).await;
+    let alice = signed_in(&app, admin, "alice", true).await;
+    let alice_admin = app
+        .web_caller(&alice, Capacity::Admin)
+        .await
+        .expect("alice-admin");
+    app.grant_review_capacity(&alice_admin, &name("alice"), by_name("team"))
+        .await
+        .expect("alice reviews team");
+    let bob = signed_in(&app, admin, "bob", false).await;
+    app.grant_review_capacity(&alice_admin, &name("bob"), by_name("team"))
+        .await
+        .expect("bob reviews team");
+    let alice_review = app
+        .web_caller(&alice, Capacity::Review)
+        .await
+        .expect("alice-review");
+    let bob_review = app
+        .web_caller(&bob, Capacity::Review)
+        .await
+        .expect("bob-review");
+    let fix = app
+        .admin_fix(
+            Bearer::Session(&alice_admin),
+            &fix_req(FixAct::Edit, v1, Some("the runbook lives in the wiki")),
+        )
+        .await
+        .expect("alice-admin fixes");
+    let listed = app
+        .review_fixes(Bearer::Session(&alice_review))
+        .await
+        .expect("alice-review lists it");
+    assert_eq!(listed.len(), 1);
+    assert!(!listed[0].settles, "listed without confirm and revert");
+    for refused in [
+        app.confirm_fix(Bearer::Session(&alice_review), fix.fix_id)
+            .await,
+        app.revert_fix(Bearer::Session(&alice_review), fix.fix_id)
+            .await,
+    ] {
+        assert!(matches!(refused.unwrap_err(), AppError::SamePerson));
+    }
+    assert!(
+        app.review_fixes(Bearer::Session(&bob_review))
+            .await
+            .expect("bob lists it")[0]
+            .settles
+    );
+    let confirmed = app
+        .confirm_fix(Bearer::Session(&bob_review), fix.fix_id)
+        .await
+        .expect("another person confirms");
+    assert_eq!(confirmed.settled_same_user, Some(false));
+}
+
+/// Inside the admin's own person's root, in a workspace that is a member of
+/// no release, that person's reviewer key confirms the fix, marked
+/// `same_user` (ADR-0089, amendment of 2026-11-18; #490).
+#[tokio::test]
+async fn an_admins_own_person_confirms_a_fix_inside_their_own_root_marked_same_user() {
+    use oml_app::types::FixAct;
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let alice = signed_in(&app, admin, "alice", true).await;
+    let writer = user_writer(&app, admin, "alice", "alice-agent").await;
+    let own_reviewer = user_reviewer(&app, admin, "alice", "alice-reviewer").await;
+    let v1 = written(
+        &app,
+        &writer.value,
+        &submit("fx490r", "the cache holds a day", Some("alice")),
+    )
+    .await;
+    approve(&app, &own_reviewer.value, v1).await;
+    let alice_admin = app
+        .web_caller(&alice, Capacity::Admin)
+        .await
+        .expect("alice-admin");
+    let fix = app
+        .admin_fix(
+            Bearer::Session(&alice_admin),
+            &fix_req(FixAct::Edit, v1, Some("the cache holds an hour")),
+        )
+        .await
+        .expect("alice-admin fixes in her own root");
+    let alice_review = app
+        .web_caller(&alice, Capacity::Review)
+        .await
+        .expect("alice-review");
+    let listed = app
+        .review_fixes(Bearer::Session(&alice_review))
+        .await
+        .expect("listed");
+    assert!(
+        listed
+            .iter()
+            .any(|f| f.fix.fix_id == fix.fix_id && f.settles)
+    );
+    let confirmed = app
+        .confirm_fix(Bearer::Session(&alice_review), fix.fix_id)
+        .await
+        .expect("her own person confirms inside her root");
+    assert_eq!(confirmed.settled_same_user, Some(true));
+}
+
+// -- an admin key linked to its person (ADR-0089, the operator's decision of
+// 2026-11-19; ADR-0085 d16) ---------------------------------------------------
+
+/// A tenant whose bootstrap linked its admin key to `alice`, a shared
+/// workspace `team`, an agent writer there, and two persons' reviewer keys on
+/// it, alice's and bob's, each linked to its person; one claim in `team`
+/// written by the agent and approved by bob's key.
+struct FixRig {
+    app: TestApp,
+    store: MemStore,
+    boot: BootstrapResult,
+    ops: oml_app::app::Caller,
+    writer: IssuedKey,
+    alice_review: IssuedKey,
+    bob_review: IssuedKey,
+    claim: Uuid,
+}
+
+async fn fix_rig() -> FixRig {
+    fix_rig_for(Some("alice")).await
+}
+
+/// [`fix_rig`] with the bootstrap's admin key linked to `person`, or to no
+/// one.
+async fn fix_rig_for(person: Option<&str>) -> FixRig {
+    let (app, store) = rig();
+    let boot = app
+        .bootstrap_tenant_for(
+            &BootstrapRequest {
+                tenant_name: name("acme"),
+                admin_key_name: name("root-admin"),
+                admin_principal: "acme-admin".to_owned(),
+            },
+            person
+                .map(|p| BootstrapPerson {
+                    user: name(p),
+                    email: email(&format!("{p}@example.com")),
+                })
+                .as_ref(),
+        )
+        .await
+        .expect("bootstrap");
+    let admin = boot.admin_key.value.as_str();
+    let ops = console_admin(&app, admin, "ops").await;
+    signed_in(&app, admin, "alice", false).await;
+    signed_in(&app, admin, "bob", false).await;
+    app.create_workspace(admin, &name("team"), Some(by_name("universe")), None)
+        .await
+        .expect("a shared workspace");
+    let writer = tenant_key(
+        &app,
+        admin,
+        Role::Writer,
+        "team/agent",
+        vec![
+            grant(by_name("team"), Role::Writer),
+            grant(by_name("team"), Role::Reader),
+        ],
+    )
+    .await;
+    let mut linked = Vec::new();
+    for person in ["alice", "bob"] {
+        let key = person_tenant_key(
+            &app,
+            admin,
+            &format!("{person}/review"),
+            vec![
+                grant(by_name("team"), Role::Reviewer),
+                grant(by_name("team"), Role::Reader),
+            ],
+        )
+        .await;
+        link_accepted(&app, &store, &ops, key.key_id, person).await;
+        linked.push(key);
+    }
+    let bob_review = linked.pop().expect("bob");
+    let alice_review = linked.pop().expect("alice");
+    let claim = written(
+        &app,
+        &writer.value,
+        &submit("fx1", "The queue drains nightly.", Some("team")),
+    )
+    .await;
+    app.post_verdict(&bob_review.value, claim, Verdict::Approve, None)
+        .await
+        .expect("bob approves");
+    FixRig {
+        app,
+        store,
+        boot,
+        ops,
+        writer,
+        alice_review,
+        bob_review,
+        claim,
+    }
+}
+
+fn edit(target: Uuid, body: &str) -> oml_app::app::FixRequest {
+    oml_app::app::FixRequest {
+        act: oml_app::types::FixAct::Edit,
+        target,
+        reason: "ticket 7: the claim is wrong".to_owned(),
+        body: Some(body.to_owned()),
+        title: None,
+    }
+}
+
+#[tokio::test]
+async fn a_fix_by_an_admin_key_linked_to_no_person_is_refused_unlinked() {
+    let (app, store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let writer = user_writer(&app, admin, "carol", "carol/laptop").await;
+    let reviewer = user_reviewer(&app, admin, "carol", "carol/review").await;
+    let claim = written(
+        &app,
+        &writer.value,
+        &submit("u1", "The build is green.", None),
+    )
+    .await;
+    app.post_verdict(&reviewer.value, claim, Verdict::Approve, None)
+        .await
+        .expect("approve");
+    let head = store
+        .events_range(boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal")
+        .len();
+    let err = app
+        .admin_fix(admin, &edit(claim, "The build is red."))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::FixRequiresPerson { reason: "unlinked" }),
+        "{err:?}"
+    );
+    let after = store
+        .events_range(boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal")
+        .len();
+    assert_eq!(head, after, "a refused fix journals nothing");
+}
+
+#[tokio::test]
+async fn the_bootstrap_links_its_admin_key_to_the_person_its_claim_names() {
+    let r = fix_rig().await;
+    let key = r
+        .store
+        .key(r.boot.tenant_id, r.boot.admin_key.key_id)
+        .await
+        .expect("read")
+        .expect("the admin key");
+    let root = key.linked_user.expect("linked");
+    let root = r
+        .store
+        .workspace(r.boot.tenant_id, root)
+        .await
+        .expect("read")
+        .expect("the root");
+    assert!(root.user_root);
+    assert_eq!(root.name, name("alice"));
+    let types: Vec<String> = r
+        .store
+        .events_range(r.boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal")
+        .into_iter()
+        .map(|e| e.envelope.event_type)
+        .collect();
+    assert!(types.iter().any(|t| t == event_types::KEY_LINKED_PERSON));
+}
+
+#[tokio::test]
+async fn a_linked_admins_fix_in_a_shared_workspace_is_refused_to_its_own_persons_review_key() {
+    let r = fix_rig().await;
+    let fix = r
+        .app
+        .admin_fix(
+            &r.boot.admin_key.value,
+            &edit(r.claim, "The queue drains hourly."),
+        )
+        .await
+        .expect("a linked admin fixes");
+    for settle in [true, false] {
+        let err = if settle {
+            r.app.confirm_fix(&r.alice_review.value, fix.fix_id).await
+        } else {
+            r.app.revert_fix(&r.alice_review.value, fix.fix_id).await
+        }
+        .unwrap_err();
+        assert!(matches!(err, AppError::SamePerson), "{err:?}");
+    }
+    let listed = r
+        .app
+        .review_fixes(&r.alice_review.value)
+        .await
+        .expect("list");
+    assert!(!listed[0].settles, "alice waits on another person");
+}
+
+#[tokio::test]
+async fn another_persons_linked_key_confirms_a_linked_admins_fix() {
+    let r = fix_rig().await;
+    let fix = r
+        .app
+        .admin_fix(
+            &r.boot.admin_key.value,
+            &edit(r.claim, "The queue drains hourly."),
+        )
+        .await
+        .expect("fix");
+    let confirmed = r
+        .app
+        .confirm_fix(&r.bob_review.value, fix.fix_id)
+        .await
+        .expect("bob confirms");
+    assert_eq!(confirmed.settled_same_user, Some(false));
+}
+
+#[tokio::test]
+async fn a_reverter_is_refused_a_fix_of_a_claim_their_own_person_wrote_in_a_shared_workspace() {
+    let r = fix_rig().await;
+    let admin = r.boot.admin_key.value.as_str();
+    let ops = console_admin(&r.app, admin, "ops").await;
+    // Bob writes a claim in team with a key linked to him; alice approves it.
+    let bob_writer = r
+        .app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                user: None,
+                used_by: Some(UsedBy::Person),
+                ..user_req(
+                    Role::Writer,
+                    "unused",
+                    "bob/writer",
+                    vec![
+                        grant(by_name("team"), Role::Writer),
+                        grant(by_name("team"), Role::Reader),
+                    ],
+                )
+            },
+        )
+        .await
+        .expect("bob's writer key");
+    link_accepted(&r.app, &r.store, &ops, bob_writer.key_id, "bob").await;
+    let bobs = written(
+        &r.app,
+        &bob_writer.value,
+        &submit("fx2", "The cache warms at boot.", Some("team")),
+    )
+    .await;
+    r.app
+        .post_verdict(&r.alice_review.value, bobs, Verdict::Approve, None)
+        .await
+        .expect("alice approves");
+    let fix = r
+        .app
+        .admin_fix(admin, &edit(bobs, "The cache warms lazily."))
+        .await
+        .expect("fix");
+    let err = r
+        .app
+        .revert_fix(&r.bob_review.value, fix.fix_id)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::SamePerson), "{err:?}");
+    // Confirming an edit of his own claim is refused the same way (A4).
+    let err = r
+        .app
+        .confirm_fix(&r.bob_review.value, fix.fix_id)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::SamePerson), "{err:?}");
+}
+
+#[tokio::test]
+async fn a_console_admin_links_an_admin_key_to_another_person_and_never_to_its_own() {
+    let (app, _store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let ops = console_admin(&app, admin, "ops").await;
+    signed_in(&app, admin, "alice", false).await;
+    let err = app
+        .link_key_to_person(
+            Bearer::Session(&ops),
+            boot.admin_key.key_id.into(),
+            &name("ops"),
+        )
+        .await
+        .unwrap_err();
+    assert!(link_refused(&err, "self_link"), "{err:?}");
+    let linked = app
+        .link_key_to_person(
+            Bearer::Session(&ops),
+            boot.admin_key.key_id.into(),
+            &name("alice"),
+        )
+        .await
+        .expect("an admin key used by a person is linkable");
+    // Pending alice's acceptance (the operator's decision of 2026-11-19).
+    assert!(linked.linked_user.is_none() && linked.link_pending.is_some());
+}
+
+// -- a link waits on its person's acceptance (ADR-0085 d16 and ADR-0089, the
+// operator's decision of 2026-11-19 on key-to-person links) ------------------
+
+/// Attack A of the decision: a console admin links an admin key to another
+/// person. Until that person accepts, the key acts for no one and its fix
+/// is refused `unlinked`; once they accept, the fix is theirs, recorded as
+/// such, and a third person's reviewer key may confirm it.
+#[tokio::test]
+async fn an_admin_key_linked_to_another_person_takes_no_fix_until_that_person_accepts() {
+    let r = fix_rig_for(None).await;
+    let admin = r.boot.admin_key.value.as_str();
+    let pending = r
+        .app
+        .link_key_to_person(
+            Bearer::Session(&r.ops),
+            r.boot.admin_key.key_id.into(),
+            &name("bob"),
+        )
+        .await
+        .expect("linked, pending bob's acceptance");
+    assert_eq!(pending.linked_user, None);
+    assert!(pending.link_pending.is_some());
+    let err = r
+        .app
+        .admin_fix(admin, &edit(r.claim, "The queue drains hourly."))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::FixRequiresPerson { reason: "unlinked" }),
+        "{err:?}"
+    );
+    accept_link(&r.app, &r.store, "bob", r.boot.admin_key.key_id).await;
+    let fix = r
+        .app
+        .admin_fix(admin, &edit(r.claim, "The queue drains hourly."))
+        .await
+        .expect("the key acts for bob, who accepted");
+    assert_eq!(fix.admin_person, name("bob"));
+    let confirmed = r
+        .app
+        .confirm_fix(&r.alice_review.value, fix.fix_id)
+        .await
+        .expect("alice is not the fix's person, so she confirms it");
+    assert_eq!(confirmed.settled_same_user, Some(false));
+}
+
+/// Attack B of the decision: the settlement compares the admin's person
+/// recorded at the fix, so relinking the admin key to another person after
+/// the fix, accepted or not, does not let the fix's own person confirm it.
+#[tokio::test]
+async fn a_relink_after_the_fix_leaves_the_settlement_judged_against_the_recorded_person() {
+    let r = fix_rig().await;
+    let admin_key = r.boot.admin_key.key_id;
+    let fix = r
+        .app
+        .admin_fix(
+            &r.boot.admin_key.value,
+            &edit(r.claim, "The queue drains hourly."),
+        )
+        .await
+        .expect("alice's fix");
+    assert_eq!(fix.admin_person, name("alice"));
+    r.app
+        .unlink_key_from_person(Bearer::Session(&r.ops), admin_key.into())
+        .await
+        .expect("unlinked");
+    link_accepted(&r.app, &r.store, &r.ops, admin_key, "bob").await;
+    let err = r
+        .app
+        .confirm_fix(&r.alice_review.value, fix.fix_id)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::SamePerson), "{err:?}");
+    let listed = r
+        .app
+        .review_fixes(&r.alice_review.value)
+        .await
+        .expect("list");
+    assert!(!listed[0].settles, "alice still waits on another person");
+    let stored = r
+        .store
+        .fix(r.boot.tenant_id, fix.fix_id)
+        .await
+        .expect("read")
+        .expect("the fix");
+    assert_eq!(stored.admin_person, name("alice"));
+    let confirmed = r
+        .app
+        .confirm_fix(&r.bob_review.value, fix.fix_id)
+        .await
+        .expect("bob is not the recorded person");
+    assert_eq!(confirmed.settled_same_user, Some(false));
+}
+
+/// Attack C of the decision: a reviewer key whose link to another person is
+/// pending acts for no one, so it settles no fix: its person is unknown and
+/// the rule fails closed, for a confirm and a revert alike.
+#[tokio::test]
+async fn a_reviewer_key_whose_link_is_pending_settles_no_fix() {
+    let r = fix_rig().await;
+    let admin = r.boot.admin_key.value.as_str();
+    let fix = r
+        .app
+        .admin_fix(admin, &edit(r.claim, "The queue drains hourly."))
+        .await
+        .expect("alice's fix");
+    let second = person_tenant_key(
+        &r.app,
+        admin,
+        "alice/second-review",
+        vec![
+            grant(by_name("team"), Role::Reviewer),
+            grant(by_name("team"), Role::Reader),
+        ],
+    )
+    .await;
+    r.app
+        .link_key_to_person(Bearer::Session(&r.ops), second.key_id.into(), &name("bob"))
+        .await
+        .expect("linked, pending bob's acceptance");
+    for settle in [true, false] {
+        let err = if settle {
+            r.app.confirm_fix(&second.value, fix.fix_id).await
+        } else {
+            r.app.revert_fix(&second.value, fix.fix_id).await
+        }
+        .unwrap_err();
+        assert!(matches!(err, AppError::SamePerson), "{err:?}");
+    }
+    let listed = r.app.review_fixes(&second.value).await.expect("list");
+    assert!(!listed[0].settles, "a pending link settles nothing");
+}
+
+/// Only the person a link names accepts it, from their own console
+/// session: another person's session, the linking admin's included, is
+/// refused `not_named_person`, a bearer key `session_only`, and a key with
+/// no link pending `not_pending`; none of them journals anything.
+#[tokio::test]
+async fn only_the_named_person_accepts_a_pending_link() {
+    let r = fix_rig().await;
+    let admin = r.boot.admin_key.value.as_str();
+    let key = person_tenant_key(&r.app, admin, "bob/desk", Vec::new()).await;
+    r.app
+        .link_key_to_person(Bearer::Session(&r.ops), key.key_id.into(), &name("bob"))
+        .await
+        .expect("linked, pending");
+    let head = r
+        .store
+        .events_range(r.boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal")
+        .len();
+    let alice = console_of(&r.app, &r.store, "alice").await;
+    for (caller, reason) in [(&alice, "not_named_person"), (&r.ops, "not_named_person")] {
+        let err = r
+            .app
+            .accept_key_link(Bearer::Session(caller), key.key_id.into())
+            .await
+            .unwrap_err();
+        assert!(link_refused(&err, reason), "{err:?}");
+    }
+    let err = r
+        .app
+        .accept_key_link(r.alice_review.value.as_str(), key.key_id.into())
+        .await
+        .unwrap_err();
+    assert!(link_refused(&err, "session_only"), "{err:?}");
+    assert_eq!(
+        r.store
+            .events_range(r.boot.tenant_id, 1, 10_000)
+            .await
+            .expect("journal")
+            .len(),
+        head,
+        "a refused acceptance journals nothing"
+    );
+    let bob = console_of(&r.app, &r.store, "bob").await;
+    let (accepted, person) = r
+        .app
+        .accept_key_link(Bearer::Session(&bob), key.key_id.into())
+        .await
+        .expect("bob accepts");
+    assert_eq!(person, name("bob"));
+    assert!(accepted.linked_user.is_some() && accepted.link_pending.is_none());
+    let events = r
+        .store
+        .events_range(r.boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal");
+    let last = &events.last().expect("an event").envelope;
+    assert_eq!(last.event_type, event_types::KEY_LINK_ACCEPTED);
+    assert_eq!(last.payload["user"], "bob");
+    let err = r
+        .app
+        .accept_key_link(Bearer::Session(&bob), key.key_id.into())
+        .await
+        .unwrap_err();
+    assert!(link_refused(&err, "not_pending"), "{err:?}");
+}
+
+/// The person's console lists a link pending to them apart from the keys
+/// linked to them, and moves it across once they accept it; the doctor
+/// count of pending links follows (ADR-0085 d16, the operator's decision of
+/// 2026-11-19).
+#[tokio::test]
+async fn a_pending_link_is_listed_to_its_person_and_counted_until_accepted() {
+    let r = fix_rig().await;
+    let admin = r.boot.admin_key.value.as_str();
+    let key = person_tenant_key(&r.app, admin, "bob/desk", Vec::new()).await;
+    r.app
+        .link_key_to_person(Bearer::Session(&r.ops), key.key_id.into(), &name("bob"))
+        .await
+        .expect("linked, pending");
+    let bob = console_of(&r.app, &r.store, "bob").await;
+    let person = r
+        .app
+        .whoami_person(Bearer::Session(&bob), false)
+        .await
+        .expect("whoami")
+        .expect("bob's person");
+    assert_eq!(
+        person
+            .pending_links
+            .iter()
+            .map(|k| k.id)
+            .collect::<Vec<_>>(),
+        vec![key.key_id]
+    );
+    assert!(person.linked_keys.iter().all(|k| k.id != key.key_id));
+    assert_eq!(
+        r.app
+            .fix_stats(r.boot.tenant_id)
+            .await
+            .expect("stats")
+            .links_pending,
+        1
+    );
+    accept_link(&r.app, &r.store, "bob", key.key_id).await;
+    let person = r
+        .app
+        .whoami_person(Bearer::Session(&bob), false)
+        .await
+        .expect("whoami")
+        .expect("bob's person");
+    assert!(person.pending_links.is_empty());
+    assert!(person.linked_keys.iter().any(|k| k.id == key.key_id));
+    assert_eq!(
+        r.app
+            .fix_stats(r.boot.tenant_id)
+            .await
+            .expect("stats")
+            .links_pending,
+        0
+    );
+}
+
+/// A later fix that takes over the mark an earlier, unconfirmed fix put on
+/// a version settles that earlier fix `superseded`: it leaves the person's
+/// list and the doctor count, and a confirm of it answers that it is
+/// settled (ADR-0089 d17, the reading of 2026-11-19).
+#[tokio::test]
+async fn a_later_fix_that_re_marks_a_version_supersedes_the_earlier_fix() {
+    let r = fix_rig().await;
+    let admin = r.boot.admin_key.value.as_str();
+    let writer = &r.writer;
+    // v2 supersedes the claim; f1 demotes it, serving v1 again.
+    let v2 = r
+        .app
+        .supersede(
+            &writer.value,
+            &supersede_req("fx1-v2", r.claim, "The queue drains twice nightly."),
+        )
+        .await
+        .expect("v2")
+        .receipt
+        .memory_id;
+    r.app
+        .post_verdict(&r.bob_review.value, v2, Verdict::Approve, None)
+        .await
+        .expect("bob approves v2");
+    let demote = |target| oml_app::app::FixRequest {
+        act: oml_app::types::FixAct::Demote,
+        target,
+        reason: "ticket 9: wrong".to_owned(),
+        body: None,
+        title: None,
+    };
+    let f1 = r.app.admin_fix(admin, &demote(v2)).await.expect("f1");
+    assert_eq!(f1.served_id, Some(r.claim));
+    // v3 supersedes v1 by review; f2 demotes it, serving v1 again.
+    let v3 = r
+        .app
+        .supersede(
+            &writer.value,
+            &supersede_req("fx1-v3", r.claim, "The queue drains at dawn."),
+        )
+        .await
+        .expect("v3")
+        .receipt
+        .memory_id;
+    r.app
+        .post_verdict(&r.bob_review.value, v3, Verdict::Approve, None)
+        .await
+        .expect("bob approves v3");
+    let f2 = r.app.admin_fix(admin, &demote(v3)).await.expect("f2");
+    assert_eq!(f2.served_id, Some(r.claim));
+    let earlier = r
+        .store
+        .fix(r.boot.tenant_id, f1.fix_id)
+        .await
+        .expect("read")
+        .expect("f1");
+    assert_eq!(earlier.state, oml_app::types::FixState::Superseded);
+    assert_eq!(earlier.superseded_by, Some(f2.fix_id));
+    let listed: Vec<Uuid> = r
+        .app
+        .review_fixes(&r.bob_review.value)
+        .await
+        .expect("list")
+        .iter()
+        .map(|f| f.fix.fix_id)
+        .collect();
+    assert_eq!(listed, vec![f2.fix_id]);
+    assert_eq!(
+        r.app
+            .fix_stats(r.boot.tenant_id)
+            .await
+            .expect("stats")
+            .unconfirmed,
+        1
+    );
+    let err = r
+        .app
+        .confirm_fix(&r.bob_review.value, f1.fix_id)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AppError::FixSettled {
+                state: "superseded"
+            }
+        ),
+        "{err:?}"
+    );
+    r.app
+        .confirm_fix(&r.bob_review.value, f2.fix_id)
+        .await
+        .expect("the later fix is settled as any other");
+}
+
+/// Who settles a fix is judged at the settlement, the target's place then
+/// (ADR-0089 d17 c8): a shared workspace moved to protected between the fix
+/// and the confirm still refuses the admin's own person and admits another.
+#[tokio::test]
+async fn a_workspace_moved_to_protected_after_the_fix_is_judged_at_the_confirm() {
+    let r = fix_rig().await;
+    let fix = r
+        .app
+        .admin_fix(
+            &r.boot.admin_key.value,
+            &edit(r.claim, "The queue drains hourly."),
+        )
+        .await
+        .expect("fix");
+    let team = r
+        .store
+        .memory(r.boot.tenant_id, r.claim)
+        .await
+        .expect("read")
+        .expect("the claim")
+        .workspace_id;
+    let proposed = r
+        .app
+        .propose_transition(
+            &r.alice_review.value,
+            team.into(),
+            oml_app::domain::WorkspaceStatus::Protected,
+        )
+        .await
+        .expect("proposed");
+    let moved = r
+        .app
+        .ratify_transition(&r.bob_review.value, team.into(), proposed.transition_id)
+        .await
+        .expect("ratified");
+    assert_eq!(moved.status, oml_app::domain::WorkspaceStatus::Protected);
+    let err = r
+        .app
+        .confirm_fix(&r.alice_review.value, fix.fix_id)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::SamePerson), "{err:?}");
+    let confirmed = r
+        .app
+        .confirm_fix(&r.bob_review.value, fix.fix_id)
+        .await
+        .expect("another person confirms in a protected workspace");
+    assert_eq!(confirmed.settled_same_user, Some(false));
+}
+
+// ---------------------------------------------------------------------------
+// A sign-in email for a person who signs in already waits on that person
+// (ADR-0045 d2's note of 2026-11-19, the operator's decision; ADR-0089).
+// ---------------------------------------------------------------------------
+
+fn email(value: &str) -> Email {
+    Email::parse(value).expect("an email")
+}
+
+/// `email` added by the bootstrap's admin key for `user`.
+async fn allowed(r: &FixRig, address: &str, user: &str) -> oml_app::types::WebEntry {
+    r.app
+        .allow_web_email(
+            r.boot.admin_key.value.as_str(),
+            &WebEmailRequest {
+                email: email(address),
+                user: name(user),
+                admin: false,
+            },
+        )
+        .await
+        .expect("the admin key adds the entry")
+        .0
+}
+
+fn email_refused(err: &AppError, reason: &str) -> bool {
+    matches!(err, AppError::WebEmailRefused { reason: r } if *r == reason)
+}
+
+fn pending_refusal(err: &AppError) -> bool {
+    matches!(
+        err,
+        AppError::WebSignIn(oml_app::domain::web::SignInRefusal::Pending)
+    )
+}
+
+/// The attack the decision closes: an admin adds an address they control
+/// for alice, who signs in already. The entry is pending, and no session
+/// opens on it, so the admin cannot act as alice through it.
+#[tokio::test]
+async fn an_email_an_admin_adds_for_a_person_who_signs_in_already_is_pending_and_opens_no_session()
+{
+    let r = fix_rig().await;
+    let entry = allowed(&r, "mallory@example.net", "alice").await;
+    assert!(entry.pending, "{entry:?}");
+    let stored = r
+        .store
+        .web_entry_by_email(&email("mallory@example.net").digest())
+        .await
+        .expect("a read")
+        .expect("the entry");
+    assert!(stored.pending);
+    let err = r
+        .app
+        .web_session_open(&stored, 3600, None)
+        .await
+        .unwrap_err();
+    assert!(pending_refusal(&err), "{err:?}");
+    let events = r
+        .store
+        .events_range(r.boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal");
+    let last = &events.last().expect("an event").envelope;
+    assert_eq!(last.event_type, event_types::WEB_EMAIL_ALLOWED);
+    assert_eq!(last.payload["pending"], true);
+}
+
+/// A person's first email signs in at once, as before the decision: no
+/// session of theirs exists to accept it from.
+#[tokio::test]
+async fn a_first_email_for_a_new_person_is_not_pending_and_signs_in() {
+    let r = fix_rig().await;
+    let entry = allowed(&r, "carol@example.com", "carol").await;
+    assert!(!entry.pending, "{entry:?}");
+    r.app
+        .web_ensure_keys(&entry)
+        .await
+        .expect("carol's session keys");
+    r.app
+        .web_session_open(&entry, 3600, None)
+        .await
+        .expect("carol's first email opens a session");
+}
+
+/// Only the person a pending email names accepts it, from their own
+/// console session: another person's session and the adding admin's are
+/// refused `not_named_person`, a bearer key `session_only`, and none of
+/// them journals anything. Once accepted the email signs in, and a second
+/// acceptance is `not_pending`.
+#[tokio::test]
+async fn only_the_named_person_accepts_a_pending_email_and_then_it_signs_in() {
+    let r = fix_rig().await;
+    let address = email("alice@work.example");
+    allowed(&r, address.as_str(), "alice").await;
+    let head = r
+        .store
+        .events_range(r.boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal")
+        .len();
+    let bob = console_of(&r.app, &r.store, "bob").await;
+    for caller in [&bob, &r.ops] {
+        let err = r
+            .app
+            .accept_web_email(Bearer::Session(caller), &address, false)
+            .await
+            .unwrap_err();
+        assert!(email_refused(&err, "not_named_person"), "{err:?}");
+    }
+    for bearer in [
+        r.alice_review.value.as_str(),
+        r.boot.admin_key.value.as_str(),
+    ] {
+        let err = r
+            .app
+            .accept_web_email(bearer, &address, false)
+            .await
+            .unwrap_err();
+        assert!(email_refused(&err, "session_only"), "{err:?}");
+    }
+    assert_eq!(
+        r.store
+            .events_range(r.boot.tenant_id, 1, 10_000)
+            .await
+            .expect("journal")
+            .len(),
+        head,
+        "a refused acceptance journals nothing"
+    );
+    let alice = console_of(&r.app, &r.store, "alice").await;
+    let accepted = r
+        .app
+        .accept_web_email(Bearer::Session(&alice), &address, false)
+        .await
+        .expect("alice accepts");
+    assert!(!accepted.pending);
+    let events = r
+        .store
+        .events_range(r.boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal");
+    let last = &events.last().expect("an event").envelope;
+    assert_eq!(last.event_type, event_types::WEB_EMAIL_ACCEPTED);
+    assert_eq!(last.payload["user"], "alice");
+    assert_eq!(last.payload["email_digest"], address.digest().to_prefixed());
+    let stored = r
+        .store
+        .web_entry_by_email(&address.digest())
+        .await
+        .expect("a read")
+        .expect("the entry");
+    assert!(!stored.pending);
+    r.app
+        .web_session_open(&stored, 3600, None)
+        .await
+        .expect("the accepted email opens a session");
+    let err = r
+        .app
+        .accept_web_email(Bearer::Session(&alice), &address, false)
+        .await
+        .unwrap_err();
+    assert!(email_refused(&err, "not_pending"), "{err:?}");
+}
+
+/// Changing an entry so that it names another person who signs in already
+/// is the same act as adding one for them: it waits on that person.
+#[tokio::test]
+async fn an_admin_changing_an_entry_to_name_another_existing_person_leaves_it_pending() {
+    let r = fix_rig().await;
+    allowed(&r, "spare@example.com", "spare").await;
+    let changed = allowed(&r, "spare@example.com", "alice").await;
+    assert!(changed.pending, "{changed:?}");
+    // A change of the admin flag alone keeps the person the entry names.
+    let flagged = r
+        .app
+        .allow_web_email(
+            r.boot.admin_key.value.as_str(),
+            &WebEmailRequest {
+                email: email("bob@example.com"),
+                user: name("bob"),
+                admin: true,
+            },
+        )
+        .await
+        .expect("bob's entry made an admin's")
+        .0;
+    assert!(!flagged.pending, "{flagged:?}");
+}
+
+/// Removing every entry of a person does not make them new: they signed in
+/// before, so an email added for them afterwards waits on them too.
+#[tokio::test]
+async fn an_email_added_after_a_persons_entries_were_removed_still_waits_on_them() {
+    let r = fix_rig().await;
+    r.app
+        .remove_web_email(r.boot.admin_key.value.as_str(), &email("bob@example.com"))
+        .await
+        .expect("bob's entry removed");
+    let entry = allowed(&r, "not-bob@example.net", "bob").await;
+    assert!(entry.pending, "{entry:?}");
+}
+
+/// A pending email is removed by the person it names, from their own
+/// session, or by an admin as any entry is; anyone else's session is
+/// refused. The person's console lists it while it waits, and the doctor
+/// counts it.
+#[tokio::test]
+async fn a_pending_email_is_listed_counted_and_removed_by_its_person_or_an_admin() {
+    let r = fix_rig().await;
+    let first = email("alice@second.example");
+    let second = email("alice@third.example");
+    allowed(&r, first.as_str(), "alice").await;
+    allowed(&r, second.as_str(), "alice").await;
+    let alice = console_of(&r.app, &r.store, "alice").await;
+    let person = r
+        .app
+        .whoami_person(Bearer::Session(&alice), false)
+        .await
+        .expect("whoami")
+        .expect("alice's person");
+    let mut listed: Vec<Email> = person
+        .pending_emails
+        .iter()
+        .map(|p| p.email.clone())
+        .collect();
+    listed.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+    assert_eq!(listed, vec![first.clone(), second.clone()]);
+    assert_eq!(
+        r.app
+            .fix_stats(r.boot.tenant_id)
+            .await
+            .expect("stats")
+            .emails_pending,
+        2
+    );
+    let bob = console_of(&r.app, &r.store, "bob").await;
+    let err = r
+        .app
+        .decline_web_email(Bearer::Session(&bob), &first)
+        .await
+        .unwrap_err();
+    assert!(email_refused(&err, "not_named_person"), "{err:?}");
+    r.app
+        .decline_web_email(Bearer::Session(&alice), &first)
+        .await
+        .expect("alice removes the email she did not ask for");
+    r.app
+        .remove_web_email(r.boot.admin_key.value.as_str(), &second)
+        .await
+        .expect("an admin removes a pending email");
+    for address in [&first, &second] {
+        assert!(
+            r.store
+                .web_entry_by_email(&address.digest())
+                .await
+                .expect("a read")
+                .is_none()
+        );
+    }
+    assert_eq!(
+        r.app
+            .fix_stats(r.boot.tenant_id)
+            .await
+            .expect("stats")
+            .emails_pending,
+        0
+    );
+    // An accepted entry is no pending one to remove from a session.
+    let err = r
+        .app
+        .decline_web_email(Bearer::Session(&alice), &email("alice@example.com"))
+        .await
+        .unwrap_err();
+    assert!(email_refused(&err, "not_pending"), "{err:?}");
+}
+
+// -- a user key counts as its issuer's person (ADR-0089 and ADR-0085 d16, the
+// operator's decision of 2026-11-20: "counts as the issuer") -----------------
+
+/// carol's root, a claim there written by `carol/laptop` and approved by
+/// `carol/review`, both minted by the bootstrap admin key `r` linked to
+/// alice; the claim's id.
+async fn carols_claim_by_admin_minted_keys(r: &FixRig) -> Uuid {
+    let admin = r.boot.admin_key.value.as_str();
+    let writer = user_writer(&r.app, admin, "carol", "carol/laptop").await;
+    let reviewer = user_reviewer(&r.app, admin, "carol", "carol/review").await;
+    let claim = written(
+        &r.app,
+        &writer.value,
+        &submit("cf1", "The nightly export runs at two.", None),
+    )
+    .await;
+    r.app
+        .post_verdict(&reviewer.value, claim, Verdict::Approve, None)
+        .await
+        .expect("approve");
+    claim
+}
+
+/// The reviewer's scenario: an admin key linked to alice demotes carol's
+/// claim, then mints `carol/forged` in carol's root. That key counts as
+/// alice, the admin's person, not as carol, so its confirmation is refused
+/// `same_person`: the fix lies outside alice's own root.
+#[tokio::test]
+async fn a_key_an_admin_mints_in_another_persons_root_counts_as_the_admins_person_at_the_confirm() {
+    let r = fix_rig().await;
+    let admin = r.boot.admin_key.value.as_str();
+    let claim = carols_claim_by_admin_minted_keys(&r).await;
+    let fix = r
+        .app
+        .admin_fix(admin, &fix_req(oml_app::types::FixAct::Demote, claim, None))
+        .await
+        .expect("alice's admin key demotes carol's claim");
+    assert_eq!(fix.admin_person, name("alice"));
+    let forged = user_reviewer(&r.app, admin, "carol", "carol/forged").await;
+    for settle in [true, false] {
+        let err = if settle {
+            r.app.confirm_fix(&forged.value, fix.fix_id).await
+        } else {
+            r.app.revert_fix(&forged.value, fix.fix_id).await
+        }
+        .unwrap_err();
+        assert!(matches!(err, AppError::SamePerson), "{err:?}");
+    }
+}
+
+/// The re-verifier's scenario: alice's admin key mints `bob/forged` in bob's
+/// root, and an admin key linked to bob demotes a claim there. The key
+/// counts as alice but was issued in bob's root, so it acts for bob on the
+/// root reading and settles bob's fix only as bob's own person would: inside
+/// bob's own development root, marked `same_user`, never as another person's
+/// confirmation, `same_user: Some(false)` (ADR-0089, the reading of
+/// 2026-11-20).
+#[tokio::test]
+async fn a_key_issued_in_the_fix_admins_root_settles_as_the_admins_person_whoever_minted_it() {
+    let r = fix_rig().await;
+    let admin = r.boot.admin_key.value.as_str();
+    let writer = user_writer(&r.app, admin, "bob", "bob/laptop").await;
+    let reviewer = user_reviewer(&r.app, admin, "bob", "bob/review").await;
+    let claim = written(
+        &r.app,
+        &writer.value,
+        &submit("cf3", "The backup runs at three.", None),
+    )
+    .await;
+    r.app
+        .post_verdict(&reviewer.value, claim, Verdict::Approve, None)
+        .await
+        .expect("approve");
+    let bobs_admin = r
+        .app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                user: None,
+                used_by: Some(UsedBy::Person),
+                ..user_req(Role::Admin, "unused", "bob/admin", Vec::new())
+            },
+        )
+        .await
+        .expect("an admin key bob holds");
+    link_accepted(&r.app, &r.store, &r.ops, bobs_admin.key_id, "bob").await;
+    let fix = r
+        .app
+        .admin_fix(
+            bobs_admin.value.as_str(),
+            &fix_req(oml_app::types::FixAct::Demote, claim, None),
+        )
+        .await
+        .expect("bob's admin key demotes the claim in bob's root");
+    assert_eq!(fix.admin_person, name("bob"));
+    let forged = user_reviewer(&r.app, admin, "bob", "bob/forged").await;
+    let settled = r
+        .app
+        .confirm_fix(&forged.value, fix.fix_id)
+        .await
+        .expect("bob's own development root, a member of no release");
+    assert_eq!(settled.settled_same_user, Some(true), "{settled:?}");
+}
+
+/// The re-verifier's sixth-round probe A: alice's admin key mints
+/// `carol/forged`, alice demotes carol's claim, and the admin key is then
+/// relinked to bob, who accepts. `carol/forged` now counts as bob, but its
+/// `issued_by` chain passes through the fix's admin key, so it settles the
+/// fix only as the fix's admin's person would: outside alice's own root,
+/// neither a confirm nor a revert, and the doctor count reads the fix as
+/// one only the admin's person holds reviewer on (ADR-0089, the reading of
+/// 2026-11-20).
+#[tokio::test]
+async fn a_key_the_fix_admins_key_issued_settles_as_the_admins_person_after_a_relink() {
+    let r = fix_rig().await;
+    let admin = r.boot.admin_key.value.as_str();
+    let claim = carols_claim_by_admin_minted_keys(&r).await;
+    let forged = user_reviewer(&r.app, admin, "carol", "carol/forged").await;
+    let fix = r
+        .app
+        .admin_fix(admin, &fix_req(oml_app::types::FixAct::Demote, claim, None))
+        .await
+        .expect("alice's admin key demotes carol's claim");
+    assert_eq!(fix.admin_person, name("alice"));
+    r.app
+        .unlink_key_from_person(Bearer::Session(&r.ops), r.boot.admin_key.key_id.into())
+        .await
+        .expect("unlinked");
+    link_accepted(&r.app, &r.store, &r.ops, r.boot.admin_key.key_id, "bob").await;
+    for settle in [true, false] {
+        let err = if settle {
+            r.app.confirm_fix(&forged.value, fix.fix_id).await
+        } else {
+            r.app.revert_fix(&forged.value, fix.fix_id).await
+        }
+        .unwrap_err();
+        assert!(matches!(err, AppError::SamePerson), "{err:?}");
+    }
+    let listed = r.app.review_fixes(&forged.value).await.expect("list");
+    assert!(!listed[0].settles, "{listed:?}");
+    let stats = r.app.fix_stats(r.boot.tenant_id).await.expect("stats");
+    assert_eq!(stats.admin_person_only, 1, "{stats:?}");
+}
+
+/// The re-verifier's sixth-round probe B: a person's reviewer key that
+/// counts as no one confirms no fix, so `oml doctor` does not count it as
+/// another person who could: with bob's reviewer key unlinked, only alice's
+/// own key holds reviewer on `team` as anyone, and alice's fix there reads
+/// as one only the admin's person holds reviewer on, as the settlement
+/// judges it (ADR-0089 d15).
+#[tokio::test]
+async fn a_reviewer_key_that_counts_as_no_one_is_no_other_person_in_the_fix_stats() {
+    let r = fix_rig().await;
+    let admin = r.boot.admin_key.value.as_str();
+    let fix = r
+        .app
+        .admin_fix(admin, &edit(r.claim, "The queue drains hourly."))
+        .await
+        .expect("alice's fix");
+    r.app
+        .unlink_key_from_person(Bearer::Session(&r.ops), r.bob_review.key_id.into())
+        .await
+        .expect("unlinked");
+    let err = r
+        .app
+        .confirm_fix(&r.bob_review.value, fix.fix_id)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::SamePerson), "{err:?}");
+    let stats = r.app.fix_stats(r.boot.tenant_id).await.expect("stats");
+    assert_eq!(stats.without_person_reviewer, 0, "{stats:?}");
+    assert_eq!(stats.admin_person_only, 1, "{stats:?}");
+}
+
+/// The re-verifier's sixth-round probe C: dora writes a claim in her own
+/// root, alice's admin key demotes it, and bob's admin key mints
+/// `dora/handed` in dora's root. That key counts as bob but was issued in
+/// dora's root, so it acts for dora, the claim's author, on the root
+/// reading: its revert is marked `same_user`, as review's `same_person`
+/// marks a review inside the person's own root (ADR-0089; ADR-0001 d5).
+#[tokio::test]
+async fn a_key_issued_in_the_authors_root_reverts_a_fix_of_the_authors_claim_as_the_author() {
+    let r = fix_rig().await;
+    let admin = r.boot.admin_key.value.as_str();
+    signed_in(&r.app, admin, "dora", false).await;
+    let web = console_of(&r.app, &r.store, "dora").await;
+    let own = r
+        .app
+        .issue_own_key(&web, "laptop", Role::Writer, false, None)
+        .await
+        .expect("dora issues her own key");
+    let claim = written(
+        &r.app,
+        own.value.as_str(),
+        &submit("cf4", "The kettle boils at noon.", Some("dora")),
+    )
+    .await;
+    let reviewer = user_reviewer(&r.app, admin, "dora", "dora/review").await;
+    r.app
+        .post_verdict(&reviewer.value, claim, Verdict::Approve, None)
+        .await
+        .expect("approve");
+    let fix = r
+        .app
+        .admin_fix(admin, &fix_req(oml_app::types::FixAct::Demote, claim, None))
+        .await
+        .expect("alice's admin key demotes dora's claim");
+    let bobs_admin = r
+        .app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                user: None,
+                used_by: Some(UsedBy::Person),
+                ..user_req(Role::Admin, "unused", "bob/admin", Vec::new())
+            },
+        )
+        .await
+        .expect("an admin key bob holds");
+    link_accepted(&r.app, &r.store, &r.ops, bobs_admin.key_id, "bob").await;
+    let handed = user_reviewer(&r.app, bobs_admin.value.as_str(), "dora", "dora/handed").await;
+    let settled = r
+        .app
+        .revert_fix(&handed.value, fix.fix_id)
+        .await
+        .expect("dora's own development root");
+    assert_eq!(settled.settled_same_user, Some(true), "{settled:?}");
+}
+
+/// A write records as its author's person the person its key counts as:
+/// a key an admin linked to alice minted in carol's root records alice, and
+/// a key carol's own console session issued records carol.
+#[tokio::test]
+async fn a_write_records_the_person_its_key_counts_as_not_the_root_it_was_issued_in() {
+    let r = fix_rig().await;
+    let admin = r.boot.admin_key.value.as_str();
+    let claim = carols_claim_by_admin_minted_keys(&r).await;
+    let row = r
+        .store
+        .memory(r.boot.tenant_id, claim)
+        .await
+        .expect("read")
+        .expect("the claim");
+    assert_eq!(row.author_person, Some(name("alice")));
+    signed_in(&r.app, admin, "dora", false).await;
+    let web = console_of(&r.app, &r.store, "dora").await;
+    let own = r
+        .app
+        .issue_own_key(&web, "laptop", Role::Writer, false, None)
+        .await
+        .expect("dora issues her own key");
+    let mine = written(
+        &r.app,
+        own.value.as_str(),
+        &submit("cf2", "The tea is green.", Some("dora")),
+    )
+    .await;
+    let row = r
+        .store
+        .memory(r.boot.tenant_id, mine)
+        .await
+        .expect("read")
+        .expect("dora's claim");
+    assert_eq!(row.author_person, Some(name("dora")));
+}
+
+// -- an existing person is any person a key names (ADR-0045 d2's note, the
+// operator's decision of 2026-11-20: "widen + bootstrap email") -------------
+
+/// The reviewer's first probe: an admin issues a key for carol from the CLI,
+/// which makes carol's user root, and then adds an address for carol. carol
+/// has no entry and no session keys, but a key names her root, so she is an
+/// existing person and the address waits on her.
+#[tokio::test]
+async fn a_first_email_for_a_person_whose_root_a_key_names_waits_on_that_person() {
+    let r = fix_rig().await;
+    let admin = r.boot.admin_key.value.as_str();
+    user_writer(&r.app, admin, "carol", "carol/laptop").await;
+    let entry = allowed(&r, "carol@example.com", "carol").await;
+    assert!(entry.pending, "{entry:?}");
+    let err = r
+        .app
+        .web_session_open(&entry, 3600, None)
+        .await
+        .unwrap_err();
+    assert!(pending_refusal(&err), "{err:?}");
+}
+
+/// The reviewer's second probe: the bootstrap claim names alice, which
+/// makes her user root and links the first admin key to it. An address an
+/// admin adds for alice afterwards waits on her.
+#[tokio::test]
+async fn an_email_an_admin_adds_for_the_bootstraps_person_waits_on_that_person() {
+    let (app, store) = rig();
+    let boot = app
+        .bootstrap_tenant_for(
+            &BootstrapRequest {
+                tenant_name: name("acme"),
+                admin_key_name: name("root-admin"),
+                admin_principal: "acme-admin".to_owned(),
+            },
+            Some(&BootstrapPerson {
+                user: name("alice"),
+                email: email("alice@setup.example"),
+            }),
+        )
+        .await
+        .expect("bootstrap");
+    // The claim records alice's own sign-in email, accepted and an admin's,
+    // so she signs in at once.
+    let own = store
+        .web_entry_by_email(&email("alice@setup.example").digest())
+        .await
+        .expect("a read")
+        .expect("the bootstrap's entry");
+    assert!(!own.pending && own.admin, "{own:?}");
+    app.web_ensure_keys(&own).await.expect("her session keys");
+    app.web_session_open(&own, 3600, None)
+        .await
+        .expect("the bootstrap's email signs in");
+    let (entry, _) = app
+        .allow_web_email(
+            boot.admin_key.value.as_str(),
+            &WebEmailRequest {
+                email: email("mallory@example.net"),
+                user: name("alice"),
+                admin: true,
+            },
+        )
+        .await
+        .expect("the admin key adds the entry");
+    assert!(entry.pending, "{entry:?}");
+}
+
+// -- the last admin entry and the reviewed admin flag (ADR-0045 d2's note and
+// d10, the operator's decision of 2026-11-20) --------------------------------
+
+/// The last live admin entry, changed to name another person who exists
+/// already, would wait on that person and sign in to nothing: the console's
+/// change, which keeps an admin, is refused as an un-flagging is.
+#[tokio::test]
+async fn the_last_admin_entry_changed_to_wait_on_another_person_is_refused() {
+    let r = fix_rig().await;
+    let err = r
+        .app
+        .allow_web_email_keeping(
+            r.boot.admin_key.value.as_str(),
+            &WebEmailRequest {
+                email: email("ops@example.com"),
+                user: name("bob"),
+                admin: true,
+            },
+            true,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::WebField { field: "admin", .. }),
+        "{err:?}"
+    );
+}
+
+/// An accept names the admin flag the person reviewed: an admin who flips
+/// the flag after alice saw the entry leaves her accept refused `changed`,
+/// journalling nothing; her person's listing shows the flag and the key
+/// that added it, and an accept of the flag shown then commits.
+#[tokio::test]
+async fn an_accept_of_an_admin_flag_flipped_since_the_review_is_refused_changed() {
+    let r = fix_rig().await;
+    let address = email("alice@work.example");
+    allowed(&r, address.as_str(), "alice").await;
+    let alice = console_of(&r.app, &r.store, "alice").await;
+    let listed = r
+        .app
+        .whoami_person(Bearer::Session(&alice), false)
+        .await
+        .expect("whoami")
+        .expect("alice's person")
+        .pending_emails;
+    assert_eq!(listed.len(), 1);
+    assert!(!listed[0].admin);
+    assert_eq!(listed[0].added_by, r.boot.admin_key.key_id);
+    assert_eq!(listed[0].added_by_name, Some(name("root-admin")));
+    let flipped = r
+        .app
+        .allow_web_email(
+            r.boot.admin_key.value.as_str(),
+            &WebEmailRequest {
+                email: address.clone(),
+                user: name("alice"),
+                admin: true,
+            },
+        )
+        .await
+        .expect("the admin flips the flag")
+        .0;
+    assert!(flipped.pending && flipped.admin, "{flipped:?}");
+    let head = r
+        .store
+        .events_range(r.boot.tenant_id, 1, 10_000)
+        .await
+        .expect("journal")
+        .len();
+    let err = r
+        .app
+        .accept_web_email(Bearer::Session(&alice), &address, false)
+        .await
+        .unwrap_err();
+    assert!(email_refused(&err, "changed"), "{err:?}");
+    assert_eq!(
+        r.store
+            .events_range(r.boot.tenant_id, 1, 10_000)
+            .await
+            .expect("journal")
+            .len(),
+        head,
+        "a refused accept journals nothing"
+    );
+    let accepted = r
+        .app
+        .accept_web_email(Bearer::Session(&alice), &address, true)
+        .await
+        .expect("an accept of the flag the entry carries");
+    assert!(!accepted.pending && accepted.admin);
+}
+
+/// The re-verifier's case: an entry the bootstrap's admin key left pending
+/// on bob, changed by a second admin to `{user: bob, admin: true}`, still
+/// pending, shows bob the second admin as the key that last set it.
+#[tokio::test]
+async fn a_pending_entry_a_second_admin_changes_shows_that_admin_as_its_adder() {
+    let r = fix_rig().await;
+    let address = email("bob@work.example");
+    let first = allowed(&r, address.as_str(), "bob").await;
+    assert!(first.pending, "{first:?}");
+    assert_eq!(first.added_by, r.boot.admin_key.key_id);
+    let second = tenant_key(
+        &r.app,
+        r.boot.admin_key.value.as_str(),
+        Role::Admin,
+        "second-admin",
+        Vec::new(),
+    )
+    .await;
+    let changed = r
+        .app
+        .allow_web_email(
+            second.value.as_str(),
+            &WebEmailRequest {
+                email: address.clone(),
+                user: name("bob"),
+                admin: true,
+            },
+        )
+        .await
+        .expect("the second admin changes the entry")
+        .0;
+    assert!(changed.pending && changed.admin, "{changed:?}");
+    assert_eq!(changed.added_by, second.key_id);
+    let bob = console_of(&r.app, &r.store, "bob").await;
+    let listed = r
+        .app
+        .whoami_person(Bearer::Session(&bob), false)
+        .await
+        .expect("whoami")
+        .expect("bob's person")
+        .pending_emails;
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].added_by, second.key_id);
+}
+
+/// The re-verifier's third finding: a bootstrap claim whose person's email
+/// another tenant's entry holds, refused at the entry's commit, fails whole.
+/// It leaves no tenant behind, so the claim the restored token allows takes
+/// the same tenant name and succeeds (ADR-0045 d2's note, the reading of
+/// 2026-11-20 after the fifth review of #498).
+#[tokio::test]
+async fn a_bootstrap_claim_refused_at_its_email_leaves_no_partial_tenant() {
+    let (app, store) = rig();
+    let claim = BootstrapRequest {
+        tenant_name: name("acme"),
+        admin_key_name: name("root-admin"),
+        admin_principal: "acme-admin".to_owned(),
+    };
+    let person = BootstrapPerson {
+        user: name("alice"),
+        email: email("alice@setup.example"),
+    };
+    store.refuse_next_commit_of(
+        event_types::WEB_EMAIL_ALLOWED,
+        oml_app::ports::StoreError::EmailTaken,
+    );
+    let err = app
+        .bootstrap_tenant_for(&claim, Some(&person))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::WebEmailTaken), "{err:?}");
+    assert!(
+        store
+            .web_entry_by_email(&person.email.digest())
+            .await
+            .expect("a read")
+            .is_none()
+    );
+    let boot = app
+        .bootstrap_tenant_for(&claim, Some(&person))
+        .await
+        .expect("the retried claim takes the name the refused one left free");
+    assert_eq!(boot.admin_key.access.issued_seq, 3);
 }

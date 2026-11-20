@@ -151,7 +151,8 @@ echo "deployment signing public key (from the boot log, handed out of band): $PU
 # --- bootstrap: the one-time claim ------------------------------------------
 step "bootstrap claim (single-use token -> first admin key, credentials stored 0600)" 0 \
     "$OML" --url "$SERVER_URL" --json bootstrap claim alice-admin \
-    --token-stdin --tenant-name poc-demo --principal platform/alice <<<"$TOKEN"
+    --token-stdin --tenant-name poc-demo --principal platform/alice --person alice \
+    --email alice@example.com <<<"$TOKEN"
 TENANT="$(jqf .tenant_id)"
 
 step "a second claim is refused — the token is consumed (typed refusal, exit 1)" 1 \

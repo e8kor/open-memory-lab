@@ -876,6 +876,57 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         )
     }
 
+    fn fix(
+        &self,
+        tenant_id: Uuid,
+        fix_id: Uuid,
+    ) -> impl Future<Output = Result<Option<oml_app::types::FixRecord>, StoreError>> + Send {
+        timed("fix", self.inner.fix(tenant_id, fix_id))
+    }
+
+    fn fixes(
+        &self,
+        tenant_id: Uuid,
+        unconfirmed_only: bool,
+    ) -> impl Future<Output = Result<Vec<oml_app::types::FixRecord>, StoreError>> + Send {
+        timed("fixes", self.inner.fixes(tenant_id, unconfirmed_only))
+    }
+
+    fn member_of_no_release(
+        &self,
+        tenant_id: Uuid,
+        memory_id: Uuid,
+    ) -> impl Future<Output = Result<bool, StoreError>> + Send {
+        timed(
+            "member_of_no_release",
+            self.inner.member_of_no_release(tenant_id, memory_id),
+        )
+    }
+
+    fn investigation(
+        &self,
+        tenant_id: Uuid,
+        investigation_id: Uuid,
+    ) -> impl Future<Output = Result<Option<oml_app::types::Investigation>, StoreError>> + Send
+    {
+        timed(
+            "investigation",
+            self.inner.investigation(tenant_id, investigation_id),
+        )
+    }
+
+    fn investigations(
+        &self,
+        tenant_id: Uuid,
+        key_id: Option<Uuid>,
+        open_only: bool,
+    ) -> impl Future<Output = Result<Vec<oml_app::types::Investigation>, StoreError>> + Send {
+        timed(
+            "investigations",
+            self.inner.investigations(tenant_id, key_id, open_only),
+        )
+    }
+
     fn valid_until_before(
         &self,
         tenant_id: Uuid,
@@ -1456,6 +1507,23 @@ impl<J: WebStore> WebStore for Timed<J> {
         timed(
             "web_linked_keys",
             self.inner.web_linked_keys(tenant_id, user_root),
+        )
+    }
+
+    fn web_pending_links(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<KeyRecord>, StoreError>> + Send {
+        timed("web_pending_links", self.inner.web_pending_links(tenant_id))
+    }
+
+    fn web_pending_emails(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<WebEntry>, StoreError>> + Send {
+        timed(
+            "web_pending_emails",
+            self.inner.web_pending_emails(tenant_id),
         )
     }
 

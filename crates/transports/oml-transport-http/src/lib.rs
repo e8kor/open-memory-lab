@@ -22,6 +22,7 @@ mod console;
 pub mod error;
 mod exports;
 mod federation;
+mod fixes;
 mod imports;
 pub mod mcp;
 mod metering;
@@ -73,14 +74,14 @@ use oml_app::ports::{
 };
 use oml_app::search::MatchMode;
 use oml_app::types::{
-    AnchorFilter, AppError, Bearer, BootstrapRequest, BriefEdgeView, ClaimEdgeProposal,
-    ClaimEdgeQuery, ConnectCodeIssued, ConnectionRecord, CrewCreateRequest, CrewRecord, CrewUpdate,
-    EdgeRatification, GrantRecord, GrantRequest, GuardrailRequest, GuardrailSet, IssueKeyRequest,
-    IssuedKey, KeyDetail, KeyLimitsChange, KeyRecord, KindFields, ListRequest, MemoryRecord,
-    NamedServe, OnSimilar, ProposeBriefEdge, ProposeClaimEdge, RecallRequest, ServedMemory,
-    SimilarItem, SkillRequest, SkillSet, SourceCheck, SourceCheckRequest, StateClause,
-    SubmitRequest, SubmitVerb, SupersedeRequest, TailedEvent, Verdict, VerdictRequest, Whoami,
-    WithdrawRequest, WorkspaceInfo, WorkspaceRecord,
+    AnchorFilter, AppError, Bearer, BootstrapPerson, BootstrapRequest, BriefEdgeView,
+    ClaimEdgeProposal, ClaimEdgeQuery, ConnectCodeIssued, ConnectionRecord, CrewCreateRequest,
+    CrewRecord, CrewUpdate, EdgeRatification, GrantRecord, GrantRequest, GuardrailRequest,
+    GuardrailSet, IssueKeyRequest, IssuedKey, KeyDetail, KeyLimitsChange, KeyRecord, KindFields,
+    ListRequest, MemoryRecord, NamedServe, OnSimilar, ProposeBriefEdge, ProposeClaimEdge,
+    RecallRequest, ServedMemory, SimilarItem, SkillRequest, SkillSet, SourceCheck,
+    SourceCheckRequest, StateClause, SubmitRequest, SubmitVerb, SupersedeRequest, TailedEvent,
+    Verdict, VerdictRequest, Whoami, WithdrawRequest, WorkspaceInfo, WorkspaceRecord,
 };
 use oml_app::types::{
     BulkItem, BulkVerdictRequest, HELD_PAGE_DEFAULT, HeldListingRequest, HeldPage, ReviewLane,
@@ -128,6 +129,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/keys/{key}/limits"),
     ("POST", "/v2/keys/{key}/link"),
     ("POST", "/v2/keys/{key}/unlink"),
+    ("POST", "/v2/keys/{key}/accept_link"),
     ("POST", "/v2/keys/{key}/connect-codes"),
     ("POST", "/v2/keys/{key}/connections/{connection_id}/revoke"),
     ("GET", "/v2/whoami"),
@@ -157,6 +159,8 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/v2/web/users"),
     ("POST", "/v2/web/emails"),
     ("POST", "/v2/web/emails/remove"),
+    ("POST", "/v2/web/emails/accept"),
+    ("POST", "/v2/web/emails/decline"),
     ("POST", "/v2/web/users/{user}/capacities"),
     ("POST", "/v2/web/users/{user}/quota"),
     ("POST", "/v2/web/users/{user}/disable"),
@@ -166,6 +170,14 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/web/deletion-requests"),
     ("POST", "/v2/admin/memories/search"),
     ("GET", "/v2/admin/memories/{artifact_id}"),
+    ("POST", "/v2/admin/investigations"),
+    ("GET", "/v2/admin/investigations"),
+    ("POST", "/v2/admin/investigations/{investigation_id}/close"),
+    ("POST", "/v2/admin/fixes"),
+    ("GET", "/v2/admin/fixes"),
+    ("GET", "/v2/review/fixes"),
+    ("POST", "/v2/review/fixes/{fix_id}/confirm"),
+    ("POST", "/v2/review/fixes/{fix_id}/revert"),
     ("GET", "/v2/admin/rescan"),
     ("POST", "/v2/admin/rescan"),
     ("GET", "/v2/admin/accounts/{account}/usage"),
@@ -387,6 +399,7 @@ where
             ("POST", "/v2/keys/{key}/limits") => post(Self::set_key_limits),
             ("POST", "/v2/keys/{key}/link") => post(Self::link_key),
             ("POST", "/v2/keys/{key}/unlink") => post(Self::unlink_key),
+            ("POST", "/v2/keys/{key}/accept_link") => post(Self::accept_key_link),
             ("POST", "/v2/keys/{key}/connect-codes") => post(Self::mint_connect_code),
             ("POST", "/v2/keys/{key}/connections/{connection_id}/revoke") => {
                 post(Self::revoke_connection)
@@ -419,6 +432,8 @@ where
             ("GET", "/v2/web/users") => get(Self::list_web_users),
             ("POST", "/v2/web/emails") => post(Self::allow_web_email),
             ("POST", "/v2/web/emails/remove") => post(Self::remove_web_email),
+            ("POST", "/v2/web/emails/accept") => post(Self::accept_web_email),
+            ("POST", "/v2/web/emails/decline") => post(Self::decline_web_email),
             ("POST", "/v2/web/users/{user}/capacities") => post(Self::grant_capacities),
             ("POST", "/v2/web/users/{user}/quota") => post(Self::set_quota),
             ("POST", "/v2/web/users/{user}/disable") => post(Self::disable_user),
@@ -428,6 +443,16 @@ where
             ("POST", "/v2/web/deletion-requests") => post(Self::request_deletion),
             ("POST", "/v2/admin/memories/search") => post(Self::admin_search_route),
             ("GET", "/v2/admin/memories/{artifact_id}") => get(Self::admin_read_route),
+            ("POST", "/v2/admin/investigations") => post(Self::investigation_open_route),
+            ("GET", "/v2/admin/investigations") => get(Self::investigations_route),
+            ("POST", "/v2/admin/investigations/{investigation_id}/close") => {
+                post(Self::investigation_close_route)
+            }
+            ("POST", "/v2/admin/fixes") => post(Self::fix_route),
+            ("GET", "/v2/admin/fixes") => get(Self::admin_fixes_route),
+            ("GET", "/v2/review/fixes") => get(Self::review_fixes_route),
+            ("POST", "/v2/review/fixes/{fix_id}/confirm") => post(Self::fix_confirm_route),
+            ("POST", "/v2/review/fixes/{fix_id}/revert") => post(Self::fix_revert_route),
             ("GET", "/v2/admin/rescan") => get(Self::rescan_route),
             ("POST", "/v2/admin/rescan") => post(Self::rescan_record_route),
             ("GET", "/v1/account/usage") => get(Self::account_usage_route),
@@ -2272,7 +2297,8 @@ where
 
     /// `POST /v2/keys/{key}/link {user}`: an admin key links a live tenant
     /// key a person holds to that person, journalled as `key.linked_person`
-    /// (ADR-0085 d16, amended 2026-11-17).
+    /// and pending until the person accepts it (ADR-0085 d16, amended
+    /// 2026-11-17 and by the operator's decision of 2026-11-19).
     async fn link_key_inner(
         st: &Self,
         key_id: &str,
@@ -2300,7 +2326,7 @@ where
         .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(
             StatusCode::OK,
-            &linked_key_json(&linked, Some(&user)),
+            &linked_key_json(&linked, Some(&user), true),
         ))
     }
 
@@ -2329,7 +2355,41 @@ where
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(
             StatusCode::OK,
-            &linked_key_json(&unlinked, None),
+            &linked_key_json(&unlinked, None, false),
+        ))
+    }
+
+    async fn accept_key_link(
+        State(st): State<Self>,
+        rid: Rid,
+        Path(key_id): Path<String>,
+        headers: HeaderMap,
+    ) -> Response {
+        finish(
+            &rid,
+            Self::accept_key_link_inner(&st, &key_id, &headers).await,
+        )
+    }
+
+    /// `POST /v2/keys/{key}/accept_link`: the person a pending link names
+    /// accepts it from their own console session, journalled as
+    /// `key.link_accepted` (ADR-0085 d16, the operator's decision of
+    /// 2026-11-19).
+    async fn accept_key_link_inner(
+        st: &Self,
+        key_id: &str,
+        headers: &HeaderMap,
+    ) -> Result<Response, ApiError> {
+        st.require_writes_open()?;
+        let acting = acting(headers, None)?;
+        idempotency_key(headers)?;
+        let key = reference("key", key_id)?;
+        let (accepted, user) = retry_chain(|| st.app.accept_key_link(acting.bearer(), key.clone()))
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(
+            StatusCode::OK,
+            &linked_key_json(&accepted, Some(&user), false),
         ))
     }
 
@@ -3046,7 +3106,7 @@ where
         // d5; http-api.md bootstrap). The names are checked while the lock
         // still holds the token: a refused name consumes no token and
         // journals nothing, and no concurrent claim sees it consumed.
-        let (taken, admin_key_name, tenant_name) = {
+        let (taken, admin_key_name, tenant_name, person) = {
             let mut guard = st
                 .enrollment
                 .lock()
@@ -3062,7 +3122,33 @@ where
                 "/tenant_name",
                 req.tenant_name.as_deref().unwrap_or("default"),
             )?;
-            (guard.take(), admin_key_name, tenant_name)
+            // The person and their sign-in email travel together: the
+            // ceremony records the email as accepted, the one way a person
+            // the claim names gets a first sign-in (ADR-0045 d2's note, the
+            // operator's decision of 2026-11-20).
+            let person = match (req.person.as_deref(), req.email.as_deref()) {
+                (None, None) => None,
+                (Some(p), Some(e)) => Some(BootstrapPerson {
+                    user: creation_name("/person", p)?,
+                    email: oml_app::domain::web::Email::parse(e).map_err(|err| {
+                        ApiError::validation(format!("/email: {err}"))
+                            .with_details(json!({ "field": "/email" }))
+                    })?,
+                }),
+                (Some(_), None) => {
+                    return Err(ApiError::validation(
+                        "/email is required with /person: the person's sign-in email",
+                    )
+                    .with_details(json!({ "field": "/email" })));
+                }
+                (None, Some(_)) => {
+                    return Err(ApiError::validation(
+                        "/email names the sign-in of the person /person names, and no /person is sent",
+                    )
+                    .with_details(json!({ "field": "/person" })));
+                }
+            };
+            (guard.take(), admin_key_name, tenant_name, person)
         };
         let boot = BootstrapRequest {
             tenant_name,
@@ -3071,9 +3157,11 @@ where
                 .admin_principal
                 .unwrap_or_else(|| "bootstrap/admin".to_owned()),
         };
-        match st.app.bootstrap_tenant(&boot).await {
+        match st.app.bootstrap_tenant_for(&boot, person.as_ref()).await {
             Err(e) => {
-                // The ceremony did not journal; the token stays claimable.
+                // The ceremony commits as one chain, so a failed one
+                // journalled nothing and left no tenant; the token stays
+                // claimable.
                 if let Ok(mut guard) = st.enrollment.lock() {
                     *guard = taken;
                 }
@@ -4226,6 +4314,16 @@ struct BootstrapClaimBody {
     tenant_name: Option<String>,
     #[serde(default)]
     admin_principal: Option<String>,
+    /// The person the first admin key acts for: its user root is created
+    /// and the key linked to it (ADR-0085 d16; ADR-0089, the operator's
+    /// decision of 2026-11-19).
+    #[serde(default)]
+    person: Option<String>,
+    /// The sign-in email of the person `person` names, required with it and
+    /// recorded as accepted, an admin's entry (ADR-0045 d2's note, the
+    /// operator's decision of 2026-11-20).
+    #[serde(default)]
+    email: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -4825,6 +4923,25 @@ fn person_json(person: &oml_app::app::Person) -> Value {
             .linked_keys
             .iter()
             .map(|k| json!({ "id": k.id, "name": k.name.as_str() }))
+            .collect::<Vec<_>>(),
+        "pending_links": person
+            .pending_links
+            .iter()
+            .map(|k| json!({ "id": k.id, "name": k.name.as_str() }))
+            .collect::<Vec<_>>(),
+        "pending_emails": person
+            .pending_emails
+            .iter()
+            .map(|e| {
+                json!({
+                    "email": e.email.as_str(),
+                    "admin": e.admin,
+                    "added_by": {
+                        "id": e.added_by,
+                        "name": e.added_by_name.as_ref().map(Name::as_str),
+                    },
+                })
+            })
             .collect::<Vec<_>>(),
     });
     // The onboarding status, only when asked (`start=true`): every page's
@@ -5705,6 +5822,10 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
     let approval = (m.status == MemoryStatus::Promoted && !served.anonymous)
         .then_some(m.approval.as_deref())
         .flatten();
+    // A version an admin fix wrote names no author to a reader: no reader
+    // learns which admin (ADR-0089 d7).
+    let fix_written = m.approval.as_deref().is_some_and(|a| a.fix_written());
+    let hidden = served.anonymous || fix_written;
     let mut value = json!({
         "artifact_id": m.memory_id,
         "claim_key": m.claim_key,
@@ -5718,7 +5839,7 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
         "unreviewed": m.status == MemoryStatus::Held,
         // A universe claim names no author outside its authoring key set
         // (ADR-0044 d9).
-        "principal": if served.anonymous {
+        "principal": if hidden {
             Value::Null
         } else {
             Value::from(m.author_principal.clone())
@@ -5726,7 +5847,7 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
         // The authoring key's id, null wherever principal is (ADR-0044 d9;
         // ADR-0070 d5): the user page names the kind of its person's own
         // keys and filters a search by one of them.
-        "author_key_id": if served.anonymous {
+        "author_key_id": if hidden {
             Value::Null
         } else {
             Value::from(m.author_key_id.to_string())
@@ -5740,7 +5861,7 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
         } else {
             Value::from(m.scan_finding.clone())
         },
-        "provenance": "agent",
+        "provenance": if fix_written { "admin_fix" } else { "agent" },
         "simulation_id": Value::Null,
         "self_signed": false,
         "plaintext_digest": m.body_digest,
@@ -5765,6 +5886,9 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
         "approver": approval.map(|a| json!({
             "used_by": a.used_by.as_str(),
             "same_user": a.same_user,
+            "act": a.act(),
+            "confirmed": a.confirmed(),
+            "reverted": a.reverted(),
         })),
         // When the version says it holds, as signed (proposed ADR-0059 d2).
         "valid_from": m.valid.from.as_ref().map(ValidEnd::as_str),
@@ -5857,6 +5981,11 @@ pub(crate) fn guardrail_set_json(set: &GuardrailSet) -> Value {
                 "at": v.at.as_str(),
             })).collect::<Vec<_>>(),
             "conflict": g.conflict,
+            // The mark of a guardrail an admin fix serves (ADR-0089 d7).
+            "admin_fix": g.fix.map(|f| json!({
+                "confirmed": f.confirmed,
+                "reverted": f.reverted,
+            })),
         })).collect::<Vec<_>>(),
         "own_held": set.own_held.iter().map(|h| json!({
             "claim_key": h.claim_key,
@@ -5895,6 +6024,9 @@ pub(crate) fn served_skill_json(s: &oml_app::types::ServedSkill) -> Value {
         "approver": s.approver.as_ref().map(|a| json!({
             "used_by": a.used_by.as_str(),
             "same_user": a.same_user,
+            "act": a.act(),
+            "confirmed": a.confirmed(),
+            "reverted": a.reverted(),
         })),
         "uri": s.uri,
         "unreviewed": s.unreviewed,
@@ -5967,13 +6099,15 @@ fn crew_json(crew: &CrewRecord) -> Value {
     })
 }
 
-/// openapi.yaml `KeyLink`: the key and the user it acts for, or `null`
-/// once unlinked (ADR-0085 d16).
-fn linked_key_json(key: &KeyRecord, user: Option<&Name>) -> Value {
+/// openapi.yaml `KeyLink`: the key and the user its link names, or `null`
+/// once unlinked, and whether that user has yet to accept it (ADR-0085
+/// d16, the operator's decision of 2026-11-19).
+fn linked_key_json(key: &KeyRecord, user: Option<&Name>, pending: bool) -> Value {
     json!({
         "key_id": key.key_id,
         "name": key.name.as_ref().map(Name::as_str),
         "linked_user": user.map(Name::as_str),
+        "pending": pending,
     })
 }
 

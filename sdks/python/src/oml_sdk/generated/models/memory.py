@@ -86,7 +86,9 @@ class Memory:
         scan_finding (None | str | Unset): Admission's scan finding on the version, class: rule at place, never the
             matched text; null when the scan found nothing, and null wherever principal is (ADR-0065 d8; ADR-0044 d9;
             ADR-0070 d5). Since v0.7.0.
-        provenance (MemorySummaryProvenance | Unset):
+        provenance (MemorySummaryProvenance | Unset): admin_fix for a version an admin fix wrote (an edit or a
+            retirement), whose principal and author_key_id are then null: no reader learns which admin (ADR-0089 d7). Since
+            v0.8.4 for admin_fix.
         simulation_id (None | str | Unset):
         self_signed (bool | Unset): Marked rows under the bounded development exception; never promote beyond their
             workspace.

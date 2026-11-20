@@ -1,6 +1,8 @@
 //! Linked tenant keys (ADR-0085 d16, amended 2026-11-17; ADR-0082 d7): an
-//! admin links a tenant key a person holds to that person's sign-in, so the
-//! key acts for them, and the console acts with it through the session.
+//! admin links a tenant key a person holds to that person's sign-in, the
+//! person accepts the link from their own console session (the operator's
+//! decision of 2026-11-19), and from then on the key acts for them and the
+//! console acts with it through the session.
 
 use serde_json::json;
 use uuid::Uuid;
@@ -20,13 +22,16 @@ where
     I: IdGen,
     Sc: Scanner,
 {
-    /// `POST /v2/keys/{key}/link` (ADR-0085 d16): the tenant key acts for
-    /// `user` from this commit on, journalled as `key.linked_person`.
-    /// A console admin session only (`<user>-admin`). Only a live tenant
-    /// bearer key used by a person
-    /// that is not an admin key is linked, to a user root of the tenant
-    /// whose person has a sign-in entry that is not disabled; anything else
-    /// is [`AppError::KeyLinkRefused`] naming why, and journals nothing.
+    /// `POST /v2/keys/{key}/link` (ADR-0085 d16): the tenant key's link to
+    /// `user`, journalled as `key.linked_person` and pending until `user`
+    /// accepts it from their own console session
+    /// ([`Self::accept_key_link`]); until then the key acts for no one (the
+    /// operator's decision of 2026-11-19). A console admin session only
+    /// (`<user>-admin`). Only a live tenant bearer key used by a person, an
+    /// admin key's included (the operator, 2026-11-19), that holds no link
+    /// and none pending, is linked, to a user root of the tenant whose
+    /// person has a sign-in entry that is not disabled; anything else is
+    /// [`AppError::KeyLinkRefused`] naming why, and journals nothing.
     pub async fn link_key_to_person(
         &self,
         bearer: impl Into<Bearer<'_>>,
@@ -62,7 +67,7 @@ where
                 reason: "self_link",
             });
         }
-        target.linked_user = Some(root.workspace_id);
+        target.link_pending = Some(root.workspace_id);
         let prev = self.head_event(tenant_id).await?;
         let event = self.seal(
             prev.as_ref(),
@@ -75,6 +80,7 @@ where
                 "user": user.as_str(),
                 "user_root_id": root.workspace_id.to_string(),
                 "linked_by_key_id": admin.key_id.to_string(),
+                "accepted": false,
             }),
         )?;
         self.commit(
@@ -82,6 +88,7 @@ where
             MetadataFold::KeyLinked {
                 key_id: target.key_id,
                 user_root: Some(root.workspace_id),
+                accepted: false,
             },
             None,
         )
@@ -90,9 +97,9 @@ where
     }
 
     /// `POST /v2/keys/{key}/unlink` (ADR-0085 d16): the tenant key acts for
-    /// no one from this commit on, journalled as `key.unlinked_person`.
-    /// Admin key role only; a key that is not linked is
-    /// [`AppError::KeyLinkRefused`] with `not_linked`.
+    /// no one from this commit on, journalled as `key.unlinked_person`; a
+    /// link still pending is withdrawn the same way. Admin key role only; a
+    /// key with neither is [`AppError::KeyLinkRefused`] with `not_linked`.
     pub async fn unlink_key_from_person(
         &self,
         bearer: impl Into<Bearer<'_>>,
@@ -108,12 +115,13 @@ where
             .key(tenant_id, key_id)
             .await?
             .ok_or(AppError::NotFound)?;
-        if target.linked_user.is_none() {
+        if target.linked_user.is_none() && target.link_pending.is_none() {
             return Err(AppError::KeyLinkRefused {
                 reason: "not_linked",
             });
         }
         target.linked_user = None;
+        target.link_pending = None;
         let prev = self.head_event(tenant_id).await?;
         let event = self.seal(
             prev.as_ref(),
@@ -131,6 +139,7 @@ where
             MetadataFold::KeyLinked {
                 key_id: target.key_id,
                 user_root: None,
+                accepted: false,
             },
             None,
         )
@@ -138,8 +147,92 @@ where
         Ok(target)
     }
 
+    /// `POST /v2/keys/{key}/accept_link` (ADR-0085 d16, the operator's
+    /// decision of 2026-11-19): the person a pending link names accepts it
+    /// from their own console session, journalled as `key.link_accepted`;
+    /// the key acts for them from this commit on. Refused, journalling
+    /// nothing, with [`AppError::KeyLinkRefused`]: a caller that is not a
+    /// console session, `session_only`; a key with no link pending,
+    /// `not_pending`; a session of any other person, the admin who made
+    /// the link included, `not_named_person`; a key no longer live or no
+    /// longer one a link may name, `revoked` or `not_used_by_person`.
+    /// Returns the key and the person it now acts for.
+    pub async fn accept_key_link(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        key: Reference,
+    ) -> Result<(KeyRecord, Name), AppError> {
+        let caller = self.authenticate_bearer(bearer.into()).await?.key;
+        let Some(session_user) = caller
+            .session_user
+            .as_ref()
+            .filter(|_| caller.credential == Credential::Session)
+        else {
+            return Err(AppError::KeyLinkRefused {
+                reason: "session_only",
+            });
+        };
+        let tenant_id = caller.tenant_id;
+        let key_id = self.resolve(&caller, NamedKind::Key, &key).await?;
+        let mut target = self
+            .journal
+            .key(tenant_id, key_id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        let Some(root_id) = target.link_pending else {
+            return Err(AppError::KeyLinkRefused {
+                reason: "not_pending",
+            });
+        };
+        let root = self
+            .journal
+            .workspace(tenant_id, root_id)
+            .await?
+            .filter(|w| w.user_root);
+        let Some(root) = root.filter(|w| &w.name == session_user) else {
+            return Err(AppError::KeyLinkRefused {
+                reason: "not_named_person",
+            });
+        };
+        if target.revoked_at.is_some() || self.key_expired(&target) {
+            return Err(AppError::KeyLinkRefused { reason: "revoked" });
+        }
+        if target.used_by != UsedBy::Person {
+            return Err(AppError::KeyLinkRefused {
+                reason: "not_used_by_person",
+            });
+        }
+        target.linked_user = Some(root_id);
+        target.link_pending = None;
+        let prev = self.head_event(tenant_id).await?;
+        let event = self.seal(
+            prev.as_ref(),
+            tenant_id,
+            event_types::KEY_LINK_ACCEPTED,
+            &caller.principal,
+            Some(caller.key_id),
+            json!({
+                "key_id": target.key_id.to_string(),
+                "user": root.name.as_str(),
+                "user_root_id": root_id.to_string(),
+                "accepted_by_key_id": caller.key_id.to_string(),
+            }),
+        )?;
+        self.commit(
+            event,
+            MetadataFold::KeyLinkAccepted {
+                key_id: target.key_id,
+                user_root: root_id,
+            },
+            None,
+        )
+        .await?;
+        Ok((target, root.name))
+    }
+
     /// The key `key` names, if a link may name it: a live tenant bearer key
-    /// used by a person that is not an admin key.
+    /// used by a person, an admin key's included (ADR-0085 d16, the
+    /// operator's decision of 2026-11-19).
     async fn linkable_key(
         &self,
         admin: &KeyRecord,
@@ -153,12 +246,10 @@ where
             .ok_or(AppError::NotFound)?;
         let reason = if target.revoked_at.is_some() || self.key_expired(&target) {
             Some("revoked")
-        } else if target.linked_user.is_some() {
+        } else if target.linked_user.is_some() || target.link_pending.is_some() {
             // One link at a time: an unlink comes first, journalled
             // (ADR-0085 d16, amended 2026-11-17).
             Some("already_linked")
-        } else if target.role == Role::Admin {
-            Some("admin_key")
         } else if target.user.is_some() || target.credential != Credential::Bearer {
             Some("not_a_tenant_key")
         } else if target.used_by != UsedBy::Person {
@@ -182,7 +273,7 @@ where
                 .journal
                 .web_entries(tenant_id, after.as_ref(), 500)
                 .await?;
-            for entry in page.iter().filter(|e| &e.user == user) {
+            for entry in page.iter().filter(|e| &e.user == user && !e.pending) {
                 if entry.disabled_at.is_some() {
                     return Ok(false);
                 }

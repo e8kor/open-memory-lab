@@ -10,17 +10,21 @@ T = TypeVar("T", bound="KeyLink")
 
 @_attrs_define
 class KeyLink:
-    """A key and the user the console acts with it for, null when unlinked (ADR-0085 d16).
+    """A key and the user its link names, null when unlinked, and whether that user has yet to accept it (ADR-0085 d16, the
+    operator's decision of 2026-11-19).
 
-    Attributes:
-        key_id (str):
-        name (None | str):
-        linked_user (None | str):
+        Attributes:
+            key_id (str):
+            name (None | str):
+            linked_user (None | str):
+            pending (bool): True from a console admin's link until the named user accepts it; the key acts for no one
+                meanwhile. Since v0.8.4.
     """
 
     key_id: str
     name: None | str
     linked_user: None | str
+    pending: bool
 
     def to_dict(self) -> dict[str, Any]:
         key_id = self.key_id
@@ -31,6 +35,8 @@ class KeyLink:
         linked_user: None | str
         linked_user = self.linked_user
 
+        pending = self.pending
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -38,6 +44,7 @@ class KeyLink:
                 "key_id": key_id,
                 "name": name,
                 "linked_user": linked_user,
+                "pending": pending,
             }
         )
 
@@ -62,10 +69,13 @@ class KeyLink:
 
         linked_user = _parse_linked_user(d.pop("linked_user"))
 
+        pending = d.pop("pending")
+
         key_link = cls(
             key_id=key_id,
             name=name,
             linked_user=linked_user,
+            pending=pending,
         )
 
         return key_link

@@ -26,7 +26,7 @@ pub use cache::{
     encode_cache,
 };
 pub use check::{Cause, Decision, NO_CACHE_WARNING, ToolCall, Uncheckable, Verdict, check, decide};
-pub use frame::{Frame, FrameOptions, over_cap_sentence, render_frame};
+pub use frame::{Frame, FrameOptions, fix_state, over_cap_sentence, render_frame};
 pub use glob::Glob;
 pub use rule::{HostPattern, Matcher, Rule, RuleDefect, ToolClass};
 pub use shell::{ShellRefusal, ShellSegment, shell_command, shell_segments};

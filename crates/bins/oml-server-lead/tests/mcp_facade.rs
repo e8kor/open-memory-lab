@@ -4283,3 +4283,16 @@ async fn oml_withdraw_is_listed_and_withdraws_over_mcp() {
 
     drop_db(&db).await;
 }
+
+/// An admin key stays off the agent surfaces: `oml_read` refuses it at
+/// the verb ceiling, so no claim text reaches a model's context without a
+/// reason (ADR-0089 d11).
+#[tokio::test]
+async fn an_admin_key_is_refused_on_oml_read() {
+    let Some((router, _db)) = fresh_router().await else {
+        return;
+    };
+    let (_crew, admin) = crew_and_admin(&router, &["writer", "reader"]).await;
+    let refused = call_tool(&router, &admin, 1, "oml_read", json!({"query": "canary"})).await;
+    assert_eq!(refusal_code(&refused), "access.verb_ceiling", "{refused}");
+}

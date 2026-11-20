@@ -16,8 +16,10 @@ from ..models.served_guardrail_effect_inside_type_3_type_1 import (
     ServedGuardrailEffectInsideType3Type1,
 )
 from ..models.severity import Severity
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.served_guardrail_admin_fix_type_0 import ServedGuardrailAdminFixType0
     from ..models.served_guardrail_verdicts_item import ServedGuardrailVerdictsItem
 
 
@@ -50,6 +52,9 @@ class ServedGuardrail:
             reviewer's key (ADR-0025 d15); empty for a held version.
         conflict (list[str]): The artifact_ids of the served rows of this claim_key with another severity; empty when
             none.
+        admin_fix (None | ServedGuardrailAdminFixType0 | Unset): The mark of a guardrail an admin fix serves, whether a
+            person confirmed or reverted the fix, never which admin; null for one a verdict promoted (ADR-0089 d7). Since
+            v0.8.4.
     """
 
     artifact_id: str
@@ -72,8 +77,13 @@ class ServedGuardrail:
     )
     verdicts: list[ServedGuardrailVerdictsItem]
     conflict: list[str]
+    admin_fix: None | ServedGuardrailAdminFixType0 | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.served_guardrail_admin_fix_type_0 import (
+            ServedGuardrailAdminFixType0,
+        )
+
         artifact_id = self.artifact_id
 
         claim_key = self.claim_key
@@ -120,6 +130,14 @@ class ServedGuardrail:
 
         conflict = self.conflict
 
+        admin_fix: dict[str, Any] | None | Unset
+        if isinstance(self.admin_fix, Unset):
+            admin_fix = UNSET
+        elif isinstance(self.admin_fix, ServedGuardrailAdminFixType0):
+            admin_fix = self.admin_fix.to_dict()
+        else:
+            admin_fix = self.admin_fix
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -141,11 +159,16 @@ class ServedGuardrail:
                 "conflict": conflict,
             }
         )
+        if admin_fix is not UNSET:
+            field_dict["admin_fix"] = admin_fix
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.served_guardrail_admin_fix_type_0 import (
+            ServedGuardrailAdminFixType0,
+        )
         from ..models.served_guardrail_verdicts_item import ServedGuardrailVerdictsItem
 
         d = dict(src_dict)
@@ -248,6 +271,25 @@ class ServedGuardrail:
 
         conflict = cast(list[str], d.pop("conflict"))
 
+        def _parse_admin_fix(
+            data: object,
+        ) -> None | ServedGuardrailAdminFixType0 | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                admin_fix_type_0 = ServedGuardrailAdminFixType0.from_dict(data)
+
+                return admin_fix_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | ServedGuardrailAdminFixType0 | Unset, data)
+
+        admin_fix = _parse_admin_fix(d.pop("admin_fix", UNSET))
+
         served_guardrail = cls(
             artifact_id=artifact_id,
             claim_key=claim_key,
@@ -264,6 +306,7 @@ class ServedGuardrail:
             effect_inside=effect_inside,
             verdicts=verdicts,
             conflict=conflict,
+            admin_fix=admin_fix,
         )
 
         return served_guardrail

@@ -56,10 +56,17 @@ pub mod event_types {
     /// as they stand after the change (ADR-0079 d5).
     pub const KEY_LIMITS_SET: &str = "key.limits_set";
     /// An admin key linked a tenant key used by a person to that person's
-    /// sign-in, so the key acts for them (ADR-0085 d16).
+    /// sign-in; the key acts for them once they accept it, or at once for
+    /// the bootstrap's link, which the person makes (ADR-0085 d16, the
+    /// operator's decision of 2026-11-19).
     pub const KEY_LINKED_PERSON: &str = "key.linked_person";
-    /// An admin key ended that link (ADR-0085 d16).
+    /// An admin key ended that link, or withdrew one still pending
+    /// (ADR-0085 d16).
     pub const KEY_UNLINKED_PERSON: &str = "key.unlinked_person";
+    /// The person a console admin's link names accepted it from their own
+    /// console session; the key acts for them from this event on
+    /// (ADR-0085 d16, the operator's decision of 2026-11-19).
+    pub const KEY_LINK_ACCEPTED: &str = "key.link_accepted";
     /// A writer submits a memory; held on arrival.
     pub const SUBMISSION_REMEMBER: &str = "submission.remember";
     /// A derived claim with its lineage; a supersession whose successor is
@@ -125,6 +132,11 @@ pub mod event_types {
     /// An email leaves the allowlist; the commit ends its sessions, and the
     /// user's agent keys keep working (ADR-0045 d2, d13).
     pub const WEB_EMAIL_REMOVED: &str = "web.email_removed";
+    /// The person a pending allowlist entry names accepted it from a
+    /// console session they already had; the email signs in from this
+    /// event on (ADR-0045 d2's note of 2026-11-19, the operator's
+    /// decision).
+    pub const WEB_EMAIL_ACCEPTED: &str = "web.email_accepted";
     /// A person signed up in open mode: the entry's email digest, the drawn
     /// user, the provider and the terms version they accepted (ADR-0068 d2).
     pub const WEB_SIGNED_UP: &str = "web.signed_up";
@@ -141,10 +153,22 @@ pub mod event_types {
     /// An admin closed a deletion request by disabling the person; the
     /// bytes wait for erasure (ADR-0068 d6).
     pub const WEB_DELETION_CLOSED: &str = "web.deletion_closed";
-    /// An admin key read memories' text and attribution: the ids served
-    /// and, for a search, a digest of the query, never either text
-    /// (ADR-0045 d21).
+    /// An admin key read memories' text and attribution: the ids served,
+    /// the investigation it read under and, for a search, a digest of the
+    /// query, never either text (ADR-0045 d21; ADR-0089 d10).
     pub const MEMORY_ADMIN_READ: &str = "memory.admin_read";
+    /// An admin key opened an investigation: its id and its reason, in
+    /// clear (ADR-0089 d10, d15).
+    pub const ADMIN_INVESTIGATION_OPENED: &str = "admin.investigation_opened";
+    /// An admin key closed its investigation (ADR-0089 d10).
+    pub const ADMIN_INVESTIGATION_CLOSED: &str = "admin.investigation_closed";
+    /// An admin's fix: its act, targets, reason and `loosens_guardrail`,
+    /// and the ids of the lifecycle events it caused (ADR-0089 d3, d16).
+    pub const ADMIN_FIX: &str = "admin.fix";
+    /// A person confirmed an admin's fix (ADR-0089 d8).
+    pub const ADMIN_FIX_CONFIRMED: &str = "admin.fix_confirmed";
+    /// A person reverted an admin's fix (ADR-0089 d8).
+    pub const ADMIN_FIX_REVERTED: &str = "admin.fix_reverted";
     /// A person's key exported a workspace as a bundle: the manifest
     /// digest, the mode, the counts and the recipients' fingerprints, never
     /// a line of content (ADR-0084 d10).

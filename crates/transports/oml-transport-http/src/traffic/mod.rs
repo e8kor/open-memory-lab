@@ -97,6 +97,8 @@ struct Observed {
     recall_sources: Option<&'static str>,
     federated_hits: u64,
     curation: Option<&'static str>,
+    /// An admin fix's act and whether it loosens a guardrail (ADR-0089 d6).
+    admin_fix: Option<(&'static str, bool)>,
     /// A write's similar check: the best relation named, `on_similar`, and
     /// its seconds (ADR-0050 d1; ADR-0054 d1).
     similar: Option<(&'static str, &'static str, f64)>,
@@ -333,6 +335,10 @@ impl RequestObserver for ScopeObserver {
 
     fn curation(&self, act: &'static str) {
         in_scope(|scope| scope.update(|o, _| o.curation = Some(act)));
+    }
+
+    fn admin_fix(&self, act: &'static str, loosens_guardrail: bool) {
+        in_scope(|scope| scope.update(|o, _| o.admin_fix = Some((act, loosens_guardrail))));
     }
 
     fn similar_checked(&self, relation: &'static str, on_similar: &'static str, seconds: f64) {
@@ -748,6 +754,9 @@ pub(crate) async fn layer(
     }
     if let Some(act) = observed.curation {
         traffic.metrics.curation(act);
+    }
+    if let Some((act, loosens)) = observed.admin_fix {
+        traffic.metrics.admin_fix(act, loosens);
     }
     response
 }

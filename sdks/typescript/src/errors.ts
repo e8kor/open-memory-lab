@@ -121,6 +121,10 @@ export class MemoryStateError extends ApiError {
 export class LifecycleError extends ApiError {
   override name = "LifecycleError";
 }
+/** `admin`: admin investigations and fixes (ADR-0089). */
+export class AdminError extends ApiError {
+  override name = "AdminError";
+}
 /** `limit`: rate and quota. */
 export class LimitError extends ApiError {
   override name = "LimitError";
@@ -161,6 +165,7 @@ export const FAMILIES: Readonly<Record<string, typeof ApiError>> = Object.freeze
   upload: UploadError,
   memory: MemoryStateError,
   lifecycle: LifecycleError,
+  admin: AdminError,
   limit: LimitError,
   bundle: BundleError,
   import: WorkspaceImportError,

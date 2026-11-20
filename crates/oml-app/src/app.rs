@@ -12,6 +12,7 @@ mod exports;
 mod federation;
 mod fixes;
 mod imports;
+mod investigations;
 mod key_limits;
 mod linked_keys;
 mod metering;
@@ -26,10 +27,14 @@ mod widen;
 pub use auth::{Callback, CallbackRefusal, WEB_SESSION_TTL_SECS};
 pub use exports::{ExportCounts, ExportRequest, Exported};
 pub use federation::WideKey;
-pub use fixes::{Demotion, Erasure};
+pub use fixes::{
+    Demotion, Erasure, FIX_REASON_MAX_BYTES, FixRequest, FixStats, ReviewedFix,
+    SERVER_KEY_PRINCIPAL,
+};
 pub use imports::{
     ImportAnswer, ImportFinished, ImportJob, ImportPlan, ImportRequest, ImportStart,
 };
+pub use investigations::{INVESTIGATION_OPEN_LONG_SECONDS, INVESTIGATION_REASON_MAX_BYTES};
 pub use metering::{AccountLimits, UsageDriftReport};
 pub use pages::{
     ActClaim, ActTicket, AdminMemory, AdminPage, AdminSearchRequest, Capacity, CapacityGranted,
@@ -38,7 +43,9 @@ pub use pages::{
 };
 pub use rescan::{RESCAN_MAX_EVENTS, RescanHit, RescanReport};
 pub use search::SearchSettings;
-pub use signup::{DRAWS_MAX, Person, PersonAsk, SignupState, StartStatus, UserDisabled, UserRow};
+pub use signup::{
+    DRAWS_MAX, PendingEmail, Person, PersonAsk, SignupState, StartStatus, UserDisabled, UserRow,
+};
 pub use sparse::{SPARSE_BACKFILL_STEP, SparsePass, encode_sparse_pass};
 pub use uploads::{UploadConfig, UploadSweep};
 pub use usage::UsageSettings;
@@ -123,8 +130,8 @@ use crate::types::{
 };
 use crate::types::{
     AppError, Approval, AssignedNames, AuthorizationRecord, AuthorizeOutcome, AuthorizePage,
-    AuthorizeParams, Bearer, BootstrapRequest, BootstrapResult, Brief, BriefEdgePage,
-    BriefEdgeProposalOutcome, BriefEdgeRatification, BriefEdgeRecord, BriefEdgeView,
+    AuthorizeParams, Bearer, BootstrapPerson, BootstrapRequest, BootstrapResult, Brief,
+    BriefEdgePage, BriefEdgeProposalOutcome, BriefEdgeRatification, BriefEdgeRecord, BriefEdgeView,
     ClaimEdgeFilter, ClaimEdgePage, ClaimEdgePosition, ClaimEdgeProposal, ClaimEdgeProposalOutcome,
     ClaimEdgeQuery, ClaimEdgeRatification, ClaimEdgeRecord, ClaimEdgeSelection,
     ClientAuthentication, ClientDescription, ClientKind, CodeEntryOutcome, ConfirmAction,
@@ -142,7 +149,7 @@ use crate::types::{
     SourceCheckReceipt, SourceCheckRequest, StateClause, SubmitOutcome, SubmitReceipt,
     SubmitRequest, SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage,
     TailedEvent, TenantRow, TokenPair, TransitionRecord, TransitionState, TransitionView, TreeNode,
-    TreePage, UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami,
+    TreePage, UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, WebEntry, Whoami,
     WithdrawReceipt, WithdrawRequest, WorkspaceInfo, WorkspaceRecord, WorkspaceStatusView,
 };
 use crate::types::{CatalogMark, KindCount};
@@ -181,6 +188,12 @@ struct RecallInstructions {
 }
 
 const EVENTS_PAGE: usize = 512;
+
+/// The longest `issued_by` chain [`App::counted_person_of`] walks from a
+/// user key before it counts the key as no one: issuance runs from a
+/// session or tenant key down a few user keys at most, so a longer chain
+/// fails closed rather than walking on.
+const COUNTED_PERSON_DEPTH: usize = 32;
 
 /// The review policy in force: the one PoC constant `{k: 1,
 /// required_roles: ["reviewer"]}`. A verdict's ratification and a status
@@ -2927,6 +2940,7 @@ where
             expiry: req.expiry.clone(),
             requests_per_minute: req.requests_per_minute,
             linked_user: None,
+            link_pending: None,
         };
         (record, value)
     }
@@ -3252,7 +3266,8 @@ where
 
     /// The operator ceremony: genesis event, the `universe` root workspace,
     /// first admin key (roles-and-keys.md bootstrap; workspaces.md, one
-    /// universe per tenant). The root's name is the first segment of every
+    /// universe per tenant), committed as one chain, so a refused ceremony
+    /// leaves no tenant (ADR-0025 d10). The root's name is the first segment of every
     /// served `workspace_path` (ADR-0025 d14). Unauthenticated by design — the
     /// composition decides who may run it.
     ///
@@ -3266,6 +3281,31 @@ where
         &self,
         req: &BootstrapRequest,
     ) -> Result<BootstrapResult, AppError> {
+        self.bootstrap_tenant_for(req, None).await
+    }
+
+    /// [`Self::bootstrap_tenant`], the first admin key linked to `person`
+    /// where the claim names one, and that person's sign-in email recorded
+    /// as accepted (ADR-0085 d16; ADR-0089, the operator's decision of
+    /// 2026-11-19; ADR-0045 d2's note, the operator's decision of
+    /// 2026-11-20).
+    ///
+    /// # Errors
+    /// As [`Self::bootstrap_tenant`]; a person whose name is not a user's
+    /// (`universe` included), before anything is journalled.
+    pub async fn bootstrap_tenant_for(
+        &self,
+        req: &BootstrapRequest,
+        person: Option<&BootstrapPerson>,
+    ) -> Result<BootstrapResult, AppError> {
+        if let Some(p) = person {
+            if p.user.as_str() == UNIVERSE {
+                return Err(AppError::UserRefused(
+                    "user may not be universe, the tenant's root",
+                ));
+            }
+            oml_domain::web::check_user(&p.user)?;
+        }
         let tenant_id = self.ids.new_id();
         self.journal.create_tenant_partitions(tenant_id).await?;
         let genesis = self.seal(
@@ -3280,7 +3320,12 @@ where
         let fold = MetadataFold::TenantGenesis {
             name: req.tenant_name.clone(),
         };
-        self.commit(genesis, fold, None).await?;
+        // The whole ceremony commits as one chain: a refusal of any link,
+        // the person's email included, journals nothing and leaves no
+        // tenant, so the token the claim restores claims again cleanly
+        // (ADR-0025 d10; the reading of 2026-11-20 after the fifth review
+        // of #498).
+        let mut links = vec![commit_request(genesis, fold, None)];
 
         let root_workspace_id = self.ids.new_id();
         let workspace = WorkspaceRecord {
@@ -3312,8 +3357,11 @@ where
             }),
         )?;
         prev = event.clone();
-        self.commit(event, MetadataFold::WorkspaceCreated(workspace), None)
-            .await?;
+        links.push(commit_request(
+            event,
+            MetadataFold::WorkspaceCreated(workspace),
+            None,
+        ));
 
         // The ceremony's admin key takes the name the claim gives it
         // (ADR-0026 d9).
@@ -3344,9 +3392,20 @@ where
             None,
             Self::key_issued_payload(&record, issue.used_by),
         )?;
-        let receipt = self
-            .commit(event, MetadataFold::KeyIssued(record), None)
-            .await?;
+        let prev = event.clone();
+        links.push(commit_request(event, MetadataFold::KeyIssued(record), None));
+        let key_link = links.len();
+        if let Some(person) = person {
+            links.extend(self.link_bootstrap_admin(
+                tenant_id,
+                root_workspace_id,
+                key_id,
+                person,
+                prev,
+            )?);
+        }
+        let after_key = u64::try_from(links.len() - key_link).unwrap_or(0);
+        let receipt = self.commit_requests(links).await?;
 
         Ok(BootstrapResult {
             tenant_id,
@@ -3365,7 +3424,7 @@ where
                 expiry: None,
                 requests_per_minute: None,
                 access: KeyAccess {
-                    issued_seq: receipt.seq,
+                    issued_seq: receipt.seq - after_key,
                     grants: Vec::new(),
                     denials: Vec::new(),
                     lift_epochs: Vec::new(),
@@ -3373,6 +3432,100 @@ where
                 connect_code: None,
             },
         })
+    }
+
+    /// The ceremony's link of its admin key to `person` (ADR-0085 d16;
+    /// ADR-0089, the operator's decision of 2026-11-19): that person's user
+    /// root under `universe`, then `key.linked_person`, then the person's
+    /// sign-in entry as `web.email_allowed`, all by the operator, chained
+    /// after the key's issuance, for the ceremony to commit with it. The person runs the
+    /// ceremony themselves, so the link is accepted at its creation and
+    /// needs no `key.link_accepted`, and the entry, an admin's, is not
+    /// pending (the operator's decisions of 2026-11-19 on key-to-person
+    /// links and of 2026-11-20 on the bootstrap's email). An email another
+    /// tenant's entry holds refuses the ceremony's commit, `web.email_taken`.
+    fn link_bootstrap_admin(
+        &self,
+        tenant_id: Uuid,
+        universe: Uuid,
+        key_id: Uuid,
+        person: &BootstrapPerson,
+        prev: SignedEnvelope,
+    ) -> Result<Vec<CommitRequest>, AppError> {
+        let root = WorkspaceRecord {
+            in_progress: false,
+            workspace_id: self.ids.new_id(),
+            tenant_id,
+            parent_id: Some(universe),
+            name: person.user.clone(),
+            status: WorkspaceStatus::Development,
+            crew: None,
+            crew_id: None,
+            user_root: true,
+            namespace: None,
+        };
+        let root_id = root.workspace_id;
+        let created = self.seal(
+            Some(&prev),
+            tenant_id,
+            event_types::WORKSPACE_CREATE,
+            "operator",
+            None,
+            Self::workspace_create_payload(&root),
+        )?;
+        let linked = self.seal(
+            Some(&created),
+            tenant_id,
+            event_types::KEY_LINKED_PERSON,
+            "operator",
+            None,
+            json!({
+                "key_id": key_id.to_string(),
+                "user": person.user.as_str(),
+                "user_root_id": root_id.to_string(),
+                "linked_by_key_id": Value::Null,
+                "accepted": true,
+            }),
+        )?;
+        let entry = WebEntry {
+            tenant_id,
+            email: person.email.clone(),
+            user: person.user.clone(),
+            admin: true,
+            google_subject: None,
+            github_subject: None,
+            added_by: key_id,
+            terms_version: None,
+            disabled_at: None,
+            pending: false,
+        };
+        let allowed = self.seal(
+            Some(&linked),
+            tenant_id,
+            event_types::WEB_EMAIL_ALLOWED,
+            "operator",
+            None,
+            json!({
+                "email_digest": person.email.digest().to_prefixed(),
+                "user": person.user.as_str(),
+                "admin": true,
+                "by_key_id": key_id.to_string(),
+                "pending": false,
+            }),
+        )?;
+        Ok(vec![
+            commit_request(created, MetadataFold::WorkspaceCreated(root), None),
+            commit_request(
+                linked,
+                MetadataFold::KeyLinked {
+                    key_id,
+                    user_root: Some(root_id),
+                    accepted: true,
+                },
+                None,
+            ),
+            commit_request(allowed, MetadataFold::WebEmailAllowed(entry), None),
+        ])
     }
 
     /// Issue a key with its grants, validated in the issuance order of
@@ -4726,6 +4879,134 @@ where
         }
     }
 
+    /// The person `key` counts as where authority is weighed, an admin
+    /// fix's person, a fix's settlement and a write's recorded
+    /// `author_person`: a session key's `session_user`, a linked key's
+    /// person, and for a user key the person its issuer counts as, walked
+    /// up `issued_by`. A user key counts as its root's person only when a
+    /// key that already counts as that person issued it, the person's own
+    /// session key or a key one issued; one an admin, or another person's
+    /// key, issued for someone's root counts as its issuer's person, and
+    /// as no one where the issuer counts as no one. A chain longer than
+    /// [`COUNTED_PERSON_DEPTH`], or an issuer the tenant does not hold,
+    /// counts as no one, which settles nothing (ADR-0089 and ADR-0085 d16,
+    /// the operator's decision of 2026-11-20: "counts as the issuer").
+    pub(crate) async fn counted_person_of(
+        &self,
+        key: &KeyRecord,
+    ) -> Result<Option<Name>, AppError> {
+        match self.counted_walk(key).await? {
+            Some(walk) => match walk.last() {
+                Some(counted) => self.person_of(counted).await,
+                None => Ok(None),
+            },
+            None => Ok(None),
+        }
+    }
+
+    /// The keys [`Self::counted_person_of`] walks from `key`: `key` first,
+    /// then up `issued_by` while a key is a user key and no session key,
+    /// ending at the key whose person `key` counts as. `None` where the walk
+    /// counts the key as no one: a user key with no issuer, an issuer the
+    /// tenant does not hold, or a chain longer than [`COUNTED_PERSON_DEPTH`]
+    /// (ADR-0089 and ADR-0085 d16, the operator's decision of 2026-11-20).
+    async fn counted_walk(&self, key: &KeyRecord) -> Result<Option<Vec<KeyRecord>>, AppError> {
+        let mut walk = vec![key.clone()];
+        for _ in 0..COUNTED_PERSON_DEPTH {
+            let Some(key) = walk.last() else {
+                return Ok(None);
+            };
+            if key.session_user.is_some() || key.user.is_none() {
+                return Ok(Some(walk));
+            }
+            let Some(issuer) = key.issued_by else {
+                return Ok(None);
+            };
+            match self.journal.key(key.tenant_id, issuer).await? {
+                Some(next) => walk.push(next),
+                None => return Ok(None),
+            }
+        }
+        Ok(None)
+    }
+
+    /// Whether the walk [`Self::counted_person_of`] takes from `key` passes
+    /// through the key `through`, `key` itself included: a user key issued by
+    /// `through`, directly or by a user key it issued, counts as whomever
+    /// `through`'s link names, so a relink of `through` moves such a key's
+    /// person with it. A walk that counts the key as no one reads as passing
+    /// through, which fails closed (ADR-0089, the reading of 2026-11-20).
+    pub(crate) async fn counted_through(
+        &self,
+        key: &KeyRecord,
+        through: Uuid,
+    ) -> Result<bool, AppError> {
+        Ok(self
+            .counted_walk(key)
+            .await?
+            .is_none_or(|walk| walk.iter().any(|k| k.key_id == through)))
+    }
+
+    /// Whether `workspace` sits inside the user root named `person`
+    /// (ADR-0082 d7): the root a settlement compares against the person a
+    /// key counts as, never the root the key was issued in (the operator's
+    /// decision of 2026-11-20).
+    pub(crate) async fn in_root_of_person(
+        &self,
+        tenant_id: Uuid,
+        person: &Name,
+        workspace: Uuid,
+    ) -> Result<bool, AppError> {
+        let Some(root) = self
+            .journal
+            .workspace(tenant_id, workspace)
+            .await?
+            .and_then(|w| w.user())
+        else {
+            return Ok(false);
+        };
+        Ok(self
+            .journal
+            .workspace(tenant_id, root)
+            .await?
+            .is_some_and(|w| w.user_root && &w.name == person))
+    }
+
+    /// Whether `author` acts for `person` on either reading: as the person
+    /// it counts as ([`Self::counted_person_of`]) or as the person whose
+    /// root it was issued in ([`Self::person_of`]). R2 by person takes the
+    /// union, so neither reading makes a reviewer less the author (ADR-0001
+    /// d5; the operator's decision of 2026-11-20).
+    pub(crate) async fn acts_for(
+        &self,
+        author: &KeyRecord,
+        person: &Name,
+    ) -> Result<bool, AppError> {
+        Ok(self.person_of(author).await?.as_ref() == Some(person)
+            || self.counted_person_of(author).await?.as_ref() == Some(person))
+    }
+
+    /// Whether `author`, a version's author key, acts for `person` beside the
+    /// person its write recorded (`author_person`): as the person whose user
+    /// root it was issued in, which is fixed for the key's life, never its
+    /// link as it stands, so a relink after the write moves nothing
+    /// (ADR-0085 d16, amended 2026-11-18; the operator's decision of
+    /// 2026-11-20).
+    pub(crate) async fn issued_in_root_of(
+        &self,
+        author: &KeyRecord,
+        person: &Name,
+    ) -> Result<bool, AppError> {
+        let Some(root) = author.user else {
+            return Ok(false);
+        };
+        Ok(self
+            .journal
+            .workspace(author.tenant_id, root)
+            .await?
+            .is_some_and(|w| &w.name == person))
+    }
+
     /// The user root of the person `key` acts for, read as
     /// [`Self::person_of`] reads the person: a user key's root, a linked
     /// tenant key's, or the root named as a session key's person; `None`
@@ -4764,6 +5045,7 @@ where
         }
         let unlinked = KeyRecord {
             linked_user: None,
+            link_pending: None,
             ..key.clone()
         };
         self.person_root_of(&unlinked).await
@@ -4820,11 +5102,14 @@ where
         let Some(author) = self.journal.key(tenant_id, author_key_id).await? else {
             return Ok(false);
         };
-        let (a, r) = (
-            self.person_of(&author).await?,
-            self.person_of(reviewer).await?,
-        );
-        Ok(same_user(a.as_ref(), r.as_ref()))
+        // The author read on either reading, the person whose root it was
+        // issued in and the person it counts as, so a key an admin minted
+        // in a root is no less its root's person here (ADR-0001 d5; the
+        // operator's decision of 2026-11-20).
+        match self.person_of(reviewer).await? {
+            Some(r) => self.acts_for(&author, &r).await,
+            None => Ok(false),
+        }
     }
 
     /// Whether `memory`'s author and `reviewer` act for one person, the
@@ -4838,8 +5123,23 @@ where
         memory: &MemoryRecord,
         reviewer: &KeyRecord,
     ) -> Result<bool, AppError> {
-        let r = self.person_of(reviewer).await?;
-        Ok(same_user(memory.author_person.as_ref(), r.as_ref()))
+        let Some(r) = self.person_of(reviewer).await? else {
+            return Ok(false);
+        };
+        if memory.author_person.as_ref() == Some(&r) {
+            return Ok(true);
+        }
+        // `author_person` records the person the author key counts as; the
+        // person whose root it was issued in is read off the key, so R2 by
+        // person takes both (the operator's decision of 2026-11-20).
+        match self
+            .journal
+            .key(memory.tenant_id, memory.author_key_id)
+            .await?
+        {
+            Some(author) => self.issued_in_root_of(&author, &r).await,
+            None => Ok(false),
+        }
     }
 
     /// A user key's edge with an endpoint in `universe` is refused
@@ -6124,6 +6424,16 @@ where
         if claim_state.live {
             return Err(AppError::ClaimKeyConflict);
         }
+        // A key whose approved versions were all demoted is written again
+        // continuing its numbers, the chain staying the one the meter
+        // counts; any other released key starts at version 1 (ADR-0089
+        // d16, O8 of 2026-11-19; ADR-0025 d18).
+        let version = match claim_state.greatest_version {
+            Some(greatest) if claim_state.demoted => greatest.checked_add(1).ok_or_else(|| {
+                StoreError::Backend(format!("claim_key {claim_key:?} has no next ordinal"))
+            })?,
+            _ => 1,
+        };
 
         // A person of the sign-up tenant writes at most their memories
         // quota, and an account within its bytes and monthly writes;
@@ -6137,7 +6447,11 @@ where
             key.tenant_id,
             ceiling.as_ref(),
             &[
-                (oml_domain::signup::Quota::Memories, 1),
+                // A continued chain is a memory the meter already counts.
+                (
+                    oml_domain::signup::Quota::Memories,
+                    u64::from(!claim_state.demoted),
+                ),
                 (oml_domain::signup::Quota::TextBytes, body.len() as u64),
                 (oml_domain::signup::Quota::WritesPerMonth, 1),
             ],
@@ -6170,7 +6484,7 @@ where
             tenant_id: key.tenant_id,
             workspace_id,
             claim_key: claim_key.clone(),
-            version: 1,
+            version,
             kind: req.kind,
             body,
             body_digest: body_digest.clone(),
@@ -6182,7 +6496,7 @@ where
             replaces: None,
             author_principal: key.principal.clone(),
             author_key_id: key.key_id,
-            author_person: self.person_of(key).await?,
+            author_person: self.counted_person_of(key).await?,
             derives_from: req.derives_from.clone(),
             lineage_principals: principals.into_iter().collect(),
             lineage_key_ids: key_ids.into_iter().collect(),
@@ -6526,10 +6840,18 @@ where
         let mut ancestries = BTreeMap::new();
         let reviewer_person = self.person_of(key).await?;
         let mut items = Vec::with_capacity(rows.len());
+        let mut issued_here = BTreeMap::new();
         for row in rows {
             let m = &row.memory;
             let Some(same) = self
-                .held_admits(key, &filter, &walked, reviewer_person.as_ref(), m)
+                .held_admits(
+                    key,
+                    &filter,
+                    &walked,
+                    reviewer_person.as_ref(),
+                    m,
+                    Some(&mut issued_here),
+                )
                 .await?
             else {
                 continue;
@@ -6569,7 +6891,10 @@ where
     /// application layer's half of the listing's rule, which every read
     /// that lists or counts held rows applies to what the store returned
     /// (ADR-0055 d2; ADR-0083 d11). `reviewer_person` is the key's person,
-    /// read once per read.
+    /// read once per read. `issued_here`, a listing's cache by author key of
+    /// whether that key was issued in the reviewer's person's root, is read
+    /// for the `same_user` mark of a row in that root; a count, which serves
+    /// such a row either way, passes `None` and reads no key.
     async fn held_admits(
         &self,
         key: &KeyRecord,
@@ -6577,6 +6902,7 @@ where
         walked: &BTreeMap<Uuid, WorkspaceRecord>,
         reviewer_person: Option<&Name>,
         m: &MemoryRecord,
+        issued_here: Option<&mut BTreeMap<Uuid, bool>>,
     ) -> Result<Option<bool>, AppError> {
         let tenant_id = key.tenant_id;
         // R2 and R3 in depth: nothing the queue would not serve this key
@@ -6588,7 +6914,28 @@ where
         }
         // The author's person as recorded at the write (ADR-0085 d16,
         // amended 2026-11-18; #448).
-        let same = same_user(m.author_person.as_ref(), reviewer_person);
+        let mut same = same_user(m.author_person.as_ref(), reviewer_person);
+        // `author_person` records the person the author key counts as. A
+        // row in the reviewer's own person's root by a key issued in that
+        // root is that person's too: the root from the walk, and the author
+        // key read once per listing (the operator's decision of 2026-11-20).
+        if !same
+            && let (Some(person), Some(cache)) = (reviewer_person, issued_here)
+            && let Some(root) = walked.get(&m.workspace_id).and_then(WorkspaceRecord::user)
+            && walked.get(&root).is_some_and(|w| &w.name == person)
+        {
+            same = match cache.get(&m.author_key_id) {
+                Some(&issued) => issued,
+                None => {
+                    let issued = match self.journal.key(tenant_id, m.author_key_id).await? {
+                        Some(author) => author.user == Some(root),
+                        None => false,
+                    };
+                    cache.insert(m.author_key_id, issued);
+                    issued
+                }
+            };
+        }
         // R2 by person: a row the reviewer's own person wrote outside
         // that person's root is not theirs to judge, so it is not
         // listed (ADR-0001 d5; ADR-0082 d7).
@@ -6749,7 +7096,14 @@ where
                 }
                 scanned += 1;
                 if self
-                    .held_admits(key, &filter, &walked, reviewer_person.as_ref(), &row.memory)
+                    .held_admits(
+                        key,
+                        &filter,
+                        &walked,
+                        reviewer_person.as_ref(),
+                        &row.memory,
+                        None,
+                    )
                     .await?
                     .is_some()
                 {
@@ -7163,6 +7517,7 @@ where
                     used_by: key.used_by,
                     same_user: Some(same_user),
                     at: verdict_event.envelope.at.clone(),
+                    fix: None,
                 }));
                 let (event_type, payload, fold) = match replaced {
                     None => (
@@ -8318,6 +8673,7 @@ where
                 rule: fields.rule,
                 unreviewed: m.status == MemoryStatus::Held,
                 effect_inside: (m.status == MemoryStatus::Held).then_some(Effect::Ask),
+                fix: m.approval.as_ref().and_then(|a| a.fix),
                 promoted_at: m.promoted_at,
                 conflict,
             })
@@ -10222,7 +10578,7 @@ where
             replaces: Some(target.memory_id),
             author_principal: key.principal.clone(),
             author_key_id: key.key_id,
-            author_person: self.person_of(key).await?,
+            author_person: self.counted_person_of(key).await?,
             derives_from: derives_from.clone(),
             lineage_principals: principals.into_iter().collect(),
             lineage_key_ids: key_ids.into_iter().collect(),

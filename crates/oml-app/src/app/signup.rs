@@ -128,6 +128,32 @@ pub struct Person {
     /// The live tenant keys an admin linked to the person, by id and name,
     /// with which the console acts in shared workspaces (ADR-0085 d16).
     pub linked_keys: Vec<NamedRef>,
+    /// The live tenant keys an admin linked to the person that wait on
+    /// their acceptance, by id and name; each acts for no one until the
+    /// person accepts it (ADR-0085 d16, the operator's decision of
+    /// 2026-11-19).
+    pub pending_links: Vec<NamedRef>,
+    /// The sign-in emails an admin added for the person that wait on their
+    /// acceptance, each with its admin flag and the key that added it; each
+    /// signs in to nothing until the person accepts it (ADR-0045 d2's note,
+    /// the operator's decisions of 2026-11-19 and 2026-11-20).
+    pub pending_emails: Vec<PendingEmail>,
+}
+
+/// A sign-in email that waits on its person, as [`Person`] lists it: what
+/// the person reviews before accepting it, the admin flag included, which
+/// the accept must name back (ADR-0045 d2's note, the operator's decision
+/// of 2026-11-20).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingEmail {
+    pub email: oml_domain::web::Email,
+    /// Whether the entry signs in as an admin once accepted.
+    pub admin: bool,
+    /// The admin key that added the entry, or changed it to name the person.
+    pub added_by: Uuid,
+    /// That key's name; `None` for a key issued before names (ADR-0026 d11)
+    /// or one the tenant no longer holds.
+    pub added_by_name: Option<Name>,
 }
 
 /// The least per-minute request rate a person's session keys get, whatever
@@ -670,25 +696,54 @@ where
         } else {
             None
         };
-        let linked_keys = match key.user {
-            Some(root) => self
+        // One read serves both lists: the keys linked to the person and
+        // those whose link waits on them (ADR-0085 d16, the operator's
+        // decision of 2026-11-19).
+        let (mut linked_keys, mut pending_links) = (Vec::new(), Vec::new());
+        if let Some(root) = key.user {
+            for k in self.journal.web_linked_keys(key.tenant_id, root).await? {
+                if k.revoked_at.is_some() || self.key_expired(&k) || k.used_by != UsedBy::Person {
+                    continue;
+                }
+                let Some(name) = k.name else { continue };
+                let named = NamedRef { id: k.key_id, name };
+                if k.linked_user == Some(root) {
+                    linked_keys.push(named);
+                } else {
+                    pending_links.push(named);
+                }
+            }
+        }
+        // The emails an admin added for the person that wait on them (the
+        // operator's decision of 2026-11-19, ADR-0045 d2's note).
+        let mut pending_emails = Vec::new();
+        for e in self
+            .journal
+            .web_pending_emails(key.tenant_id)
+            .await?
+            .into_iter()
+            .filter(|e| e.user == user)
+        {
+            let added_by_name = self
                 .journal
-                .web_linked_keys(key.tenant_id, root)
+                .key(key.tenant_id, e.added_by)
                 .await?
-                .into_iter()
-                .filter(|k| {
-                    k.revoked_at.is_none() && !self.key_expired(k) && k.used_by == UsedBy::Person
-                })
-                .filter_map(|k| k.name.map(|name| NamedRef { id: k.key_id, name }))
-                .collect(),
-            None => Vec::new(),
-        };
+                .and_then(|k| k.name);
+            pending_emails.push(PendingEmail {
+                email: e.email,
+                admin: e.admin,
+                added_by: e.added_by,
+                added_by_name,
+            });
+        }
         Ok(Person {
             user,
             limits,
             deletion_requested_at,
             start,
             linked_keys,
+            pending_links,
+            pending_emails,
         })
     }
 

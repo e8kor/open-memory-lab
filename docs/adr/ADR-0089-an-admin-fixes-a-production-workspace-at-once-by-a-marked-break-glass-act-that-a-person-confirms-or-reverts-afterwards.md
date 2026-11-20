@@ -10,9 +10,9 @@ answers: which acts an admin key may take on a workspace's content, on which tar
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its five questions decided at their
 recommendations and every other default as drafted, and its amendment of ADR-0001 d5 accepted with
 it · proposed the same day · amended 2026-11-17 by the operator (d16: demote's targets, the
-fix route as the one surface for demote and erase, erase's claim-wide scope, a fix's events; as-of reads skip a demoted version) · amendments of d8 of 2026-11-18, from the operator's batch (strict confirmation wherever the fixed version is served to production; a cut refuses a `same_user`-only member; #429), accepted 2026-11-19 by the operator
+fix route as the one surface for demote and erase, erase's claim-wide scope, a fix's events; as-of reads skip a demoted version) · readings of 2026-11-18 recorded for the operator's batch (d17) · amendments of d8 of 2026-11-18, from the operator's batch (strict confirmation wherever the fixed version is served to production and for any target outside the admin's own root; a cut refuses a `same_user`-only member; #429), accepted 2026-11-19 by the operator · amended 2026-11-19 by the operator (d16, O8: a claim whose approved versions are all demoted is written again, continuing its numbers; #474) · amended 2026-11-19 by the operator after the review of #498 (an admin key is linked to its person; the settlement fails closed; a revert checks R2 by person; proposed for the record, see the decision at the end) · amended 2026-11-19 by the operator after the second review of #498 (a link of an admin or reviewer key takes effect only once its person accepts it; each fix records its admin's person, which the settlement compares; see the second decision at the end) · reading of 2026-11-19 in d17 (a fix whose mark a later fix takes over is settled `superseded`) · amended 2026-11-19 by the operator after the third review of #498 (a sign-in email an admin adds for an existing person waits on that person; a key's link set only through an acceptance; see the third decision at the end) · amended 2026-11-20 by the operator after the fourth review of #498 (a user key counts as its issuer's person; what one admin can still do is recorded in the third decision; see the decision of 2026-11-20 at the end) · reading of 2026-11-20 after the fifth review of #498, for the operator (a settler counts as the fix's admin on either reading; in the third decision) · reading of 2026-11-20 after the sixth review of #498, for the operator (a key whose counting walk passes through the fix's admin key settles as that admin's person; the doctor count reads the settlement's predicate; R2 by person over a lineage reads the settler on both readings; in the third decision)
 
-**Release:** not scheduled; with ADR-0085, whose releases a fix overlays
+**Release:** built in v0.8.4, except the release overlays (d5), which wait for ADR-0085
 
 **Twin parts** (ADR-0090 d18, PR #388): an `admin.fix` and its reason, its confirmation or
 revert, and an investigation's reason are journal or part, never excluded. A release's overlay
@@ -99,7 +99,8 @@ Decided, not built.
   - The body is scanned like any write of its kind (ADR-0074, including d24's instruction kinds).
   - A veto refuses the edit with `submission.scan_veto`.
   - A finding that would hold the write also refuses the edit as a fix
-    (`admin.fix_used_by_scan`), because a fix serves at once and a held finding needs a person
+    (`admin.fix_held_by_scan`; d4 named it `admin.fix_used_by_scan`, a slip corrected 2026-11-18,
+    d17), because a fix serves at once and a held finding needs a person
     first. The admin can demote instead, which serves already-reviewed text.
 
 - **d5 — A fix reaches release-bound keys as a marked overlay.** For every release that lists the
@@ -315,7 +316,9 @@ Decided, not built.
       successor was the tip or a version below it: recall does not hide a restored tip as
       expired, and an as-of read in the demoted version's tenure serves the version below it.
       `lifecycle.demote` names that version and its end (`reopened_artifact_id`,
-      `restored_valid_until`), so a rebuild reads them.
+      `restored_valid_until`), so a rebuild reads them. Both stores compare-and-set the pair the
+      demotion read, as they do its restored tip, and refuse a stale one as a moved tip, so the
+      signed event never names an end the store did not write (#474).
       Each store keeps that earlier end when a ratification replaces it: PostgreSQL in
       `memories.valid_until_ratified` and `valid_until_before` (migration 0058). A version a
       ratification ended before 0058 keeps the end it has when restored. The law
@@ -329,13 +332,26 @@ Decided, not built.
       The operator may widen this later.
     - **The author's read of a demoted version.** Its author keeps reading the version by id and
       in their own listing, marked `demoted`; no other read serves it (admission.md).
-    - **Not built: a claim key whose every approved version is demoted.** The reading is that
+    - **Superseded by O8 below: a claim key whose every approved version is demoted.** The reading is that
       `demoted` does not count as live, as `erased` does not, so the key can be written again.
       It is not built in this change: `memories_claim_version` keeps a demoted version's ordinal,
       so a fresh claim cannot start at version 1, and the usage meter (ADR-0071 d2,
       `oml_chain_live` and `oml_chain_account`, migration 0045) counts a chain with a demoted
       version as live and finds its account by its version 1. Freeing the key needs the
       operator to choose where the fresh claim's ordinals start and how the meter counts it.
+    - **O8 — A claim whose approved versions are all demoted is written again, continuing its
+      numbers (the operator, 2026-11-19; #474).** `demoted` no longer holds a claim key: a new
+      write to a key whose every version is demoted, rejected or erased is admitted, and when a
+      demoted version is among them the new version continues the claim's ordinals (v4 after
+      v1 to v3, the demoted ones keeping theirs in `memories_claim_version`) rather than starting
+      at 1. The usage meter keeps counting the chain as one live memory: its account is still its
+      earliest version 1's, it is live again once the new version is held, and the write charges
+      no new memory. No migration: both stores' claim-key read stops counting `demoted` as live,
+      and the meter's definition (migration 0045) already counts the chain. With it the fix route
+      demotes a claim's last approved version too, and d17's `admin.fix_would_lock_claim_key`
+      guard is not built. The law
+      `a_claim_whose_approved_versions_are_all_demoted_takes_a_new_version_continuing_its_numbers`
+      holds it over both stores, the meter included.
     - **Held successors of a demoted tip.** A version held as the successor of a tip that is
       later demoted can never be approved, since its target is no longer the served tip. `oml
       doctor` counts held versions whose target is no longer their claim's promoted tip
@@ -343,6 +359,110 @@ Decided, not built.
       reviewer rejects them. A held first version is not counted: it replaces nothing and stays
       approvable. The doctor also counts erased versions whose data key is still live
       (`lake.erased_key_live`).
+
+- **d17 — Readings of v0.8.3 bulk 2, recorded 2026-11-18 before the code, for the operator's
+  batch (#422, #423, #474).** The operator decided the first three on 2026-11-17; the coordinator
+  confirmed the plan's c1, c2, c5-c8 and c10-c12 as recommended; the rest are the build's own,
+  each with its rejected alternative.
+  - **Investigations close only by an explicit close (the operator, 2026-11-17).** No idle expiry.
+    `POST /v2/admin/investigations/{id}/close` is one route beyond d15; only the key that opened
+    the investigation closes it, and a close of an investigation already closed answers it as it
+    is and journals nothing. `oml doctor` warns `admin.investigation_open_long` for each one open
+    for more than seven days. Rejected: an 8-hour idle expiry (plan c9), which the operator
+    overrode; closing by any admin key of the tenant, which would let one admin end another's
+    stated reason.
+  - **How a read names its investigation (c9, confirmed).** The search body's `investigation`
+    field and the one-memory read's `?investigation=` query. A read naming none, or one that is
+    unknown, closed or another key's, is refused `admin.investigation_required` (403), naming the
+    field (`/investigation` or `investigation`), and journals nothing; one code for all four, so
+    the refusal says nothing of another key's investigations. Every admin route that serves claim
+    text requires it: today the two of ADR-0045 d21. Counts, structure and recall telemetry
+    (ADR-0054 d2) serve no claim text and do not. `memory.admin_read` names `investigation_id`,
+    and its commit compare-and-sets that the investigation is still open and the key's.
+  - **The reason.** 1 to 1,024 bytes after trimming, scanned by the veto scan as a verdict's
+    reason is (a finding that would hold a write does not apply to a reason), stored in clear in
+    `admin.investigation_opened` and `admin_investigations` (migration 0063).
+    `GET /v2/admin/investigations?state=open|closed` lists the key's own, `open` by default.
+  - **The console keeps the id in the browser session** (c9's "the web session holds the open
+    id"), as the cookie `__Host-oml_investigation`, not in a new session column: an admin page
+    that reads claim text without one, or under one closed since, asks for the reason and opens
+    one through `POST /web/admin/investigation`, then returns to the page; the admin pages carry
+    a **Close investigation** control. Rejected: a column on `web_sessions`, which needs a lead
+    route for the console to set it; reading under the key's newest open investigation, which
+    would bind one person's browsers to one reason they did not all give.
+  - **The fix route is the only surface for demote and erase (c1, confirmed; d16).**
+  - **A reserved per-tenant server key authors a revert (c5, confirmed).** Role none,
+    `used_by: service`, revoked at issuance, principal `oml:server`, issued in the revert's own
+    transaction the first time a tenant needs it. Its restored version's lineage carries the
+    original version's lineage and the admin's principal, so R2 excludes both from the
+    reverter's verdict.
+  - **The held-by-scan code is `admin.fix_held_by_scan` (c6, confirmed).** d4's
+    `admin.fix_used_by_scan` was a slip; d4 reads `admin.fix_held_by_scan`.
+  - **Any admin edit of an instruction-class claim sets `loosens_guardrail` (c7, confirmed),**
+    since whether a rewritten rule binds less is undecidable; so does a demotion or retirement
+    that takes a served instruction-class tip out of service.
+  - **The scope is judged at confirm or revert time (c8, confirmed):** the target's place then,
+    the strictest current reading. Who may confirm or revert is the 2026-11-18 amendment's rule
+    below, which this reading defers to (#490): a reviewer key of the admin's own person confirms
+    or reverts, marked `same_user`, only a fix whose target lies inside that person's own user
+    root and is a member of no release; anywhere else, open shared workspaces included, another
+    person does. Until releases exist (ADR-0085, R3) "a member of no release" holds for every
+    target; the check is one named function that R3 fills. Rejected: d8's development-scope
+    reading, superseded the same day.
+  - **CLI and HTTP only (c10, confirmed).** No console Fix form until the Releases view exists
+    (ADR-0083 d9).
+  - **An erasure is confirmed, never reverted, and has no dispute comment yet (c11, confirmed);**
+    the dispute comment is a follow-up issue.
+  - **A fix journals `admin.fix` and the lifecycle event it causes (c12, confirmed; d16),**
+    `admin.fix` naming that event's id.
+  - **Demoting the last approved version of a claim (superseded the next day by d16's O8).** The
+    coordinator's reading of 2026-11-18 refused it as `admin.fix_would_lock_claim_key`; the
+    operator decided on 2026-11-19 that the key is released and written again continuing its
+    numbers (d16, O8), so the guard was never shipped.
+  - **The build's readings of #422 (recorded 2026-11-19 with the code, for the operator's batch).**
+    Each names its rejected alternative.
+    - **An edit sends `body` and an optional `title`; a retirement's body is the reason.** The
+      kind, format, guardrail fields and kind fields stay the target's. Rejected: a full
+      supersession body, which would let a fix change a claim's kind.
+    - **The reserved server key is role `reader` with no grant**, since no key record carries
+      "role none"; revoked at issuance, it authenticates nothing either way. Its id is derived
+      from the tenant's, its name the derived form `key-<hex>`, which no created name collides
+      with. Rejected: a fixed name such as `oml-server`, which a tenant's key may already hold.
+    - **A revert of a demotion of a version below the tip is `admin.fix_superseded`:** the claim
+      had moved on before the fix, and serving the demoted text again would replace today's tip.
+      A person confirms such a fix instead. A revert in a frozen workspace is `workspace.frozen`,
+      since it promotes.
+    - **Two codes beyond d4's and d8's:** `admin.fix_not_revertible` for a revert of an erasure,
+      and `admin.fix_settled` for a confirm or revert of a fix already settled, the store
+      compare-and-setting `unconfirmed`. A same-person settlement outside the strict rule's
+      allowance answers `review.author_in_lineage` with `details.reason: same_person`, as R2 by
+      person does elsewhere.
+    - **The person-side read marks each fix with `acts`** (`[confirm, revert]`, `[confirm]` for an
+      erasure, `[]` where this key may take neither), rather than leaving it out, so the
+      admin's own person sees a fix waits on someone else.
+    - **The doctor lines** are `admin.fix_unconfirmed` (with the oldest's age),
+      `admin.fix_loosens_guardrail`, `admin.fix_without_person_reviewer`,
+      `admin.fix_admin_person_only` (d15's "visible only to the admin's own principal", read as
+      no other person holds reviewer there) and `admin.fix_reverted`, from the admin rescan
+      report. The two gauges are set by the lead's upload sweep, as the import gauges are.
+    - **Not built here:** d13's `universe` mark and d5's release overlays, which wait for
+      releases (R3).
+  - **A fix whose mark a later fix takes over is settled `superseded` (the build's reading of
+    2026-11-19, the second review of #498; built in v0.8.4).** A version carries one fix mark. When a later fix F2
+    serves a version an earlier, unconfirmed fix F1 serves (F1 demotes v2 and serves v1; v3 then
+    replaces v1 by review; F2 demotes v3 and serves v1 again), F2's mark replaces F1's, and F1
+    could no longer be confirmed or reverted. In F2's own commit the store settles F1 as state
+    `superseded`, `superseded_by` naming F2, at F2's seq and time, with no settling key
+    (`admin_fixes.superseded_by`, migration 0064). F1 leaves `GET /v2/review/fixes` and the
+    `admin.fix_unconfirmed` count; a confirm or revert of it answers `admin.fix_settled` with
+    `state: superseded`; the admin's `GET /v2/admin/fixes?state=all` lists it. A confirmed or
+    reverted F1 keeps its state. The fold derives it from `admin.fix` alone, so a rebuild that
+    replays the fix events reproduces it. Rejected: settling F1 as confirmed by F2, which would
+    record a confirmation no person made; leaving F1 unconfirmed, which keeps an act no one can
+    take on the person's list and in the doctor count.
+  - **A demotion's reopened end is compare-and-set (#474).** `MetadataFold::MemoryDemoted`
+    carries the reopened version and its earlier end, and both stores refuse a stale pair as a
+    moved tip (d16's note of 2026-11-18).
 
 ## Consequences
 
@@ -412,3 +532,183 @@ marked superseded.
   `same_user_only`, is ADR-0085's amendment of the same day. With the strict confirmation above, a
   `same_user` confirmation happens only inside a user root, where no cut is made, so the refusal is
   the backstop should any `same_user` verdict reach a subtree a cut covers.
+
+## Operator decision of 2026-11-19: an admin key is linked to its person (proposed for the record; #498 review)
+
+The operator decided on 2026-11-19, after the review of #498, that an admin key that fixes acts for
+a known person, so the rule that keeps the admin's own person off the confirmation reads a person
+and never an absence of one. It amends d1, d8 and d17 (c5, c8) as follows.
+
+- **An admin fix needs an admin key linked to its person (amends d1).** The admin key must be
+  `used_by: person` and must name its person: a bearer admin key linked under ADR-0085 d16 (now
+  admitted for admin keys), or a console admin session key, whose person is its session user. An
+  admin key that names no person is refused `admin.fix_requires_person` with
+  `details.reason: unlinked`; one used by a service keeps `details.reason: not_used_by_person`.
+  Nothing is journalled.
+- **The settlement rule fails closed (amends d8 as amended 2026-11-18).** Outside the own-root
+  allowance a confirm or revert is admitted only when the admin key's person and the settling
+  key's person are both known and differ; an unknown person on either side answers
+  `review.author_in_lineage` with `details.reason: same_person`. Rejected: reading an unknown
+  person as "another person", which let an unlinked admin's own reviewer key confirm its fix.
+- **A revert checks R2 by person against the original version's authors (amends d8).** Beside the
+  key-and-principal R2 over the restored version's lineage, the reverter's person is compared with
+  the person recorded at the write (`author_person`, ADR-0085 d16, #448) of the original version
+  and of every version in its lineage the store holds: the same person outside the reverter's own
+  root is refused `same_person`; inside it the revert is admitted marked `same_user`. A confirm of
+  an edit or retirement applies the same two checks over the served version's lineage, so a person
+  never confirms a fix of a claim they wrote outside their own root.
+- **The bootstrap links its admin key (amends ADR-0085 d16's "Console only" for the ceremony).**
+  `POST /v2/bootstrap/claim` takes an optional `person`; with it the ceremony creates that
+  person's user root and journals `key.linked_person` for the first admin key, actor `operator`,
+  in the ceremony's chain. `oml bootstrap claim --person` sends it, and the quickstart and the
+  stack jobs pass one. Without it the tenant's first admin key is unlinked and takes no fix until
+  a console admin links it. The console link stays console-only and still refuses a self-link.
+- **A reverted fix's served version reads `reverted` (d17, the build's reading of D6).** The
+  version a fix served keeps its mark when the fix is reverted, and reads `approver.act:
+  admin_fix`, `confirmed: false`, `reverted: true`; the restored version reads `act: verdict`.
+  Rejected: clearing the mark, which would show an edit no one reviewed as `act: verdict`.
+- **A non-admin reader never learns which admin fixed a version (d7, the build's reading of A5).**
+  On a version written by a fix (an edit or retirement), every non-admin read serves `principal`
+  and `author_key_id` as null and `provenance: admin_fix`; an admin read serves them as stored.
+
+## Operator decision of 2026-11-19, second: a link waits on its person, and a fix records its admin's person (#498 second review)
+
+Built in v0.8.4, with the rest of this record's build.
+
+The operator decided on 2026-11-19, after the second review of #498, how a key comes to act for a
+person, since one console admin could otherwise link any key to any other person alone. Three
+attacks followed: (A) an admin links their bearer admin key to another person, fixes, and confirms
+with their own reviewer key as "another person"; (B) after a fair fix the admin relinks the admin
+key to another person and confirms; (C) an admin links their own reviewer key to another person and
+confirms with it. It amends d1, d8 and the first decision of that day.
+
+- **A link of an admin key or a reviewer key takes effect only once the named person accepts it
+  from their own console session (ADR-0085 d16, amended the same day).** Until then the link is
+  pending and the key counts as unlinked. An admin key with no link or a pending one is refused a
+  fix, `admin.fix_requires_person` with `details.reason: unlinked`, and nothing is journalled. A
+  reviewer key whose link is pending acts for no person, so the settlement rule finds its person
+  unknown and fails closed: its confirm or revert answers `review.author_in_lineage` with
+  `details.reason: same_person`, and the person-side read marks the fix `acts: []` for it. The
+  build applies acceptance to every link, a writer key's included (ADR-0085 d16's reading).
+- **Each fix records its admin's person at fix time (amends d3 and d8).** `admin_fixes.admin_person`
+  and the `admin.fix` payload's `admin_person` hold the person the admin key acted for when it
+  fixed, its accepted link's or its console session's. The settlement compares that recorded
+  person with the settling key's person as it stands, never the admin key's link as it stands at
+  the settlement, so a relink after the fix (B) changes nothing. The doctor's
+  `admin.fix_admin_person_only` reads the same recorded person. The admin's own view of a fix
+  serves `admin_person`; a person's reviewer view never does (d15).
+- **The bootstrap's link is accepted at creation.** The person `oml bootstrap claim --person`
+  names runs the ceremony, so its link is theirs and takes effect at once; the quickstart, the PoC
+  demo and the CI stack jobs keep working unchanged.
+- **What the decision admits, and why it is correct.** Once the named person accepts an admin key's
+  link, that key's fixes are theirs, recorded as theirs, and any other person may confirm them,
+  the linking admin's own reviewer key included: the person consented to act through that key.
+- A fix that a later fix's mark supersedes is d17's reading of the same day.
+
+## Operator decision of 2026-11-19, third: an admin no longer quietly becomes an existing person (#498 third review)
+
+The second decision bound a key's link to its person's acceptance from their own console session,
+but an admin could still become that person: `POST /v2/web/emails` let any admin key add a sign-in
+address they control for a user who already signs in, sign in as them, and accept a link or settle
+a fix as them. The operator decided on 2026-11-19 that such an address stays pending until the
+person accepts it from a session they already have;
+[ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)'s
+note of that day records the rule, its acceptance and removal, and the build's reading of who is an
+existing person. Two defences follow here.
+
+- **A key's link is set only through its person (defence in depth).** Migration 0064's
+  `api_keys_link_guard`, owner-owned and SECURITY INVOKER as 0057's guard is, admits a change of
+  `api_keys.linked_user_id` only to NULL (an unlink), from the link pending to the same root (an
+  acceptance), or on the bootstrap ceremony's first admin key while it holds no link (its
+  `issued_by` is NULL: no key issues it, and its person runs the ceremony), and refuses any change
+  of `issued_by`. No CLI path sets a link directly: the CLI links nothing, and `oml bootstrap
+  claim --person` reaches the ceremony's link above.
+- **Links made before this decision wait on their person.** Migration 0064 moves every
+  `linked_user_id` but the bootstrap ceremony's key's to `link_pending_user_id`, so each person
+  accepts it before the key acts for them. v0.7.3, the release in production, has no link; a
+  stage or development database that applied an earlier draft of 0064 is reset (upgrades).
+- **What stays possible, accepted by this decision (recorded 2026-11-20).** One admin can always
+  create a new person, a name no key and no entry names, add an address of their own for it that
+  signs in at once, sign in as that person and confirm a fix through that person's reviewer key.
+  The pending rule protects existing persons, not names an admin invents; the new person's entry
+  and the fix each name the admin key that made them, so the act is visible in the journal.
+  [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)'s
+  limits table of 2026-11-20 lists it beside what the database does not guard.
+- **Reading of 2026-11-20, for the operator: a settler counts as the fix's admin on either
+  reading.** The fifth review found that admin alice could mint a reviewer key in bob's root, and
+  that once an admin key linked to bob demoted a claim there, that key, counting as alice,
+  confirmed bob's fix as another person's, `same_user: false`. The build reads the settlement
+  fail closed, as R2 by person already reads an ordinary review: the settling key acts for the
+  fix's admin's person when either the person it counts as or the person whose root it was issued
+  in is that person. Such a key settles only as that person would, marked `same_user` inside that
+  person's own development root and a member of no release, and refused `same_person`
+  elsewhere; the development, own-root and release checks run on both readings. The person-only
+  doctor count of unconfirmed fixes compares the same way. A key that counts as no one still
+  settles nothing. This reading is the coordinator's within the operator's decision of
+  2026-11-20, flagged here for the operator to confirm.
+- **Reading of 2026-11-20 after the sixth review, for the operator: what the build compares.**
+  The sixth review found three gaps, and the build now reads them as follows.
+  - **A key the fix's admin key issued.** Alice's admin key minted `carol/forged`, demoted carol's
+    claim, and was then relinked to bob, who accepted. `carol/forged` then counted as bob and
+    confirmed alice's fix as another person's. A settling key now also acts for the fix's
+    admin's person when the walk that counts its person passes through the fix's
+    `admin_key_id`. That walk starts at the key itself and goes up `issued_by` while a key is a
+    user key and no session key, so it names the key whose link it counts by. A walk that counts
+    the key as no one reads as passing through.
+  - **Which keys may settle.** A settling key acts for a known person other than the admin's
+    only when two things hold. It counts as a known person, and it acts for the admin's person
+    neither on either reading nor through that walk. Only such a key settles the fix unmarked.
+    Any other key that counts as a known person settles as the admin's person would: marked
+    `same_user` inside that person's own development root on a member of no release, and refused
+    `same_person` elsewhere. A key that counts as no one settles nothing.
+  - **The doctor count.** `admin.fix_admin_person_only` reads the same predicate. A live
+    person's reviewer key that holds reviewer on the fix's workspace counts as another person
+    only where the settlement would take it as one. A key that counts as no one is no other
+    person, and its fix is reported as one only the admin's person holds reviewer on.
+  - **R2 by person over a lineage, at a revert and at the confirm of an edit or retirement.** The
+    settling key is read as the person it counts as and as the person whose root it was issued
+    in. It acts for a person of the lineage in either of two cases. That person may be the
+    author recorded at the write, or the person whose root the author key was issued in.
+    Otherwise another key of the lineage acts for that person on either reading as it stands.
+    The settling key also acts for the recorded author and for each of its own persons when its
+    counting walk passes through any key of the lineage. When it acts for any such person, the
+    settlement is marked `same_user` only if the claim lies inside every such person's own root,
+    and is refused `same_person` otherwise.
+  - **The fourth probe.** Dora writes a claim in her root and alice's admin key demotes it. Bob's
+    admin key then mints `dora/handed` in dora's root. That key counts as bob, was issued in
+    dora's root, and its revert is marked `same_user`, as review's `same_person` marks a review
+    inside the person's own root.
+
+  Every reading here makes settling stricter: it adds a mark or a refusal, never lifts one. It
+  needs no migration. It is the coordinator's reading, within the operator's decision of
+  2026-11-20, and is flagged here for the operator to confirm.
+
+## Operator decision of 2026-11-20: a user key counts as its issuer's person (#498 fourth review)
+
+The fourth review found that an admin key linked to alice could demote carol's claim, mint
+`carol/forged`, a user key in carol's root, and confirm the fix through it: the key counted as
+carol because of the root it was issued in. The operator decided on 2026-11-20 that such a key
+"counts as the issuer".
+
+- **The person a key counts as.** Where authority is weighed, the admin's person a fix records,
+  who settles a fix (d8) and the author's person a write records (ADR-0085 d16, #448), a session
+  key counts as its `session_user`, a linked key as its accepted link's person, and a user key as
+  the person its issuer counts as, walked up `issued_by`. A user key counts as its root's person
+  only when a key that already counts as that person issued it: the person's own session key
+  (`<user>-web`) or a key one issued. A user key an admin, or another person's key, issued for
+  someone's root counts as its issuer's person, and as no one where the issuer counts as no one,
+  which settles nothing (d8 fails closed). A chain longer than 32 keys counts as no one.
+- **The root a settlement compares.** A same-person settlement is marked `same_user` only inside
+  the root of the fix's admin's person, whichever reading makes the settling key that person's
+  (the third decision's reading of 2026-11-20). In the
+  reviewer's scenario `carol/forged` counts as alice, the fix lies in carol's root, and the confirm
+  and the revert are refused `same_person`.
+- **R2 by person takes both readings.** Where the reviewer must not be the author, an author key
+  acts for a person on either reading: the person it counts as or the person whose root it was
+  issued in. So an ordinary review by alice of a write by a key an admin issued in alice's root is
+  still marked `same_user`, and the change makes no reviewer less the author.
+- **Where the root still decides.** Which root a key writes in (ADR-0044 d3, the user-root rule)
+  is unchanged: a key issued in carol's root writes there, whoever counts for it.
+- The cost: one key read per user key on each of those reads, one more on an ordinary verdict, and one per author key, cached, on a held listing that marks a row in the reviewer's own root (the served listing reads six store calls where it read five, at any number of workspaces).
+
+

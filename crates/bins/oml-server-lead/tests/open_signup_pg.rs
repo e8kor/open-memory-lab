@@ -1243,13 +1243,23 @@ async fn deletion_is_a_journalled_request_the_admin_closes_by_disabling_the_pers
         !body.to_string().contains("outlives the account") || status != StatusCode::OK,
         "{body}"
     );
+    let (_, _, opened) = json(
+        &rig,
+        api(
+            "POST",
+            "/v2/admin/investigations",
+            &rig.boot.admin_key.value,
+            Some(json!({"reason": "a deleted account's claims"})),
+        ),
+    )
+    .await;
     let (_, _, op_read) = json(
         &rig,
         api(
             "POST",
             "/v2/admin/memories/search",
             &rig.boot.admin_key.value,
-            Some(json!({"query": "outlives"})),
+            Some(json!({"query": "outlives", "investigation": opened["investigation_id"]})),
         ),
     )
     .await;

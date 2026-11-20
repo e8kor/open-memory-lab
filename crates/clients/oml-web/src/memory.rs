@@ -342,7 +342,13 @@ async fn admin_read(
 ) -> Result<AdminRead, Error> {
     let credential = session.credential(Capacity::Admin);
     let ids = calls.next_ids();
-    web.api.admin_read(&call(&credential, &ids), id).await
+    web.api
+        .admin_read(
+            &call(&credential, &ids),
+            id,
+            session.investigation.as_deref().unwrap_or_default(),
+        )
+        .await
 }
 
 /// `GET /web/admin/memory?id=`: one memory with its attribution, and the

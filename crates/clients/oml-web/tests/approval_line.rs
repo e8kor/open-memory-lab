@@ -240,15 +240,15 @@ async fn the_json_route_carries_the_approval_the_card_shows_and_nothing_more() {
     assert_eq!(item("own")["approved_at"], "2026-11-10T09:30:00.000000Z");
     assert_eq!(
         item("own")["approver"],
-        json!({"kind": "person", "same_user": true})
+        json!({"kind": "person", "same_user": true, "act": "verdict", "confirmed": null})
     );
     assert_eq!(
         item("by-agent")["approver"],
-        json!({"kind": "agent", "same_user": false})
+        json!({"kind": "agent", "same_user": false, "act": "verdict", "confirmed": null})
     );
     assert_eq!(
         item("by-service")["approver"],
-        json!({"kind": "service", "same_user": false})
+        json!({"kind": "service", "same_user": false, "act": "verdict", "confirmed": null})
     );
     for id in ["shared", "waiting"] {
         assert_eq!(item(id)["approved_at"], Value::Null, "{id}");

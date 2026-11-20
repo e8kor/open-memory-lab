@@ -40,7 +40,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", required=True)
     ap.add_argument("--issuer", required=True)
-    ap.add_argument("--cookie", required=True)
+    ap.add_argument("--cookie", required=True, help="a Cookie header: name=value pairs")
     ap.add_argument("--admin-cookie", required=True)
     ap.add_argument("--shots", default="")
     a = ap.parse_args()
@@ -77,16 +77,22 @@ def main() -> int:
                     ctx = browser.new_context(
                         viewport={"width": width, "height": 900}, color_scheme=theme
                     )
+                    # The cookie header the test's browser sends: the
+                    # session, and for an admin the open investigation's id
+                    # (ADR-0089 d10).
                     ctx.add_cookies(
                         [
                             {
-                                "name": "__Host-oml_session",
-                                "value": cookie,
+                                "name": name.strip(),
+                                "value": value,
                                 "url": issuer + "/",
                                 "secure": True,
                                 "httpOnly": True,
                                 "sameSite": "Lax",
                             }
+                            for name, value in (
+                                pair.split("=", 1) for pair in cookie.split(";")
+                            )
                         ]
                     )
                     ctx.route("**/*", route)

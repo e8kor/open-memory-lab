@@ -7,6 +7,7 @@
 from .client import OmlClient, Written, fence_for
 from .errors import (
     AccessError,
+    AdminError,
     ApiError,
     AuthError,
     BundleError,
@@ -34,6 +35,7 @@ from .errors import (
 
 __all__ = [
     "AccessError",
+    "AdminError",
     "ApiError",
     "AuthError",
     "BundleError",

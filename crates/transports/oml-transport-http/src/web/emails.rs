@@ -41,6 +41,9 @@ struct RemoveBody {
     email: Option<String>,
     /// Refuse removing the tenant's last admin entry (ADR-0045 d10).
     keep_an_admin: Option<bool>,
+    /// The accept's alone: the admin flag the person reviewed, which the
+    /// entry must still carry (the operator's decision of 2026-11-20).
+    admin: Option<bool>,
 }
 
 fn entry_json(entry: &WebEntry) -> Value {
@@ -48,6 +51,7 @@ fn entry_json(entry: &WebEntry) -> Value {
         "email": entry.email.as_str(),
         "user": entry.user.as_str(),
         "admin": entry.admin,
+        "pending": entry.pending,
     })
 }
 
@@ -305,6 +309,10 @@ where
             crate::console::Claimed::Act(claim) => claim,
         };
         let req: RemoveBody = parse_json(headers, body)?;
+        if req.admin.is_some() {
+            return Err(ApiError::validation("admin is the accept's alone")
+                .with_details(json!({ "field": "/admin" })));
+        }
         let email = email_field(req.email.as_deref())?;
         let keep = req.keep_an_admin == Some(true);
         let st = st.clone();
@@ -319,6 +327,103 @@ where
                 Ok(crate::console::Acted::new(
                     StatusCode::OK,
                     json!({ "journal_seq": seq, "event_id": event_id.to_string(), "dry_run": false }),
+                ))
+            })
+            .await
+    }
+
+    pub(crate) async fn accept_web_email(
+        State(st): State<Self>,
+        rid: Rid,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
+        finish(
+            &rid,
+            Self::pending_web_email_inner(&st, &headers, &body, true).await,
+        )
+    }
+
+    pub(crate) async fn decline_web_email(
+        State(st): State<Self>,
+        rid: Rid,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
+        finish(
+            &rid,
+            Self::pending_web_email_inner(&st, &headers, &body, false).await,
+        )
+    }
+
+    /// `POST /v2/web/emails/accept` and `POST /v2/web/emails/decline`: the
+    /// person a pending entry names accepts it, journalled as
+    /// `web.email_accepted`, or removes it, journalled as
+    /// `web.email_removed`, from a console session they already have; both
+    /// answer the entry as it stood after (the operator's decision of
+    /// 2026-11-19, ADR-0045 d2's note).
+    async fn pending_web_email_inner(
+        st: &Self,
+        headers: &HeaderMap,
+        body: &Bytes,
+        accept: bool,
+    ) -> Result<Response, ApiError> {
+        st.require_writes_open()?;
+        acting(headers, None)?;
+        let idem = idempotency_key(headers)?;
+        let caller = std::sync::Arc::new(st.console_caller(headers).await?);
+        let acting: crate::Acting<'static> = crate::Acting::Session(caller.clone());
+        let digest = crate::console::act_digest("", body);
+        let act = if accept {
+            "web.email_accepted"
+        } else {
+            "web.email_declined"
+        };
+        let claim = match st.claim(&caller, act, &idem, &digest).await? {
+            crate::console::Claimed::Replayed(replayed) => return Ok(replayed),
+            crate::console::Claimed::Act(claim) => claim,
+        };
+        let req: RemoveBody = parse_json(headers, body)?;
+        if req.keep_an_admin.is_some() {
+            return Err(
+                ApiError::validation("keep_an_admin is the admin's removal's alone")
+                    .with_details(json!({ "field": "/keep_an_admin" })),
+            );
+        }
+        let admin = match (accept, req.admin) {
+            (true, Some(admin)) => admin,
+            (true, None) => {
+                return Err(ApiError::validation(
+                    "admin is required: the admin flag of the entry as the person reviewed it",
+                )
+                .with_details(json!({ "field": "/admin" })));
+            }
+            (false, None) => false,
+            (false, Some(_)) => {
+                return Err(ApiError::validation("admin is the accept's alone")
+                    .with_details(json!({ "field": "/admin" })));
+            }
+        };
+        let email = email_field(req.email.as_deref())?;
+        let st = st.clone();
+        claim
+            .run(async move {
+                let entry = retry_chain(|| async {
+                    if accept {
+                        st.app
+                            .accept_web_email(acting.bearer(), &email, admin)
+                            .await
+                    } else {
+                        st.app.decline_web_email(acting.bearer(), &email).await
+                    }
+                })
+                .await
+                .map_err(|e| {
+                    crate::console::ActFailure::first(map_app_error(e, ErrorContext::Write))
+                })?;
+                Ok(crate::console::Acted::new(
+                    StatusCode::OK,
+                    entry_json(&entry),
                 ))
             })
             .await

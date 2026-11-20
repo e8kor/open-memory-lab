@@ -17,8 +17,11 @@ An unclaimed server that only the administrator can reach and the `oml` CLI ([in
 
    ```sh
    printf '%s\n' "$TOKEN" | oml --url https://oml.example.com bootstrap claim ops-admin \
-       --token-stdin --tenant-name acme --principal platform/admin
+       --token-stdin --tenant-name acme --principal platform/admin \
+       --person dana --email dana@example.com
    ```
+
+   `--person` and `--email` are optional and go together: the claim makes the administrator's own user root, links the admin key to it, which an admin fix requires, and records the address as their admin sign-in for the console. An address an admin adds for that person later waits until the person accepts it.
 
 3. **Check it** with `oml doctor`, which exits `1` on any failure.
 4. **Create a crew and a workspace for it.**
@@ -137,7 +140,7 @@ An admin key gives no verdict: its verdict is refused, and a verdict from any ke
 
 No verb promotes, demotes, erases or deletes a memory. There is no `oml promote` and no `oml delete`: only a different reviewer's verdict approves, a memory leaves recall only by an approved retirement, and rejected and retired memories keep their bytes. Demotion and erasure are designed and not built ([admin limits](../architecture/roles-and-keys.md#admin-limits)). Names are permanent, and the server reads the tenant off the key.
 
-An admin key does read memory text. The [admin read](../architecture/roles-and-keys.md#the-admin-read) serves every memory of the tenant with its text and attribution, held ones included, and journals each read as `memory.admin_read`.
+An admin key does read memory text. The [admin read](../architecture/roles-and-keys.md#the-admin-read) serves every memory of the tenant with its text and attribution, held ones included, and journals each read as `memory.admin_read`. Every read names an open investigation, which carries the reason once for all reads made under it: `oml admin investigate --reason "<why>"` prints its id for `oml admin read --investigation <id>`, `oml admin investigate` lists the key's open ones, and `oml admin investigate --close <id>` ends one. The console asks for the reason the first time an admin page shows text, and its admin pages carry a **Close investigation** control.
 
 `--guardrail-scope workspace|ancestors` sets a key's guardrail scope at issuance ([guardrails](../use/guardrails.md)).
 

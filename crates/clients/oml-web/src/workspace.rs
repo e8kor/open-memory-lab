@@ -1040,6 +1040,9 @@ pub async fn admin_page(
         workspace: Some(&view.id),
         kinds: Some(kind.as_str()),
         limit: LIST_LIMIT,
+        // The admin reads claim text under the browser session's open
+        // investigation (ADR-0089 d10).
+        investigation: session.investigation.as_deref(),
         ..AdminSearch::default()
     };
     let found = match web.api.admin_search(&call(&admin, &ids), &search).await {
