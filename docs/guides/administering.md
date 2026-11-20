@@ -17,8 +17,11 @@ An unclaimed server that only the administrator can reach and the `oml` CLI ([in
 
    ```sh
    printf '%s\n' "$TOKEN" | oml --url https://oml.example.com bootstrap claim ops-admin \
-       --token-stdin --tenant-name acme --principal platform/admin
+       --token-stdin --tenant-name acme --principal platform/admin \
+       --person dana --email dana@example.com
    ```
+
+   `--person` and `--email` are optional and go together: the claim makes the administrator's own user root, links the admin key to it, which an admin fix requires, and records the address as their admin sign-in for the console. An address an admin adds for that person later waits until the person accepts it.
 
 3. **Check it** with `oml doctor`, which exits `1` on any failure.
 4. **Create a crew and a workspace for it.**
