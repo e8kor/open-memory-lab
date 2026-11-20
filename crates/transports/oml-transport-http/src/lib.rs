@@ -3159,7 +3159,9 @@ where
         };
         match st.app.bootstrap_tenant_for(&boot, person.as_ref()).await {
             Err(e) => {
-                // The ceremony did not journal; the token stays claimable.
+                // The ceremony commits as one chain, so a failed one
+                // journalled nothing and left no tenant; the token stays
+                // claimable.
                 if let Ok(mut guard) = st.enrollment.lock() {
                     *guard = taken;
                 }

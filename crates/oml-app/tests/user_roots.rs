@@ -6706,3 +6706,43 @@ async fn a_pending_entry_a_second_admin_changes_shows_that_admin_as_its_adder() 
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].added_by, second.key_id);
 }
+
+/// The re-verifier's third finding: a bootstrap claim whose person's email
+/// another tenant's entry holds, refused at the entry's commit, fails whole.
+/// It leaves no tenant behind, so the claim the restored token allows takes
+/// the same tenant name and succeeds (ADR-0045 d2's note, the reading of
+/// 2026-11-20 after the fifth review of #498).
+#[tokio::test]
+async fn a_bootstrap_claim_refused_at_its_email_leaves_no_partial_tenant() {
+    let (app, store) = rig();
+    let claim = BootstrapRequest {
+        tenant_name: name("acme"),
+        admin_key_name: name("root-admin"),
+        admin_principal: "acme-admin".to_owned(),
+    };
+    let person = BootstrapPerson {
+        user: name("alice"),
+        email: email("alice@setup.example"),
+    };
+    store.refuse_next_commit_of(
+        event_types::WEB_EMAIL_ALLOWED,
+        oml_app::ports::StoreError::EmailTaken,
+    );
+    let err = app
+        .bootstrap_tenant_for(&claim, Some(&person))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::WebEmailTaken), "{err:?}");
+    assert!(
+        store
+            .web_entry_by_email(&person.email.digest())
+            .await
+            .expect("a read")
+            .is_none()
+    );
+    let boot = app
+        .bootstrap_tenant_for(&claim, Some(&person))
+        .await
+        .expect("the retried claim takes the name the refused one left free");
+    assert_eq!(boot.admin_key.access.issued_seq, 3);
+}

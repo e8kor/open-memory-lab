@@ -3266,7 +3266,8 @@ where
 
     /// The operator ceremony: genesis event, the `universe` root workspace,
     /// first admin key (roles-and-keys.md bootstrap; workspaces.md, one
-    /// universe per tenant). The root's name is the first segment of every
+    /// universe per tenant), committed as one chain, so a refused ceremony
+    /// leaves no tenant (ADR-0025 d10). The root's name is the first segment of every
     /// served `workspace_path` (ADR-0025 d14). Unauthenticated by design — the
     /// composition decides who may run it.
     ///
@@ -3319,7 +3320,12 @@ where
         let fold = MetadataFold::TenantGenesis {
             name: req.tenant_name.clone(),
         };
-        self.commit(genesis, fold, None).await?;
+        // The whole ceremony commits as one chain: a refusal of any link,
+        // the person's email included, journals nothing and leaves no
+        // tenant, so the token the claim restores claims again cleanly
+        // (ADR-0025 d10; the reading of 2026-11-20 after the fifth review
+        // of #498).
+        let mut links = vec![commit_request(genesis, fold, None)];
 
         let root_workspace_id = self.ids.new_id();
         let workspace = WorkspaceRecord {
@@ -3351,8 +3357,11 @@ where
             }),
         )?;
         prev = event.clone();
-        self.commit(event, MetadataFold::WorkspaceCreated(workspace), None)
-            .await?;
+        links.push(commit_request(
+            event,
+            MetadataFold::WorkspaceCreated(workspace),
+            None,
+        ));
 
         // The ceremony's admin key takes the name the claim gives it
         // (ADR-0026 d9).
@@ -3384,13 +3393,19 @@ where
             Self::key_issued_payload(&record, issue.used_by),
         )?;
         let prev = event.clone();
-        let receipt = self
-            .commit(event, MetadataFold::KeyIssued(record), None)
-            .await?;
+        links.push(commit_request(event, MetadataFold::KeyIssued(record), None));
+        let key_link = links.len();
         if let Some(person) = person {
-            self.link_bootstrap_admin(tenant_id, root_workspace_id, key_id, person, prev)
-                .await?;
+            links.extend(self.link_bootstrap_admin(
+                tenant_id,
+                root_workspace_id,
+                key_id,
+                person,
+                prev,
+            )?);
         }
+        let after_key = u64::try_from(links.len() - key_link).unwrap_or(0);
+        let receipt = self.commit_requests(links).await?;
 
         Ok(BootstrapResult {
             tenant_id,
@@ -3409,7 +3424,7 @@ where
                 expiry: None,
                 requests_per_minute: None,
                 access: KeyAccess {
-                    issued_seq: receipt.seq,
+                    issued_seq: receipt.seq - after_key,
                     grants: Vec::new(),
                     denials: Vec::new(),
                     lift_epochs: Vec::new(),
@@ -3423,20 +3438,20 @@ where
     /// ADR-0089, the operator's decision of 2026-11-19): that person's user
     /// root under `universe`, then `key.linked_person`, then the person's
     /// sign-in entry as `web.email_allowed`, all by the operator, chained
-    /// after the key's issuance and committed together. The person runs the
+    /// after the key's issuance, for the ceremony to commit with it. The person runs the
     /// ceremony themselves, so the link is accepted at its creation and
     /// needs no `key.link_accepted`, and the entry, an admin's, is not
     /// pending (the operator's decisions of 2026-11-19 on key-to-person
     /// links and of 2026-11-20 on the bootstrap's email). An email another
-    /// tenant's entry holds refuses the commit, `web.email_taken`.
-    async fn link_bootstrap_admin(
+    /// tenant's entry holds refuses the ceremony's commit, `web.email_taken`.
+    fn link_bootstrap_admin(
         &self,
         tenant_id: Uuid,
         universe: Uuid,
         key_id: Uuid,
         person: &BootstrapPerson,
         prev: SignedEnvelope,
-    ) -> Result<(), AppError> {
+    ) -> Result<Vec<CommitRequest>, AppError> {
         let root = WorkspaceRecord {
             in_progress: false,
             workspace_id: self.ids.new_id(),
@@ -3498,7 +3513,7 @@ where
                 "pending": false,
             }),
         )?;
-        self.commit_requests(vec![
+        Ok(vec![
             commit_request(created, MetadataFold::WorkspaceCreated(root), None),
             commit_request(
                 linked,
@@ -3511,8 +3526,6 @@ where
             ),
             commit_request(allowed, MetadataFold::WebEmailAllowed(entry), None),
         ])
-        .await?;
-        Ok(())
     }
 
     /// Issue a key with its grants, validated in the issuance order of

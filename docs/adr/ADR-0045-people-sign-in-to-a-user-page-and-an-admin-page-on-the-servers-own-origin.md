@@ -1157,7 +1157,9 @@ The fourth review of #498 found three gaps in the note above. The operator decid
 - **The bootstrap claim takes the person's email.** `POST /v2/bootstrap/claim` with `person` takes
   `email`, the person's sign-in address, and records it as that person's admin entry, accepted
   (`web.email_allowed` with `pending: false`, by the operator, in the commit that links the first
-  admin key). `person` and `email` travel together: either alone is `request.validation` naming the
+  admin key). The whole ceremony, genesis to entry, commits as one chain, so a claim refused at
+  any link, an email another tenant holds included, leaves no tenant and the token claims again
+  (the reading of 2026-11-20 after the fifth review of #498). `person` and `email` travel together: either alone is `request.validation` naming the
   one missing. `oml bootstrap claim --person <name> --email <address>`, `scripts/quickstart.sh`
   and `scripts/poc-demo.sh` send both; the CI stack jobs sign in a new person, `e2e`, whom no key
   names, so its first address still signs in at once. This replaces "The bootstrap claim adds no
