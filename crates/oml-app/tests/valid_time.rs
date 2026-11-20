@@ -125,8 +125,8 @@ async fn world() -> World {
     let writer = issue(
         &app,
         &admin,
-        Role::Writer,
-        vec![grant(crew, Role::Writer), grant(crew, Role::Reader)],
+        Role::Contributor,
+        vec![grant(crew, Role::Submitter), grant(crew, Role::Reader)],
     )
     .await;
     let reviewer = issue(

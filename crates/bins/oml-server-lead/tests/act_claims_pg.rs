@@ -230,7 +230,7 @@ async fn two_concurrent_key_issues_under_one_key_issue_once_and_show_the_secret_
         ("issue-1", "alice-laptop", false),
         ("issue-2", "alice-phone", true),
     ] {
-        let body = json!({"name": name, "role": "writer", "connect_code": connect_code});
+        let body = json!({"name": name, "role": "contributor", "connect_code": connect_code});
         // Two sends of one Keys form, as two oml-web replicas forward a
         // double click: before #233 both acted, and the second answered
         // name.taken.

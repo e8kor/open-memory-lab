@@ -114,7 +114,7 @@ branch that reserved later renumbers.
 | adr | 0090 | `main` |  | the lake is a replayable twin of postgresql that holds every signed ev | used |
 | adr | 0091 | `main` |  | workareas become workspaces and the dreamer role becomes reviewer on e | used |
 | adr | 0092 | `main` |  | search filters by every claim kind and ranks skills and guardrails as  | used |
-| adr | 0093 | `docs/adr-role-names` |  | contributor and submitter replace writer | reserved |
+| adr | 0093 | `main` |  | contributor and submitter replace writer | used |
 | migration | 0001 | `main` |  | init | used |
 | migration | 0002 | `main` |  | poc adapter | used |
 | migration | 0003 | `main` |  | lead startup | used |
@@ -181,3 +181,4 @@ branch that reserved later renumbers.
 | migration | 0063 | `bulk/v083-2` |  | admin investigations | reserved |
 | migration | 0064 | `bulk/v083-2` |  | admin fixes and the fix mark on memories | reserved |
 | migration | 0065 | `main` |  | session key account | used |
+| migration | 0066 | `feat/role-names` |  | contributor and submitter replace writer (ADR-0093) | reserved |

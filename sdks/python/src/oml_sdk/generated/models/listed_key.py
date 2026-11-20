@@ -31,6 +31,9 @@ class ListedKey:
         user_root_id (None | UUID):
         revoked (bool):
         cut_off (bool): A denial on universe cuts the key off (ADR-0045 d9).
+        without_recall (bool): Whether the key is a contributor without recall: a contributor key holding a submitter
+            grant on a node that no reader grant of it reaches, before its deny masks; the console marks it no recall
+            (ADR-0093 d3, as read on 2026-11-20; since v0.8.4).
         grants (list[ListedKeyGrantsItem]):
         expiry (datetime.datetime | None | Unset): The instant from which the key authenticates nothing; null for a key
             that does not expire (ADR-0079 d3; since v0.7.3).
@@ -47,6 +50,7 @@ class ListedKey:
     user_root_id: None | UUID
     revoked: bool
     cut_off: bool
+    without_recall: bool
     grants: list[ListedKeyGrantsItem]
     expiry: datetime.datetime | None | Unset = UNSET
     expired: bool | Unset = UNSET
@@ -73,6 +77,8 @@ class ListedKey:
         revoked = self.revoked
 
         cut_off = self.cut_off
+
+        without_recall = self.without_recall
 
         grants = []
         for grants_item_data in self.grants:
@@ -107,6 +113,7 @@ class ListedKey:
                 "user_root_id": user_root_id,
                 "revoked": revoked,
                 "cut_off": cut_off,
+                "without_recall": without_recall,
                 "grants": grants,
             }
         )
@@ -158,6 +165,8 @@ class ListedKey:
 
         cut_off = d.pop("cut_off")
 
+        without_recall = d.pop("without_recall")
+
         grants = []
         _grants = d.pop("grants")
         for grants_item_data in _grants:
@@ -204,6 +213,7 @@ class ListedKey:
             user_root_id=user_root_id,
             revoked=revoked,
             cut_off=cut_off,
+            without_recall=without_recall,
             grants=grants,
             expiry=expiry,
             expired=expired,

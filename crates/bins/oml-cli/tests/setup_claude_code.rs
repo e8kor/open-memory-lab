@@ -185,7 +185,7 @@ fn setup_claude_code_installs_the_plugin_at_the_clis_own_tag_and_hands_the_key_t
     let file = key_file(&dir);
     let out = run(
         &dir,
-        "writer",
+        "contributor",
         Some(&bin),
         &[
             "--url",
@@ -264,7 +264,7 @@ fn setup_claude_code_refuses_a_claude_code_older_than_2_1_285_and_changes_nothin
     let file = key_file(&dir);
     let out = run(
         &dir,
-        "writer",
+        "contributor",
         Some(&bin),
         &[
             "--url",
@@ -303,7 +303,12 @@ fn setup_claude_code_with_print_or_without_claude_runs_nothing_and_prints_a_conf
         if print {
             args.push("--print");
         }
-        let out = run(&dir, "writer", with_claude.then_some(bin.as_path()), &args);
+        let out = run(
+            &dir,
+            "contributor",
+            with_claude.then_some(bin.as_path()),
+            &args,
+        );
         let stdout = String::from_utf8_lossy(&out.stdout);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert_eq!(out.status.code(), Some(0), "{case}: {stdout}{stderr}");
@@ -341,7 +346,7 @@ fn setup_claude_code_refuses_key_file_beside_api_key_before_anything_is_sent() {
         "--key-file",
         &file,
     ];
-    let out = run(&dir, "writer", Some(&bin), &args);
+    let out = run(&dir, "contributor", Some(&bin), &args);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(2), "{stderr}");
     assert!(
@@ -360,7 +365,7 @@ fn setup_claude_code_refuses_a_url_named_without_a_key() {
     let bin = fake_claude(&dir, "2.1.312");
     let out = run(
         &dir,
-        "writer",
+        "contributor",
         Some(&bin),
         &["--url", "{url}", "setup", "claude-code"],
     );
@@ -384,7 +389,7 @@ fn setup_with_key_file(dir: &Path, bin: &Path) -> Output {
     let file = key_file(dir);
     run(
         dir,
-        "writer",
+        "contributor",
         Some(bin),
         &[
             "--url",
@@ -543,7 +548,7 @@ fn setup_with_a_key_and_no_url_off_a_terminal_is_refused_as_no_server_and_sends_
         let file = key_file(&dir);
         let args: Vec<String> = args.iter().map(|a| a.replace("{file}", &file)).collect();
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
-        let (out, sent) = run_counted(&dir, "writer", Some(&bin), &args, env);
+        let (out, sent) = run_counted(&dir, "contributor", Some(&bin), &args, env);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert_eq!(out.status.code(), Some(2), "{case}: {stderr}");
         assert!(stderr.contains(NO_SERVER), "{case}: {stderr}");
@@ -564,7 +569,7 @@ fn setup_never_pairs_a_key_file_with_oml_url_from_the_environment() {
     let file = key_file(&dir);
     let (out, sent) = run_counted(
         &dir,
-        "writer",
+        "contributor",
         Some(&bin),
         &["setup", "claude-code", "--key-file", &file],
         &[("OML_URL", "{url}")],
@@ -585,7 +590,7 @@ fn setup_with_oml_url_set_and_a_key_file_names_why_it_is_not_paired() {
     let file = key_file(&dir);
     let (out, _) = run_counted(
         &dir,
-        "writer",
+        "contributor",
         Some(&bin),
         &["setup", "claude-code", "--key-file", &file],
         &[("OML_URL", "{url}")],
@@ -607,7 +612,7 @@ fn the_configure_line_carries_the_url_the_user_named() {
     let bin = fake_claude(&dir, "2.1.312");
     let file = key_file(&dir);
     let runtime = tokio::runtime::Runtime::new().expect("a runtime");
-    let (server, sent) = fixture(&runtime, "writer");
+    let (server, sent) = fixture(&runtime, "contributor");
     let out = command(
         &dir,
         &server,
@@ -641,7 +646,13 @@ fn a_credentials_file_with_a_key_and_no_url_prompts_on_a_terminal_and_is_refused
     let dir = scratch("creds-key-alone");
     let bin = fake_claude(&dir, "2.1.312");
     key_only_credentials(&dir);
-    let (out, sent) = run_counted(&dir, "writer", Some(&bin), &["setup", "claude-code"], &[]);
+    let (out, sent) = run_counted(
+        &dir,
+        "contributor",
+        Some(&bin),
+        &["setup", "claude-code"],
+        &[],
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(2), "{stderr}");
     assert!(stderr.contains(NO_SERVER), "{stderr}");
@@ -719,7 +730,7 @@ fn on_a_terminal(
 ) -> (Option<i32>, String, usize, String) {
     use expectrl::{Eof, Expect as _};
     let runtime = tokio::runtime::Runtime::new().expect("a runtime");
-    let (server, sent) = fixture(&runtime, "writer");
+    let (server, sent) = fixture(&runtime, "contributor");
     let mut session = expectrl::Session::spawn(command(dir, &server, Some(bin), args, env))
         .expect("oml on a pseudo-terminal");
     session.set_expect_timeout(Some(std::time::Duration::from_secs(20)));

@@ -67,7 +67,7 @@ pub mod event_types {
     /// console session; the key acts for them from this event on
     /// (ADR-0085 d16, the operator's decision of 2026-11-19).
     pub const KEY_LINK_ACCEPTED: &str = "key.link_accepted";
-    /// A writer submits a memory; held on arrival.
+    /// A key with a submitter grant submits a memory; held on arrival.
     pub const SUBMISSION_REMEMBER: &str = "submission.remember";
     /// A derived claim with its lineage; a supersession whose successor is
     /// a `derived_fact` journals it too (ADR-0025 d10).

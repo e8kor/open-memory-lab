@@ -222,7 +222,7 @@ async fn quickstart_brings_up_the_compose_profile_claims_the_lead_and_prints_the
         .expect("whoami under the agent key")
         .into_json()
         .expect("JSON");
-    assert_eq!(me["role"], "writer", "{me}");
+    assert_eq!(me["role"], "contributor", "{me}");
     assert_eq!(me["default_workspace"]["path"], "universe.crew", "{me}");
     assert!(
         !dir.join("user-credentials.toml").exists(),

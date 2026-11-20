@@ -9,13 +9,17 @@ use sha2::{Digest as _, Sha256};
 use unicode_normalization::UnicodeNormalization as _;
 use uuid::Uuid;
 
-/// The five roles (ADR-0010, admission.md). The order is the tables' listing
-/// order — it sorts a role set (`crate::access::effective_roles`) — never a
-/// privilege order: roles do not imply one another (roles-and-keys.md).
+/// The six roles (ADR-0010, admission.md; ADR-0093 d1). The order is the
+/// tables' listing order — it sorts a role set
+/// (`crate::access::effective_roles`) — never a privilege order: roles do not
+/// imply one another (roles-and-keys.md). `Contributor` is a key role only,
+/// whose recall is an explicit reader grant; `Submitter` is both the key role
+/// that writes without recall and the grant role that confers writing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Role {
     Reader,
-    Writer,
+    Contributor,
+    Submitter,
     Reviewer,
     Admin,
     Operator,
@@ -26,7 +30,8 @@ impl Role {
     pub fn as_str(self) -> &'static str {
         match self {
             Role::Reader => "reader",
-            Role::Writer => "writer",
+            Role::Contributor => "contributor",
+            Role::Submitter => "submitter",
             Role::Reviewer => "reviewer",
             Role::Admin => "admin",
             Role::Operator => "operator",

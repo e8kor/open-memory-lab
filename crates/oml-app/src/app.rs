@@ -66,8 +66,9 @@ use uuid::Uuid;
 
 use oml_domain::access::{
     AccessRefusal, Covers, Grant, IssuanceRefusal, KeyDenial, LabelledGrant, TailCaller,
-    TailSubject, Verb, VerbRefusal, admissible_grant_roles, check_issuance, effective_access,
-    effective_roles, effective_verbs, resolve, resolve_verb, tail_visible,
+    TailSubject, Verb, VerbRefusal, admissible_grant_roles, check_contributor_grants,
+    check_issuance, contributor_without_recall, effective_access, effective_roles, effective_verbs,
+    recall_ancestries_needed, resolve, resolve_verb, tail_visible,
 };
 use oml_domain::anchor::{self as anchor_grammar, Anchor, SourceCheckBody};
 use oml_domain::brief::{brief_cut, brief_order};
@@ -718,12 +719,12 @@ fn require_admissible(key: &KeyRecord, needed: Role, verb: &'static str) -> Resu
     }
 }
 
-/// The role the refusal order reads for `needed`: a curator key's writer
-/// grants confer the writer verbs, which a reviewer's ceiling would refuse
-/// (ADR-0030 d8).
+/// The role the refusal order reads for `needed`: a curator key's submitter
+/// grants confer the submitter verbs, which a reviewer's ceiling would refuse
+/// (ADR-0030 d8; ADR-0093 d6).
 fn ceiling_role(key: &KeyRecord, needed: Role) -> Role {
-    if key.profile == Some(KeyProfile::Curator) && needed == Role::Writer {
-        Role::Writer
+    if key.profile == Some(KeyProfile::Curator) && needed == Role::Submitter {
+        Role::Submitter
     } else {
         key.role
     }
@@ -734,7 +735,7 @@ fn ceiling_role(key: &KeyRecord, needed: Role) -> Role {
 const BULK_CHAIN_RETRIES: usize = 16;
 
 /// The listing and the bulk verdict admit a reviewer key a person holds,
-/// and refuse every other key before any lookup (ADR-0055 d1): a writer or
+/// and refuse every other key before any lookup (ADR-0055 d1): a contributor, submitter or
 /// reader key (R1), a service key (ADR-0025 d1) and a reviewer key used by
 /// an agent, whose crew reviews one serve at a time.
 fn require_person_reviewer(key: &KeyRecord) -> Result<(), AppError> {
@@ -827,6 +828,7 @@ fn issuance_refusal(refusal: IssuanceRefusal) -> AppError {
             admissible,
             grant_index,
         },
+        IssuanceRefusal::ContributorGrants => AppError::ContributorGrants,
     }
 }
 
@@ -2322,7 +2324,7 @@ where
     /// (ADR-0044 d16): `submission.user_root_refused` when `node` is a user
     /// root or lies beneath one and `key` does not act for that root's
     /// user, so a tenant key and another person's key are refused alike,
-    /// whatever writer or reviewer grant reaches the node. The person a key
+    /// whatever submitter or reviewer grant reaches the node. The person a key
     /// acts for is read as `same_user` reads it, by [`Self::person_of`]: a
     /// user key's root, or a session key's `session_user`, which is how
     /// `<user>-review` names its person (ADR-0045 d6). The two acts that
@@ -2371,6 +2373,11 @@ where
             .await?;
         if caller.owns(memory.author_key_id) {
             return Ok(!caller.denied(&ancestry));
+        }
+        // A submitter reads only the rows it wrote, whatever its grants
+        // (ADR-0093 d2, as read on 2026-11-20).
+        if caller.key.role == Role::Submitter {
+            return Ok(false);
         }
         let reader = caller.effective(&ancestry).contains(&Role::Reader);
         if memory.status == MemoryStatus::Held && reader {
@@ -3101,7 +3108,7 @@ where
     }
 
     /// The user root an issuance names in `user`: `user` is admitted on a
-    /// reader, writer or reviewer key used by an agent or a person, and never
+    /// reader, contributor, submitter or reviewer key used by an agent or a person, and never
     /// names `universe`; a user root holding the name is joined, a shared
     /// workspace holding it is `name.taken`, and otherwise the root is to be
     /// created, under a fresh id (ADR-0044 d2, d14). Nothing is journalled
@@ -3571,7 +3578,7 @@ where
     /// `how`: a plain issuance by an admin or operator key; a session key
     /// for `session_user`, with no value (ADR-0045 d6); or a person's
     /// `<user>-web` issuing a key in its own root, which the web use case
-    /// has bounded to reader and writer keys naming its user (ADR-0045 d9,
+    /// has bounded to reader and contributor keys naming its user (ADR-0045 d9,
     /// d16), the issuer ceiling read as an admin's for those.
     pub(crate) async fn issue_key_by(
         &self,
@@ -3618,7 +3625,7 @@ where
             Issuance::PersonsOwn(_) => Role::Admin,
             Issuance::Plain | Issuance::Session(_) => issuer.role,
         };
-        // A curator is a reviewer key used by an agent, whose writer grants
+        // A curator is a reviewer key used by an agent, whose submitter grants
         // the reviewer's admissible set is read as if absent (ADR-0030 d8).
         if let Some(profile) = req.profile
             && !profile_admits(profile, req.role, req.used_by.unwrap_or(UsedBy::Agent))
@@ -3630,7 +3637,7 @@ where
         let checked: Vec<Grant> = if req.profile == Some(KeyProfile::Curator) {
             grants
                 .iter()
-                .filter(|g| g.role != Role::Writer)
+                .filter(|g| g.role != Role::Submitter)
                 .cloned()
                 .collect()
         } else {
@@ -3693,8 +3700,12 @@ where
             }
         }
         // A user key reads `universe`'s own claims through one reader grant
-        // on that node alone, which the request did not send (ADR-0044 d3).
-        if let Some(u) = &user {
+        // on that node alone, which the request did not send (ADR-0044 d3);
+        // a submitter key recalls nothing and gets none (ADR-0093 d2, as
+        // read on 2026-11-20).
+        if let Some(u) = &user
+            && req.role != Role::Submitter
+        {
             grants.push(Grant {
                 grant_id: self.ids.new_id(),
                 node: u.universe,
@@ -3723,6 +3734,12 @@ where
             }
             _ => grants.first().map(|g| g.node),
         };
+
+        // Then a contributor key's shape, over the grants the request sent: a
+        // reader and a submitter grant, which the server never adds (ADR-0093
+        // d2; request.validation, reason contributor_grants).
+        let sent_roles: Vec<Role> = req.grants.iter().map(|g| g.role).collect();
+        check_contributor_grants(req.role, &sent_roles).map_err(issuance_refusal)?;
 
         // Step 7: with `connect_code`, the key can hold a connection — a
         // role other than admin or operator, `used_by` other than service,
@@ -3977,9 +3994,9 @@ where
     /// derived from the parent's stored ancestry, as the read derives it. A
     /// name the namespace already holds, `universe` included, is checked
     /// last, by the store's unique index: `name.taken`, and nothing is
-    /// journalled (ADR-0026 d5, d6). A writer user key creates too, under a
+    /// journalled (ADR-0026 d5, d6). A contributor user key creates too, under a
     /// parent inside its own root where its effective access confers
-    /// writer, the root itself when `parent` is omitted, by the refusal
+    /// submitter, the root itself when `parent` is omitted, by the refusal
     /// order on the parent; the node's name lands in that root's namespace
     /// (ADR-0044 d5, d6). A parent that is `frozen` refuses the child as
     /// `workspace.frozen` after both lookups and before the name, so a frozen
@@ -4010,11 +4027,12 @@ where
         in_progress: bool,
     ) -> Result<CreatedWorkspace, AppError> {
         let key = &caller.key;
-        // A user key with the writer role creates inside its own root, by
-        // its effective access on the parent; every other key by the admin
-        // key role (ADR-0044 d6).
+        // A user key with the contributor role creates inside its own root,
+        // by its effective access on the parent, since it acts on a tree it
+        // must read; every other key by the admin key role (ADR-0044 d6;
+        // ADR-0093 d6).
         let parent_id = match key.user {
-            Some(root) if key.role == Role::Writer => {
+            Some(root) if key.role == Role::Contributor => {
                 // Crew metadata stays a governed admin act (ADR-0044 d6).
                 if crew.is_some() {
                     return Err(AppError::VerbCeiling {
@@ -4026,7 +4044,7 @@ where
                     Some(parent) => self.resolve(key, NamedKind::Workspace, parent).await?,
                     None => root,
                 };
-                self.require_access(caller, parent_id, Role::Writer, "create_workspace")
+                self.require_access(caller, parent_id, Role::Submitter, "create_workspace")
                     .await?;
                 Some(parent_id)
             }
@@ -4589,6 +4607,7 @@ where
                 user: None,
                 grants: Vec::new(),
                 denied: None,
+                without_recall: false,
             });
         };
         // The person's `<user>-web` alone is told, and only whether: the
@@ -4602,6 +4621,7 @@ where
             .key_references(key.tenant_id, key.key_id)
             .await?
             .ok_or(AppError::Unauthorized)?;
+        let without_recall = self.without_recall(&key, Some(&access)).await?;
         Ok(Whoami {
             key,
             tenant: Some(references.tenant),
@@ -4610,7 +4630,30 @@ where
             user: references.user,
             grants: access.grants,
             denied,
+            without_recall,
         })
+    }
+
+    /// Whether `key`, holding `access`, is a contributor without recall: a
+    /// submitter grant on a node no reader grant of it reaches (ADR-0093 d3,
+    /// as read on 2026-11-20), decided by the domain's one definition. A
+    /// submitter grant's ancestry is read only where no reader grant sits on
+    /// its own node, so a key with a reader beside each submitter grant, and
+    /// every key of another role, costs no read.
+    pub(crate) async fn without_recall(
+        &self,
+        key: &KeyRecord,
+        access: Option<&KeyAccess>,
+    ) -> Result<bool, AppError> {
+        let Some(access) = access else {
+            return Ok(false);
+        };
+        let grants: Vec<Grant> = access.grants.iter().map(|g| g.grant.clone()).collect();
+        let mut ancestries = BTreeMap::new();
+        for node in recall_ancestries_needed(key.role, &grants) {
+            ancestries.insert(node, self.ancestry(key.tenant_id, node).await?);
+        }
+        Ok(contributor_without_recall(key.role, &grants, &ancestries))
     }
 
     /// Change a crew record's charter URI or external manager, never its
@@ -5301,7 +5344,7 @@ where
     /// node keeps its status until a second identity ratifies it (ADR-0009
     /// d3). The refusal order: (1) the key role, before any lookup, an admin
     /// key passing on its role and any other key needing reviewer among its
-    /// admissible grant roles, so a reader, writer or operator key is
+    /// admissible grant roles, so a reader, contributor, submitter or operator key is
     /// `access.verb_ceiling`; (2) the node resolves; (3) a reviewer key needs
     /// reviewer effective access on it, `access.not_found` outside read access
     /// and `access.grant_refused` within it; (4) the ladder, on the node and
@@ -6137,7 +6180,7 @@ where
         Ok(similar)
     }
 
-    /// Submit a memory: writer on the resolved node, which must exist, by
+    /// Submit a memory: submitter on the resolved node, which must exist, by
     /// the refusal order (ADR-0025 d1), and in a user root the key that
     /// user's own, else `submission.user_root_refused` where the key reads
     /// the node (ADR-0044 d16); every `derives_from` target readable
@@ -6195,7 +6238,7 @@ where
         // reviewer key keeps the verb ceiling (ADR-0082 d2, d8 item 5, d10).
         let session_reviewer = session_reviewer_starts_claims(key);
         if !session_reviewer {
-            require_admissible(key, Role::Writer, "submit")?;
+            require_admissible(key, Role::Submitter, "submit")?;
         }
         // The body's workspace, by id or name, resolves after step 1 and
         // before the record is looked up, so either spelling is one request
@@ -6213,7 +6256,7 @@ where
                 refused => refused,
             }
         } else {
-            self.require_access(&caller, workspace_id, Role::Writer, "submit")
+            self.require_access(&caller, workspace_id, Role::Submitter, "submit")
                 .await
         };
         // A memory is started in a user root by its own user's keys only.
@@ -9433,7 +9476,13 @@ where
         as_of: Option<&EventTime>,
     ) -> Result<ServedMemory, AppError> {
         let caller = self.authenticate_bearer(bearer.into()).await?;
-        require_admissible(&caller.key, Role::Reader, "get")?;
+        // A submitter key recalls nothing but reads its own rows in every
+        // state (ADR-0025 d3; ADR-0093 d2), so its role passes step 1 here
+        // and `readable` admits its own rows alone, whatever its grants: any
+        // other id is `access.not_found`.
+        if caller.key.role != Role::Submitter {
+            require_admissible(&caller.key, Role::Reader, "get")?;
+        }
         if let Some(at) = as_of {
             self.refuse_future(at, "as_of")?;
         }
@@ -9678,8 +9727,8 @@ where
     }
 
     /// Record a source check on a promoted, anchored served tip (ADR-0057
-    /// d5, d18): from its author key (writer), or a reviewer with reviewer
-    /// access on its workspace; a writer that can read it and did not author
+    /// d5, d18): from its author key (a contributor), or a reviewer with reviewer
+    /// access on its workspace; a contributor that can read it and did not author
     /// it is `access.author_only`, and a key that cannot read it is told
     /// nothing. A held, unanchored or superseded version is
     /// `request.validation` naming `/artifact_id`. Journals `source.checked`
@@ -9695,7 +9744,7 @@ where
         let key = &caller.key;
         let admissible = admissible_grant_roles(key.role);
         let reviewer = admissible.contains(&Role::Reviewer);
-        if !reviewer && !admissible.contains(&Role::Writer) {
+        if !reviewer && !admissible.contains(&Role::Submitter) {
             return Err(AppError::VerbCeiling {
                 role: key.role,
                 verb: "source_check",
@@ -9743,8 +9792,13 @@ where
             if target.author_key_id != key.key_id {
                 return Err(AppError::AuthorOnly);
             }
-            self.require_access(&caller, target.workspace_id, Role::Writer, "source_check")
-                .await?;
+            self.require_access(
+                &caller,
+                target.workspace_id,
+                Role::Submitter,
+                "source_check",
+            )
+            .await?;
         }
         let invalid = |reason: &str| AppError::SourceCheckInvalid {
             field: "/artifact_id".to_owned(),
@@ -9941,12 +9995,12 @@ where
     /// target stays the served tip, and stays in everyone's recall, until a
     /// non-author ratifies the successor (ADR-0025 d10). With `retirement`
     /// the successor proposes retiring the claim (d11). The supersede rule
-    /// runs in its order: a key role admitting writer or reviewer (step 1);
+    /// runs in its order: a key role admitting submitter or reviewer (step 1);
     /// the idempotency record, scoped to the key with a nil workspace, looked
     /// up next and replayed whatever the target's state now; the target
     /// readable (step 2), and, where it is a ratified retirement in a user
     /// root, the key that user's own, else `submission.user_root_refused`
-    /// (ADR-0044 d16); a writer's own target and writer on its workspace
+    /// (ADR-0044 d16); a submitting key's own target and submitter on its workspace
     /// (step 3), or a reviewer's reviewer and reader there, whoever authored
     /// it (step 4, edit-as-proposal); then the target-dependent refusals —
     /// `X-OML-Workarea`, the served tip, the kind and retirement checks,
@@ -10217,7 +10271,7 @@ where
         let key = &caller.key;
         let admissible = admissible_grant_roles(key.role);
         let reviewer = admissible.contains(&Role::Reviewer);
-        if !reviewer && !admissible.contains(&Role::Writer) {
+        if !reviewer && !admissible.contains(&Role::Submitter) {
             return Err(AppError::VerbCeiling {
                 role: key.role,
                 verb: "supersede",
@@ -10307,7 +10361,7 @@ where
             if !own {
                 return Err(AppError::AuthorOnly);
             }
-            self.require_access(&caller, target.workspace_id, Role::Writer, "supersede")
+            self.require_access(&caller, target.workspace_id, Role::Submitter, "supersede")
                 .await?;
         }
         // Step 5, in its order: the scope is the target's workspace, the
@@ -12250,7 +12304,7 @@ where
             let ids: Vec<Uuid> = ancestry.iter().map(|w| w.workspace_id).collect();
             let effective = effective_roles(&grants, &denials, &ids);
             for (role, names) in [
-                (Role::Writer, &mut view.writes_in),
+                (Role::Submitter, &mut view.writes_in),
                 (Role::Reader, &mut view.reads_in),
                 (Role::Reviewer, &mut view.proposes_in),
             ] {

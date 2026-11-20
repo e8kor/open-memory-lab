@@ -18,7 +18,7 @@ against a stand-in that refuses the options git 2.30 added; it has not been run 
 1. **Pick the source and the adapter.** `adr` yields one memory per decision bullet, plus a summary
    and a rejected-alternatives memory. `headings` yields one per heading of level 2 to 4. `lines`
    yields blocks of at most 40 lines.
-2. **Create the workspace and a writer key.** Keep using the same sync key. A writer supersedes only
+2. **Create the workspace and a contributor key.** Keep using the same sync key. A contributor supersedes only
    its own tips.
 3. **Preview.** `oml sync docs/adr --workspace design --adapter adr --dry-run` lists each item as
    `new`, `changed`, `removed`, `moved` or `unchanged` and writes nothing.

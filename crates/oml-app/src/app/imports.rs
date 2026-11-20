@@ -1,4 +1,4 @@
-//! Workspace imports (ADR-0084 d6-d11, R11, I4; #426): a person's writer
+//! Workspace imports (ADR-0084 d6-d11, R11, I4; #426): a person's contributor
 //! key imports a decrypted bundle it uploaded through one upload session
 //! (ADR-0004 d3) into an in-progress workspace. The bundle is verified
 //! before anything is written, the plan is made against the target, and
@@ -170,8 +170,9 @@ where
     ) -> Result<ImportStart, AppError> {
         let caller = self.authenticate(api_key).await?;
         let key = &caller.key;
-        // d11: a person's writer key, and no other, imports (I1's shape).
-        if key.role != Role::Writer || key.used_by != UsedBy::Person {
+        // d11: a person's contributor key, and no other, imports (I1's
+        // shape): an import acts on a tree the key must read (ADR-0093 d6).
+        if key.role != Role::Contributor || key.used_by != UsedBy::Person {
             return Err(AppError::ImportPersonOnly {
                 role: key.role,
                 used_by: key.used_by,
@@ -454,7 +455,7 @@ where
                 _ => Err(AppError::NotFound),
             };
         };
-        self.require_access(caller, id, Role::Writer, "import")
+        self.require_access(caller, id, Role::Submitter, "import")
             .await?;
         let node = ancestry.first().ok_or(AppError::NotFound)?;
         if node.status == WorkspaceStatus::Development && in_progress_root_in(&ancestry).is_some() {

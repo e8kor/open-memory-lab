@@ -85,11 +85,11 @@ def sync_detailed(
 ) -> Response[ErrorEnvelope | UsageEventsResponse200]:
     """The tenant's recalls of the last 30 days, with what their readers did next, newest first.
 
-     Requires: admin key role (ADR-0054 d2). No agent, writer, reader or reviewer key reads an event, on
-    any transport. query_text is present only for a recall made while the tenant kept text. A row past
-    the 30 days is never served, purged or not. Each read is journalled as telemetry.events_read with
-    counts and the page's bounds. system.unavailable with reason telemetry_off where the server records
-    no recall. Since v0.5.7.
+     Requires: admin key role (ADR-0054 d2). No agent, contributor, submitter, reader or reviewer key
+    reads an event, on any transport. query_text is present only for a recall made while the tenant kept
+    text. A row past the 30 days is never served, purged or not. Each read is journalled as
+    telemetry.events_read with counts and the page's bounds. system.unavailable with reason
+    telemetry_off where the server records no recall. Since v0.5.7.
 
     Args:
         limit (int | Unset):  Default: 50.
@@ -132,11 +132,11 @@ def sync(
 ) -> ErrorEnvelope | UsageEventsResponse200 | None:
     """The tenant's recalls of the last 30 days, with what their readers did next, newest first.
 
-     Requires: admin key role (ADR-0054 d2). No agent, writer, reader or reviewer key reads an event, on
-    any transport. query_text is present only for a recall made while the tenant kept text. A row past
-    the 30 days is never served, purged or not. Each read is journalled as telemetry.events_read with
-    counts and the page's bounds. system.unavailable with reason telemetry_off where the server records
-    no recall. Since v0.5.7.
+     Requires: admin key role (ADR-0054 d2). No agent, contributor, submitter, reader or reviewer key
+    reads an event, on any transport. query_text is present only for a recall made while the tenant kept
+    text. A row past the 30 days is never served, purged or not. Each read is journalled as
+    telemetry.events_read with counts and the page's bounds. system.unavailable with reason
+    telemetry_off where the server records no recall. Since v0.5.7.
 
     Args:
         limit (int | Unset):  Default: 50.
@@ -174,11 +174,11 @@ async def asyncio_detailed(
 ) -> Response[ErrorEnvelope | UsageEventsResponse200]:
     """The tenant's recalls of the last 30 days, with what their readers did next, newest first.
 
-     Requires: admin key role (ADR-0054 d2). No agent, writer, reader or reviewer key reads an event, on
-    any transport. query_text is present only for a recall made while the tenant kept text. A row past
-    the 30 days is never served, purged or not. Each read is journalled as telemetry.events_read with
-    counts and the page's bounds. system.unavailable with reason telemetry_off where the server records
-    no recall. Since v0.5.7.
+     Requires: admin key role (ADR-0054 d2). No agent, contributor, submitter, reader or reviewer key
+    reads an event, on any transport. query_text is present only for a recall made while the tenant kept
+    text. A row past the 30 days is never served, purged or not. Each read is journalled as
+    telemetry.events_read with counts and the page's bounds. system.unavailable with reason
+    telemetry_off where the server records no recall. Since v0.5.7.
 
     Args:
         limit (int | Unset):  Default: 50.
@@ -219,11 +219,11 @@ async def asyncio(
 ) -> ErrorEnvelope | UsageEventsResponse200 | None:
     """The tenant's recalls of the last 30 days, with what their readers did next, newest first.
 
-     Requires: admin key role (ADR-0054 d2). No agent, writer, reader or reviewer key reads an event, on
-    any transport. query_text is present only for a recall made while the tenant kept text. A row past
-    the 30 days is never served, purged or not. Each read is journalled as telemetry.events_read with
-    counts and the page's bounds. system.unavailable with reason telemetry_off where the server records
-    no recall. Since v0.5.7.
+     Requires: admin key role (ADR-0054 d2). No agent, contributor, submitter, reader or reviewer key
+    reads an event, on any transport. query_text is present only for a recall made while the tenant kept
+    text. A row past the 30 days is never served, purged or not. Each read is journalled as
+    telemetry.events_read with counts and the page's bounds. system.unavailable with reason
+    telemetry_off where the server records no recall. Since v0.5.7.
 
     Args:
         limit (int | Unset):  Default: 50.

@@ -185,11 +185,11 @@ pub fn profile_admits(profile: KeyProfile, role: Role, used_by: UsedBy) -> bool 
 }
 
 /// The grant roles a key may carry, profile included (d8): a curator's are
-/// reader, writer and reviewer; otherwise the role's own admissible set.
+/// reader, submitter and reviewer; otherwise the role's own admissible set.
 #[must_use]
 pub fn admissible_roles(role: Role, profile: Option<KeyProfile>) -> &'static [Role] {
     match profile {
-        Some(KeyProfile::Curator) => &[Role::Reader, Role::Writer, Role::Reviewer],
+        Some(KeyProfile::Curator) => &[Role::Reader, Role::Submitter, Role::Reviewer],
         None => crate::access::admissible_grant_roles(role),
     }
 }
@@ -370,7 +370,8 @@ mod tests {
             (Role::Reviewer, UsedBy::Agent),
             (Role::Reviewer, UsedBy::Service),
             (Role::Admin, UsedBy::Person),
-            (Role::Writer, UsedBy::Person),
+            (Role::Contributor, UsedBy::Person),
+            (Role::Submitter, UsedBy::Person),
             (Role::Reader, UsedBy::Person),
         ] {
             assert!(!may_set_mode(role, used_by, None), "{role:?} {used_by:?}");
@@ -396,7 +397,7 @@ mod tests {
         ));
         assert!(!profile_admits(
             KeyProfile::Curator,
-            Role::Writer,
+            Role::Contributor,
             UsedBy::Agent
         ));
     }

@@ -108,7 +108,7 @@ async fn key(app: &TestApp, boot: &BootstrapResult, name: &str, connector: bool)
         &boot.admin_key.value,
         &IssueKeyRequest {
             profile: None,
-            role: Role::Writer,
+            role: Role::Contributor,
             name: Name::parse(name).expect("a name"),
             principal: format!("crew/{name}"),
             used_by: Some(UsedBy::Agent),
@@ -117,7 +117,7 @@ async fn key(app: &TestApp, boot: &BootstrapResult, name: &str, connector: bool)
             grants: vec![
                 GrantRequest {
                     node: boot.root_workspace_id.into(),
-                    role: Role::Writer,
+                    role: Role::Submitter,
                     deny: Vec::new(),
                     covers: Covers::Subtree,
                 },
@@ -343,7 +343,7 @@ async fn the_request_line_carries_the_resolved_key_the_target_workspace_and_the_
     assert_eq!(line["key_id"], writer.key_id.to_string());
     assert_eq!(line["key_name"], "agent-7");
     assert_eq!(line["principal"], "crew/agent-7");
-    assert_eq!(line["role"], "writer");
+    assert_eq!(line["role"], "contributor");
     assert_eq!(line["credential"], "bearer");
     assert_eq!(line["workspace_id"], boot.root_workspace_id.to_string());
     assert_eq!(line["user_agent"], "oml-cli/0.4.1 hook/session-start");

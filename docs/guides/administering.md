@@ -55,7 +55,7 @@ The claim stores `url` and `api_key` in `~/.config/oml/credentials` (0600). `OML
 
 The CLI takes its pair from the first source that sets either value: `--url` and `--api-key`, then `OML_URL` and `OML_API_KEY`, then the file. An exported agent pair therefore wins over the stored admin pair, so run admin verbs with both unset. `oml login <url>` replaces the stored pair once `GET /v2/whoami` accepts the key.
 
-Never put an admin key into an agent; issue a writer key for the agent's use.
+Never put an admin key into an agent; issue a contributor key for the agent's use.
 
 ## Workspaces and names
 
@@ -73,15 +73,15 @@ A crew is a record (name, charter URI, external manager) OML stores and does not
 
 ## Issue keys by role
 
-A key's role fixes its grants: `writer` takes `reader` and `writer`, `reviewer` takes `reader` and `reviewer`, `reader` takes `reader`, `admin` takes none ([roles and keys](../architecture/roles-and-keys.md)). The server shows each key value once.
+A key's role fixes its grants: `contributor` takes `reader` and `submitter`, at least one of each, `submitter` takes `submitter`, `reviewer` takes `reader` and `reviewer`, `reader` takes `reader`, `admin` takes none ([roles and keys](../architecture/roles-and-keys.md)). The server shows each key value once.
 
-**An agent.** `oml keys issue-agent` issues a writer key with a writer grant on the workspace, a reader grant unless `--write-only`, and the workspace as default. Give each agent its own principal. With `--out` the CLI creates the file owner-only first, refuses a path that exists, and prints lines that read the file, none carrying the value; without it, the verb prints `export` lines. The `oml-admin` plugin runs this from Claude Code with `--out`.
+**An agent.** `oml keys issue-agent` issues a contributor key with a submitter and a reader grant on the workspace, or with `--role submitter` a submitter key with the submitter grant alone, and the workspace as default. Give each agent its own principal. With `--out` the CLI creates the file owner-only first, refuses a path that exists, and prints lines that read the file, none carrying the value; without it, the verb prints `export` lines. The `oml-admin` plugin runs this from Claude Code with `--out`.
 
 **A claude.ai or phone connection.** Add `--connect-code`: the key gets no value; the verb prints the connector URL and a single-use code. It needs `oauth.issuer`, else `oauth.connect_refused`. `oml keys connect-code <key>` mints a fresh code, voiding earlier ones; `--ttl 14d` makes it live up to 30 days, for a key confined to one workspace other than the universe ([claude.ai and mobile](claude-ai-and-mobile.md)).
 
-**A reviewer.** `oml keys issue --role reviewer --grant <workspace>:reviewer` with a principal no writer there uses, plus `--grant <workspace>:reader`, or the reviewer sees a held memory without its sources ([reviewing](reviewing.md)).
+**A reviewer.** `oml keys issue --role reviewer --grant <workspace>:reviewer` with a principal no contributor there uses, plus `--grant <workspace>:reader`, or the reviewer sees a held memory without its sources ([reviewing](reviewing.md)).
 
-**A key for someone outside the team**, such as a reviewer of a demo workspace. Add `--expires <instant>` and `--requests-per-minute <n>` to either issuing verb: from that instant the key, and the connection of a connector key, authenticates nothing, and the request past the rate answers `429` until the next minute. The instant is RFC 3339 with its offset, such as `2026-12-01T17:00:00Z`. Both are for reader, writer and reviewer keys: an admin key issued with either is refused, so no admin key is temporary.
+**A key for someone outside the team**, such as a reviewer of a demo workspace. Add `--expires <instant>` and `--requests-per-minute <n>` to either issuing verb: from that instant the key, and the connection of a connector key, authenticates nothing, and the request past the rate answers `429` until the next minute. The instant is RFC 3339 with its offset, such as `2026-12-01T17:00:00Z`. Both are for reader, contributor, submitter and reviewer keys: an admin key issued with either is refused, so no admin key is temporary.
 
 **Another admin.** `--role admin --used-by person`, no `--grant`; a reviewer grant is refused as `access.role_exclusive`. **A reader or service:** `--role reader --used-by service --grant <workspace>:reader`.
 

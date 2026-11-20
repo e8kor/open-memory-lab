@@ -167,11 +167,11 @@ WA="$(jqf .id)"
 [ "$(jqf .path)" = "universe.poc-metals" ] || fail "the workspace's derived path is not universe.poc-metals"
 
 # Each key carries only grant roles its key role admits (the admissibility
-# table, ADR-0025 d1): writer admits reader and writer, reviewer admits reader
+# table, ADR-0025 d1; ADR-0093 d2): contributor admits reader and submitter, reviewer admits reader
 # and reviewer, reader admits reader.
-step "issue the agent's writer key with a writer and a reader grant (one key writes and recalls)" 0 \
-    "$OML" --json keys issue agent-blue --role writer --used-by agent --principal crew/agent-blue \
-    --default-workspace poc-metals --grant poc-metals:writer --grant poc-metals:reader
+step "issue the agent's contributor key with a submitter and a reader grant (one key writes and recalls)" 0 \
+    "$OML" --json keys issue agent-blue --role contributor --used-by agent --principal crew/agent-blue \
+    --default-workspace poc-metals --grant poc-metals:submitter --grant poc-metals:reader
 WRITER="$(jqf .value)"
 [ "$(jqf .default_workspace_id)" = "$WA" ] || fail "the name poc-metals did not resolve to the workspace's id"
 [ "$(jqf '[.grants[].workspace_node_id] | unique | join(",")')" = "$WA" ] \
@@ -188,7 +188,7 @@ step "issue a reader key for a second identity that only reads (a reader key adm
 READER="$(jqf .value)"
 
 # --- write: held on arrival, invisible to recall -----------------------------
-step "write a claim with the writer key (deterministic scan; held on arrival)" 0 \
+step "write a claim with the contributor key (deterministic scan; held on arrival)" 0 \
     "$OML" --url "$SERVER_URL" --api-key "$WRITER" --json write \
     "Supplier Accra Metals quoted 412 USD/t for Q1-2027 delivery." \
     --claim-key supplier-quote-am-7741
@@ -213,9 +213,9 @@ step "recall after promotion: the claim is served" 0 \
 [ "$(jqf '.hits | length')" -ge 1 ] || fail "promoted row missing from recall"
 jqf '.hits[0].memory.artifact_id' | grep -q "$ARTIFACT" || fail "recall hit is not the promoted artifact"
 
-step "recall after promotion with the agent's own writer key (its reader grant serves recall)" 0 \
+step "recall after promotion with the agent's own contributor key (its reader grant serves recall)" 0 \
     "$OML" --url "$SERVER_URL" --api-key "$WRITER" --json read --query "Accra Metals"
-jqf '.hits[].memory.artifact_id' | grep -q "$ARTIFACT" || fail "the writer key's reader grant did not serve recall"
+jqf '.hits[].memory.artifact_id' | grep -q "$ARTIFACT" || fail "the contributor key's reader grant did not serve recall"
 
 # --- R2: the reviewer is never the author ------------------------------------
 step "issue a reviewer key to the AUTHOR's principal (crew/agent-blue also reviews?)" 0 \
@@ -230,7 +230,7 @@ step "verdict with the author's key is refused — R2 against the lineage closur
 [ "$(jqf .error.code)" = "review.author_in_lineage" ] || fail "expected review.author_in_lineage, got $(jqf .error.code)"
 
 # --- supersede: the author replaces the promoted tip -------------------------
-step "supersede the promoted tip with the writer key (successor enters held)" 0 \
+step "supersede the promoted tip with the contributor key (successor enters held)" 0 \
     "$OML" --url "$SERVER_URL" --api-key "$WRITER" --json write \
     "Supplier Accra Metals revised the Q1-2027 quote to 399 USD/t." --replaces "$ARTIFACT" --expected-version 1
 SUCCESSOR="$(jqf .artifact_id)"

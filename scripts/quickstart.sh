@@ -3,8 +3,8 @@
 #
 # Claims the single-use enrollment token, creates one workspace, and issues two
 # keys on it, naming the root `universe` and the workspace by its name wherever
-# an id would go (ADR-0026 d4, d6): the agent's one key, a writer key with a
-# writer and a reader grant, and a reviewer key (the reviewer, a different
+# an id would go (ADR-0026 d4, d6): the agent's one key, a contributor key with a
+# submitter and a reader grant, and a reviewer key (the reviewer, a different
 # identity). Then checks
 # the agent plugin end to end over /mcp on the agent's one key, through
 # oml_write and oml_read alone: write -> held in its own work (`own: true`,
@@ -97,7 +97,7 @@ issue() { # key_name role used_by principal grant_role...
         || fail "the workspace name $WORKSPACE_NAME did not resolve to its id $workspace: $issued"
     jq -r .value <<<"$issued"
 }
-agent="$(issue quickstart-agent writer agent crew/agent writer reader)"
+agent="$(issue quickstart-agent contributor agent crew/agent submitter reader)"
 reviewer="$(issue quickstart-reviewer reviewer person crew/reviewer reviewer)"
 
 rpc() { # id method params

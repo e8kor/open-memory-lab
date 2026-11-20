@@ -243,10 +243,14 @@ async fn tenant_crew(app: &TestApp, name: &str, canary: &str, n: usize) -> Crew 
     let writer = app
         .issue_key(
             admin,
-            &issue(Role::Writer, &format!("{name}-wanda"), &format!("{name}-w")),
+            &issue(
+                Role::Submitter,
+                &format!("{name}-wanda"),
+                &format!("{name}-w"),
+            ),
         )
         .await
-        .expect("writer");
+        .expect("submitter");
     let reviewer = app
         .issue_key(
             admin,

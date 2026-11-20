@@ -213,7 +213,7 @@ async fn run_flow(db: &str) -> Option<Flow> {
             &boot.admin_key.value,
             &IssueKeyRequest {
                 profile: None,
-                role: Role::Writer,
+                role: Role::Submitter,
                 name: Name::parse("claude-mobile").expect("a name"),
                 principal: "crew/claude-mobile".to_owned(),
                 used_by: Some(UsedBy::Agent),
@@ -221,7 +221,7 @@ async fn run_flow(db: &str) -> Option<Flow> {
                 crew: None,
                 grants: vec![GrantRequest {
                     node: boot.root_workspace_id.into(),
-                    role: Role::Writer,
+                    role: Role::Submitter,
                     deny: Vec::new(),
                     covers: Covers::Subtree,
                 }],

@@ -167,7 +167,7 @@ fn keys_script(person: Result<Value, ()>) -> Script {
             }
         } else if path.starts_with("/v2/keys") {
             let key = json!({
-                "id": "k-agent", "name": "alice-agent", "role": "writer", "used_by": "agent",
+                "id": "k-agent", "name": "alice-agent", "role": "contributor", "used_by": "agent",
                 "credential": "bearer", "revoked": false, "cut_off": false, "grants": [],
             });
             (200, json!({"items": [key], "next_cursor": null}))

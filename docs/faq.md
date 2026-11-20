@@ -58,7 +58,7 @@ No. It needs a public HTTPS address with `oauth.issuer` set to it. See [claude.a
 
 ### Where does the connect code come from?
 
-From the account page, before adding the connector. Open `/web` on the server and sign in, find **Connect Claude on the web or a phone**, type a name, keep **writer** and click **Issue connector key**. Copy the connect code it shows once, then paste it on the `/oauth/authorize` page Claude opens. If it is lost or expired, click **New connect code** on that key's row (connector keys only). See [claude.ai and mobile](guides/claude-ai-and-mobile.md#1-get-a-connect-code-first).
+From the account page, before adding the connector. Open `/web` on the server and sign in, find **Connect Claude on the web or a phone**, type a name, keep **contributor** and click **Issue connector key**. Copy the connect code it shows once, then paste it on the `/oauth/authorize` page Claude opens. If it is lost or expired, click **New connect code** on that key's row (connector keys only). See [claude.ai and mobile](guides/claude-ai-and-mobile.md#1-get-a-connect-code-first).
 
 ## Write, review and recall
 

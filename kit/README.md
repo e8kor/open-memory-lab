@@ -56,8 +56,8 @@ three. A copy left unedited fails to resolve `.invalid`, a name reserved never t
 `401 auth.invalid`, and the tool gets no OML tools from it; the operator of the server it reached
 has seen the key, so treat it as exposed.
 
-Issue a key on your own server with `oml keys issue-agent`, which gives it a writer grant and a
-reader grant on the agent's workspace. Check it first with `oml login <url>`, which stores the pair
+Issue a key on your own server with `oml keys issue-agent`, which issues a contributor key with a
+submitter grant and a reader grant on the agent's workspace. Check it first with `oml login <url>`, which stores the pair
 only when the server accepts the key; the `oml` CLI and the Gemini CLI session-start hook read
 the same `OML_URL`:
 

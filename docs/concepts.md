@@ -35,9 +35,9 @@ A workspace moves forward through three statuses: development, protected and fro
 
 ## Key
 
-A key is an API key with one role. The server reads the tenant and role from the key, never from the request. The roles are reader, writer, reviewer, admin and operator.
+A key is an API key with one role. The server reads the tenant and role from the key, never from the request. The roles are reader, contributor, submitter, reviewer, admin and operator. A contributor recalls and writes; a submitter writes without recall.
 
-A reviewer key has the role `reviewer`. An admin cannot approve content, and a writer cannot approve its own. [Producers and reviewers](concepts/producers-and-reviewers.md) lists which pairs count in which scope. A grant gives a key a role on a workspace and its subtree. A deny always wins over a grant. An agent can write and recall, and it can never approve, sign, demote or delete. See [roles and keys](architecture/roles-and-keys.md).
+A reviewer key has the role `reviewer`. An admin cannot approve content, and a contributor or submitter cannot approve its own. [Producers and reviewers](concepts/producers-and-reviewers.md) lists which pairs count in which scope. A grant gives a key a role on a workspace and its subtree. A deny always wins over a grant. An agent can write and recall, and it can never approve, sign, demote or delete. See [roles and keys](architecture/roles-and-keys.md).
 
 ## Journal
 

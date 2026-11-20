@@ -444,9 +444,9 @@ impl World {
             &http,
             &admin,
             &root,
-            "writer",
-            "writer",
-            &["writer", "reader"],
+            "contributor",
+            "contributor",
+            &["submitter", "reader"],
         )
         .await;
         let reviewer = Self::issue(

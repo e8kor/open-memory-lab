@@ -27,7 +27,7 @@ Three kinds of actor use the same versioned HTTP API ([API](../api/http-api.md))
 ```mermaid
 flowchart LR
     subgraph outside ["Outside the deployment"]
-        AG["Agent crews<br/>(writer / reader keys)"]
+        AG["Agent crews<br/>(contributor / reader keys)"]
         RC["Reviewer crews<br/>(reviewer keys)"]
         AD["Admins and the operator"]
     end
@@ -68,7 +68,7 @@ Each binary has one shape. A pure core (`oml-domain`) holds the rules: the revie
 
 ```mermaid
 sequenceDiagram
-    participant A as Agent (writer key)
+    participant A as Agent (contributor key)
     participant S as oml-server-lead
     participant P as PostgreSQL
     A->>S: oml_write (text, idempotency key)

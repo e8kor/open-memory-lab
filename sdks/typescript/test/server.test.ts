@@ -248,7 +248,7 @@ describe("error mapping", live, () => {
     });
   });
 
-  test("a writer key asking for review is an AccessError", async () => {
+  test("a contributor key asking for review is an AccessError", async () => {
     await assert.rejects(
       agent.reviewNext(),
       (error: unknown) =>

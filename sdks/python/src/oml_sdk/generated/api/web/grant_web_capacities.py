@@ -94,16 +94,16 @@ def sync_detailed(
     """Give a person's session key a capacity on workspaces, review or curation.
 
      Requires: admin key role (ADR-0045 d10; ADR-0044 d7; ADR-0070 d5). review: <user>-review gains
-    reviewer and reader on each workspace; curate: <user>-curate, a tenant writer key with writer on the
-    universe node alone, is created at the first designation, and gains reader on each workspace. Each
-    grant is one grant.issued; a grant the key holds already is not added again, so a repeat adds none
-    and journal_seq is null. A user with no session key of that capacity answers access.not_found. This
-    is the one path that creates a session key; POST /v2/keys never mints one. A resubmission under the
-    same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing
-    again, the key claimed before the act and its outcome recorded after the act's last commit, so a
-    resubmission while the first attempt holds the key waits up to 5 s for its answer, then is
-    idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3
-    layer 4). Since v0.6.4.
+    reviewer and reader on each workspace; curate: <user>-curate, a tenant contributor key with
+    submitter on the universe node alone, is created at the first designation, and gains reader on each
+    workspace. Each grant is one grant.issued; a grant the key holds already is not added again, so a
+    repeat adds none and journal_seq is null. A user with no session key of that capacity answers
+    access.not_found. This is the one path that creates a session key; POST /v2/keys never mints one. A
+    resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay:
+    true and acts nothing again, the key claimed before the act and its outcome recorded after the act's
+    last commit, so a resubmission while the first attempt holds the key waits up to 5 s for its answer,
+    then is idempotency.in_progress; the same key on another request is idempotency.digest_mismatch
+    (ADR-0070 d3 layer 4). Since v0.6.4.
 
     Args:
         user (str):
@@ -150,16 +150,16 @@ def sync(
     """Give a person's session key a capacity on workspaces, review or curation.
 
      Requires: admin key role (ADR-0045 d10; ADR-0044 d7; ADR-0070 d5). review: <user>-review gains
-    reviewer and reader on each workspace; curate: <user>-curate, a tenant writer key with writer on the
-    universe node alone, is created at the first designation, and gains reader on each workspace. Each
-    grant is one grant.issued; a grant the key holds already is not added again, so a repeat adds none
-    and journal_seq is null. A user with no session key of that capacity answers access.not_found. This
-    is the one path that creates a session key; POST /v2/keys never mints one. A resubmission under the
-    same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing
-    again, the key claimed before the act and its outcome recorded after the act's last commit, so a
-    resubmission while the first attempt holds the key waits up to 5 s for its answer, then is
-    idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3
-    layer 4). Since v0.6.4.
+    reviewer and reader on each workspace; curate: <user>-curate, a tenant contributor key with
+    submitter on the universe node alone, is created at the first designation, and gains reader on each
+    workspace. Each grant is one grant.issued; a grant the key holds already is not added again, so a
+    repeat adds none and journal_seq is null. A user with no session key of that capacity answers
+    access.not_found. This is the one path that creates a session key; POST /v2/keys never mints one. A
+    resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay:
+    true and acts nothing again, the key claimed before the act and its outcome recorded after the act's
+    last commit, so a resubmission while the first attempt holds the key waits up to 5 s for its answer,
+    then is idempotency.in_progress; the same key on another request is idempotency.digest_mismatch
+    (ADR-0070 d3 layer 4). Since v0.6.4.
 
     Args:
         user (str):
@@ -201,16 +201,16 @@ async def asyncio_detailed(
     """Give a person's session key a capacity on workspaces, review or curation.
 
      Requires: admin key role (ADR-0045 d10; ADR-0044 d7; ADR-0070 d5). review: <user>-review gains
-    reviewer and reader on each workspace; curate: <user>-curate, a tenant writer key with writer on the
-    universe node alone, is created at the first designation, and gains reader on each workspace. Each
-    grant is one grant.issued; a grant the key holds already is not added again, so a repeat adds none
-    and journal_seq is null. A user with no session key of that capacity answers access.not_found. This
-    is the one path that creates a session key; POST /v2/keys never mints one. A resubmission under the
-    same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing
-    again, the key claimed before the act and its outcome recorded after the act's last commit, so a
-    resubmission while the first attempt holds the key waits up to 5 s for its answer, then is
-    idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3
-    layer 4). Since v0.6.4.
+    reviewer and reader on each workspace; curate: <user>-curate, a tenant contributor key with
+    submitter on the universe node alone, is created at the first designation, and gains reader on each
+    workspace. Each grant is one grant.issued; a grant the key holds already is not added again, so a
+    repeat adds none and journal_seq is null. A user with no session key of that capacity answers
+    access.not_found. This is the one path that creates a session key; POST /v2/keys never mints one. A
+    resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay:
+    true and acts nothing again, the key claimed before the act and its outcome recorded after the act's
+    last commit, so a resubmission while the first attempt holds the key waits up to 5 s for its answer,
+    then is idempotency.in_progress; the same key on another request is idempotency.digest_mismatch
+    (ADR-0070 d3 layer 4). Since v0.6.4.
 
     Args:
         user (str):
@@ -255,16 +255,16 @@ async def asyncio(
     """Give a person's session key a capacity on workspaces, review or curation.
 
      Requires: admin key role (ADR-0045 d10; ADR-0044 d7; ADR-0070 d5). review: <user>-review gains
-    reviewer and reader on each workspace; curate: <user>-curate, a tenant writer key with writer on the
-    universe node alone, is created at the first designation, and gains reader on each workspace. Each
-    grant is one grant.issued; a grant the key holds already is not added again, so a repeat adds none
-    and journal_seq is null. A user with no session key of that capacity answers access.not_found. This
-    is the one path that creates a session key; POST /v2/keys never mints one. A resubmission under the
-    same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing
-    again, the key claimed before the act and its outcome recorded after the act's last commit, so a
-    resubmission while the first attempt holds the key waits up to 5 s for its answer, then is
-    idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3
-    layer 4). Since v0.6.4.
+    reviewer and reader on each workspace; curate: <user>-curate, a tenant contributor key with
+    submitter on the universe node alone, is created at the first designation, and gains reader on each
+    workspace. Each grant is one grant.issued; a grant the key holds already is not added again, so a
+    repeat adds none and journal_seq is null. A user with no session key of that capacity answers
+    access.not_found. This is the one path that creates a session key; POST /v2/keys never mints one. A
+    resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay:
+    true and acts nothing again, the key claimed before the act and its outcome recorded after the act's
+    last commit, so a resubmission while the first attempt holds the key waits up to 5 s for its answer,
+    then is idempotency.in_progress; the same key on another request is idempotency.digest_mismatch
+    (ADR-0070 d3 layer 4). Since v0.6.4.
 
     Args:
         user (str):

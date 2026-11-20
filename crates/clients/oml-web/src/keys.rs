@@ -4,7 +4,7 @@
 //! for the path (`tests/web_pages.rs`).
 //!
 //! On the user page the person's `<user>-web` key lists their keys, issues
-//! a reader or writer key or a connector key on their root, mints a
+//! a contributor or reader key or a connector key on their root, mints a
 //! connector key's connect code and cuts a key off, each through its
 //! documented operation (`listKeys`, `issueKey`, `mintConnectCode`,
 //! `addDenial`). On the admin page `<user>-admin` lists one person's keys,
@@ -94,6 +94,9 @@ const DENIED_STILL_WORKS: &str =
 /// The word [`DENIED_SESSION`] uses, which marks the session's own key in
 /// the table.
 const RESTRICTED: &str = "restricted";
+
+/// The mark of a contributor key that holds no reader grant (ADR-0093 d3).
+const NO_RECALL: &str = "no recall";
 
 /// The sentence and its muted line as the pages draw them.
 pub(crate) fn denied_notice() -> String {
@@ -218,6 +221,14 @@ fn row(key: &ListedKey, side: Side, csrf: &str, user: &str, denied: Option<&str>
     }
     if key.expired {
         marks.push("expired");
+    }
+    // A contributor without recall, as the API serves it: a submitter grant
+    // on a node no reader grant of the key reaches, such as a writer key
+    // issued write-only before v0.8.4, which works as before and is
+    // replaced by a submitter key (ADR-0093 d3). The listing's grants carry
+    // no ancestry, so the page decides nothing of its own.
+    if key.without_recall {
+        marks.push(NO_RECALL);
     }
     // The session's own key, where it carries a denial, in the word the
     // page's sentence uses: `GET /v2/keys` says `cut_off` for a denial on
@@ -587,7 +598,7 @@ async fn user_view(
                 select(
                     "role",
                     "role",
-                    &[("writer", "writer"), ("reader", "reader")]
+                    &[("contributor", "contributor"), ("reader", "reader")]
                 ),
                 acts::nonce_field()
             ),
@@ -947,9 +958,11 @@ async fn act(
     let call = call(&credential, &ids);
     let secret = match action {
         "issue_key" | "connect_key" => {
-            let role = match fields.given("role").unwrap_or("writer") {
-                role @ ("reader" | "writer") => role,
-                _ => return acts::invalid("role is reader or writer", &calls),
+            // The form offers a contributor, the default, and a reader; a
+            // submitter key is an act of the CLI and the admin (ADR-0093 d6).
+            let role = match fields.given("role").unwrap_or("contributor") {
+                role @ ("contributor" | "reader") => role,
+                _ => return acts::invalid("role is contributor or reader", &calls),
             };
             let user = session.whoami.user.as_ref().map_or("", |u| u.name.as_str());
             let name = format!("{user}-{}", fields.given("name").unwrap_or_default());
@@ -1129,6 +1142,58 @@ mod tests {
             "is good until 2026-11-11T11:20:00+01:00"
         );
         assert_eq!(expiry("soon", 0), "is good until soon");
+    }
+
+    /// A contributor without recall is marked "no recall" on both sides as
+    /// `GET /v2/keys` serves it: a migrated v0.8.3 write-only user key
+    /// holding submitter on its root and the `universe` node reader grant is
+    /// marked though it holds a reader grant; a contributor that recalls and
+    /// a submitter are not (ADR-0093 d3, as read on 2026-11-20).
+    #[test]
+    fn a_contributor_key_served_without_recall_is_marked_no_recall() {
+        let listed = |role: &str, grants: &[(&str, &str)], without_recall: bool| -> ListedKey {
+            serde_json::from_value(serde_json::json!({
+                "id": "k1",
+                "name": "alice-ingest",
+                "role": role,
+                "used_by": "agent",
+                "credential": "bearer",
+                "revoked": false,
+                "cut_off": false,
+                "without_recall": without_recall,
+                "grants": grants.iter().map(|(r, path)| serde_json::json!({
+                    "role": r, "workspace_id": "w", "path": path,
+                })).collect::<Vec<_>>(),
+            }))
+            .expect("a listed key")
+        };
+        for side in [Side::User, Side::Admin] {
+            let migrated = row(
+                &listed(
+                    "contributor",
+                    &[("submitter", "universe.alice"), ("reader", "universe")],
+                    true,
+                ),
+                side,
+                "csrf",
+                "alice",
+                None,
+            );
+            assert!(migrated.contains(NO_RECALL), "{migrated}");
+            for (role, grants) in [
+                (
+                    "contributor",
+                    &[
+                        ("submitter", "universe.alice"),
+                        ("reader", "universe.alice"),
+                    ][..],
+                ),
+                ("submitter", &[("submitter", "universe.alice")][..]),
+            ] {
+                let shown = row(&listed(role, grants, false), side, "csrf", "alice", None);
+                assert!(!shown.contains(NO_RECALL), "{role}: {shown}");
+            }
+        }
     }
 
     /// A new key is shown beside the API's issuer, else beside `oml-web`'s

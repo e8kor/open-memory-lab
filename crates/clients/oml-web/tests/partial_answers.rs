@@ -369,7 +369,7 @@ async fn an_allowlist_cursor_cycle_is_refused_as_an_api_fault_at_its_first_repea
 /// One agent key of the person `first`, as `GET /v2/keys` lists it.
 fn agent_key() -> Value {
     json!({
-        "id": "k-agent", "name": "first-agent", "role": "writer", "used_by": "agent",
+        "id": "k-agent", "name": "first-agent", "role": "contributor", "used_by": "agent",
         "credential": "bearer", "revoked": false, "cut_off": false, "grants": [],
     })
 }
@@ -578,7 +578,7 @@ fn issued_without_a_value(replayed: bool) -> Script {
 }
 
 const ISSUE: &str =
-    "action=issue_key&name=laptop&role=writer&nonce=0123456789abcdef0123456789abcdef";
+    "action=issue_key&name=laptop&role=contributor&nonce=0123456789abcdef0123456789abcdef";
 
 #[tokio::test]
 async fn a_replayed_issue_redirects_to_the_keys_and_sets_no_cookie_over_the_first_answers() {

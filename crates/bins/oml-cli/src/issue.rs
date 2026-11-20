@@ -1,5 +1,6 @@
 //! The key tool's local half (ADR-0028; cli/reference.md `oml keys`): the
-//! reader grant the issuing verbs send beside a writer grant, the shell
+//! reader grant the issuing verbs send beside a contributor key's submitter
+//! grant, the shell
 //! quoting of the two export lines `oml keys issue-agent` prints, the
 //! `claude plugin configure` and `oml setup claude-code` lines it adds with
 //! `--out`, the owner-only file
@@ -14,35 +15,41 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-/// The grants an issuing verb sends: each requested grant in order, and
-/// beside every writer grant a reader grant on the same workspace, unless
-/// `write_only` or the request already names that reader grant (ADR-0028
-/// d2). A default of the CLI's alone; nothing here widens what the server
-/// would accept. No issuing verb takes a per-grant deny mask yet, so neither
-/// grant carries one; a verb that takes one copies the writer grant's masks
-/// onto its reader grant (ADR-0028 d2; cli/reference.md `oml keys`).
+/// The grants an issuing verb sends: each requested grant in order, and,
+/// for a key of role `contributor`, beside every submitter grant a reader
+/// grant on the same workspace unless the request already names that reader
+/// grant (ADR-0028 d2; ADR-0093 d6). A submitter key's grants go as given,
+/// since it writes without recall. A default of the CLI's alone; nothing
+/// here widens what the server would accept, and the server never adds the
+/// grant itself (ADR-0093 d2). No issuing verb takes a per-grant deny mask
+/// yet, so neither grant carries one; a verb that takes one copies the
+/// submitter grant's masks onto its reader grant (ADR-0028 d2;
+/// cli/reference.md `oml keys`).
 ///
 /// Each workspace is the id or the name the operator typed, and the added
 /// reader grant spells it the same way. The CLI resolves no name (ADR-0026
 /// d4), so "already names that reader grant" compares spellings: a reader
-/// grant given by a workspace's id does not count for a writer grant given
-/// by its name.
+/// grant given by a workspace's id does not count for a submitter grant
+/// given by its name.
 #[must_use]
-pub fn with_reader_beside_writers(
+pub fn with_reader_beside_submitters(
     grants: &[(String, String)],
-    write_only: bool,
+    key_role: &str,
 ) -> Vec<(String, String)> {
     let mut sent: Vec<(String, String)> = Vec::with_capacity(grants.len() * 2);
     for (node, role) in grants {
         sent.push((node.clone(), role.clone()));
-        // A writer grant on the node alone brings a reader grant on the node
-        // alone (ADR-0044 d4).
+        // A submitter grant on the node alone brings a reader grant on the
+        // node alone (ADR-0044 d4).
         let (base, reader) = match role.split_once(':') {
             Some((base, covers)) => (base, format!("reader:{covers}")),
             None => (role.as_str(), "reader".to_owned()),
         };
         let reads = |(n, r): &(String, String)| n == node && *r == reader;
-        if base == "writer" && !write_only && !grants.iter().chain(&sent).any(reads) {
+        if base == "submitter"
+            && key_role == "contributor"
+            && !grants.iter().chain(&sent).any(reads)
+        {
             sent.push((node.clone(), reader.clone()));
         }
     }
@@ -389,7 +396,7 @@ mod tests {
 
     use super::{
         KeyFile, configure_line, connect_code_printed, minted_code_printed, parse_ttl, setup_line,
-        with_reader_beside_writers,
+        with_reader_beside_submitters,
     };
 
     /// ADR-0067 d3: `--ttl` is a whole number and one unit, 1 second to 30
@@ -418,27 +425,38 @@ mod tests {
         }
     }
 
-    /// ADR-0044 d4 with ADR-0028 d2: a writer grant on a node alone brings a
-    /// reader grant on that node alone, and a subtree writer grant a subtree
-    /// reader grant.
+    /// ADR-0044 d4 with ADR-0028 d2: a contributor key's submitter grant on
+    /// a node alone brings a reader grant on that node alone, and a subtree
+    /// submitter grant a subtree reader grant (ADR-0093 d6).
     #[test]
-    fn a_writer_node_grant_brings_a_reader_node_grant() {
-        let sent = with_reader_beside_writers(
+    fn a_contributor_keys_submitter_node_grant_brings_a_reader_node_grant() {
+        let sent = with_reader_beside_submitters(
             &[
-                ("universe".to_owned(), "writer:node".to_owned()),
-                ("alice".to_owned(), "writer".to_owned()),
+                ("universe".to_owned(), "submitter:node".to_owned()),
+                ("alice".to_owned(), "submitter".to_owned()),
             ],
-            false,
+            "contributor",
         );
         let pairs: Vec<(&str, &str)> = sent.iter().map(|(n, r)| (n.as_str(), r.as_str())).collect();
         assert_eq!(
             pairs,
             vec![
-                ("universe", "writer:node"),
+                ("universe", "submitter:node"),
                 ("universe", "reader:node"),
-                ("alice", "writer"),
+                ("alice", "submitter"),
                 ("alice", "reader"),
             ]
+        );
+    }
+
+    /// A submitter key writes without recall: its grants go as given, and no
+    /// reader grant is added beside them (ADR-0093 d2, d6).
+    #[test]
+    fn a_submitter_keys_grants_go_as_given() {
+        let grants = [("alice".to_owned(), "submitter".to_owned())];
+        assert_eq!(
+            with_reader_beside_submitters(&grants, "submitter"),
+            grants.to_vec()
         );
     }
 
@@ -456,7 +474,7 @@ mod tests {
         json!({
             "key_id": "key_01J9ZK",
             "name": "claude-mobile",
-            "role": "writer",
+            "role": "contributor",
             "principal": "crew/claude-mobile",
             "default_workspace_id": "metals",
             "grants": [],

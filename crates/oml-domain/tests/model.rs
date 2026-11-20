@@ -165,7 +165,13 @@ fn a_lineage_key_is_refused_even_under_a_fresh_principal() {
 #[test]
 fn only_reviewers_review() {
     let closure = LineageClosure::new();
-    for role in [Role::Reader, Role::Writer, Role::Admin, Role::Operator] {
+    for role in [
+        Role::Reader,
+        Role::Contributor,
+        Role::Submitter,
+        Role::Admin,
+        Role::Operator,
+    ] {
         assert_eq!(
             check_reviewer(role, "crew-green/reviewer-1", key(9), &closure),
             Err(VerdictError::NotReviewer(role))

@@ -106,8 +106,8 @@ for topic in $TOPICS; do
     "$OML" --json workspaces create eval-fed "fed-$topic" >/dev/null || fail "workspace fed-$topic"
 done
 (umask 077
- "$OML" --json keys issue fed-writer --role writer --used-by agent --principal crew/writer \
-     --default-workspace eval-fed --grant eval-fed:writer --grant eval-fed:reader \
+ "$OML" --json keys issue fed-writer --role contributor --used-by agent --principal crew/writer \
+     --default-workspace eval-fed --grant eval-fed:submitter --grant eval-fed:reader \
      | jq -r .value >"$STATE/writer.key"
  "$OML" --json keys issue fed-reviewer --role reviewer --used-by person --principal crew/reviewer \
      --default-workspace eval-fed --grant eval-fed:reviewer --grant eval-fed:reader \

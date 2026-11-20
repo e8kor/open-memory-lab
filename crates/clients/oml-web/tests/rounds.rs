@@ -184,7 +184,7 @@ async fn the_text_search_reads_the_persons_keys_beside_the_recall_only_for_an_au
         }
         if record.starts_with("GET /v2/keys") {
             let page = json!({"items": [{
-                "id": "k9", "name": "alice-laptop", "role": "writer", "used_by": "agent",
+                "id": "k9", "name": "alice-laptop", "role": "contributor", "used_by": "agent",
                 "credential": "bearer", "revoked": false, "cut_off": false, "grants": [],
             }], "next_cursor": null});
             (200, page, Some("POST /v1/memories/recall"))

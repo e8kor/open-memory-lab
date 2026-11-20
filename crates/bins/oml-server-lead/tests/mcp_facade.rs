@@ -138,13 +138,13 @@ async fn call_tool(router: &Router, token: &str, id: u64, name: &str, args: Valu
 
 /// Bootstrap, one crew workspace, and a writer, reviewer and reader key on it.
 async fn crew(router: &Router) -> (String, String, String, Uuid) {
-    crew_with_writer_grants(router, &["writer"]).await
+    crew_with_writer_grants(router, &["submitter"]).await
 }
 
 /// The crew of [`crew`] with its writer an agent that remembers and recalls
 /// on one key: a writer-role key admits reader grants (ADR-0025 d1).
 async fn agent_crew(router: &Router) -> (String, String, String, Uuid) {
-    crew_with_writer_grants(router, &["writer", "reader"]).await
+    crew_with_writer_grants(router, &["submitter", "reader"]).await
 }
 
 async fn crew_with_writer_grants(
@@ -184,8 +184,15 @@ async fn crew_and_admin(
     assert_eq!(status, StatusCode::CREATED, "{wa}");
     let crew = Uuid::parse_str(wa["id"].as_str().expect("workspace id")).expect("uuid");
     let mut keys = Vec::new();
+    // The writing key recalls where it holds a reader grant, a contributor;
+    // otherwise it is a submitter (ADR-0093 d2).
+    let writer_role = if writer_grants.contains(&"reader") {
+        "contributor"
+    } else {
+        "submitter"
+    };
     for (role, principal, grants) in [
-        ("writer", "crew/agent-7", writer_grants),
+        (writer_role, "crew/agent-7", writer_grants),
         ("reviewer", "crew/reviewer-3", &["reviewer"][..]),
         ("reader", "crew/agent-recall", &["reader"][..]),
     ] {
@@ -212,7 +219,7 @@ async fn crew_and_admin(
     }
     let reader = keys.pop().expect("reader");
     let reviewer = keys.pop().expect("reviewer");
-    let writer = keys.pop().expect("writer");
+    let writer = keys.pop().expect("contributor");
     ((writer, reviewer, reader, crew), admin)
 }
 
@@ -459,12 +466,12 @@ async fn an_agent_writes_through_mcp_and_reads_only_after_another_identity_ratif
     assert_eq!(before["isError"], false, "{before}");
     assert_eq!(before["structuredContent"]["hits"], json!([]));
 
-    // The writer's key carries no read grant, so its scope is not readable:
-    // the ring's typed refusal, absence (ADR-0025 d1).
+    // The writer's key is a submitter, whose role admits no read grant: the
+    // ring's typed refusal at its ceiling (ADR-0025 d1; ADR-0093 d2).
     let refused = call_tool(&router, &writer, 4, "oml_read", recall.clone()).await;
     assert_eq!(refused["isError"], true, "{refused}");
     assert_eq!(
-        refused["structuredContent"]["error"]["code"], "access.not_found",
+        refused["structuredContent"]["error"]["code"], "access.verb_ceiling",
         "{refused}"
     );
     assert!(refused["structuredContent"]["error"]["rule"].is_string());
@@ -1736,18 +1743,18 @@ async fn oml_write_by_a_tenant_key_starts_no_memory_in_a_users_root_and_its_revi
     let Some((router, db)) = fresh_router().await else {
         return;
     };
-    let (_, admin) = crew_and_admin(&router, &["writer"]).await;
+    let (_, admin) = crew_and_admin(&router, &["submitter"]).await;
     let mut keys = Vec::new();
     for (name, role, user, workspace) in [
-        ("alice-laptop", "writer", Some("alice"), "alice"),
+        ("alice-laptop", "contributor", Some("alice"), "alice"),
         ("alice-review", "reviewer", Some("alice"), "alice"),
-        ("crew-loader", "writer", None, "universe"),
+        ("crew-loader", "contributor", None, "universe"),
         ("crew-editor", "reviewer", None, "universe"),
     ] {
         let mut body = json!({
             "role": role, "name": name, "principal": name,
             "grants": [
-                {"workspace": workspace, "role": role},
+                {"workspace": workspace, "role": if role == "contributor" { "submitter" } else { role }},
                 {"workspace": workspace, "role": "reader"},
             ],
         });
@@ -2062,17 +2069,17 @@ async fn oml_read_recall_and_scoped_listing_are_refused_without_a_reader_grant_a
         return;
     };
     // The writer here holds a writer grant alone.
-    let ((writer, reviewer, _, _), admin) = crew_and_admin(&router, &["writer"]).await;
+    let ((writer, reviewer, _, _), admin) = crew_and_admin(&router, &["submitter"]).await;
     ratified(&router, &writer, &reviewer).await;
 
     let recall = json!({"query": "aluminium price"});
     let scoped = json!({"own": false});
     for (id, (mode, args)) in (1..).zip([("recall", &recall), ("listing", &scoped)]) {
-        // Reader is not effective on the writer's default workspace, so the
-        // read answers step 4 of the refusal order: the node is not found,
-        // never named as refused (roles-and-keys.md, refusal order).
+        // A submitter's role admits no reader grant, so the read answers
+        // step 1 of the refusal order (roles-and-keys.md, refusal order;
+        // ADR-0093 d2).
         let refused = call_tool(&router, &writer, id, "oml_read", args.clone()).await;
-        assert_eq!(refusal_code(&refused), "access.not_found", "{mode}");
+        assert_eq!(refusal_code(&refused), "access.verb_ceiling", "{mode}");
         // An admin key reads no claim content, whatever its grants: step 1
         // (errors.md, access.verb_ceiling; ADR-0026 d15).
         let refused = call_tool(&router, &admin, 10 + id, "oml_read", args.clone()).await;
@@ -2376,17 +2383,17 @@ async fn oml_workspace_without_an_argument_describes_the_default_workspace() {
     };
     let agent = issue(
         "agent",
-        "writer",
+        "contributor",
         json!([
-            {"workspace": crew, "role": "writer"},
+            {"workspace": crew, "role": "submitter"},
             {"workspace": crew, "role": "reader"},
         ]),
     )
     .await;
     let writer = issue(
-        "writer",
-        "writer",
-        json!([{"workspace": crew, "role": "writer"}]),
+        "submitter",
+        "submitter",
+        json!([{"workspace": crew, "role": "submitter"}]),
     )
     .await;
     let unscoped = issue("unscoped", "reader", json!([])).await;
@@ -2450,7 +2457,7 @@ async fn oml_workspace_without_an_argument_describes_the_default_workspace() {
     // is absence, as on the ring; an unknown argument is validation.
     for (id, token, args, code) in [
         (4, &unscoped, json!({}), "request.workspace_unresolved"),
-        (5, &writer, json!({}), "access.not_found"),
+        (5, &writer, json!({}), "access.verb_ceiling"),
         (6, &agent, json!({"workspace": root}), "access.not_found"),
         (
             7,
@@ -3873,7 +3880,7 @@ async fn oml_workspace_serves_the_policy_the_live_proposals_and_the_brief_as_cla
         return;
     };
     let ((writer, reviewer, _reader, crew), admin) =
-        crew_and_admin(&router, &["writer", "reader"]).await;
+        crew_and_admin(&router, &["submitter", "reader"]).await;
     let artifact = ratified(&router, &writer, &reviewer).await;
     let mut curators = Vec::new();
     for name in ["dora", "dan"] {
@@ -4292,7 +4299,7 @@ async fn an_admin_key_is_refused_on_oml_read() {
     let Some((router, _db)) = fresh_router().await else {
         return;
     };
-    let (_crew, admin) = crew_and_admin(&router, &["writer", "reader"]).await;
+    let (_crew, admin) = crew_and_admin(&router, &["submitter", "reader"]).await;
     let refused = call_tool(&router, &admin, 1, "oml_read", json!({"query": "canary"})).await;
     assert_eq!(refusal_code(&refused), "access.verb_ceiling", "{refused}");
 }

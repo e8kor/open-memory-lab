@@ -112,23 +112,23 @@ fn user_req(role: Role, user: &str, principal: &str, grants: Vec<GrantRequest>) 
     }
 }
 
-/// A writer key of `user`, writer and reader on its root: what `oml keys
+/// A contributor key of `user`, submitter and reader on its root: what `oml keys
 /// issue-agent --user` sends (ADR-0044 d11).
 async fn user_writer(app: &TestApp, admin: &str, user: &str, principal: &str) -> IssuedKey {
     app.issue_key(
         admin,
         &user_req(
-            Role::Writer,
+            Role::Contributor,
             user,
             principal,
             vec![
-                grant(by_name(user), Role::Writer),
+                grant(by_name(user), Role::Submitter),
                 grant(by_name(user), Role::Reader),
             ],
         ),
     )
     .await
-    .expect("issue a user writer key")
+    .expect("issue a user contributor key")
 }
 
 async fn user_reviewer(app: &TestApp, admin: &str, user: &str, principal: &str) -> IssuedKey {
@@ -168,11 +168,11 @@ async fn tenant_key(
 /// and reader grants on what it curates (ADR-0044 d7).
 async fn curator(app: &TestApp, admin: &str, reads: &[&str]) -> IssuedKey {
     let mut grants = vec![
-        node_grant(by_name("universe"), Role::Writer),
+        node_grant(by_name("universe"), Role::Submitter),
         node_grant(by_name("universe"), Role::Reader),
     ];
     grants.extend(reads.iter().map(|r| grant(by_name(r), Role::Reader)));
-    tenant_key(app, admin, Role::Writer, "curator", grants).await
+    tenant_key(app, admin, Role::Contributor, "curator", grants).await
 }
 
 /// A tenant reviewer on the `universe` node: the second identity curation
@@ -424,10 +424,10 @@ async fn a_user_named_like_a_shared_workspace_is_name_taken() {
         .issue_key(
             admin,
             &user_req(
-                Role::Writer,
+                Role::Submitter,
                 "crew",
                 "crew/laptop",
-                vec![grant(by_name("crew"), Role::Writer)],
+                vec![grant(by_name("crew"), Role::Submitter)],
             ),
         )
         .await
@@ -437,7 +437,10 @@ async fn a_user_named_like_a_shared_workspace_is_name_taken() {
         "{err:?}"
     );
     let err = app
-        .issue_key(admin, &user_req(Role::Writer, "universe", "u", Vec::new()))
+        .issue_key(
+            admin,
+            &user_req(Role::Contributor, "universe", "u", Vec::new()),
+        )
         .await
         .expect_err("universe is no user");
     assert!(matches!(err, AppError::UserRefused(_)), "{err:?}");
@@ -495,11 +498,11 @@ async fn a_user_keys_grant_outside_its_root_is_refused_as_issuer_ceiling() {
             .issue_key(
                 admin,
                 &user_req(
-                    Role::Writer,
+                    Role::Contributor,
                     "alice",
                     "alice/laptop",
                     vec![
-                        grant(by_name("alice"), Role::Writer),
+                        grant(by_name("alice"), Role::Submitter),
                         // A user key's bare names resolve in its own
                         // namespace, so a shared node is named by id.
                         grant(
@@ -535,13 +538,16 @@ async fn a_user_keys_grant_outside_its_root_is_refused_as_issuer_ceiling() {
                 assert_eq!(role, Role::Reader);
                 assert_eq!(grant_index, 1);
                 assert_eq!(user.as_str(), "alice");
-                assert_eq!(admissible, &[Role::Reader, Role::Writer]);
+                assert_eq!(admissible, &[Role::Reader, Role::Submitter]);
             }
             other => panic!("{outside}: {other:?}"),
         }
     }
 }
 
+/// Every user key but a submitter key, which recalls nothing and is issued
+/// no reader grant (ADR-0093 d2; see
+/// `a_submitter_user_keys_issued_grants_carry_no_reader`).
 #[tokio::test]
 async fn issuance_adds_a_reader_node_grant_on_universe_to_every_user_key() {
     let (app, store) = rig();
@@ -760,7 +766,7 @@ async fn a_user_key_cannot_create_outside_its_root() {
         matches!(
             err,
             AppError::GrantRefused {
-                needed_role: Role::Writer,
+                needed_role: Role::Submitter,
                 ..
             }
         ),
@@ -806,9 +812,9 @@ async fn a_user_key_cannot_create_outside_its_root() {
     let tenant_writer = tenant_key(
         &app,
         admin,
-        Role::Writer,
+        Role::Submitter,
         "tw",
-        vec![grant(by_name("crew"), Role::Writer)],
+        vec![grant(by_name("crew"), Role::Submitter)],
     )
     .await;
     assert!(matches!(
@@ -840,13 +846,25 @@ async fn a_user_keys_write_into_universe_is_universe_refused() {
         .await
         .expect_err("users never write universe");
     assert!(matches!(err, AppError::UniverseRefused), "{err:?}");
-    // A tenant writer without writer on universe keeps grant_refused.
+    // A tenant contributor without submitter on universe keeps
+    // grant_refused.
+    app.create_workspace(
+        &boot.admin_key.value,
+        &name("team"),
+        Some(by_name("universe")),
+        None,
+    )
+    .await
+    .expect("team");
     let tenant = tenant_key(
         &app,
         &boot.admin_key.value,
-        Role::Writer,
+        Role::Contributor,
         "tw",
-        vec![node_grant(by_name("universe"), Role::Reader)],
+        vec![
+            node_grant(by_name("universe"), Role::Reader),
+            grant(by_name("team"), Role::Submitter),
+        ],
     )
     .await;
     let err = app
@@ -1825,10 +1843,10 @@ async fn same_user_is_one_rule_for_claim_approvals_transitions_and_edges() {
     let crew_writer = tenant_key(
         &app,
         admin,
-        Role::Writer,
+        Role::Contributor,
         "crew/loader",
         vec![
-            grant(by_name("alice"), Role::Writer),
+            grant(by_name("alice"), Role::Submitter),
             grant(by_name("alice"), Role::Reader),
         ],
     )
@@ -2070,7 +2088,7 @@ async fn each_session_key_of_a_person_is_read_in_a_user_root_as_that_persons_key
             }
             Err(AppError::NotFound) => Answer::NotFound,
             Err(AppError::GrantRefused {
-                needed_role: Role::Writer,
+                needed_role: Role::Submitter,
                 ..
             }) => Answer::GrantRefused,
             Err(AppError::UserRootRefused) => Answer::UserRootRefused,
@@ -2237,7 +2255,7 @@ async fn linking_an_agent_held_key_is_refused() {
     let admin = boot.admin_key.value.as_str();
     let ops = console_admin(&app, admin, "ops").await;
     signed_in(&app, admin, "alice", false).await;
-    let agent = tenant_key(&app, admin, Role::Writer, "alice/agent", Vec::new()).await;
+    let agent = tenant_key(&app, admin, Role::Submitter, "alice/agent", Vec::new()).await;
     let user_key = user_writer(&app, admin, "alice", "alice/laptop").await;
     let head = store
         .events_range(boot.tenant_id, 1, 10_000)
@@ -2564,10 +2582,10 @@ async fn a_linked_key_writes_into_its_persons_root_and_an_unlinked_one_is_refuse
                 user: None,
                 used_by: Some(UsedBy::Person),
                 ..user_req(
-                    Role::Writer,
+                    Role::Submitter,
                     "unused",
                     "alice/desk",
-                    vec![grant(by_name("alice"), Role::Writer)],
+                    vec![grant(by_name("alice"), Role::Submitter)],
                 )
             },
         )
@@ -2581,8 +2599,8 @@ async fn a_linked_key_writes_into_its_persons_root_and_an_unlinked_one_is_refuse
     app.link_key_to_person(Bearer::Session(&ops), writer.key_id.into(), &name("alice"))
         .await
         .expect("linked, pending");
-    // A writer key's link waits on its person too: pending, the key writes
-    // nothing into her root (the operator's decision of 2026-11-19).
+    // A contributor key's link waits on its person too: pending, the key
+    // writes nothing into her root (the operator's decision of 2026-11-19).
     let err = app
         .submit_memory(
             &writer.value,
@@ -2726,11 +2744,11 @@ async fn team_with_alices_linked_writer(
                 user: None,
                 used_by: Some(UsedBy::Person),
                 ..user_req(
-                    Role::Writer,
+                    Role::Contributor,
                     "unused",
                     "alice/team",
                     vec![
-                        grant(by_name("team"), Role::Writer),
+                        grant(by_name("team"), Role::Submitter),
                         grant(by_name("team"), Role::Reader),
                     ],
                 )
@@ -2850,11 +2868,11 @@ async fn the_same_user_mark_survives_an_unlink_between_the_write_and_the_approva
                 user: None,
                 used_by: Some(UsedBy::Person),
                 ..user_req(
-                    Role::Writer,
+                    Role::Contributor,
                     "unused",
                     "alice/desk",
                     vec![
-                        grant(by_name("alice"), Role::Writer),
+                        grant(by_name("alice"), Role::Submitter),
                         grant(by_name("alice"), Role::Reader),
                     ],
                 )
@@ -3071,11 +3089,11 @@ async fn team_with_alices_session_and_bobs_writer(
                 user: None,
                 used_by: Some(UsedBy::Person),
                 ..user_req(
-                    Role::Writer,
+                    Role::Contributor,
                     "unused",
                     "bob/team",
                     vec![
-                        grant(by_name("team"), Role::Writer),
+                        grant(by_name("team"), Role::Submitter),
                         grant(by_name("team"), Role::Reader),
                     ],
                 )
@@ -4525,9 +4543,9 @@ async fn a_writer_that_cannot_read_its_workspace_previews_a_guardrail_with_no_se
     let writer = tenant_key(
         &app,
         admin,
-        Role::Writer,
+        Role::Submitter,
         "team-writer",
-        vec![grant(by_name("team"), Role::Writer)],
+        vec![grant(by_name("team"), Role::Submitter)],
     )
     .await;
     let req = guardrail("g1", "Never force-push.", Some("team"));
@@ -4603,11 +4621,11 @@ async fn a_persons_web_key_supersedes_their_linked_tenant_keys_row_held() {
                 user: None,
                 used_by: Some(UsedBy::Person),
                 ..user_req(
-                    Role::Writer,
+                    Role::Contributor,
                     "unused",
                     "alice/desk",
                     vec![
-                        grant(by_name("alice"), Role::Writer),
+                        grant(by_name("alice"), Role::Submitter),
                         grant(by_name("alice"), Role::Reader),
                     ],
                 )
@@ -4739,12 +4757,12 @@ async fn a_skill_preview_never_names_a_skill_the_key_cannot_read() {
         .to_string();
     let rw = |node: &str| {
         vec![
-            grant(by_name(node), Role::Writer),
+            grant(by_name(node), Role::Submitter),
             grant(by_name(node), Role::Reader),
         ]
     };
-    let team_writer = tenant_key(&app, admin, Role::Writer, "team/writer", rw("team")).await;
-    let sub_writer = tenant_key(&app, admin, Role::Writer, "sub/writer", rw(&sub)).await;
+    let team_writer = tenant_key(&app, admin, Role::Contributor, "team/writer", rw("team")).await;
+    let sub_writer = tenant_key(&app, admin, Role::Contributor, "sub/writer", rw(&sub)).await;
     let reviewer = person_tenant_key(
         &app,
         admin,
@@ -5025,11 +5043,11 @@ async fn todo_counts_never_count_an_unreadable_workspace() {
                 user: None,
                 used_by: Some(UsedBy::Person),
                 ..user_req(
-                    Role::Writer,
+                    Role::Contributor,
                     "unused",
                     "bob/other",
                     vec![
-                        grant(by_name("other"), Role::Writer),
+                        grant(by_name("other"), Role::Submitter),
                         grant(by_name("other"), Role::Reader),
                     ],
                 )
@@ -5210,6 +5228,178 @@ async fn a_document_preview_answers_its_passages_by_fragment_and_lines() {
     assert!(memory.passages.is_none(), "only a document is cut");
 }
 
+/// The user-root workspace create acts on a tree the key must read, so a
+/// user's contributor key creates there and a user's submitter key, which
+/// writes the root without recall, is refused by its role (ADR-0093 d6;
+/// ADR-0044 d6).
+#[tokio::test]
+async fn only_a_users_contributor_key_creates_a_workspace_in_its_root() {
+    let (app, _) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let contributor = user_writer(&app, admin, "alice", "alice/laptop").await;
+    app.create_workspace(&contributor.value, &name("notes"), None, None)
+        .await
+        .expect("a contributor creates in its own root");
+    let submitter = app
+        .issue_key(
+            admin,
+            &user_req(
+                Role::Submitter,
+                "alice",
+                "alice/ingest",
+                vec![grant(by_name("alice"), Role::Submitter)],
+            ),
+        )
+        .await
+        .expect("a user submitter key");
+    let err = app
+        .create_workspace(&submitter.value, &name("drafts"), None, None)
+        .await
+        .expect_err("a submitter creates nothing");
+    assert!(
+        matches!(
+            err,
+            AppError::VerbCeiling {
+                role: Role::Submitter,
+                verb: "create_workspace"
+            }
+        ),
+        "{err:?}"
+    );
+}
+
+/// A submitter key recalls nothing, so issuance adds it no reader grant on
+/// `universe`: a user's submitter key holds exactly the submitter grants it
+/// was sent (ADR-0093 d2; the coordinator's reading of 2026-11-20).
+#[tokio::test]
+async fn a_submitter_user_keys_issued_grants_carry_no_reader() {
+    let (app, store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let bob = app
+        .issue_key(
+            admin,
+            &user_req(
+                Role::Submitter,
+                "bob",
+                "bob/ingest",
+                vec![grant(by_name("bob"), Role::Submitter)],
+            ),
+        )
+        .await
+        .expect("a user submitter key");
+    let roles: Vec<Role> = bob.access.grants.iter().map(|g| g.grant.role).collect();
+    assert_eq!(roles, vec![Role::Submitter], "{:?}", bob.access.grants);
+    let stored = store
+        .key_access(boot.tenant_id, bob.key_id)
+        .await
+        .expect("read")
+        .expect("access");
+    assert_eq!(stored.grants, bob.access.grants, "echoed as stored");
+}
+
+/// A submitter key's get by id serves only the rows that key wrote,
+/// whatever its grants: a curated `universe` claim, promoted and readable by
+/// every recalling user key, is `access.not_found` to bob's submitter key,
+/// as any unreadable id is, while bob's own held row is served (ADR-0093
+/// d2; ADR-0025 d3; the coordinator's reading of 2026-11-20).
+#[tokio::test]
+async fn a_submitter_user_key_gets_a_curated_universe_claim_by_id_as_not_found() {
+    let (app, _) = rig();
+    let boot = bootstrap(&app).await;
+    let c = curated(&app, &boot).await;
+    let admin = boot.admin_key.value.as_str();
+    let bob = app
+        .issue_key(
+            admin,
+            &user_req(
+                Role::Submitter,
+                "bob",
+                "bob/ingest",
+                vec![grant(by_name("bob"), Role::Submitter)],
+            ),
+        )
+        .await
+        .expect("a user submitter key");
+    for id in [c.placed, c.source] {
+        let err = app
+            .get_memory(bob.value.as_str(), id)
+            .await
+            .expect_err("another key's row is unreadable to a submitter");
+        assert!(matches!(err, AppError::NotFound), "{err:?}");
+    }
+    let own = written(&app, &bob.value, &submit("bob-own", "bob's own note", None)).await;
+    app.get_memory(bob.value.as_str(), own)
+        .await
+        .expect("a submitter reads its own held row");
+}
+
+/// `whoami` serves a contributor without recall per node: a contributor
+/// whose one reader grant is a node grant on `universe`, the shape a
+/// migrated v0.8.3 write-only user key holds, writes `crew` where no
+/// reader grant reaches and is served `without_recall`; with the reader
+/// grant over `universe`'s subtree it recalls where it writes and is not; a
+/// user's contributor and submitter keys are not (ADR-0093 d3, as read on
+/// 2026-11-20).
+#[tokio::test]
+async fn whoami_serves_a_contributor_whose_reader_grant_reaches_none_of_its_submitter_nodes_as_without_recall()
+ {
+    let (app, _) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    app.create_workspace(admin, &name("crew"), Some(by_name("universe")), None)
+        .await
+        .expect("crew");
+    let migrated = tenant_key(
+        &app,
+        admin,
+        Role::Contributor,
+        "crew/ingest",
+        vec![
+            grant(by_name("crew"), Role::Submitter),
+            node_grant(by_name("universe"), Role::Reader),
+        ],
+    )
+    .await;
+    let recalls = tenant_key(
+        &app,
+        admin,
+        Role::Contributor,
+        "crew/agent",
+        vec![
+            grant(by_name("crew"), Role::Submitter),
+            grant(by_name("universe"), Role::Reader),
+        ],
+    )
+    .await;
+    let alice = user_writer(&app, admin, "alice", "alice/laptop").await;
+    let bob = app
+        .issue_key(
+            admin,
+            &user_req(
+                Role::Submitter,
+                "bob",
+                "bob/ingest",
+                vec![grant(by_name("bob"), Role::Submitter)],
+            ),
+        )
+        .await
+        .expect("a user submitter key");
+    let served = |key: &IssuedKey| {
+        let app = &app;
+        let value = key.value.clone();
+        async move { app.whoami(&value).await.expect("whoami").without_recall }
+    };
+    assert!(served(&migrated).await, "a reader grant on universe alone");
+    assert!(
+        !served(&recalls).await,
+        "a reader grant over universe's subtree"
+    );
+    assert!(!served(&alice).await, "a user's contributor key");
+    assert!(!served(&bob).await, "a submitter key is not a contributor");
+}
+
 // -- who confirms an admin fix (ADR-0089, amendment of 2026-11-18; #490) ----
 
 fn fix_req(
@@ -5247,10 +5437,10 @@ async fn an_admins_own_person_cannot_confirm_a_fix_in_a_shared_workspace() {
     let writer = tenant_key(
         &app,
         admin,
-        Role::Writer,
+        Role::Contributor,
         "wanda",
         vec![
-            grant(by_name("team"), Role::Writer),
+            grant(by_name("team"), Role::Submitter),
             grant(by_name("team"), Role::Reader),
         ],
     )
@@ -5381,8 +5571,8 @@ async fn an_admins_own_person_confirms_a_fix_inside_their_own_root_marked_same_u
 // 2026-11-19; ADR-0085 d16) ---------------------------------------------------
 
 /// A tenant whose bootstrap linked its admin key to `alice`, a shared
-/// workspace `team`, an agent writer there, and two persons' reviewer keys on
-/// it, alice's and bob's, each linked to its person; one claim in `team`
+/// workspace `team`, an agent contributor there, and two persons' reviewer
+/// keys on it, alice's and bob's, each linked to its person; one claim in `team`
 /// written by the agent and approved by bob's key.
 struct FixRig {
     app: TestApp,
@@ -5429,10 +5619,10 @@ async fn fix_rig_for(person: Option<&str>) -> FixRig {
     let writer = tenant_key(
         &app,
         admin,
-        Role::Writer,
+        Role::Contributor,
         "team/agent",
         vec![
-            grant(by_name("team"), Role::Writer),
+            grant(by_name("team"), Role::Submitter),
             grant(by_name("team"), Role::Reader),
         ],
     )
@@ -5612,18 +5802,18 @@ async fn a_reverter_is_refused_a_fix_of_a_claim_their_own_person_wrote_in_a_shar
                 user: None,
                 used_by: Some(UsedBy::Person),
                 ..user_req(
-                    Role::Writer,
+                    Role::Contributor,
                     "unused",
-                    "bob/writer",
+                    "bob/contributor",
                     vec![
-                        grant(by_name("team"), Role::Writer),
+                        grant(by_name("team"), Role::Submitter),
                         grant(by_name("team"), Role::Reader),
                     ],
                 )
             },
         )
         .await
-        .expect("bob's writer key");
+        .expect("bob's contributor key");
     link_accepted(&r.app, &r.store, &ops, bob_writer.key_id, "bob").await;
     let bobs = written(
         &r.app,
@@ -6549,7 +6739,7 @@ async fn a_key_issued_in_the_authors_root_reverts_a_fix_of_the_authors_claim_as_
     let web = console_of(&r.app, &r.store, "dora").await;
     let own = r
         .app
-        .issue_own_key(&web, "laptop", Role::Writer, false, None)
+        .issue_own_key(&web, "laptop", Role::Contributor, false, None)
         .await
         .expect("dora issues her own key");
     let claim = written(
@@ -6609,7 +6799,7 @@ async fn a_write_records_the_person_its_key_counts_as_not_the_root_it_was_issued
     let web = console_of(&r.app, &r.store, "dora").await;
     let own = r
         .app
-        .issue_own_key(&web, "laptop", Role::Writer, false, None)
+        .issue_own_key(&web, "laptop", Role::Contributor, false, None)
         .await
         .expect("dora issues her own key");
     let mine = written(

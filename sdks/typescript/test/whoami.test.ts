@@ -13,8 +13,8 @@ type Whoami = components["schemas"]["Whoami"];
 const older: Whoami = JSON.parse(
   JSON.stringify({
     key_id: "key_w",
-    name: "writer",
-    role: "writer",
+    name: "agent-w",
+    role: "contributor",
     principal: "p",
     used_by: "agent",
     tenant: { id: "t1", name: "oml" },
@@ -28,8 +28,8 @@ const older: Whoami = JSON.parse(
 // Assigned without a cast: compiles only while `shared` is optional.
 const typed: Whoami = {
   key_id: "key_w",
-  name: "writer",
-  role: "writer",
+  name: "agent-w",
+  role: "contributor",
   principal: "p",
   used_by: "agent",
   tenant: { id: "t1", name: "oml" },

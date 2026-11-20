@@ -114,9 +114,9 @@ async fn world() -> World {
         &app,
         &admin,
         "writer-agent",
-        Role::Writer,
+        Role::Contributor,
         UsedBy::Agent,
-        vec![grant(crew, Role::Writer), grant(crew, Role::Reader)],
+        vec![grant(crew, Role::Submitter), grant(crew, Role::Reader)],
     )
     .await;
     let agent_reviewer = key(

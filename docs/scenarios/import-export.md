@@ -46,13 +46,13 @@ Export from a shared workspace starts from a **published release**, the last ste
 1. **Verify before writing.** The importer's CLI and the server check the layout, paths, sizes, digests, the manifest signature and each source event's signature. Each failure has its own code, such as `bundle.signature_invalid` or `bundle.path_unsafe`. An import that would not fit the target's quota is refused whole as `import.over_quota` before the first write (ADR-0084 d7).
 2. **Name the expected key.** `--expect-key <fingerprint>`, obtained out of band, refuses a manifest signed by any other key. Without it the signature proves integrity only, and the plan says so.
 3. **Scan again.** Each version passes the target's scan rule set, which may be newer than the source's. A veto skips the version and names it; a hold keeps it author-only (ADR-0084 d11).
-4. **Land held.** The importing person's writer key becomes the author of every version on the target. The source's verdicts show on the review card as evidence and count for nothing (ADR-0084 d4, d6).
+4. **Land held.** The importing person's contributor key becomes the author of every version on the target. The source's verdicts show on the review card as evidence and count for nothing (ADR-0084 d4, d6).
 5. **Review again.** A person on the target judges each item, one act for a listed set allowed. Approving an imported version attests "did not author this on the source", journalled with the verdict, because a person with keys on both servers cannot be recognised across them (ADR-0084 d4).
 6. **Publish on the target.** One person cuts a release and another publishes it. Keys bound to `latest` receive it then (ADR-0085 d6, ADR-0084 d12).
 
 Until step 6, only `tip` keys inside the target's in-progress subtree, and, designed, `tip` keys on its ancestor chain, read the imported content, marked unreviewed (ADR-0080 d16).
 
-**Who acts.** A person's key exports, under the tenant's export policy: `off`, `own_root` (the default: a person's own root only) or `allowed`. An admin may allow one shared workspace's export, which reads no content. No agent, admin or service key exports, and only a person's writer key imports (ADR-0084 d10, d11). No MCP tool exists for either (R1).
+**Who acts.** A person's key exports, under the tenant's export policy: `off`, `own_root` (the default: a person's own root only) or `allowed`. An admin may allow one shared workspace's export, which reads no content. No agent, admin or service key exports, and only a person's contributor key imports (ADR-0084 d10, d11). No MCP tool exists for either (R1).
 
 **A repeated import** adds only what is new. Each claim key is planned as `oml sync` plans it: new, changed, removed, unchanged or in conflict. A conflict never writes over the target's tip; it lands as a held supersession marked `conflict`. An older bundle is refused `import.bundle_older` unless `--allow-older` is given, and `--dry-run` prints the plan and writes nothing (ADR-0084 d8).
 
@@ -71,7 +71,7 @@ Designed (ADR-0084 d15):
 ```sh
 # on the source, as a person
 oml workspaces export payments.dev --release 1.4.0 --recipient age1… --out payments-1.4.0.oml
-# on the target, as a person with writer there
+# on the target, as a person with a contributor key there
 oml workspaces import payments-1.4.0.oml --into payments.dev --identity key.txt --expect-key <fingerprint> --dry-run
 oml workspaces import payments-1.4.0.oml --into payments.dev --identity key.txt --expect-key <fingerprint>
 # a same-server copy from a release

@@ -11,6 +11,11 @@ the `Workspace…` models, `create_workspace`, the role `reviewer`, the statuses
 type, the `dreamer` role or `held_by` does not import against it, and a v0.7 client does not
 work against a v0.8.3 server: upgrade the client before the server.
 
+From v0.8.4 the role `writer` is gone (ADR-0093): a key that recalls and writes is a
+`contributor`, one that writes without recall is a `submitter`, and the grant role that
+confers writing is `submitter`. A v0.8.3 client that sends the former role is refused and
+issues nothing: upgrade the client before the server.
+
 Python 3.11 or later. Each release attaches a wheel and an sdist to its GitHub release; install
 the wheel from the file, or install from a checkout of the repository:
 

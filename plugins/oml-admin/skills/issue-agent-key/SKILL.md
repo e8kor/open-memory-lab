@@ -5,8 +5,8 @@ description: Use when the operator asks to issue, create or set up an Open Memor
 
 # Issue an agent key without seeing it
 
-This skill issues the one key an agent needs on an Open Memory Lab server: a writer key, under a
-name the operator chooses, with a writer grant and a reader grant on one workspace, which is also
+This skill issues the one key an agent needs on an Open Memory Lab server: a contributor key, under a
+name the operator chooses, with a submitter grant and a reader grant on one workspace, which is also
 the key's default workspace. It runs the `oml` CLI on this machine, under the server and admin key
 the CLI already uses, and the server journals the issuance like any other.
 
@@ -46,8 +46,9 @@ follows from that.
     - whether the key belongs to a crew, and which (`--crew`, the crew's name). A key's crew is
       fixed for its life.
     - whether a person rather than an agent holds the key (`--used-by person`).
-    - whether the key must not read promoted memory on that workspace (`--write-only`). Without
-      it the CLI adds a reader grant beside the writer grant; say so before you run it.
+    - whether the key writes without recall (`--role submitter`): a submitter key holds the
+      submitter grant alone and reads only its own memories. Without it the key is a contributor
+      and the CLI adds a reader grant beside the submitter grant; say so before you run it.
 
 2. Choose the key file: `$HOME/.config/oml/keys/<principal>`, with each `/` of the principal
    written as `-`, so `crew/agent-7` becomes `crew-agent-7`. If the operator names another path,
@@ -61,7 +62,7 @@ follows from that.
     ```
 
 4. Run the issuance, adding `--user <user>`, `--used-by person`, `--crew <crew>` or
-   `--write-only` only if the operator asked (with `--user`, `--workspace` may be left out):
+   `--role submitter` only if the operator asked (with `--user`, `--workspace` may be left out):
 
     ```sh
     oml keys issue-agent agent-7-laptop --principal crew/agent-7 --workspace metals-crew --out "$HOME/.config/oml/keys/crew-agent-7"

@@ -7,7 +7,7 @@
 //! nothing; `GET /web/admin/workspace` draws the same contents read-only.
 //!
 //! Which key acts follows from the workspace, never from a form (d2): in
-//! the person's root `<user>-web`, which holds writer there and supersedes
+//! the person's root `<user>-web`, which holds submitter there and supersedes
 //! a row any key of the person wrote; outside it `<user>-review`, where it
 //! holds reviewer, whose new claim is held and whose edit of another
 //! author's row is a reviewer proposal. No control saves, publishes or

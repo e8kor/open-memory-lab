@@ -10,6 +10,10 @@
 //! nothing else, after the stored bytes are verified as they stand; the
 //! mapped event is never signed, hashed or re-serialized into the journal.
 //!
+//! Rule 7 (ADR-0093 d4) reads the v0.8.3 role `writer`: a `key.issued` role
+//! as `contributor`, and a `grant.issued` role and each `required_roles`
+//! value as `submitter`.
+//!
 //! The map is the identity on every event the v0.8.0 server writes, so
 //! applying it twice changes nothing and no reader needs a cut-over date. It
 //! is the one place outside the applied migrations and the catalog's
@@ -106,7 +110,8 @@ pub fn read_key(key: &str) -> String {
     }
 }
 
-/// Maps one event as stored to the event as read (ADR-0091 d4, rules 1-6).
+/// Maps one event as stored to the event as read (ADR-0091 d4, rules 1-6;
+/// ADR-0093 d4, rule 7).
 ///
 /// # Errors
 ///
@@ -197,6 +202,8 @@ fn read_values(event_type: &str, fields: &mut Map<String, Value>) {
         "key.issued" => {
             if let Some(role) = fields.get_mut("role") {
                 replace_str(role, "dreamer", "reviewer");
+                // Rule 7: a writer key recalled through its reader grants.
+                replace_str(role, "writer", "contributor");
             }
             // Rule 6: the one event that records a key's holder.
             if let Some(mut held_by) = fields.remove("held_by") {
@@ -207,6 +214,7 @@ fn read_values(event_type: &str, fields: &mut Map<String, Value>) {
         "grant.issued" => {
             if let Some(role) = fields.get_mut("role") {
                 replace_str(role, "dreamer", "reviewer");
+                replace_str(role, "writer", "submitter");
             }
         }
         "workspace.create" => {
@@ -245,6 +253,7 @@ fn read_snapshots(event_type: &str, value: &mut Value) {
                     if let Some(Value::Array(roles)) = snapshot.get_mut("required_roles") {
                         for role in roles {
                             replace_str(role, "dreamer", "reviewer");
+                            replace_str(role, "writer", "submitter");
                         }
                     }
                     if event_type == "workspace.status_transition"
@@ -289,7 +298,7 @@ fn leftovers(event_type: &str, value: &Value, key: Option<&str>, found: &mut Vec
     let former_value = |field: &str, v: &str| -> bool {
         match field {
             "kind" | "guardrail_scope" => v == "workarea",
-            "role" | "required_roles" => v == "dreamer",
+            "role" | "required_roles" => v == "dreamer" || v == "writer",
             "used_by" | "approver_used_by" => v == "human",
             "status" | "from_status" | "to_status" => v == "committed" || v == "validated",
             "from" | "to" => {

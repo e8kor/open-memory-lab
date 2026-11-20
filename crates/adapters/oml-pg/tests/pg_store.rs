@@ -239,7 +239,19 @@ fn row_before_rename(table: &str, row: &Value) -> Value {
                 ("workareas", "status") | ("workarea_transitions", "from_status" | "to_status") => {
                     back(value, &statuses)
                 }
-                ("api_keys" | "grants", "role") => back(value, &[("reviewer", "dreamer")]),
+                // Every schema this seeds predates 0066 too, whose checks
+                // hold writer (ADR-0093 d5).
+                ("api_keys", "role") => back(
+                    value,
+                    &[
+                        ("reviewer", "dreamer"),
+                        ("contributor", "writer"),
+                        ("submitter", "writer"),
+                    ],
+                ),
+                ("grants", "role") => {
+                    back(value, &[("reviewer", "dreamer"), ("submitter", "writer")])
+                }
                 ("api_keys" | "memories", "held_by" | "approver_held_by") => {
                     back(value, &[("person", "human")])
                 }
@@ -1939,7 +1951,7 @@ async fn grants_of_another_tenant_are_invisible_under_rls() {
         workspace_record(a.tenant_id, node, None, "universe"),
     )
     .await;
-    let key = key_record(a.tenant_id, Uuid::from_u128(0xD92), Role::Writer, None);
+    let key = key_record(a.tenant_id, Uuid::from_u128(0xD92), Role::Contributor, None);
     a.issue_key(&store, key.clone()).await;
     a.issue_grant(
         &store,
@@ -3105,6 +3117,17 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
                  - 'admin_fix_reverted'"
             }
             (true, "key_denials") => "to_jsonb(t) - 'lifted_epoch'",
+            // 0066 makes a writer key a contributor and a writer grant a
+            // submitter (ADR-0093 d5), so the PoC's rows are read in the
+            // roles it leaves them.
+            (false, "api_keys") => {
+                "to_jsonb(t) || jsonb_build_object('role', \
+                 CASE t.role WHEN 'writer' THEN 'contributor' ELSE t.role END)"
+            }
+            (false, "grants") => {
+                "to_jsonb(t) || jsonb_build_object('role', \
+                 CASE t.role WHEN 'writer' THEN 'submitter' ELSE t.role END)"
+            }
             _ => "to_jsonb(t)",
         };
         // Row-level security does not bind a superuser, as CI's Postgres role
@@ -3580,7 +3603,7 @@ async fn rows_that_predate_names_are_reported_per_table_and_rows_created_since_a
         &store,
         KeyRecord {
             name: Some(name("agent-7")),
-            ..key_record(t, key, Role::Writer, None)
+            ..key_record(t, key, Role::Contributor, None)
         },
     )
     .await;
@@ -3985,10 +4008,16 @@ async fn under_tenant_a_a_reference_to_tenant_bs_row_fails_as_one_to_a_random_id
     )
     .await;
     let (a_key, b_key) = (Uuid::from_u128(0xD180), Uuid::from_u128(0xD190));
-    a.issue_key(&store, key_record(a.tenant_id, a_key, Role::Writer, None))
-        .await;
-    b.issue_key(&store, key_record(b.tenant_id, b_key, Role::Writer, None))
-        .await;
+    a.issue_key(
+        &store,
+        key_record(a.tenant_id, a_key, Role::Contributor, None),
+    )
+    .await;
+    b.issue_key(
+        &store,
+        key_record(b.tenant_id, b_key, Role::Contributor, None),
+    )
+    .await;
     let (a_memory, b_memory) = (Uuid::from_u128(0xC180), Uuid::from_u128(0xC190));
     // Tenant B's memory holds no review_queue row: review_queue's primary key
     // is the global memory_id, so moving tenant A's queue row onto a queued B
@@ -5205,7 +5234,7 @@ fn digest_hex(byte: u8) -> String {
 fn connector_key_sql(tenant: Uuid, key: Uuid) -> String {
     format!(
         "INSERT INTO api_keys (id, tenant_id, hash, credential, role, principal, issued_seq) \
-         VALUES ('{key}', '{tenant}', NULL, 'connection', 'writer', 'crew/claude-mobile', 1)"
+         VALUES ('{key}', '{tenant}', NULL, 'connection', 'contributor', 'crew/claude-mobile', 1)"
     )
 }
 
@@ -5284,7 +5313,12 @@ async fn a_connector_key_row_has_no_hash_and_a_bearer_key_row_holding_its_hash_c
     let (store, tenant, connector) = connector_rig(&created, 120).await;
     let mut rig = ChainRig::new(121);
     rig.seed_chain(&store, 0).await;
-    let bearer = key_record(rig.tenant_id, Uuid::from_u128(0xB0B1), Role::Writer, None);
+    let bearer = key_record(
+        rig.tenant_id,
+        Uuid::from_u128(0xB0B1),
+        Role::Contributor,
+        None,
+    );
     rig.issue_key(&store, bearer.clone()).await;
 
     let mut tx = store.pool().begin().await.expect("begin");
@@ -5308,7 +5342,7 @@ async fn a_connector_key_row_has_no_hash_and_a_bearer_key_row_holding_its_hash_c
 
     let hashed_connector = format!(
         "INSERT INTO api_keys (id, tenant_id, hash, credential, role, principal, issued_seq) \
-         VALUES ('{}', '{tenant}', decode('{}', 'hex'), 'connection', 'writer', 'crew/x', 1)",
+         VALUES ('{}', '{tenant}', decode('{}', 'hex'), 'connection', 'contributor', 'crew/x', 1)",
         Uuid::from_u128(0xC0DE_0F00),
         digest_hex(0x77)
     );
@@ -6436,8 +6470,8 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 65,
-        "every migration through 0065_session_key_account"
+        applied, 66,
+        "every migration through 0066_contributor_and_submitter"
     );
     drop(conn);
     drop_dbs(&created).await;
@@ -7133,8 +7167,11 @@ async fn edge_tenant(store: &PgStore, seed: u64, base: u128) -> EdgeTenant {
     .await;
     let (proposer, ratifier) = (Uuid::from_u128(base + 1), Uuid::from_u128(base + 2));
     for key in [proposer, ratifier] {
-        rig.issue_key(store, key_record(rig.tenant_id, key, Role::Writer, None))
-            .await;
+        rig.issue_key(
+            store,
+            key_record(rig.tenant_id, key, Role::Contributor, None),
+        )
+        .await;
     }
     let (src, dst) = (Uuid::from_u128(base + 3), Uuid::from_u128(base + 4));
     hold(store, &mut rig, root, src, proposer, false).await;
@@ -7895,8 +7932,8 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 65,
-        "every migration through 0065_session_key_account"
+        applied, 66,
+        "every migration through 0066_contributor_and_submitter"
     );
     drop(conn);
 
@@ -8902,8 +8939,8 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 65,
-        "every migration through 0065_session_key_account"
+        applied, 66,
+        "every migration through 0066_contributor_and_submitter"
     );
     drop(conn);
 
@@ -11450,7 +11487,7 @@ async fn migration_0045_fills_each_accounts_meters_from_the_rows_stored_before_i
             &seed,
             KeyRecord {
                 user,
-                ..key_record(t, key_id, Role::Writer, None)
+                ..key_record(t, key_id, Role::Contributor, None)
             },
         )
         .await;
@@ -11771,7 +11808,7 @@ async fn a_tenant_keys_first_version_commits_without_touching_the_meters() {
     let crew = workspace_record(t, Uuid::from_u128(0x4520), None, "universe");
     rig.create_workspace(&store, crew.clone()).await;
     let tenant_key = Uuid::from_u128(0x4521);
-    rig.issue_key(&store, key_record(t, tenant_key, Role::Writer, None))
+    rig.issue_key(&store, key_record(t, tenant_key, Role::Contributor, None))
         .await;
     let held = |n: u128| {
         held_memory(
@@ -11892,7 +11929,7 @@ async fn a_counter_never_goes_below_zero_and_a_fold_on_a_drifted_one_still_commi
         &store,
         KeyRecord {
             user: Some(account),
-            ..key_record(t, key_id, Role::Writer, None)
+            ..key_record(t, key_id, Role::Contributor, None)
         },
     )
     .await;
@@ -11991,7 +12028,7 @@ async fn writers_that_skip_the_pre_check_are_held_by_the_commits_own_ceiling() {
         &store,
         KeyRecord {
             user: Some(account),
-            ..key_record(t, key_id, Role::Writer, None)
+            ..key_record(t, key_id, Role::Contributor, None)
         },
     )
     .await;
@@ -12079,13 +12116,13 @@ async fn writer_pg(app: &PgApp, admin: &str, node: Uuid) -> String {
         admin,
         &oml_app::types::IssueKeyRequest {
             profile: None,
-            role: Role::Writer,
+            role: Role::Contributor,
             name: name("kinds-writer"),
             principal: "kinds/agent".to_owned(),
             used_by: Some(oml_app::domain::UsedBy::Agent),
             default_workspace: Some(node.into()),
             crew: None,
-            grants: [Role::Writer, Role::Reader]
+            grants: [Role::Submitter, Role::Reader]
                 .into_iter()
                 .map(|role| oml_app::types::GrantRequest {
                     node: node.into(),
@@ -13604,8 +13641,8 @@ async fn migrations_0059_and_0060_apply_over_0058_with_a_document_row_and_count_
             .await
             .expect("versions");
     assert_eq!(
-        applied, 65,
-        "every migration through 0065_session_key_account"
+        applied, 66,
+        "every migration through 0066_contributor_and_submitter"
     );
     let (partitions, attached, valid, carries, validated): (i64, i64, bool, bool, bool) =
         sqlx::query_as(

@@ -4670,26 +4670,27 @@ fn parse_covers(index: usize, covers: Option<&str>) -> Result<Covers, ApiError> 
 fn parse_role(role: &str) -> Result<Role, ApiError> {
     match role {
         "reader" => Ok(Role::Reader),
-        "writer" => Ok(Role::Writer),
+        "contributor" => Ok(Role::Contributor),
+        "submitter" => Ok(Role::Submitter),
         "reviewer" => Ok(Role::Reviewer),
         "admin" => Ok(Role::Admin),
         "operator" => Ok(Role::Operator),
         other => Err(ApiError::validation(format!(
-            "role must be one of reader, writer, reviewer, admin, operator — not {other:?}"
+            "role must be one of reader, contributor, submitter, reviewer, admin, operator — not {other:?}"
         ))),
     }
 }
 
-/// A grant role is reader, writer or reviewer, never admin or operator
-/// (openapi.yaml `GrantRequest.role`); whether the key role admits it is the
-/// app's issuance check.
+/// A grant role is reader, submitter or reviewer, never contributor, admin
+/// or operator (openapi.yaml `GrantRequest.role`; ADR-0093 d1); whether the
+/// key role admits it is the app's issuance check.
 fn parse_grant_role(role: &str) -> Result<Role, ApiError> {
     match role {
         "reader" => Ok(Role::Reader),
-        "writer" => Ok(Role::Writer),
+        "submitter" => Ok(Role::Submitter),
         "reviewer" => Ok(Role::Reviewer),
         other => Err(ApiError::validation(format!(
-            "a grant role is one of reader, writer, reviewer — not {other:?}"
+            "a grant role is one of reader, submitter, reviewer — not {other:?}"
         ))),
     }
 }
@@ -4892,6 +4893,9 @@ fn whoami_json(whoami: &Whoami) -> Value {
         // each null for none (ADR-0079 d3, d4).
         "expiry": key.expiry.as_ref().map(|at| at.as_str()),
         "requests_per_minute": key.requests_per_minute,
+        // A contributor without recall, decided on the server, since the
+        // grants above carry no ancestry (ADR-0093 d3).
+        "without_recall": whoami.without_recall,
     });
     // A person's `<user>-web` alone is told whether it carries a denial, so
     // the web console draws no form for the key acts that key is refused for
@@ -6267,7 +6271,7 @@ mod tests {
             grant: Grant {
                 grant_id: Uuid::from_u128(1),
                 node: Uuid::from_u128(2),
-                role: Role::Writer,
+                role: Role::Submitter,
                 deny: vec![sealed],
                 covers: Covers::Subtree,
             },
@@ -6278,7 +6282,7 @@ mod tests {
             json!({
                 "grant_id": Uuid::from_u128(1),
                 "workspace_node_id": Uuid::from_u128(2),
-                "role": "writer",
+                "role": "submitter",
                 "covers": "subtree",
                 "epoch": 41,
             })

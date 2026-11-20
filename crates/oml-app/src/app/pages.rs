@@ -92,6 +92,9 @@ pub struct OwnKey {
     pub access: Option<KeyAccess>,
     /// A global denial on `universe` cuts it off.
     pub cut_off: bool,
+    /// A contributor without recall, which the console marks "no recall"
+    /// (ADR-0093 d3, as read on 2026-11-20).
+    pub without_recall: bool,
 }
 
 /// One workspace's queue with its path (ADR-0045 d10).
@@ -474,21 +477,23 @@ where
             let cut_off = access
                 .as_ref()
                 .is_some_and(|a| a.denials.iter().any(|d| Some(d.denial.node) == universe));
+            let without_recall = self.without_recall(&key, access.as_ref()).await?;
             out.push(OwnKey {
                 key,
                 access,
                 cut_off,
+                without_recall,
             });
         }
         Ok(out)
     }
 
     /// `POST /v2/keys` as `<user>-web` (ADR-0070 d5; ADR-0045 d9, d16), the
-    /// console's `issue_key` and `connect_key`: a reader or writer key naming
+    /// console's `issue_key` and `connect_key`: a contributor or reader key naming
     /// the person's user, granted on their root and nothing else, named
     /// `<user>-<name>` with the session suffixes reserved, issued by
     /// `<user>-web`; with `connector`, a connector key and its connect code.
-    /// Issuance never amplifies authority: `<user>-web` holds writer there, and
+    /// Issuance never amplifies authority: `<user>-web` holds submitter there, and
     /// the key it issues holds no more, so a `<user>-web` that carries a
     /// denial issues none (#325). The person may end the key on a date,
     /// `expiry`, later than now as at every issuance; the key takes no rate
@@ -528,9 +533,9 @@ where
             covers: Covers::Subtree,
         };
         let grants = match role {
-            Role::Writer => vec![grant(Role::Writer), grant(Role::Reader)],
+            Role::Contributor => vec![grant(Role::Submitter), grant(Role::Reader)],
             Role::Reader => vec![grant(Role::Reader)],
-            _ => return Err(field("role", "an issued key is a reader or a writer")),
+            _ => return Err(field("role", "an issued key is a contributor or a reader")),
         };
         let req = IssueKeyRequest {
             profile: None,
@@ -680,10 +685,12 @@ where
             let cut_off = access
                 .as_ref()
                 .is_some_and(|a| a.denials.iter().any(|d| Some(d.denial.node) == universe));
+            let without_recall = self.without_recall(&key, access.as_ref()).await?;
             out.push(OwnKey {
                 key,
                 access,
                 cut_off,
+                without_recall,
             });
         }
         Ok(out)
@@ -719,7 +726,7 @@ where
 
     /// `POST /v2/web/users/{user}/capacities` with `capacity: curate` (ADR-0070
     /// d5 #3; ADR-0045 d10, ADR-0044 d7): the user's `<user>-curate`, a tenant
-    /// writer key with writer on the `universe` node alone and reader on
+    /// contributor key with submitter on the `universe` node alone and reader on
     /// `workspace`, created by `<user>-admin` at the first designation and
     /// extended by a reader grant after it.
     pub async fn grant_curation_capacity(
@@ -752,7 +759,7 @@ where
             // The issuance default; a page offers no scope (ADR-0037
             // d17, d18 Q5).
             guardrail_scope: None,
-            role: Role::Writer,
+            role: Role::Contributor,
             principal: name.as_str().to_owned(),
             name,
             used_by: Some(UsedBy::Person),
@@ -761,7 +768,7 @@ where
             grants: vec![
                 GrantRequest {
                     node: Reference::Name(Name::parse(UNIVERSE).expect("universe is a name")),
-                    role: Role::Writer,
+                    role: Role::Submitter,
                     deny: Vec::new(),
                     covers: Covers::Node,
                 },
@@ -837,6 +844,8 @@ where
                 covers: g.covers,
             });
         }
+        // Step 3 applies to added grants; a contributor's shape was checked
+        // when it was issued, and adding a grant cannot undo it (ADR-0093 d2).
         check_issuance(Role::Admin, key.role, &resolved).map_err(issuance_refusal)?;
         let mut added = Vec::with_capacity(resolved.len());
         for grant in resolved {

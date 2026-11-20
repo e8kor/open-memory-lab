@@ -10,7 +10,7 @@
 # The workspaces are the names bench.py derives (bench-<dataset>, and for a
 # dataset of several haystacks bench-<dataset>-<group>); `bench.py
 # workspaces <dataset>...` prints them. Keys: <state-dir>/writer.key, an agent
-# key with writer and reader grants on the `bench` subtree, and
+# contributor key with submitter and reader grants on the `bench` subtree, and
 # <state-dir>/reviewer-<i>.key for i in 1..BENCH_REVIEWERS (default 4), human
 # keys of other principals with the reviewer grant, so the reviewer is never
 # the author (R2). Several reviewers because review next serves one key its
@@ -112,8 +112,8 @@ for wa in "$@"; do
     "$OML" --json workspaces create bench "$wa" >/dev/null || fail "workspace $wa"
 done
 (umask 077
- "$OML" --json keys issue bench-writer --role writer --used-by agent --principal bench/writer \
-     --default-workspace bench --grant bench:writer --grant bench:reader \
+ "$OML" --json keys issue bench-writer --role contributor --used-by agent --principal bench/writer \
+     --default-workspace bench --grant bench:submitter --grant bench:reader \
      | jq -r .value >"$STATE/writer.key"
  for i in $(seq 1 "$REVIEWERS"); do
      "$OML" --json keys issue "bench-reviewer-$i" --role reviewer --used-by person \

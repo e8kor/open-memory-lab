@@ -98,17 +98,96 @@ pub struct KeyDenial {
 }
 
 /// The grant roles a key of `key_role` may carry, in table order
-/// (roles-and-keys.md, grant admissibility; ADR-0025 d1). Admin and
-/// operator keys carry no grant, and no key carries an admin or operator
-/// grant.
+/// (roles-and-keys.md, grant admissibility; ADR-0025 d1; ADR-0093 d2). Admin
+/// and operator keys carry no grant, and no key carries a contributor, admin
+/// or operator grant: `contributor` is a key role only.
 #[must_use]
 pub fn admissible_grant_roles(key_role: Role) -> &'static [Role] {
     match key_role {
         Role::Reader => &[Role::Reader],
-        Role::Writer => &[Role::Reader, Role::Writer],
+        Role::Contributor => &[Role::Reader, Role::Submitter],
+        Role::Submitter => &[Role::Submitter],
         Role::Reviewer => &[Role::Reader, Role::Reviewer],
         Role::Admin | Role::Operator => &[],
     }
+}
+
+/// The nodes whose ancestry [`contributor_without_recall`] needs for a key of
+/// `key_role` holding `grants`: a contributor's submitter grant nodes that no
+/// reader grant names as its own node. A submitter grant on the node of a
+/// reader grant is reached by it whatever lies above, so the common key, a
+/// reader beside each submitter grant, needs no read.
+#[must_use]
+pub fn recall_ancestries_needed(key_role: Role, grants: &[Grant]) -> BTreeSet<Uuid> {
+    if key_role != Role::Contributor {
+        return BTreeSet::new();
+    }
+    grants
+        .iter()
+        .filter(|s| s.role == Role::Submitter)
+        .filter(|s| {
+            !grants
+                .iter()
+                .any(|r| r.role == Role::Reader && r.node == s.node)
+        })
+        .map(|s| s.node)
+        .collect()
+}
+
+/// Whether a key of `key_role` holding `grants` is a contributor without
+/// recall (ADR-0093 d3, as read on 2026-11-20): a contributor key holding a
+/// submitter grant on some node that no reader grant of the same key
+/// reaches. A v0.8.3 writer key issued write-only became one, the
+/// user key among them whose one reader grant is the `universe` node grant
+/// issuance added (ADR-0044 d3). It works as before; `oml doctor` names it
+/// and the console marks it, both from this answer as the server serves it.
+///
+/// `ancestries` maps each node of [`recall_ancestries_needed`] to its
+/// ancestry, node to root; a node it lacks is read as itself alone. A reader
+/// grant reaches a node by [`Grant::reaches`], before its deny masks, so the
+/// answer, served to the key itself, names no subtree a mask hides
+/// (ADR-0039 d15).
+#[must_use]
+pub fn contributor_without_recall(
+    key_role: Role,
+    grants: &[Grant],
+    ancestries: &std::collections::BTreeMap<Uuid, Vec<Uuid>>,
+) -> bool {
+    key_role == Role::Contributor
+        && grants
+            .iter()
+            .filter(|s| s.role == Role::Submitter)
+            .any(|s| {
+                let own = [s.node];
+                let ancestry = ancestries.get(&s.node).map_or(&own[..], Vec::as_slice);
+                !grants
+                    .iter()
+                    .any(|r| r.role == Role::Reader && r.reaches(ancestry))
+            })
+}
+
+/// A contributor key's shape (ADR-0093 d2): issued with at least one reader
+/// and one submitter grant among `grant_roles`, else
+/// [`IssuanceRefusal::ContributorGrants`]. Every other key role is shaped by
+/// [`admissible_grant_roles`] alone. The issuance checks it after the grants'
+/// nodes, denies and default (steps 4-6), so a request that names a node the
+/// tenant does not hold is told so first; adding grants to an issued key
+/// never checks it, since a grant added cannot take one away.
+///
+/// # Errors
+///
+/// [`IssuanceRefusal::ContributorGrants`] for a contributor key without
+/// either grant.
+pub fn check_contributor_grants(
+    key_role: Role,
+    grant_roles: &[Role],
+) -> Result<(), IssuanceRefusal> {
+    if key_role == Role::Contributor
+        && !(grant_roles.contains(&Role::Reader) && grant_roles.contains(&Role::Submitter))
+    {
+        return Err(IssuanceRefusal::ContributorGrants);
+    }
+    Ok(())
 }
 
 /// The key roles a key of `issuer_role` may issue (roles-and-keys.md,
@@ -118,9 +197,15 @@ pub fn admissible_grant_roles(key_role: Role) -> &'static [Role] {
 #[must_use]
 pub fn issuable_key_roles(issuer_role: Role) -> &'static [Role] {
     match issuer_role {
-        Role::Admin => &[Role::Reader, Role::Writer, Role::Reviewer, Role::Admin],
+        Role::Admin => &[
+            Role::Reader,
+            Role::Contributor,
+            Role::Submitter,
+            Role::Reviewer,
+            Role::Admin,
+        ],
         Role::Operator => &[Role::Admin, Role::Operator],
-        Role::Reader | Role::Writer | Role::Reviewer => &[],
+        Role::Reader | Role::Contributor | Role::Submitter | Role::Reviewer => &[],
     }
 }
 
@@ -147,11 +232,20 @@ pub enum IssuanceRefusal {
         admissible: &'static [Role],
         grant_index: Option<usize>,
     },
+    /// After step 6, `request.validation` with `details.field: /grants` and
+    /// `details.reason: contributor_grants`: a contributor key lacks a reader
+    /// or a submitter grant (ADR-0093 d2). The server never adds the missing
+    /// grant (ADR-0025 d2).
+    #[error(
+        "a contributor key carries at least one reader and one submitter grant (ADR-0093 d2, request.validation contributor_grants)"
+    )]
+    ContributorGrants,
 }
 
 /// Steps 1–3 of the issuance validation order (roles-and-keys.md; ADR-0025
 /// d2): the two-key rule, the issuer ceiling on the key role, then grant
-/// admissibility, first failure answering. The caller has already refused an
+/// admissibility, first failure answering. A contributor key's shape is
+/// [`check_contributor_grants`], checked after steps 4-6. The caller has already refused an
 /// issuer outside the issue verb (`access.verb_ceiling`) and checked
 /// `tenant_id` (step 0); node existence, deny containment and the default's
 /// coverage (steps 4–6) need the store and follow this check.
@@ -271,7 +365,10 @@ const VERBS_CONFERRED: [(Role, &[&str]); 3] = [
         Role::Reader,
         &["recall", "read", "graph_read", "events_tail"],
     ),
-    (Role::Writer, &["remember", "learn", "attach", "supersede"]),
+    (
+        Role::Submitter,
+        &["remember", "learn", "attach", "supersede"],
+    ),
     (Role::Reviewer, &["propose", "review", "supersede"]),
 ];
 
@@ -626,7 +723,7 @@ impl MemberProfile {
     pub fn key_role(self) -> Role {
         match self {
             MemberProfile::Classifier | MemberProfile::Curator => Role::Reviewer,
-            MemberProfile::TermCreator => Role::Writer,
+            MemberProfile::TermCreator => Role::Contributor,
         }
     }
 }
@@ -700,7 +797,7 @@ fn cell(profile: MemberProfile, grant: &LabelledGrant, on_vocabulary: bool) -> O
             }
         }
         (MemberProfile::TermCreator, _) if !on_vocabulary => Some(Cell::Never),
-        (MemberProfile::TermCreator, Role::Writer) => Some(Cell::Must),
+        (MemberProfile::TermCreator, Role::Submitter) => Some(Cell::Must),
         (MemberProfile::TermCreator, Role::Reader) => Some(Cell::May),
         (MemberProfile::Curator, Role::Reviewer) => match (narrowed, on_vocabulary) {
             (false, true) => Some(Cell::Must),

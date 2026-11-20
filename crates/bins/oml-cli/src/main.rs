@@ -23,7 +23,7 @@ use oml_cli::discovery;
 use oml_cli::hook;
 use oml_cli::issue::{
     KeyFile, configure_line, connect_code_printed, key_limit_lines, minted_code_printed, parse_ttl,
-    setup_line, sh_quote, with_reader_beside_writers,
+    setup_line, sh_quote, with_reader_beside_submitters,
 };
 use oml_cli::verify::parse_verifying_key;
 
@@ -437,7 +437,8 @@ enum KeysCommand {
 struct KeysIssueArgs {
     /// Key name, unique in the tenant and never released; distinct from principal and label.
     key_name: String,
-    /// reader | writer | reviewer | admin
+    /// reader | contributor | submitter | reviewer | admin. A contributor
+    /// recalls and writes; a submitter writes without recall.
     #[arg(long)]
     role: String,
     /// agent | person | service
@@ -448,8 +449,8 @@ struct KeysIssueArgs {
     #[arg(long)]
     default_workspace: Option<String>,
     /// Grant <workspace>:<role>, or <workspace>:<role>:node for one node; workspace
-    /// may be id or name. Repeatable. Writer grants include reader access unless
-    /// --write-only.
+    /// may be id or name. Repeatable. For a contributor key, each submitter grant
+    /// brings a reader grant on the same workspace.
     #[arg(long = "grant", value_parser = parse_grant)]
     grants: Vec<(String, String)>,
     /// Crew record (id or name), fixed for the key's life.
@@ -459,9 +460,6 @@ struct KeysIssueArgs {
     /// workspace names resolve; the first key creates that root.
     #[arg(long)]
     user: Option<String>,
-    /// Send writer grants without matching reader grants.
-    #[arg(long)]
-    write_only: bool,
     /// Principal the key acts as.
     #[arg(long)]
     principal: Option<String>,
@@ -526,9 +524,10 @@ struct IssueAgentArgs {
     /// Who holds the key.
     #[arg(long, default_value = "agent", value_parser = ["agent", "person"])]
     used_by: String,
-    /// Send the writer grant without a matching reader grant.
-    #[arg(long)]
-    write_only: bool,
+    /// contributor recalls and writes the workspace; submitter writes it without
+    /// recall.
+    #[arg(long, default_value = "contributor", value_parser = ["contributor", "submitter"])]
+    role: String,
     /// Write the key to a new 0600 file without overwriting and print a line that
     /// reads it instead of the value.
     #[arg(long)]
@@ -647,7 +646,7 @@ enum WorkspacesCommand {
     /// Import an encrypted bundle into an in-progress workspace, or a new
     /// name created in progress. The bundle is decrypted here, twice, and
     /// verified before upload; nothing decrypted is written to disk. Every
-    /// version lands held by this key. A writer key used by a person only.
+    /// version lands held by this key. A contributor key used by a person only.
     Import {
         /// The encrypted bundle (`.oml-bundle`).
         file: std::path::PathBuf,
@@ -1717,12 +1716,12 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             command: KeysCommand::Issue(args),
         } => {
             let client = resolve(cli, &stored)?;
-            let grants = with_reader_beside_writers(&args.grants, args.write_only);
+            let grants = with_reader_beside_submitters(&args.grants, &args.role);
             if !cli.json {
                 for (node, _) in grants.iter().filter(|g| !args.grants.contains(g)) {
                     eprintln!(
-                        "adding {node}:reader beside {node}:writer \
-                         (pass --write-only to send the writer grants alone)"
+                        "adding {node}:reader beside {node}:submitter \
+                         (a contributor recalls; --role submitter writes without recall)"
                     );
                 }
             }
@@ -3728,7 +3727,7 @@ fn run_review_next(
         println!("serving 1 held item");
         println!();
         println!(
-            "  artifact  {} @ v{}   kind: {}   writer: {}",
+            "  artifact  {} @ v{}   kind: {}   author: {}",
             field(item, "artifact_id"),
             item["version"],
             field(item, "kind"),
@@ -4006,8 +4005,9 @@ fn run_verdict(
 // oml keys issue-agent (ADR-0028 d1)
 // ---------------------------------------------------------------------------
 
-/// One `POST /v2/keys` for a writer key named `<key-name>`, with writer and
-/// reader grants on the workspace, that workspace as its default and the
+/// One `POST /v2/keys` for a contributor key named `<key-name>`, with
+/// submitter and reader grants on the workspace, or with `--role submitter`
+/// a submitter key with the submitter grant alone (ADR-0093 d6), that workspace as its default and the
 /// `--crew` when one is given, each reference as the operator spelled it,
 /// then two lines on stdout: `export OML_URL=…` and `export
 /// OML_API_KEY=…`, the second reading the value back from the `--out` file
@@ -4051,9 +4051,9 @@ fn run_issue_agent(
         None => None,
     };
     let grants =
-        with_reader_beside_writers(&[(workspace.clone(), "writer".to_owned())], args.write_only);
+        with_reader_beside_submitters(&[(workspace.clone(), "submitter".to_owned())], &args.role);
     let mut body = json!({
-        "role": "writer",
+        "role": args.role,
         "name": args.key_name,
         "used_by": args.used_by,
         "principal": args.principal,
@@ -4166,8 +4166,9 @@ fn run_issue_agent(
         })
         .unwrap_or_default();
     eprintln!(
-        "key {key_name} ({key_id}) issued to {} (writer, used by {}): {}; default workspace {}",
+        "key {key_name} ({key_id}) issued to {} ({}, used by {}): {}; default workspace {}",
         field(&response, "principal"),
+        args.role,
         args.used_by,
         granted.join(", "),
         field(&response, "default_workspace_id"),
@@ -5864,7 +5865,8 @@ fn user_root_holding(client: &Client, node: &Value) -> Option<String> {
 }
 
 /// A memory is started in a user's root by that user's keys only (ADR-0044
-/// d16): a tenant writer key whose default workspace lies in `user`'s root
+/// d16): a tenant key that writes, a contributor or a submitter, whose
+/// default workspace lies in `user`'s root
 /// is refused every new memory it does not address elsewhere, so the line
 /// warns and names the fix. Nothing for a user key, whose default lies in
 /// its own root, or for a key that writes nothing.
@@ -5874,7 +5876,8 @@ fn user_root_writes_doctor(
     user: Option<&str>,
 ) -> Option<String> {
     let (me, node, user) = (me?, default_node?, user?);
-    (me["user"].is_null() && me["role"] == "writer").then(|| {
+    let writes = me["role"] == "contributor" || me["role"] == "submitter";
+    (me["user"].is_null() && writes).then(|| {
         format!(
             "warn: the default workspace {} lies in the root of user {user}, where only \
              {user}'s keys start memories; this tenant key's new memories there are refused \
@@ -5987,8 +5990,12 @@ fn key_limits_body(
 
 /// The key lines (ADR-0079 d7), for the key doctor runs under: that the
 /// server refused it as expired or past its rate; else, from `whoami`, the
-/// instant it ends and the rate it is held to. A key with neither limit,
-/// and a refusal for any other reason, print nothing here.
+/// instant it ends and the rate it is held to, and
+/// `key_contributor_without_recall` for a contributor without recall as
+/// `whoami` serves it: a submitter grant on a node no reader grant of the key
+/// reaches, such as a v0.8.3 writer key issued write-only, which
+/// works as before and is replaced by a submitter key (ADR-0093 d3). A key with
+/// neither limit, and a refusal for any other reason, print nothing here.
 fn key_doctor(me: Option<&Result<Value, CliError>>) -> Vec<String> {
     let mut lines = Vec::new();
     match me {
@@ -6020,6 +6027,16 @@ fn key_doctor(me: Option<&Result<Value, CliError>>) -> Vec<String> {
                 lines.push(format!(
                     "ok rate: this key is held to {rate} requests per minute, counted by each \
                      server process alone"
+                ));
+            }
+            // The server decides it: `whoami`'s grants carry no ancestry.
+            if me["without_recall"] == true {
+                lines.push(format!(
+                    "warn key_contributor_without_recall: {} is a contributor key that writes \
+                     where no reader grant of it reaches, a writer key issued with --write-only \
+                     before v0.8.4; it works as before, but issue a submitter key with `oml keys \
+                     issue-agent <name> --role submitter` and cut this one off",
+                    me["name"].as_str().unwrap_or("this key")
                 ));
             }
         }
@@ -6133,7 +6150,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut me: Option<Result<Value, CliError>> = None;
     let mut head_seq: Option<u64> = None;
     // A user key reads universe's own claims through its node grant; one
-    // that cannot is warned about (ADR-0044 d14).
+    // that cannot is warned about (ADR-0044 d14). A submitter key holds no
+    // such grant and is not asked (ADR-0093 d2).
     let mut reads_universe: Option<bool> = None;
     let mut admin_emails: Option<(usize, Vec<String>)> = None;
     let mut signup_overview: Option<Value> = None;
@@ -6142,7 +6160,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut rescan_read: Option<Result<Value, String>> = None;
     let mut queue_read: Option<Result<Value, String>> = None;
     let mut default_node: Option<Value> = None;
-    // The user whose root holds a tenant writer key's default workspace
+    // The user whose root holds a tenant key's default workspace, for a key
+    // that writes
     // (ADR-0044 d16).
     let mut default_in_root_of: Option<String> = None;
     let mut waiting_edges: Option<usize> = None;
@@ -6192,8 +6211,11 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
                     )
                     .map(|(_, answer)| answer),
             );
+            // A submitter key recalls nothing and is issued no universe
+            // grant, so it is not asked (ADR-0093 d2).
             if let Some(Ok(v)) = &me
                 && v["user"].is_object()
+                && v["role"] != "submitter"
             {
                 reads_universe = Some(match client.get("/v2/workspaces/universe") {
                     Ok(_) => true,
@@ -6212,7 +6234,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
                     .ok()
                     .map(|(_, n)| n);
                 if v["user"].is_null()
-                    && v["role"] == "writer"
+                    && (v["role"] == "contributor" || v["role"] == "submitter")
                     && let Some(node) = &default_node
                 {
                     default_in_root_of = user_root_holding(&client, node);
@@ -8147,7 +8169,7 @@ mod tests {
             "{service}"
         );
         assert!(!service.contains("person_required"), "{service}");
-        assert_eq!(review_doctor(Some(&json!({"role": "writer"}))), None);
+        assert_eq!(review_doctor(Some(&json!({"role": "contributor"}))), None);
     }
 
     #[test]
@@ -9091,9 +9113,14 @@ mod tests {
     }
 
     #[test]
-    fn doctor_warns_when_a_tenant_writer_keys_default_workspace_lies_in_a_users_root() {
+    fn doctor_warns_when_a_tenant_writing_keys_default_workspace_lies_in_a_users_root() {
         let node = serde_json::json!({ "path": "universe.alice.project" });
-        let tenant_writer = serde_json::json!({ "role": "writer", "user": null });
+        let tenant_writer = serde_json::json!({ "role": "contributor", "user": null });
+        let tenant_submitter = serde_json::json!({ "role": "submitter", "user": null });
+        assert_eq!(
+            user_root_writes_doctor(Some(&tenant_submitter), Some(&node), Some("alice")),
+            user_root_writes_doctor(Some(&tenant_writer), Some(&node), Some("alice")),
+        );
         assert_eq!(
             user_root_writes_doctor(Some(&tenant_writer), Some(&node), Some("alice")).as_deref(),
             Some(
@@ -9106,7 +9133,7 @@ mod tests {
             user_root_writes_doctor(Some(&tenant_writer), Some(&node), None),
             None
         );
-        let alices = serde_json::json!({ "role": "writer", "user": { "name": "alice" } });
+        let alices = serde_json::json!({ "role": "contributor", "user": { "name": "alice" } });
         assert_eq!(
             user_root_writes_doctor(Some(&alices), Some(&node), Some("alice")),
             None
@@ -9227,6 +9254,46 @@ mod tests {
         let plain = serde_json::json!({ "expiry": null, "requests_per_minute": null });
         assert!(key_doctor(Some(&Ok(plain))).is_empty());
         assert!(key_doctor(None).is_empty());
+    }
+
+    /// The doctor names the key as the server serves it, by `whoami`'s
+    /// `without_recall`: a migrated v0.8.3 write-only user key holds a
+    /// reader grant, the `universe` node grant, and is named all the same,
+    /// since that grant reaches none of the nodes it writes (ADR-0093 d3, as
+    /// read on 2026-11-20).
+    #[test]
+    fn doctor_names_a_migrated_write_only_user_key_as_key_contributor_without_recall() {
+        let migrated = serde_json::json!({
+            "name": "ada-ingest",
+            "role": "contributor",
+            "grants": [
+                { "role": "submitter", "workspace_node_id": "root", "covers": "subtree" },
+                { "role": "reader", "workspace_node_id": "universe", "covers": "node" },
+            ],
+            "without_recall": true,
+        });
+        assert_eq!(
+            key_doctor(Some(&Ok(migrated))),
+            vec![
+                "warn key_contributor_without_recall: ada-ingest is a contributor key that writes where no reader grant of it reaches, a writer key issued with --write-only before v0.8.4; it works as before, but issue a submitter key with `oml keys issue-agent <name> --role submitter` and cut this one off",
+            ]
+        );
+        // A contributor that recalls where it writes, and a submitter, are
+        // told nothing.
+        let recalls = serde_json::json!({
+            "name": "ada",
+            "role": "contributor",
+            "grants": [{ "role": "submitter" }, { "role": "reader" }],
+            "without_recall": false,
+        });
+        assert!(key_doctor(Some(&Ok(recalls))).is_empty());
+        let submitter = serde_json::json!({
+            "name": "ada-ingest-2",
+            "role": "submitter",
+            "grants": [{ "role": "submitter" }],
+            "without_recall": false,
+        });
+        assert!(key_doctor(Some(&Ok(submitter))).is_empty());
     }
 
     #[test]

@@ -66,7 +66,7 @@ async fn the_metrics_listener_serves_the_four_families_with_closed_labels_and_no
             &boot.admin_key.value,
             &IssueKeyRequest {
                 profile: None,
-                role: Role::Writer,
+                role: Role::Submitter,
                 name: Name::parse("agent-7").expect("a name"),
                 principal: "crew/agent-7".to_owned(),
                 used_by: Some(UsedBy::Agent),
@@ -74,7 +74,7 @@ async fn the_metrics_listener_serves_the_four_families_with_closed_labels_and_no
                 crew: None,
                 grants: vec![GrantRequest {
                     node: boot.root_workspace_id.into(),
-                    role: Role::Writer,
+                    role: Role::Submitter,
                     deny: Vec::new(),
                     covers: Covers::Subtree,
                 }],

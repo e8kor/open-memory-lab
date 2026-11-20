@@ -73,13 +73,13 @@ async fn writer(app: &TestApp) -> String {
             &boot.admin_key.value,
             &IssueKeyRequest {
                 profile: None,
-                role: Role::Writer,
+                role: Role::Contributor,
                 name: Name::parse("w-key").expect("name"),
-                principal: "writer".to_owned(),
+                principal: "contributor".to_owned(),
                 used_by: Some(UsedBy::Agent),
                 default_workspace: None,
                 crew: None,
-                grants: vec![grant(Role::Writer), grant(Role::Reader)],
+                grants: vec![grant(Role::Submitter), grant(Role::Reader)],
                 connect_code: false,
                 user: None,
                 guardrail_scope: None,
@@ -152,10 +152,14 @@ async fn the_verdict_event_covers_the_format_the_version_was_signed_with() {
     let w = app
         .issue_key(
             admin,
-            &issue("w-key", R::Writer, vec![grant(R::Writer), grant(R::Reader)]),
+            &issue(
+                "w-key",
+                R::Contributor,
+                vec![grant(R::Submitter), grant(R::Reader)],
+            ),
         )
         .await
-        .expect("writer");
+        .expect("contributor");
     let d = app
         .issue_key(
             admin,
