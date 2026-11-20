@@ -40,3 +40,4 @@ eval/recall/check_data.py  # origin.writer names who drafted a query, not a role
 eval/recall/federated.py  # writer.key is a state file's name, not a role (d7)
 eval/recall/fed2.py | ("writer", "reviewer", "reader")  # writer.key is a state file's name, not a role (d7)
 testing/spikes/rls/spike_rls.py  # a frozen spike of the v0.3 schema, run against that schema alone (d7)
+crates/clients/oml-web/tests/web_pages.rs | writer  # the console refuses the retired role and draws no option for it, which its test names (d6, d7)
