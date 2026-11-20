@@ -674,3 +674,19 @@ beside a decision, for the operator to confirm or reverse.
     issuance and never widen one afterwards, the admin does it by issuing a key at `latest`
     **[operator batch]**.
   - Every other widening stays as d7 says.
+
+## Operator decisions of 2026-11-20 (d16, #498 fourth review)
+
+- **A write records the person its key counts as.** The author's person a version records at its
+  write is the person the author key counts as: a user key counts as its issuer's person, so a key
+  an admin minted in carol's root records the admin's person
+  ([ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md),
+  the decision of 2026-11-20, "counts as the issuer"). R2 by person reads both that record and the
+  root the author key was issued in, so the `same_user` mark of an ordinary review is unchanged.
+- **An inserted key carries no link.** Migration 0064's `api_keys_link_guard` covers inserts: a key
+  is inserted with no `linked_user_id` and no `link_pending_user_id`. The ceremony's link of its own
+  admin key is admitted only while that key is its tenant's only key, as it is at the ceremony, so
+  an admin key no key issued, inserted later beside other keys, never reaches it. What the database still leaves to the serving role, `link_pending_user_id`, a
+  key's `hash` and `web_emails.pending_since`, is listed in
+  [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)'s
+  limits table of 2026-11-20.

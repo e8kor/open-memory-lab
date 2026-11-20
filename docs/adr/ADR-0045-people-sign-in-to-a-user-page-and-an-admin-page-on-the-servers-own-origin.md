@@ -1,7 +1,7 @@
 <!--
 id: adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin
 tier: engineering
-status: accepted design · 2026-11-04 · amended 2026-11-13 (d9, d11, d27, d32), accepted by the operator the same day
+status: accepted design · 2026-11-04 · amended 2026-11-13 (d9, d11, d27, d32), accepted by the operator the same day · amended 2026-11-20 by the operator after the fourth review of #498 (who is an existing person, the bootstrap's email, the accept's admin flag; see the decisions of 2026-11-20 at the end)
 answers: why OML now serves a web console after ADR-0015 declined one, and how each of ADR-0015's reasons is answered; which pages and routes the lead serves and why so few; how a person signs in with Google or GitHub and what the server checks; what the email allowlist holds, who maintains it, how the first admin gets in and what removing an email ends; how a signed-in person maps to ADR-0044's user; which identity signs each act a page performs and how R1 keeps the pages out of every agent's reach; what the user page and the admin page do; how review, curation, demotion and supersession run from a page without the admin key; what the admin reads and how that read is journalled; the session, CSRF, clickjacking, CSP, rate-limit and logging rules; the request-line fields for web requests; the doctor lines; how the Memories view lists, filters and pages, what each page's list may show, how the Atlas view draws the same page from a JSON route and what its script changes in the CSP and in risk, and how a workspace's acts become a dropdown of what the key may do; what it amends in ADR-0010, ADR-0015, ADR-0025, ADR-0026, ADR-0031, ADR-0042 and ADR-0044
 -->
 
@@ -1141,3 +1141,61 @@ link. It amends d2, d5 and d18.
   journal event, one nullable column on `web_emails`, and one store read on each `whoami` that
   serves a person.
 
+
+## Operator decisions of 2026-11-20: who is an existing person, the bootstrap's email, and what the accept names
+
+The fourth review of #498 found three gaps in the note above. The operator decided them on
+2026-11-20 ("widen + bootstrap email"); they amend d2, d10 and the note of 2026-11-19.
+
+- **An existing person is any person a key names (amends the build's reading above).** A user is
+  existing when an entry of the tenant names them, their session keys exist, or a key names their
+  user root as its `user_root_id`, its `linked_user_id` or its `link_pending_user_id`. The first
+  address an admin adds for such a person waits on them. The reviewer's two probes, a person an
+  admin made from the CLI by issuing a user key and the person a bootstrap claim named, now leave
+  the admin's address pending. A user root no key names, and a name no root holds, take a first
+  address at once, as before.
+- **The bootstrap claim takes the person's email.** `POST /v2/bootstrap/claim` with `person` takes
+  `email`, the person's sign-in address, and records it as that person's admin entry, accepted
+  (`web.email_allowed` with `pending: false`, by the operator, in the commit that links the first
+  admin key). `person` and `email` travel together: either alone is `request.validation` naming the
+  one missing. `oml bootstrap claim --person <name> --email <address>`, `scripts/quickstart.sh`
+  and `scripts/poc-demo.sh` send both; the CI stack jobs sign in a new person, `e2e`, whom no key
+  names, so its first address still signs in at once. This replaces "The bootstrap claim adds no
+  entry" above.
+- **A person with keys and no address.** No route lets a person add an address of their own: the
+  allowlist is the admin's (d2), and the bootstrap is the one other way an address is recorded as
+  accepted. A person whose root an admin made by issuing a user key, and who never signed in,
+  therefore has no way to accept an address. The narrowest path the records allow is a new user
+  name, the recovery path above: the admin adds the address under a new name, and the keys the
+  admin issued in the old root count as the admin's person, not that person's
+  ([ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md),
+  the decision of the same day, "counts as the issuer"), so that root's person loses no authority
+  they held. A route by which a person adds an address from their own session is not built; it
+  would reach only persons who already sign in, so it would not close this gap either.
+- **The last admin entry (d10).** A change that leaves the tenant's last live admin entry pending
+  is refused as its un-flagging is: a pending entry signs in to nothing. The store checks
+  `keep_an_admin && (!admin || pending)` in the commit's own transaction, on either store.
+- **The accept names the admin flag the person reviewed.** `GET /v2/whoami` serves each pending
+  address with its `admin` flag and the admin key that added it, or changed it to name the person
+  (`added_by`, by id and name); the Keys page shows both. `POST /v2/web/emails/accept` takes
+  `{email, admin}`, the flag shown; an entry whose flag is not that one is refused
+  `request.validation`, `details.field: /admin`, `details.reason: changed`, and journals nothing.
+  `web.email_accepted` journals the flag, and its fold matches it with the email and the user, so a
+  flip between the read and the commit fails the commit. A change that makes an entry newly wait on
+  its person records the changing admin key as `added_by`.
+- The cost: two key-list reads on an `allow_web_email` for a name no entry and no session key
+  names, one key read per pending address on a `whoami` that serves a person, and one field on the
+  accept.
+
+### Limits of the database's guard
+
+| What the database guards | What it does not |
+|---|---|
+| An insert into `api_keys` carries no `linked_user_id` and no `link_pending_user_id` (`api_keys_link_guard`, migration 0064) | The serving role sets `link_pending_user_id` without a guard, so a role that can write `api_keys` can set a pending link and then accept it in a second update; the guard holds only the shape of each update |
+| An update sets `linked_user_id` only to NULL, from the pending link to the same root, or on the bootstrap ceremony's own admin key while that key is the tenant's only one; `issued_by` never changes | The serving role updates `api_keys.hash` without a guard, so it can rotate a key's value |
+| A session opens only on an entry with `pending_since` NULL | The serving role sets and clears `web_emails.pending_since` without a guard, so it can accept an entry for its person |
+| | One admin can always create a new person, a name no key and no entry names, add an address of their own for it that signs in at once, and confirm a fix through that person's reviewer key. The operator accepted this by the third decision of 2026-11-19 ([ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md)); the new person's entry and the fix name the admin key that made each, so the act is visible in the journal |
+
+Each row on the right needs the serving role's credentials or an admin key, which this deployment
+already trusts with the tenant's rows. Closing them takes a guard per column, or a separate role
+for sign-in rows, and no decision asks for either yet.

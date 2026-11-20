@@ -10,7 +10,7 @@ answers: which acts an admin key may take on a workspace's content, on which tar
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its five questions decided at their
 recommendations and every other default as drafted, and its amendment of ADR-0001 d5 accepted with
 it · proposed the same day · amended 2026-11-17 by the operator (d16: demote's targets, the
-fix route as the one surface for demote and erase, erase's claim-wide scope, a fix's events; as-of reads skip a demoted version) · readings of 2026-11-18 recorded for the operator's batch (d17) · amendments of d8 of 2026-11-18, from the operator's batch (strict confirmation wherever the fixed version is served to production and for any target outside the admin's own root; a cut refuses a `same_user`-only member; #429), accepted 2026-11-19 by the operator · amended 2026-11-19 by the operator (d16, O8: a claim whose approved versions are all demoted is written again, continuing its numbers; #474) · amended 2026-11-19 by the operator after the review of #498 (an admin key is linked to its person; the settlement fails closed; a revert checks R2 by person; proposed for the record, see the decision at the end) · amended 2026-11-19 by the operator after the second review of #498 (a link of an admin or reviewer key takes effect only once its person accepts it; each fix records its admin's person, which the settlement compares; see the second decision at the end) · reading of 2026-11-19 in d17 (a fix whose mark a later fix takes over is settled `superseded`) · amended 2026-11-19 by the operator after the third review of #498 (a sign-in email an admin adds for an existing person waits on that person; a key's link set only through an acceptance; see the third decision at the end)
+fix route as the one surface for demote and erase, erase's claim-wide scope, a fix's events; as-of reads skip a demoted version) · readings of 2026-11-18 recorded for the operator's batch (d17) · amendments of d8 of 2026-11-18, from the operator's batch (strict confirmation wherever the fixed version is served to production and for any target outside the admin's own root; a cut refuses a `same_user`-only member; #429), accepted 2026-11-19 by the operator · amended 2026-11-19 by the operator (d16, O8: a claim whose approved versions are all demoted is written again, continuing its numbers; #474) · amended 2026-11-19 by the operator after the review of #498 (an admin key is linked to its person; the settlement fails closed; a revert checks R2 by person; proposed for the record, see the decision at the end) · amended 2026-11-19 by the operator after the second review of #498 (a link of an admin or reviewer key takes effect only once its person accepts it; each fix records its admin's person, which the settlement compares; see the second decision at the end) · reading of 2026-11-19 in d17 (a fix whose mark a later fix takes over is settled `superseded`) · amended 2026-11-19 by the operator after the third review of #498 (a sign-in email an admin adds for an existing person waits on that person; a key's link set only through an acceptance; see the third decision at the end) · amended 2026-11-20 by the operator after the fourth review of #498 (a user key counts as its issuer's person; what one admin can still do is recorded in the third decision; see the decision of 2026-11-20 at the end)
 
 **Release:** built in v0.8.4, except the release overlays (d5), which wait for ADR-0085
 
@@ -627,4 +627,39 @@ existing person. Two defences follow here.
   `linked_user_id` but the bootstrap ceremony's key's to `link_pending_user_id`, so each person
   accepts it before the key acts for them. v0.7.3, the release in production, has no link; a
   stage or development database that applied an earlier draft of 0064 is reset (upgrades).
+- **What stays possible, accepted by this decision (recorded 2026-11-20).** One admin can always
+  create a new person, a name no key and no entry names, add an address of their own for it that
+  signs in at once, sign in as that person and confirm a fix through that person's reviewer key.
+  The pending rule protects existing persons, not names an admin invents; the new person's entry
+  and the fix each name the admin key that made them, so the act is visible in the journal.
+  [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)'s
+  limits table of 2026-11-20 lists it beside what the database does not guard.
+
+## Operator decision of 2026-11-20: a user key counts as its issuer's person (#498 fourth review)
+
+The fourth review found that an admin key linked to alice could demote carol's claim, mint
+`carol/forged`, a user key in carol's root, and confirm the fix through it: the key counted as
+carol because of the root it was issued in. The operator decided on 2026-11-20 that such a key
+"counts as the issuer".
+
+- **The person a key counts as.** Where authority is weighed, the admin's person a fix records,
+  who settles a fix (d8) and the author's person a write records (ADR-0085 d16, #448), a session
+  key counts as its `session_user`, a linked key as its accepted link's person, and a user key as
+  the person its issuer counts as, walked up `issued_by`. A user key counts as its root's person
+  only when a key that already counts as that person issued it: the person's own session key
+  (`<user>-web`) or a key one issued. A user key an admin, or another person's key, issued for
+  someone's root counts as its issuer's person, and as no one where the issuer counts as no one,
+  which settles nothing (d8 fails closed). A chain longer than 32 keys counts as no one.
+- **The root a settlement compares.** A same-person settlement is marked `same_user` only inside
+  the root of the person the settling key counts as, never the root the key was issued in. In the
+  reviewer's scenario `carol/forged` counts as alice, the fix lies in carol's root, and the confirm
+  and the revert are refused `same_person`.
+- **R2 by person takes both readings.** Where the reviewer must not be the author, an author key
+  acts for a person on either reading: the person it counts as or the person whose root it was
+  issued in. So an ordinary review by alice of a write by a key an admin issued in alice's root is
+  still marked `same_user`, and the change makes no reviewer less the author.
+- **Where the root still decides.** Which root a key writes in (ADR-0044 d3, the user-root rule)
+  is unchanged: a key issued in carol's root writes there, whoever counts for it.
+- The cost: one key read per user key on each of those reads, and one more on an ordinary verdict.
+
 
