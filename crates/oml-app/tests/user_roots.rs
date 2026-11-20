@@ -6465,6 +6465,131 @@ async fn a_key_issued_in_the_fix_admins_root_settles_as_the_admins_person_whoeve
     assert_eq!(settled.settled_same_user, Some(true), "{settled:?}");
 }
 
+/// The re-verifier's sixth-round probe A: alice's admin key mints
+/// `carol/forged`, alice demotes carol's claim, and the admin key is then
+/// relinked to bob, who accepts. `carol/forged` now counts as bob, but its
+/// `issued_by` chain passes through the fix's admin key, so it settles the
+/// fix only as the fix's admin's person would: outside alice's own root,
+/// neither a confirm nor a revert, and the doctor count reads the fix as
+/// one only the admin's person holds reviewer on (ADR-0089, the reading of
+/// 2026-11-20).
+#[tokio::test]
+async fn a_key_the_fix_admins_key_issued_settles_as_the_admins_person_after_a_relink() {
+    let r = fix_rig().await;
+    let admin = r.boot.admin_key.value.as_str();
+    let claim = carols_claim_by_admin_minted_keys(&r).await;
+    let forged = user_reviewer(&r.app, admin, "carol", "carol/forged").await;
+    let fix = r
+        .app
+        .admin_fix(admin, &fix_req(oml_app::types::FixAct::Demote, claim, None))
+        .await
+        .expect("alice's admin key demotes carol's claim");
+    assert_eq!(fix.admin_person, name("alice"));
+    r.app
+        .unlink_key_from_person(Bearer::Session(&r.ops), r.boot.admin_key.key_id.into())
+        .await
+        .expect("unlinked");
+    link_accepted(&r.app, &r.store, &r.ops, r.boot.admin_key.key_id, "bob").await;
+    for settle in [true, false] {
+        let err = if settle {
+            r.app.confirm_fix(&forged.value, fix.fix_id).await
+        } else {
+            r.app.revert_fix(&forged.value, fix.fix_id).await
+        }
+        .unwrap_err();
+        assert!(matches!(err, AppError::SamePerson), "{err:?}");
+    }
+    let listed = r.app.review_fixes(&forged.value).await.expect("list");
+    assert!(!listed[0].settles, "{listed:?}");
+    let stats = r.app.fix_stats(r.boot.tenant_id).await.expect("stats");
+    assert_eq!(stats.admin_person_only, 1, "{stats:?}");
+}
+
+/// The re-verifier's sixth-round probe B: a person's reviewer key that
+/// counts as no one confirms no fix, so `oml doctor` does not count it as
+/// another person who could: with bob's reviewer key unlinked, only alice's
+/// own key holds reviewer on `team` as anyone, and alice's fix there reads
+/// as one only the admin's person holds reviewer on, as the settlement
+/// judges it (ADR-0089 d15).
+#[tokio::test]
+async fn a_reviewer_key_that_counts_as_no_one_is_no_other_person_in_the_fix_stats() {
+    let r = fix_rig().await;
+    let admin = r.boot.admin_key.value.as_str();
+    let fix = r
+        .app
+        .admin_fix(admin, &edit(r.claim, "The queue drains hourly."))
+        .await
+        .expect("alice's fix");
+    r.app
+        .unlink_key_from_person(Bearer::Session(&r.ops), r.bob_review.key_id.into())
+        .await
+        .expect("unlinked");
+    let err = r
+        .app
+        .confirm_fix(&r.bob_review.value, fix.fix_id)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::SamePerson), "{err:?}");
+    let stats = r.app.fix_stats(r.boot.tenant_id).await.expect("stats");
+    assert_eq!(stats.without_person_reviewer, 0, "{stats:?}");
+    assert_eq!(stats.admin_person_only, 1, "{stats:?}");
+}
+
+/// The re-verifier's sixth-round probe C: dora writes a claim in her own
+/// root, alice's admin key demotes it, and bob's admin key mints
+/// `dora/handed` in dora's root. That key counts as bob but was issued in
+/// dora's root, so it acts for dora, the claim's author, on the root
+/// reading: its revert is marked `same_user`, as review's `same_person`
+/// marks a review inside the person's own root (ADR-0089; ADR-0001 d5).
+#[tokio::test]
+async fn a_key_issued_in_the_authors_root_reverts_a_fix_of_the_authors_claim_as_the_author() {
+    let r = fix_rig().await;
+    let admin = r.boot.admin_key.value.as_str();
+    signed_in(&r.app, admin, "dora", false).await;
+    let web = console_of(&r.app, &r.store, "dora").await;
+    let own = r
+        .app
+        .issue_own_key(&web, "laptop", Role::Writer, false, None)
+        .await
+        .expect("dora issues her own key");
+    let claim = written(
+        &r.app,
+        own.value.as_str(),
+        &submit("cf4", "The kettle boils at noon.", Some("dora")),
+    )
+    .await;
+    let reviewer = user_reviewer(&r.app, admin, "dora", "dora/review").await;
+    r.app
+        .post_verdict(&reviewer.value, claim, Verdict::Approve, None)
+        .await
+        .expect("approve");
+    let fix = r
+        .app
+        .admin_fix(admin, &fix_req(oml_app::types::FixAct::Demote, claim, None))
+        .await
+        .expect("alice's admin key demotes dora's claim");
+    let bobs_admin = r
+        .app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                user: None,
+                used_by: Some(UsedBy::Person),
+                ..user_req(Role::Admin, "unused", "bob/admin", Vec::new())
+            },
+        )
+        .await
+        .expect("an admin key bob holds");
+    link_accepted(&r.app, &r.store, &r.ops, bobs_admin.key_id, "bob").await;
+    let handed = user_reviewer(&r.app, bobs_admin.value.as_str(), "dora", "dora/handed").await;
+    let settled = r
+        .app
+        .revert_fix(&handed.value, fix.fix_id)
+        .await
+        .expect("dora's own development root");
+    assert_eq!(settled.settled_same_user, Some(true), "{settled:?}");
+}
+
 /// A write records as its author's person the person its key counts as:
 /// a key an admin linked to alice minted in carol's root records alice, and
 /// a key carol's own console session issued records carol.
