@@ -1,4 +1,4 @@
-//! Workspace imports (ADR-0084 d6-d11, R11, I4; #426): a person's writer
+//! Workspace imports (ADR-0084 d6-d11, R11, I4; #426): a person's contributor
 //! key imports a decrypted bundle it uploaded through one upload session
 //! (ADR-0004 d3) into an in-progress workspace. The bundle is verified
 //! before anything is written, the plan is made against the target, and

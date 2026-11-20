@@ -60,8 +60,8 @@ use uuid::Uuid;
 use oml_domain::access::{
     AccessRefusal, Covers, Grant, IssuanceRefusal, KeyDenial, LabelledGrant, TailCaller,
     TailSubject, Verb, VerbRefusal, admissible_grant_roles, check_contributor_grants,
-    check_issuance, effective_access, effective_roles, effective_verbs, resolve, resolve_verb,
-    tail_visible,
+    check_issuance, contributor_without_recall, effective_access, effective_roles, effective_verbs,
+    recall_ancestries_needed, resolve, resolve_verb, tail_visible,
 };
 use oml_domain::anchor::{self as anchor_grammar, Anchor, SourceCheckBody};
 use oml_domain::brief::{brief_cut, brief_order};
@@ -2311,7 +2311,7 @@ where
     /// (ADR-0044 d16): `submission.user_root_refused` when `node` is a user
     /// root or lies beneath one and `key` does not act for that root's
     /// user, so a tenant key and another person's key are refused alike,
-    /// whatever writer or reviewer grant reaches the node. The person a key
+    /// whatever submitter or reviewer grant reaches the node. The person a key
     /// acts for is read as `same_user` reads it, by [`Self::person_of`]: a
     /// user key's root, or a session key's `session_user`, which is how
     /// `<user>-review` names its person (ADR-0045 d6). The two acts that
@@ -2360,6 +2360,11 @@ where
             .await?;
         if caller.owns(memory.author_key_id) {
             return Ok(!caller.denied(&ancestry));
+        }
+        // A submitter reads only the rows it wrote, whatever its grants
+        // (ADR-0093 d2, as read on 2026-11-20).
+        if caller.key.role == Role::Submitter {
+            return Ok(false);
         }
         let reader = caller.effective(&ancestry).contains(&Role::Reader);
         if memory.status == MemoryStatus::Held && reader {
@@ -3089,7 +3094,7 @@ where
     }
 
     /// The user root an issuance names in `user`: `user` is admitted on a
-    /// reader, writer or reviewer key used by an agent or a person, and never
+    /// reader, contributor, submitter or reviewer key used by an agent or a person, and never
     /// names `universe`; a user root holding the name is joined, a shared
     /// workspace holding it is `name.taken`, and otherwise the root is to be
     /// created, under a fresh id (ADR-0044 d2, d14). Nothing is journalled
@@ -3542,8 +3547,12 @@ where
             }
         }
         // A user key reads `universe`'s own claims through one reader grant
-        // on that node alone, which the request did not send (ADR-0044 d3).
-        if let Some(u) = &user {
+        // on that node alone, which the request did not send (ADR-0044 d3);
+        // a submitter key recalls nothing and gets none (ADR-0093 d2, as
+        // read on 2026-11-20).
+        if let Some(u) = &user
+            && req.role != Role::Submitter
+        {
             grants.push(Grant {
                 grant_id: self.ids.new_id(),
                 node: u.universe,
@@ -3834,7 +3843,7 @@ where
     /// last, by the store's unique index: `name.taken`, and nothing is
     /// journalled (ADR-0026 d5, d6). A contributor user key creates too, under a
     /// parent inside its own root where its effective access confers
-    /// writer, the root itself when `parent` is omitted, by the refusal
+    /// submitter, the root itself when `parent` is omitted, by the refusal
     /// order on the parent; the node's name lands in that root's namespace
     /// (ADR-0044 d5, d6). A parent that is `frozen` refuses the child as
     /// `workspace.frozen` after both lookups and before the name, so a frozen
@@ -4445,6 +4454,7 @@ where
                 user: None,
                 grants: Vec::new(),
                 denied: None,
+                without_recall: false,
             });
         };
         // The person's `<user>-web` alone is told, and only whether: the
@@ -4458,6 +4468,7 @@ where
             .key_references(key.tenant_id, key.key_id)
             .await?
             .ok_or(AppError::Unauthorized)?;
+        let without_recall = self.without_recall(&key, Some(&access)).await?;
         Ok(Whoami {
             key,
             tenant: Some(references.tenant),
@@ -4466,7 +4477,30 @@ where
             user: references.user,
             grants: access.grants,
             denied,
+            without_recall,
         })
+    }
+
+    /// Whether `key`, holding `access`, is a contributor without recall: a
+    /// submitter grant on a node no reader grant of it reaches (ADR-0093 d3,
+    /// as read on 2026-11-20), decided by the domain's one definition. A
+    /// submitter grant's ancestry is read only where no reader grant sits on
+    /// its own node, so a key with a reader beside each submitter grant, and
+    /// every key of another role, costs no read.
+    pub(crate) async fn without_recall(
+        &self,
+        key: &KeyRecord,
+        access: Option<&KeyAccess>,
+    ) -> Result<bool, AppError> {
+        let Some(access) = access else {
+            return Ok(false);
+        };
+        let grants: Vec<Grant> = access.grants.iter().map(|g| g.grant.clone()).collect();
+        let mut ancestries = BTreeMap::new();
+        for node in recall_ancestries_needed(key.role, &grants) {
+            ancestries.insert(node, self.ancestry(key.tenant_id, node).await?);
+        }
+        Ok(contributor_without_recall(key.role, &grants, &ancestries))
     }
 
     /// Change a crew record's charter URI or external manager, never its
@@ -5010,7 +5044,7 @@ where
     /// node keeps its status until a second identity ratifies it (ADR-0009
     /// d3). The refusal order: (1) the key role, before any lookup, an admin
     /// key passing on its role and any other key needing reviewer among its
-    /// admissible grant roles, so a reader, writer or operator key is
+    /// admissible grant roles, so a reader, contributor, submitter or operator key is
     /// `access.verb_ceiling`; (2) the node resolves; (3) a reviewer key needs
     /// reviewer effective access on it, `access.not_found` outside read access
     /// and `access.grant_refused` within it; (4) the ladder, on the node and
@@ -5846,7 +5880,7 @@ where
         Ok(similar)
     }
 
-    /// Submit a memory: writer on the resolved node, which must exist, by
+    /// Submit a memory: submitter on the resolved node, which must exist, by
     /// the refusal order (ADR-0025 d1), and in a user root the key that
     /// user's own, else `submission.user_root_refused` where the key reads
     /// the node (ADR-0044 d16); every `derives_from` target readable
@@ -9088,7 +9122,8 @@ where
         let caller = self.authenticate_bearer(bearer.into()).await?;
         // A submitter key recalls nothing but reads its own rows in every
         // state (ADR-0025 d3; ADR-0093 d2), so its role passes step 1 here
-        // and `readable` admits its own rows alone.
+        // and `readable` admits its own rows alone, whatever its grants: any
+        // other id is `access.not_found`.
         if caller.key.role != Role::Submitter {
             require_admissible(&caller.key, Role::Reader, "get")?;
         }
@@ -9336,7 +9371,7 @@ where
     }
 
     /// Record a source check on a promoted, anchored served tip (ADR-0057
-    /// d5, d18): from its author key (writer), or a reviewer with reviewer
+    /// d5, d18): from its author key (a contributor), or a reviewer with reviewer
     /// access on its workspace; a contributor that can read it and did not author
     /// it is `access.author_only`, and a key that cannot read it is told
     /// nothing. A held, unanchored or superseded version is
@@ -9604,7 +9639,7 @@ where
     /// target stays the served tip, and stays in everyone's recall, until a
     /// non-author ratifies the successor (ADR-0025 d10). With `retirement`
     /// the successor proposes retiring the claim (d11). The supersede rule
-    /// runs in its order: a key role admitting writer or reviewer (step 1);
+    /// runs in its order: a key role admitting submitter or reviewer (step 1);
     /// the idempotency record, scoped to the key with a nil workspace, looked
     /// up next and replayed whatever the target's state now; the target
     /// readable (step 2), and, where it is a ratified retirement in a user

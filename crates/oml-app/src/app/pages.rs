@@ -92,6 +92,9 @@ pub struct OwnKey {
     pub access: Option<KeyAccess>,
     /// A global denial on `universe` cuts it off.
     pub cut_off: bool,
+    /// A contributor without recall, which the console marks "no recall"
+    /// (ADR-0093 d3, as read on 2026-11-20).
+    pub without_recall: bool,
 }
 
 /// One workspace's queue with its path (ADR-0045 d10).
@@ -471,10 +474,12 @@ where
             let cut_off = access
                 .as_ref()
                 .is_some_and(|a| a.denials.iter().any(|d| Some(d.denial.node) == universe));
+            let without_recall = self.without_recall(&key, access.as_ref()).await?;
             out.push(OwnKey {
                 key,
                 access,
                 cut_off,
+                without_recall,
             });
         }
         Ok(out)
@@ -485,7 +490,7 @@ where
     /// the person's user, granted on their root and nothing else, named
     /// `<user>-<name>` with the session suffixes reserved, issued by
     /// `<user>-web`; with `connector`, a connector key and its connect code.
-    /// Issuance never amplifies authority: `<user>-web` holds writer there, and
+    /// Issuance never amplifies authority: `<user>-web` holds submitter there, and
     /// the key it issues holds no more, so a `<user>-web` that carries a
     /// denial issues none (#325). The person may end the key on a date,
     /// `expiry`, later than now as at every issuance; the key takes no rate
@@ -677,10 +682,12 @@ where
             let cut_off = access
                 .as_ref()
                 .is_some_and(|a| a.denials.iter().any(|d| Some(d.denial.node) == universe));
+            let without_recall = self.without_recall(&key, access.as_ref()).await?;
             out.push(OwnKey {
                 key,
                 access,
                 cut_off,
+                without_recall,
             });
         }
         Ok(out)

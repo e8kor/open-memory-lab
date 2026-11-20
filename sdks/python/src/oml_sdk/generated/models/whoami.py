@@ -60,6 +60,11 @@ class Whoami:
                 for those acts when it is true (ADR-0070 d2, d5; ADR-0039 d15; since v0.7.3).
             person (None | Unset | WhoamiPerson): The person the key's user root names; null for a tenant key (ADR-0070 d5).
                 Absent with person=false (#286).
+            without_recall (bool | Unset): Whether this key is a contributor without recall: a contributor key holding a
+                submitter grant on a node that no reader grant of it reaches, before its deny masks, such as a v0.8.3 writer key
+                issued write-only, user keys whose one reader grant is the universe node grant among them. It works as before;
+                oml doctor names it key_contributor_without_recall. false for every other key; optional here so a client reads
+                an answer without it, from an older server, as false (ADR-0093 d3, as read on 2026-11-20).
             shared (bool | Unset): Whether the server's admins are not the caller's: true when the operator sets
                 server.shared or opens sign-up. oml sync asks consent of a shared server; a server from this release always
                 sends it; optional here so a client reads an answer without it, from an older server, as false (ADR-0076 d9).
@@ -87,6 +92,7 @@ class Whoami:
     requests_per_minute: int | None | Unset = UNSET
     denied: bool | Unset = UNSET
     person: None | Unset | WhoamiPerson = UNSET
+    without_recall: bool | Unset = UNSET
     shared: bool | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
@@ -174,6 +180,8 @@ class Whoami:
         else:
             person = self.person
 
+        without_recall = self.without_recall
+
         shared = self.shared
 
         field_dict: dict[str, Any] = {}
@@ -204,6 +212,8 @@ class Whoami:
             field_dict["denied"] = denied
         if person is not UNSET:
             field_dict["person"] = person
+        if without_recall is not UNSET:
+            field_dict["without_recall"] = without_recall
         if shared is not UNSET:
             field_dict["shared"] = shared
 
@@ -401,6 +411,8 @@ class Whoami:
 
         person = _parse_person(d.pop("person", UNSET))
 
+        without_recall = d.pop("without_recall", UNSET)
+
         shared = d.pop("shared", UNSET)
 
         whoami = cls(
@@ -420,6 +432,7 @@ class Whoami:
             requests_per_minute=requests_per_minute,
             denied=denied,
             person=person,
+            without_recall=without_recall,
             shared=shared,
         )
 

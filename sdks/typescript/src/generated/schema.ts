@@ -77,7 +77,7 @@ export interface paths {
         };
         /**
          * One memory with its text (decrypted on the serving path) and attachment descriptors.
-         * @description The calling key may fetch its own rows in any state, with no grant needed (global denials still mask). Anyone else needs reader effective access on the row's workspace and sees promoted versions only — superseded versions and every version of a retired claim stay fetchable as history. Get takes the row's own workspace as its implicit scope, so a non-own self_signed version is served to a key with reader effective access there. Anything else answers access.not_found (ADR-0025 d3). Erased answers 410 lifecycle.erased only to a key that could read the version immediately before its erasure — its author's key set, or, when it was promoted then, a key with reader effective access on its workspace; readability is checked first, and every other key gets access.not_found. Resolves no workspace: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea. derives_from lists only ancestors the caller can read, replaces is null when the caller cannot read the replaced version, and workspace_id is null on an own row whose node the key holds no role on. With as_of, a version recorded after the instant is access.not_found and any other answers as get does today (ADR-0059 d19); as_of is the only query parameter get takes.
+         * @description The calling key may fetch its own rows in any state, with no grant needed (global denials still mask); a submitter key fetches those alone, whatever its grants (ADR-0093 d2). Anyone else needs reader effective access on the row's workspace and sees promoted versions only — superseded versions and every version of a retired claim stay fetchable as history. Get takes the row's own workspace as its implicit scope, so a non-own self_signed version is served to a key with reader effective access there. Anything else answers access.not_found (ADR-0025 d3). Erased answers 410 lifecycle.erased only to a key that could read the version immediately before its erasure — its author's key set, or, when it was promoted then, a key with reader effective access on its workspace; readability is checked first, and every other key gets access.not_found. Resolves no workspace: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea. derives_from lists only ancestors the caller can read, replaces is null when the caller cannot read the replaced version, and workspace_id is null on an own row whose node the key holds no role on. With as_of, a version recorded after the instant is access.not_found and any other answers as get does today (ADR-0059 d19); as_of is the only query parameter get takes.
          */
         get: operations["getMemory"];
         put?: never;
@@ -3067,7 +3067,7 @@ export interface components {
             role: components["schemas"]["Role"];
             /** @description The key's name: unique in its namespace (409 name.taken), never changed, never released; distinct from principal and label (ADR-0026 d9). */
             name: components["schemas"]["Name"];
-            /** @description Taken exactly as sent, except that a user key also gets a reader grant on the universe node alone (ADR-0025 d2; ADR-0044 d3). The CLI's reader grant beside a contributor key's submitter grant is sent here like any other (ADR-0028 d2; ADR-0093 d6). A contributor key without a reader or a submitter grant is request.validation, details.field /grants, details.reason contributor_grants, and nothing is journalled; the server adds no grant (ADR-0093 d2). */
+            /** @description Taken exactly as sent, except that a user key other than a submitter key also gets a reader grant on the universe node alone (ADR-0025 d2; ADR-0044 d3; a submitter recalls nothing, ADR-0093 d2). The CLI's reader grant beside a contributor key's submitter grant is sent here like any other (ADR-0028 d2; ADR-0093 d6). A contributor key without a reader or a submitter grant is request.validation, details.field /grants, details.reason contributor_grants, and nothing is journalled; the server adds no grant (ADR-0093 d2). */
             grants?: components["schemas"]["GrantRequest"][];
             /** @description The person the key acts for, by the user's name: a user key, whose every grant must lie in its user root universe.<user> (403 access.issuer_ceiling, details user) and whose workspace references resolve in that root's namespace. The first key naming a user creates the root; a name a shared workspace holds is 409 name.taken. Refused on admin and operator keys, on used_by service and for universe (request.validation, details.field /user) (ADR-0044 d2, d3). */
             user?: components["schemas"]["Name"];
@@ -3505,6 +3505,8 @@ export interface components {
             denied?: boolean;
             /** @description The person the key's user root names; null for a tenant key (ADR-0070 d5). Absent with person=false (#286). */
             person?: components["schemas"]["WhoamiPerson"] | null;
+            /** @description Whether this key is a contributor without recall: a contributor key holding a submitter grant on a node that no reader grant of it reaches, before its deny masks, such as a v0.8.3 writer key issued write-only, user keys whose one reader grant is the universe node grant among them. It works as before; oml doctor names it key_contributor_without_recall. false for every other key; optional here so a client reads an answer without it, from an older server, as false (ADR-0093 d3, as read on 2026-11-20). */
+            without_recall?: boolean;
             /** @description Whether the server's admins are not the caller's: true when the operator sets server.shared or opens sign-up. oml sync asks consent of a shared server; a server from this release always sends it; optional here so a client reads an answer without it, from an older server, as false (ADR-0076 d9). */
             shared?: boolean;
         };
@@ -3568,6 +3570,8 @@ export interface components {
             expired?: boolean;
             /** @description The key's own requests per UTC minute; null for none of its own (ADR-0079 d4; since v0.7.3). */
             requests_per_minute?: number | null;
+            /** @description Whether the key is a contributor without recall: a contributor key holding a submitter grant on a node that no reader grant of it reaches, before its deny masks; the console marks it no recall (ADR-0093 d3, as read on 2026-11-20; since v0.8.4). */
+            without_recall: boolean;
             grants: {
                 role: components["schemas"]["Role"];
                 /** Format: uuid */
@@ -6205,11 +6209,22 @@ export interface operations {
                      *           "expiry": null,
                      *           "expired": false,
                      *           "requests_per_minute": null,
+                     *           "without_recall": false,
                      *           "grants": [
                      *             {
                      *               "role": "submitter",
                      *               "workspace_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *               "path": "universe.alice"
+                     *             },
+                     *             {
+                     *               "role": "reader",
+                     *               "workspace_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+                     *               "path": "universe.alice"
+                     *             },
+                     *             {
+                     *               "role": "reader",
+                     *               "workspace_id": "0b5e9d2a-6c3f-4e8a-9d71-4f2a8c6e1b30",
+                     *               "path": "universe"
                      *             }
                      *           ]
                      *         }
@@ -6375,7 +6390,8 @@ export interface operations {
                      *           "grant_id": "9c1e3a5b-7d9f-4b2d-8a4c-6e8a0c2e4a6c",
                      *           "epoch": 41
                      *         }
-                     *       ]
+                     *       ],
+                     *       "without_recall": false
                      *     }
                      */
                     "application/json": components["schemas"]["Whoami"];

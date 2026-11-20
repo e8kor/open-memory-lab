@@ -1435,6 +1435,10 @@ pub struct ListedKey {
     /// (ADR-0079 d4).
     #[serde(default)]
     pub requests_per_minute: Option<u32>,
+    /// Whether the key is a contributor without recall: a submitter grant on
+    /// a node no reader grant of it reaches (ADR-0093 d3).
+    #[serde(default)]
+    pub without_recall: bool,
     pub grants: Vec<ListedGrant>,
 }
 

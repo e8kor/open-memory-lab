@@ -4795,6 +4795,9 @@ fn whoami_json(whoami: &Whoami) -> Value {
         // each null for none (ADR-0079 d3, d4).
         "expiry": key.expiry.as_ref().map(|at| at.as_str()),
         "requests_per_minute": key.requests_per_minute,
+        // A contributor without recall, decided on the server, since the
+        // grants above carry no ancestry (ADR-0093 d3).
+        "without_recall": whoami.without_recall,
     });
     // A person's `<user>-web` alone is told whether it carries a denial, so
     // the web console draws no form for the key acts that key is refused for

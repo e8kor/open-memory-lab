@@ -683,6 +683,9 @@ where
                 "expiry": k.key.expiry.as_ref().map(|at| at.as_str()),
                 "expired": st.app.key_expired(&k.key),
                 "requests_per_minute": k.key.requests_per_minute,
+                // A contributor without recall, which the console marks
+                // "no recall" (ADR-0093 d3).
+                "without_recall": k.without_recall,
                 "grants": grants,
             }));
         }

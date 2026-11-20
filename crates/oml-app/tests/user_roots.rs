@@ -540,6 +540,9 @@ async fn a_user_keys_grant_outside_its_root_is_refused_as_issuer_ceiling() {
     }
 }
 
+/// Every user key but a submitter key, which recalls nothing and is issued
+/// no reader grant (ADR-0093 d2; see
+/// `a_submitter_user_keys_issued_grants_carry_no_reader`).
 #[tokio::test]
 async fn issuance_adds_a_reader_node_grant_on_universe_to_every_user_key() {
     let (app, store) = rig();
@@ -5222,4 +5225,135 @@ async fn only_a_users_contributor_key_creates_a_workspace_in_its_root() {
         ),
         "{err:?}"
     );
+}
+
+/// A submitter key recalls nothing, so issuance adds it no reader grant on
+/// `universe`: a user's submitter key holds exactly the submitter grants it
+/// was sent (ADR-0093 d2; the coordinator's reading of 2026-11-20).
+#[tokio::test]
+async fn a_submitter_user_keys_issued_grants_carry_no_reader() {
+    let (app, store) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let bob = app
+        .issue_key(
+            admin,
+            &user_req(
+                Role::Submitter,
+                "bob",
+                "bob/ingest",
+                vec![grant(by_name("bob"), Role::Submitter)],
+            ),
+        )
+        .await
+        .expect("a user submitter key");
+    let roles: Vec<Role> = bob.access.grants.iter().map(|g| g.grant.role).collect();
+    assert_eq!(roles, vec![Role::Submitter], "{:?}", bob.access.grants);
+    let stored = store
+        .key_access(boot.tenant_id, bob.key_id)
+        .await
+        .expect("read")
+        .expect("access");
+    assert_eq!(stored.grants, bob.access.grants, "echoed as stored");
+}
+
+/// A submitter key's get by id serves only the rows that key wrote,
+/// whatever its grants: a curated `universe` claim, promoted and readable by
+/// every recalling user key, is `access.not_found` to bob's submitter key,
+/// as any unreadable id is, while bob's own held row is served (ADR-0093
+/// d2; ADR-0025 d3; the coordinator's reading of 2026-11-20).
+#[tokio::test]
+async fn a_submitter_user_key_gets_a_curated_universe_claim_by_id_as_not_found() {
+    let (app, _) = rig();
+    let boot = bootstrap(&app).await;
+    let c = curated(&app, &boot).await;
+    let admin = boot.admin_key.value.as_str();
+    let bob = app
+        .issue_key(
+            admin,
+            &user_req(
+                Role::Submitter,
+                "bob",
+                "bob/ingest",
+                vec![grant(by_name("bob"), Role::Submitter)],
+            ),
+        )
+        .await
+        .expect("a user submitter key");
+    for id in [c.placed, c.source] {
+        let err = app
+            .get_memory(bob.value.as_str(), id)
+            .await
+            .expect_err("another key's row is unreadable to a submitter");
+        assert!(matches!(err, AppError::NotFound), "{err:?}");
+    }
+    let own = written(&app, &bob.value, &submit("bob-own", "bob's own note", None)).await;
+    app.get_memory(bob.value.as_str(), own)
+        .await
+        .expect("a submitter reads its own held row");
+}
+
+/// `whoami` serves a contributor without recall per node: a contributor
+/// whose one reader grant is a node grant on `universe`, the shape a
+/// migrated v0.8.3 write-only user key holds, writes `crew` where no
+/// reader grant reaches and is served `without_recall`; with the reader
+/// grant over `universe`'s subtree it recalls where it writes and is not; a
+/// user's contributor and submitter keys are not (ADR-0093 d3, as read on
+/// 2026-11-20).
+#[tokio::test]
+async fn whoami_serves_a_contributor_whose_reader_grant_reaches_none_of_its_submitter_nodes_as_without_recall()
+ {
+    let (app, _) = rig();
+    let boot = bootstrap(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    app.create_workspace(admin, &name("crew"), Some(by_name("universe")), None)
+        .await
+        .expect("crew");
+    let migrated = tenant_key(
+        &app,
+        admin,
+        Role::Contributor,
+        "crew/ingest",
+        vec![
+            grant(by_name("crew"), Role::Submitter),
+            node_grant(by_name("universe"), Role::Reader),
+        ],
+    )
+    .await;
+    let recalls = tenant_key(
+        &app,
+        admin,
+        Role::Contributor,
+        "crew/agent",
+        vec![
+            grant(by_name("crew"), Role::Submitter),
+            grant(by_name("universe"), Role::Reader),
+        ],
+    )
+    .await;
+    let alice = user_writer(&app, admin, "alice", "alice/laptop").await;
+    let bob = app
+        .issue_key(
+            admin,
+            &user_req(
+                Role::Submitter,
+                "bob",
+                "bob/ingest",
+                vec![grant(by_name("bob"), Role::Submitter)],
+            ),
+        )
+        .await
+        .expect("a user submitter key");
+    let served = |key: &IssuedKey| {
+        let app = &app;
+        let value = key.value.clone();
+        async move { app.whoami(&value).await.expect("whoami").without_recall }
+    };
+    assert!(served(&migrated).await, "a reader grant on universe alone");
+    assert!(
+        !served(&recalls).await,
+        "a reader grant over universe's subtree"
+    );
+    assert!(!served(&alice).await, "a user's contributor key");
+    assert!(!served(&bob).await, "a submitter key is not a contributor");
 }

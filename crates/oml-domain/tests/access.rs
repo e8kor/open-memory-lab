@@ -6,8 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use oml_domain::access::{
     AccessRefusal, Covers, Grant, IssuanceRefusal, KeyDenial, TailCaller, TailSubject,
-    admissible_grant_roles, check_contributor_grants, check_issuance, effective_roles,
-    effective_verbs, resolve, tail_visible,
+    admissible_grant_roles, check_contributor_grants, check_issuance, contributor_without_recall,
+    effective_roles, effective_verbs, recall_ancestries_needed, resolve, tail_visible,
 };
 use oml_domain::{Role, UsedBy};
 use proptest::prelude::*;
@@ -1157,4 +1157,82 @@ fn a_node_grant_covers_its_node_and_no_descendant() {
         Some(Covers::Subtree)
     );
     assert_eq!(Covers::parse("tree"), None);
+}
+
+// ---- A contributor without recall (ADR-0093 d3, as read on 2026-11-20) ----
+
+/// The answer for a key of `role` holding `grants` over the example tree,
+/// reading the ancestries the helper asks for and no other.
+fn without_recall(tree: &Tree, role: Role, grants: &[Grant]) -> bool {
+    let ancestries: BTreeMap<Uuid, Vec<Uuid>> = recall_ancestries_needed(role, grants)
+        .into_iter()
+        .map(|n| (n, tree.ancestry(n)))
+        .collect();
+    contributor_without_recall(role, grants, &ancestries)
+}
+
+/// A v0.8.3 write-only user key, migrated: a contributor holding
+/// submitter on its user root and, as its one reader grant, the `universe`
+/// node grant issuance added. The reader grant reaches `universe` alone, so
+/// the key writes its root without recall and is named, though it holds a
+/// reader grant.
+#[test]
+fn a_migrated_write_only_user_key_with_a_universe_reader_grant_is_a_contributor_without_recall() {
+    let tree = Tree::new();
+    // research-crew stands for the user root, directly under universe.
+    let migrated = [
+        grant(1, tree.research_crew, Role::Submitter, &[]),
+        node_grant(2, tree.universe, Role::Reader),
+    ];
+    assert!(without_recall(&tree, Role::Contributor, &migrated));
+    assert_eq!(
+        recall_ancestries_needed(Role::Contributor, &migrated),
+        roles_nodes(&[tree.research_crew]),
+        "the submitter node no reader grant names is the one read"
+    );
+}
+
+/// A contributor is named when any one submitter grant's node is reached by
+/// no reader grant, and not when a reader grant reaches each, on the same
+/// node or as a subtree grant above it; a key of any other role is never a
+/// contributor without recall.
+#[test]
+fn a_contributor_is_without_recall_where_one_submitter_node_is_reached_by_no_reader_grant() {
+    let tree = Tree::new();
+    let beside = [
+        grant(1, tree.research_crew, Role::Submitter, &[]),
+        grant(2, tree.research_crew, Role::Reader, &[]),
+    ];
+    assert!(!without_recall(&tree, Role::Contributor, &beside));
+    assert!(recall_ancestries_needed(Role::Contributor, &beside).is_empty());
+    let above = [
+        grant(1, tree.run_grid, Role::Submitter, &[]),
+        grant(2, tree.research_crew, Role::Reader, &[]),
+    ];
+    assert!(!without_recall(&tree, Role::Contributor, &above));
+    let one_uncovered = [
+        grant(1, tree.lit_review, Role::Submitter, &[]),
+        grant(2, tree.ops_crew, Role::Submitter, &[]),
+        grant(3, tree.research_crew, Role::Reader, &[]),
+    ];
+    assert!(without_recall(&tree, Role::Contributor, &one_uncovered));
+    let node_reader_below = [
+        grant(1, tree.research_crew, Role::Submitter, &[]),
+        node_grant(2, tree.lit_review, Role::Reader),
+    ];
+    assert!(without_recall(&tree, Role::Contributor, &node_reader_below));
+    for role in [Role::Submitter, Role::Reviewer, Role::Reader] {
+        assert!(
+            !without_recall(
+                &tree,
+                role,
+                &[grant(1, tree.ops_crew, Role::Submitter, &[])]
+            ),
+            "{role:?}"
+        );
+    }
+}
+
+fn roles_nodes(nodes: &[Uuid]) -> BTreeSet<Uuid> {
+    nodes.iter().copied().collect()
 }

@@ -813,7 +813,7 @@ Issue a key under the issuer ceiling; the value appears exactly once, here.
 |---|---|---|---|
 | `role` | `reader` \| `contributor` \| `submitter` \| `reviewer` \| `admin` \| `operator` | yes |  |
 | `name` | string | yes | The key's name: unique in its namespace (409 name.taken), never changed, never released; distinct from principal and label. |
-| `grants` | array of object | no | Taken exactly as sent, except that a user key also gets a reader grant on the universe node alone. |
+| `grants` | array of object | no | Taken exactly as sent, except that a user key other than a submitter key also gets a reader grant on the universe node alone. |
 | `user` | string | no | The person the key acts for, by the user's name: a user key, whose every grant must lie in its user root universe.<user> (403 access.issuer_ceiling, details user) and whose workspace references resolve in that root's namespace. |
 | `default_workspace` | WorkspaceRef | no | The provider-ring target, by id or name; its validation and its default when omitted are declared in the issuance order of docs/architecture/roles-and-keys.md. |
 | `used_by` | `agent` \| `person` \| `service` | no | The issuing admin's journalled attestation; never verified as fact. |

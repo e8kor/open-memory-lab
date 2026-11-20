@@ -5742,9 +5742,10 @@ fn key_limits_body(
 /// The key lines (ADR-0079 d7), for the key doctor runs under: that the
 /// server refused it as expired or past its rate; else, from `whoami`, the
 /// instant it ends and the rate it is held to, and
-/// `key_contributor_without_recall` for a contributor key that holds no
-/// reader grant: a v0.8.3 writer key issued with `--write-only`, which works
-/// as before and is replaced by a submitter key (ADR-0093 d3). A key with
+/// `key_contributor_without_recall` for a contributor without recall as
+/// `whoami` serves it: a submitter grant on a node no reader grant of the key
+/// reaches, such as a v0.8.3 writer key issued write-only, which
+/// works as before and is replaced by a submitter key (ADR-0093 d3). A key with
 /// neither limit, and a refusal for any other reason, print nothing here.
 fn key_doctor(me: Option<&Result<Value, CliError>>) -> Vec<String> {
     let mut lines = Vec::new();
@@ -5779,12 +5780,13 @@ fn key_doctor(me: Option<&Result<Value, CliError>>) -> Vec<String> {
                      server process alone"
                 ));
             }
-            if contributor_without_recall(me) {
+            // The server decides it: `whoami`'s grants carry no ancestry.
+            if me["without_recall"] == true {
                 lines.push(format!(
-                    "warn key_contributor_without_recall: {} is a contributor key with no reader \
-                     grant, a writer key issued with --write-only before v0.8.4; it works as \
-                     before, but issue a submitter key with `oml keys issue-agent <name> --role \
-                     submitter` and cut this one off",
+                    "warn key_contributor_without_recall: {} is a contributor key that writes \
+                     where no reader grant of it reaches, a writer key issued with --write-only \
+                     before v0.8.4; it works as before, but issue a submitter key with `oml keys \
+                     issue-agent <name> --role submitter` and cut this one off",
                     me["name"].as_str().unwrap_or("this key")
                 ));
             }
@@ -5792,15 +5794,6 @@ fn key_doctor(me: Option<&Result<Value, CliError>>) -> Vec<String> {
         _ => {}
     }
     lines
-}
-
-/// A contributor key whose grants hold no reader grant (ADR-0093 d3), as
-/// `whoami` serves it.
-fn contributor_without_recall(me: &Value) -> bool {
-    me["role"] == "contributor"
-        && me["grants"]
-            .as_array()
-            .is_some_and(|grants| !grants.iter().any(|g| g["role"] == "reader"))
 }
 
 /// Whether this key may review in bulk and approve instructions, for a
@@ -5908,7 +5901,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut me: Option<Result<Value, CliError>> = None;
     let mut head_seq: Option<u64> = None;
     // A user key reads universe's own claims through its node grant; one
-    // that cannot is warned about (ADR-0044 d14).
+    // that cannot is warned about (ADR-0044 d14). A submitter key holds no
+    // such grant and is not asked (ADR-0093 d2).
     let mut reads_universe: Option<bool> = None;
     let mut admin_emails: Option<(usize, Vec<String>)> = None;
     let mut signup_overview: Option<Value> = None;
@@ -5968,8 +5962,11 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
                     )
                     .map(|(_, answer)| answer),
             );
+            // A submitter key recalls nothing and is issued no universe
+            // grant, so it is not asked (ADR-0093 d2).
             if let Some(Ok(v)) = &me
                 && v["user"].is_object()
+                && v["role"] != "submitter"
             {
                 reads_universe = Some(match client.get("/v2/workspaces/universe") {
                     Ok(_) => true,
@@ -8896,30 +8893,42 @@ mod tests {
         assert!(key_doctor(None).is_empty());
     }
 
+    /// The doctor names the key as the server serves it, by `whoami`'s
+    /// `without_recall`: a migrated v0.8.3 write-only user key holds a
+    /// reader grant, the `universe` node grant, and is named all the same,
+    /// since that grant reaches none of the nodes it writes (ADR-0093 d3, as
+    /// read on 2026-11-20).
     #[test]
-    fn doctor_names_a_contributor_key_without_a_reader_grant_as_key_contributor_without_recall() {
-        let without_recall = serde_json::json!({
+    fn doctor_names_a_migrated_write_only_user_key_as_key_contributor_without_recall() {
+        let migrated = serde_json::json!({
             "name": "ada-ingest",
             "role": "contributor",
-            "grants": [{ "role": "submitter", "workspace_node_id": "n" }],
+            "grants": [
+                { "role": "submitter", "workspace_node_id": "root", "covers": "subtree" },
+                { "role": "reader", "workspace_node_id": "universe", "covers": "node" },
+            ],
+            "without_recall": true,
         });
         assert_eq!(
-            key_doctor(Some(&Ok(without_recall))),
+            key_doctor(Some(&Ok(migrated))),
             vec![
-                "warn key_contributor_without_recall: ada-ingest is a contributor key with no reader grant, a writer key issued with --write-only before v0.8.4; it works as before, but issue a submitter key with `oml keys issue-agent <name> --role submitter` and cut this one off",
+                "warn key_contributor_without_recall: ada-ingest is a contributor key that writes where no reader grant of it reaches, a writer key issued with --write-only before v0.8.4; it works as before, but issue a submitter key with `oml keys issue-agent <name> --role submitter` and cut this one off",
             ]
         );
-        // A contributor that recalls, and a submitter, are told nothing.
+        // A contributor that recalls where it writes, and a submitter, are
+        // told nothing.
         let recalls = serde_json::json!({
             "name": "ada",
             "role": "contributor",
             "grants": [{ "role": "submitter" }, { "role": "reader" }],
+            "without_recall": false,
         });
         assert!(key_doctor(Some(&Ok(recalls))).is_empty());
         let submitter = serde_json::json!({
             "name": "ada-ingest-2",
             "role": "submitter",
             "grants": [{ "role": "submitter" }],
+            "without_recall": false,
         });
         assert!(key_doctor(Some(&Ok(submitter))).is_empty());
     }

@@ -112,13 +112,58 @@ pub fn admissible_grant_roles(key_role: Role) -> &'static [Role] {
     }
 }
 
-/// Whether a key of `key_role` holding `grants` is a contributor without
-/// recall: a writer key of v0.8.3 issued with no reader grant, which the
-/// migration and the former-name map both read as a contributor (ADR-0093
-/// d3). It works as before; `oml doctor` names it and the console marks it.
+/// The nodes whose ancestry [`contributor_without_recall`] needs for a key of
+/// `key_role` holding `grants`: a contributor's submitter grant nodes that no
+/// reader grant names as its own node. A submitter grant on the node of a
+/// reader grant is reached by it whatever lies above, so the common key, a
+/// reader beside each submitter grant, needs no read.
 #[must_use]
-pub fn contributor_without_recall(key_role: Role, grants: &[Grant]) -> bool {
-    key_role == Role::Contributor && !grants.iter().any(|g| g.role == Role::Reader)
+pub fn recall_ancestries_needed(key_role: Role, grants: &[Grant]) -> BTreeSet<Uuid> {
+    if key_role != Role::Contributor {
+        return BTreeSet::new();
+    }
+    grants
+        .iter()
+        .filter(|s| s.role == Role::Submitter)
+        .filter(|s| {
+            !grants
+                .iter()
+                .any(|r| r.role == Role::Reader && r.node == s.node)
+        })
+        .map(|s| s.node)
+        .collect()
+}
+
+/// Whether a key of `key_role` holding `grants` is a contributor without
+/// recall (ADR-0093 d3, as read on 2026-11-20): a contributor key holding a
+/// submitter grant on some node that no reader grant of the same key
+/// reaches. A v0.8.3 writer key issued write-only became one, the
+/// user key among them whose one reader grant is the `universe` node grant
+/// issuance added (ADR-0044 d3). It works as before; `oml doctor` names it
+/// and the console marks it, both from this answer as the server serves it.
+///
+/// `ancestries` maps each node of [`recall_ancestries_needed`] to its
+/// ancestry, node to root; a node it lacks is read as itself alone. A reader
+/// grant reaches a node by [`Grant::reaches`], before its deny masks, so the
+/// answer, served to the key itself, names no subtree a mask hides
+/// (ADR-0039 d15).
+#[must_use]
+pub fn contributor_without_recall(
+    key_role: Role,
+    grants: &[Grant],
+    ancestries: &std::collections::BTreeMap<Uuid, Vec<Uuid>>,
+) -> bool {
+    key_role == Role::Contributor
+        && grants
+            .iter()
+            .filter(|s| s.role == Role::Submitter)
+            .any(|s| {
+                let own = [s.node];
+                let ancestry = ancestries.get(&s.node).map_or(&own[..], Vec::as_slice);
+                !grants
+                    .iter()
+                    .any(|r| r.role == Role::Reader && r.reaches(ancestry))
+            })
 }
 
 /// A contributor key's shape (ADR-0093 d2): issued with at least one reader

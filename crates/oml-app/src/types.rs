@@ -563,7 +563,7 @@ pub struct ConfirmationView {
     pub role: Role,
     /// In grant order.
     pub grants: Vec<ConfirmationGrant>,
-    /// Granted workspaces where writer is effective: "Claude can remember
+    /// Granted workspaces where submitter is effective: "Claude can remember
     /// and learn as this agent in …".
     pub writes_in: Vec<Name>,
     /// Granted workspaces where reader is effective: "Claude can recall and
@@ -2986,6 +2986,9 @@ pub struct Whoami {
     /// session keys included, so an agent key or an admin key learns nothing
     /// of its denials (ADR-0039 d15).
     pub denied: Option<bool>,
+    /// Whether the key is a contributor without recall (ADR-0093 d3, as
+    /// read on 2026-11-20): `oml doctor`'s `key_contributor_without_recall`.
+    pub without_recall: bool,
 }
 
 /// `POST /v1/memories/{artifact_id}/supersede` (http-api.md supersede;
@@ -3875,7 +3878,7 @@ pub enum AppError {
     ImportTargetNotInProgress { workspace_id: Uuid },
     /// Only a contributor key used by a person imports (`access.verb_ceiling`,
     /// `import_person_only`; ADR-0084 d11).
-    #[error("an import needs a writer key used by a person (ADR-0084 d11)")]
+    #[error("an import needs a contributor key used by a person (ADR-0084 d11)")]
     ImportPersonOnly {
         role: Role,
         used_by: oml_domain::UsedBy,
