@@ -4895,20 +4895,56 @@ where
         &self,
         key: &KeyRecord,
     ) -> Result<Option<Name>, AppError> {
-        let mut key = key.clone();
+        match self.counted_walk(key).await? {
+            Some(walk) => match walk.last() {
+                Some(counted) => self.person_of(counted).await,
+                None => Ok(None),
+            },
+            None => Ok(None),
+        }
+    }
+
+    /// The keys [`Self::counted_person_of`] walks from `key`: `key` first,
+    /// then up `issued_by` while a key is a user key and no session key,
+    /// ending at the key whose person `key` counts as. `None` where the walk
+    /// counts the key as no one: a user key with no issuer, an issuer the
+    /// tenant does not hold, or a chain longer than [`COUNTED_PERSON_DEPTH`]
+    /// (ADR-0089 and ADR-0085 d16, the operator's decision of 2026-11-20).
+    async fn counted_walk(&self, key: &KeyRecord) -> Result<Option<Vec<KeyRecord>>, AppError> {
+        let mut walk = vec![key.clone()];
         for _ in 0..COUNTED_PERSON_DEPTH {
+            let Some(key) = walk.last() else {
+                return Ok(None);
+            };
             if key.session_user.is_some() || key.user.is_none() {
-                return self.person_of(&key).await;
+                return Ok(Some(walk));
             }
             let Some(issuer) = key.issued_by else {
                 return Ok(None);
             };
             match self.journal.key(key.tenant_id, issuer).await? {
-                Some(next) => key = next,
+                Some(next) => walk.push(next),
                 None => return Ok(None),
             }
         }
         Ok(None)
+    }
+
+    /// Whether the walk [`Self::counted_person_of`] takes from `key` passes
+    /// through the key `through`, `key` itself included: a user key issued by
+    /// `through`, directly or by a user key it issued, counts as whomever
+    /// `through`'s link names, so a relink of `through` moves such a key's
+    /// person with it. A walk that counts the key as no one reads as passing
+    /// through, which fails closed (ADR-0089, the reading of 2026-11-20).
+    pub(crate) async fn counted_through(
+        &self,
+        key: &KeyRecord,
+        through: Uuid,
+    ) -> Result<bool, AppError> {
+        Ok(self
+            .counted_walk(key)
+            .await?
+            .is_none_or(|walk| walk.iter().any(|k| k.key_id == through)))
     }
 
     /// Whether `workspace` sits inside the user root named `person`

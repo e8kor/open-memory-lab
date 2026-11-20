@@ -10,7 +10,7 @@ answers: which acts an admin key may take on a workspace's content, on which tar
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its five questions decided at their
 recommendations and every other default as drafted, and its amendment of ADR-0001 d5 accepted with
 it · proposed the same day · amended 2026-11-17 by the operator (d16: demote's targets, the
-fix route as the one surface for demote and erase, erase's claim-wide scope, a fix's events; as-of reads skip a demoted version) · readings of 2026-11-18 recorded for the operator's batch (d17) · amendments of d8 of 2026-11-18, from the operator's batch (strict confirmation wherever the fixed version is served to production and for any target outside the admin's own root; a cut refuses a `same_user`-only member; #429), accepted 2026-11-19 by the operator · amended 2026-11-19 by the operator (d16, O8: a claim whose approved versions are all demoted is written again, continuing its numbers; #474) · amended 2026-11-19 by the operator after the review of #498 (an admin key is linked to its person; the settlement fails closed; a revert checks R2 by person; proposed for the record, see the decision at the end) · amended 2026-11-19 by the operator after the second review of #498 (a link of an admin or reviewer key takes effect only once its person accepts it; each fix records its admin's person, which the settlement compares; see the second decision at the end) · reading of 2026-11-19 in d17 (a fix whose mark a later fix takes over is settled `superseded`) · amended 2026-11-19 by the operator after the third review of #498 (a sign-in email an admin adds for an existing person waits on that person; a key's link set only through an acceptance; see the third decision at the end) · amended 2026-11-20 by the operator after the fourth review of #498 (a user key counts as its issuer's person; what one admin can still do is recorded in the third decision; see the decision of 2026-11-20 at the end) · reading of 2026-11-20 after the fifth review of #498, for the operator (a settler counts as the fix's admin on either reading; in the third decision)
+fix route as the one surface for demote and erase, erase's claim-wide scope, a fix's events; as-of reads skip a demoted version) · readings of 2026-11-18 recorded for the operator's batch (d17) · amendments of d8 of 2026-11-18, from the operator's batch (strict confirmation wherever the fixed version is served to production and for any target outside the admin's own root; a cut refuses a `same_user`-only member; #429), accepted 2026-11-19 by the operator · amended 2026-11-19 by the operator (d16, O8: a claim whose approved versions are all demoted is written again, continuing its numbers; #474) · amended 2026-11-19 by the operator after the review of #498 (an admin key is linked to its person; the settlement fails closed; a revert checks R2 by person; proposed for the record, see the decision at the end) · amended 2026-11-19 by the operator after the second review of #498 (a link of an admin or reviewer key takes effect only once its person accepts it; each fix records its admin's person, which the settlement compares; see the second decision at the end) · reading of 2026-11-19 in d17 (a fix whose mark a later fix takes over is settled `superseded`) · amended 2026-11-19 by the operator after the third review of #498 (a sign-in email an admin adds for an existing person waits on that person; a key's link set only through an acceptance; see the third decision at the end) · amended 2026-11-20 by the operator after the fourth review of #498 (a user key counts as its issuer's person; what one admin can still do is recorded in the third decision; see the decision of 2026-11-20 at the end) · reading of 2026-11-20 after the fifth review of #498, for the operator (a settler counts as the fix's admin on either reading; in the third decision) · reading of 2026-11-20 after the sixth review of #498, for the operator (a key whose counting walk passes through the fix's admin key settles as that admin's person; the doctor count reads the settlement's predicate; R2 by person over a lineage reads the settler on both readings; in the third decision)
 
 **Release:** built in v0.8.4, except the release overlays (d5), which wait for ADR-0085
 
@@ -646,6 +646,42 @@ existing person. Two defences follow here.
   doctor count of unconfirmed fixes compares the same way. A key that counts as no one still
   settles nothing. This reading is the coordinator's within the operator's decision of
   2026-11-20, flagged here for the operator to confirm.
+- **Reading of 2026-11-20 after the sixth review, for the operator: what the build compares.**
+  The sixth review found three gaps, and the build now reads them as follows.
+  - **A key the fix's admin key issued.** Alice's admin key minted `carol/forged`, demoted carol's
+    claim, and was then relinked to bob, who accepted. `carol/forged` then counted as bob and
+    confirmed alice's fix as another person's. A settling key now also acts for the fix's
+    admin's person when the walk that counts its person passes through the fix's
+    `admin_key_id`. That walk starts at the key itself and goes up `issued_by` while a key is a
+    user key and no session key, so it names the key whose link it counts by. A walk that counts
+    the key as no one reads as passing through.
+  - **Which keys may settle.** A settling key acts for a known person other than the admin's
+    only when two things hold. It counts as a known person, and it acts for the admin's person
+    neither on either reading nor through that walk. Only such a key settles the fix unmarked.
+    Any other key that counts as a known person settles as the admin's person would: marked
+    `same_user` inside that person's own development root on a member of no release, and refused
+    `same_person` elsewhere. A key that counts as no one settles nothing.
+  - **The doctor count.** `admin.fix_admin_person_only` reads the same predicate. A live
+    person's reviewer key that holds reviewer on the fix's workspace counts as another person
+    only where the settlement would take it as one. A key that counts as no one is no other
+    person, and its fix is reported as one only the admin's person holds reviewer on.
+  - **R2 by person over a lineage, at a revert and at the confirm of an edit or retirement.** The
+    settling key is read as the person it counts as and as the person whose root it was issued
+    in. It acts for a person of the lineage in either of two cases. That person may be the
+    author recorded at the write, or the person whose root the author key was issued in.
+    Otherwise another key of the lineage acts for that person on either reading as it stands.
+    The settling key also acts for the recorded author and for each of its own persons when its
+    counting walk passes through any key of the lineage. When it acts for any such person, the
+    settlement is marked `same_user` only if the claim lies inside every such person's own root,
+    and is refused `same_person` otherwise.
+  - **The fourth probe.** Dora writes a claim in her root and alice's admin key demotes it. Bob's
+    admin key then mints `dora/handed` in dora's root. That key counts as bob, was issued in
+    dora's root, and its revert is marked `same_user`, as review's `same_person` marks a review
+    inside the person's own root.
+
+  Every reading here makes settling stricter: it adds a mark or a refusal, never lifts one. It
+  needs no migration. It is the coordinator's reading, within the operator's decision of
+  2026-11-20, and is flagged here for the operator to confirm.
 
 ## Operator decision of 2026-11-20: a user key counts as its issuer's person (#498 fourth review)
 

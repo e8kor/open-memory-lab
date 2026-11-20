@@ -1405,20 +1405,21 @@ where
 
     /// Who settles a fix (ADR-0089 d8, as amended 2026-11-18; #490; the
     /// operator's decision of 2026-11-19): a key acting for a known person
-    /// other than the admin key's known person settles it, `Some(false)`;
-    /// a key acting for the admin's own person settles it, marked
-    /// `same_user`, `Some(true)`, only when the target lies inside that
-    /// person's own user root, in a workspace that is neither protected nor
-    /// frozen, and is a member of no release; otherwise, a person unknown on either
-    /// side included, `None`. A key acts for the admin's person on either
-    /// reading, the person it counts as or the person whose root it was
-    /// issued in ([`Self::acts_for`]), so neither reading makes a settler
-    /// less the fix's admin (ADR-0089, the reading of 2026-11-20).
+    /// other than the fix's admin's person ([`Self::settles_as_other_person`])
+    /// settles it, `Some(false)`; a key acting for the admin's person
+    /// ([`Self::acts_for_fix_admin`]) settles it, marked `same_user`,
+    /// `Some(true)`, only when the target lies inside that person's own user
+    /// root, in a workspace that is neither protected nor frozen, and is a
+    /// member of no release; otherwise, a person unknown on the settling side
+    /// included, `None` (ADR-0089, the readings of 2026-11-20).
     async fn settle_rule(
         &self,
         key: &KeyRecord,
         fix: &FixRecord,
     ) -> Result<Option<bool>, AppError> {
+        if self.settles_as_other_person(key, fix).await? {
+            return Ok(Some(false));
+        }
         // Fails closed: a person unknown on the settling side, a key whose
         // link is still pending included, settles nothing (ADR-0089 and
         // ADR-0085 d16, the operator's decisions of 2026-11-19 and
@@ -1430,9 +1431,6 @@ where
         // link as it stands now: a relink after the fix moves nothing
         // (ADR-0089, the operator's decision of 2026-11-19).
         let person = &fix.admin_person;
-        if !self.acts_for(key, person).await? {
-            return Ok(Some(false));
-        }
         let development = self
             .journal
             .workspace(key.tenant_id, fix.workspace_id)
@@ -1451,50 +1449,110 @@ where
         Ok(loose.then_some(true))
     }
 
-    /// R2 by person over `m`'s lineage: `m`'s author as recorded at its
-    /// write (`author_person`) and by the root its key was issued in, and
-    /// every other key in its lineage as it stands, read both as the person
-    /// it counts as and as the person whose root it was issued in. When one of them acts for
-    /// the person `key` counts as, the settlement is
-    /// [`AppError::SamePerson`] outside that person's own root, and marked
-    /// `same_user` inside it; otherwise `same_user` as judged before
-    /// (ADR-0089, the operator's decisions of 2026-11-19 and 2026-11-20).
+    /// Whether `key` settles `fix` as a person other than the fix's admin's:
+    /// it counts as a known person ([`Self::counted_person_of`]) and acts
+    /// for the admin's person on no reading ([`Self::acts_for_fix_admin`]).
+    /// The one predicate [`Self::settle_rule`] and [`Self::fix_stats`] read,
+    /// so `oml doctor` counts as another person exactly the keys a
+    /// settlement takes as one (ADR-0089 d15, the reading of 2026-11-20).
+    async fn settles_as_other_person(
+        &self,
+        key: &KeyRecord,
+        fix: &FixRecord,
+    ) -> Result<bool, AppError> {
+        Ok(self.counted_person_of(key).await?.is_some()
+            && !self.acts_for_fix_admin(key, fix).await?)
+    }
+
+    /// Whether `key` acts for the person recorded on `fix` as its admin's:
+    /// on either reading of [`Self::acts_for`], or because the walk that
+    /// counts its person passes through the fix's admin key
+    /// ([`Self::counted_through`]), so a key that key issued stays the
+    /// admin's person after the admin key is relinked to another (ADR-0089,
+    /// the reading of 2026-11-20).
+    async fn acts_for_fix_admin(&self, key: &KeyRecord, fix: &FixRecord) -> Result<bool, AppError> {
+        Ok(self.acts_for(key, &fix.admin_person).await?
+            || self.counted_through(key, fix.admin_key_id).await?)
+    }
+
+    /// R2 by person over `m`'s lineage. The settler is read on both
+    /// readings, the person it counts as and the person whose root it was
+    /// issued in ([`Self::acts_for`]). It acts for a person of the lineage
+    /// when that person is `m`'s author as recorded at its write
+    /// (`author_person`) or by the root the author key was issued in, or
+    /// when another key of the lineage acts for that person on either
+    /// reading as it stands; and the walk that counts the settler's person
+    /// passing through any key of the lineage ([`Self::counted_through`])
+    /// makes the settler act for `m`'s recorded author and for each of its
+    /// own persons. When it acts for any, the settlement is
+    /// [`AppError::SamePerson`] unless `m` lies inside the own root of every
+    /// such person, and marked `same_user` there; otherwise `same_user` as
+    /// judged before (ADR-0089, the operator's decisions of 2026-11-19 and
+    /// 2026-11-20; ADR-0001 d5).
     async fn lineage_person_rule(
         &self,
         key: &KeyRecord,
         m: &MemoryRecord,
         same_user: bool,
     ) -> Result<bool, AppError> {
-        let Some(person) = self.counted_person_of(key).await? else {
+        let Some(counted) = self.counted_person_of(key).await? else {
             return Err(AppError::SamePerson);
         };
-        let mut same = m.author_person.as_ref() == Some(&person);
-        for key_id in &m.lineage_key_ids {
+        let mut persons = vec![counted];
+        if let Some(rooted) = self.person_of(key).await?
+            && !persons.contains(&rooted)
+        {
+            persons.push(rooted);
+        }
+        let mut matched: Vec<Name> = Vec::new();
+        for person in &persons {
+            let mut same = m.author_person.as_ref() == Some(person);
+            for key_id in &m.lineage_key_ids {
+                if same {
+                    break;
+                }
+                if let Some(author) = self.journal.key(key.tenant_id, *key_id).await? {
+                    // The author as recorded at the write and by the root it
+                    // was issued in, never its link as it stands; every
+                    // other key of the lineage on both readings as it
+                    // stands.
+                    same = if *key_id == m.author_key_id {
+                        self.issued_in_root_of(&author, person).await?
+                    } else {
+                        self.acts_for(&author, person).await?
+                    };
+                }
+            }
             if same {
+                matched.push(person.clone());
+            }
+        }
+        let mut through = false;
+        for key_id in &m.lineage_key_ids {
+            if self.counted_through(key, *key_id).await? {
+                through = true;
                 break;
             }
-            if let Some(author) = self.journal.key(key.tenant_id, *key_id).await? {
-                // The author as recorded at the write and by the root it was
-                // issued in, never its link as it stands; every other key of
-                // the lineage on both readings as it stands.
-                same = if *key_id == m.author_key_id {
-                    self.issued_in_root_of(&author, &person).await?
-                } else {
-                    self.acts_for(&author, &person).await?
-                };
+        }
+        if through {
+            for person in m.author_person.iter().chain(&persons) {
+                if !matched.contains(person) {
+                    matched.push(person.clone());
+                }
             }
         }
-        if !same {
+        if matched.is_empty() {
             return Ok(same_user);
         }
-        if self
-            .in_root_of_person(key.tenant_id, &person, m.workspace_id)
-            .await?
-        {
-            Ok(true)
-        } else {
-            Err(AppError::SamePerson)
+        for person in &matched {
+            if !self
+                .in_root_of_person(key.tenant_id, person, m.workspace_id)
+                .await?
+            {
+                return Err(AppError::SamePerson);
+            }
         }
+        Ok(true)
     }
 
     /// A person's reviewer key: reviewer role, used by a person, no crew
@@ -1531,8 +1589,10 @@ pub struct FixStats {
     pub loosening_guardrail: u64,
     /// On a workspace where no live person's reviewer key holds reviewer.
     pub without_person_reviewer: u64,
-    /// On a workspace where only keys of the admin's own person hold
-    /// reviewer, so no one may confirm it outside that person's own root.
+    /// On a workspace where a live person's reviewer key holds reviewer but
+    /// none settles the fix as a person other than the admin's: each acts
+    /// for the admin's own person or counts as no one, so no one may
+    /// confirm it outside that person's own root.
     pub admin_person_only: u64,
     pub reverted: u64,
     /// Live keys whose link to a person waits on that person's
@@ -1606,10 +1666,10 @@ where
                     for r in &reviewers {
                         if effective_roles(&r.grants, &r.denials, &ids).contains(&Role::Reviewer) {
                             any = true;
-                            // Against the admin's person recorded at
-                            // the fix, on both readings, as the
-                            // settlement compares it.
-                            if !self.acts_for(&r.key, &fix.admin_person).await? {
+                            // The settlement's own predicate, so a key that
+                            // counts as no one, or acts for the admin's
+                            // person on any reading, is no other person.
+                            if self.settles_as_other_person(&r.key, fix).await? {
                                 other = true;
                             }
                         }
