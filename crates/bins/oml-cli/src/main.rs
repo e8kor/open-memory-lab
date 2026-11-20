@@ -5798,9 +5798,9 @@ fn key_doctor(me: Option<&Result<Value, CliError>>) -> Vec<String> {
 /// `whoami` serves it.
 fn contributor_without_recall(me: &Value) -> bool {
     me["role"] == "contributor"
-        && !me["grants"]
+        && me["grants"]
             .as_array()
-            .is_some_and(|grants| grants.iter().any(|g| g["role"] == "reader"))
+            .is_some_and(|grants| !grants.iter().any(|g| g["role"] == "reader"))
 }
 
 /// Whether this key may review in bulk and approve instructions, for a

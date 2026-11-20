@@ -325,7 +325,7 @@ async fn full_ceremony_through_the_cli() {
         let field = |name: &str| response[name].as_str().expect(name).to_owned();
         (field("value"), field("key_id"))
     };
-    let (writer, writer_id) = issue("contributor", "crew/agent-1");
+    let (writer, writer_id) = issue("submitter", "crew/agent-1");
     let (reviewer, _) = issue("reviewer", "crew/reviewer-1");
     let (reader, _) = issue("reader", "crew/recall-1");
 
@@ -806,7 +806,7 @@ async fn keys_issue_with_one_writer_grant_sends_a_reader_grant_on_the_same_works
     assert_eq!(
         granted(&issued),
         [
-            (wa.clone(), "contributor".to_owned()),
+            (wa.clone(), "submitter".to_owned()),
             (wa.clone(), "reader".to_owned())
         ]
     );
@@ -1572,7 +1572,7 @@ async fn keys_issue_agent_sends_the_v0_4_0_field_names() {
                         "value": STUB_VALUE,
                         "role": "contributor",
                         "default_workspace_id": "00000000-0000-4000-8000-000000000007",
-                        "grants": [],
+                        "grants": [{ "role": "submitter" }, { "role": "reader" }],
                     })),
                 )
             }
@@ -2171,7 +2171,7 @@ async fn a_grant_by_workspace_name_issues_the_same_grant_as_by_id() {
     assert_eq!(
         granted(&by_id),
         [
-            (wa.clone(), "contributor".to_owned()),
+            (wa.clone(), "submitter".to_owned()),
             (wa.clone(), "reader".to_owned())
         ]
     );
@@ -4312,7 +4312,7 @@ async fn doctor_stub_with(
                         "tenant": { "id": "t1", "name": "acme" },
                         "default_workspace": { "id": "w1", "name": "metals", "path": "acme/metals" },
                         "crew": null,
-                        "grants": [],
+                        "grants": [{ "role": "submitter" }, { "role": "reader" }],
                     }),
                     "/v2/events" => json!({ "events": [], "head_seq": 7 }),
                     _ => json!({}),
@@ -4570,7 +4570,7 @@ async fn login_stub() -> (String, Calls, tokio::task::JoinHandle<()>) {
                     "tenant": { "id": "t1", "name": "acme" },
                     "default_workspace": { "id": "w1", "name": "metals", "path": "acme/metals" },
                     "crew": null,
-                    "grants": [],
+                    "grants": [{ "role": "submitter" }, { "role": "reader" }],
                 }))
                 .into_response();
             }
@@ -5091,7 +5091,7 @@ async fn doctor_prints_role_tenant_and_default_workspace_from_whoami() {
     let (code, text) = doctor_text(&pair, &[]);
     assert_eq!(code, 0, "{text}");
     assert!(
-        text.contains("whoami      : role writer, tenant acme, default workspace acme/metals\n"),
+        text.contains("whoami      : role contributor, tenant acme, default workspace acme/metals\n"),
         "{text}"
     );
     // A key that names no user says so (ADR-0044 d14).
@@ -6904,8 +6904,8 @@ async fn oml_review_list_and_approve_ids_judge_each_listed_item() {
             .expect("value")
             .to_owned()
     };
-    let loader = issue("loader", "contributor", "agent", "crew/loader", "contributor");
-    let twin = issue("twin", "contributor", "agent", "eugene", "contributor");
+    let loader = issue("loader", "submitter", "agent", "crew/loader", "submitter");
+    let twin = issue("twin", "submitter", "agent", "eugene", "submitter");
     let reviewer = issue("eugene-review", "reviewer", "person", "eugene", "reviewer");
     for key in ["adr-0001-d1", "adr-0001-d2"] {
         let (code, _, log) = lab.json(
@@ -7078,7 +7078,7 @@ async fn oml_sync_keeps_a_workspace_in_step_with_a_clones_records() {
                 "--principal",
                 principal,
                 "--grant",
-                &format!("{wa}:{role}"),
+                &format!("{wa}:{}", if role == "contributor" { "submitter" } else { role }),
                 // A person's reviewer reads the tips it links (ADR-0057 d10).
                 "--grant",
                 &format!("{wa}:reader"),
@@ -7266,7 +7266,7 @@ async fn oml_sync_loads_a_crates_docs_and_a_code_edit_writes_nothing() {
                 "--principal",
                 principal,
                 "--grant",
-                &format!("{wa}:{role}"),
+                &format!("{wa}:{}", if role == "contributor" { "submitter" } else { role }),
                 "--grant",
                 &format!("{wa}:reader"),
             ],
