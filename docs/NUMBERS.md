@@ -114,6 +114,7 @@ branch that reserved later renumbers.
 | adr | 0090 | `main` |  | the lake is a replayable twin of postgresql that holds every signed ev | used |
 | adr | 0091 | `main` |  | workareas become workspaces and the dreamer role becomes reviewer on e | used |
 | adr | 0092 | `main` |  | search filters by every claim kind and ranks skills and guardrails as  | used |
+| adr | 0093 | `docs/adr-role-names` |  | contributor and submitter replace writer | reserved |
 | migration | 0001 | `main` |  | init | used |
 | migration | 0002 | `main` |  | poc adapter | used |
 | migration | 0003 | `main` |  | lead startup | used |
@@ -175,8 +176,8 @@ branch that reserved later renumbers.
 | migration | 0058 | `main` |  | valid until before supersession | used |
 | migration | 0059 | `main` |  | document passages search | used |
 | migration | 0060 | `main` |  | document passages served index | used |
-| migration | 0061 | `bulk/v080-e` |  | a version records its author's person at write (ADR-0085 d16, #448) | reserved |
-| migration | 0062 | `bulk/v080-e` |  | postings and counts for every hit kind, and the catalog index (ADR-0092 d4, d9, #443) | reserved |
+| migration | 0061 | `main` |  | memories author person | used |
+| migration | 0062 | `main` |  | search every hit kind | used |
 | migration | 0063 | `bulk/v083-2` |  | admin investigations | reserved |
 | migration | 0064 | `bulk/v083-2` |  | admin fixes and the fix mark on memories | reserved |
-| migration | 0065 | `bulk/v080-d` |  | a person's review key writes are charged to the person's account | reserved |
+| migration | 0065 | `main` |  | session key account | used |
