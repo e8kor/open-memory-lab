@@ -359,7 +359,7 @@ def seed_after_migrations(conn: psycopg.Connection, t: Tenant) -> None:
     with tenant_tx(conn, t.id):
         seed_insert(
             conn, "INSERT INTO grants (id, tenant_id, key_id, role, workspace_node_id, deny, epoch) VALUES "
-            "(%s, %s, %s, 'writer', %s, '[]', 2), (%s, %s, %s, 'reviewer', %s, '[]', 3)",
+            "(%s, %s, %s, 'submitter', %s, '[]', 2), (%s, %s, %s, 'reviewer', %s, '[]', 3)",
             [t.grant_w, t.id, t.writer, t.child, t.grant_d, t.id, t.reviewer, t.universe],
         )
         seed_insert(
