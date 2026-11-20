@@ -34,11 +34,11 @@ name, principal and role; every workspace it holds a grant on, by its name, with
 the grant's role; and one sentence per kind of verb
 the key's role and effective access give it:
 
-- where it holds writer: "Claude can remember and learn as this agent in `<workspaces>`."
+- where it holds submitter: "Claude can remember and learn as this agent in `<workspaces>`."
 - where it holds reader: "Claude can recall and read as this agent in `<workspaces>`."
 - where it holds reviewer(propose): "Claude can propose edits and edges as this agent in
   `<workspaces>`."
-- where it holds writer or reviewer(propose): "Everything it writes is held until someone other
+- where it holds submitter or reviewer(propose): "Everything it writes is held until someone other
   than its author reviews it."
 - for each granted workspace whose tenant policy permits `self_signed` rows: "In `<workspace>`, its
   writes may be self-signed and readable there without review."

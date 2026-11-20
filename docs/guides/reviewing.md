@@ -52,7 +52,7 @@ The command serves one held memory, oldest first, and the key takes it. It serve
 workspaces where the key holds `reviewer`. It skips any memory whose lineage names the key or
 principal. An empty queue prints `nothing in scope waits — the queue is empty (204).`
 
-The output shows the artifact id and version, kind, writer, claim key and text, then the
+The output shows the artifact id and version, kind, author, claim key and text, then the
 `serve_id`. Add `--json` to see `derives_from`, `replaces`, `retirement` and, for a supersession,
 the full version it replaces. Read each source with `oml read <artifact_id>`. A source that cannot be
 read is a reason to reject, not to guess.
@@ -204,7 +204,7 @@ authors, each author's oldest first.
 $ oml review next
 serving 1 held item
 
-  artifact  4f9c2a7e-0b31-4d8e-9a55-1c6f3e2d8b10 @ v1   kind: memory   writer: crew-procure/agent-4
+  artifact  4f9c2a7e-0b31-4d8e-9a55-1c6f3e2d8b10 @ v1   kind: memory   author: crew-procure/agent-4
   claim_key supplier-quote-am-7741
   body      | Accra Metals quoted 412 USD/t for Q1-2027 delivery, valid until 2026-11-15. Quote ref AM-7741.
 
