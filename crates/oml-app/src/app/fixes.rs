@@ -1410,26 +1410,27 @@ where
     /// `same_user`, `Some(true)`, only when the target lies inside that
     /// person's own user root, in a workspace that is neither protected nor
     /// frozen, and is a member of no release; otherwise, a person unknown on either
-    /// side included, `None`.
+    /// side included, `None`. A key acts for the admin's person on either
+    /// reading, the person it counts as or the person whose root it was
+    /// issued in ([`Self::acts_for`]), so neither reading makes a settler
+    /// less the fix's admin (ADR-0089, the reading of 2026-11-20).
     async fn settle_rule(
         &self,
         key: &KeyRecord,
         fix: &FixRecord,
     ) -> Result<Option<bool>, AppError> {
+        // Fails closed: a person unknown on the settling side, a key whose
+        // link is still pending included, settles nothing (ADR-0089 and
+        // ADR-0085 d16, the operator's decisions of 2026-11-19 and
+        // 2026-11-20).
+        if self.counted_person_of(key).await?.is_none() {
+            return Ok(None);
+        }
         // The admin's person as recorded at the fix, never the admin key's
         // link as it stands now: a relink after the fix moves nothing
         // (ADR-0089, the operator's decision of 2026-11-19).
-        // The settling key counts as the person its issuer counts as, so a
-        // key an admin mints in another person's root is the admin's
-        // person's here (the operator's decision of 2026-11-20).
-        let Some(person) = self.counted_person_of(key).await? else {
-            // Fails closed: a person unknown on the settling side, a key
-            // whose link is still pending included, settles nothing
-            // (ADR-0089 and ADR-0085 d16, the operator's decisions of
-            // 2026-11-19).
-            return Ok(None);
-        };
-        if fix.admin_person != person {
+        let person = &fix.admin_person;
+        if !self.acts_for(key, person).await? {
             return Ok(Some(false));
         }
         let development = self
@@ -1437,11 +1438,11 @@ where
             .workspace(key.tenant_id, fix.workspace_id)
             .await?
             .is_some_and(|w| w.status == WorkspaceStatus::Development);
-        // The root of the person the key counts as, never the root it was
-        // issued in (the operator's decision of 2026-11-20).
+        // The admin's person's own root, whichever reading made the key
+        // that person's (the operator's decision of 2026-11-20).
         let loose = development
             && self
-                .in_root_of_person(key.tenant_id, &person, fix.workspace_id)
+                .in_root_of_person(key.tenant_id, person, fix.workspace_id)
                 .await?
             && self
                 .journal
@@ -1606,10 +1607,9 @@ where
                         if effective_roles(&r.grants, &r.denials, &ids).contains(&Role::Reviewer) {
                             any = true;
                             // Against the admin's person recorded at
-                            // the fix, as the settlement compares it.
-                            if self.counted_person_of(&r.key).await?.as_ref()
-                                != Some(&fix.admin_person)
-                            {
+                            // the fix, on both readings, as the
+                            // settlement compares it.
+                            if !self.acts_for(&r.key, &fix.admin_person).await? {
                                 other = true;
                             }
                         }

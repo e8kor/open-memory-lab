@@ -6411,6 +6411,60 @@ async fn a_key_an_admin_mints_in_another_persons_root_counts_as_the_admins_perso
     }
 }
 
+/// The re-verifier's scenario: alice's admin key mints `bob/forged` in bob's
+/// root, and an admin key linked to bob demotes a claim there. The key
+/// counts as alice but was issued in bob's root, so it acts for bob on the
+/// root reading and settles bob's fix only as bob's own person would: inside
+/// bob's own development root, marked `same_user`, never as another person's
+/// confirmation, `same_user: Some(false)` (ADR-0089, the reading of
+/// 2026-11-20).
+#[tokio::test]
+async fn a_key_issued_in_the_fix_admins_root_settles_as_the_admins_person_whoever_minted_it() {
+    let r = fix_rig().await;
+    let admin = r.boot.admin_key.value.as_str();
+    let writer = user_writer(&r.app, admin, "bob", "bob/laptop").await;
+    let reviewer = user_reviewer(&r.app, admin, "bob", "bob/review").await;
+    let claim = written(
+        &r.app,
+        &writer.value,
+        &submit("cf3", "The backup runs at three.", None),
+    )
+    .await;
+    r.app
+        .post_verdict(&reviewer.value, claim, Verdict::Approve, None)
+        .await
+        .expect("approve");
+    let bobs_admin = r
+        .app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                user: None,
+                used_by: Some(UsedBy::Person),
+                ..user_req(Role::Admin, "unused", "bob/admin", Vec::new())
+            },
+        )
+        .await
+        .expect("an admin key bob holds");
+    link_accepted(&r.app, &r.store, &r.ops, bobs_admin.key_id, "bob").await;
+    let fix = r
+        .app
+        .admin_fix(
+            bobs_admin.value.as_str(),
+            &fix_req(oml_app::types::FixAct::Demote, claim, None),
+        )
+        .await
+        .expect("bob's admin key demotes the claim in bob's root");
+    assert_eq!(fix.admin_person, name("bob"));
+    let forged = user_reviewer(&r.app, admin, "bob", "bob/forged").await;
+    let settled = r
+        .app
+        .confirm_fix(&forged.value, fix.fix_id)
+        .await
+        .expect("bob's own development root, a member of no release");
+    assert_eq!(settled.settled_same_user, Some(true), "{settled:?}");
+}
+
 /// A write records as its author's person the person its key counts as:
 /// a key an admin linked to alice minted in carol's root records alice, and
 /// a key carol's own console session issued records carol.

@@ -10,7 +10,7 @@ answers: which acts an admin key may take on a workspace's content, on which tar
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its five questions decided at their
 recommendations and every other default as drafted, and its amendment of ADR-0001 d5 accepted with
 it · proposed the same day · amended 2026-11-17 by the operator (d16: demote's targets, the
-fix route as the one surface for demote and erase, erase's claim-wide scope, a fix's events; as-of reads skip a demoted version) · readings of 2026-11-18 recorded for the operator's batch (d17) · amendments of d8 of 2026-11-18, from the operator's batch (strict confirmation wherever the fixed version is served to production and for any target outside the admin's own root; a cut refuses a `same_user`-only member; #429), accepted 2026-11-19 by the operator · amended 2026-11-19 by the operator (d16, O8: a claim whose approved versions are all demoted is written again, continuing its numbers; #474) · amended 2026-11-19 by the operator after the review of #498 (an admin key is linked to its person; the settlement fails closed; a revert checks R2 by person; proposed for the record, see the decision at the end) · amended 2026-11-19 by the operator after the second review of #498 (a link of an admin or reviewer key takes effect only once its person accepts it; each fix records its admin's person, which the settlement compares; see the second decision at the end) · reading of 2026-11-19 in d17 (a fix whose mark a later fix takes over is settled `superseded`) · amended 2026-11-19 by the operator after the third review of #498 (a sign-in email an admin adds for an existing person waits on that person; a key's link set only through an acceptance; see the third decision at the end) · amended 2026-11-20 by the operator after the fourth review of #498 (a user key counts as its issuer's person; what one admin can still do is recorded in the third decision; see the decision of 2026-11-20 at the end)
+fix route as the one surface for demote and erase, erase's claim-wide scope, a fix's events; as-of reads skip a demoted version) · readings of 2026-11-18 recorded for the operator's batch (d17) · amendments of d8 of 2026-11-18, from the operator's batch (strict confirmation wherever the fixed version is served to production and for any target outside the admin's own root; a cut refuses a `same_user`-only member; #429), accepted 2026-11-19 by the operator · amended 2026-11-19 by the operator (d16, O8: a claim whose approved versions are all demoted is written again, continuing its numbers; #474) · amended 2026-11-19 by the operator after the review of #498 (an admin key is linked to its person; the settlement fails closed; a revert checks R2 by person; proposed for the record, see the decision at the end) · amended 2026-11-19 by the operator after the second review of #498 (a link of an admin or reviewer key takes effect only once its person accepts it; each fix records its admin's person, which the settlement compares; see the second decision at the end) · reading of 2026-11-19 in d17 (a fix whose mark a later fix takes over is settled `superseded`) · amended 2026-11-19 by the operator after the third review of #498 (a sign-in email an admin adds for an existing person waits on that person; a key's link set only through an acceptance; see the third decision at the end) · amended 2026-11-20 by the operator after the fourth review of #498 (a user key counts as its issuer's person; what one admin can still do is recorded in the third decision; see the decision of 2026-11-20 at the end) · reading of 2026-11-20 after the fifth review of #498, for the operator (a settler counts as the fix's admin on either reading; in the third decision)
 
 **Release:** built in v0.8.4, except the release overlays (d5), which wait for ADR-0085
 
@@ -634,6 +634,18 @@ existing person. Two defences follow here.
   and the fix each name the admin key that made them, so the act is visible in the journal.
   [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)'s
   limits table of 2026-11-20 lists it beside what the database does not guard.
+- **Reading of 2026-11-20, for the operator: a settler counts as the fix's admin on either
+  reading.** The fifth review found that admin alice could mint a reviewer key in bob's root, and
+  that once an admin key linked to bob demoted a claim there, that key, counting as alice,
+  confirmed bob's fix as another person's, `same_user: false`. The build reads the settlement
+  fail closed, as R2 by person already reads an ordinary review: the settling key acts for the
+  fix's admin's person when either the person it counts as or the person whose root it was issued
+  in is that person. Such a key settles only as that person would, marked `same_user` inside that
+  person's own development root and a member of no release, and refused `same_person`
+  elsewhere; the development, own-root and release checks run on both readings. The person-only
+  doctor count of unconfirmed fixes compares the same way. A key that counts as no one still
+  settles nothing. This reading is the coordinator's within the operator's decision of
+  2026-11-20, flagged here for the operator to confirm.
 
 ## Operator decision of 2026-11-20: a user key counts as its issuer's person (#498 fourth review)
 
@@ -651,7 +663,8 @@ carol because of the root it was issued in. The operator decided on 2026-11-20 t
   someone's root counts as its issuer's person, and as no one where the issuer counts as no one,
   which settles nothing (d8 fails closed). A chain longer than 32 keys counts as no one.
 - **The root a settlement compares.** A same-person settlement is marked `same_user` only inside
-  the root of the person the settling key counts as, never the root the key was issued in. In the
+  the root of the fix's admin's person, whichever reading makes the settling key that person's
+  (the third decision's reading of 2026-11-20). In the
   reviewer's scenario `carol/forged` counts as alice, the fix lies in carol's root, and the confirm
   and the revert are refused `same_person`.
 - **R2 by person takes both readings.** Where the reviewer must not be the author, an author key
