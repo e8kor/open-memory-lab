@@ -59,8 +59,9 @@ use uuid::Uuid;
 
 use oml_domain::access::{
     AccessRefusal, Covers, Grant, IssuanceRefusal, KeyDenial, LabelledGrant, TailCaller,
-    TailSubject, Verb, VerbRefusal, admissible_grant_roles, check_contributor_grants, check_issuance, effective_access,
-    effective_roles, effective_verbs, resolve, resolve_verb, tail_visible,
+    TailSubject, Verb, VerbRefusal, admissible_grant_roles, check_contributor_grants,
+    check_issuance, effective_access, effective_roles, effective_verbs, resolve, resolve_verb,
+    tail_visible,
 };
 use oml_domain::anchor::{self as anchor_grammar, Anchor, SourceCheckBody};
 use oml_domain::brief::{brief_cut, brief_order};
@@ -9400,8 +9401,13 @@ where
             if target.author_key_id != key.key_id {
                 return Err(AppError::AuthorOnly);
             }
-            self.require_access(&caller, target.workspace_id, Role::Submitter, "source_check")
-                .await?;
+            self.require_access(
+                &caller,
+                target.workspace_id,
+                Role::Submitter,
+                "source_check",
+            )
+            .await?;
         }
         let invalid = |reason: &str| AppError::SourceCheckInvalid {
             field: "/artifact_id".to_owned(),

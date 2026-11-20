@@ -333,7 +333,10 @@ fn a_grant_issued_whose_role_is_writer_reads_as_a_submitter() {
         "grant.issued",
         &json!({"role": "writer", "workspace_node_id": "n"}),
     );
-    assert_eq!(payload, json!({"role": "submitter", "workspace_node_id": "n"}));
+    assert_eq!(
+        payload,
+        json!({"role": "submitter", "workspace_node_id": "n"})
+    );
 }
 
 #[test]

@@ -6,8 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use oml_domain::access::{
     AccessRefusal, Covers, Grant, IssuanceRefusal, KeyDenial, TailCaller, TailSubject,
-    admissible_grant_roles, check_contributor_grants, check_issuance, effective_roles, effective_verbs, resolve,
-    tail_visible,
+    admissible_grant_roles, check_contributor_grants, check_issuance, effective_roles,
+    effective_verbs, resolve, tail_visible,
 };
 use oml_domain::{Role, UsedBy};
 use proptest::prelude::*;
@@ -188,7 +188,11 @@ fn a_contributor_key_without_a_reader_or_a_submitter_grant_is_refused_as_contrib
     }
     // Only a contributor key is shaped so.
     for key_role in [Role::Reader, Role::Submitter, Role::Reviewer, Role::Admin] {
-        assert_eq!(check_contributor_grants(key_role, &[]), Ok(()), "{key_role:?}");
+        assert_eq!(
+            check_contributor_grants(key_role, &[]),
+            Ok(()),
+            "{key_role:?}"
+        );
     }
     // The reader grant need not sit on the submitter grant's node
     // (ADR-0093 d2: `<user>-curate` writes on one node and reads elsewhere).
@@ -196,7 +200,10 @@ fn a_contributor_key_without_a_reader_or_a_submitter_grant_is_refused_as_contrib
         node_grant(3, tree.universe, Role::Submitter),
         grant(4, tree.ops_crew, Role::Reader, &[]),
     ];
-    assert_eq!(check_issuance(Role::Admin, Role::Contributor, &curate), Ok(()));
+    assert_eq!(
+        check_issuance(Role::Admin, Role::Contributor, &curate),
+        Ok(())
+    );
     assert_eq!(
         check_contributor_grants(Role::Contributor, &roles(&curate)),
         Ok(())

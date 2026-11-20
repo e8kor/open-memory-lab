@@ -3973,10 +3973,16 @@ async fn under_tenant_a_a_reference_to_tenant_bs_row_fails_as_one_to_a_random_id
     )
     .await;
     let (a_key, b_key) = (Uuid::from_u128(0xD180), Uuid::from_u128(0xD190));
-    a.issue_key(&store, key_record(a.tenant_id, a_key, Role::Contributor, None))
-        .await;
-    b.issue_key(&store, key_record(b.tenant_id, b_key, Role::Contributor, None))
-        .await;
+    a.issue_key(
+        &store,
+        key_record(a.tenant_id, a_key, Role::Contributor, None),
+    )
+    .await;
+    b.issue_key(
+        &store,
+        key_record(b.tenant_id, b_key, Role::Contributor, None),
+    )
+    .await;
     let (a_memory, b_memory) = (Uuid::from_u128(0xC180), Uuid::from_u128(0xC190));
     // Tenant B's memory holds no review_queue row: review_queue's primary key
     // is the global memory_id, so moving tenant A's queue row onto a queued B
@@ -5272,7 +5278,12 @@ async fn a_connector_key_row_has_no_hash_and_a_bearer_key_row_holding_its_hash_c
     let (store, tenant, connector) = connector_rig(&created, 120).await;
     let mut rig = ChainRig::new(121);
     rig.seed_chain(&store, 0).await;
-    let bearer = key_record(rig.tenant_id, Uuid::from_u128(0xB0B1), Role::Contributor, None);
+    let bearer = key_record(
+        rig.tenant_id,
+        Uuid::from_u128(0xB0B1),
+        Role::Contributor,
+        None,
+    );
     rig.issue_key(&store, bearer.clone()).await;
 
     let mut tx = store.pool().begin().await.expect("begin");
@@ -7121,8 +7132,11 @@ async fn edge_tenant(store: &PgStore, seed: u64, base: u128) -> EdgeTenant {
     .await;
     let (proposer, ratifier) = (Uuid::from_u128(base + 1), Uuid::from_u128(base + 2));
     for key in [proposer, ratifier] {
-        rig.issue_key(store, key_record(rig.tenant_id, key, Role::Contributor, None))
-            .await;
+        rig.issue_key(
+            store,
+            key_record(rig.tenant_id, key, Role::Contributor, None),
+        )
+        .await;
     }
     let (src, dst) = (Uuid::from_u128(base + 3), Uuid::from_u128(base + 4));
     hold(store, &mut rig, root, src, proposer, false).await;

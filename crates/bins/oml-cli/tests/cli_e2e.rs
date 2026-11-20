@@ -895,7 +895,10 @@ async fn write_only_and_the_writer_role_are_refused_and_issue_nothing() {
     ]);
     assert_ne!(code, 0, "{stderr}");
     assert!(stderr.contains("--write-only"), "{stderr}");
-    assert!(lab.take_requests().is_empty(), "clap refuses before any request");
+    assert!(
+        lab.take_requests().is_empty(),
+        "clap refuses before any request"
+    );
     let (code, envelope, log) = lab.json(
         None,
         &[
@@ -912,7 +915,10 @@ async fn write_only_and_the_writer_role_are_refused_and_issue_nothing() {
     );
     assert_eq!(code, 1, "{log}");
     assert_eq!(envelope["error"]["code"], "request.validation", "{log}");
-    assert!(envelope["error"]["details"].get("renamed_to").is_none(), "{log}");
+    assert!(
+        envelope["error"]["details"].get("renamed_to").is_none(),
+        "{log}"
+    );
     lab.stop().await;
 }
 
@@ -5091,7 +5097,9 @@ async fn doctor_prints_role_tenant_and_default_workspace_from_whoami() {
     let (code, text) = doctor_text(&pair, &[]);
     assert_eq!(code, 0, "{text}");
     assert!(
-        text.contains("whoami      : role contributor, tenant acme, default workspace acme/metals\n"),
+        text.contains(
+            "whoami      : role contributor, tenant acme, default workspace acme/metals\n"
+        ),
         "{text}"
     );
     // A key that names no user says so (ADR-0044 d14).
@@ -7078,7 +7086,14 @@ async fn oml_sync_keeps_a_workspace_in_step_with_a_clones_records() {
                 "--principal",
                 principal,
                 "--grant",
-                &format!("{wa}:{}", if role == "contributor" { "submitter" } else { role }),
+                &format!(
+                    "{wa}:{}",
+                    if role == "contributor" {
+                        "submitter"
+                    } else {
+                        role
+                    }
+                ),
                 // A person's reviewer reads the tips it links (ADR-0057 d10).
                 "--grant",
                 &format!("{wa}:reader"),
@@ -7266,7 +7281,14 @@ async fn oml_sync_loads_a_crates_docs_and_a_code_edit_writes_nothing() {
                 "--principal",
                 principal,
                 "--grant",
-                &format!("{wa}:{}", if role == "contributor" { "submitter" } else { role }),
+                &format!(
+                    "{wa}:{}",
+                    if role == "contributor" {
+                        "submitter"
+                    } else {
+                        role
+                    }
+                ),
                 "--grant",
                 &format!("{wa}:reader"),
             ],

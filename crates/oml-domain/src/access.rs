@@ -133,7 +133,10 @@ pub fn contributor_without_recall(key_role: Role, grants: &[Grant]) -> bool {
 ///
 /// [`IssuanceRefusal::ContributorGrants`] for a contributor key without
 /// either grant.
-pub fn check_contributor_grants(key_role: Role, grant_roles: &[Role]) -> Result<(), IssuanceRefusal> {
+pub fn check_contributor_grants(
+    key_role: Role,
+    grant_roles: &[Role],
+) -> Result<(), IssuanceRefusal> {
     if key_role == Role::Contributor
         && !(grant_roles.contains(&Role::Reader) && grant_roles.contains(&Role::Submitter))
     {

@@ -3190,7 +3190,8 @@ async fn a_key_issuance_without_a_name_is_request_validation_naming_name_and_jou
     .into_iter()
     .enumerate()
     {
-        let mut body = json!({ "role": "contributor", "principal": "claude/laptop", "grants": grants });
+        let mut body =
+            json!({ "role": "contributor", "principal": "claude/laptop", "grants": grants });
         if !name.is_null() {
             body["name"] = name;
         }
@@ -3221,7 +3222,14 @@ async fn a_key_issuance_without_a_name_is_request_validation_naming_name_and_jou
     assert_eq!(refused["error"]["details"]["field"], "/name", "{refused}");
     assert_eq!(head_seq(&rig, tenant).await, head, "nothing journalled");
 
-    let issued = issue_key_with(router, &admin, "contributor", "claude/laptop", grants.clone()).await;
+    let issued = issue_key_with(
+        router,
+        &admin,
+        "contributor",
+        "claude/laptop",
+        grants.clone(),
+    )
+    .await;
     let key_id = Uuid::parse_str(issued["key_id"].as_str().expect("key id")).expect("uuid");
     let stored = rig
         .store
@@ -6557,9 +6565,7 @@ async fn an_unreadable_workspace_is_not_found() {
     assert_envelope(&body, "access.verb_ceiling");
     // An id that names no node and a name that names no node answer as
     // absence (ADR-0026 d4).
-    for (token, id) in [
-        (&reader, "no-such-node".to_owned()),
-    ] {
+    for (token, id) in [(&reader, "no-such-node".to_owned())] {
         let (status, _, body) = get(token, id).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
         assert_envelope(&body, "access.not_found");

@@ -185,7 +185,12 @@ struct Alice {
 async fn alice(app: &TestApp) -> Alice {
     let boot = bootstrap(app).await;
     let admin = &boot.admin_key.value;
-    let rw = || vec![grant("alice", Role::Submitter), grant("alice", Role::Reader)];
+    let rw = || {
+        vec![
+            grant("alice", Role::Submitter),
+            grant("alice", Role::Reader),
+        ]
+    };
     let person = issue(
         app,
         admin,

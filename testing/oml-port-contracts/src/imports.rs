@@ -559,7 +559,12 @@ async fn the_upload_binds_once_and_its_key_is_nulled_at_the_end<S: JournalStore 
         .value;
     let submitters = upload(&rig, &submitter, &bytes).await;
     assert!(matches!(
-        import(&rig, &submitter, &request(submitters, "notes", expect.clone())).await,
+        import(
+            &rig,
+            &submitter,
+            &request(submitters, "notes", expect.clone())
+        )
+        .await,
         Err(AppError::ImportPersonOnly {
             role: Role::Submitter,
             used_by: UsedBy::Person,

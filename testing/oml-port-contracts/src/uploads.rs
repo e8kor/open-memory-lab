@@ -329,9 +329,7 @@ async fn another_key_can_neither_read_nor_touch_an_upload<S: JournalStore + Clon
 
 /// A contributor and a submitter key open an upload; a reader, a reviewer
 /// and an admin key are refused by their role (ADR-0004 d3; ADR-0093 d6).
-async fn only_a_contributor_or_a_submitter_key_opens_an_upload<S: JournalStore + Clone>(
-    store: S,
-) {
+async fn only_a_contributor_or_a_submitter_key_opens_an_upload<S: JournalStore + Clone>(store: S) {
     let rig = rig(store).await;
     let on_universe = |role| GrantRequest {
         node: Reference::parse("universe").expect("a reference"),

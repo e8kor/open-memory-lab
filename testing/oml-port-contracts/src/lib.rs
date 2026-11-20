@@ -3105,7 +3105,12 @@ pub async fn journal_key_lookup_by_hash<S: JournalStore>(store: &S) {
 pub async fn a_revoked_key_no_longer_resolves_by_its_hash<S: JournalStore>(store: &S) {
     let mut rig = ChainRig::new(21);
     rig.seed_chain(store, 0).await;
-    let key = key_record(rig.tenant_id, Uuid::from_u128(0xDA), Role::Contributor, None);
+    let key = key_record(
+        rig.tenant_id,
+        Uuid::from_u128(0xDA),
+        Role::Contributor,
+        None,
+    );
     rig.issue_key(store, key.clone()).await;
     assert_eq!(
         store
@@ -3227,7 +3232,12 @@ pub async fn a_keys_limits_fold_with_its_issuance_and_are_replaced_by_key_limits
         key_hash: None,
         name: Some(name("alice-web")),
         session_user: Some(name("alice")),
-        ..key_record(rig.tenant_id, Uuid::from_u128(0xE2), Role::Contributor, None)
+        ..key_record(
+            rig.tenant_id,
+            Uuid::from_u128(0xE2),
+            Role::Contributor,
+            None,
+        )
     };
     rig.issue_key(store, session.clone()).await;
     let head = store
@@ -3711,7 +3721,12 @@ pub async fn grants_and_denials_round_trip_through_their_folds_and_key_access<S:
         rig.create_workspace(store, w).await;
     }
     let admin = key_record(t, Uuid::from_u128(0xD10), Role::Admin, None);
-    let agent = key_record(t, Uuid::from_u128(0xD11), Role::Contributor, Some(admin.key_id));
+    let agent = key_record(
+        t,
+        Uuid::from_u128(0xD11),
+        Role::Contributor,
+        Some(admin.key_id),
+    );
     let admin_issued = rig.issue_key(store, admin.clone()).await;
     let agent_issued = rig.issue_key(store, agent.clone()).await;
 
@@ -3895,7 +3910,12 @@ pub async fn a_grant_or_denial_the_schema_refuses_commits_nothing<S: JournalStor
             workspace_record(other.tenant_id, foreign_node, None, "universe"),
         )
         .await;
-    let foreign_key = key_record(other.tenant_id, Uuid::from_u128(0xD31), Role::Contributor, None);
+    let foreign_key = key_record(
+        other.tenant_id,
+        Uuid::from_u128(0xD31),
+        Role::Contributor,
+        None,
+    );
     other.issue_key(store, foreign_key.clone()).await;
     let head = store.chain_head(t).await.expect("head");
     let unknown = Uuid::from_u128(0xBFF);

@@ -596,10 +596,17 @@ async fn the_keys_page_issues_a_contributor_by_default_or_a_reader_and_nothing_e
             &rig,
             &cookie,
             "/web/keys",
-            &[("action", "issue_key"), ("name", refused), ("role", refused)],
+            &[
+                ("action", "issue_key"),
+                ("name", refused),
+                ("role", refused),
+            ],
         )
         .await;
-        assert!(answer.contains("role is contributor or reader"), "{refused}: {answer}");
+        assert!(
+            answer.contains("role is contributor or reader"),
+            "{refused}: {answer}"
+        );
     }
     laptop_key(&rig, &cookie).await;
     let key = key_named(&rig, "alice-laptop").await;
@@ -6464,7 +6471,11 @@ async fn the_old_review_and_keys_urls_move_or_are_not_found_and_their_acts_run_n
             &rig,
             &cookie,
             page,
-            &[("action", action), ("name", "laptop"), ("role", "contributor")],
+            &[
+                ("action", action),
+                ("name", "laptop"),
+                ("role", "contributor"),
+            ],
         )
         .await;
         assert_eq!(status, refused, "{page} {action}");

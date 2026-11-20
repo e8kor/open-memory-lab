@@ -152,7 +152,11 @@ async fn the_verdict_event_covers_the_format_the_version_was_signed_with() {
     let w = app
         .issue_key(
             admin,
-            &issue("w-key", R::Contributor, vec![grant(R::Submitter), grant(R::Reader)]),
+            &issue(
+                "w-key",
+                R::Contributor,
+                vec![grant(R::Submitter), grant(R::Reader)],
+            ),
         )
         .await
         .expect("contributor");

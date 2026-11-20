@@ -1604,7 +1604,8 @@ async fn a_persons_own_issuance_takes_an_expiry_and_no_rate() {
         ("expiry", json!("2999-01-01T00:00:00")),
         ("expiry", json!("2000-01-01T00:00:00Z")),
     ] {
-        let mut body = json!({"name": "alice-laptop", "role": "contributor", "connect_code": false});
+        let mut body =
+            json!({"name": "alice-laptop", "role": "contributor", "connect_code": false});
         body[member] = value.clone();
         let (status, answer) = as_web(&rig, &cookie, "web", "/v2/keys", body).await;
         assert_eq!(

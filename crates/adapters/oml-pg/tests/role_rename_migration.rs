@@ -394,9 +394,7 @@ async fn a_database_migrated_across_the_role_rename_holds_its_rows_in_the_roles_
         store
             .verify_stored_chain_reading(
                 seeded.tenant,
-                &KeySet::new(vec![
-                    oml_port_contracts::test_signing_key().verifying_key(),
-                ]),
+                &KeySet::new(vec![oml_port_contracts::test_signing_key().verifying_key()]),
                 |event| {
                     let env = &event.envelope;
                     unmapped.extend(oml_app::domain::former_names::unmapped_former_names(
@@ -425,7 +423,11 @@ async fn a_database_migrated_across_the_role_rename_holds_its_rows_in_the_roles_
         read_roles.sort();
         let mut rows: Vec<(Uuid, String)> = keys.into_iter().chain(grants).collect();
         rows.sort();
-        assert_eq!(rows, read_roles, "{}: the rows equal the map's reading", seeded.tenant);
+        assert_eq!(
+            rows, read_roles,
+            "{}: the rows equal the map's reading",
+            seeded.tenant
+        );
     }
     // The serving role reads its own tenant's renamed rows alone.
     let mut serving = PgConnection::connect(&serving_url(&db))

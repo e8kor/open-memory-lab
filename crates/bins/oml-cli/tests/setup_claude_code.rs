@@ -303,7 +303,12 @@ fn setup_claude_code_with_print_or_without_claude_runs_nothing_and_prints_a_conf
         if print {
             args.push("--print");
         }
-        let out = run(&dir, "contributor", with_claude.then_some(bin.as_path()), &args);
+        let out = run(
+            &dir,
+            "contributor",
+            with_claude.then_some(bin.as_path()),
+            &args,
+        );
         let stdout = String::from_utf8_lossy(&out.stdout);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert_eq!(out.status.code(), Some(0), "{case}: {stdout}{stderr}");
@@ -641,7 +646,13 @@ fn a_credentials_file_with_a_key_and_no_url_prompts_on_a_terminal_and_is_refused
     let dir = scratch("creds-key-alone");
     let bin = fake_claude(&dir, "2.1.312");
     key_only_credentials(&dir);
-    let (out, sent) = run_counted(&dir, "contributor", Some(&bin), &["setup", "claude-code"], &[]);
+    let (out, sent) = run_counted(
+        &dir,
+        "contributor",
+        Some(&bin),
+        &["setup", "claude-code"],
+        &[],
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(2), "{stderr}");
     assert!(stderr.contains(NO_SERVER), "{stderr}");

@@ -432,7 +432,10 @@ async fn a_user_named_like_a_shared_workspace_is_name_taken() {
         "{err:?}"
     );
     let err = app
-        .issue_key(admin, &user_req(Role::Contributor, "universe", "u", Vec::new()))
+        .issue_key(
+            admin,
+            &user_req(Role::Contributor, "universe", "u", Vec::new()),
+        )
         .await
         .expect_err("universe is no user");
     assert!(matches!(err, AppError::UserRefused(_)), "{err:?}");

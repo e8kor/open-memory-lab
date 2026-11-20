@@ -804,7 +804,10 @@ async fn a_second_version_one_on_a_live_claim_key_is_claim_key_conflict() {
         admin,
         Role::Submitter,
         "wanda",
-        vec![grant(crew, Role::Submitter), grant(library, Role::Submitter)],
+        vec![
+            grant(crew, Role::Submitter),
+            grant(library, Role::Submitter),
+        ],
     )
     .await;
     let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
@@ -1180,7 +1183,13 @@ async fn a_contributor_without_a_reader_grant_there_is_told_not_found_and_a_subm
         .await
         .unwrap_err();
     assert!(
-        matches!(err, AppError::VerbCeiling { role: Role::Submitter, verb: "recall" }),
+        matches!(
+            err,
+            AppError::VerbCeiling {
+                role: Role::Submitter,
+                verb: "recall"
+            }
+        ),
         "{err:?}"
     );
 }
@@ -2105,8 +2114,7 @@ async fn a_default_no_grant_covers_is_refused() {
 /// nothing (ADR-0093 d2). A submitter key with a reader grant is refused at
 /// step 3, as any inadmissible grant is.
 #[tokio::test]
-async fn a_contributor_key_without_a_reader_or_a_submitter_grant_is_refused_and_journals_nothing()
- {
+async fn a_contributor_key_without_a_reader_or_a_submitter_grant_is_refused_and_journals_nothing() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
@@ -2120,7 +2128,10 @@ async fn a_contributor_key_without_a_reader_or_a_submitter_grant_is_refused_and_
             .issue_key(admin, &issue_req(Role::Contributor, "c", grants.clone()))
             .await
             .unwrap_err();
-        assert!(matches!(err, AppError::ContributorGrants), "{grants:?}: {err:?}");
+        assert!(
+            matches!(err, AppError::ContributorGrants),
+            "{grants:?}: {err:?}"
+        );
     }
     // A node the tenant does not hold is told first (step 4).
     let err = app
@@ -5337,7 +5348,10 @@ async fn issuing_a_key_with_a_crew_name_journals_the_crews_id() {
                 ..issue_req(
                     Role::Contributor,
                     "claude/laptop",
-                    vec![grant(crew_wa, Role::Submitter), grant(crew_wa, Role::Reader)],
+                    vec![
+                        grant(crew_wa, Role::Submitter),
+                        grant(crew_wa, Role::Reader),
+                    ],
                 )
             },
         )
@@ -7405,7 +7419,8 @@ async fn a_wrong_code_of_any_kind_answers_the_same_refusal_with_one_attempt_fewe
     let (_, spent) = connector_with_code(&app, admin, vec![grant(crew, Role::Submitter)]).await;
     entered(&app, &code_page(&app).await, &spent).await;
     // Expired: a code whose ten minutes are over.
-    let (expired_key, _) = connector_with_code(&app, admin, vec![grant(crew, Role::Submitter)]).await;
+    let (expired_key, _) =
+        connector_with_code(&app, admin, vec![grant(crew, Role::Submitter)]).await;
     let expired = "EXPD-EXPD-EXPD";
     let live = store
         .connect_codes(boot.tenant_id, expired_key.key_id)
@@ -7517,8 +7532,12 @@ async fn a_revoked_keys_code_answers_connect_code_invalid() {
     let store = MemStore::new();
     let app = oauth_app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
-    let (issued, code) =
-        connector_with_code(&app, &boot.admin_key.value, vec![grant(crew, Role::Submitter)]).await;
+    let (issued, code) = connector_with_code(
+        &app,
+        &boot.admin_key.value,
+        vec![grant(crew, Role::Submitter)],
+    )
+    .await;
     seal_onto(
         &store,
         boot.tenant_id,
@@ -7569,8 +7588,12 @@ async fn connect_twice_with_one_handle_opens_at_most_one_connection() {
     let store = MemStore::new();
     let app = oauth_app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
-    let (issued, code) =
-        connector_with_code(&app, &boot.admin_key.value, vec![grant(crew, Role::Submitter)]).await;
+    let (issued, code) = connector_with_code(
+        &app,
+        &boot.admin_key.value,
+        vec![grant(crew, Role::Submitter)],
+    )
+    .await;
     let view = entered(&app, &code_page(&app).await, &code).await;
 
     let first = app
@@ -7641,8 +7664,12 @@ async fn the_connect_code_stays_spent_after_cancel() {
     let store = MemStore::new();
     let app = oauth_app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
-    let (issued, code) =
-        connector_with_code(&app, &boot.admin_key.value, vec![grant(crew, Role::Submitter)]).await;
+    let (issued, code) = connector_with_code(
+        &app,
+        &boot.admin_key.value,
+        vec![grant(crew, Role::Submitter)],
+    )
+    .await;
     let view = entered(&app, &code_page(&app).await, &code).await;
 
     let cancelled = app
@@ -7697,8 +7724,12 @@ async fn connect_stamps_the_clients_connected_at() {
     let store = MemStore::new();
     let app = oauth_app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
-    let (issued, code) =
-        connector_with_code(&app, &boot.admin_key.value, vec![grant(crew, Role::Submitter)]).await;
+    let (issued, code) = connector_with_code(
+        &app,
+        &boot.admin_key.value,
+        vec![grant(crew, Role::Submitter)],
+    )
+    .await;
     let view = entered(&app, &code_page(&app).await, &code).await;
     let client = store.oauth_client(DOC_URL).await.expect("read");
     assert_eq!(client.expect("the cached document").connected_at, None);
@@ -7780,8 +7811,12 @@ async fn connect_or_cancel_after_ten_minutes_answers_authorization_expired() {
         let store = MemStore::new();
         let app = oauth_app_over(store.clone());
         let (boot, crew) = tenant(&app).await;
-        let (issued, code) =
-            connector_with_code(&app, &boot.admin_key.value, vec![grant(crew, Role::Submitter)]).await;
+        let (issued, code) = connector_with_code(
+            &app,
+            &boot.admin_key.value,
+            vec![grant(crew, Role::Submitter)],
+        )
+        .await;
         let view = entered(&app, &code_page(&app).await, &code).await;
         let handle = lapsed_confirmation(&store, &view).await;
 
@@ -7840,8 +7875,12 @@ async fn a_code_entered_on_a_lapsed_or_unopened_handle_spends_nothing_and_counts
     let store = MemStore::new();
     let app = oauth_app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
-    let (issued, code) =
-        connector_with_code(&app, &boot.admin_key.value, vec![grant(crew, Role::Submitter)]).await;
+    let (issued, code) = connector_with_code(
+        &app,
+        &boot.admin_key.value,
+        vec![grant(crew, Role::Submitter)],
+    )
+    .await;
     let live = code_page(&app).await;
     let request = open_request(
         PlainSealer.open(&live).as_deref(),
@@ -14193,7 +14232,10 @@ async fn a_named_workspace_the_key_holds_no_reader_on_answers_access_not_found()
         admin,
         Role::Contributor,
         "wes",
-        vec![grant(f.crew, Role::Submitter), grant(elsewhere, Role::Reader)],
+        vec![
+            grant(f.crew, Role::Submitter),
+            grant(elsewhere, Role::Reader),
+        ],
     )
     .await;
 

@@ -122,7 +122,11 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
         let ada = app
             .issue_key(
                 admin.as_str(),
-                &user_key(Role::Contributor, UsedBy::Agent, &[Role::Submitter, Role::Reader]),
+                &user_key(
+                    Role::Contributor,
+                    UsedBy::Agent,
+                    &[Role::Submitter, Role::Reader],
+                ),
             )
             .await
             .expect("ada's writer key");
@@ -164,7 +168,10 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
             &app,
             &admin,
             Role::Contributor,
-            vec![grant(universe, Role::Submitter), grant(universe, Role::Reader)],
+            vec![
+                grant(universe, Role::Submitter),
+                grant(universe, Role::Reader),
+            ],
         )
         .await;
         let tenant_reviewer = tenant_key(
@@ -606,7 +613,10 @@ pub async fn a_key_that_is_not_the_users_starts_no_memory_in_a_users_root_or_bel
     let reads_only = w
         .tenant_key(
             Role::Contributor,
-            vec![grant(w.root, Role::Reader), grant(w.shared, Role::Submitter)],
+            vec![
+                grant(w.root, Role::Reader),
+                grant(w.shared, Role::Submitter),
+            ],
         )
         .await;
     let bos_writer = w

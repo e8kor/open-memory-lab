@@ -1024,7 +1024,13 @@ mod tests {
             .expect("a listed key")
         };
         for side in [Side::User, Side::Admin] {
-            let without = row(&listed("contributor", &["submitter"]), side, "csrf", "alice", None);
+            let without = row(
+                &listed("contributor", &["submitter"]),
+                side,
+                "csrf",
+                "alice",
+                None,
+            );
             assert!(without.contains(NO_RECALL), "{without}");
             for (role, grants) in [
                 ("contributor", &["submitter", "reader"][..]),
