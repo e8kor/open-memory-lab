@@ -84,11 +84,12 @@ where
             admin: req.admin,
             google_subject: existing.as_ref().and_then(|e| e.google_subject.clone()),
             github_subject: existing.as_ref().and_then(|e| e.github_subject.clone()),
-            // A change that makes an entry newly wait on its person records
-            // the admin key that made it, the one the person is shown as
-            // having added it (the operator's decision of 2026-11-20).
+            // A change that leaves or makes an entry wait on its person
+            // records the admin key that made it, the one the person is
+            // shown as having last set it (the operator's decision of
+            // 2026-11-20); an accepted entry keeps the key that added it.
             added_by: match &existing {
-                Some(e) if !(pending && !e.pending) => e.added_by,
+                Some(e) if !pending => e.added_by,
                 _ => admin.key_id,
             },
             terms_version: existing.as_ref().and_then(|e| e.terms_version.clone()),

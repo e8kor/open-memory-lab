@@ -6661,3 +6661,48 @@ async fn an_accept_of_an_admin_flag_flipped_since_the_review_is_refused_changed(
         .expect("an accept of the flag the entry carries");
     assert!(!accepted.pending && accepted.admin);
 }
+
+/// The re-verifier's case: an entry the bootstrap's admin key left pending
+/// on bob, changed by a second admin to `{user: bob, admin: true}`, still
+/// pending, shows bob the second admin as the key that last set it.
+#[tokio::test]
+async fn a_pending_entry_a_second_admin_changes_shows_that_admin_as_its_adder() {
+    let r = fix_rig().await;
+    let address = email("bob@work.example");
+    let first = allowed(&r, address.as_str(), "bob").await;
+    assert!(first.pending, "{first:?}");
+    assert_eq!(first.added_by, r.boot.admin_key.key_id);
+    let second = tenant_key(
+        &r.app,
+        r.boot.admin_key.value.as_str(),
+        Role::Admin,
+        "second-admin",
+        Vec::new(),
+    )
+    .await;
+    let changed = r
+        .app
+        .allow_web_email(
+            second.value.as_str(),
+            &WebEmailRequest {
+                email: address.clone(),
+                user: name("bob"),
+                admin: true,
+            },
+        )
+        .await
+        .expect("the second admin changes the entry")
+        .0;
+    assert!(changed.pending && changed.admin, "{changed:?}");
+    assert_eq!(changed.added_by, second.key_id);
+    let bob = console_of(&r.app, &r.store, "bob").await;
+    let listed = r
+        .app
+        .whoami_person(Bearer::Session(&bob), false)
+        .await
+        .expect("whoami")
+        .expect("bob's person")
+        .pending_emails;
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].added_by, second.key_id);
+}

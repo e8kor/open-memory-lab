@@ -1176,13 +1176,14 @@ The fourth review of #498 found three gaps in the note above. The operator decid
   is refused as its un-flagging is: a pending entry signs in to nothing. The store checks
   `keep_an_admin && (!admin || pending)` in the commit's own transaction, on either store.
 - **The accept names the admin flag the person reviewed.** `GET /v2/whoami` serves each pending
-  address with its `admin` flag and the admin key that added it, or changed it to name the person
-  (`added_by`, by id and name); the Keys page shows both. `POST /v2/web/emails/accept` takes
+  address with its `admin` flag and the admin key that last set it (`added_by`, by id and name); the Keys page shows both. `POST /v2/web/emails/accept` takes
   `{email, admin}`, the flag shown; an entry whose flag is not that one is refused
   `request.validation`, `details.field: /admin`, `details.reason: changed`, and journals nothing.
   `web.email_accepted` journals the flag, and its fold matches it with the email and the user, so a
-  flip between the read and the commit fails the commit. A change that makes an entry newly wait on
-  its person records the changing admin key as `added_by`.
+  flip between the read and the commit fails the commit. Every change that leaves or makes an entry
+  wait on its person records the changing admin key as `added_by` (the reading of 2026-11-20 after
+  the fifth review of #498: a second admin's change of an entry already pending shows that admin);
+  an accepted entry keeps the key that added it.
 - The cost: two key-list reads on an `allow_web_email` for a name no entry and no session key
   names, one key read per pending address on a `whoami` that serves a person, and one field on the
   accept.
