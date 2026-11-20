@@ -123,11 +123,11 @@ struct Seeded {
 impl Seeded {
     fn new(n: u128) -> Self {
         Self {
-            tenant: Uuid::from_u128(0xA066_0 + n),
-            root: Uuid::from_u128(0xB066_0 + n),
-            recalls: Uuid::from_u128(0xC066_0 + n),
-            write_only: Uuid::from_u128(0xC066_8 + n),
-            reviewer: Uuid::from_u128(0xC066_F + n),
+            tenant: Uuid::from_u128(0xA0660 + n),
+            root: Uuid::from_u128(0xB0660 + n),
+            recalls: Uuid::from_u128(0xC0660 + n),
+            write_only: Uuid::from_u128(0xC0668 + n),
+            reviewer: Uuid::from_u128(0xC066F + n),
         }
     }
 
