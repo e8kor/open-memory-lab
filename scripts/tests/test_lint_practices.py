@@ -408,6 +408,20 @@ class FormerRole(unittest.TestCase):
         flagged = {p.split(":")[0] for p in L.lint_former_role(root, False)}
         self.assertEqual(flagged, {"a.rs", "b.json", "c.sh", "d.md", "e.md", "f.md"})
 
+    def test_the_writer_role_in_docs_prose_and_shell_is_flagged_and_its_plain_senses_are_not(self):
+        root = tree({
+            "a.md": "issue a writer key for the agent's use\n",
+            "b.md": "type a name, keep **writer** and click Issue\n",
+            "c.md": "where it holds writer: Claude can remember\n",
+            "d.sh": "# grants the agent writer and reader on its root\n",
+            "e.md": "check the key has a writer grant on the workspace\n",
+            "ok.md": "the lake writer key file; the lake-writer grants; every writer receives alike;\n"
+                     "a writer that omits derives_from; why do writers get 503\n",
+            "ok.rs": "// a writer key in a Rust comment is not prose this rule reads\n",
+        })
+        flagged = {p.split(":")[0] for p in L.lint_former_role(root, False)}
+        self.assertEqual(flagged, {"a.md", "b.md", "c.md", "d.sh", "e.md"})
+
     def test_a_roles_entry_allows_its_path_or_its_lines_and_names_a_reason(self):
         files = {"migrations/0001_init.sql": "CHECK (role IN ('reader', 'writer'))\n",
                  "docs/x.md": "Called `writer` before v0.8.4\nthe `writer` role\n"}

@@ -432,6 +432,18 @@ FORMER_ROLE = re.compile(
     r"|--write-only\b|\bwrite_only\b"
 )
 
+# ADR-0093 d7 in docs prose and shell scripts, where the role is written as a bare word: "a writer
+# key", "a writer grant", "keep writer", "holds writer", "writer and reader". The lake writer and
+# a person or agent that writes ("every writer", "why do writers get") are other senses, not read.
+FORMER_ROLE_PROSE = re.compile(
+    r"(?<![\w-])(?<!lake )(?<!lake-)(?<!Delta )writer (?:keys?|grants?)\b"
+    r"|\bkeep (?:the role )?\**writer\b"
+    r"|\b(?:holds?|holding|with|has|on) writer\b"
+    r"|\bwriter,? (?:and|or) (?:reader|reviewer)\b"
+    r"|\b(?:reader|reviewer),? (?:and |or )?writer\b",
+    re.IGNORECASE,
+)
+
 
 def rename_allowed(root: Path, use: bool, name: str = "rename.txt") -> list[tuple[str, str]]:
     """The entries of lint_allow/<name>: `<glob>  # <reason>` allows a whole path, and
@@ -519,6 +531,8 @@ def lint_former_role(root: Path, use_allow: bool = True) -> list[str]:
             if any(n in line for n in needles):
                 continue
             m = FORMER_ROLE.search(line)
+            if not m and rel.endswith((".md", ".sh")):
+                m = FORMER_ROLE_PROSE.search(line)
             if m:
                 problems.append(f"{rel}:{i}: former role {m.group(0)!r} (ADR-0093 d7)")
     return problems
