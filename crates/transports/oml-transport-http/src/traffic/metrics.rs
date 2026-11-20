@@ -118,6 +118,12 @@ struct ActLabels {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct FixLabels {
+    act: String,
+    loosens_guardrail: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct VerdictLabels {
     verdict: String,
 }
@@ -235,6 +241,10 @@ pub struct Metrics {
     imports_stopped: Gauge,
     imports_unprovenanced: Gauge,
     exports: Counter,
+    admin_reads: Counter,
+    admin_fixes: Family<FixLabels, Counter>,
+    admin_fixes_unconfirmed: Gauge,
+    admin_fix_oldest_unconfirmed: Gauge,
     scan_findings: Family<ScanLabels, Counter>,
     scan_counts: std::sync::OnceLock<ScanCounts>,
     scan_refresh: std::sync::Mutex<()>,
@@ -404,6 +414,10 @@ impl Default for Metrics {
         let imports_stopped = Gauge::default();
         let imports_unprovenanced = Gauge::default();
         let exports = Counter::default();
+        let admin_reads = Counter::default();
+        let admin_fixes = Family::<FixLabels, Counter>::default();
+        let admin_fixes_unconfirmed = Gauge::default();
+        let admin_fix_oldest_unconfirmed = Gauge::default();
         registry.register(
             "oml_http_request_duration_seconds",
             "API-listener request duration by route template and status; probes answered 200 are not counted",
@@ -620,6 +634,28 @@ impl Default for Metrics {
             exports.clone(),
         );
         registry.register(
+            "oml_admin_reads",
+            "admin reads of claim text served, each journalled as memory.admin_read under an investigation (ADR-0089 d10, d15)",
+            admin_reads.clone(),
+        );
+        // The act is a closed set: demote, edit, retire or erase (ADR-0089
+        // d2, d6, d15).
+        registry.register(
+            "oml_admin_fixes",
+            "admin fixes committed, by act and whether each loosens a guardrail (ADR-0089 d6, d15)",
+            admin_fixes.clone(),
+        );
+        registry.register(
+            "oml_admin_fixes_unconfirmed",
+            "admin fixes no person has confirmed or reverted yet, at the last sweep (ADR-0089 d15)",
+            admin_fixes_unconfirmed.clone(),
+        );
+        registry.register(
+            "oml_admin_fix_oldest_unconfirmed_seconds",
+            "the age of the oldest unconfirmed admin fix, 0 with none, at the last sweep (ADR-0089 d15)",
+            admin_fix_oldest_unconfirmed.clone(),
+        );
+        registry.register(
             "oml_handler_panics",
             "requests whose handler panicked and were answered system.internal by the panic guard; every one is a defect, named in the lead's log under event handler_panic",
             handler_panics.clone(),
@@ -674,6 +710,10 @@ impl Default for Metrics {
             upload_sweep_failures,
             upload_store_unavailable,
             exports,
+            admin_reads,
+            admin_fixes,
+            admin_fixes_unconfirmed,
+            admin_fix_oldest_unconfirmed,
             scan_findings,
             scan_counts: std::sync::OnceLock::new(),
             scan_refresh: std::sync::Mutex::new(()),
@@ -741,6 +781,13 @@ impl Metrics {
         }
         if route == "/v2/workspaces/{workspace}/exports" && status == 200 {
             self.exports.inc();
+        }
+        if matches!(
+            route,
+            "/v2/admin/memories/search" | "/v2/admin/memories/{artifact_id}"
+        ) && status == 200
+        {
+            self.admin_reads.inc();
         }
         if route == "/oauth/token" {
             self.oauth_tokens
@@ -846,6 +893,25 @@ impl Metrics {
                 mode: mode.to_owned(),
             })
             .inc();
+    }
+
+    /// One admin fix committed (ADR-0089 d6, d15).
+    pub(crate) fn admin_fix(&self, act: &'static str, loosens_guardrail: bool) {
+        self.admin_fixes
+            .get_or_create(&FixLabels {
+                act: act.to_owned(),
+                loosens_guardrail: loosens_guardrail.to_string(),
+            })
+            .inc();
+    }
+
+    /// The deployment's unconfirmed admin fixes and the oldest one's age in
+    /// seconds, at one sweep (ADR-0089 d15).
+    pub fn fix_sweep(&self, unconfirmed: u64, oldest_seconds: u64) {
+        self.admin_fixes_unconfirmed
+            .set(i64::try_from(unconfirmed).unwrap_or(i64::MAX));
+        self.admin_fix_oldest_unconfirmed
+            .set(i64::try_from(oldest_seconds).unwrap_or(i64::MAX));
     }
 
     /// One curator act (ADR-0030 d5, d9).

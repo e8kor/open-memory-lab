@@ -156,6 +156,9 @@ pub struct AdminSearchRequest<'a> {
     pub kinds: Vec<MemoryKind>,
     pub after: Option<(EventTime, Uuid)>,
     pub limit: usize,
+    /// The open investigation of the admin key the read is made under
+    /// (ADR-0089 d10).
+    pub investigation: Option<Uuid>,
 }
 
 /// The user page's Memories list as the person filters it (ADR-0045 d22,
@@ -1437,6 +1440,10 @@ where
     /// alone; every memory of the tenant the search names, any state, with
     /// its text and author, newest first. Journalled as one
     /// `memory.admin_read` naming the ids served and a digest of the query.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the admin search's filters and the investigation it reads under"
+    )]
     pub async fn admin_search(
         &self,
         bearer: impl Into<Bearer<'_>>,
@@ -1445,6 +1452,7 @@ where
         state: Option<AdminState>,
         after: Option<(EventTime, Uuid)>,
         limit: usize,
+        investigation: Option<Uuid>,
     ) -> Result<AdminPage, AppError> {
         self.admin_search_filtered(
             bearer,
@@ -1457,6 +1465,7 @@ where
                 kinds: Vec::new(),
                 after,
                 limit,
+                investigation,
             },
         )
         .await
@@ -1484,7 +1493,11 @@ where
             kinds,
             after,
             limit,
+            investigation,
         } = req.clone();
+        let investigation = self
+            .require_investigation(&caller.key, investigation, "/investigation")
+            .await?;
         let author = match &author {
             None => None,
             Some(reference) => Some(self.resolve(&caller.key, NamedKind::Key, reference).await?),
@@ -1531,6 +1544,7 @@ where
         }
         self.journal_admin_read(
             &caller.key,
+            investigation,
             items.iter().map(|m| m.memory.memory_id).collect(),
             search.query.as_deref(),
         )
@@ -1545,9 +1559,13 @@ where
         &self,
         bearer: impl Into<Bearer<'_>>,
         memory_id: Uuid,
+        investigation: Option<Uuid>,
     ) -> Result<AdminMemory, AppError> {
         let caller = self.authenticate_bearer(bearer.into()).await?;
         require_role(&caller.key, Role::Admin, "admin_read")?;
+        let investigation = self
+            .require_investigation(&caller.key, investigation, "investigation")
+            .await?;
         let tenant_id = caller.key.tenant_id;
         let memory = self
             .journal
@@ -1555,7 +1573,7 @@ where
             .await?
             .ok_or(AppError::NotFound)?;
         let read = self.admin_memory(tenant_id, memory, true).await?;
-        self.journal_admin_read(&caller.key, vec![memory_id], None)
+        self.journal_admin_read(&caller.key, investigation, vec![memory_id], None)
             .await?;
         Ok(read)
     }
@@ -1637,6 +1655,7 @@ where
     async fn journal_admin_read(
         &self,
         admin: &KeyRecord,
+        investigation_id: Uuid,
         artifact_ids: Vec<Uuid>,
         query: Option<&str>,
     ) -> Result<(), AppError> {
@@ -1652,9 +1671,18 @@ where
             json!({
                 "artifact_ids": ids.into_iter().collect::<Vec<_>>(),
                 "query_digest": query.map(|q| Sha256Hash::digest(q.as_bytes()).to_prefixed()),
+                "investigation_id": investigation_id.to_string(),
             }),
         )?;
-        self.commit(event, MetadataFold::AdminRead, None).await?;
+        self.commit(
+            event,
+            MetadataFold::AdminMemoryRead {
+                investigation_id,
+                key_id: admin.key_id,
+            },
+            None,
+        )
+        .await?;
         Ok(())
     }
 }

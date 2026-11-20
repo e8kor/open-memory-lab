@@ -8,7 +8,7 @@ answers: what a workspace release is, when its manifest is fixed and what it may
 # ADR-0085 — A workspace publishes immutable releases that one person cuts and another ratifies, and each key binds to the tip, the latest release or a pinned one
 
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its three questions decided at their
-recommendations and every other default as drafted · proposed the same day · amended 2026-11-17 (d16: how the console acts with a linked key, accepted the same day by the operator, "Session + named key") · amended 2026-11-18 (d16: a version records its author's person at its write, the follow-up d16 left open, built by #448) · amendments of 2026-11-18 (d2, d6, d10: the operator's answers D1 to D3 to the lifecycle review; d1 and the stage tabs from the operator's batch; #429), accepted 2026-11-19 by the operator · amended 2026-11-19 by the operator's decisions on the release plan (D2's reach, federated sources at their latest release, a reviewed retirement at the next cut, the release notes' document, a pin moved by a person's reviewer key; the decisions of 2026-11-19 at the end of this record)
+recommendations and every other default as drafted · proposed the same day · amended 2026-11-17 (d16: how the console acts with a linked key, accepted the same day by the operator, "Session + named key") · amended 2026-11-18 (d16: a version records its author's person at its write, the follow-up d16 left open, built by #448) · amendments of 2026-11-18 (d2, d6, d10: the operator's answers D1 to D3 to the lifecycle review; d1 and the stage tabs from the operator's batch; #429), accepted 2026-11-19 by the operator · amended 2026-11-19 by the operator's decisions on the release plan (D2's reach, federated sources at their latest release, a reviewed retirement at the next cut, the release notes' document, a pin moved by a person's reviewer key; the decisions of 2026-11-19 at the end of this record) · amended 2026-11-19 by the operator (d16: an admin key is linkable to its person, and the bootstrap claim links its first admin key; ADR-0089's decision of that day) · amended 2026-11-19 by the operator after the second review of #498 (d16: a console admin's link of a key takes effect only once the named person accepts it from their own console session; the bootstrap's link is accepted at its creation)
 
 **Release:** not scheduled; the first record of the workspace lifecycle
 ([review](https://github.com/e8kor/open-memory-lab/blob/main/design/workspace-lifecycle.md)), before
@@ -367,6 +367,49 @@ Decided, not built.
       verdict. Recording the author's person on the version at its write, so an unlink cannot
       clear the mark, is the follow-up this record leaves open. A revoked key may still be
       unlinked.
+    - *Admin keys are linkable* (the operator, 2026-11-19, ADR-0089's decision of that day). A
+      bearer admin key `used_by: person` is linked to its person through the same console flow,
+      console-only, a self-link refused as for any key, so ADR-0089's fix knows whose act it is.
+      The tenant's first admin key is linked by the bootstrap ceremony when its claim names a
+      `person`. A linked admin key never acts through `OML-Acting-Key`: the console's acting
+      routes still refuse an admin key. The `api_keys_linked_user` check drops its `role <> 'admin'`
+      clause (migration 0064).
+    - *A link waits on its person's acceptance* (the operator, 2026-11-19, after the second
+      review of #498; built in v0.8.4). Three attacks followed from one console admin linking any key to any
+      other person alone: (A) an admin links their own bearer admin key to another person,
+      fixes, and confirms with their own reviewer key as "another person"; (B) after a fair fix
+      the admin relinks the admin key to another person and then confirms; (C) an admin links
+      their own reviewer key to another person and confirms with it. The decision:
+      - A console admin's `POST /v2/keys/{key}/link` journals `key.linked_person` with
+        `accepted: false` and leaves the link *pending* (`api_keys.link_pending_user_id`,
+        migration 0064). A key with a pending link acts for no one: it is unlinked for every rule
+        that reads a key's person (the console's acting key, root writes, R2 by person,
+        `same_user`, the author's person recorded at a write, an admin fix, the settlement of
+        one).
+      - The named person accepts it from their own console session, `POST
+        /v2/keys/{key}/accept_link`, the **Accept link** act on the personal Keys page, journalled
+        `key.link_accepted` (`key_id`, `user`, `user_root_id`, `accepted_by_key_id`); the key acts
+        for them from that commit on. Anyone else is refused `request.validation`, `details.field:
+        key`, with `details.reason`: `not_named_person` for another person's session, the linking
+        admin's own included; `session_only` for a bearer key or any non-session caller;
+        `not_pending` for a key with no link pending; `revoked` or `not_used_by_person` for a key no
+        longer one a link may name. A refusal journals nothing.
+      - A pending link is withdrawn as a link is ended, `POST /v2/keys/{key}/unlink`, journalled
+        `key.unlinked_person`; a key holds a link or a pending one, never both, and a second link
+        while one pends is refused `already_linked`.
+      - `oml doctor` warns `key.link_pending` with the count of live keys whose link waits, from the
+        admin rescan report's `key_links_pending`.
+      - *Writer keys too* (the build's reading, recommended for consistency and recorded here for
+        the operator): a link of any key waits on acceptance, a writer key's included, since this
+        record's original use of a link is to let a key write into the person's root; a reading
+        that exempted writer keys would let an admin grant themselves writes into another person's
+        root alone. Rejected: acceptance for admin and reviewer keys only, the decision's minimum,
+        which keeps that write path open.
+      - *The bootstrap's link is accepted at its creation.* `oml bootstrap claim --person` (and the
+        quickstart, the PoC demo and the CI stack jobs that pass it) is run by the person it names,
+        so its `key.linked_person` carries `accepted: true` and needs no `key.link_accepted`.
+      - The cost: one more act per link, by a second person, and one nullable column on
+        `api_keys`.
     - *The author's person is recorded at the write* (amended 2026-11-18, #448, closing the
       follow-up above). A version records, when it is written, the person its author key acts
       for, by name as `same_user` compares it: a session key's person, the user root a user key
@@ -631,3 +674,19 @@ beside a decision, for the operator to confirm or reverse.
     issuance and never widen one afterwards, the admin does it by issuing a key at `latest`
     **[operator batch]**.
   - Every other widening stays as d7 says.
+
+## Operator decisions of 2026-11-20 (d16, #498 fourth review)
+
+- **A write records the person its key counts as.** The author's person a version records at its
+  write is the person the author key counts as: a user key counts as its issuer's person, so a key
+  an admin minted in carol's root records the admin's person
+  ([ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md),
+  the decision of 2026-11-20, "counts as the issuer"). R2 by person reads both that record and the
+  root the author key was issued in, so the `same_user` mark of an ordinary review is unchanged.
+- **An inserted key carries no link.** Migration 0064's `api_keys_link_guard` covers inserts: a key
+  is inserted with no `linked_user_id` and no `link_pending_user_id`. The ceremony's link of its own
+  admin key is admitted only while that key is its tenant's only key, as it is at the ceremony, so
+  an admin key no key issued, inserted later beside other keys, never reaches it. What the database still leaves to the serving role, `link_pending_user_id`, a
+  key's `hash` and `web_emails.pending_since`, is listed in
+  [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)'s
+  limits table of 2026-11-20.

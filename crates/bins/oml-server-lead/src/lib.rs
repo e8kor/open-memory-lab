@@ -2039,6 +2039,25 @@ pub async fn import_totals(app: &LeadApp, store: &PgStore) -> oml_app::types::Im
     totals
 }
 
+/// The deployment's unconfirmed admin fixes and the oldest one's age,
+/// for the fix gauges (ADR-0089 d15). A tenant that fails to read is left
+/// out of the totals.
+pub async fn fix_totals(app: &LeadApp, store: &PgStore) -> oml_app::app::FixStats {
+    let mut totals = oml_app::app::FixStats::default();
+    let Ok(tenants) = enumerate_tenants(store.pool()).await else {
+        return totals;
+    };
+    for tenant_id in tenants {
+        if let Ok(stats) = app.fix_stats(tenant_id).await {
+            totals.unconfirmed += stats.unconfirmed;
+            totals.oldest_unconfirmed_seconds = totals
+                .oldest_unconfirmed_seconds
+                .max(stats.oldest_unconfirmed_seconds);
+        }
+    }
+    totals
+}
+
 /// Runs [`sweep_uploads`] at the lead's start and every
 /// [`UPLOAD_SWEEP_SECONDS`] after, setting the upload gauges and logging
 /// [`EVENT_UPLOAD_SWEEP`] when it shredded or removed something, or
@@ -2075,6 +2094,8 @@ pub fn spawn_upload_sweep(
                 imports.stopped,
                 imports.unprovenanced,
             );
+            let fixes = fix_totals(&app, &store).await;
+            metrics.fix_sweep(fixes.unconfirmed, fixes.oldest_unconfirmed_seconds);
             match swept {
                 Ok((totals, changed, failures, reasons)) => {
                     metrics.upload_sweep(&totals, failures);

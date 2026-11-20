@@ -155,7 +155,7 @@ async fn get(router: &Router, path: &str, bearer: &str, web: bool) -> Answer {
 async fn send(
     router: &Router,
     request: axum::http::request::Builder,
-    body: &'static str,
+    body: &str,
     bearer: &str,
     web: bool,
 ) -> Answer {
@@ -170,7 +170,11 @@ async fn send(
     let guard = tracing::subscriber::set_default(log_subscriber(move || sink.clone()));
     let response = router
         .clone()
-        .oneshot(request.body(Body::from(body)).expect("a request"))
+        .oneshot(
+            request
+                .body(Body::from(body.to_owned()))
+                .expect("a request"),
+        )
         .await
         .expect("the router answers");
     let status = response.status();
@@ -189,11 +193,6 @@ async fn send(
         body: serde_json::from_slice(&bytes).unwrap_or(Value::Null),
         line,
     }
-}
-
-/// `POST path` with an empty JSON object, as [`get`] sends a `GET`.
-async fn post(router: &Router, path: &str, bearer: &str, web: bool) -> Answer {
-    send(router, Request::post(path), "{}", bearer, web).await
 }
 
 fn web(token: &str, capacity: &str) -> String {
@@ -266,8 +265,43 @@ async fn a_session_keys_read_resolves_its_caller_on_the_gates_access_once_and_a_
     // key value resolves and reads its access (two calls), the session key
     // on a POST is resolved by the gate (one) and reads its access when
     // the verb runs (one more).
-    let by_value = post(&rig.router, "/v2/admin/memories/search", &rig.admin, false).await;
-    let by_session = post(&rig.router, "/v2/admin/memories/search", &admin, true).await;
+    // Each key reads under an open investigation of its own (ADR-0089 d10).
+    let search = |inv: &serde_json::Value| {
+        serde_json::json!({ "investigation": inv["investigation_id"] }).to_string()
+    };
+    let opened = |bearer: &str, web: bool| {
+        let bearer = bearer.to_owned();
+        let router = rig.router.clone();
+        async move {
+            let answer = send(
+                &router,
+                Request::post("/v2/admin/investigations"),
+                r#"{"reason":"the store calls"}"#,
+                &bearer,
+                web,
+            )
+            .await;
+            assert_eq!(answer.status, StatusCode::CREATED, "{}", answer.body);
+            answer.body
+        }
+    };
+    let (by_key, of_session) = (opened(&rig.admin, false).await, opened(&admin, true).await);
+    let by_value = send(
+        &rig.router,
+        Request::post("/v2/admin/memories/search"),
+        &search(&by_key),
+        &rig.admin,
+        false,
+    )
+    .await;
+    let by_session = send(
+        &rig.router,
+        Request::post("/v2/admin/memories/search"),
+        &search(&of_session),
+        &admin,
+        true,
+    )
+    .await;
     assert_eq!(by_value.status, StatusCode::OK, "{}", by_value.body);
     assert_eq!(by_session.status, StatusCode::OK, "{}", by_session.body);
     assert_eq!(
@@ -353,7 +387,9 @@ async fn whoami_of_a_key_value_without_the_person_block_reads_each_row_once() {
 /// one resolution of the credential: the record's reads and the person's
 /// own (their deletion request, their account's profile, which alone
 /// puts an account outside the sign-up tenant under limits, ADR-0071 d5,
-/// and the keys an admin linked to them, ADR-0085 d16).
+/// the keys an admin linked to them, ADR-0085 d16, and the sign-in emails
+/// an admin added for them that wait on their acceptance, ADR-0045 d2's
+/// note of 2026-11-19: one read more since v0.8.4).
 #[tokio::test]
 async fn whoami_serves_the_person_block_unless_asked_not_to_in_one_resolution() {
     let rig = rig().await;
@@ -363,7 +399,7 @@ async fn whoami_serves_the_person_block_unless_asked_not_to_in_one_resolution() 
     assert_eq!(me.body["person"]["under_quotas"], false, "{}", me.body);
     assert_eq!(me.body["person"]["deletion_requested_at"], Value::Null);
     assert!(me.body["person"].get("start").is_none(), "{}", me.body);
-    assert_eq!(me.store_calls(), 1 + 1 + 3, "{}", me.line);
+    assert_eq!(me.store_calls(), 1 + 1 + 4, "{}", me.line);
     let asked = get(
         &rig.router,
         "/v2/whoami?person=true",
@@ -812,7 +848,12 @@ async fn the_held_listings_store_calls_do_not_grow_with_the_workspaces() {
         );
         calls.push(held.store_calls());
     }
-    assert_eq!(calls, [5, 5], "the held listing's store calls at 6 and 48");
+    // Six: the sixth is the one read of the rows' author key, cached for the
+    // listing, which says whether a row in alice's root that a key an admin
+    // issued there wrote is marked `same_user`: that key counts as the
+    // admin's person, so its recorded author's person is not alice's (the
+    // operator's decision of 2026-11-20, ADR-0089).
+    assert_eq!(calls, [6, 6], "the held listing's store calls at 6 and 48");
 }
 
 // ---------------------------------------------------------------------------

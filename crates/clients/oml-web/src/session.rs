@@ -188,6 +188,9 @@ pub struct Session {
     token: String,
     pub whoami: Whoami,
     pub admin: bool,
+    /// The browser session's open admin investigation, from its cookie
+    /// (ADR-0089 d10).
+    pub investigation: Option<String>,
     /// The To do counts read as `<user>-web`, made on a Personal page's
     /// `GET` (ADR-0083 d6, d11); `None` where it was not made or did not
     /// answer.
@@ -204,12 +207,23 @@ impl std::fmt::Debug for Session {
             .field("token", &"<redacted>")
             .field("whoami", &self.whoami)
             .field("admin", &self.admin)
+            .field("investigation", &self.investigation)
             .field("todo", &self.todo)
             .finish()
     }
 }
 
 impl Session {
+    /// The session with the browser's open admin investigation, from its
+    /// cookie (ADR-0089 d10).
+    #[must_use]
+    pub fn investigating(self, investigation: Option<String>) -> Self {
+        Self {
+            investigation,
+            ..self
+        }
+    }
+
     /// The credential of `capacity`, derived from the session token.
     #[must_use]
     pub fn credential(&self, capacity: Capacity) -> String {
@@ -372,9 +386,12 @@ pub(crate) async fn resolve_request(
     // rebase) carries the number as a GET does (ADR-0083 d6; the review of
     // PR #494, 11).
     let counts = Some(Scope::of_path(uri.path(), true));
+    let investigation =
+        cookie(headers, crate::investigation::INVESTIGATION_COOKIE).filter(|id| !id.is_empty());
     let session = resolve_with_counts(web, calls, token, counts)
         .await
-        .map_err(|e| Box::new(outcome::page(&e, calls, &page)))?;
+        .map_err(|e| Box::new(outcome::page(&e, calls, &page)))?
+        .investigating(investigation);
     calls.signed_in(&session);
     Ok(session)
 }
@@ -441,6 +458,7 @@ async fn resolve_with_counts(
         token,
         whoami,
         admin: admin.is_ok(),
+        investigation: None,
         todo,
         admin_todo,
     })
@@ -486,6 +504,7 @@ mod tests {
                 denied: None,
             },
             admin: false,
+            investigation: None,
             todo: None,
             admin_todo: None,
         };

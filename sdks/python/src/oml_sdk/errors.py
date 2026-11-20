@@ -124,6 +124,10 @@ class LifecycleError(ApiError):
     """`lifecycle`: erased content."""
 
 
+class AdminError(ApiError):
+    """`admin`: admin investigations and fixes (ADR-0089)."""
+
+
 class LimitError(ApiError):
     """`limit`: rate and quota."""
 
@@ -163,6 +167,7 @@ FAMILIES: dict[str, type[ApiError]] = {
     "upload": UploadError,
     "memory": MemoryStateError,
     "lifecycle": LifecycleError,
+    "admin": AdminError,
     "limit": LimitError,
     "bundle": BundleError,
     "import": WorkspaceImportError,

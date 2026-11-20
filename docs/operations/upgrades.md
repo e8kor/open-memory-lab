@@ -1,7 +1,7 @@
 ---
 status: Stable
-verified: 2026-11-19
-answers: "how to upgrade an OML server: how migrations run, the upgrade steps in order, what rollback does and does not mean, the upgrade from a pre-0.3.1 install, the v0.5.4 fix, how to move from v0.3, the v0.8.4 role rename and the v0.8.3 rename that clients take before the server, what the v0.8.3 migrations cost and what waits during them, and the storage.url to set before v0.8.3's uploads"
+verified: 2026-11-20
+answers: "how to upgrade an OML server: how migrations run, the upgrade steps in order, what rollback does and does not mean, the upgrade from a pre-0.3.1 install, the v0.5.4 fix, how to move from v0.3, the v0.8.4 role rename that clients take before the server, what v0.8.4's migrations 0063, 0064 and 0066 cost, the admin key links, links and sign-in emails that wait on their person, and the reset of a database that ran a draft of 0063 or 0064, the v0.8.3 rename that clients take before the server, what the v0.8.3 migrations cost and what waits during them, and the storage.url to set before v0.8.3's uploads"
 ---
 
 # Upgrade OML
@@ -85,6 +85,11 @@ Update the plugin with `claude plugin update oml@open-memory-lab`. Then set its 
 
 ## Upgrading to v0.8.4
 
+v0.8.4 runs three migrations, renames the writer role, and makes links and sign-in emails wait on
+their person.
+
+### Contributor and submitter replace writer: clients upgrade before the server
+
 v0.8.4 renames the writer role on every surface in one cut, with no alias
 ([ADR-0093](../adr/ADR-0093-contributor-and-submitter-replace-writer.md)). A key that recalls and
 writes is a `contributor`, a key that writes without recall is a `submitter`, and the grant role
@@ -103,15 +108,26 @@ sent `--write-only`, is refused and issues nothing. The notice to send before th
 > submitter key with `--role submitter` and cut the old one off. Memories, key values, grants and
 > names are otherwise unchanged.
 
-**The upgrade is not rolling** (ADR-0093 d8, following ADR-0091 d12's runbook):
+### What v0.8.4's migrations cost
+
+The server runs 0063, 0064 and 0066 at boot, in that order, before it serves, as [Upgrade in order](#upgrade-in-order) says. Each waits at most 5 s for a lock. On a v0.8.3 database, which holds 0065 already, 0063 and 0064 run after 0065: sqlx applies every migration the database has not recorded, in number order, so a version lower than the newest applied is expected here and is no error. 0066 runs last.
+
+| Migration | What it does to each tenant | What waits, and for how long |
+|---|---|---|
+| 0063 | Creates the empty `admin_investigations` table with its policy, its update guard and column grants | Catalog changes only; nothing waits beyond the 5 s lock bound. |
+| 0064 | Creates the empty `admin_fixes` table, adds four nullable columns to `memories`, `link_pending_user_id` to `api_keys` and `pending_since` to `web_emails`, all with no default, moves every key's link but the bootstrap admin key's to `link_pending_user_id`, adds the `api_keys_link_guard` insert and update guard, replaces the `api_keys_linked_user` check with a looser one and adds `api_keys_link_pending`, both validated in the same transaction | Every lock 0064 takes is held until it commits. The link move and the two VALIDATE scans of `api_keys`, a row per key, run under the ACCESS EXCLUSIVE lock the check swap takes, so key lookups wait for all three: the fourth review of #498 measured about 400 ms at 1,000,000 keys of which 10,000 are linked. A tenant holds hundreds of keys. `memories` and `web_emails` are locked for catalog changes that rewrite no row, so their reads and sign-ins wait until the commit too. |
+| 0066 | Rewrites `api_keys.role` from `writer` to `contributor` and `grants.role` from `writer` to `submitter` under each tenant's row security, and replaces the `api_keys_role_check` and `grants_role_check` checks | Reads two small tables, a row per key and per grant. The upgrade stops the lead, `oml-web` and the lake writer first, so nothing waits on its locks. |
+
+### The upgrade is not rolling
+
+The steps follow ADR-0093 d8 and ADR-0091 d12's runbook:
 
 1. Announce the window with the notice above.
 2. Back up and verify that the backup restores ([restore](restore.md)): migration 0066 has no
    reverse.
 3. Stop `oml-web`, the lead and the lake writer, and start v0.8.4 of all three from one tag.
-   Migration 0066 rewrites `api_keys.role` from `writer` to `contributor` and `grants.role` from
-   `writer` to `submitter` under each tenant's row security, and replaces the two role checks. It
-   reads two small tables, and the stopped server leaves its locks free.
+   The server runs 0063, 0064 and 0066 as [What v0.8.4's migrations cost](#what-v084s-migrations-cost)
+   says.
 4. Check `oml doctor`, `oml verify` and migration 0066's law (ADR-0093 d5): no role check names
    `writer`, so no role column can hold it. As the database owner,
    `SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint WHERE conname IN
@@ -121,6 +137,16 @@ sent `--write-only`, is refused and issues nothing. The notice to send before th
 5. Upgrade the operator's own clients, and reissue any key `oml doctor` names under
    `key_contributor_without_recall`: issue a submitter key with
    `oml keys issue-agent <name> --role submitter` and cut the old one off.
+
+### Admin fixes, links and sign-in emails
+
+**Link the admin key before a fix, and have its person accept the link.** From v0.8.4 an admin fix (ADR-0089) is taken only by an admin key that acts for its person; one with no link, or with a link its person has not accepted, is refused `admin.fix_requires_person` with `details.reason: unlinked`. A new server links its first admin key at setup: `oml bootstrap claim <key-name> --token-stdin --tenant-name <tenant> --principal <name> --person <name> --email <sign-in email>` creates that person's user root, links the key and records the email as the person's accepted admin sign-in, all at once because that person runs the setup. An upgraded server's admin keys are unlinked: a console admin links each on the admin Keys page (`/web/admin/keys`): show the person, then name the key in the **Link key** form; the person is one other than the console admin's own, since a self-link is refused. The link then waits until that person signs in and chooses **Accept link** on their own Keys page (`/web/keys`); any key's link waits the same way (ADR-0085 d16). A console admin session key acts for its own person and needs no link. `oml doctor` (admin key) warns `key.link_pending` with the count of links that wait.
+
+**Links made before v0.8.4 wait on their person.** 0064 moves the link of every linked key to pending, except the bootstrap admin key's, the first admin key the setup issued, which no key issues. Before v0.8.4 only a tenant key that is not an admin key could be linked. Each person accepts their links with **Accept link** on their Keys page before the keys act for them again. Production runs v0.8.3, which links keys from the console (ADR-0085 d16), so it may hold links that 0064 moves. From v0.8.4 the database refuses an update of `api_keys.linked_user_id` that is not an unlink, an acceptance of the pending link, or the setup's link of its own admin key while that key is the tenant's only one, and an insert of a key that carries a link or a pending link. It does not guard who sets `link_pending_user_id`, a key's `hash` or `web_emails.pending_since`: the serving role writes those, as [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)'s limits record.
+
+**An address added for an existing person waits on that person.** From v0.8.4 an email an admin adds with `oml web allow`, `POST /v2/web/emails` or the console's allowlist page, for an existing person, or an entry changed to name one, is pending: it signs in to nothing, refused `auth.invalid` with `details.reason: email_pending`, until that person signs in with an address they already use and chooses **Accept sign-in email** on their Keys page (`/web/keys`), where each pending address shows whether it signs in as an admin and the admin key that added it. An existing person is one a sign-in entry or a session key names, or whose user root a key names: a user key issued in it (`oml keys issue --user`), a key linked to it, or a link to it that waits. The person or an admin removes a pending address. A person no key and no entry names takes a first address at once, as before. The person the setup's `--person` names takes the `--email` the setup sends; an address added for them later waits. `oml doctor` (admin key) warns `web.email_pending` with the count. A person whose root holds keys but who has no sign-in email cannot get console access to that root, and this lasts: an address added for them waits on a session they cannot open, and the old root has no console route of its own. Such a person signs in under a new user name, and the keys issued in the old root count as the issuing admin's person (ADR-0089, the operator's decision of 2026-11-20). To restore console access for an admin who lost every provider account, add the new address under a new user name with `--admin`; an address added for the old person would wait on a session they no longer have.
+
+**A database that applied an earlier draft of 0063 or 0064 needs a reset.** Both were edited in place while #498 was open (v0.8.4). A stage or development database that ran a draft of either records the draft's checksum, and the server refuses to start against it with a checksum mismatch for version 63 or 64. Drop and recreate such a database and let the server migrate it from empty; production at v0.8.3 never ran either and needs nothing.
 
 ## Upgrading to v0.8.3
 

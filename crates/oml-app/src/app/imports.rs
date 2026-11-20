@@ -178,13 +178,15 @@ where
                 used_by: key.used_by,
             });
         }
+        // The upload's state first: a bound or expired upload is refused
+        // by its own reason whatever else runs (ADR-0084 I13).
+        let session = self.import_upload(&caller, req.upload_id).await?;
         // I13: one import or dry run per tenant, and a bounded number in
         // the process, hold a bundle in memory at a time.
         let mut busy = self
             .imports_busy
             .try_enter(key.tenant_id)
             .ok_or(AppError::ImportBusy)?;
-        let session = self.import_upload(&caller, req.upload_id).await?;
         let target = self.import_target(&caller, &req.target).await?;
 
         let bytes = self.upload_bytes(&session).await?;

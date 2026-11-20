@@ -453,6 +453,10 @@ struct TenantState {
     /// (`memories.valid_until_ratified` and `valid_until_before`, 0058;
     /// ADR-0089 d16, note of 2026-11-18).
     valid_until_before: BTreeMap<Uuid, Option<oml_domain::valid_time::ValidEnd>>,
+    /// The admin investigations, by id (ADR-0089 d10; 0063).
+    investigations: BTreeMap<Uuid, crate::types::Investigation>,
+    /// The admin fixes, by id (ADR-0089 d3; 0064).
+    fixes: BTreeMap<Uuid, crate::types::FixRecord>,
 }
 
 /// BTreeMap journal-and-metadata store with a real lock per tenant: chain
@@ -1144,6 +1148,7 @@ fn fold_poc_event(
                     expiry: None,
                     requests_per_minute: None,
                     linked_user: None,
+                    link_pending: None,
                 },
             );
         }
@@ -1587,6 +1592,149 @@ fn apply_fold(
         MetadataFold::TenantGenesis { .. }
         | MetadataFold::VerdictRecorded { .. }
         | MetadataFold::AdminRead => {}
+        MetadataFold::AdminMemoryRead {
+            investigation_id,
+            key_id,
+        } => {
+            match state
+                .investigations
+                .get_mut(&investigation_id)
+                .filter(|i| i.key_id == key_id && i.closed_at.is_none())
+            {
+                Some(i) => i.reads += 1,
+                None => return Err(StoreError::InvestigationNotOpen { investigation_id }),
+            }
+        }
+        MetadataFold::AdminFixRecorded(fix) => {
+            // The served version reads `act: admin_fix`, unconfirmed, used
+            // by a person, never naming which admin (ADR-0089 d7).
+            // The mark names a version the store holds, else nothing
+            // commits (ADR-0089 d7), as the store's one-row update.
+            // An unconfirmed fix whose mark this one takes over is settled
+            // `superseded` by it, as the store's update before the mark
+            // (ADR-0089 d17, the reading of 2026-11-19).
+            let earlier = fix
+                .served_id
+                .and_then(|id| state.memories.get(&id))
+                .and_then(|m| m.approval.as_ref())
+                .and_then(|a| a.fix)
+                .map(|mark| mark.fix_id)
+                .filter(|id| *id != fix.fix_id);
+            if let Some(earlier) = earlier
+                && let Some(f) = state
+                    .fixes
+                    .get_mut(&earlier)
+                    .filter(|f| f.state == crate::types::FixState::Unconfirmed)
+            {
+                f.state = crate::types::FixState::Superseded;
+                f.superseded_by = Some(fix.fix_id);
+                f.settled_at = Some(at.clone());
+            }
+            let served = match fix.served_id {
+                Some(id) => Some(
+                    state
+                        .memories
+                        .get_mut(&id)
+                        .ok_or(StoreError::FixVersionMissing { fix_id: fix.fix_id })?,
+                ),
+                None => None,
+            };
+            if let Some(memory) = served {
+                let at = memory
+                    .approval
+                    .as_ref()
+                    .map_or_else(|| fix.fixed_at.clone(), |a| a.at.clone());
+                memory.approval = Some(Box::new(crate::types::Approval {
+                    used_by: oml_domain::UsedBy::Person,
+                    same_user: Some(false),
+                    at,
+                    fix: Some(crate::types::FixMark {
+                        fix_id: fix.fix_id,
+                        confirmed: false,
+                        reverted: false,
+                        written: matches!(
+                            fix.act,
+                            crate::types::FixAct::Edit | crate::types::FixAct::Retire
+                        ),
+                    }),
+                }));
+            }
+            state.fixes.insert(fix.fix_id, *fix);
+        }
+        MetadataFold::AdminFixSettled {
+            fix_id,
+            state: settled,
+            settled_by_key_id,
+            same_user,
+            restored_id,
+            served_id,
+        } => {
+            let Some(fix) = state
+                .fixes
+                .get_mut(&fix_id)
+                .filter(|f| f.state == crate::types::FixState::Unconfirmed)
+            else {
+                return Err(StoreError::FixSettled { fix_id });
+            };
+            fix.state = settled;
+            fix.settled_by_key_id = Some(settled_by_key_id);
+            fix.settled_same_user = Some(same_user);
+            fix.settled_at = Some(at.clone());
+            fix.restored_id = restored_id;
+            // The served version, by its id: confirmed and `same_user` as
+            // judged, or marked reverted (ADR-0089 d7, d17).
+            if let Some(served) = served_id {
+                let Some((approval, mark)) = state
+                    .memories
+                    .get_mut(&served)
+                    .and_then(|m| m.approval.as_mut())
+                    .and_then(|a| {
+                        let mark = a.fix.filter(|f| f.fix_id == fix_id)?;
+                        Some((a, mark))
+                    })
+                else {
+                    return Err(StoreError::FixVersionMissing { fix_id });
+                };
+                let mut mark = mark;
+                if settled == crate::types::FixState::Confirmed {
+                    mark.confirmed = true;
+                    approval.same_user = Some(same_user);
+                } else {
+                    mark.reverted = true;
+                }
+                approval.fix = Some(mark);
+            }
+        }
+        MetadataFold::InvestigationOpened {
+            investigation_id,
+            key_id,
+            reason,
+        } => {
+            state.investigations.insert(
+                investigation_id,
+                crate::types::Investigation {
+                    investigation_id,
+                    key_id,
+                    reason,
+                    opened_at: at.clone(),
+                    reads: 0,
+                    closed_at: None,
+                },
+            );
+        }
+        MetadataFold::InvestigationClosed {
+            investigation_id,
+            key_id,
+        } => {
+            match state
+                .investigations
+                .get_mut(&investigation_id)
+                .filter(|i| i.key_id == key_id && i.closed_at.is_none())
+            {
+                Some(i) => i.closed_at = Some(at.clone()),
+                None => return Err(StoreError::InvestigationNotOpen { investigation_id }),
+            }
+        }
         MetadataFold::WorkspaceImported(ended) => {
             let Some(import) = state.imports.get_mut(&ended.import_id) else {
                 return Err(StoreError::Backend(format!(
@@ -1684,7 +1832,13 @@ fn apply_fold(
             keep_an_admin,
         } => {
             let hash = entry.email.digest();
-            if keep_an_admin && !entry.admin && last_admin(&state.web_entries, &hash) {
+            // A change that leaves the entry pending un-flags it as an
+            // un-flagging does: a pending entry signs in to nothing
+            // (ADR-0045 d10; d2's note of 2026-11-19).
+            if keep_an_admin
+                && (!entry.admin || entry.pending)
+                && last_admin(&state.web_entries, &hash)
+            {
                 return Err(StoreError::LastAdminEntry);
             }
             let Some(held) = state.web_entries.get_mut(&hash.0) else {
@@ -1694,8 +1848,24 @@ fn apply_fold(
             };
             held.user = entry.user;
             held.admin = entry.admin;
+            held.pending = entry.pending;
+            held.added_by = entry.added_by;
             state.web_sessions.retain(|_, s| s.email_hash != hash);
         }
+        MetadataFold::WebEmailAccepted {
+            email_hash,
+            user,
+            admin,
+        } => match state.web_entries.get_mut(&email_hash.0) {
+            Some(held) if held.pending && held.user == user && held.admin == admin => {
+                held.pending = false;
+            }
+            _ => {
+                return Err(StoreError::Backend(
+                    "web.email_accepted names no pending entry of this user".to_owned(),
+                ));
+            }
+        },
         MetadataFold::WebEmailRemoved {
             email_hash,
             keep_an_admin,
@@ -1872,12 +2042,19 @@ fn apply_fold(
         // hold, a revoked key, a session key and an admin key are refused,
         // as the store's guarded update refuses them (ADR-0079 d5).
         // The link takes the event's root; a key that is not a live tenant
-        // bearer key used by a person, an admin key, or a root that is not a
-        // user root are refused, as the store's guarded update refuses them
+        // bearer key used by a person, or a root that is not a user root, are
+        // refused (an admin key used by a person is linkable, the operator's
+        // decision of 2026-11-19), as the store's guarded update refuses them
         // (ADR-0085 d16).
-        MetadataFold::KeyLinked { key_id, user_root } => {
-            // As the Postgres guard: a link names a live unlinked tenant
-            // key and a user root; an unlink any linked key (ADR-0085 d16).
+        MetadataFold::KeyLinked {
+            key_id,
+            user_root,
+            accepted,
+        } => {
+            // As the Postgres guard: a link names a live tenant key that
+            // holds no link and none pending, and a user root; an unlink
+            // ends a link or a pending one (ADR-0085 d16, the operator's
+            // decision of 2026-11-19).
             let root_ok =
                 user_root.is_none_or(|r| state.workspaces.get(&r).is_some_and(|w| w.user_root));
             let Some(key) = state.keys.get_mut(&key_id).filter(|k| match user_root {
@@ -1885,18 +2062,38 @@ fn apply_fold(
                     root_ok
                         && k.revoked_at.is_none()
                         && k.credential == Credential::Bearer
-                        && k.role != Role::Admin
                         && k.used_by == oml_domain::UsedBy::Person
                         && k.user.is_none()
                         && k.linked_user.is_none()
+                        && k.link_pending.is_none()
                 }
-                None => k.linked_user.is_some(),
+                None => k.linked_user.is_some() || k.link_pending.is_some(),
             }) else {
                 return Err(StoreError::Backend(format!(
                     "key {key_id} cannot take this link: not a live unlinked tenant key used by a person, the root is not a user root, or there is no link to end"
                 )));
             };
-            key.linked_user = user_root;
+            if accepted || user_root.is_none() {
+                key.linked_user = user_root;
+                key.link_pending = None;
+            } else {
+                key.link_pending = user_root;
+            }
+        }
+        MetadataFold::KeyLinkAccepted { key_id, user_root } => {
+            // As the Postgres guard: the pending link names this root and
+            // the key is live (ADR-0085 d16).
+            let Some(key) = state.keys.get_mut(&key_id).filter(|k| {
+                k.revoked_at.is_none()
+                    && k.link_pending == Some(user_root)
+                    && k.linked_user.is_none()
+            }) else {
+                return Err(StoreError::Backend(format!(
+                    "key {key_id} has no live link pending to this root"
+                )));
+            };
+            key.linked_user = Some(user_root);
+            key.link_pending = None;
         }
         MetadataFold::KeyLimitsSet {
             key_id,
@@ -2230,6 +2427,7 @@ fn apply_fold(
         MetadataFold::MemoryDemoted {
             memory_id,
             restored,
+            reopened,
         } => {
             // The compare-and-set PostgreSQL's fold makes (ADR-0089 d16).
             let Some(demoted) = state.memories.get(&memory_id).cloned() else {
@@ -2258,6 +2456,18 @@ fn apply_fold(
                     }
                     None => !demoted.is_tip || greatest_below.is_none(),
                 };
+            // What the demotion reopens, compare-and-set too (#474): the
+            // version it replaces, still promoted, with the end it had
+            // before a ratification ended it.
+            let reopenable = demoted.replaces.and_then(|r| {
+                state
+                    .memories
+                    .get(&r)
+                    .filter(|m| m.status == MemoryStatus::Promoted)
+                    .and_then(|_| state.valid_until_before.get(&r))
+                    .map(|before| (r, before.clone()))
+            });
+            let cas = cas && reopenable == reopened;
             if !cas {
                 return Err(StoreError::TipMoved {
                     replaced: memory_id,
@@ -2270,15 +2480,11 @@ fn apply_fold(
             // The version it replaced, still promoted, gets back the end it
             // had before this version's ratification, tip or not (ADR-0089
             // d16, note of 2026-11-18).
-            if let Some(replaced) = demoted.replaces
-                && state
-                    .memories
-                    .get(&replaced)
-                    .is_some_and(|m| m.status == MemoryStatus::Promoted)
-                && let Some(before) = state.valid_until_before.remove(&replaced)
-                && let Some(memory) = state.memories.get_mut(&replaced)
-            {
-                memory.valid.until = before;
+            if let Some((replaced, before)) = reopened {
+                state.valid_until_before.remove(&replaced);
+                if let Some(memory) = state.memories.get_mut(&replaced) {
+                    memory.valid.until = before;
+                }
             }
             if let Some(r) = restored
                 && let Some(memory) = state.memories.get_mut(&r)
@@ -4572,7 +4778,10 @@ impl JournalStore for MemStore {
             .filter(|m| m.workspace_id == workspace_id && m.claim_key == claim_key)
             .fold(ClaimKeyState::default(), |acc, m| ClaimKeyState {
                 greatest_version: acc.greatest_version.max(Some(m.version)),
-                live: acc.live || LIVE.contains(&m.status),
+                // A demoted version keeps its ordinal and releases the key:
+                // a new claim continues the numbers (ADR-0089 d16, O8).
+                live: acc.live || matches!(m.status, MemoryStatus::Held | MemoryStatus::Promoted),
+                demoted: acc.demoted || m.status == MemoryStatus::Demoted,
             }))
     }
 
@@ -4756,6 +4965,88 @@ impl JournalStore for MemStore {
             })
             .map(|m| m.version)
             .max())
+    }
+
+    async fn fix(
+        &self,
+        tenant_id: Uuid,
+        fix_id: Uuid,
+    ) -> Result<Option<crate::types::FixRecord>, StoreError> {
+        Ok(self.tenant_existing(tenant_id).and_then(|tenant| {
+            tenant
+                .lock()
+                .expect("tenant lock")
+                .fixes
+                .get(&fix_id)
+                .cloned()
+        }))
+    }
+
+    async fn fixes(
+        &self,
+        tenant_id: Uuid,
+        unconfirmed_only: bool,
+    ) -> Result<Vec<crate::types::FixRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let mut all: Vec<crate::types::FixRecord> = state
+            .fixes
+            .values()
+            .filter(|f| !unconfirmed_only || f.state == crate::types::FixState::Unconfirmed)
+            .cloned()
+            .collect();
+        all.sort_by(|a, b| (a.fixed_at.as_str(), a.fix_id).cmp(&(b.fixed_at.as_str(), b.fix_id)));
+        Ok(all)
+    }
+
+    /// No release exists until R3 (ADR-0085), so no version is a member.
+    async fn member_of_no_release(
+        &self,
+        _tenant_id: Uuid,
+        _memory_id: Uuid,
+    ) -> Result<bool, StoreError> {
+        Ok(true)
+    }
+
+    async fn investigation(
+        &self,
+        tenant_id: Uuid,
+        investigation_id: Uuid,
+    ) -> Result<Option<crate::types::Investigation>, StoreError> {
+        Ok(self.tenant_existing(tenant_id).and_then(|tenant| {
+            tenant
+                .lock()
+                .expect("tenant lock")
+                .investigations
+                .get(&investigation_id)
+                .cloned()
+        }))
+    }
+
+    async fn investigations(
+        &self,
+        tenant_id: Uuid,
+        key_id: Option<Uuid>,
+        open_only: bool,
+    ) -> Result<Vec<crate::types::Investigation>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let mut all: Vec<crate::types::Investigation> = state
+            .investigations
+            .values()
+            .filter(|i| key_id.is_none_or(|k| i.key_id == k))
+            .filter(|i| !open_only || i.closed_at.is_none())
+            .cloned()
+            .collect();
+        all.sort_by(|a, b| {
+            (a.opened_at.as_str(), a.investigation_id)
+                .cmp(&(b.opened_at.as_str(), b.investigation_id))
+        });
+        Ok(all)
     }
 
     async fn valid_until_before(
@@ -5757,10 +6048,20 @@ impl WebStore for MemStore {
         }
         let state = self.tenant(session.tenant_id);
         let mut state = state.lock().expect("tenant lock");
-        if !state.web_entries.contains_key(&session.email_hash.0) {
-            return Err(StoreError::Backend(
-                "a session names an entry the tenant does not hold".to_owned(),
-            ));
+        match state.web_entries.get(&session.email_hash.0) {
+            None => {
+                return Err(StoreError::Backend(
+                    "a session names an entry the tenant does not hold".to_owned(),
+                ));
+            }
+            // A pending entry signs in to nothing (ADR-0045 d2's note of
+            // 2026-11-19), as Postgres refuses it.
+            Some(entry) if entry.pending => {
+                return Err(StoreError::Backend(
+                    "web_sessions: the entry waits on its person's acceptance".to_owned(),
+                ));
+            }
+            Some(_) => {}
         }
         for (capacity, digest) in credentials {
             state
@@ -5825,7 +6126,30 @@ impl WebStore for MemStore {
         tenant_id: Uuid,
         user_root: Uuid,
     ) -> Result<Vec<KeyRecord>, StoreError> {
-        Ok(self.tenant_keys(tenant_id, |k| k.linked_user == Some(user_root)))
+        Ok(self.tenant_keys(tenant_id, |k| {
+            k.linked_user == Some(user_root) || k.link_pending == Some(user_root)
+        }))
+    }
+
+    async fn web_pending_links(&self, tenant_id: Uuid) -> Result<Vec<KeyRecord>, StoreError> {
+        Ok(self.tenant_keys(tenant_id, |k| {
+            k.revoked_at.is_none() && k.link_pending.is_some()
+        }))
+    }
+
+    async fn web_pending_emails(&self, tenant_id: Uuid) -> Result<Vec<WebEntry>, StoreError> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = state.lock().expect("tenant lock");
+        let mut pending: Vec<WebEntry> = state
+            .web_entries
+            .values()
+            .filter(|e| e.pending)
+            .cloned()
+            .collect();
+        pending.sort_by(|a, b| a.email.as_str().cmp(b.email.as_str()));
+        Ok(pending)
     }
 
     async fn web_session_keys(
@@ -7080,7 +7404,9 @@ impl crate::ports::SparseEncoder for FakeSparseEncoder {
 /// tenant is (ADR-0045 d10).
 fn last_admin(entries: &BTreeMap<[u8; 32], WebEntry>, hash: &Sha256Hash) -> bool {
     entries.get(&hash.0).is_some_and(|e| e.admin)
-        && !entries.iter().any(|(h, e)| e.admin && h != &hash.0)
+        && !entries
+            .iter()
+            .any(|(h, e)| e.admin && !e.pending && h != &hash.0)
 }
 
 /// An object store in memory (ADR-0004 d3, as amended 2026-11-17): what an

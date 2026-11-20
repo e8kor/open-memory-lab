@@ -353,6 +353,16 @@ enum BootstrapCommand {
         /// Principal for the first admin key.
         #[arg(long)]
         principal: Option<String>,
+        /// The person the first admin key acts for: the claim creates that
+        /// person's user root and links the key to it, so the key may take
+        /// an admin fix. Requires --email.
+        #[arg(long, requires = "email")]
+        person: Option<String>,
+        /// The person's sign-in email, recorded as accepted for the console:
+        /// the one way the person --person names gets a first sign-in.
+        /// Requires --person.
+        #[arg(long, requires = "person")]
+        email: Option<String>,
     },
 }
 
@@ -775,6 +785,49 @@ enum AdminCommand {
         /// erased version is listed as demoted.
         #[arg(long)]
         state: Option<String>,
+        /// The open investigation the read is made under (`oml admin
+        /// investigate --reason`); every read of claim text names one.
+        #[arg(long)]
+        investigation: String,
+    },
+    /// Open an investigation with the reason every admin read made under it
+    /// carries, print its id, or with --close end one; with neither, list the
+    /// key's open investigations. Journals admin.investigation_opened or
+    /// admin.investigation_closed.
+    Investigate {
+        /// Why the text is read; stored in clear and scanned.
+        #[arg(long, conflicts_with = "close")]
+        reason: Option<String>,
+        /// The id of an open investigation of this key to close.
+        #[arg(long)]
+        close: Option<String>,
+    },
+    /// Take a marked break-glass fix that serves at once and waits for a
+    /// person to confirm or revert it: demote an approved version, edit or
+    /// retire the served tip, or erase the claim. Journals admin.fix with
+    /// the lifecycle event it causes; an admin key used by a person only.
+    Fix {
+        /// demote, edit, retire or erase.
+        #[arg(value_parser = ["demote", "edit", "retire", "erase"])]
+        act: String,
+        /// The version's artifact id.
+        target: String,
+        /// Why; stored in clear and scanned.
+        #[arg(long)]
+        reason: String,
+        /// An edit's new body; `-` reads it from stdin.
+        #[arg(long)]
+        body: Option<String>,
+        /// An edit's new title, where its format takes one.
+        #[arg(long)]
+        title: Option<String>,
+    },
+    /// List the tenant's admin fixes no person has confirmed or reverted,
+    /// or with --all every fix.
+    Fixes {
+        /// Every fix, confirmed and reverted ones included.
+        #[arg(long)]
+        all: bool,
     },
     /// Report by rule and location which stored versions current rules would
     /// refuse or hold; never prints text or changes data.
@@ -1224,6 +1277,18 @@ enum ReviewCommand {
         #[arg(long)]
         ids: Option<String>,
     },
+    /// List the unconfirmed admin fixes on workspaces where this person's
+    /// reviewer key holds reviewer, with the acts it may take on each; or
+    /// confirm or revert one.
+    Fixes {
+        /// Confirm this fix; journals admin.fix_confirmed.
+        #[arg(long, conflicts_with = "revert")]
+        confirm: Option<String>,
+        /// Revert this fix: its text is served again as a new version this
+        /// key approves; journals admin.fix_reverted.
+        #[arg(long)]
+        revert: Option<String>,
+    },
 }
 
 #[derive(Args)]
@@ -1581,6 +1646,8 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                     token_stdin: _,
                     tenant_name,
                     principal,
+                    person,
+                    email,
                 },
         } => {
             let client = resolve_url(cli, &stored)?;
@@ -1591,6 +1658,12 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             }
             if let Some(p) = principal {
                 body["admin_principal"] = json!(p);
+            }
+            if let Some(p) = person {
+                body["person"] = json!(p);
+            }
+            if let Some(e) = email {
+                body["email"] = json!(e);
             }
             let (_, response) = client.post(
                 "/v2/bootstrap/claim",
@@ -3605,6 +3678,9 @@ fn run_review(
 ) -> Result<ExitCode, CliError> {
     match command {
         ReviewCommand::Next { needs } => run_review_next(cli, stored, needs.as_deref()),
+        ReviewCommand::Fixes { confirm, revert } => {
+            run_review_fixes(cli, stored, confirm.as_deref(), revert.as_deref())
+        }
         ReviewCommand::List(args) => run_review_list(cli, stored, args),
         ReviewCommand::Approve {
             ids: Some(ids),
@@ -4483,22 +4559,191 @@ fn rates_lines(report: &Value) -> Vec<String> {
     out
 }
 
+/// `oml admin investigate`: opens an investigation with `reason`, closes
+/// `close`, or lists the key's open ones (ADR-0089 d10, d15).
+/// One line per fix: its id, act, state, the version it serves, whether it
+/// loosens a guardrail, its age, the acts this key may take, and its reason.
+fn print_fixes(cli: &Cli, answer: &Value) -> Result<ExitCode, CliError> {
+    if cli.json {
+        print_json(answer);
+        return Ok(ExitCode::SUCCESS);
+    }
+    let line = |f: &Value| {
+        let acts = f["acts"]
+            .as_array()
+            .map(|a| {
+                let named: Vec<&str> = a.iter().filter_map(Value::as_str).collect();
+                format!(
+                    "  acts {}",
+                    if named.is_empty() {
+                        "none (another person confirms it)".to_owned()
+                    } else {
+                        named.join(",")
+                    }
+                )
+            })
+            .unwrap_or_default();
+        format!(
+            "{}  {}  {}  serves {}  loosens_guardrail {}  age {}s{}  {}",
+            field(f, "fix_id"),
+            field(f, "act"),
+            field(f, "state"),
+            field(f, "served_artifact_id"),
+            f["loosens_guardrail"],
+            f["age_seconds"],
+            acts,
+            field(f, "reason").replace('\n', " ")
+        )
+    };
+    match answer["items"].as_array() {
+        Some(items) => items.iter().for_each(|f| println!("{}", line(f))),
+        None => println!("{}", line(answer)),
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `oml review fixes`: the unconfirmed admin fixes this person's reviewer
+/// key sees, or with --confirm or --revert one settled (ADR-0089 d8, d15).
+fn run_review_fixes(
+    cli: &Cli,
+    stored: &Credentials,
+    confirm: Option<&str>,
+    revert: Option<&str>,
+) -> Result<ExitCode, CliError> {
+    let client = resolve(cli, stored)?;
+    let write = CallOpts {
+        auth: true,
+        idempotency: false,
+    };
+    let answer = match (confirm, revert) {
+        (Some(id), _) => {
+            client
+                .post(
+                    &format!("/v2/review/fixes/{}/confirm", segment(id)?),
+                    &json!({}),
+                    &write,
+                )?
+                .1
+        }
+        (None, Some(id)) => {
+            client
+                .post(
+                    &format!("/v2/review/fixes/{}/revert", segment(id)?),
+                    &json!({}),
+                    &write,
+                )?
+                .1
+        }
+        (None, None) => client.get("/v2/review/fixes")?.1,
+    };
+    print_fixes(cli, &answer)
+}
+
+fn run_investigate(
+    cli: &Cli,
+    client: &Client,
+    reason: Option<&str>,
+    close: Option<&str>,
+) -> Result<ExitCode, CliError> {
+    let write = CallOpts {
+        auth: true,
+        idempotency: false,
+    };
+    let answer = match (reason, close) {
+        (Some(reason), _) => {
+            client
+                .post(
+                    "/v2/admin/investigations",
+                    &json!({ "reason": reason }),
+                    &write,
+                )?
+                .1
+        }
+        (None, Some(id)) => {
+            client
+                .post(
+                    &format!("/v2/admin/investigations/{}/close", segment(id)?),
+                    &json!({}),
+                    &write,
+                )?
+                .1
+        }
+        (None, None) => client.get("/v2/admin/investigations?state=open")?.1,
+    };
+    if cli.json {
+        print_json(&answer);
+        return Ok(ExitCode::SUCCESS);
+    }
+    let line = |i: &Value| {
+        format!(
+            "{}  {}  reads {}  age {}s  {}",
+            field(i, "investigation_id"),
+            field(i, "state"),
+            i["reads"],
+            i["age_seconds"],
+            field(i, "reason").replace('\n', " ")
+        )
+    };
+    match answer["items"].as_array() {
+        Some(items) => items.iter().for_each(|i| println!("{}", line(i))),
+        None => println!("{}", line(&answer)),
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 fn run_admin(
     cli: &Cli,
     stored: &Credentials,
     command: &AdminCommand,
 ) -> Result<ExitCode, CliError> {
     let client = resolve(cli, stored)?;
-    let (memory, query, workspace, state) = match command {
+    let (memory, query, workspace, state, investigation) = match command {
         AdminCommand::Rescan { record_held, rates } => {
             return run_rescan(cli, &client, *record_held, *rates);
+        }
+        AdminCommand::Investigate { reason, close } => {
+            return run_investigate(cli, &client, reason.as_deref(), close.as_deref());
+        }
+        AdminCommand::Fix {
+            act,
+            target,
+            reason,
+            body,
+            title,
+        } => {
+            let mut sent = json!({ "act": act, "target": target, "reason": reason });
+            if let Some(body) = body {
+                sent["body"] = json!(if body == "-" {
+                    let mut text = String::new();
+                    std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)
+                        .map_err(|e| CliError::Local(format!("--body -: {e}")))?;
+                    text
+                } else {
+                    body.clone()
+                });
+            }
+            if let Some(title) = title {
+                sent["title"] = json!(title);
+            }
+            let write = CallOpts {
+                auth: true,
+                idempotency: false,
+            };
+            let fix = client.post("/v2/admin/fixes", &sent, &write)?.1;
+            return print_fixes(cli, &fix);
+        }
+        AdminCommand::Fixes { all } => {
+            let state = if *all { "all" } else { "unconfirmed" };
+            let fixes = client.get(&format!("/v2/admin/fixes?state={state}"))?.1;
+            return print_fixes(cli, &fixes);
         }
         AdminCommand::Read {
             memory,
             query,
             workspace,
             state,
-        } => (memory, query, workspace, state),
+            investigation,
+        } => (memory, query, workspace, state, investigation),
     };
     let line = |m: &Value| {
         format!(
@@ -4511,7 +4756,11 @@ fn run_admin(
         )
     };
     if let Some(memory) = memory {
-        let (_, read) = client.get(&format!("/v2/admin/memories/{}", segment(memory)?))?;
+        let (_, read) = client.get(&format!(
+            "/v2/admin/memories/{}?investigation={}",
+            segment(memory)?,
+            segment(investigation)?
+        ))?;
         if cli.json {
             print_json(&read);
         } else {
@@ -4532,7 +4781,7 @@ fn run_admin(
         }
         return Ok(ExitCode::SUCCESS);
     }
-    let mut body = json!({});
+    let mut body = json!({ "investigation": investigation });
     if let Some(q) = query {
         body["query"] = json!(q);
     }
@@ -7126,7 +7375,8 @@ fn withdrawn_queue_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
     }]
 }
 
-/// Doctor's lifecycle lines (ADR-0089 d16, notes of 2026-11-18), from the
+/// Doctor's lifecycle lines (ADR-0089 d16, notes of 2026-11-18; ADR-0085
+/// d16's pending links, the operator's decision of 2026-11-19), from the
 /// same admin rescan window: `memory.held_successor_stranded` warns of held
 /// versions whose target is no longer its claim's promoted tip, which no
 /// verdict can approve (a demoted tip's successors among them), and
@@ -7135,7 +7385,7 @@ fn withdrawn_queue_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
 /// out. A server before a count does not report it, and its line is then
 /// absent; a count that is no unsigned integer is named, never read as zero.
 fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
-    const LINES: [(&str, &str, &str); 2] = [
+    const LINES: [(&str, &str, &str); 10] = [
         (
             "held_successors_stranded",
             "memory.held_successor_stranded",
@@ -7145,6 +7395,46 @@ fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
             "erased_keys_live",
             "lake.erased_key_live",
             "erased version(s) still have a live data key, which the erase destroys in its own transaction; the lake writer destroys it when it drains the erase, so check that it runs",
+        ),
+        (
+            "investigations_open_long",
+            "admin.investigation_open_long",
+            "admin investigation(s) open for more than 7 days; the key that opened each closes it with oml admin investigate --close <id>",
+        ),
+        (
+            "fixes_unconfirmed",
+            "admin.fix_unconfirmed",
+            "admin fix(es) no person has confirmed or reverted; a person's reviewer key lists them with oml review fixes",
+        ),
+        (
+            "fixes_loosening_guardrail",
+            "admin.fix_loosens_guardrail",
+            "unconfirmed admin fix(es) took a served instruction out of service or rewrote one; a person confirms or reverts each with oml review fixes",
+        ),
+        (
+            "fixes_without_person_reviewer",
+            "admin.fix_without_person_reviewer",
+            "unconfirmed admin fix(es) sit on a workspace where no person's reviewer key holds reviewer, so no one can confirm them; grant reviewer to a person there",
+        ),
+        (
+            "fixes_admin_person_only",
+            "admin.fix_admin_person_only",
+            "unconfirmed admin fix(es) sit on a workspace where only the admin's own person holds reviewer; another person confirms them",
+        ),
+        (
+            "fixes_reverted",
+            "admin.fix_reverted",
+            "admin fix(es) a person reverted; read each with oml admin fixes --all",
+        ),
+        (
+            "key_links_pending",
+            "key.link_pending",
+            "key link(s) wait on their person's acceptance; each key acts for no one, and an admin key among them takes no fix, until that person accepts the link on the console's Keys page",
+        ),
+        (
+            "web_emails_pending",
+            "web.email_pending",
+            "sign-in email(s) wait on their person's acceptance; each signs in to nothing until that person accepts it on the console's Keys page, or the person or an admin removes it",
         ),
     ];
     let report = match read {
@@ -7169,6 +7459,13 @@ fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
             Some(match count.as_u64() {
                 None => format!("warn {line}: the server's {field} is {count}, not a count"),
                 Some(0) => format!("{line}: 0"),
+                Some(n) if *field == "fixes_unconfirmed" => {
+                    let oldest = report
+                        .get("fix_oldest_unconfirmed_seconds")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    format!("warn {line}: {n} {what}; the oldest is {oldest} s old")
+                }
                 Some(n) => format!("warn {line}: {n} {what}"),
             })
         })
@@ -8430,7 +8727,15 @@ mod tests {
             lifecycle_doctor(None),
             vec![
                 "memory.held_successor_stranded: not read; an admin key reads it".to_owned(),
-                "lake.erased_key_live: not read; an admin key reads it".to_owned()
+                "lake.erased_key_live: not read; an admin key reads it".to_owned(),
+                "admin.investigation_open_long: not read; an admin key reads it".to_owned(),
+                "admin.fix_unconfirmed: not read; an admin key reads it".to_owned(),
+                "admin.fix_loosens_guardrail: not read; an admin key reads it".to_owned(),
+                "admin.fix_without_person_reviewer: not read; an admin key reads it".to_owned(),
+                "admin.fix_admin_person_only: not read; an admin key reads it".to_owned(),
+                "admin.fix_reverted: not read; an admin key reads it".to_owned(),
+                "key.link_pending: not read; an admin key reads it".to_owned(),
+                "web.email_pending: not read; an admin key reads it".to_owned()
             ]
         );
         assert_eq!(
@@ -8439,6 +8744,64 @@ mod tests {
                 "warn lake.erased_key_live: the server's erased_keys_live is \"many\", not a count"
                     .to_owned()
             ]
+        );
+    }
+
+    #[test]
+    fn the_lifecycle_doctor_warns_of_an_investigation_open_more_than_seven_days() {
+        assert_eq!(
+            lifecycle_doctor(Some(&Ok(json!({ "investigations_open_long": 1 })))),
+            vec!["warn admin.investigation_open_long: 1 admin investigation(s) open for more than 7 days; the key that opened each closes it with oml admin investigate --close <id>".to_owned()]
+        );
+        assert_eq!(
+            lifecycle_doctor(Some(&Ok(json!({ "investigations_open_long": 0 })))),
+            vec!["admin.investigation_open_long: 0".to_owned()]
+        );
+    }
+
+    #[test]
+    fn the_lifecycle_doctor_warns_of_unconfirmed_admin_fixes_with_the_oldests_age() {
+        let report = json!({
+            "fixes_unconfirmed": 2,
+            "fix_oldest_unconfirmed_seconds": 7200,
+            "fixes_loosening_guardrail": 1,
+            "fixes_without_person_reviewer": 0,
+            "fixes_admin_person_only": 1,
+            "fixes_reverted": 0,
+        });
+        assert_eq!(
+            lifecycle_doctor(Some(&Ok(report))),
+            vec![
+                "warn admin.fix_unconfirmed: 2 admin fix(es) no person has confirmed or reverted; a person's reviewer key lists them with oml review fixes; the oldest is 7200 s old".to_owned(),
+                "warn admin.fix_loosens_guardrail: 1 unconfirmed admin fix(es) took a served instruction out of service or rewrote one; a person confirms or reverts each with oml review fixes".to_owned(),
+                "admin.fix_without_person_reviewer: 0".to_owned(),
+                "warn admin.fix_admin_person_only: 1 unconfirmed admin fix(es) sit on a workspace where only the admin's own person holds reviewer; another person confirms them".to_owned(),
+                "admin.fix_reverted: 0".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_lifecycle_doctor_warns_of_sign_in_emails_waiting_on_their_persons_acceptance() {
+        assert_eq!(
+            lifecycle_doctor(Some(&Ok(json!({ "web_emails_pending": 3 })))),
+            vec!["warn web.email_pending: 3 sign-in email(s) wait on their person's acceptance; each signs in to nothing until that person accepts it on the console's Keys page, or the person or an admin removes it".to_owned()]
+        );
+        assert_eq!(
+            lifecycle_doctor(Some(&Ok(json!({ "web_emails_pending": 0 })))),
+            vec!["web.email_pending: 0".to_owned()]
+        );
+    }
+
+    #[test]
+    fn the_lifecycle_doctor_warns_of_key_links_waiting_on_their_persons_acceptance() {
+        assert_eq!(
+            lifecycle_doctor(Some(&Ok(json!({ "key_links_pending": 2 })))),
+            vec!["warn key.link_pending: 2 key link(s) wait on their person's acceptance; each key acts for no one, and an admin key among them takes no fix, until that person accepts the link on the console's Keys page".to_owned()]
+        );
+        assert_eq!(
+            lifecycle_doctor(Some(&Ok(json!({ "key_links_pending": 0 })))),
+            vec!["key.link_pending: 0".to_owned()]
         );
     }
 

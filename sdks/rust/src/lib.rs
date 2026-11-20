@@ -568,6 +568,13 @@ pub struct Attachment {
 pub struct Approver {
     pub used_by: String,
     pub same_user: bool,
+    /// `verdict`, or `admin_fix` for a version served because of an
+    /// admin's fix (ADR-0089 d7); absent from a server before v0.8.4.
+    #[serde(default)]
+    pub act: Option<String>,
+    /// Whether a person confirmed the fix; null for a verdict (ADR-0089 d7).
+    #[serde(default)]
+    pub confirmed: Option<bool>,
 }
 
 /// One finding of a version's findings list (openapi.yaml `ScanFinding`;
@@ -949,6 +956,19 @@ pub struct AdminMemory {
     pub scan_finding: Option<String>,
 }
 
+/// An admin key's investigation (ADR-0089 d10, d15).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Investigation {
+    pub investigation_id: String,
+    pub reason: String,
+    pub opened_at: String,
+    pub reads: u64,
+    pub age_seconds: i64,
+    pub state: String,
+    #[serde(default)]
+    pub closed_at: Option<String>,
+}
+
 /// One verdict on a memory, as the admin read lists it.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct AdminVerdict {
@@ -1093,15 +1113,48 @@ pub struct Person {
     /// API before v0.8.0 (ADR-0085 d16).
     #[serde(default)]
     pub linked_keys: Vec<LinkedKey>,
+    /// The live tenant keys an admin linked to the person that wait on
+    /// their acceptance; empty from an API before v0.8.4 (ADR-0085 d16,
+    /// the operator's decision of 2026-11-19).
+    #[serde(default)]
+    pub pending_links: Vec<LinkedKey>,
+    /// The sign-in emails an admin added for the person that wait on their
+    /// acceptance, each with its admin flag and the key that added it;
+    /// empty from an API before v0.8.4 (ADR-0045 d2, the operator's
+    /// decisions of 2026-11-19 and 2026-11-20).
+    #[serde(default)]
+    pub pending_emails: Vec<PendingEmail>,
 }
 
-/// `POST /v2/keys/{key}/link` and `/unlink`: the key and the user it acts
-/// for, `None` once unlinked (ADR-0085 d16).
+/// A sign-in email that waits on its person: the address, whether it signs
+/// in as an admin once accepted, and the admin key that added it, whose
+/// name is `None` for a key issued before names (ADR-0045 d2, the
+/// operator's decision of 2026-11-20).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct PendingEmail {
+    pub email: String,
+    pub admin: bool,
+    pub added_by: AddedBy,
+}
+
+/// The admin key that added a pending sign-in email, by id and name.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AddedBy {
+    pub id: String,
+    pub name: Option<String>,
+}
+
+/// `POST /v2/keys/{key}/link`, `/unlink` and `/accept_link`: the key and
+/// the user its link names, `None` once unlinked, and whether that user
+/// has yet to accept it (ADR-0085 d16, the operator's decision of
+/// 2026-11-19).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct KeyLink {
     pub key_id: String,
     pub name: Option<String>,
     pub linked_user: Option<String>,
+    #[serde(default)]
+    pub pending: bool,
 }
 
 /// A tenant key linked to a person, by id and name (ADR-0085 d16).
@@ -1124,6 +1177,11 @@ pub struct WebEmail {
     pub email: String,
     pub user: String,
     pub admin: bool,
+    /// Whether the entry waits on its person's acceptance; false from an
+    /// API before v0.8.4 (ADR-0045 d2, the operator's decision of
+    /// 2026-11-19).
+    #[serde(default)]
+    pub pending: bool,
 }
 
 /// `GET /v2/web/emails`: one page of the allowlist.
@@ -1637,6 +1695,9 @@ pub struct AdminSearch<'a> {
     pub kinds: Option<&'a str>,
     pub limit: u32,
     pub cursor: Option<&'a str>,
+    /// The admin key's open investigation the read is made under
+    /// (ADR-0089 d10).
+    pub investigation: Option<&'a str>,
 }
 
 /// The typed client over a [`Transport`], with the headers every call
@@ -2147,6 +2208,7 @@ impl<T: Transport> Client<T> {
             ("origin_kind", search.origin_kind),
             ("author", search.author),
             ("cursor", search.cursor),
+            ("investigation", search.investigation),
         ] {
             if let Some(value) = value {
                 body[name] = serde_json::json!(value);
@@ -2485,6 +2547,27 @@ impl<T: Transport> Client<T> {
         .await
     }
 
+    /// `POST /v2/keys/{key}/accept_link`: the signed-in person accepts the
+    /// link an admin made of `key` to them, so it acts for them (ADR-0085
+    /// d16, the operator's decision of 2026-11-19).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn accept_key_link(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        key: &str,
+    ) -> Result<KeyLink, Error> {
+        self.post(
+            call,
+            format!("/v2/keys/{}/accept_link", encode(key)),
+            idempotency_key,
+            &serde_json::json!({}),
+        )
+        .await
+    }
+
     /// `GET /v1/memories/{artifact_id}`: one memory with its text, as the
     /// caller may read it.
     ///
@@ -2501,10 +2584,60 @@ impl<T: Transport> Client<T> {
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
-    pub async fn admin_read(&self, call: &Call<'_>, artifact_id: &str) -> Result<AdminRead, Error> {
+    pub async fn admin_read(
+        &self,
+        call: &Call<'_>,
+        artifact_id: &str,
+        investigation: &str,
+    ) -> Result<AdminRead, Error> {
         self.get(
             Some(call),
-            format!("/v2/admin/memories/{}", encode(artifact_id)),
+            format!(
+                "/v2/admin/memories/{}?investigation={}",
+                encode(artifact_id),
+                encode(investigation)
+            ),
+        )
+        .await
+    }
+
+    /// `POST /v2/admin/investigations {reason}`: opens an investigation of
+    /// the admin key, the reason its reads of claim text are made under
+    /// (ADR-0089 d10). Not idempotent: each call opens one.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn open_investigation(
+        &self,
+        call: &Call<'_>,
+        reason: &str,
+    ) -> Result<Investigation, Error> {
+        self.send(
+            Method::POST,
+            Some(call),
+            "/v2/admin/investigations".to_owned(),
+            None,
+            Some(&serde_json::json!({ "reason": reason })),
+        )
+        .await
+    }
+
+    /// `POST /v2/admin/investigations/{id}/close`: the admin key closes its
+    /// own investigation (ADR-0089 d10).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn close_investigation(
+        &self,
+        call: &Call<'_>,
+        investigation: &str,
+    ) -> Result<Investigation, Error> {
+        self.send(
+            Method::POST,
+            Some(call),
+            format!("/v2/admin/investigations/{}/close", encode(investigation)),
+            None,
+            Some(&serde_json::json!({})),
         )
         .await
     }
@@ -2736,6 +2869,51 @@ impl<T: Transport> Client<T> {
             "/v2/web/emails/remove".to_owned(),
             idempotency_key,
             &serde_json::json!({ "email": email, "keep_an_admin": true }),
+        )
+        .await
+    }
+
+    /// `POST /v2/web/emails/accept`: the signed-in person accepts a sign-in
+    /// email an admin added for them, so it signs in as them (ADR-0045 d2,
+    /// the operator's decision of 2026-11-19). `admin` is the flag the
+    /// person reviewed; an entry whose flag changed since is refused
+    /// `changed` (the operator's decision of 2026-11-20).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn accept_web_email(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        email: &str,
+        admin: bool,
+    ) -> Result<WebEmail, Error> {
+        self.post(
+            call,
+            "/v2/web/emails/accept".to_owned(),
+            idempotency_key,
+            &serde_json::json!({ "email": email, "admin": admin }),
+        )
+        .await
+    }
+
+    /// `POST /v2/web/emails/decline`: the signed-in person removes a sign-in
+    /// email an admin added for them that waits on them (ADR-0045 d2, the
+    /// operator's decision of 2026-11-19).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn decline_web_email(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        email: &str,
+    ) -> Result<WebEmail, Error> {
+        self.post(
+            call,
+            "/v2/web/emails/decline".to_owned(),
+            idempotency_key,
+            &serde_json::json!({ "email": email }),
         )
         .await
     }
@@ -3120,7 +3298,7 @@ mod tests {
                     .await,
             ),
             decodes(&client.get_memory(&CALL, "m-1").await),
-            decodes(&client.admin_read(&CALL, "m-1").await),
+            decodes(&client.admin_read(&CALL, "m-1", "i-1").await),
             decodes(
                 &client
                     .learn(

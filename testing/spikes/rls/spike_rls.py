@@ -387,6 +387,19 @@ def seed_after_migrations(conn: psycopg.Connection, t: Tenant) -> None:
             [t.m4, t.id, t.child, claim, hashlib.sha256(claim.encode()).digest(), t.events[9],
              t.principal, t.writer, [t.principal], [t.writer], len(claim.encode()), t.m1],
         )
+        # An admin's investigation (0063) and an unconfirmed fix demoting m1 (0064), each
+        # carrying the tenant's marker in its reason (ADR-0089 d10, d3).
+        seed_insert(
+            conn, "INSERT INTO admin_investigations (tenant_id, id, key_id, reason, opened_at, opened_seq) "
+            "VALUES (%s, %s, %s, %s, now(), 9)",
+            [t.id, uid(t.letter, "investigation"), t.reviewer, f"{t.marker} investigation"],
+        )
+        seed_insert(
+            conn, "INSERT INTO admin_fixes (tenant_id, id, act, target_id, workspace_id, claim_key, "
+            "reason, loosens_guardrail, admin_key_id, lifecycle_event_id, fixed_at, fixed_seq, admin_person) "
+            "VALUES (%s, %s, 'demote', %s, %s, 'deploy-runbook', %s, false, %s, %s, now(), 9, 'ada')",
+            [t.id, uid(t.letter, "fix"), t.m1, t.child, f"{t.marker} fix", t.reviewer, t.events[9]],
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -638,6 +651,13 @@ KEYS_REFUSED = [
     f"COPY {KEYS} (wrapped_dek) TO STDOUT",
 ]
 KEYS_DESTROY = f"UPDATE {KEYS} SET wrapped_dek = NULL, destroyed_at = now() WHERE destroyed_at IS NULL"
+# 0063, 0064: the serving role settles a fix and counts and closes an investigation, and rewrites
+# nothing either recorded; these are its only UPDATE columns on the two tables (ADR-0089 d3, d8, d10).
+UPDATE_COLUMN_GRANTS = {
+    "admin_fixes": sorted(["restored_id", "settled_at", "settled_by_key_id", "settled_same_user",
+                           "settled_seq", "state", "superseded_by"]),
+    "admin_investigations": sorted(["closed_at", "closed_seq", "reads"]),
+}
 
 
 def s3_2_roles() -> Scenario:
@@ -748,6 +768,18 @@ def s3_2(admin_db_ci: str, owner_ci: str, service_ci: str, owner: str, service: 
             "SELECT array_agg(p) FILTER (WHERE has_table_privilege(current_user, %s, p)) FROM unnest(ARRAY["
             "'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p",
             [KEYS]).fetchone()[0]
+        updates = {t: sorted(r[0] for r in conn.execute(
+            "SELECT a.attname FROM pg_attribute a WHERE a.attrelid = %s::regclass AND a.attnum > 0 "
+            "AND NOT a.attisdropped AND has_column_privilege(current_user, a.attrelid, a.attnum, 'UPDATE') "
+            "ORDER BY 1", [t]).fetchall()) for t in UPDATE_COLUMN_GRANTS}
+        s.check(updates == UPDATE_COLUMN_GRANTS,
+                f"the service role's UPDATE columns on the fix and investigation tables are exactly "
+                f"{UPDATE_COLUMN_GRANTS}: {updates}")
+        wide = {t: conn.execute("SELECT has_table_privilege(current_user, %s, 'UPDATE') "
+                                "OR has_table_privilege(current_user, %s, 'DELETE')", [t, t]).fetchone()[0]
+                for t in UPDATE_COLUMN_GRANTS}
+        s.check(not any(wide.values()),
+                f"the service role holds no table-wide UPDATE or DELETE on the fix and investigation tables: {wide}")
         s.check(not keys_held, f"the service role holds no table-wide privilege on {KEYS}: no SELECT, INSERT, "
                                f"UPDATE, DELETE, TRUNCATE, REFERENCES or TRIGGER (held: {keys_held or 'none'})")
         key_reads = {statement: (copy_sqlstate(conn, statement, a.id) if statement.startswith("COPY")
@@ -1149,6 +1181,15 @@ def index_shapes(b: Tenant) -> list[tuple[str, str, list, list[str]]]:
         ("memories_claim_version", "SELECT * FROM memories WHERE tenant_id = %s AND workspace_id = %s AND "
                                    "claim_key = 'deploy-runbook' AND version = 2 AND status = 'held'", [b.id, b.child], BTREE),
         ("memories_pkey", "SELECT * FROM memories WHERE id = %s", [b.m1], BTREE),
+        # 0063, 0064: the seeded investigation and fix of tenant B (ADR-0089 d10, d3).
+        ("admin_fixes_pkey", "SELECT * FROM admin_fixes WHERE tenant_id = %s AND id = %s",
+         [b.id, uid(b.letter, "fix")], BTREE),
+        ("admin_fixes_unconfirmed", "SELECT * FROM admin_fixes WHERE tenant_id = %s AND state = 'unconfirmed' "
+                                    "ORDER BY fixed_at", [b.id], BTREE),
+        ("admin_investigations_pkey", "SELECT * FROM admin_investigations WHERE tenant_id = %s AND id = %s",
+         [b.id, uid(b.letter, "investigation")], BTREE),
+        ("admin_investigations_open", "SELECT * FROM admin_investigations WHERE tenant_id = %s AND key_id = %s "
+                                      "AND closed_at IS NULL", [b.id, b.reviewer], BTREE),
         ("grants_key", "SELECT * FROM grants WHERE tenant_id = %s AND key_id = %s", [b.id, b.writer], BTREE),
         ("grants_pkey", "SELECT * FROM grants WHERE id = %s", [b.grant_w], BTREE),
         ("key_denials_key", "SELECT * FROM key_denials WHERE tenant_id = %s AND key_id = %s", [b.id, b.writer], BTREE),

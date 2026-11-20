@@ -26,6 +26,8 @@ Three roles reach the database. The owner role owns every table and runs the mig
 | [`account_activity`](#account_activity) | owns | SELECT, INSERT, UPDATE, DELETE |  |
 | [`account_meters`](#account_meters) | owns | SELECT, INSERT, UPDATE |  |
 | [`account_profiles`](#account_profiles) | owns | SELECT, INSERT, UPDATE, DELETE |  |
+| [`admin_fixes`](#admin_fixes) | owns | SELECT, INSERT, UPDATE (restored_id, settled_at, settled_by_key_id, settled_same_user, settled_seq, state, superseded_by) |  |
+| [`admin_investigations`](#admin_investigations) | owns | SELECT, INSERT, UPDATE (closed_at, closed_seq, reads) |  |
 | [`api_keys`](#api_keys) | owns | SELECT, INSERT, UPDATE |  |
 | [`artifact_keys`](#artifact_keys) | owns | SELECT (artifact_id, destroyed_at, tenant_id), UPDATE (destroyed_at, wrapped_dek) | SELECT, INSERT, UPDATE |
 | [`brief_edges`](#brief_edges) | owns | SELECT, INSERT, UPDATE | SELECT |
@@ -199,6 +201,99 @@ Row-level security: enabled and forced, so the owner is bound too.
 
 Grants: serving: SELECT, INSERT, UPDATE, DELETE.
 
+### admin_fixes
+
+An admin's marked break-glass fix and its confirmation or revert.
+
+Kind: table.
+
+| Column | Type | Null | Default | Purpose |
+|---|---|---|---|---|
+| `tenant_id` | `uuid` | not null |  |  |
+| `id` | `uuid` | not null |  |  |
+| `act` | `text` | not null |  |  |
+| `target_id` | `uuid` | not null |  |  |
+| `workspace_id` | `uuid` | not null |  |  |
+| `claim_key` | `text` | not null |  |  |
+| `replaced_id` | `uuid` | null |  |  |
+| `served_id` | `uuid` | null |  |  |
+| `reason` | `text` | not null |  |  |
+| `loosens_guardrail` | `boolean` | not null |  |  |
+| `admin_key_id` | `uuid` | not null |  |  |
+| `admin_person` | `text` | not null |  |  |
+| `lifecycle_event_id` | `uuid` | not null |  |  |
+| `state` | `text` | not null | `'unconfirmed'::text` |  |
+| `fixed_at` | `timestamp with time zone` | not null |  |  |
+| `fixed_seq` | `bigint` | not null |  |  |
+| `settled_by_key_id` | `uuid` | null |  |  |
+| `settled_same_user` | `boolean` | null |  |  |
+| `settled_at` | `timestamp with time zone` | null |  |  |
+| `settled_seq` | `bigint` | null |  |  |
+| `restored_id` | `uuid` | null |  |  |
+| `superseded_by` | `uuid` | null |  |  |
+
+Checks:
+
+- `admin_fixes_act_check`: `CHECK (act = ANY (ARRAY['demote'::text, 'edit'::text, 'retire'::text, 'erase'::text]))`
+- `admin_fixes_admin_person_check`: `CHECK (admin_person <> ''::text)`
+- `admin_fixes_check`: `CHECK ((state = 'unconfirmed'::text) = (settled_at IS NULL))`
+- `admin_fixes_check1`: `CHECK ((settled_at IS NULL) = (settled_seq IS NULL))`
+- `admin_fixes_check2`: `CHECK ((state = ANY (ARRAY['unconfirmed'::text, 'superseded'::text])) = (settled_by_key_id IS NULL))`
+- `admin_fixes_check3`: `CHECK ((state = 'superseded'::text) = (superseded_by IS NOT NULL))`
+- `admin_fixes_check4`: `CHECK (act <> 'erase'::text OR state <> 'reverted'::text)`
+- `admin_fixes_reason_check`: `CHECK (reason <> ''::text)`
+- `admin_fixes_state_check`: `CHECK (state = ANY (ARRAY['unconfirmed'::text, 'confirmed'::text, 'reverted'::text, 'superseded'::text]))`
+
+Keys:
+
+- `admin_fixes_tenant_id_fkey` (foreign key): `FOREIGN KEY (tenant_id) REFERENCES tenants(id)`
+- `admin_fixes_pkey` (primary key): `PRIMARY KEY (tenant_id, id)`
+
+Row-level security: enabled and forced, so the owner is bound too.
+
+- Policy `tenant_isolation`, ALL for PUBLIC, permissive:
+    - using `tenant_id = NULLIF(current_setting('oml.tenant_id'::text, true), ''::text)::uuid`
+    - with check `tenant_id = NULLIF(current_setting('oml.tenant_id'::text, true), ''::text)::uuid`
+
+Grants: serving: SELECT, INSERT, UPDATE (restored_id, settled_at, settled_by_key_id, settled_same_user, settled_seq, state, superseded_by).
+
+### admin_investigations
+
+An admin key's investigation: the reason its reads of claim text are made under, open until the key closes it.
+
+Kind: table.
+
+| Column | Type | Null | Default | Purpose |
+|---|---|---|---|---|
+| `tenant_id` | `uuid` | not null |  |  |
+| `id` | `uuid` | not null |  |  |
+| `key_id` | `uuid` | not null |  |  |
+| `reason` | `text` | not null |  |  |
+| `opened_at` | `timestamp with time zone` | not null |  |  |
+| `opened_seq` | `bigint` | not null |  |  |
+| `reads` | `bigint` | not null | `0` |  |
+| `closed_at` | `timestamp with time zone` | null |  |  |
+| `closed_seq` | `bigint` | null |  |  |
+
+Checks:
+
+- `admin_investigations_check`: `CHECK ((closed_at IS NULL) = (closed_seq IS NULL))`
+- `admin_investigations_reads_check`: `CHECK (reads >= 0)`
+- `admin_investigations_reason_check`: `CHECK (reason <> ''::text)`
+
+Keys:
+
+- `admin_investigations_tenant_id_fkey` (foreign key): `FOREIGN KEY (tenant_id) REFERENCES tenants(id)`
+- `admin_investigations_pkey` (primary key): `PRIMARY KEY (tenant_id, id)`
+
+Row-level security: enabled and forced, so the owner is bound too.
+
+- Policy `tenant_isolation`, ALL for PUBLIC, permissive:
+    - using `tenant_id = NULLIF(current_setting('oml.tenant_id'::text, true), ''::text)::uuid`
+    - with check `tenant_id = NULLIF(current_setting('oml.tenant_id'::text, true), ''::text)::uuid`
+
+Grants: serving: SELECT, INSERT, UPDATE (closed_at, closed_seq, reads).
+
 ### api_keys
 
 API keys: hash only, never the value.
@@ -229,6 +324,7 @@ Kind: table.
 | `expires_at` | `timestamp(6) with time zone` | null |  | The instant from which the key authenticates nothing; NULL never. |
 | `requests_per_minute` | `integer` | null |  | The key's own requests per UTC minute; NULL none of its own. |
 | `linked_user_id` | `uuid` | null |  |  |
+| `link_pending_user_id` | `uuid` | null |  | The user root a console admin linked this key to, until that person accepts the link; the key acts for no one meanwhile (the operator's decision of 2026-11-19). |
 
 Checks:
 
@@ -236,7 +332,8 @@ Checks:
 - `api_keys_connector_has_no_hash`: `CHECK (credential = 'bearer'::text OR hash IS NULL)`
 - `api_keys_credential_check`: `CHECK (credential = ANY (ARRAY['bearer'::text, 'connection'::text, 'session'::text]))`
 - `api_keys_guardrail_scope_check`: `CHECK (guardrail_scope = ANY (ARRAY['workspace'::text, 'ancestors'::text]))`
-- `api_keys_linked_user`: `CHECK (linked_user_id IS NULL OR user_root_id IS NULL AND credential <> 'session'::text AND role <> 'admin'::text)`
+- `api_keys_link_pending`: `CHECK (link_pending_user_id IS NULL OR linked_user_id IS NULL AND user_root_id IS NULL AND credential <> 'session'::text)`
+- `api_keys_linked_user`: `CHECK (linked_user_id IS NULL OR user_root_id IS NULL AND credential <> 'session'::text)`
 - `api_keys_profile`: `CHECK (profile IS NULL OR profile = 'curator'::text AND role = 'reviewer'::text AND used_by = 'agent'::text)`
 - `api_keys_requests_per_minute_check`: `CHECK (requests_per_minute >= 1 AND requests_per_minute <= 1000000)`
 - `api_keys_role_check`: `CHECK (role = ANY (ARRAY['reader'::text, 'contributor'::text, 'submitter'::text, 'reviewer'::text, 'admin'::text, 'operator'::text]))`
@@ -888,6 +985,10 @@ Kind: partitioned table, `PARTITION BY LIST (tenant_id)`.
 | `valid_until_before` | `text` | null |  | The end the version had before a ratified supersession replaced it; NULL for an open end. Read only while valid_until_ratified is true (0058). |
 | `valid_until_before_us` | `bigint` | null |  | valid_until_before as Unix microseconds, as valid_until_us is valid_until (0058). |
 | `author_person` | `text` | null |  | The person the author key acted for at the write, by name, as same_user compares it; NULL for a key that acts for no person (0061). |
+| `admin_fix_id` | `uuid` | null |  | The admin fix this version is served because of; NULL for a version a verdict promoted. |
+| `admin_fix_confirmed` | `boolean` | null |  | Whether a person confirmed the fix that serves this version: approver.confirmed. |
+| `admin_fix_same_user` | `boolean` | null |  | Whether that confirmation was by the admin's own person, in a development scope: approver.same_user. |
+| `admin_fix_reverted` | `boolean` | null |  | Whether a person reverted the fix that served this version: approver.reverted (the decision of 2026-11-19). |
 
 Checks:
 
@@ -1726,6 +1827,7 @@ Kind: table.
 | `added_by` | `uuid` | not null |  |  |
 | `terms_version` | `text` | null |  |  |
 | `disabled_at` | `timestamp with time zone` | null |  |  |
+| `pending_since` | `timestamp with time zone` | null |  | When an admin added this entry, or changed it to name its user, for a person who signs in already; it signs in to nothing until that person accepts it, and is NULL after (the operator's decision of 2026-11-19). |
 
 Checks:
 

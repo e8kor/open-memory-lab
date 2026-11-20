@@ -119,6 +119,9 @@ async fn entries(
 fn people_notice(fields: &Fields) -> Option<&'static str> {
     match fields.get("done")? {
         "added" => Some("Added."),
+        "added_pending" => Some(
+            "Added, pending: the person signs in already, so the address signs in to nothing until they accept it on their own Keys page.",
+        ),
         "changed" => Some("Changed."),
         "removed" => Some("Removed: its sessions ended; its agent keys keep working."),
         "granted" => Some("Granted."),
@@ -155,10 +158,11 @@ pub async fn people_page(
             r#"<tr><td class="mono">{}</td><td class="mono">{}</td><td>{}</td><td>{}{}</td></tr>"#,
             short(&e.email),
             short(&e.user),
-            if e.admin {
-                state_tag("admin")
-            } else {
-                String::new()
+            match (e.admin, e.pending) {
+                (true, true) => format!("{}{}", state_tag("admin"), state_tag("pending")),
+                (true, false) => state_tag("admin"),
+                (false, true) => state_tag("pending"),
+                (false, false) => String::new(),
             },
             form(
                 PEOPLE_PATH,
@@ -339,6 +343,7 @@ pub async fn people_act(
                 email: email.to_owned(),
                 user: String::new(),
                 admin: false,
+                pending: false,
             }),
             found => found,
         };
@@ -378,7 +383,9 @@ pub async fn people_act(
                 yes(&fields, "admin"),
             )
             .await
-            .map(|_| "added"),
+            // An address for a person who signs in already waits on them
+            // (ADR-0045 d2, the operator's decision of 2026-11-19).
+            .map(|e| if e.pending { "added_pending" } else { "added" }),
         "set_admin" => {
             let entry = entry.expect("read above");
             web.api

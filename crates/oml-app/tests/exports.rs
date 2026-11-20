@@ -185,6 +185,21 @@ struct Alice {
 async fn alice(app: &TestApp) -> Alice {
     let boot = bootstrap(app).await;
     let admin = &boot.admin_key.value;
+    // alice's sign-in entry first: an address added for a person a key
+    // names waits on her (the operator's decision of 2026-11-20, ADR-0045
+    // d2's note).
+    let (entry, _) = app
+        .allow_web_email(
+            admin.as_str(),
+            &oml_app::types::WebEmailRequest {
+                email: oml_app::domain::web::Email::parse("alice@example.com").expect("an email"),
+                user: name("alice"),
+                admin: false,
+            },
+        )
+        .await
+        .expect("alice's entry");
+    app.web_ensure_keys(&entry).await.expect("her session keys");
     let rw = || {
         vec![
             grant("alice", Role::Submitter),
@@ -930,7 +945,29 @@ async fn a_linked_key_exports_none_of_its_persons_other_keys_held_rows() {
         &name("alice"),
     )
     .await
-    .expect("linked");
+    .expect("linked, pending");
+    // Alice accepts the link from her own console session (ADR-0085 d16,
+    // the operator's decision of 2026-11-19).
+    let alice_token = app
+        .web_session_open(&alice_entry, 3600, None)
+        .await
+        .expect("opens")
+        .token;
+    let alice_session = app
+        .web_session(&alice_token)
+        .await
+        .expect("a read")
+        .expect("live");
+    let alice_web = app
+        .web_caller(&alice_session, oml_app::app::Capacity::Web)
+        .await
+        .expect("alice's console");
+    app.accept_key_link(
+        oml_app::types::Bearer::Session(&alice_web),
+        bob.key_id.into(),
+    )
+    .await
+    .expect("accepted");
     let exported = app
         .export_workspace(bob.value.as_str(), by_name("alice"), &history())
         .await

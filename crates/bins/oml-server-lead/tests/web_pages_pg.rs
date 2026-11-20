@@ -274,12 +274,23 @@ async fn the_first_admin_email_is_added_under_an_admin_key_and_signs_in_through_
     assert_eq!(web.session_user.as_ref().map(Name::as_str), Some("alice"));
     assert_eq!(web.key_hash, None);
     // The admin read runs under the serving role and journals itself.
+    let (status, _, opened) = send(
+        &router,
+        json_post(
+            "/v2/admin/investigations",
+            &boot.admin_key.value,
+            json!({"reason": "the serving role reads"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{opened}");
+    let opened: serde_json::Value = serde_json::from_str(&opened).expect("JSON");
     let (status, _, body) = send(
         &router,
         json_post(
             "/v2/admin/memories/search",
             &boot.admin_key.value,
-            json!({"query": "anything", "state": "held"}),
+            json!({"query": "anything", "state": "held", "investigation": opened["investigation_id"]}),
         ),
     )
     .await;
@@ -300,7 +311,7 @@ async fn the_first_admin_email_is_added_under_an_admin_key_and_signs_in_through_
         json_post(
             "/v2/admin/memories/search",
             &boot.admin_key.value,
-            json!({"state": "promoted", "kinds": ["skill", "guardrail"]}),
+            json!({"state": "promoted", "kinds": ["skill", "guardrail"], "investigation": opened["investigation_id"]}),
         ),
     )
     .await;

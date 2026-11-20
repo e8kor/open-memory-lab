@@ -252,6 +252,9 @@ pub(crate) struct Approver {
     kind: &'static str,
     /// Whether the reviewing key acts for the author's person.
     same_user: bool,
+    /// For a version served because of an admin fix, whether a person
+    /// confirmed it (ADR-0089 d7); `None` for a verdict.
+    fix: Option<bool>,
 }
 
 /// What a card's density draws.
@@ -415,6 +418,7 @@ impl Card {
             approver: m.approver.as_ref().map(|a| Approver {
                 kind: kind_word(&a.used_by),
                 same_user: a.same_user,
+                fix: (a.act.as_deref() == Some("admin_fix")).then_some(a.confirmed == Some(true)),
             }),
             id: m.artifact_id.clone(),
             state: row_state(&m.state, m.tip),
@@ -727,6 +731,8 @@ impl Card {
             "approver": self.approver.map(|a| json!({
                 "kind": a.kind,
                 "same_user": a.same_user,
+                "act": if a.fix.is_some() { "admin_fix" } else { "verdict" },
+                "confirmed": a.fix,
             })),
             "author": self.author,
             "author_kind": self.author_kind,
@@ -757,7 +763,17 @@ impl Card {
         if let Some(at) = &self.approved {
             let _ = write!(line, " on {}", text(&day(at)));
         }
-        if self.approver.is_some_and(|a| a.same_user) {
+        match self.approver.and_then(|a| a.fix) {
+            Some(false) => {
+                line.push_str(" · admin fix, served at once and not yet confirmed by a person")
+            }
+            Some(true) => line.push_str(" · admin fix, confirmed by a person"),
+            None => {}
+        }
+        if self
+            .approver
+            .is_some_and(|a| a.same_user && a.fix.is_none())
+        {
             line.push_str(" · self-review: the same person's keys wrote it and approved it");
         }
         line

@@ -107,6 +107,27 @@ async fn tenant(app: &TestApp) -> (BootstrapResult, Uuid) {
     (boot, crew)
 }
 
+/// [`tenant`], its bootstrap admin key linked to the person `alice`, as an
+/// admin fix requires (ADR-0089, the operator's decision of 2026-11-19).
+async fn fix_tenant(app: &TestApp) -> (BootstrapResult, Uuid) {
+    let boot = app
+        .bootstrap_tenant_for(
+            &BootstrapRequest {
+                tenant_name: Name::parse("acme").expect("a name"),
+                admin_key_name: Name::parse("root-admin").expect("a name"),
+                admin_principal: "alice-admin".to_owned(),
+            },
+            Some(&oml_app::types::BootstrapPerson {
+                user: name("alice"),
+                email: oml_app::domain::web::Email::parse("alice@example.com").expect("an email"),
+            }),
+        )
+        .await
+        .expect("bootstrap");
+    let crew = workspace(app, &boot.admin_key.value, "crew", boot.root_workspace_id).await;
+    (boot, crew)
+}
+
 fn grant(node: Uuid, role: Role) -> GrantRequest {
     GrantRequest {
         node: node.into(),
@@ -6446,6 +6467,7 @@ async fn operator_key(store: &MemStore, tenant: Uuid) -> String {
         expiry: None,
         requests_per_minute: None,
         linked_user: None,
+        link_pending: None,
     };
     seal_onto(
         store,
@@ -17084,7 +17106,7 @@ async fn two_promoted_versions() -> (
 ) {
     let store = MemStore::new();
     let app = app_over(store.clone());
-    let (boot, crew) = tenant(&app).await;
+    let (boot, crew) = fix_tenant(&app).await;
     let (writer, reader, reviewer) = crew_keys(&app, &boot.admin_key.value, crew).await;
     let v1 = promoted(
         &app,
@@ -18835,4 +18857,657 @@ async fn a_served_held_guardrail_is_not_also_listed_as_held_and_not_in_force() {
     assert_eq!(served_guardrail_ids(&set), vec![held]);
     assert!(set.guardrails[0].unreviewed);
     assert!(set.own_held.is_empty(), "{:?}", set.own_held);
+}
+
+// -- admin investigations (ADR-0089 d10, d15; #423) --------------------------
+
+#[tokio::test]
+async fn an_admin_read_without_an_investigation_is_refused() {
+    let (store, app, boot, _writer, _reader, _v1, v2) = two_promoted_versions().await;
+    let admin = boot.admin_key.value.as_str();
+    let head = journal(&store, boot.tenant_id).await.len();
+    assert!(matches!(
+        app.admin_read(admin, v2, None).await.unwrap_err(),
+        AppError::InvestigationRequired {
+            field: "investigation"
+        }
+    ));
+    assert!(matches!(
+        app.admin_search(admin, Some("canary"), None, None, None, 10, None)
+            .await
+            .unwrap_err(),
+        AppError::InvestigationRequired {
+            field: "/investigation"
+        }
+    ));
+    // An id the tenant does not hold, and a closed one, name no open one.
+    assert!(matches!(
+        app.admin_read(admin, v2, Some(Uuid::from_u128(7)))
+            .await
+            .unwrap_err(),
+        AppError::InvestigationRequired { .. }
+    ));
+    let opened = app
+        .open_investigation(admin, "ticket 41: a leaked hostname")
+        .await
+        .expect("open");
+    app.close_investigation(admin, opened.investigation_id)
+        .await
+        .expect("close");
+    assert!(matches!(
+        app.admin_read(admin, v2, Some(opened.investigation_id))
+            .await
+            .unwrap_err(),
+        AppError::InvestigationRequired { .. }
+    ));
+    let types = types_since(&store, boot.tenant_id, 0).await;
+    assert!(
+        !types[head..]
+            .iter()
+            .any(|t| t == event_types::MEMORY_ADMIN_READ),
+        "a refused read journals no admin read"
+    );
+    // Another admin key's open investigation is not this key's.
+    let other = app
+        .issue_key(admin, &issue_req(Role::Admin, "second-admin", Vec::new()))
+        .await
+        .expect("a second admin key");
+    let theirs = app
+        .open_investigation(other.value.as_str(), "their own case")
+        .await
+        .expect("open");
+    assert!(matches!(
+        app.admin_read(admin, v2, Some(theirs.investigation_id))
+            .await
+            .unwrap_err(),
+        AppError::InvestigationRequired { .. }
+    ));
+}
+
+#[tokio::test]
+async fn each_admin_read_names_its_investigation() {
+    let (store, app, boot, _writer, _reader, _v1, v2) = two_promoted_versions().await;
+    let admin = boot.admin_key.value.as_str();
+    let opened = app
+        .open_investigation(admin, "ticket 42: review the canary claim")
+        .await
+        .expect("open");
+    let id = opened.investigation_id;
+    app.admin_read(admin, v2, Some(id)).await.expect("read");
+    app.admin_search(admin, Some("canary"), None, None, None, 10, Some(id))
+        .await
+        .expect("search");
+    let reads: Vec<_> = journal(&store, boot.tenant_id)
+        .await
+        .into_iter()
+        .filter(|e| e.envelope.event_type == event_types::MEMORY_ADMIN_READ)
+        .collect();
+    assert_eq!(reads.len(), 2);
+    for read in &reads {
+        assert_eq!(
+            read.envelope.payload["investigation_id"],
+            json!(id.to_string())
+        );
+    }
+    let opened_event = journal(&store, boot.tenant_id)
+        .await
+        .into_iter()
+        .find(|e| e.envelope.event_type == event_types::ADMIN_INVESTIGATION_OPENED)
+        .expect("the open is journalled");
+    assert_eq!(
+        opened_event.envelope.payload["reason"],
+        json!("ticket 42: review the canary claim")
+    );
+    let listed = app.investigations(admin, true).await.expect("list");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].reads, 2, "both reads are counted");
+    assert_eq!(listed[0].reason, "ticket 42: review the canary claim");
+    let closed = app.close_investigation(admin, id).await.expect("close");
+    assert!(closed.closed_at.is_some());
+    assert!(
+        app.investigations(admin, true)
+            .await
+            .expect("list")
+            .is_empty()
+    );
+    assert_eq!(
+        app.investigations(admin, false).await.expect("list").len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn an_investigation_reason_the_scan_vetoes_opens_nothing() {
+    let (store, app, boot, _writer, _reader, _v1, _v2) = two_promoted_versions().await;
+    let admin = boot.admin_key.value.as_str();
+    let head = journal(&store, boot.tenant_id).await.len();
+    assert!(matches!(
+        app.open_investigation(admin, "   ").await.unwrap_err(),
+        AppError::AdminField {
+            field: "/reason",
+            ..
+        }
+    ));
+    let vetoed = app
+        .open_investigation(admin, "-----BEGIN a pasted key")
+        .await
+        .unwrap_err();
+    assert!(matches!(vetoed, AppError::ScanVeto(_)), "{vetoed:?}");
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+}
+
+// -- admin fixes (ADR-0089 d2-d9, d15-d17; #422) -----------------------------
+
+/// Links the person's key `key_id` to the person `person` through a console
+/// admin session, as the settlement of an admin fix requires a known person
+/// on both sides (ADR-0089, the operator's decision of 2026-11-19).
+async fn link_person(app: &TestApp, admin: &str, key_id: Uuid, person: &str) {
+    use oml_app::app::Capacity;
+    use oml_app::domain::web::Email;
+    use oml_app::types::{Bearer, WebEmailRequest};
+    let mut sessions = Vec::new();
+    for (user, is_admin) in [(format!("ops-{person}"), true), (person.to_owned(), false)] {
+        let (entry, _) = app
+            .allow_web_email(
+                admin,
+                &WebEmailRequest {
+                    email: Email::parse(&format!("{user}@example.com")).expect("an email"),
+                    user: name(&user),
+                    admin: is_admin,
+                },
+            )
+            .await
+            .expect("the entry is added");
+        app.web_ensure_keys(&entry).await.expect("the session keys");
+        let token = app
+            .web_session_open(&entry, 3600, None)
+            .await
+            .expect("the session opens")
+            .token;
+        sessions.push(app.web_session(&token).await.expect("read").expect("live"));
+    }
+    let ops = app
+        .web_caller(&sessions[0], Capacity::Admin)
+        .await
+        .expect("the console admin");
+    app.link_key_to_person(Bearer::Session(&ops), key_id.into(), &name(person))
+        .await
+        .expect("linked, pending");
+    // The named person accepts it from their own console session (ADR-0085
+    // d16, the operator's decision of 2026-11-19).
+    let own = app
+        .web_caller(&sessions[1], Capacity::Web)
+        .await
+        .expect("the person's console");
+    app.accept_key_link(Bearer::Session(&own), key_id.into())
+        .await
+        .expect("accepted");
+}
+
+fn fix_req(
+    act: oml_app::types::FixAct,
+    target: Uuid,
+    body: Option<&str>,
+) -> oml_app::app::FixRequest {
+    oml_app::app::FixRequest {
+        act,
+        target,
+        reason: "ticket 41: the claim is wrong in production".to_owned(),
+        body: body.map(str::to_owned),
+        title: None,
+    }
+}
+
+fn types_after(events: &[SignedEnvelope], from: usize) -> Vec<String> {
+    events[from..]
+        .iter()
+        .map(|e| e.envelope.event_type.clone())
+        .collect()
+}
+
+#[tokio::test]
+async fn an_admin_edit_serves_at_once_marked_admin_fix_and_unconfirmed() {
+    use oml_app::types::{FixAct, FixState};
+    let (store, app, boot, _writer, reader, _v1, v2) = two_promoted_versions().await;
+    let admin = boot.admin_key.value.as_str();
+    let head = journal(&store, boot.tenant_id).await.len();
+    let fix = app
+        .admin_fix(
+            admin,
+            &fix_req(
+                FixAct::Edit,
+                v2,
+                Some("the canary drains, settles and reports first"),
+            ),
+        )
+        .await
+        .expect("an admin edit");
+    assert_eq!(fix.state, FixState::Unconfirmed);
+    let served = fix.served_id.expect("an edit serves a version");
+    let got = app
+        .get_memory(&reader.value, served)
+        .await
+        .expect("served to a reader at once");
+    let approval = got.memory.approval.expect("served");
+    assert_eq!(approval.act(), "admin_fix");
+    assert_eq!(approval.confirmed(), Some(false));
+    assert_eq!(approval.used_by, UsedBy::Person);
+    assert_eq!(approval.same_user, Some(false));
+    let events = journal(&store, boot.tenant_id).await;
+    assert_eq!(
+        types_after(&events, head),
+        ["submission.remember", "lifecycle.supersede", "admin.fix"]
+    );
+    let admin_fix = &events.last().expect("admin.fix").envelope.payload;
+    assert_eq!(
+        admin_fix["lifecycle_event_id"],
+        events[head + 1].envelope.event_id.to_string(),
+        "admin.fix names the lifecycle event it caused"
+    );
+    assert_eq!(admin_fix["reason"], fix.reason);
+    assert_eq!(admin_fix["loosens_guardrail"], false);
+    assert_eq!(app.admin_fixes(admin, true).await.expect("list").len(), 1);
+}
+
+#[tokio::test]
+async fn a_fix_by_an_admin_key_not_used_by_a_person_is_refused_and_journals_nothing() {
+    use oml_app::types::FixAct;
+    let (store, app, boot, _writer, _reader, _v1, v2) = two_promoted_versions().await;
+    let service_admin = issue_with(
+        &app,
+        &boot.admin_key.value,
+        Role::Admin,
+        "svc-admin",
+        vec![],
+    )
+    .await;
+    let head = journal(&store, boot.tenant_id).await.len();
+    assert!(matches!(
+        app.admin_fix(
+            service_admin.value.as_str(),
+            &fix_req(FixAct::Demote, v2, None)
+        )
+        .await
+        .unwrap_err(),
+        AppError::FixRequiresPerson {
+            reason: "not_used_by_person"
+        }
+    ));
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+}
+
+#[tokio::test]
+async fn only_an_approved_version_is_demoted_as_a_fix() {
+    use oml_app::types::FixAct;
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = fix_tenant(&app).await;
+    let (writer, _reader, _reviewer) = crew_keys(&app, &boot.admin_key.value, crew).await;
+    let held = app
+        .submit_memory(&writer.value, &submit_req("fx-held", "the build is green"))
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    let head = journal(&store, boot.tenant_id).await.len();
+    assert!(matches!(
+        app.admin_fix(&boot.admin_key.value, &fix_req(FixAct::Demote, held, None))
+            .await
+            .unwrap_err(),
+        AppError::FixTargetNotPromoted {
+            status: MemoryStatus::Held
+        }
+    ));
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+}
+
+#[tokio::test]
+async fn a_demotion_fix_journals_the_demotion_then_admin_fix_and_marks_the_restored_tip() {
+    use oml_app::types::FixAct;
+    let (store, app, boot, _writer, reader, v1, v2) = two_promoted_versions().await;
+    let head = journal(&store, boot.tenant_id).await.len();
+    let fix = app
+        .admin_fix(&boot.admin_key.value, &fix_req(FixAct::Demote, v2, None))
+        .await
+        .expect("demote");
+    assert_eq!(fix.served_id, Some(v1));
+    let events = journal(&store, boot.tenant_id).await;
+    assert_eq!(
+        types_after(&events, head),
+        ["lifecycle.demote", "admin.fix"]
+    );
+    let got = app.get_memory(&reader.value, v1).await.expect("v1 serves");
+    assert_eq!(got.memory.approval.expect("approved").act(), "admin_fix");
+}
+
+#[tokio::test]
+async fn a_person_confirms_a_fix_and_the_served_version_reads_confirmed() {
+    use oml_app::types::{FixAct, FixState};
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = fix_tenant(&app).await;
+    let (writer, reader, reviewer) = crew_keys(&app, &boot.admin_key.value, crew).await;
+    link_person(&app, &boot.admin_key.value, reviewer.key_id, "dana").await;
+    let v1 = promoted(
+        &app,
+        &writer.value,
+        &reviewer.value,
+        &submit_req("fx-c", "the queue drains nightly"),
+    )
+    .await;
+    let fix = app
+        .admin_fix(
+            &boot.admin_key.value,
+            &fix_req(FixAct::Edit, v1, Some("the queue drains hourly")),
+        )
+        .await
+        .expect("edit");
+    let listed = app.review_fixes(&reviewer.value).await.expect("list");
+    assert_eq!(listed.len(), 1);
+    assert!(listed[0].settles, "another person may confirm");
+    let confirmed = app
+        .confirm_fix(&reviewer.value, fix.fix_id)
+        .await
+        .expect("confirm");
+    assert_eq!(confirmed.state, FixState::Confirmed);
+    assert_eq!(confirmed.settled_same_user, Some(false));
+    let served = fix.served_id.expect("served");
+    let approval = app
+        .get_memory(&reader.value, served)
+        .await
+        .expect("get")
+        .memory
+        .approval
+        .expect("approved");
+    assert_eq!(approval.confirmed(), Some(true));
+    assert!(matches!(
+        app.confirm_fix(&reviewer.value, fix.fix_id)
+            .await
+            .unwrap_err(),
+        AppError::FixSettled { state: "confirmed" }
+    ));
+    assert!(
+        app.review_fixes(&reviewer.value)
+            .await
+            .expect("list")
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn a_revert_serves_the_earlier_text_as_a_server_authored_version_the_reverter_approved() {
+    use oml_app::types::{FixAct, FixState};
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = fix_tenant(&app).await;
+    let (writer, reader, reviewer) = crew_keys(&app, &boot.admin_key.value, crew).await;
+    link_person(&app, &boot.admin_key.value, reviewer.key_id, "dana").await;
+    let v1 = promoted(
+        &app,
+        &writer.value,
+        &reviewer.value,
+        &submit_req("fx-r", "the queue drains nightly"),
+    )
+    .await;
+    let fix = app
+        .admin_fix(
+            &boot.admin_key.value,
+            &fix_req(FixAct::Edit, v1, Some("the queue drains hourly")),
+        )
+        .await
+        .expect("edit");
+    let head = journal(&store, boot.tenant_id).await.len();
+    let reverted = app
+        .revert_fix(&reviewer.value, fix.fix_id)
+        .await
+        .expect("revert");
+    assert_eq!(reverted.state, FixState::Reverted);
+    let restored = reverted.restored_id.expect("a restored version");
+    let row = store
+        .memory(boot.tenant_id, restored)
+        .await
+        .expect("read")
+        .expect("row");
+    assert_eq!(row.body, "the queue drains nightly");
+    assert_eq!(row.version, 3);
+    assert!(row.is_tip);
+    assert_eq!(row.derives_from, vec![v1]);
+    assert_eq!(row.author_principal, oml_app::app::SERVER_KEY_PRINCIPAL);
+    assert!(row.lineage_principals.contains(&"alice-admin".to_owned()));
+    let server = store
+        .key(boot.tenant_id, row.author_key_id)
+        .await
+        .expect("read")
+        .expect("the server key");
+    assert!(server.revoked_at.is_some(), "revoked at issuance");
+    assert_eq!(server.used_by, UsedBy::Service);
+    assert_eq!(
+        types_after(&journal(&store, boot.tenant_id).await, head),
+        [
+            "key.issued",
+            "key.revoked",
+            "submission.remember",
+            "review.approve",
+            "lifecycle.supersede",
+            "admin.fix_reverted"
+        ]
+    );
+    let approval = app
+        .get_memory(&reader.value, restored)
+        .await
+        .expect("served")
+        .memory
+        .approval
+        .expect("approved");
+    assert_eq!(approval.act(), "verdict");
+    // A second revert finds the fix settled.
+    assert!(matches!(
+        app.revert_fix(&reviewer.value, fix.fix_id)
+            .await
+            .unwrap_err(),
+        AppError::FixSettled { .. }
+    ));
+}
+
+#[tokio::test]
+async fn an_erasure_is_confirmed_and_never_reverted() {
+    use oml_app::types::FixAct;
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = fix_tenant(&app).await;
+    let (writer, _reader, reviewer) = crew_keys(&app, &boot.admin_key.value, crew).await;
+    link_person(&app, &boot.admin_key.value, reviewer.key_id, "dana").await;
+    let v1 = promoted(
+        &app,
+        &writer.value,
+        &reviewer.value,
+        &submit_req("fx-e", "the vault token is abc"),
+    )
+    .await;
+    let fix = app
+        .admin_fix(&boot.admin_key.value, &fix_req(FixAct::Erase, v1, None))
+        .await
+        .expect("erase");
+    assert!(matches!(
+        app.revert_fix(&reviewer.value, fix.fix_id)
+            .await
+            .unwrap_err(),
+        AppError::FixNotRevertible
+    ));
+    app.confirm_fix(&reviewer.value, fix.fix_id)
+        .await
+        .expect("confirmed");
+}
+
+#[tokio::test]
+async fn a_fix_whose_claim_moved_on_is_refused_revert_as_superseded() {
+    use oml_app::types::FixAct;
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = fix_tenant(&app).await;
+    let (writer, _reader, reviewer) = crew_keys(&app, &boot.admin_key.value, crew).await;
+    link_person(&app, &boot.admin_key.value, reviewer.key_id, "dana").await;
+    let v1 = promoted(
+        &app,
+        &writer.value,
+        &reviewer.value,
+        &submit_req("fx-s", "the queue drains nightly"),
+    )
+    .await;
+    let fix = app
+        .admin_fix(
+            &boot.admin_key.value,
+            &fix_req(FixAct::Edit, v1, Some("the queue drains hourly")),
+        )
+        .await
+        .expect("edit");
+    // A second fix demotes the edit: the claim is served by v1 again, not
+    // by the version the first fix made its tip.
+    let served = fix.served_id.expect("served");
+    app.admin_fix(
+        &boot.admin_key.value,
+        &fix_req(FixAct::Demote, served, None),
+    )
+    .await
+    .expect("a later demotion");
+    assert!(matches!(
+        app.revert_fix(&reviewer.value, fix.fix_id)
+            .await
+            .unwrap_err(),
+        AppError::FixSuperseded
+    ));
+}
+
+#[tokio::test]
+async fn an_admin_edit_in_a_frozen_workspace_is_refused_and_a_demotion_is_admitted() {
+    use oml_app::types::FixAct;
+    let (store, app, boot, _writer, _reader, _v1, v2) = two_promoted_versions().await;
+    let admin = boot.admin_key.value.as_str();
+    let crew = store
+        .memory(boot.tenant_id, v2)
+        .await
+        .expect("read")
+        .expect("v2")
+        .workspace_id;
+    let ratifier = issue(&app, admin, Role::Reviewer, "rita", crew).await;
+    freeze(&app, admin, &ratifier.value, crew).await;
+    let err = app
+        .admin_fix(
+            admin,
+            &fix_req(FixAct::Edit, v2, Some("the canary is gone")),
+        )
+        .await
+        .unwrap_err();
+    assert_frozen(&err, crew, FrozenOp::Write);
+    app.admin_fix(admin, &fix_req(FixAct::Demote, v2, None))
+        .await
+        .expect("a frozen workspace admits a demotion");
+}
+
+#[tokio::test]
+async fn an_admin_edit_whose_body_the_scan_would_hold_is_refused() {
+    use oml_app::types::FixAct;
+    let (store, app, boot, _writer, _reader, _v1, v2) = two_promoted_versions().await;
+    let head = journal(&store, boot.tenant_id).await.len();
+    let err = app
+        .admin_fix(
+            &boot.admin_key.value,
+            &fix_req(FixAct::Edit, v2, Some("drain first [needs-person]")),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::FixScanHold { .. }), "{err:?}");
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+}
+
+/// ADR-0077 d5's read-path law with the fix (ADR-0089 d9): every served
+/// hit is unreviewed, or approved by a verdict of a key and principal
+/// other than its author's, or carries `approver.act: admin_fix` and an
+/// `admin.fix` names it.
+#[tokio::test]
+async fn every_served_hit_satisfies_the_read_path_law() {
+    use oml_app::types::FixAct;
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = fix_tenant(&app).await;
+    let (writer, reader, reviewer) = crew_keys(&app, &boot.admin_key.value, crew).await;
+    let mut ids = Vec::new();
+    for (idem, body) in [
+        ("law-a", "the canary drains first"),
+        ("law-b", "the canary reports to ops"),
+        ("law-c", "the canary pages the oncall"),
+    ] {
+        ids.push(
+            promoted(
+                &app,
+                &writer.value,
+                &reviewer.value,
+                &submit_req(idem, body),
+            )
+            .await,
+        );
+    }
+    app.admin_fix(
+        &boot.admin_key.value,
+        &fix_req(
+            FixAct::Edit,
+            ids[0],
+            Some("the canary drains and settles first"),
+        ),
+    )
+    .await
+    .expect("edit");
+    let v2 = app
+        .supersede(
+            &writer.value,
+            &supersede_req("law-b2", ids[1], "the canary reports to ops hourly"),
+        )
+        .await
+        .expect("supersede")
+        .receipt
+        .memory_id;
+    app.post_verdict(&reviewer.value, v2, Verdict::Approve, None)
+        .await
+        .expect("approve");
+    app.admin_fix(&boot.admin_key.value, &fix_req(FixAct::Demote, v2, None))
+        .await
+        .expect("demote");
+    let events = journal(&store, boot.tenant_id).await;
+    let hits = app
+        .recall(&reader.value, &recall_req("canary"))
+        .await
+        .expect("recall")
+        .hits;
+    assert_eq!(hits.len(), 3);
+    let mut fixed = 0;
+    for hit in &hits {
+        let m = &hit.memory;
+        if m.status == MemoryStatus::Held {
+            continue;
+        }
+        let approval = m.approval.as_ref().expect("a served approved hit");
+        let id = m.memory_id.to_string();
+        if approval.act() == "admin_fix" {
+            fixed += 1;
+            assert!(
+                events.iter().any(|e| e.envelope.event_type == "admin.fix"
+                    && e.envelope.payload["served_artifact_id"] == id),
+                "an admin.fix names {id}"
+            );
+        } else {
+            let verdict = events
+                .iter()
+                .find(|e| {
+                    e.envelope.event_type == "review.approve"
+                        && e.envelope.payload["artifact_id"] == id
+                })
+                .expect("its approving verdict");
+            assert_ne!(verdict.envelope.api_key_id, Some(m.author_key_id));
+            assert_ne!(verdict.envelope.principal, m.author_principal);
+        }
+    }
+    assert_eq!(
+        fixed, 2,
+        "the edit's version and the demotion's restored tip"
+    );
 }

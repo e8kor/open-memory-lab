@@ -705,6 +705,13 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             ApiError::validation(format!("the key cannot be linked or unlinked: {reason}"))
                 .with_details(json!({ "field": field, "reason": reason }))
         }
+        AppError::WebEmailRefused { reason } => ApiError::validation(format!(
+            "the sign-in email cannot be accepted or removed here: {reason}"
+        ))
+        .with_details(json!({
+            "field": if reason == "changed" { "/admin" } else { "/email" },
+            "reason": reason,
+        })),
         AppError::ActingKeyNotLinked => ApiError::auth_invalid("acting_key_not_linked"),
         AppError::SkillBodyTooLarge => ApiError::payload_too_large("a skill body past 32,768 bytes")
             .with_details(json!({ "field": "/body" })),
@@ -1047,6 +1054,78 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
                 to.as_str()
             ),
         ),
+        AppError::InvestigationRequired { field } => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "admin.investigation_required",
+            "An admin reads claim text under one reason per investigation: open one with POST /v2/admin/investigations {reason} and name its id (ADR-0089 d10).",
+            format!("this read names no open investigation of the admin key in {field}"),
+        )
+        .with_details(json!({ "field": field })),
+        AppError::Store(StoreError::InvestigationNotOpen { .. }) => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "admin.investigation_required",
+            "An admin reads claim text under one reason per investigation: open one with POST /v2/admin/investigations {reason} and name its id (ADR-0089 d10).",
+            "the investigation was closed while the read was made",
+        )
+        .with_details(json!({ "field": "investigation" })),
+        AppError::FixRequiresPerson { reason } => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "admin.fix_requires_person",
+            "A fix is break-glass: it is taken by an admin key used by a person and linked to that person (ADR-0089 d1, the operator's decision of 2026-11-19).",
+            if *reason == *"unlinked" {
+                "this admin key is linked to no person: a console admin links it, or the bootstrap claim names its person"
+            } else {
+                "this admin key is not used by a person"
+            },
+        )
+        .with_details(json!({ "reason": reason })),
+        AppError::FixTargetNotPromoted { status } => ApiError::new(
+            StatusCode::CONFLICT,
+            "admin.fix_target_not_promoted",
+            "Only an approved version is demoted: a held one is withdrawn by its author or rejected by a reviewer (ADR-0089 d16).",
+            format!("the version is {}", status.as_str()),
+        )
+        .with_details(json!({ "state": status.as_str() })),
+        AppError::FixScanHold { .. } => ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "admin.fix_held_by_scan",
+            "A fix serves at once, so an edit whose body the scan would hold is refused; demote instead, which serves already-reviewed text (ADR-0089 d4).",
+            "the edit's body carries a finding that would hold it",
+        ),
+        AppError::FixSuperseded => ApiError::new(
+            StatusCode::CONFLICT,
+            "admin.fix_superseded",
+            "A fix whose claim has moved on is not reverted: a person fixes the claim forward (ADR-0089 d8).",
+            "the claim is no longer served by the version the fix made its tip",
+        ),
+        AppError::FixNotRevertible => ApiError::new(
+            StatusCode::CONFLICT,
+            "admin.fix_not_revertible",
+            "An erasure is confirmed and never reverted (ADR-0089 d8).",
+            "the fix is an erasure",
+        ),
+        AppError::FixSettled { state } => ApiError::new(
+            StatusCode::CONFLICT,
+            "admin.fix_settled",
+            "A fix is confirmed or reverted once (ADR-0089 d8).",
+            format!("the fix is already {state}"),
+        )
+        .with_details(json!({ "state": state })),
+        AppError::Store(StoreError::FixSettled { .. }) => ApiError::new(
+            StatusCode::CONFLICT,
+            "admin.fix_settled",
+            "A fix is confirmed or reverted once (ADR-0089 d8).",
+            "the fix was settled while this request was made",
+        ),
+        AppError::Store(StoreError::FixVersionMissing { .. }) => ApiError::new(
+            StatusCode::CONFLICT,
+            "admin.fix_superseded",
+            "A fix marks the version it serves; that version was not found as the fix named it, so nothing was written (ADR-0089 d7).",
+            "the version the fix serves was not found",
+        )
+        .with_details(json!({ "reason": "served_version_missing" })),
+        AppError::AdminField { field, message } => ApiError::validation(format!("{field}: {message}"))
+            .with_details(json!({ "field": field })),
         AppError::WorkspaceFrozen { workspace_id, op } => ApiError::new(
             StatusCode::CONFLICT,
             "workspace.frozen",

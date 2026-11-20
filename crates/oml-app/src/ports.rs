@@ -58,6 +58,19 @@ pub enum StoreError {
     ApprovalMissing { memory_id: Uuid },
     #[error("chain head moved: expected seq {expected_seq}, commit carries seq {found_seq}")]
     SeqConflict { expected_seq: u64, found_seq: u64 },
+    /// An admin read or a close named an investigation that is not open,
+    /// or not the committing key's, inside the committing transaction; the
+    /// commit wrote nothing (ADR-0089 d10).
+    #[error("investigation {investigation_id} is not open for this key")]
+    InvestigationNotOpen { investigation_id: Uuid },
+    /// A confirm or revert found the fix no longer unconfirmed inside the
+    /// committing transaction; the commit wrote nothing (ADR-0089 d8).
+    #[error("fix {fix_id} is no longer unconfirmed")]
+    FixSettled { fix_id: Uuid },
+    /// A fix's mark found no version to mark where the fix names one; the
+    /// commit wrote nothing (ADR-0089 d7).
+    #[error("fix {fix_id} names a served version the store does not hold")]
+    FixVersionMissing { fix_id: Uuid },
     #[error("prev_hash does not match the stored head at seq {seq}")]
     PrevHashConflict { seq: u64 },
     /// A ratification's compare-and-set found `replaced` no longer the
@@ -281,14 +294,28 @@ pub enum MetadataFold {
         expiry: Option<EventTime>,
         requests_per_minute: Option<u32>,
     },
-    /// `key.linked_person` (`Some`) or `key.unlinked_person` (`None`): the
-    /// tenant key acts for the person whose user root is named from this
-    /// commit on, or for no one. The store refuses a key it does not hold,
-    /// a revoked key, a key that is not a tenant bearer key used by a
-    /// person, and a root that is not a user root (ADR-0085 d16).
+    /// `key.linked_person` (`Some`) or `key.unlinked_person` (`None`). A
+    /// link `accepted` (the bootstrap's, made by the person who runs it)
+    /// makes the tenant key act for the person whose user root is named
+    /// from this commit on; one not accepted (a console admin's) leaves it
+    /// pending, acting for no one, until [`Self::KeyLinkAccepted`]. An
+    /// unlink ends a link or a pending one. The store refuses a key it does
+    /// not hold, a revoked key, a key that is not a tenant bearer key used
+    /// by a person, a key that holds a link or a pending one, and a root
+    /// that is not a user root (ADR-0085 d16, the operator's decision of
+    /// 2026-11-19).
     KeyLinked {
         key_id: Uuid,
         user_root: Option<Uuid>,
+        accepted: bool,
+    },
+    /// `key.link_accepted`: the named person accepted the link pending to
+    /// `user_root`, so the key acts for them from this commit on. The store
+    /// refuses a key whose pending link names another root, or a revoked
+    /// key (ADR-0085 d16, the operator's decision of 2026-11-19).
+    KeyLinkAccepted {
+        key_id: Uuid,
+        user_root: Uuid,
     },
     /// `connection.code_issued`: the code's row, its `issued_seq` this
     /// commit's seq. The commit voids every code of the key from which no
@@ -397,9 +424,16 @@ pub enum MetadataFold {
     /// claim lies below it. A lost compare-and-set writes nothing and
     /// refuses with [`StoreError::TipMoved`] naming `memory_id`. The bytes
     /// stay (ADR-0089 d16; ADR-0009 d5; ADR-0001 d4).
+    ///
+    /// `reopened` is compare-and-set too (#474): with `Some((r, end))`, `r`
+    /// is the version `memory_id` replaces, still promoted, whose end a
+    /// ratification set and whose end before it is `end`, which the fold
+    /// writes back; with `None`, no such version exists. So the signed
+    /// `lifecycle.demote` never names an end the store did not write.
     MemoryDemoted {
         memory_id: Uuid,
         restored: Option<Uuid>,
+        reopened: Option<(Uuid, Option<oml_domain::valid_time::ValidEnd>)>,
     },
     /// `lifecycle.erase`: every version of one claim, `memory_ids`, becomes
     /// `erased`, no longer the tip, its body and every column derived from
@@ -462,6 +496,18 @@ pub enum MetadataFold {
         /// tenant's last admin entry (ADR-0070 d5).
         keep_an_admin: bool,
     },
+    /// `web.email_accepted`: the pending entry of `email_hash`, naming
+    /// `user` with the admin flag `admin`, signs in from this commit on. The
+    /// store refuses an entry it does not hold, one that is not pending, one
+    /// that names another user, and one whose admin flag is not `admin`, so
+    /// a flag flipped after the person reviewed the entry fails the accept
+    /// (ADR-0045 d2's note, the operator's decisions of 2026-11-19 and
+    /// 2026-11-20).
+    WebEmailAccepted {
+        email_hash: Sha256Hash,
+        user: Name,
+        admin: bool,
+    },
     /// `web.email_removed`: the entry's row and every session of it, gone
     /// in the same commit; the store refuses an entry it does not hold
     /// (ADR-0045 d2, d13).
@@ -471,9 +517,49 @@ pub enum MetadataFold {
         /// tenant's last admin entry (ADR-0070 d5).
         keep_an_admin: bool,
     },
-    /// `memory.admin_read`: an admin key read memories' text; nothing
-    /// changes but the journal (ADR-0045 d21).
+    /// An admin read that changes nothing but the journal: a read of other
+    /// keys' recall telemetry or its replay (ADR-0054 d2, d11).
     AdminRead,
+    /// `memory.admin_read`: an admin key read memories' text under one of
+    /// its open investigations, whose read count moves; the store refuses
+    /// an investigation that is not open or not the key's with
+    /// [`StoreError::InvestigationNotOpen`] (ADR-0045 d21; ADR-0089 d10).
+    AdminMemoryRead {
+        investigation_id: Uuid,
+        key_id: Uuid,
+    },
+    /// `admin.fix`: the fix's row, unconfirmed, and the mark on the
+    /// version it made the served tip (`served_id`), in the commit that
+    /// also journals the lifecycle event it caused (ADR-0089 d3, d7, d16).
+    AdminFixRecorded(Box<crate::types::FixRecord>),
+    /// `admin.fix_confirmed` or `admin.fix_reverted`: the fix moves from
+    /// unconfirmed to `state`, compare-and-set, else
+    /// [`StoreError::FixSettled`]; a confirmation also marks the version
+    /// the fix serves `confirmed`, `same_user` as judged (ADR-0089 d7, d8).
+    AdminFixSettled {
+        fix_id: Uuid,
+        state: crate::types::FixState,
+        settled_by_key_id: Uuid,
+        same_user: bool,
+        restored_id: Option<Uuid>,
+        /// The version the fix serves, marked by its primary key.
+        served_id: Option<Uuid>,
+    },
+    /// `admin.investigation_opened`: an admin key's investigation, open
+    /// from the event, its reason in clear (ADR-0089 d10, d15).
+    InvestigationOpened {
+        investigation_id: Uuid,
+        key_id: Uuid,
+        reason: String,
+    },
+    /// `admin.investigation_closed`: the key closes its open investigation
+    /// at the event; the store refuses one that is not open or not the
+    /// key's with [`StoreError::InvestigationNotOpen`] (ADR-0089 d10; the
+    /// operator, 2026-11-17: closed only by its key, never by idling).
+    InvestigationClosed {
+        investigation_id: Uuid,
+        key_id: Uuid,
+    },
     /// `workspace.imported`: the import's row ends `done` with its counts
     /// and refusals, and the target's ledger for the source moves to the
     /// bundle's export instant, release and signer, in the event's
@@ -1587,6 +1673,48 @@ pub trait JournalStore: Retriever + Send + Sync {
         reads_promoted: bool,
     ) -> impl Future<Output = Result<Option<u32>, StoreError>> + Send;
 
+    /// One admin fix of the tenant (ADR-0089 d15).
+    fn fix(
+        &self,
+        tenant_id: Uuid,
+        fix_id: Uuid,
+    ) -> impl Future<Output = Result<Option<crate::types::FixRecord>, StoreError>> + Send;
+
+    /// The tenant's admin fixes, oldest first, the unconfirmed ones alone
+    /// when `unconfirmed_only` (ADR-0089 d15).
+    fn fixes(
+        &self,
+        tenant_id: Uuid,
+        unconfirmed_only: bool,
+    ) -> impl Future<Output = Result<Vec<crate::types::FixRecord>, StoreError>> + Send;
+
+    /// Whether `memory_id` is a member of no release, published or
+    /// withdrawn (ADR-0089, amendment of 2026-11-18). Releases are not built
+    /// (ADR-0085, R3), so every store answers true until R3 fills it; the
+    /// contract law `no_version_is_a_release_member_until_releases_exist`
+    /// is the one R3 changes.
+    fn member_of_no_release(
+        &self,
+        tenant_id: Uuid,
+        memory_id: Uuid,
+    ) -> impl Future<Output = Result<bool, StoreError>> + Send;
+
+    /// One investigation of the tenant, open or closed (ADR-0089 d10).
+    fn investigation(
+        &self,
+        tenant_id: Uuid,
+        investigation_id: Uuid,
+    ) -> impl Future<Output = Result<Option<crate::types::Investigation>, StoreError>> + Send;
+
+    /// The investigations of the tenant, oldest first: `key_id`'s alone
+    /// when named, the open ones alone when `open_only` (ADR-0089 d15).
+    fn investigations(
+        &self,
+        tenant_id: Uuid,
+        key_id: Option<Uuid>,
+        open_only: bool,
+    ) -> impl Future<Output = Result<Vec<crate::types::Investigation>, StoreError>> + Send;
+
     /// The end `memory_id` had before a ratified supersession replaced it:
     /// `None` when no ratification gave it its end, `Some(None)` for an
     /// open end. A demotion of the successor gives it back and names it in
@@ -2050,13 +2178,30 @@ pub trait WebStore: JournalStore {
         user_root: Uuid,
     ) -> impl Future<Output = Result<Vec<KeyRecord>, StoreError>> + Send;
 
-    /// The tenant's keys linked to the person whose root is `user_root`,
-    /// revoked ones included, in name order (ADR-0085 d16).
+    /// The tenant's keys linked to the person whose root is `user_root`, and
+    /// those whose link to them waits on their acceptance (`link_pending`),
+    /// revoked ones included, in name order (ADR-0085 d16, the operator's
+    /// decision of 2026-11-19).
     fn web_linked_keys(
         &self,
         tenant_id: Uuid,
         user_root: Uuid,
     ) -> impl Future<Output = Result<Vec<KeyRecord>, StoreError>> + Send;
+
+    /// The tenant's live keys whose link waits on its person's acceptance,
+    /// in name order (ADR-0085 d16, the operator's decision of 2026-11-19).
+    fn web_pending_links(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<KeyRecord>, StoreError>> + Send;
+
+    /// The tenant's allowlist entries that wait on their person's
+    /// acceptance, in email order (ADR-0045 d2's note of 2026-11-19, the
+    /// operator's decision).
+    fn web_pending_emails(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<WebEntry>, StoreError>> + Send;
 
     /// The tenant's session keys serving `session_user` (ADR-0045 d6).
     fn web_session_keys(
@@ -2847,6 +2992,12 @@ pub trait RequestObserver: Send + Sync {
     /// `write` (ADR-0030 d5, d9).
     fn curation(&self, act: &'static str) {
         let _ = act;
+    }
+
+    /// An admin fix committed: its act and whether it loosens a guardrail
+    /// (ADR-0089 d6, d15).
+    fn admin_fix(&self, act: &'static str, loosens_guardrail: bool) {
+        let _ = (act, loosens_guardrail);
     }
 }
 

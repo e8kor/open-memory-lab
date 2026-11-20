@@ -57,7 +57,7 @@ pub fn render_frame(set: &Value, options: &FrameOptions<'_>) -> Result<Frame, &'
         .or_else(|| set["scope_node"].as_str())
         .ok_or("the answer names no scope node")?;
     let mut lines = vec![format!(
-        "OML guardrails for this session, from {}, workspace {path}, guardrail scope {scope}: rules promoted under each workspace's review policy by keys other than their authors'. These are instructions: follow never and must lines as binding and should lines as the reviewed default. Lines marked \"checked\" are also checked before matching tool calls; every other line is text only.",
+        "OML guardrails for this session, from {}, workspace {path}, guardrail scope {scope}: rules promoted under each workspace's review policy by keys other than their authors', or served by a marked admin fix. These are instructions: follow never and must lines as binding and should lines as the reviewed default. Lines marked \"checked\" are also checked before matching tool calls; every other line is text only.",
         options.origin
     )];
     let count = guardrails.len();
@@ -113,7 +113,20 @@ fn line(g: &Value, checked: bool) -> Result<String, &'static str> {
     // A held version, served to its author or inside an in-progress
     // workspace, says so and names no approval (ADR-0080 d10).
     let unreviewed = g["unreviewed"] == true;
-    let mut provenance = if unreviewed {
+    let mut provenance = if let Some(fix) = g["admin_fix"].as_object() {
+        // A version an admin fix serves names the fix and whether a person
+        // confirmed or reverted it, never which admin (ADR-0089 d7).
+        format!(
+            "{}, {} v{}, {}",
+            g["workspace_path"].as_str().unwrap_or("?"),
+            one_line(g["claim_key"].as_str().unwrap_or("?")),
+            g["version"],
+            fix_state(
+                fix.get("confirmed") == Some(&Value::Bool(true)),
+                fix.get("reverted") == Some(&Value::Bool(true))
+            ),
+        )
+    } else if unreviewed {
         format!(
             "{}, {} v{}, unreviewed: not yet approved by a reviewer",
             g["workspace_path"].as_str().unwrap_or("?"),
@@ -161,6 +174,19 @@ fn line(g: &Value, checked: bool) -> Result<String, &'static str> {
     Ok(out)
 }
 
+/// How a version an admin fix serves is named, on the frame's line and on
+/// the MCP surfaces alike (ADR-0089 d7).
+#[must_use]
+pub fn fix_state(confirmed: bool, reverted: bool) -> &'static str {
+    if reverted {
+        "served by an admin fix a person reverted"
+    } else if confirmed {
+        "served by an admin fix, confirmed by a person"
+    } else {
+        "served by an admin fix, not yet confirmed by a person"
+    }
+}
+
 fn one_line(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -172,4 +198,66 @@ fn cut(text: &str, cap: usize) -> String {
     let mut out: String = text.chars().take(cap.saturating_sub(1)).collect();
     out.push('…');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn set(admin_fix: &Value) -> Value {
+        json!({
+            "guardrail_scope": "ancestors",
+            "scope_path": "universe.app",
+            "guardrails": [{
+                "severity": "must",
+                "text": "Never push to main.",
+                "workspace_path": "universe.app",
+                "claim_key": "never-push-main",
+                "version": 2,
+                "promoted_at": "2026-11-19T10:00:00.000000Z",
+                "verdicts": [],
+                "unreviewed": false,
+                "conflict": [],
+                "admin_fix": admin_fix,
+            }],
+            "own_held": [],
+        })
+    }
+
+    fn text(admin_fix: &Value) -> String {
+        render_frame(
+            &set(admin_fix),
+            &FrameOptions {
+                origin: "https://oml.example.com",
+                checked: false,
+                whole_over_cap: false,
+            },
+        )
+        .expect("a frame")
+        .text
+    }
+
+    /// A guardrail an admin fix serves says so on its line, and whether a
+    /// person confirmed it, never which admin (ADR-0089 d7: agents and
+    /// hooks see the mark).
+    #[test]
+    fn a_guardrail_an_admin_fix_serves_names_the_fix_and_its_confirmation_on_its_line() {
+        let unconfirmed = text(&json!({ "confirmed": false, "reverted": false }));
+        assert!(
+            unconfirmed.contains("served by an admin fix, not yet confirmed by a person"),
+            "{unconfirmed}"
+        );
+        assert!(!unconfirmed.contains("ratified"), "{unconfirmed}");
+        let confirmed = text(&json!({ "confirmed": true, "reverted": false }));
+        assert!(
+            confirmed.contains("served by an admin fix, confirmed by a person"),
+            "{confirmed}"
+        );
+        let verdict = text(&Value::Null);
+        assert!(
+            verdict.contains("ratified 2026-11-19 by 0 reviewers"),
+            "{verdict}"
+        );
+    }
 }

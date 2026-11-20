@@ -1883,7 +1883,7 @@ paths:
       tags: [keys]
       operationId: linkKey
       summary: Link a person's tenant key to the user who signs in, so the console acts with it in shared workspaces.
-      description: 'Requires: a console admin session, <user>-admin through its capacity credential, in the key''s own tenant; another role is access.verb_ceiling, a bearer admin key, which names no person, is request.validation with details.field key and details.reason session_admin_only, and no MCP tool or CLI command reaches the route (the operator, 2026-11-17: "Console only"). user names a user of the tenant with a user root and a web entry, none of it disabled, and never the calling admin''s own person; otherwise request.validation with details.field /user and details.reason user_unknown, user_disabled or self_link. The key is a live tenant bearer key used_by person that holds no link; otherwise request.validation with details.field key and details.reason revoked (a key past its expiry too), already_linked (unlink it first), admin_key, not_a_tenant_key (a user key, a session key or a connector key) or not_used_by_person. Journalled as key.linked_person. From then on the key writes into that user''s root as their key wherever its grants allow, and oml-web may name it in OML-Acting-Key beside that user''s capacity credential on the console''s acting routes (GET /v2/whoami, GET /v2/review/held, GET /v1/memories/{artifact_id}, POST /v2/review/verdicts/bulk): the request runs as the key, with its grants and verb ceilings. The header sent twice, on another route, without a capacity credential, or naming a key the link no longer admits answers auth.invalid with details.reason acting_key_not_linked and runs nothing (ADR-0085 d16, amended 2026-11-17). The Idempotency-Key is required and not replayed. Since v0.8.3.'
+      description: 'Requires: a console admin session, <user>-admin through its capacity credential, in the key''s own tenant; another role is access.verb_ceiling, a bearer admin key, which names no person, is request.validation with details.field key and details.reason session_admin_only, and no MCP tool or CLI command reaches the route (the operator, 2026-11-17: "Console only"). user names a user of the tenant with a user root and a web entry, none of it disabled, and never the calling admin''s own person; otherwise request.validation with details.field /user and details.reason user_unknown, user_disabled or self_link. The key is a live tenant bearer key used_by person that holds no link, an admin key''s included; otherwise request.validation with details.field key and details.reason revoked (a key past its expiry too), already_linked (unlink it first), not_a_tenant_key (a user key, a session key or a connector key) or not_used_by_person. Journalled as key.linked_person, with accepted false: the link is pending, and the key acts for no one, until that user accepts it from their own console session with POST /v2/keys/{key}/accept_link (the operator''s decision of 2026-11-19). The key is refused already_linked while a link pends too. From the acceptance on, the key writes into that user''s root as their key wherever its grants allow, and oml-web may name it in OML-Acting-Key beside that user''s capacity credential on the console''s acting routes (GET /v2/whoami, GET /v2/review/held, GET /v1/memories/{artifact_id}, POST /v2/review/verdicts/bulk): the request runs as the key, with its grants and verb ceilings. The header sent twice, on another route, without a capacity credential, or naming a key the link no longer admits answers auth.invalid with details.reason acting_key_not_linked and runs nothing (ADR-0085 d16, amended 2026-11-17). The Idempotency-Key is required and not replayed. Since v0.8.3.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -1909,6 +1909,7 @@ paths:
                 key_id: d405428e-4c99-426d-8826-76d28436e423
                 name: alice-payments
                 linked_user: alice
+                pending: true
               schema: { $ref: '#/components/schemas/KeyLink' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -1920,7 +1921,7 @@ paths:
       tags: [keys]
       operationId: unlinkKey
       summary: End a key's link to a person.
-      description: 'Requires: a console admin session, <user>-admin through its capacity credential, in the key''s own tenant; another role is access.verb_ceiling, a bearer admin key, which names no person, is request.validation with details.field key and details.reason session_admin_only, and no MCP tool or CLI command reaches the route (the operator, 2026-11-17: "Console only"). A key without a link is request.validation with details.field key and details.reason not_linked. Journalled as key.unlinked_person; the console''s next act with the key answers auth.invalid with details.reason acting_key_not_linked, and the key no longer writes into the user''s root. A revoked key is unlinked too. The Idempotency-Key is required and not replayed (ADR-0085 d16). Since v0.8.3.'
+      description: 'Requires: a console admin session, <user>-admin through its capacity credential, in the key''s own tenant; another role is access.verb_ceiling, a bearer admin key, which names no person, is request.validation with details.field key and details.reason session_admin_only, and no MCP tool or CLI command reaches the route (the operator, 2026-11-17: "Console only"). A key without a link or a pending one is request.validation with details.field key and details.reason not_linked. Journalled as key.unlinked_person, which also withdraws a link still pending; the console''s next act with the key answers auth.invalid with details.reason acting_key_not_linked, and the key no longer writes into the user''s root. A revoked key is unlinked too. The Idempotency-Key is required and not replayed (ADR-0085 d16). Since v0.8.3.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -1939,6 +1940,37 @@ paths:
                 key_id: d405428e-4c99-426d-8826-76d28436e423
                 name: alice-payments
                 linked_user: null
+                pending: false
+              schema: { $ref: '#/components/schemas/KeyLink' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/keys/{key}/accept_link:
+    post:
+      tags: [keys]
+      operationId: acceptKeyLink
+      summary: Accept a link an admin made of a key to the signed-in person, so the key acts for them.
+      description: 'Requires: the console session of the person the pending link names, through its capacity credential (the operator''s decision of 2026-11-19: a link takes effect only once the named person accepts it from their own console session). A bearer key or any other caller that is not a console session is request.validation with details.field key and details.reason session_only; another person''s session, the linking admin''s included, is not_named_person; a key with no link pending is not_pending; a key revoked or past its expiry is revoked, and one no longer used_by person is not_used_by_person. A refusal journals nothing. Journalled as key.link_accepted; from then on the key acts for the person as ADR-0085 d16 says: it writes into their root wherever its grants allow, its fix and its settlement read the person, and oml-web may name it in OML-Acting-Key. No MCP tool or CLI command reaches the route. The Idempotency-Key is required and not replayed. Since v0.8.4.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { $ref: '#/components/parameters/KeyId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '200':
+          description: The key, now linked to the person.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              example:
+                key_id: d405428e-4c99-426d-8826-76d28436e423
+                name: alice-payments
+                linked_user: alice
+                pending: false
               schema: { $ref: '#/components/schemas/KeyLink' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -2054,6 +2086,8 @@ paths:
               properties:
                 enrollment_token: { type: string }
                 name: { $ref: '#/components/schemas/Name', description: "The root operator key's name, in the provider's namespace (409 name.taken when held — ADR-0026 d9)." }
+                person: { $ref: '#/components/schemas/Name', description: "The person the first admin key acts for: the claim creates that person's user root and links the key to it, accepted at once, so the key may take an admin fix (ADR-0089, ADR-0085 d16, the operator's decision of 2026-11-19). Sent with email, or neither is (request.validation naming the one missing). Since v0.8.4." }
+                email: { type: string, maxLength: 254, description: "The sign-in email of the person person names, recorded as that person's accepted admin entry, journalled as web.email_allowed with pending false: the one way the person a claim names gets a first sign-in, since an email an admin adds later for a person a key names waits on that person (ADR-0045 d2's note, the operator's decision of 2026-11-20). An email another tenant's entry holds is web.email_taken. Since v0.8.4." }
       responses:
         '201':
           description: The root operator key, value shown once.
@@ -2482,6 +2516,78 @@ paths:
                   event_id: { type: string, format: uuid }
                   dry_run: { type: boolean, const: false }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/web/emails/accept:
+    post:
+      tags: [web]
+      operationId: acceptWebEmail
+      summary: Accept a sign-in email an admin added for the signed-in person, so it signs in as them.
+      description: 'Requires: the console session of the person the pending entry names, through its capacity credential (the operator''s decision of 2026-11-19, ADR-0045 d2''s note). An email an admin adds for a person who signs in already, or an entry changed to name such a person, is pending and signs in to nothing until that person accepts it. Journalled as web.email_accepted with the email''s digest; the email signs in as the person from then on. Refused request.validation, details.field /email, with details.reason session_only for a bearer key, an admin key''s included, not_named_person for a session of any other person, the adding admin''s included, not_pending for an entry that waits on no one, and changed (details.field /admin) for an entry whose admin flag is not the one sent; an email on no entry of the caller''s tenant answers access.not_found. A refusal journals nothing. The email is in the body, never the path. Since v0.8.4.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              email: alice@work.example
+              admin: false
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, admin]
+              properties:
+                email: { type: string, maxLength: 254 }
+                admin: { type: boolean, description: "The admin flag of the entry as the person reviewed it, from whoami's pending_emails; an entry whose flag is not this one, an admin having changed it since, is refused request.validation, details.field /admin, details.reason changed, and journals nothing (the operator's decision of 2026-11-20). Since v0.8.4." }
+      responses:
+        '200':
+          description: Accepted; the entry as it stands, pending false.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebEmail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/web/emails/decline:
+    post:
+      tags: [web]
+      operationId: declineWebEmail
+      summary: Remove a sign-in email an admin added for the signed-in person that waits on them.
+      description: 'Requires: the console session of the person the pending entry names, through its capacity credential (the operator''s decision of 2026-11-19, ADR-0045 d2''s note). An email an admin adds for a person who signs in already, or an entry changed to name such a person, is pending and signs in to nothing until that person accepts it. Journalled as web.email_removed with the email''s digest and pending true; an admin removes a pending entry with POST /v2/web/emails/remove. Refused request.validation, details.field /email, with details.reason session_only for a bearer key, an admin key''s included, not_named_person for a session of any other person, the adding admin''s included, and not_pending for an entry that waits on no one; an email on no entry of the caller''s tenant answers access.not_found. A refusal journals nothing. The email is in the body, never the path. Since v0.8.4.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              email: alice@work.example
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email]
+              properties:
+                email: { type: string, maxLength: 254 }
+      responses:
+        '200':
+          description: Removed; the entry as it stood, pending true.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebEmail' }
         '404': { $ref: '#/components/responses/NotFound' }
         default: { $ref: '#/components/responses/Error' }
 
@@ -3177,7 +3283,7 @@ paths:
         - { $ref: '#/components/parameters/XCorrelationId' }
         - { $ref: '#/components/parameters/Traceparent' }
       summary: Search every memory of the tenant, in every state, workspace and user root, with its text and attribution.
-      description: 'Requires: admin key role (ADR-0045 d21); the operator and every other role answer access.verb_ceiling. query is the recall full-text search without the visibility filter; state and workspace narrow it. A POST so that the query travels in a body, never a path or query string. Each answer journals one memory.admin_read event naming the admin key, the artifact_ids served and a query_digest, never the text or the query. Served on the lead only. Records no verdict, creates no serve binding. Since v0.5.0.'
+      description: 'Requires: admin key role (ADR-0045 d21); the operator and every other role answer access.verb_ceiling. query is the recall full-text search without the visibility filter; state and workspace narrow it. A POST so that the query travels in a body, never a path or query string. Each read names an open investigation of the admin key in investigation, else it is refused admin.investigation_required naming /investigation (ADR-0089 d10). Each answer journals one memory.admin_read event naming the admin key, the artifact_ids served, the investigation_id and a query_digest, never the text or the query. Served on the lead only. Records no verdict, creates no serve binding. Since v0.5.0.'
       requestBody:
         required: true
         content:
@@ -3185,6 +3291,7 @@ paths:
             example:
               query: deploy window
               state: held
+              investigation: 00000000-0000-4000-8000-0000000000c1
             schema:
               type: object
               additionalProperties: false
@@ -3197,6 +3304,7 @@ paths:
                 kinds: { type: array, minItems: 1, items: { $ref: '#/components/schemas/ClaimKind' }, description: "Only these kinds, each named once, as recall's kinds: a row of any of them is served (ADR-0083 d5; ADR-0082 d8 item 3; ADR-0092 d6). An empty array, an unknown kind or any other value is request.validation naming /kinds; a single kind, the spelling of an unreleased draft, is request.validation naming /kinds in details.renamed_to. Since v0.8.3." }
                 limit: { type: integer, minimum: 1, maximum: 200, description: "At most 200, the console list's largest page (ADR-0045 d22; raised from 100 in v0.7.0)." }
                 cursor: { type: string }
+                investigation: { type: string, format: uuid, description: "An open investigation of the admin key, from POST /v2/admin/investigations; required (ADR-0089 d10). Since v0.8.4." }
       responses:
         '200':
           description: A page of memories with text and attribution.
@@ -3221,12 +3329,13 @@ paths:
       tags: [admin]
       operationId: adminReadMemory
       summary: One memory of the tenant with its text and full attribution, a universe claim with its source.
-      description: 'Requires: admin key role (ADR-0045 d21). The fields of the search plus derives_from, replaces, every verdict with its reviewing key, principal, reason and time, and plaintext_digest; ADR-0044 d9''s served view does not apply. Journalled as memory.admin_read with the one artifact_id. Served on the lead only. Since v0.5.0.'
+      description: 'Requires: admin key role (ADR-0045 d21). The fields of the search plus derives_from, replaces, every verdict with its reviewing key, principal, reason and time, and plaintext_digest; ADR-0044 d9''s served view does not apply. Requires an open investigation of the admin key in ?investigation=, else admin.investigation_required naming investigation (ADR-0089 d10). Journalled as memory.admin_read with the one artifact_id and the investigation_id. Served on the lead only. Since v0.5.0.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
         - { $ref: '#/components/parameters/Traceparent' }
         - { name: artifact_id, in: path, required: true, schema: { type: string } }
+        - { name: investigation, in: query, required: true, schema: { type: string, format: uuid }, description: 'An open investigation of the admin key (ADR-0089 d10). Since v0.8.4.' }
       responses:
         '200':
           description: The memory with its attribution.
@@ -3255,6 +3364,238 @@ paths:
                             at: { type: string, format: date-time }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/admin/investigations:
+    post:
+      tags: [admin]
+      operationId: adminOpenInvestigation
+      summary: Open an investigation, the reason the admin key's reads of claim text are made under.
+      description: 'Requires: admin key role (ADR-0089 d10, d15); every other role answers access.verb_ceiling. reason is 1 to 1,024 bytes, stored in clear and scanned as a verdict''s reason is; a veto answers submission.scan_veto. Journalled as admin.investigation_opened with the id and the reason. Not idempotent: each call opens one. The investigation stays open until its key closes it. Since v0.8.4.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              reason: ticket 41, a leaked hostname
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 1, maxLength: 1024 }
+      responses:
+        '201':
+          description: The investigation, open.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Investigation' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+    get:
+      tags: [admin]
+      operationId: adminListInvestigations
+      summary: The admin key's own investigations, open by default, each with its reason, read count and age.
+      description: 'Requires: admin key role (ADR-0089 d15). Lists only the calling key''s investigations, oldest first. Journals nothing. Since v0.8.4.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: state, in: query, required: false, schema: { type: string, enum: [open, closed], default: open } }
+      responses:
+        '200':
+          description: The investigations.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Investigation' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/admin/investigations/{investigation_id}/close:
+    post:
+      tags: [admin]
+      operationId: adminCloseInvestigation
+      summary: Close an investigation of the admin key; reads under it are refused from then on.
+      description: 'Requires: admin key role and the key that opened it (ADR-0089 d10, d17); another key''s or an unknown id answers access.not_found. Journalled as admin.investigation_closed; closing one already closed answers it and journals nothing. Since v0.8.4.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: investigation_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The investigation, closed.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Investigation' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/admin/fixes:
+    post:
+      tags: [admin]
+      operationId: adminFix
+      summary: Take a marked break-glass fix that serves at once and waits for a person to confirm or revert it.
+      description: 'Requires: admin key role, used by a person and linked to that person (ADR-0089 d1, the operator''s decision of 2026-11-19); another admin key answers admin.fix_requires_person, details.reason not_used_by_person or unlinked, every other role access.verb_ceiling. act is demote (an approved version; the claim''s tip returns to its latest earlier approved version, or none), edit (body and optional title replace the served tip), retire (the served tip is retired, reason as its body) or erase (every version of the claim is crypto-shredded). reason is 1 to 1,024 bytes, stored in clear and scanned. One commit journals the lifecycle event the act causes, then admin.fix naming it. An edit''s body is scanned as its kind requires: a veto answers submission.scan_veto and a hold admin.fix_held_by_scan. In a frozen workspace an edit or retirement answers workspace.frozen. A demotion of a version that is not approved answers admin.fix_target_not_promoted. Not idempotent. Since v0.8.4.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              act: demote
+              target: 0192f0a0-0000-7000-8000-000000000001
+              reason: ticket 41, the claim names the wrong host
+            schema:
+              type: object
+              additionalProperties: false
+              required: [act, target, reason]
+              properties:
+                act: { type: string, enum: [demote, edit, retire, erase] }
+                target: { type: string, format: uuid, description: The version the act names. }
+                reason: { type: string, minLength: 1, maxLength: 1024 }
+                body: { type: string, description: An edit's new body; refused on every other act. }
+                title: { type: string, description: "An edit's new title, where its format takes one; refused on every other act." }
+      responses:
+        '201':
+          description: The fix, unconfirmed.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Fix' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        default: { $ref: '#/components/responses/Error' }
+    get:
+      tags: [admin]
+      operationId: adminListFixes
+      summary: The tenant's admin fixes, the unconfirmed ones by default.
+      description: 'Requires: admin key role (ADR-0089 d15). Oldest first. Journals nothing. Since v0.8.4.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: state, in: query, required: false, schema: { type: string, enum: [unconfirmed, all], default: unconfirmed } }
+      responses:
+        '200':
+          description: The fixes.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Fix' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/review/fixes:
+    get:
+      tags: [review]
+      operationId: reviewListFixes
+      summary: The unconfirmed admin fixes on workspaces where this person's reviewer key holds reviewer, each with the acts this key may take.
+      description: 'Requires: a person''s reviewer key: reviewer role, used by a person, no crew and no profile (ADR-0089 d15). Never names the admin key, principal or user. acts is [confirm, revert], [confirm] for an erasure, or [] when this key acts for the admin''s own person and the fix''s target lies outside that person''s own root, sits in a protected or frozen workspace, or is a member of a release (ADR-0089, amendment of 2026-11-18). Journals nothing. Since v0.8.4.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+      responses:
+        '200':
+          description: The fixes.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Fix' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/review/fixes/{fix_id}/confirm:
+    post:
+      tags: [review]
+      operationId: reviewConfirmFix
+      summary: Confirm an admin fix; the version it serves reads approver.confirmed true from then on.
+      description: 'Requires: a person''s reviewer key with reviewer on the fix''s workspace (ADR-0089 d8, d15). A key of the admin''s own person confirms, marked same_user, only a fix whose target lies inside that person''s own root, in a workspace neither protected nor frozen, and is a member of no release; anywhere else it answers review.author_in_lineage with details.reason same_person (amendment of 2026-11-18). A fix already settled answers admin.fix_settled. Journalled as admin.fix_confirmed. Since v0.8.4.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: fix_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The fix, confirmed.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Fix' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/review/fixes/{fix_id}/revert:
+    post:
+      tags: [review]
+      operationId: reviewRevertFix
+      summary: Revert an admin fix; the text it took out of service returns as a new version this key approves.
+      description: 'Requires: as confirm (ADR-0089 d8, d15). The restored version is authored by the tenant''s reserved server key (principal oml:server, used_by service, revoked at issuance), derives from the version the fix took out of service, and is promoted by this key''s verdict; R2 excludes that version''s lineage and the admin''s principal. An erasure answers admin.fix_not_revertible; a fix whose claim moved on admin.fix_superseded; a frozen workspace workspace.frozen. Journalled as admin.fix_reverted, after the submission, verdict and promotion it causes. Since v0.8.4.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: fix_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The fix, reverted.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Fix' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/admin/rescan:
@@ -3871,6 +4212,42 @@ components:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
 
   schemas:
+    Investigation:
+      type: object
+      description: An admin key's investigation, the reason its reads of claim text are made under (ADR-0089 d10, d15). Since v0.8.4.
+      required: [investigation_id, reason, opened_at, reads, age_seconds, state, closed_at]
+      properties:
+        investigation_id: { type: string, format: uuid }
+        reason: { type: string }
+        opened_at: { type: string, format: date-time }
+        reads: { type: integer, minimum: 0, description: 'The admin reads made under it.' }
+        age_seconds: { type: integer, minimum: 0 }
+        state: { type: string, enum: [open, closed] }
+        closed_at: { type: [string, 'null'], format: date-time }
+    Fix:
+      type: object
+      description: "An admin's marked break-glass fix (ADR-0089 d3, d8, d15). admin_key_id and admin_person are served on the admin routes alone; a person's review read never names the admin. acts is served on GET /v2/review/fixes alone. Since v0.8.4."
+      required: [fix_id, act, target_artifact_id, workspace_id, claim_key, replaced_artifact_id, served_artifact_id, reason, loosens_guardrail, state, fixed_at, age_seconds, settled_at, same_user, restored_artifact_id, superseded_by]
+      properties:
+        fix_id: { type: string, format: uuid }
+        act: { type: string, enum: [demote, edit, retire, erase] }
+        target_artifact_id: { type: string, format: uuid }
+        workspace_id: { type: string, format: uuid }
+        claim_key: { type: string }
+        replaced_artifact_id: { type: [string, 'null'], format: uuid, description: The version the fix took out of service. }
+        served_artifact_id: { type: [string, 'null'], format: uuid, description: "The version the fix made the claim's served tip, or null." }
+        reason: { type: string }
+        loosens_guardrail: { type: boolean }
+        state: { type: string, enum: [unconfirmed, confirmed, reverted, superseded], description: "superseded: a later fix took over the mark on the version this one served, so no person settles it (ADR-0089 d17, the reading of 2026-11-19)." }
+        fixed_at: { type: string, format: date-time }
+        age_seconds: { type: integer, minimum: 0 }
+        settled_at: { type: [string, 'null'], format: date-time }
+        same_user: { type: [boolean, 'null'], description: "Whether the confirmation or revert was by the admin's own person; null while unconfirmed." }
+        restored_artifact_id: { type: [string, 'null'], format: uuid, description: "The version a revert wrote and promoted." }
+        superseded_by: { type: [string, 'null'], format: uuid, description: "The later fix that took over this one's mark, for a superseded fix; null otherwise." }
+        admin_key_id: { type: string, format: uuid }
+        admin_person: { type: string, description: "The person the admin key acted for when it fixed, recorded then; the settlement compares it, never the key's link as it stands (ADR-0089, the operator's decision of 2026-11-19)." }
+        acts: { type: array, items: { type: string, enum: [confirm, revert] } }
     AdminMemory:
       type: object
       description: 'A memory as the admin read serves it (ADR-0045 d21): its text and who wrote it, in every state.'
@@ -3936,11 +4313,12 @@ components:
       type: object
       additionalProperties: false
       description: 'An allowlist entry (ADR-0045 d2): an email a person may sign in with, the ADR-0044 user it signs in as, and whether it opens the admin page.'
-      required: [email, user, admin]
+      required: [email, user, admin, pending]
       properties:
         email: { type: string, maxLength: 254 }
         user: { type: string, pattern: '^[a-z]([a-z0-9-]{0,54}[a-z0-9])?$', description: 'A name under the creation grammar, at most 56 characters.' }
         admin: { type: boolean }
+        pending: { type: boolean, description: "Whether the entry waits on its person's acceptance: an admin added it, or changed it to name them, for a person who signs in already; it signs in to nothing, auth.invalid with details.reason email_pending, until that person accepts it with POST /v2/web/emails/accept (ADR-0045 d2, the operator's decision of 2026-11-19). Since v0.8.4." }
 
     Digest:
       type: string
@@ -4035,6 +4413,13 @@ components:
         - auth.missing
         - auth.invalid
         - access.verb_ceiling
+        - admin.investigation_required
+        - admin.fix_requires_person
+        - admin.fix_target_not_promoted
+        - admin.fix_held_by_scan
+        - admin.fix_superseded
+        - admin.fix_not_revertible
+        - admin.fix_settled
         - access.grant_refused
         - access.not_found
         - access.author_only
@@ -4354,7 +4739,7 @@ components:
         principal: { type: [string, 'null'], description: "The authoring principal; null on a version in universe served to a key outside its authoring key set, which is served with derives_from empty and workspace_path universe, so no field names its source (ADR-0044 d9)." }
         author_key_id: { type: [string, 'null'], description: "The authoring key's id; null wherever principal is (ADR-0044 d9). The web console names the kind of its person's own keys by it and narrows a search to one of them (ADR-0070 d5). Since v0.7.0." }
         scan_finding: { type: [string, 'null'], description: "Admission's scan finding on the version, class: rule at place, never the matched text; null when the scan found nothing, and null wherever principal is (ADR-0065 d8; ADR-0044 d9; ADR-0070 d5). Since v0.7.0." }
-        provenance: { type: string, enum: [agent, human, connector, simulation] }
+        provenance: { type: string, enum: [agent, human, connector, simulation, admin_fix], description: "admin_fix for a version an admin fix wrote (an edit or a retirement), whose principal and author_key_id are then null: no reader learns which admin (ADR-0089 d7). Since v0.8.4 for admin_fix." }
         simulation_id: { type: [string, 'null'] }
         self_signed: { type: boolean, description: Marked rows under the bounded development exception; never promote beyond their workspace. }
         plaintext_digest: { $ref: '#/components/schemas/Digest' }
@@ -4419,6 +4804,9 @@ components:
       required: [used_by, same_user]
       additionalProperties: false
       properties:
+        act: { type: string, enum: [verdict, admin_fix], description: "verdict for a version a review promoted; admin_fix for one served because of an admin's fix (ADR-0089 d7). Since v0.8.4." }
+        confirmed: { type: [boolean, 'null'], description: "For act admin_fix, whether a person confirmed the fix; null for a verdict (ADR-0089 d7). Since v0.8.4." }
+        reverted: { type: [boolean, 'null'], description: "For act admin_fix, whether a person reverted the fix; the version keeps its mark and reads confirmed false; null for a verdict (ADR-0089 d7, d17). Since v0.8.4." }
         used_by: { type: string, enum: [agent, person, service], description: "The reviewing key's attestation, who holds it, when it gave the verdict (docs/architecture/roles-and-keys.md), as a served guardrail's verdicts carry it (ADR-0037 d5)." }
         same_user: { type: [boolean, 'null'], description: "True when the reviewing key and the authoring key act for one person, as the promotion's event marks it (ADR-0055 d7); the reviewing key and principal still differ from the author's (ADR-0044 d8). Null on a version ratified before the mark." }
 
@@ -5709,12 +6097,13 @@ components:
     KeyLink:
       type: object
       additionalProperties: false
-      required: [key_id, name, linked_user]
-      description: "A key and the user the console acts with it for, null when unlinked (ADR-0085 d16)."
+      required: [key_id, name, linked_user, pending]
+      description: "A key and the user its link names, null when unlinked, and whether that user has yet to accept it (ADR-0085 d16, the operator's decision of 2026-11-19)."
       properties:
         key_id: { type: string }
         name: { type: [string, 'null'] }
         linked_user: { type: [string, 'null'] }
+        pending: { type: boolean, description: "True from a console admin's link until the named user accepts it; the key acts for no one meanwhile. Since v0.8.4." }
 
     Key:
       type: object
@@ -5895,6 +6284,14 @@ components:
               used_by: { type: string, enum: [agent, person, service] }
               at: { type: string, format: date-time }
         conflict: { type: array, items: { type: string }, description: "The artifact_ids of the served rows of this claim_key with another severity; empty when none." }
+        admin_fix:
+          type: [object, 'null']
+          description: "The mark of a guardrail an admin fix serves, whether a person confirmed or reverted the fix, never which admin; null for one a verdict promoted (ADR-0089 d7). Since v0.8.4."
+          required: [confirmed, reverted]
+          additionalProperties: false
+          properties:
+            confirmed: { type: boolean }
+            reverted: { type: boolean }
 
     WhoamiRef:
       type: object
@@ -6003,6 +6400,27 @@ components:
           description: "The live tenant keys an admin linked to the person (not revoked, not past their expiry, used_by person), by id and name, in name order: the keys oml-web may name in OML-Acting-Key for this person (ADR-0085 d16). Since v0.8.3."
           type: array
           items: { $ref: '#/components/schemas/WhoamiRef' }
+        pending_links:
+          description: "The live tenant keys an admin linked to the person that wait on the person's acceptance, by id and name, in name order; each acts for no one until the person accepts it with POST /v2/keys/{key}/accept_link (ADR-0085 d16, the operator's decision of 2026-11-19). Since v0.8.4."
+          type: array
+          items: { $ref: '#/components/schemas/WhoamiRef' }
+        pending_emails:
+          description: "The sign-in emails an admin added for the person that wait on the person's acceptance, in email order, each with whether it signs in as an admin and the admin key that added it, or changed it to name the person; each signs in to nothing until the person accepts it with POST /v2/web/emails/accept, naming back the admin flag shown, or removes it with POST /v2/web/emails/decline (ADR-0045 d2, the operator's decision of 2026-11-19). Since v0.8.4."
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [email, admin, added_by]
+            properties:
+              email: { type: string, maxLength: 254 }
+              admin: { type: boolean }
+              added_by:
+                type: object
+                additionalProperties: false
+                required: [id, name]
+                properties:
+                  id: { type: string }
+                  name: { type: [string, 'null'], description: "The key's name; null for a key issued before names (ADR-0026 d11)." }
         start:
           description: "With start=true, what the onboarding page waits for: whether one of the person's agent keys has connected, and the state of the newest memory of their root, held or promoted, else null (ADR-0068 d10; ADR-0070 d5). Absent otherwise. Since v0.7.0."
           type: [object, 'null']

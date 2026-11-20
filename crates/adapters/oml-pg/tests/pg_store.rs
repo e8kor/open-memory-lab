@@ -407,6 +407,37 @@ async fn journal_store_contract_suite() {
     drop_dbs(&created).await;
 }
 
+/// The double's law over the real store: a legacy row with no stored
+/// approval reads, once a fix serves it, approved at the fix's time
+/// (ADR-0089 d7; ADR-0077 d6).
+#[tokio::test]
+async fn a_fix_marks_a_legacy_row_on_postgres_as_on_the_double() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    oml_port_contracts::a_fix_marks_a_legacy_row_with_no_approval_at_the_fixs_time(
+        &store,
+        |tenant, id| {
+            let store = &store;
+            async move {
+                owner_exec(
+                    store,
+                    tenant,
+                    "UPDATE memories SET approved_at = NULL, approver_used_by = NULL, \
+                            approver_same_user = NULL \
+                      WHERE tenant_id = $1 AND id = $2",
+                    id,
+                )
+                .await;
+            }
+        },
+    )
+    .await;
+    drop_dbs(&created).await;
+}
+
 /// The unapproved count is of served tips, over the real store: the same
 /// law the double passes, so the two agree on a count above zero, and the
 /// remedy doctor names brings it to zero (ADR-0077 d6; #311).
@@ -3039,12 +3070,13 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // as ancestors (proposed ADR-0037 d4); 0028 adds profile, null
             // for every key it finds (ADR-0030 d14); 0046 adds expires_at
             // and requests_per_minute, null for every key it finds
-            // (ADR-0079); 0050 adds linked_user_id, null for every key it
-            // finds (ADR-0085 d16).
+            // (ADR-0079); 0050 adds linked_user_id and 0064
+            // link_pending_user_id, null for every key they find (ADR-0085
+            // d16).
             (true, "api_keys") => {
                 "to_jsonb(t) - 'name' - 'crew_id' - 'credential' - 'user_root_id' \
                  - 'session_for' - 'guardrail_scope' - 'profile' - 'expires_at' \
-                 - 'requests_per_minute' - 'linked_user_id'"
+                 - 'requests_per_minute' - 'linked_user_id' - 'link_pending_user_id'"
             }
             // 0014 adds covers, subtree for every grant it finds (ADR-0044
             // d12).
@@ -3066,7 +3098,8 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // end a ratified supersession replaced, false and null on every
             // existing row (ADR-0089 d16); 0061 adds the author's person,
             // null for the PoC's agent keys, which act for no person
-            // (ADR-0085 d16).
+            // (ADR-0085 d16); 0064 adds the fix mark, null on every existing
+            // row (ADR-0089 d7).
             (true, "memories") => {
                 "to_jsonb(t) - 'severity' - 'rule' - 'search_vector' - 'search_len' \
                  - 'anchor_repo' - 'anchor_uri' - 'anchor_rev' - 'anchor_path' \
@@ -3079,7 +3112,9 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
                  - 'skill_name' - 'skill_description' - 'document_title' - 'test_shape' \
                  - 'import_provenance' \
                  - 'valid_until_ratified' - 'valid_until_before' - 'valid_until_before_us' \
-                 - 'author_person'"
+                 - 'author_person' \
+                 - 'admin_fix_id' - 'admin_fix_confirmed' - 'admin_fix_same_user' \
+                 - 'admin_fix_reverted'"
             }
             (true, "key_denials") => "to_jsonb(t) - 'lifted_epoch'",
             // 0066 makes a writer key a contributor and a writer grant a
@@ -13837,6 +13872,239 @@ async fn a_documents_passages_postings_words_and_sparse_entries_go_with_its_eras
             "{pipeline}: {:?}",
             recall.hits.len()
         );
+    }
+    drop_dbs(&created).await;
+}
+
+/// An open investigation's read count only grows: the serving role may
+/// count a read and may never reset or lower the count, which the guard of
+/// 0063 refuses (ADR-0089 d10).
+#[tokio::test]
+async fn an_open_investigations_read_count_never_goes_down() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let (_app, tenant, _admin, _writer, _v1, _v2) = two_promoted_pg(&store, "readsguard").await;
+    let investigation = Uuid::from_u128(0x4981);
+    owner_exec(
+        &store,
+        tenant,
+        "INSERT INTO admin_investigations (tenant_id, id, key_id, reason, opened_at, opened_seq) \
+         VALUES ($1, $2, $2, 'ticket', now(), 1)",
+        investigation,
+    )
+    .await;
+    let count =
+        "UPDATE admin_investigations SET reads = reads + 2 WHERE tenant_id = $1 AND id = $2";
+    assert_eq!(
+        serving_refusal(&store, tenant, count, investigation).await,
+        None
+    );
+    for sql in [
+        "UPDATE admin_investigations SET reads = 0 WHERE tenant_id = $1 AND id = $2",
+        "UPDATE admin_investigations SET reads = reads - 1 WHERE tenant_id = $1 AND id = $2",
+    ] {
+        let err = serving_refusal(&store, tenant, sql, investigation)
+            .await
+            .unwrap_or_else(|| panic!("an open investigation's count went down: {sql}"));
+        assert!(err.contains("admin_investigations_guard"), "{sql}: {err}");
+    }
+    drop_dbs(&created).await;
+}
+
+/// F4 of the fourth review of #498: an inserted key carries no link and no
+/// pending link, and the guard's one exception, the bootstrap ceremony's
+/// link of its own first admin key, is reached only while that key is its
+/// tenant's only one; on an established tenant the ceremony's key itself,
+/// like any other key no key issued, is refused a direct link
+/// (0064's api_keys_link_guard; ADR-0085 d16, the operator's decision of
+/// 2026-11-20).
+#[tokio::test]
+async fn the_serving_role_inserts_no_linked_key_and_links_the_ceremony_key_only_while_it_is_alone()
+{
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let (_app, tenant, _admin, _writer, _v1, _v2) = two_promoted_pg(&store, "linkinsert").await;
+    for sql in [
+        "INSERT INTO api_keys (id, tenant_id, role, principal, used_by, issued_by, issued_seq, \
+         credential, linked_user_id) \
+         SELECT $2, $1, 'reviewer', 'p', 'person', k.id, 1, 'bearer', gen_random_uuid() \
+         FROM api_keys k WHERE k.tenant_id = $1 AND k.issued_by IS NULL AND k.role = 'admin'",
+        "INSERT INTO api_keys (id, tenant_id, role, principal, used_by, issued_by, issued_seq, \
+         credential, link_pending_user_id) \
+         SELECT $2, $1, 'reviewer', 'p', 'person', k.id, 1, 'bearer', gen_random_uuid() \
+         FROM api_keys k WHERE k.tenant_id = $1 AND k.issued_by IS NULL AND k.role = 'admin'",
+    ] {
+        let err = serving_refusal(&store, tenant, sql, Uuid::from_u128(0x4F01))
+            .await
+            .unwrap_or_else(|| panic!("the serving role inserted a linked key: {sql}"));
+        assert!(err.contains("api_keys_link_guard"), "{sql}: {err}");
+    }
+    let ceremony: Uuid = {
+        let mut tx = store.pool().begin().await.expect("begin");
+        sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+            .bind(tenant.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("tenant");
+        let id = sqlx::query_scalar(
+            "SELECT id FROM api_keys WHERE tenant_id = $1 AND issued_by IS NULL \
+             AND role = 'admin' AND linked_user_id IS NULL",
+        )
+        .bind(tenant)
+        .fetch_one(&mut *tx)
+        .await
+        .expect("the ceremony's unlinked admin key");
+        tx.commit().await.expect("commit");
+        id
+    };
+    let direct =
+        "UPDATE api_keys SET linked_user_id = gen_random_uuid() WHERE tenant_id = $1 AND id = $2";
+    let err = serving_refusal(&store, tenant, direct, ceremony)
+        .await
+        .expect("the ceremony's key beside other keys is refused a direct link");
+    assert!(err.contains("api_keys_link_guard"), "{err}");
+    drop_dbs(&created).await;
+}
+
+/// A key comes to act for a person only through that person (the
+/// operator's decision of 2026-11-19; ADR-0085 d16): the serving role may
+/// not set a key's link directly, nor accept a pending link to another root
+/// than the one pending, nor change a key's issuer, which marks the
+/// bootstrap ceremony's key; 0064's guard refuses each. An acceptance of the
+/// pending link and an unlink pass.
+#[tokio::test]
+async fn the_serving_role_links_a_key_to_a_person_only_through_an_acceptance() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let (_app, tenant, _admin, _writer, _v1, _v2) = two_promoted_pg(&store, "linkguard").await;
+    let key: Uuid = {
+        let mut tx = store.pool().begin().await.expect("begin");
+        sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+            .bind(tenant.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("tenant");
+        let id = sqlx::query_scalar(
+            "SELECT id FROM api_keys WHERE tenant_id = $1 AND issued_by IS NOT NULL \
+             AND credential = 'bearer' AND user_root_id IS NULL ORDER BY id LIMIT 1",
+        )
+        .bind(tenant)
+        .fetch_one(&mut *tx)
+        .await
+        .expect("a tenant key an admin issued");
+        tx.commit().await.expect("commit");
+        id
+    };
+    for sql in [
+        "UPDATE api_keys SET linked_user_id = gen_random_uuid() WHERE tenant_id = $1 AND id = $2",
+        "UPDATE api_keys SET issued_by = NULL WHERE tenant_id = $1 AND id = $2",
+    ] {
+        let err = serving_refusal(&store, tenant, sql, key)
+            .await
+            .unwrap_or_else(|| panic!("the serving role linked a key directly: {sql}"));
+        assert!(err.contains("api_keys_link_guard"), "{sql}: {err}");
+    }
+    let pend = "UPDATE api_keys SET link_pending_user_id = $2 WHERE tenant_id = $1 AND id = $2";
+    assert_eq!(serving_refusal(&store, tenant, pend, key).await, None);
+    let elsewhere = "UPDATE api_keys SET linked_user_id = gen_random_uuid(), \
+                     link_pending_user_id = NULL WHERE tenant_id = $1 AND id = $2";
+    let err = serving_refusal(&store, tenant, elsewhere, key)
+        .await
+        .expect("an acceptance to another root is refused");
+    assert!(err.contains("api_keys_link_guard"), "{err}");
+    for sql in [
+        "UPDATE api_keys SET linked_user_id = link_pending_user_id, \
+         link_pending_user_id = NULL WHERE tenant_id = $1 AND id = $2",
+        "UPDATE api_keys SET linked_user_id = NULL WHERE tenant_id = $1 AND id = $2",
+    ] {
+        assert_eq!(
+            serving_refusal(&store, tenant, sql, key).await,
+            None,
+            "{sql}"
+        );
+    }
+    drop_dbs(&created).await;
+}
+
+/// The serving role settles a fix once and closes an investigation once,
+/// and rewrites nothing either recorded: column grants keep the recorded
+/// columns out of its reach, and the guards of 0063 and 0064 refuse a
+/// second settlement and a second close (ADR-0089 d3, d8, d10).
+#[tokio::test]
+async fn the_serving_role_settles_a_fix_once_and_closes_an_investigation_once() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let (_app, tenant, _admin, _writer, _v1, _v2) = two_promoted_pg(&store, "fixguard").await;
+    let fix = Uuid::from_u128(0x4980);
+    owner_exec(
+        &store,
+        tenant,
+        "INSERT INTO admin_fixes (tenant_id, id, act, target_id, workspace_id, claim_key, \
+                reason, loosens_guardrail, admin_key_id, lifecycle_event_id, fixed_at, fixed_seq, \
+                admin_person) \
+         VALUES ($1, $2, 'demote', $2, $2, 'k', 'ticket', false, $2, $2, now(), 1, 'ada')",
+        fix,
+    )
+    .await;
+    owner_exec(
+        &store,
+        tenant,
+        "INSERT INTO admin_investigations (tenant_id, id, key_id, reason, opened_at, opened_seq) \
+         VALUES ($1, $2, $2, 'ticket', now(), 1)",
+        fix,
+    )
+    .await;
+    for sql in [
+        "UPDATE admin_fixes SET reason = 'other' WHERE tenant_id = $1 AND id = $2",
+        "UPDATE admin_fixes SET admin_key_id = $2 WHERE tenant_id = $1 AND id = $2",
+        "UPDATE admin_fixes SET served_id = $2 WHERE tenant_id = $1 AND id = $2",
+        "UPDATE admin_fixes SET admin_person = 'bob' WHERE tenant_id = $1 AND id = $2",
+        "DELETE FROM admin_fixes WHERE tenant_id = $1 AND id = $2",
+        "UPDATE admin_investigations SET reason = 'other' WHERE tenant_id = $1 AND id = $2",
+        "UPDATE admin_investigations SET key_id = $2 WHERE tenant_id = $1 AND id = $2",
+        "DELETE FROM admin_investigations WHERE tenant_id = $1 AND id = $2",
+    ] {
+        let err = serving_refusal(&store, tenant, sql, fix)
+            .await
+            .unwrap_or_else(|| panic!("the serving role ran: {sql}"));
+        assert!(err.contains("permission denied"), "{sql}: {err}");
+    }
+    let settle = "UPDATE admin_fixes SET state = 'confirmed', settled_by_key_id = $2, \
+                   settled_same_user = false, settled_at = now(), settled_seq = 2 \
+                   WHERE tenant_id = $1 AND id = $2";
+    assert_eq!(serving_refusal(&store, tenant, settle, fix).await, None);
+    let err = serving_refusal(
+        &store,
+        tenant,
+        "UPDATE admin_fixes SET state = 'reverted' WHERE tenant_id = $1 AND id = $2",
+        fix,
+    )
+    .await
+    .expect("a settled fix moves no further");
+    assert!(err.contains("admin_fixes_guard"), "{err}");
+    let close = "UPDATE admin_investigations SET closed_at = now(), closed_seq = 3 \
+                  WHERE tenant_id = $1 AND id = $2";
+    assert_eq!(serving_refusal(&store, tenant, close, fix).await, None);
+    for sql in [
+        close,
+        "UPDATE admin_investigations SET reads = reads + 1 WHERE tenant_id = $1 AND id = $2",
+    ] {
+        let err = serving_refusal(&store, tenant, sql, fix)
+            .await
+            .unwrap_or_else(|| panic!("a closed investigation changed: {sql}"));
+        assert!(err.contains("admin_investigations_guard"), "{sql}: {err}");
     }
     drop_dbs(&created).await;
 }

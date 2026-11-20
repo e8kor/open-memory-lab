@@ -689,12 +689,84 @@ async fn removing_an_email_ends_its_sessions() {
     )
     .await;
     assert!(page.contains("Sign in with Google"), "signed out: {page}");
-    // Changing the entry's admin flag ends its sessions too.
-    rig.allow(EMAIL, "alice", false).await;
+    // Changing the entry's admin flag ends its sessions too. alice signed
+    // in before, so the address comes back for a new person: one added for
+    // alice would wait on her (the operator's decision of 2026-11-19).
+    rig.allow(EMAIL, "alice-two", false).await;
     let (_, token, _) = sign_in_google(&rig, "sub-1", EMAIL).await;
     let token = token.expect("a session");
-    rig.allow(EMAIL, "alice", true).await;
+    rig.allow(EMAIL, "alice-two", true).await;
     assert!(rig.app.web_session(&token).await.unwrap().is_none());
+}
+
+/// The operator's decision of 2026-11-19 (ADR-0045 d2's note): an address
+/// an admin adds for a person who signs in already signs in to nothing, with
+/// the reason named and no session cookie, until that person accepts it
+/// through the API from a session they already have; then it signs in as
+/// them. A first address for a new person signs in at once.
+#[tokio::test]
+async fn an_email_an_admin_adds_for_a_person_who_signs_in_already_signs_in_only_once_that_person_accepts_it()
+ {
+    const ADDED: &str = "mallory@example.net";
+    let rig = rig().await;
+    let alice = signed_in(&rig, "sub-1", EMAIL).await;
+    rig.allow(ADDED, "alice", false).await;
+    let (status, token, body) = sign_in_google(&rig, "sub-9", ADDED).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert!(body.contains("waits for its person to accept it"), "{body}");
+    assert_eq!(token, None, "a pending email opens no session");
+
+    // The admin key is no session, and a session of another person is not
+    // alice's: both are refused, by name.
+    let (status, refused) = as_admin(
+        &rig,
+        "/v2/web/emails/accept",
+        "accept-0",
+        json!({ "email": ADDED, "admin": false }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    assert_eq!(
+        refused["error"]["details"]["reason"], "session_only",
+        "{refused}"
+    );
+    rig.allow("bob@example.com", "bob", false).await;
+    let bob = signed_in(&rig, "sub-2", "bob@example.com").await;
+    let (status, refused) = as_web(
+        &rig,
+        &bob,
+        "web",
+        "/v2/web/emails/accept",
+        json!({ "email": ADDED, "admin": false }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    assert_eq!(
+        refused["error"]["details"]["reason"], "not_named_person",
+        "{refused}"
+    );
+
+    let (status, accepted) = as_web(
+        &rig,
+        &alice,
+        "web",
+        "/v2/web/emails/accept",
+        json!({ "email": ADDED, "admin": false }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{accepted}");
+    assert_eq!(accepted["user"], "alice", "{accepted}");
+    assert_eq!(accepted["pending"], false, "{accepted}");
+    let (status, token, body) = sign_in_google(&rig, "sub-9", ADDED).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let token = token.expect("the accepted email opens a session");
+    let session = rig
+        .app
+        .web_session(&token)
+        .await
+        .expect("a read")
+        .expect("a live session");
+    assert_eq!(session.user.as_str(), "alice");
 }
 
 #[tokio::test]
@@ -1253,7 +1325,7 @@ async fn the_allowlist_routes_take_an_admin_key_and_the_email_only_in_a_body() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
         serde_json::from_str::<Value>(&body).unwrap(),
-        json!({"email": "bob@example.com", "user": "bob", "admin": true})
+        json!({"email": "bob@example.com", "user": "bob", "admin": true, "pending": false})
     );
     let (status, _, body) = send(
         &rig.router,
@@ -1702,15 +1774,44 @@ async fn the_admin_read_serves_text_and_attribution_and_journals_the_read() {
     let value = value_of(&page);
     let memory = agent_writes(&rig, &value, "zebra crossing secret").await;
     let admin = format!("Bearer {}", rig.boot.admin_key.value);
-    let (status, _, body) = send(
-        &rig.router,
-        Request::post("/v2/admin/memories/search")
+    let post = |path: &str, body: Value| {
+        Request::post(path)
             .header(header::AUTHORIZATION, &admin)
             .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(
-                json!({"query": "zebra", "state": "held"}).to_string(),
-            ))
-            .unwrap(),
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    };
+    // Without an open investigation the read is refused, naming the field
+    // (ADR-0089 d10).
+    let (status, _, body) = send(
+        &rig.router,
+        post(
+            "/v2/admin/memories/search",
+            json!({"query": "zebra", "state": "held"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    let refused: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(refused["error"]["code"], "admin.investigation_required");
+    assert_eq!(refused["error"]["details"]["field"], "/investigation");
+    let (status, _, body) = send(
+        &rig.router,
+        post(
+            "/v2/admin/investigations",
+            json!({"reason": "who wrote the zebra claim"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let opened: Value = serde_json::from_str(&body).unwrap();
+    let inv = opened["investigation_id"].as_str().unwrap().to_owned();
+    let (status, _, body) = send(
+        &rig.router,
+        post(
+            "/v2/admin/memories/search",
+            json!({"query": "zebra", "state": "held", "investigation": inv}),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -1721,6 +1822,15 @@ async fn the_admin_read_serves_text_and_attribution_and_journals_the_read() {
     let (status, _, body) = send(
         &rig.router,
         Request::get(format!("/v2/admin/memories/{memory}"))
+            .header(header::AUTHORIZATION, &admin)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    let (status, _, body) = send(
+        &rig.router,
+        Request::get(format!("/v2/admin/memories/{memory}?investigation={inv}"))
             .header(header::AUTHORIZATION, &admin)
             .body(Body::empty())
             .unwrap(),
@@ -1745,6 +1855,9 @@ async fn the_admin_read_serves_text_and_attribution_and_journals_the_read() {
         json!([memory.to_string()])
     );
     assert!(reads[0].envelope.payload["query_digest"].is_string());
+    for e in &reads {
+        assert_eq!(e.envelope.payload["investigation_id"], json!(inv));
+    }
     for e in &reads {
         assert!(
             !e.envelope.payload.to_string().contains("zebra"),
@@ -2446,7 +2559,21 @@ async fn a_denied_session_key_is_still_refused_after_its_entry_is_removed_added_
     let web = key_named(&rig, "alice-web").await.key_id;
     let issued_before = journalled(&rig, "key.issued").await;
     // The entry removed and added back: the session ends, and the next
-    // sign-in opens a new one on the same key.
+    // sign-in opens a new one on the same key. alice signed in before, so
+    // the address added back waits on her, and she accepts it from a session
+    // of a second address of hers (the operator's decision of 2026-11-19).
+    const SECOND: &str = "alice@second.example";
+    rig.allow(SECOND, "alice", false).await;
+    let (status, accepted) = as_web(
+        &rig,
+        &cookie,
+        "web",
+        "/v2/web/emails/accept",
+        json!({ "email": SECOND, "admin": false }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{accepted}");
+    let bridge = signed_in(&rig, "sub-5", SECOND).await;
     rig.app
         .remove_web_email(&rig.boot.admin_key.value, &Email::parse(EMAIL).unwrap())
         .await
@@ -2457,6 +2584,15 @@ async fn a_denied_session_key_is_still_refused_after_its_entry_is_removed_added_
         "the old session ended with the entry"
     );
     rig.allow(EMAIL, "alice", false).await;
+    let (status, accepted) = as_web(
+        &rig,
+        &bridge,
+        "web",
+        "/v2/web/emails/accept",
+        json!({ "email": EMAIL, "admin": false }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{accepted}");
     let again = signed_in(&rig, "sub-1", EMAIL).await;
     assert_ne!(again, cookie, "a new session");
     assert_eq!(

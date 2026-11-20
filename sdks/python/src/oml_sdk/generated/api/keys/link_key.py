@@ -105,15 +105,18 @@ def sync_detailed(
     CLI command reaches the route (the operator, 2026-11-17: "Console only"). user names a user of the
     tenant with a user root and a web entry, none of it disabled, and never the calling admin's own
     person; otherwise request.validation with details.field /user and details.reason user_unknown,
-    user_disabled or self_link. The key is a live tenant bearer key used_by person that holds no link;
-    otherwise request.validation with details.field key and details.reason revoked (a key past its
-    expiry too), already_linked (unlink it first), admin_key, not_a_tenant_key (a user key, a session
-    key or a connector key) or not_used_by_person. Journalled as key.linked_person. From then on the key
-    writes into that user's root as their key wherever its grants allow, and oml-web may name it in OML-
-    Acting-Key beside that user's capacity credential on the console's acting routes (GET /v2/whoami,
-    GET /v2/review/held, GET /v1/memories/{artifact_id}, POST /v2/review/verdicts/bulk): the request
-    runs as the key, with its grants and verb ceilings. The header sent twice, on another route, without
-    a capacity credential, or naming a key the link no longer admits answers auth.invalid with
+    user_disabled or self_link. The key is a live tenant bearer key used_by person that holds no link,
+    an admin key's included; otherwise request.validation with details.field key and details.reason
+    revoked (a key past its expiry too), already_linked (unlink it first), not_a_tenant_key (a user key,
+    a session key or a connector key) or not_used_by_person. Journalled as key.linked_person, with
+    accepted false: the link is pending, and the key acts for no one, until that user accepts it from
+    their own console session with POST /v2/keys/{key}/accept_link (the operator's decision of
+    2026-11-19). The key is refused already_linked while a link pends too. From the acceptance on, the
+    key writes into that user's root as their key wherever its grants allow, and oml-web may name it in
+    OML-Acting-Key beside that user's capacity credential on the console's acting routes (GET
+    /v2/whoami, GET /v2/review/held, GET /v1/memories/{artifact_id}, POST /v2/review/verdicts/bulk): the
+    request runs as the key, with its grants and verb ceilings. The header sent twice, on another route,
+    without a capacity credential, or naming a key the link no longer admits answers auth.invalid with
     details.reason acting_key_not_linked and runs nothing (ADR-0085 d16, amended 2026-11-17). The
     Idempotency-Key is required and not replayed. Since v0.8.3.
 
@@ -169,15 +172,18 @@ def sync(
     CLI command reaches the route (the operator, 2026-11-17: "Console only"). user names a user of the
     tenant with a user root and a web entry, none of it disabled, and never the calling admin's own
     person; otherwise request.validation with details.field /user and details.reason user_unknown,
-    user_disabled or self_link. The key is a live tenant bearer key used_by person that holds no link;
-    otherwise request.validation with details.field key and details.reason revoked (a key past its
-    expiry too), already_linked (unlink it first), admin_key, not_a_tenant_key (a user key, a session
-    key or a connector key) or not_used_by_person. Journalled as key.linked_person. From then on the key
-    writes into that user's root as their key wherever its grants allow, and oml-web may name it in OML-
-    Acting-Key beside that user's capacity credential on the console's acting routes (GET /v2/whoami,
-    GET /v2/review/held, GET /v1/memories/{artifact_id}, POST /v2/review/verdicts/bulk): the request
-    runs as the key, with its grants and verb ceilings. The header sent twice, on another route, without
-    a capacity credential, or naming a key the link no longer admits answers auth.invalid with
+    user_disabled or self_link. The key is a live tenant bearer key used_by person that holds no link,
+    an admin key's included; otherwise request.validation with details.field key and details.reason
+    revoked (a key past its expiry too), already_linked (unlink it first), not_a_tenant_key (a user key,
+    a session key or a connector key) or not_used_by_person. Journalled as key.linked_person, with
+    accepted false: the link is pending, and the key acts for no one, until that user accepts it from
+    their own console session with POST /v2/keys/{key}/accept_link (the operator's decision of
+    2026-11-19). The key is refused already_linked while a link pends too. From the acceptance on, the
+    key writes into that user's root as their key wherever its grants allow, and oml-web may name it in
+    OML-Acting-Key beside that user's capacity credential on the console's acting routes (GET
+    /v2/whoami, GET /v2/review/held, GET /v1/memories/{artifact_id}, POST /v2/review/verdicts/bulk): the
+    request runs as the key, with its grants and verb ceilings. The header sent twice, on another route,
+    without a capacity credential, or naming a key the link no longer admits answers auth.invalid with
     details.reason acting_key_not_linked and runs nothing (ADR-0085 d16, amended 2026-11-17). The
     Idempotency-Key is required and not replayed. Since v0.8.3.
 
@@ -228,15 +234,18 @@ async def asyncio_detailed(
     CLI command reaches the route (the operator, 2026-11-17: "Console only"). user names a user of the
     tenant with a user root and a web entry, none of it disabled, and never the calling admin's own
     person; otherwise request.validation with details.field /user and details.reason user_unknown,
-    user_disabled or self_link. The key is a live tenant bearer key used_by person that holds no link;
-    otherwise request.validation with details.field key and details.reason revoked (a key past its
-    expiry too), already_linked (unlink it first), admin_key, not_a_tenant_key (a user key, a session
-    key or a connector key) or not_used_by_person. Journalled as key.linked_person. From then on the key
-    writes into that user's root as their key wherever its grants allow, and oml-web may name it in OML-
-    Acting-Key beside that user's capacity credential on the console's acting routes (GET /v2/whoami,
-    GET /v2/review/held, GET /v1/memories/{artifact_id}, POST /v2/review/verdicts/bulk): the request
-    runs as the key, with its grants and verb ceilings. The header sent twice, on another route, without
-    a capacity credential, or naming a key the link no longer admits answers auth.invalid with
+    user_disabled or self_link. The key is a live tenant bearer key used_by person that holds no link,
+    an admin key's included; otherwise request.validation with details.field key and details.reason
+    revoked (a key past its expiry too), already_linked (unlink it first), not_a_tenant_key (a user key,
+    a session key or a connector key) or not_used_by_person. Journalled as key.linked_person, with
+    accepted false: the link is pending, and the key acts for no one, until that user accepts it from
+    their own console session with POST /v2/keys/{key}/accept_link (the operator's decision of
+    2026-11-19). The key is refused already_linked while a link pends too. From the acceptance on, the
+    key writes into that user's root as their key wherever its grants allow, and oml-web may name it in
+    OML-Acting-Key beside that user's capacity credential on the console's acting routes (GET
+    /v2/whoami, GET /v2/review/held, GET /v1/memories/{artifact_id}, POST /v2/review/verdicts/bulk): the
+    request runs as the key, with its grants and verb ceilings. The header sent twice, on another route,
+    without a capacity credential, or naming a key the link no longer admits answers auth.invalid with
     details.reason acting_key_not_linked and runs nothing (ADR-0085 d16, amended 2026-11-17). The
     Idempotency-Key is required and not replayed. Since v0.8.3.
 
@@ -290,15 +299,18 @@ async def asyncio(
     CLI command reaches the route (the operator, 2026-11-17: "Console only"). user names a user of the
     tenant with a user root and a web entry, none of it disabled, and never the calling admin's own
     person; otherwise request.validation with details.field /user and details.reason user_unknown,
-    user_disabled or self_link. The key is a live tenant bearer key used_by person that holds no link;
-    otherwise request.validation with details.field key and details.reason revoked (a key past its
-    expiry too), already_linked (unlink it first), admin_key, not_a_tenant_key (a user key, a session
-    key or a connector key) or not_used_by_person. Journalled as key.linked_person. From then on the key
-    writes into that user's root as their key wherever its grants allow, and oml-web may name it in OML-
-    Acting-Key beside that user's capacity credential on the console's acting routes (GET /v2/whoami,
-    GET /v2/review/held, GET /v1/memories/{artifact_id}, POST /v2/review/verdicts/bulk): the request
-    runs as the key, with its grants and verb ceilings. The header sent twice, on another route, without
-    a capacity credential, or naming a key the link no longer admits answers auth.invalid with
+    user_disabled or self_link. The key is a live tenant bearer key used_by person that holds no link,
+    an admin key's included; otherwise request.validation with details.field key and details.reason
+    revoked (a key past its expiry too), already_linked (unlink it first), not_a_tenant_key (a user key,
+    a session key or a connector key) or not_used_by_person. Journalled as key.linked_person, with
+    accepted false: the link is pending, and the key acts for no one, until that user accepts it from
+    their own console session with POST /v2/keys/{key}/accept_link (the operator's decision of
+    2026-11-19). The key is refused already_linked while a link pends too. From the acceptance on, the
+    key writes into that user's root as their key wherever its grants allow, and oml-web may name it in
+    OML-Acting-Key beside that user's capacity credential on the console's acting routes (GET
+    /v2/whoami, GET /v2/review/held, GET /v1/memories/{artifact_id}, POST /v2/review/verdicts/bulk): the
+    request runs as the key, with its grants and verb ceilings. The header sent twice, on another route,
+    without a capacity credential, or naming a key the link no longer admits answers auth.invalid with
     details.reason acting_key_not_linked and runs nothing (ADR-0085 d16, amended 2026-11-17). The
     Idempotency-Key is required and not replayed. Since v0.8.3.
 
