@@ -115,7 +115,9 @@ branch that reserved later renumbers.
 | adr | 0091 | `main` |  | workareas become workspaces and the dreamer role becomes reviewer on e | used |
 | adr | 0092 | `main` |  | search filters by every claim kind and ranks skills and guardrails as  | used |
 | adr | 0093 | `main` |  | contributor and submitter replace writer | used |
-| adr | 0094 | `feat/sdk-langchain` |  | a LangChain integration rides the Python SDK; its store writes only into an in-progress workspace | reserved |
+| adr | 0094 | `main` |  | a langchain integration rides the python sdk and its store writes only | used |
+| adr | 0095 | `docs/adr-mcp-workspace` |  | agents manage workspaces over MCP by proposal | reserved |
+| adr | 0096 | `docs/adr-console-keys` |  | a person builds a key in the console with grants inside the own root and a rate, and the admin reads one key and sets its limits | reserved |
 | migration | 0001 | `main` |  | init | used |
 | migration | 0002 | `main` |  | poc adapter | used |
 | migration | 0003 | `main` |  | lead startup | used |
