@@ -50,6 +50,8 @@ BLURB = {
 # ADR-0089 to ADR-0093 are decided and not built (ADR-0088 is deferred, not decided), and
 # ADR-0066 is about how this repository tracks work, which readers of the site do not need.
 HELD_BACK = {64, 66, 80, 81, 82, 83, 84, 85, 86, 87, 89, 90, 91, 92, 93}
+# ADR-0096 is decided and not built either.
+HELD_BACK |= {96}
 
 
 RENAMED_ROW = re.compile(r"^\|\s*`(ADR-\d{4}[^`]*\.md)`\s*\|\s*\[`(ADR-\d{4}[^`]*\.md)`\]", re.M)

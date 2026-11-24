@@ -11,7 +11,7 @@ answers: what the views of the Memories cockpit show and which API call serves e
 choices settled from the approved design system v18 mockups (d2, d3, d5 to d9, d11, d12), the withdraw act (d13) decided the same day, and every
 other default as drafted · proposed the same day, tracking #374, with the operator's answers
 (d10) · aligned with ADR-0089 (admins fix production at once, a person confirms or reverts) · amended by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) (d12, 2026-11-15) · amendments of d11 and the workspace page of 2026-11-18, from the operator's batch (the "approved, not in a release" row and the stage tabs; #429), accepted 2026-11-19 by the operator · amendment of d13 of 2026-11-24, decided by the operator
-  (withdraw is a mode of `oml_write`; proposed for acceptance)
+  (withdraw is a mode of `oml_write`; proposed for acceptance) · amended by [ADR-0096](ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md) (d9, d11, 2026-11-24, decided by the operator)
 
 **Release:** built in v0.8.3, except the To do groups of unbuilt features (d11, d14) and the 2026-11-18 amendments, which wait for ADR-0085 and ADR-0089; the amendment of 2026-11-24 (withdraw as an `oml_write` mode) ships in v0.8.4
 
@@ -499,3 +499,20 @@ operator's acceptance. It ships in v0.8.4.
 |---|---|
 | **Keep `oml_withdraw` as a separate tool** | A fourth tool for one act a parameter carries: ADR-0039 d8 asks a tool to show that no parameter of the three carries it, and d13 recorded no such reason. Each tool costs every session its listing and description. |
 | **Fold it into `replaces` with `retirement`** | A retirement is a proposal a reviewer decides, which leaves the version held and adds another; a withdrawal is the author's own act, no reviewer involved and no verdict recorded (d13). One flag would mean two acts with different authority depending on the target's state. |
+
+## Amendment of 2026-11-24: the Fix tab and the brief group (amends d9 and d11; ADR-0096)
+
+Decided by the operator on 2026-11-24 (D6, D8 of the v0.8.5 console round); recorded in [ADR-0096](ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md).
+Decided, not built.
+
+- **d9: the Fix form is a tab of the admin workspace page until the Releases view exists.**
+  `/web/admin/workspace?workspace=<w>&view=fix` carries the form with the acts `POST
+  /v2/admin/fixes` builds (demote, edit, retire, erase) and its confirmation step, posting to
+  `/web/admin/fixes` as `<user>-admin`. Release and import rollback wait for ADR-0085; when its
+  Releases view lands, the form moves there and the tab goes (ADR-0096 d5).
+- **d11: To do gains "Brief proposals to ratify"** after To review, listed by `GET
+  /v2/review/briefs` under `<user>-review` and counted by `briefs` on `GET /v2/todo/counts`; its
+  act, Ratify, posts `POST /v2/edges/{id}/ratify` after a confirmation. Status proposals get no
+  group (ADR-0096 d7).
+- **d11, imported versions:** the group and its attestation stay unbuilt this round
+  (ADR-0096 d11).

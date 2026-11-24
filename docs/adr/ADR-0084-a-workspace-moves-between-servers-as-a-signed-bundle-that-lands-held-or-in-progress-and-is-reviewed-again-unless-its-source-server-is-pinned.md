@@ -10,7 +10,7 @@ answers: what a workspace export carries and what it never carries; the bundle's
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its four questions decided at their
 recommendations and every other default as drafted · proposed the same day · the "unless its source server is
 pinned" of its file name is ADR-0088, which is deferred · the format built as the crate `oml-bundle`, with its readings and the
-operator's R1 decision of 2026-11-17 and the integration readings I1–I9 recorded at the end of this record; of d15, `history`-mode export (the route and `oml workspaces export`) is built (#425), and the import (`POST /v2/imports`, `GET /v2/imports/{id}`, `oml workspaces import`, the `imports` doctor line) is built (#426); the rest is not built · amendment of d6 of 2026-11-18 (imports into any open or protected workspace, the operator's answer D4 to the lifecycle review; #429), accepted 2026-11-19 by the operator
+operator's R1 decision of 2026-11-17 and the integration readings I1–I9 recorded at the end of this record; of d15, `history`-mode export (the route and `oml workspaces export`) is built (#425), and the import (`POST /v2/imports`, `GET /v2/imports/{id}`, `oml workspaces import`, the `imports` doctor line) is built (#426); the rest is not built · amendment of d6 of 2026-11-18 (imports into any open or protected workspace, the operator's answer D4 to the lifecycle review; #429), accepted 2026-11-19 by the operator · amended by [ADR-0096](ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md) (d15, 2026-11-24, decided by the operator)
 
 **Release:** imports built in v0.8.3 (#426); release mode waits for ADR-0085, whose release
 manifest `release` mode exports. A trusted source server, the "unless" of the title, is the deferred ADR-0088.
@@ -682,3 +682,17 @@ with each item in it marked **[operator batch]**.
     the shipped refusal stands and the pages that describe the built import do not change.
   - **Superseded:** d6's first bullet, from "The target is a `development` workspace in progress"
     to "`import.target_not_in_progress`"; I16's new target created in progress.
+
+## Amendment of 2026-11-24: a person reads the imports of their keys (amends d15; ADR-0096)
+
+Decided by the operator on 2026-11-24 (D7 of the v0.8.5 console round); recorded in [ADR-0096](ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md).
+Decided, not built.
+
+- `GET /v2/imports/{import_id}` admits, beside the importing key, the person's web session
+  `<user>-web` for an import run by any key whose user is that person; anything else stays
+  `access.not_found`.
+- `GET /v2/imports?state=&limit=&cursor=` is new: newest first, as `<user>-web` the imports of
+  every key of the person, as any other key its own, each item with the importing `key`.
+- A tenant key linked to the person is not among "the person's keys", a coordinator's reading
+  for the operator to confirm. d4's `import_provenance` on held rows and the
+  `attests_not_source_author` attestation stay unbuilt (ADR-0096 d11).
