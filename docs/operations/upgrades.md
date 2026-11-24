@@ -156,7 +156,8 @@ unknown tool (JSON-RPC -32602), with no alias. The HTTP route
 `POST /v1/memories/{artifact_id}/withdraw`, `oml withdraw` and the console's **Withdraw** are
 unchanged. A client that lists tools at each session start, as the plugin and the claude.ai
 connector do, finds the new mode without a change to its tool list; a script or an agent prompt
-that names `oml_withdraw` changes before the upgrade, and so do the client's permission rules. A
+that names `oml_withdraw` changes in the server's window, since a v0.8.3 server refuses the
+`withdraw` field, and so do the client's permission rules. A
 permission rule that names the old tool, such as a deny or ask rule on
 `mcp__plugin_oml_oml__oml_withdraw`, protects nothing after the upgrade: no tool has that name. A
 rule that allows `mcp__plugin_oml_oml__oml_write` without a prompt, or `mcp__plugin_oml_oml` for
