@@ -508,11 +508,15 @@ Decided, not built.
 - **d9: the Fix form is a tab of the admin workspace page until the Releases view exists.**
   `/web/admin/workspace?workspace=<w>&view=fix` carries the form with the acts `POST
   /v2/admin/fixes` builds (demote, edit, retire, erase) and its confirmation step, posting to
-  `/web/admin/fixes` as `<user>-admin`. Release and import rollback wait for ADR-0085; when its
+  `/web/admin/fixes` as `<user>-admin`. A frozen workspace offers demote and erase alone (ADR-0089 d12). The target comes from an open
+  investigation's read (ADR-0089 d10). Release and import rollback wait for ADR-0085; when its
   Releases view lands, the form moves there and the tab goes (ADR-0096 d5).
 - **d11: To do gains "Brief proposals to ratify"** after To review, listed by `GET
   /v2/review/briefs` under `<user>-review` and counted by `briefs` on `GET /v2/todo/counts`; its
-  act, Ratify, posts `POST /v2/edges/{id}/ratify` after a confirmation. Status proposals get no
+  act, Ratify, posts `POST /v2/edges/{id}/ratify` after a confirmation, by a key and principal
+  other than the proposer's, a same-person ratification marked `same_user`. The admin
+  To do's alerts group is built from `loosens_guardrail` on `GET /v2/admin/fixes`, and
+  `GET /v2/admin/todo/counts` gains `alerts`. Status proposals get no
   group (ADR-0096 d7).
 - **d11, imported versions:** the group and its attestation stay unbuilt this round
   (ADR-0096 d11).

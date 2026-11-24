@@ -1139,10 +1139,11 @@ coordinator's readings wait for the operator's confirmation. Decided, not built.
   `label`, `principal`, `profile` and `tenant` stay refused by name; at most 16 grants and 16
   denials per grant (`too_many`, a coordinator's reading). The server still adds the `universe`
   reader node grant to contributor and reader keys and never to a submitter key.
-- **d2, d5: `<user>-admin`** reads one key (`GET /v2/keys/{key}`), sets its limits
+- **d2, d5: `<user>-admin`** reads one key (`GET /v2/keys/{key}`, which today reads the raw bearer value and answers the
+  session `auth.invalid`, so the route changes to resolve the session caller), sets its limits
   (`POST /v2/keys/{key}/limits`, claiming and replaying the `Idempotency-Key` as the session's
-  other key acts do) and denies a key on any workspace of the tenant (`POST
-  /v2/keys/{key}/denials`), where "on `universe` alone" held for both session capacities;
+  other key acts do) and, as the coordinator's reading for the operator to confirm, denies a key on any workspace
+  of the tenant (`POST /v2/keys/{key}/denials`), where "on `universe` alone" held for both session capacities;
   `<user>-web` keeps `universe` alone. d2's "the admin capacity issues no plain key" stands
   (ADR-0096 d4).
 - **d5, new and changed operations:** `GET /v2/imports` and `<user>-web` on `GET

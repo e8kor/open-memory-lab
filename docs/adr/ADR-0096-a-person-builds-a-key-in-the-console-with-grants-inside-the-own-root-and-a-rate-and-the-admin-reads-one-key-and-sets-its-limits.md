@@ -90,12 +90,19 @@ Decided, not built.
     Still refused from `<user>-web`, each as today: `user`, `used_by`, `crew`, `label`,
     `principal`, `profile` and `tenant` (`request.validation` naming the field, so the server sets
     `user` to the session's person and `used_by` to `agent`); the role `admin`, `operator` or
-    `reviewer` (`/role`); a grant outside the root (`403 access.issuer_ceiling`, `details.user`);
+    `reviewer` (`/role`). That role check in `issue_own_key` is the only guard that keeps a
+    reviewer key out of the console: a person's issuance runs under `Issuance::PersonsOwn`, whose
+    ceiling is the admin role, which admits reviewer keys, so without the check a person could
+    issue an agent a key that approves (R1). The test
+    `a_persons_web_session_issues_only_contributor_reader_or_submitter_keys_and_never_a_reviewer_key`
+    pins it. Also refused: a grant outside the root (`403 access.issuer_ceiling`, `details.user`);
     a grant role the key role does not admit, a `reviewer` grant among them (`403
     access.issuer_ceiling`, `details.role`, `admissible`, `grant_index`); a name without the
-    `<user>-` prefix or with a reserved suffix `web`, `review`, `curate`, `admin` (`/name`); a deny
-    on a node grant (`/grants/<i>/deny`); a default workspace no grant covers
-    (`/default_workspace`); a node the root does not hold (`404 access.not_found`); a session key
+    `<user>-` prefix (`/name`); exactly the four session names `<user>-web`, `<user>-review`,
+    `<user>-curate` and `<user>-admin` (`/name`), and no other name, so `<user>-proj-review` is
+    issued (`SESSION_KEY_SUFFIXES` compares the whole suffix); a deny on a node grant
+    (`/grants/<i>/deny`); a default workspace no grant covers, or one that lies inside a grant's
+    deny (`/default_workspace`, step 6 of the issuance order); a node the root does not hold (`404 access.not_found`); a session key
     that carries a denial (`403 access.verb_ceiling`, `session_key_denied`, ADR-0070 d2); the
     account's keys quota (`429 limit.quota`, ADR-0068 d5); a taken name (`409 name.taken`, checked
     last). Any session capacity but `web` stays `access.verb_ceiling`, `session_capacity`.
@@ -114,10 +121,14 @@ Decided, not built.
     the role table and the tree it already read; `name.taken` and `access.not_found` stay the
     server's answers (D12).
 
-    *Doctor:* no new line. A contributor built with a submitter grant that no reader grant
-    reaches is a contributor without recall, served `without_recall: true` and named by
-    `key_contributor_without_recall` (ADR-0093 d3, as read on 2026-11-20); the review step says
-    so before issuance. *Bottleneck:* an issuance runs the issuer ceiling, a node lookup and a
+    The form adds a reader row beside each submitter row, on the same node with the same
+    coverage, as the CLI does (ADR-0093 d2; ADR-0028 d2); the person may remove it. A contributor
+    whose submitter grant then has no reader grant reaching it passes `contributor_grants` and is
+    a contributor without recall (ADR-0093 d3, as read on 2026-11-20), so the review step warns
+    "no recall" on that row before **Issue key**.
+
+    *Doctor:* no new line. Such a key is served `without_recall: true` and named by
+    `key_contributor_without_recall`. *Bottleneck:* an issuance runs the issuer ceiling, a node lookup and a
     deny-containment check per grant inside one transaction; the cap bounds it, and the build
     records the issuance time at 16 grants as a row in [limits](../reference/limits.md).
     *Budget:* the builder's form and review `GET`s each make `whoami` (2 store calls), then one
@@ -162,10 +173,15 @@ Decided, not built.
 
 - **d4 — The admin console reads one key, sets its limits and denies it on any workspace of the
   tenant, and still issues nothing (D1).** Three acts of `<user>-admin`, under capacity `admin`:
-    - **The one-key read.** `/web/admin/keys?key=<key>` draws `GET /v2/keys/{key}`: the grants with
-      coverage and denials, crew, principal, label, profile, guardrail scope, connections,
-      expiry and rate. The route takes the admin key role and `<user>-admin` is an admin key, so
-      it is admitted; the build proves that with a test before the page is built.
+    - **The one-key read, an API change.** `/web/admin/keys?key=<key>` draws `GET /v2/keys/{key}`:
+      the grants with coverage and denials, crew, principal, label, profile, guardrail scope,
+      connections, expiry and rate. Today the route refuses the session: `get_key_inner` reads the
+      raw `Authorization` value and calls the use case with it, not with the session gate's
+      caller, so a `<user>-admin` capacity credential answers `401 auth.invalid`. The route
+      changes to resolve the caller as `/limits` and `/denials` do, admitting the admin key role,
+      `<user>-admin` included, and no other session capacity; the test
+      `the_admin_session_reads_one_key_through_get_key` proves it, red first. The read, like
+      `GET /v2/keys`, journals nothing, and the page says nothing of an audit trail.
     - **Limits.** `POST /v2/keys/{key}/limits` from `<user>-admin`, as ADR-0079 d5 has it: never
       the calling key (`own_key`), a session key (`session_key`), a revoked key (`revoked`) or an
       admin key (`admin_key`), each `request.validation`, `details.field: key`; a key of another
@@ -174,11 +190,15 @@ Decided, not built.
       (ADR-0070 d3 layer 4), so the form's nonce journals one `key.limits_set`; a bearer admin key
       keeps the unreplayed behaviour. The form enters an expiry as d10 says and clears either
       limit with its own checkbox.
-    - **Deny on a workspace.** `POST /v2/keys/{key}/denials` from `<user>-admin` admits any
+    - **Deny on a workspace (coordinator's reading, for the operator to confirm).** The operator's
+      D1 gives the admin the one-key read and the limits; a denial on one workspace was in the
+      round's brief and is not in D1's words, so this item waits for the operator's answer and is
+      not built without it. As read: `POST /v2/keys/{key}/denials` from `<user>-admin` admits any
       workspace of the tenant, with the request's `reason`, where today a session key denies on
       `universe` alone. `<user>-web` keeps `universe` alone, cutting off one of the person's own
       keys. The refusals stand: never a session key, never an admin key (`request.validation`,
-      `details.field: key`), a workspace the tenant does not hold `access.not_found`.
+      `details.field: key`, with no `details.reason`), a workspace the tenant does not hold
+      `access.not_found`.
 
     Admin issuance stays off the console: `POST /v2/keys` from `<user>-admin` remains
     `access.verb_ceiling`, `session_capacity` (ADR-0070 d2, "the admin capacity issues no plain
@@ -186,34 +206,46 @@ Decided, not built.
 
     *Doctor:* none new; ADR-0079 d7 and the denial lines stand. *Bottleneck:* the one-key read
     runs three use cases (ADR-0079 d4, #341), which costs nothing against a rate since an admin
-    key carries none. *Budget:* the one-key page makes `whoami` (2), then `GET /v2/keys/{key}`,
+    key carries none, and three times the store calls of one. *Budget:* the one-key page makes `whoami` (2), then `GET /v2/keys/{key}`,
     whose store calls the build measures and records in `web_console_reads.rs`; the limits and
     deny forms are `POST`s.
 
 - **d5 — The admin Fix form is a tab of the admin workspace page until the Releases view exists
   (D6).** This amends ADR-0083 d9. `/web/admin/workspace?workspace=<w>&view=fix` carries the
-  **Fix** form with the acts `POST /v2/admin/fixes` builds today, `demote`, `edit`, `retire` and
-  `erase`, each with its target and the required reason, and a confirmation step
-  (`…&view=fix&act=<act>&target=<target>`) that says the fix is served at once and waits for a
-  person to confirm or revert it, and for `erase` what erasure removes. It posts to
-  `/web/admin/fixes`, which calls `POST /v2/admin/fixes` as `<user>-admin`. Release rollback and
-  import rollback are absent until ADR-0085 is built; when its Releases view lands, the form
-  moves there as d9 first said and the tab goes. No other admin card carries a fix act.
+  **Fix** form with the acts `POST /v2/admin/fixes` builds today, each with its target and the
+  required reason, and a confirmation step (`…&view=fix&act=<act>&target=<target>`) that says the
+  fix is served at once and waits for a person to confirm or revert it, and for `erase` that every
+  version of the claim is crypto-shredded. It posts to `/web/admin/fixes`, which calls `POST
+  /v2/admin/fixes` as `<user>-admin`. Release rollback and import rollback are absent until
+  ADR-0085 is built; when its Releases view lands, the form moves there as d9 first said and the
+  tab goes. No other admin card carries a fix act.
+    - **The acts by status.** In a `development` or `protected` workspace the form offers
+      `demote`, `edit`, `retire` and `erase`. In a `frozen` workspace it offers `demote` and
+      `erase` alone (ADR-0089 d12); an edit or a retirement posted there anyway, from a stale form,
+      answers `workspace.frozen`, and the page says to demote or erase instead.
+    - **The target is read through an investigation.** `target` is a version id, and an admin
+      reads a claim only inside an investigation, each read journalled (ADR-0089 d10). The tab
+      takes its target from an open investigation: a link on the investigation's memory page
+      (`/web/admin/investigation`), which carries no act itself, opens the tab with that version as its target, and an edit's
+      form shows the version's current text from that same read. With no open investigation the
+      tab names none and says an investigation opens first.
+    - **Who settles it.** The fix is confirmed or reverted by a person's reviewer key with
+      reviewer on the workspace (ADR-0083 d8). Where the target lies outside the fixing admin's
+      own person's root, in a `protected` or `frozen` workspace, or in a release, that person is
+      someone other than the person the admin acted for: their own review key is served `acts: []`
+      for it (ADR-0089, the amendment of 2026-11-18, accepted 2026-11-19). Inside that person's own
+      root in development they may settle it themselves, marked `same_user`. An author of the
+      target's lineage outside the own root is refused `review.author_in_lineage`, `same_person`,
+      at the act. The confirmation step says "waits for a person other than <admin's person>"
+      where the rule applies; the console reads the served `acts` and never computes the rule.
 
-    Refusals shown by name: `admin.fix_requires_person` (`not_used_by_person`, `unlinked`),
-    `admin.fix_held_by_scan`, `admin.fix_target_not_promoted`, `workspace.frozen`.
+    Refusals shown by name: `admin.fix_held_by_scan`, `admin.fix_target_not_promoted`,
+    `workspace.frozen`. A `<user>-admin` session's person is the session's user (ADR-0089, the
+    operator's decision of 2026-11-19), so `admin.fix_requires_person` does not arise on this tab;
+    the test `an_admin_session_fixes_as_the_person_its_session_names` proves it.
 
-    **Coordinator's readings:**
-    - The confirmation names the target by its id and claim key as entered and shows an edit's
-      new body as typed; it serves no stored text of the target, since an admin page shows memory
-      text only inside an investigation (ADR-0089 d10).
-    - The build proves with a test that a `<user>-admin` session passes ADR-0089's person check as
-      the person its session row names. If it does not, the session's admin key counts as used by
-      and linked to that person, since the session is that person's own sign-in (ADR-0070 d2), and
-      the build makes it so; no other admin key gains anything.
-
-    *Doctor:* none new. *Budget:* the tab adds no call to the workspace page's `GET`; the
-    confirmation is a `GET` with no call beyond `whoami`.
+    *Doctor:* none new. *Budget:* the tab adds no call to the workspace page's `GET`; the target's
+    read is the investigation's own, journalled as ADR-0089 d10 says.
 
 - **d6 — A person's web session reads and lists the imports any key of the person ran (D7).**
   This amends ADR-0084 d15, where only the importing key reads an import.
@@ -225,6 +257,14 @@ Decided, not built.
       own. Each item is the `Import` that `GET /v2/imports/{import_id}` serves, plus
       `key: {id, name}`, the importing key. `state` is `running`, `done` or `failed`; another value
       is `request.validation`, `details.field: state`.
+
+    **The built import rule, which these pages state.** An import goes into a `development`
+    workspace in progress that the key writes, or a new name it creates in progress; any other
+    target is `409 import.target_not_in_progress`. ADR-0084's D4 amendment ("any open or protected
+    workspace") is not built, so the console's import hand-off offers in-progress workspaces and a
+    new name only. The first import from a source requires `--expect-key`, the source key's
+    fingerprint of 64 hex digits (`request.validation`, `details.field: /expect_key`,
+    `details.reason: first_import`), and pins it.
 
     **Coordinator's reading:** "any key of the person" is every key that names the person as its
     user; a tenant key linked to the person (ADR-0085 d16) is not included, since the link lets
@@ -244,14 +284,23 @@ Decided, not built.
     - **New:** `GET /v2/review/briefs?workspace=&cursor=` under `<user>-review` (capacity
       `review`): the pending brief edges on workspaces where the key holds reviewer effective
       access, oldest first, each with the edge id, workspace, the claim's id and title, the
-      proposing key's name, `same_user` (ADR-0046 d2) and when it was proposed; an edge the key
-      proposed itself is not listed, since ratification refuses its proposer. Any other caller is
-      `access.verb_ceiling`.
+      proposing key's name, `same_user` (ADR-0046 d2) and when it was proposed; an edge proposed
+      by the key itself or under its principal is not listed, since ratification refuses those.
+      Any other caller is `access.verb_ceiling`.
+    - **Who ratifies.** A key and principal other than the proposer's, not another person
+      (ADR-0046 d2, d8): a ratification by another key of the same person is admitted and marked
+      `same_user`. The console proposes a brief member as `<user>-web`, so the person's
+      `<user>-review` can ratify it; in a user root no other key of the person holds reviewer.
     - The group "Brief proposals to ratify" sits after "To review"; its act, **Ratify**, asks for
       confirmation and posts `POST /v2/edges/{id}/ratify` as `<user>-review`.
 
     Status proposals get no group: they come from reviewer keys alone (ADR-0095 d5) and already
     show on both Workspaces views.
+
+    The admin To do's "Guardrail-loosening alerts" group (ADR-0083 d11) needs no new list: it is
+    built from `loosens_guardrail` on the rows `GET /v2/admin/fixes` already serves. Only its
+    count on the badge is an API change: `GET /v2/admin/todo/counts` gains `alerts`, counted from
+    the same rows.
 
     *Doctor:* none. *Bottleneck:* the list and the count read pending brief edges under the key's
     reviewer grants; the build adds a row in [limits](../reference/limits.md). *Budget:* To do
@@ -300,7 +349,9 @@ Decided, not built.
 ## Consequences
 
 - **OpenAPI** (`docs/api/openapi.yaml`): `issueKey`'s session paragraph lists the fields of d1
-  and `too_many`; `setKeyLimits` and `addDenial` say what `<user>-admin` may do (d4);
+  and `too_many`; `getKey` resolves the session caller and admits `<user>-admin` (d4); `setKeyLimits` says what
+  `<user>-admin` may do, and `addDenial` too if the operator confirms d4's reading;
+  `adminTodoCounts` gains `alerts` (d7);
   `getImport` admits `<user>-web` (d6); `listImports` (`GET /v2/imports`), `listBriefProposals`
   (`GET /v2/review/briefs`) are new; `todoCounts` gains `briefs`; `ListedKey.grants[]` gains
   `covers`; `WhoamiPerson` and `WebUser` gain `profile`, `period`, `usage.recalls`,
@@ -318,7 +369,7 @@ Decided, not built.
   `a_web_session_issuance_past_sixteen_grants_is_refused_too_many`,
   `a_rate_set_at_a_persons_issuance_changes_only_by_an_admin_key`,
   `the_admin_session_reads_one_key_and_sets_its_limits_once_per_nonce`,
-  `the_admin_session_denies_a_key_on_a_workspace_and_the_web_session_on_universe_only`,
+  `the_admin_session_denies_a_key_on_a_workspace_and_the_web_session_on_universe_only` (if d4's reading is confirmed),
   `the_admin_session_still_issues_no_key`,
   `a_persons_web_session_reads_and_lists_the_imports_of_every_key_of_the_person`,
   `the_brief_group_lists_what_the_review_key_may_ratify_and_never_its_own_proposal`,
