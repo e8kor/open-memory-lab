@@ -26,7 +26,7 @@
 ## Guides
 
 - [Guides](https://e8kor.github.io/open-memory-lab/guides/): which task guide to open
-- [Remember and recall](https://e8kor.github.io/open-memory-lab/use/remember-and-recall/): what an agent saves and finds with the four tools, how recall is scoped and budgeted, and how a memory is corrected, withdrawn, retired, linked or checked against what is already held
+- [Remember and recall](https://e8kor.github.io/open-memory-lab/use/remember-and-recall/): what an agent saves and finds with the three tools, how recall is scoped and budgeted, and how a memory is corrected, withdrawn, retired, linked or checked against what is already held
 - [Review held memories](https://e8kor.github.io/open-memory-lab/guides/reviewing/): how a person reviews held memories: getting and storing a reviewer key, taking the next held memory, reading it and its sources, what to check, approving and rejecting, supersessions and steering, and a worked session
 - [Organize memory in workspaces](https://e8kor.github.io/open-memory-lab/use/workspaces/): how memory is organized in workspaces, what a person's own workspace and the shared universe are, how a workspace matures from development to frozen, how an in-progress workspace serves unreviewed memories inside it, and what links and briefs do
 - [Capture chat memory](https://e8kor.github.io/open-memory-lab/use/chat-memory/): what chat memory captures, what it does not, how to switch it on and off, the three hooks it uses, and where captured facts go
