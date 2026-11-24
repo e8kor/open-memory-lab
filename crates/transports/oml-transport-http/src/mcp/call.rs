@@ -88,12 +88,14 @@ fn tool(name: &str) -> &'static str {
 }
 
 /// The mode the arguments choose, as the tool itself chooses it:
-/// `oml_write` supersedes with `replaces` and submits otherwise; `oml_read`
-/// gets with `artifact_id`, recalls with `query` and lists otherwise
-/// (ADR-0039 d3, d4).
+/// `oml_write` withdraws with `withdraw`, supersedes with `replaces` and
+/// submits otherwise; `oml_read` gets with `artifact_id`, recalls with
+/// `query` and lists otherwise (ADR-0039 d3, d4; ADR-0083 d13, amendment of
+/// 2026-11-24).
 fn mode(tool: &str, arguments: Option<&Value>) -> Option<&'static str> {
     let has = |field: &str| arguments.and_then(|a| a.get(field)).is_some();
     match tool {
+        "oml_write" if has("withdraw") => Some("withdraw"),
         "oml_write" if has("replaces") => Some("supersede"),
         "oml_write" => Some("submit"),
         "oml_read" if has("artifact_id") => Some("get"),

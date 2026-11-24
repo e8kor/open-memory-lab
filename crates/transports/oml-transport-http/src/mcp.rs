@@ -10,10 +10,11 @@
 //! an id or a name; the facade resolves nothing (mcp-plugin.md; ADR-0026
 //! d4). `tools/list` serves docs/api/mcp-tools.json whole, its one
 //! declaration site: the tools `oml_write`, `oml_read` and
-//! `oml_workspace` (ADR-0039 d2) and `oml_withdraw` (ADR-0083 d13). The designed tools and arguments live in
+//! `oml_workspace` (ADR-0039 d2). The designed tools and arguments live in
 //! docs/api/mcp-tools.designed.json, which is never served. The eight v0.3.0
-//! tool names were removed in v0.5.1 and answer as any unknown tool does
-//! (ADR-0039 d12).
+//! tool names, removed in v0.5.1, and `oml_withdraw`, removed in v0.8.4 for
+//! `oml_write`'s withdraw mode, each answer as any unknown tool does
+//! (ADR-0039 d12; ADR-0083 d13, amendment of 2026-11-24).
 
 mod call;
 
@@ -80,9 +81,10 @@ like every recalled text. oml_read with neither a query nor an artifact_id is th
 the key reads, by kind; own true lists the key's own writes and whether each was approved.
 
 Remembering, through oml_write, stores one checkable claim with its source and date and an \
-idempotency_key; the server names the claim, and a memory holds no secret. A write only adds a \
-row, which is held until a different identity reviews it, so it is not recallable by others yet. \
-A held write its own key made by mistake is withdrawn through oml_withdraw: kept, never served.
+idempotency_key; the server names the claim, and a memory holds no secret. A write never \
+deletes a row: it adds one, which is held until a different identity reviews it, so it is not \
+recallable by others yet. The one exception is oml_write with withdraw, which marks a held write \
+of the key's own, made by mistake, withdrawn and keeps its text, never served.
 
 Reviewed skills are listed as prompts and as resources, each opening with a line naming its \
 source workspace and approval. A skill is stored through oml_write with kind skill and updated \
@@ -106,7 +108,7 @@ const CATALOG: &str = include_str!("../../../../docs/api/mcp-tools.json");
 /// The tools `tools/list` names, in catalog order: exactly the entries of
 /// docs/api/mcp-tools.json, as scripts/check_contract_sync.py holds them
 /// (ADR-0039 d2).
-pub const SERVED_TOOLS: [&str; 4] = ["oml_write", "oml_read", "oml_workspace", "oml_withdraw"];
+pub const SERVED_TOOLS: [&str; 3] = ["oml_write", "oml_read", "oml_workspace"];
 
 /// The tools of docs/api/mcp-tools.designed.json: designed, never served,
 /// and named as such when called, not as unknown (ADR-0025 d12, ADR-0039
@@ -390,12 +392,16 @@ struct ToolCall {
 }
 
 /// `oml_write`'s one flat argument set; which fields are present chooses
-/// the endpoint (ADR-0039 d3).
+/// the endpoint (ADR-0039 d3). `text` is required in every mode but
+/// withdraw, which takes none (ADR-0083 d13, amendment of 2026-11-24).
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WriteArgs {
-    text: String,
+    text: Option<String>,
     idempotency_key: String,
+    /// The held version of the key's own to withdraw (ADR-0083 d13,
+    /// amendment of 2026-11-24).
+    withdraw: Option<String>,
     claim_key: Option<String>,
     kind: Option<String>,
     derives_from: Option<Vec<String>>,
@@ -527,15 +533,6 @@ const READ_LISTING: [&str; 15] = [
 #[serde(deny_unknown_fields)]
 struct WorkspaceInfoArgs {
     workspace: Option<String>,
-}
-
-/// `oml_withdraw`'s arguments (ADR-0083 d13).
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WithdrawArgs {
-    artifact_id: String,
-    reason: Option<String>,
-    idempotency_key: String,
 }
 
 impl<J, S, C, I, Sc> ApiState<J, S, C, I, Sc>
@@ -1225,7 +1222,6 @@ where
             "oml_write" => Self::tool_write(st, presented, args).await,
             "oml_read" => Self::tool_read(st, presented, args).await,
             "oml_workspace" => Self::tool_workspace(st, presented, args).await,
-            "oml_withdraw" => Self::tool_withdraw(st, presented, args).await,
             _ if DESIGNED_TOOLS.contains(&name) => {
                 call.rpc_error(INVALID_PARAMS);
                 return rpc_error(
@@ -1267,21 +1263,42 @@ where
         rpc_result(id, &tool_result(outcome, request_id))
     }
 
-    /// `oml_write`: one `POST /v1/memories`, or with `replaces` one
-    /// `POST /v1/memories/{replaces}/supersede`, chosen by the fields
+    /// `oml_write`: one `POST /v1/memories`, with `replaces` one
+    /// `POST /v1/memories/{replaces}/supersede`, or with `withdraw` one
+    /// `POST /v1/memories/{withdraw}/withdraw`, chosen by the fields
     /// present. A submission refuses `retirement` and `reason`, and leaves
     /// the verb, the kind and the claim key to the ring's defaults; a
     /// supersession refuses `claim_key` and a vocabulary `kind`, and sets
     /// `refuse_vocabulary_target`, so the ring refuses a vocabulary target
-    /// and a workspace other than the target's. Each refusal is
-    /// `request.validation` naming its field (ADR-0039 d3, ADR-0025 d16).
+    /// and a workspace other than the target's; a withdrawal takes only
+    /// `reason`. Each refusal is `request.validation` naming its field
+    /// (ADR-0039 d3, ADR-0025 d16; ADR-0083 d13, amendment of 2026-11-24).
     async fn tool_write(st: &Self, presented: Presented<'_>, args: Value) -> Result<Value, Value> {
-        let args: WriteArgs = parse_args(args)?;
+        // `artifact_id` is the removed `oml_withdraw`'s argument name; named
+        // here, before the schema refuses it with no field, so a client
+        // still sending it learns where the id goes (ADR-0083 d13, amendment
+        // of 2026-11-24).
+        if args.get("artifact_id").is_some() {
+            return Err(field_refusal(
+                "/artifact_id",
+                "artifact_id is outside oml_write's schema: withdraw takes the artifact id as its value, as withdraw: <artifact_id>",
+            ));
+        }
+        let mut args: WriteArgs = parse_args(args)?;
+        if let Some(artifact_id) = args.withdraw.take() {
+            return Self::write_withdraw(st, presented, &artifact_id, args).await;
+        }
+        let Some(text) = args.text else {
+            return Err(field_refusal(
+                "/text",
+                "text is required: every mode of oml_write but withdraw stores a text",
+            ));
+        };
         refuse_guardrail_kind(args.kind.as_deref())?;
         let mut headers = ring_headers(presented);
         insert_header(&mut headers, "idempotency-key", &args.idempotency_key)?;
         let mut body = Map::new();
-        body.insert("body".to_owned(), Value::String(args.text));
+        body.insert("body".to_owned(), Value::String(text));
         let (mode, response) = if let Some(replaces) = args.replaces {
             if args.claim_key.is_some() {
                 return Err(field_refusal(
@@ -1590,16 +1607,47 @@ where
         Ok(out)
     }
 
-    /// `oml_withdraw` (ADR-0083 d13): one `POST
-    /// /v1/memories/{artifact_id}/withdraw`, so the tool answers exactly
-    /// what the ring answers: the author retracting its own held version,
-    /// never a verdict on anyone's (R1).
-    async fn tool_withdraw(
+    /// `oml_write`'s withdraw mode (ADR-0083 d13, amendment of 2026-11-24):
+    /// one `POST /v1/memories/{withdraw}/withdraw`, so the mode answers
+    /// exactly what the ring answers: the author retracting its own held
+    /// version, never a verdict on anyone's (R1). Every field but
+    /// `withdraw`, `reason` and `idempotency_key` is outside the mode and
+    /// refused naming it, never dropped; the answer is the write answer
+    /// under `mode: "withdraw"`.
+    async fn write_withdraw(
         st: &Self,
         presented: Presented<'_>,
-        args: Value,
+        artifact_id: &str,
+        args: WriteArgs,
     ) -> Result<Value, Value> {
-        let args: WithdrawArgs = parse_args(args)?;
+        for (field, sent) in [
+            ("text", args.text.is_some()),
+            ("replaces", args.replaces.is_some()),
+            ("claim_key", args.claim_key.is_some()),
+            ("kind", args.kind.is_some()),
+            ("derives_from", args.derives_from.is_some()),
+            ("workspace", args.workspace.is_some()),
+            ("expected_version", args.expected_version.is_some()),
+            ("retirement", args.retirement.is_some()),
+            ("on_similar", args.on_similar.is_some()),
+            ("valid_from", args.valid_from.is_some()),
+            ("valid_until", args.valid_until.is_some()),
+            ("anchor", args.anchor.is_some()),
+            ("format", args.format.is_some()),
+            ("title", args.title.is_some()),
+            ("origin", args.origin.is_some()),
+            ("skill", args.skill.is_some()),
+            ("document", args.document.is_some()),
+        ] {
+            if sent {
+                return Err(field_refusal(
+                    &format!("/{field}"),
+                    &format!(
+                        "{field} is refused with withdraw: a withdrawal takes only withdraw, reason and idempotency_key"
+                    ),
+                ));
+            }
+        }
         let mut headers = ring_headers(presented);
         insert_header(&mut headers, "idempotency-key", &args.idempotency_key)?;
         let mut body = Map::new();
@@ -1608,7 +1656,7 @@ where
         }
         let response = Self::withdraw_inner(
             st,
-            &args.artifact_id,
+            artifact_id,
             &headers,
             &Bytes::from(Value::Object(body).to_string()),
             presented.connection,
@@ -1619,6 +1667,7 @@ where
             .is_ok_and(|r| r.headers().contains_key("idempotency-replay"));
         let receipt = ring_outcome(response).await?;
         Ok(json!({
+            "mode": "withdraw",
             "artifact_id": receipt["artifact_id"],
             "state": receipt["state"],
             "idempotent_replay": replayed,

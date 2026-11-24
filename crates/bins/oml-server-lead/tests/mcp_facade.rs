@@ -804,7 +804,7 @@ async fn the_v0_3_0_tool_names_answer_unknown_tool() {
 }
 
 #[tokio::test]
-async fn tools_list_names_four_tools_each_with_its_annotations() {
+async fn tools_list_serves_exactly_three_tools_each_with_its_annotations() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
@@ -816,7 +816,9 @@ async fn tools_list_names_four_tools_each_with_its_annotations() {
     let listed = rpc(&router, &writer, 1, "tools/list", json!({})).await;
     let tools = listed["result"]["tools"].as_array().expect("tools");
     // Each tool also carries the human title the Connectors Directory asks for
-    // (ADR-0067 d1), and a write that only adds a held row is not destructive.
+    // (ADR-0067 d1), and a write that never deletes a row is not destructive:
+    // it adds a held row, or with withdraw marks the key's own held version
+    // withdrawn and keeps its text.
     let titles: Vec<(&str, &str)> = tools
         .iter()
         .map(|t| {
@@ -832,7 +834,6 @@ async fn tools_list_names_four_tools_each_with_its_annotations() {
             ("oml_write", "Remember"),
             ("oml_read", "Recall"),
             ("oml_workspace", "Workspace"),
-            ("oml_withdraw", "Withdraw"),
         ],
         "{listed}"
     );
@@ -855,15 +856,6 @@ async fn tools_list_names_four_tools_each_with_its_annotations() {
             ),
             ("oml_read", &read_only),
             ("oml_workspace", &read_only),
-            (
-                "oml_withdraw",
-                &json!({
-                    "readOnlyHint": false,
-                    "destructiveHint": false,
-                    "idempotentHint": true,
-                    "openWorldHint": false,
-                })
-            ),
         ],
         "{listed}"
     );
@@ -888,7 +880,7 @@ fn the_instructions_and_tool_descriptions_describe_and_do_not_command() {
                 .to_owned(),
         ));
     }
-    assert_eq!(texts.len(), 5);
+    assert_eq!(texts.len(), 4);
     // An imperative aimed at the model: a sentence that opens with a verb
     // about calling, trying, recording or treating, or tells it to do so
     // "before" or "after" something.
@@ -929,8 +921,12 @@ fn the_instructions_and_tool_descriptions_describe_and_do_not_command() {
     );
     let write = &texts[1].1;
     assert!(
-        write.contains("never changes or deletes"),
+        write.contains("never deletes a row"),
         "the write tool says why it is not destructive: {write}"
+    );
+    assert!(
+        write.contains("except withdraw"),
+        "the write tool names the one mode that changes an existing row: {write}"
     );
 }
 
@@ -2026,7 +2022,7 @@ fn refusal_code(result: &Value) -> &str {
 }
 
 #[tokio::test]
-async fn oml_write_by_a_reader_key_is_refused_at_the_verb_ceiling_in_every_mode() {
+async fn oml_write_by_a_reader_key_is_refused_at_the_verb_ceiling_in_every_mode_but_withdraw() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
@@ -2036,6 +2032,10 @@ async fn oml_write_by_a_reader_key_is_refused_at_the_verb_ceiling_in_every_mode(
     // A reader key's role admits no writer grant, so each of oml_write's
     // modes stops at step 1 of the refusal order, before the target or the
     // workspace is read (R1; roles-and-keys.md, refusal order; ADR-0039 d2).
+    // Withdraw has no verb ceiling: it retracts the key's own held write, so
+    // the ring refuses a reader key access.author_only on another key's
+    // version and access.not_found on one it cannot see (ADR-0083 d13,
+    // amendment of 2026-11-24).
     for (id, (mode, args)) in (1..).zip([
         (
             "submit",
@@ -2206,8 +2206,8 @@ async fn a_reused_idempotency_key_across_modes_is_a_separate_write() {
         .as_str()
         .expect("description");
     assert!(
-        said.contains("Without replaces it is scoped to (key, resolved workspace)")
-            && said.contains("with replaces to the calling key alone")
+        said.contains("Without replaces or withdraw it is scoped to (key, resolved workspace)")
+            && said.contains("with replaces or withdraw to the calling key alone")
             && said.contains("is a separate write"),
         "{said}"
     );
@@ -4218,49 +4218,69 @@ async fn oml_read_takes_as_of_in_every_mode_and_answers_as_http_does() {
     drop_db(&db).await;
 }
 
-/// `oml_withdraw` is listed, and withdraws the calling key's own held
-/// version over MCP: the version leaves review, a retry replays, and a
-/// promoted version is the ring's `memory.not_held` (ADR-0083 d13).
+/// A held write of the calling key, by its artifact id, through
+/// `oml_write {withdraw}`.
+async fn withdraw_through_oml_write(
+    router: &Router,
+    token: &str,
+    id: u64,
+    artifact_id: &str,
+    idempotency_key: &str,
+) -> Value {
+    call_tool(
+        router,
+        token,
+        id,
+        "oml_write",
+        json!({
+            "withdraw": artifact_id,
+            "reason": "written by mistake",
+            "idempotency_key": idempotency_key,
+        }),
+    )
+    .await
+}
+
+/// A held write of `token`'s own, by its artifact id.
+async fn held_write(router: &Router, token: &str, id: u64, text: &str, idem: &str) -> String {
+    let held = call_tool(
+        router,
+        token,
+        id,
+        "oml_write",
+        json!({"text": text, "idempotency_key": idem}),
+    )
+    .await;
+    assert_eq!(held["structuredContent"]["state"], "held", "{held}");
+    held["structuredContent"]["artifact_id"]
+        .as_str()
+        .expect("id")
+        .to_owned()
+}
+
+/// `oml_write {withdraw}` takes the key's own held write out of every
+/// review queue and keeps it, with its text, as withdrawn; the answer is
+/// the write answer under `mode: "withdraw"` (ADR-0083 d13, amendment of
+/// 2026-11-24).
 #[tokio::test]
-async fn oml_withdraw_is_listed_and_withdraws_over_mcp() {
+async fn withdraw_through_oml_write_removes_the_keys_own_held_write_from_the_queues_and_keeps_it_as_withdrawn()
+ {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
     let (writer, reviewer, _, _) = crew(&router).await;
-    let listed = rpc(&router, &writer, 1, "tools/list", json!({})).await;
-    assert!(
-        listed["result"]["tools"]
-            .as_array()
-            .expect("tools")
-            .iter()
-            .any(|t| t["name"] == "oml_withdraw"),
-        "{listed}"
-    );
-    let held = call_tool(
-        &router,
-        &writer,
-        2,
-        "oml_write",
-        json!({"text": "A note written by mistake.", "idempotency_key": "w-1"}),
-    )
-    .await;
-    let id = held["structuredContent"]["artifact_id"]
-        .as_str()
-        .expect("id")
-        .to_owned();
-    let withdraw = json!({
-        "artifact_id": id,
-        "reason": "written by mistake",
-        "idempotency_key": "wd-1",
-    });
-    let done = call_tool(&router, &writer, 3, "oml_withdraw", withdraw.clone()).await;
+    let id = held_write(&router, &writer, 1, "A note written by mistake.", "w-1").await;
+    let done = withdraw_through_oml_write(&router, &writer, 2, &id, "wd-1").await;
     assert_eq!(done["isError"], false, "{done}");
-    assert_eq!(done["structuredContent"]["state"], "withdrawn");
-    assert_eq!(done["structuredContent"]["idempotent_replay"], false);
-    let replay = call_tool(&router, &writer, 4, "oml_withdraw", withdraw).await;
     assert_eq!(
-        replay["structuredContent"]["idempotent_replay"], true,
-        "{replay}"
+        done["structuredContent"],
+        json!({
+            "mode": "withdraw",
+            "artifact_id": id,
+            "state": "withdrawn",
+            "idempotent_replay": false,
+        }),
+        "{done}"
     );
     let serve = send(
         &router,
@@ -4276,17 +4296,214 @@ async fn oml_withdraw_is_listed_and_withdraws_over_mcp() {
         Some(id.as_str()),
         "no review queue serves it: {serve:?}"
     );
+    let (status, kept) = send(
+        &router,
+        "GET",
+        "/v1/memories?mine=true&include_text=true&state=withdrawn",
+        Some(&writer),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{kept}");
+    let items = kept["items"].as_array().expect("items");
+    assert_eq!(items.len(), 1, "{kept}");
+    assert_eq!(items[0]["artifact_id"], id.as_str(), "{kept}");
+    assert_eq!(items[0]["state"], "withdrawn", "{kept}");
+    assert_eq!(items[0]["text"], "A note written by mistake.", "{kept}");
+
+    drop_db(&db).await;
+}
+
+/// A retry of `oml_write {withdraw}` with the same idempotency key replays
+/// the stored answer, and records no second act (ADR-0083 d13, amendment
+/// of 2026-11-24).
+#[tokio::test]
+async fn withdraw_through_oml_write_replays_under_the_same_idempotency_key() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let (writer, _, _, _) = crew(&router).await;
+    let id = held_write(&router, &writer, 1, "A note written twice.", "w-1").await;
+    let first = withdraw_through_oml_write(&router, &writer, 2, &id, "wd-1").await;
+    assert_eq!(
+        first["structuredContent"]["idempotent_replay"], false,
+        "{first}"
+    );
+    let replay = withdraw_through_oml_write(&router, &writer, 3, &id, "wd-1").await;
+    assert_eq!(replay["isError"], false, "{replay}");
+    assert_eq!(
+        replay["structuredContent"],
+        json!({
+            "mode": "withdraw",
+            "artifact_id": id,
+            "state": "withdrawn",
+            "idempotent_replay": true,
+        }),
+        "{replay}"
+    );
+    // A new idempotency key is a new act, on a version no longer held.
+    let again = withdraw_through_oml_write(&router, &writer, 4, &id, "wd-2").await;
+    assert_eq!(refusal_code(&again), "memory.not_held", "{again}");
+
+    drop_db(&db).await;
+}
+
+/// Another key's write is refused `access.author_only` through `oml_write
+/// {withdraw}`, though that key reads it, and stays as it was (ADR-0083
+/// d13, amendment of 2026-11-24).
+#[tokio::test]
+async fn withdraw_through_oml_write_of_another_keys_write_is_refused_author_only() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let (writer, reviewer, reader, _) = crew(&router).await;
     let promoted = ratified(&router, &writer, &reviewer).await;
+    let refused = withdraw_through_oml_write(&router, &reader, 1, &promoted, "wd-1").await;
+    assert_eq!(refusal_code(&refused), "access.author_only", "{refused}");
+    let (status, read) = send(
+        &router,
+        "GET",
+        &format!("/v1/memories/{promoted}"),
+        Some(&reader),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{read}");
+    assert_eq!(read["state"], "promoted", "{read}");
+
+    drop_db(&db).await;
+}
+
+/// A reviewed version is refused `memory.not_held` through `oml_write
+/// {withdraw}`, even to its author (ADR-0083 d13, amendment of 2026-11-24).
+#[tokio::test]
+async fn withdraw_through_oml_write_of_a_reviewed_version_is_refused_not_held() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let (writer, reviewer, _, _) = crew(&router).await;
+    let promoted = ratified(&router, &writer, &reviewer).await;
+    let refused = withdraw_through_oml_write(&router, &writer, 1, &promoted, "wd-1").await;
+    assert_eq!(refusal_code(&refused), "memory.not_held", "{refused}");
+
+    drop_db(&db).await;
+}
+
+/// A withdraw carrying a field of another mode is refused with
+/// `request.validation` naming that field, never dropped, and withdraws
+/// nothing; `text` is required in every mode but withdraw (ADR-0039 d3;
+/// ADR-0083 d13, amendment of 2026-11-24).
+#[tokio::test]
+async fn a_withdraw_carrying_text_or_kind_is_refused_naming_the_field() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let (writer, _, _, _) = crew(&router).await;
+    let id = held_write(&router, &writer, 1, "A note to keep for now.", "w-1").await;
+    for (n, (field, value)) in (2..).zip([
+        ("text", json!("A second text.")),
+        ("kind", json!("memory")),
+        ("replaces", json!(id)),
+        ("claim_key", json!("a-key")),
+        ("workspace", json!("metals-crew")),
+        ("retirement", json!(true)),
+    ]) {
+        let mut args = json!({"withdraw": id, "idempotency_key": format!("wd-{field}")});
+        args[field] = value;
+        let refused = call_tool(&router, &writer, n, "oml_write", args).await;
+        assert_eq!(
+            refusal_code(&refused),
+            "request.validation",
+            "{field}: {refused}"
+        );
+        assert_eq!(
+            refused["structuredContent"]["error"]["details"]["field"],
+            format!("/{field}"),
+            "{field}: {refused}"
+        );
+    }
+    // Without withdraw, a write without text is refused naming it.
     let refused = call_tool(
         &router,
         &writer,
-        5,
-        "oml_withdraw",
-        json!({"artifact_id": promoted, "idempotency_key": "wd-2"}),
+        20,
+        "oml_write",
+        json!({"idempotency_key": "no-text"}),
     )
     .await;
-    assert_eq!(refused["isError"], true, "{refused}");
-    assert_eq!(refusal_code(&refused), "memory.not_held", "{refused}");
+    assert_eq!(refusal_code(&refused), "request.validation", "{refused}");
+    assert_eq!(
+        refused["structuredContent"]["error"]["details"]["field"], "/text",
+        "{refused}"
+    );
+    // Nothing was withdrawn: the version is still held.
+    let done = withdraw_through_oml_write(&router, &writer, 21, &id, "wd-ok").await;
+    assert_eq!(done["structuredContent"]["state"], "withdrawn", "{done}");
+
+    drop_db(&db).await;
+}
+
+/// `oml_write` with `artifact_id`, the removed `oml_withdraw`'s argument,
+/// is refused with `request.validation` naming `/artifact_id` and saying
+/// that withdraw takes the id, and withdraws nothing (ADR-0083 d13,
+/// amendment of 2026-11-24).
+#[tokio::test]
+async fn oml_write_with_the_old_artifact_id_argument_is_refused_naming_it() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let (writer, _, _, _) = crew(&router).await;
+    let id = held_write(&router, &writer, 1, "A note still held.", "w-1").await;
+    for (n, args) in (2..).zip([
+        json!({"withdraw": true, "artifact_id": id, "idempotency_key": "wd-1"}),
+        json!({"withdraw": id, "artifact_id": id, "idempotency_key": "wd-2"}),
+        json!({"artifact_id": id, "idempotency_key": "wd-3"}),
+    ]) {
+        let refused = call_tool(&router, &writer, n, "oml_write", args).await;
+        assert_eq!(refusal_code(&refused), "request.validation", "{refused}");
+        let error = &refused["structuredContent"]["error"];
+        assert_eq!(error["details"]["field"], "/artifact_id", "{refused}");
+        assert!(
+            error["message"]
+                .as_str()
+                .expect("message")
+                .contains("withdraw takes the artifact id"),
+            "{refused}"
+        );
+    }
+    // Nothing was withdrawn: the version is still held.
+    let done = withdraw_through_oml_write(&router, &writer, 10, &id, "wd-ok").await;
+    assert_eq!(done["structuredContent"]["state"], "withdrawn", "{done}");
+
+    drop_db(&db).await;
+}
+
+/// `oml_withdraw` is no tool: calling it answers as any unknown tool does,
+/// JSON-RPC -32602 with no tool result, and withdraws nothing (ADR-0083
+/// d13, amendment of 2026-11-24).
+#[tokio::test]
+async fn calling_oml_withdraw_is_an_unknown_tool() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let (writer, _, _, _) = crew(&router).await;
+    let id = held_write(&router, &writer, 1, "A note still held.", "w-1").await;
+    let body = rpc(
+        &router,
+        &writer,
+        2,
+        "tools/call",
+        json!({"name": "oml_withdraw", "arguments": {"artifact_id": id, "idempotency_key": "wd-1"}}),
+    )
+    .await;
+    assert!(body.get("result").is_none(), "{body}");
+    assert_eq!(body["error"]["code"], -32602, "{body}");
+    let message = body["error"]["message"].as_str().expect("message");
+    assert!(message.starts_with("Unknown tool: oml_withdraw."), "{body}");
+    let done = withdraw_through_oml_write(&router, &writer, 3, &id, "wd-2").await;
+    assert_eq!(done["structuredContent"]["state"], "withdrawn", "{done}");
 
     drop_db(&db).await;
 }

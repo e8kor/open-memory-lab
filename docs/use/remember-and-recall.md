@@ -1,14 +1,14 @@
 ---
 status: Stable
 verified: 2026-11-19
-answers: "what an agent saves and finds with the four tools, how recall is scoped and budgeted, and how a memory is corrected, withdrawn, retired, linked or checked against what is already held"
+answers: "what an agent saves and finds with the three tools, how recall is scoped and budgeted, and how a memory is corrected, withdrawn, retired, linked or checked against what is already held"
 ---
 
 # Write and read memories
 
-An agent holds one key and four tools. `oml_write` saves, `oml_read` finds and lists,
-`oml_workspace` says where the agent works and what it may do there, and `oml_withdraw` retracts
-a held write the key made by mistake, kept as `withdrawn` and never served. People use the same calls
+An agent holds one key and three tools. `oml_write` saves, and with `withdraw` retracts a held
+write the key made by mistake, kept as `withdrawn` and never served; `oml_read` finds and lists,
+and `oml_workspace` says where the agent works and what it may do there. People use the same calls
 through `oml write`, `oml read` and `oml withdraw`. An agent can save and find memories. It cannot approve, sign,
 demote or delete them ([MCP tools](../api/mcp-plugin.md)).
 
@@ -64,8 +64,8 @@ entry's text.
 
 - **Correct.** Write the new text naming the memory it replaces and the version read
   (`expected_version`). The new version is held, and others keep the old one until it is approved.
-- **Withdraw.** A held write the key made by mistake is taken back with `oml_withdraw` and its
-  `artifact_id`, or `oml withdraw <artifact_id> --reason <why>`. The version is kept as
+- **Withdraw.** A held write the key made by mistake is taken back with `oml_write` and `withdraw` set to
+  its `artifact_id`, or `oml withdraw <artifact_id> --reason <why>`. The version is kept as
   `withdrawn` with its text, leaves every review queue and is never served; no reviewer is
   involved. Over MCP and the CLI only the author key withdraws, and only a held version: an approved one answers
   `memory.not_held`, another key's `access.author_only`. A person withdraws a held write of any of

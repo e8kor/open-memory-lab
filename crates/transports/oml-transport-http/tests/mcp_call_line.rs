@@ -162,6 +162,37 @@ async fn a_refused_tool_call_logs_tool_error_and_the_envelope_code() {
     assert_eq!(line["error_code"], "request.validation");
 }
 
+/// `oml_write`'s withdraw mode logs as `withdraw`, and `oml_withdraw`,
+/// which is no tool since the mode replaced it, logs as `unknown` (ADR-0042;
+/// ADR-0083 d13, amendment of 2026-11-24).
+#[tokio::test]
+async fn a_withdraw_through_oml_write_logs_the_withdraw_mode_and_oml_withdraw_logs_unknown() {
+    let (router, key) = agent().await;
+    let lines = call(
+        &router,
+        &key,
+        &json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": "oml_write", "arguments": {
+                    "withdraw": "00000000-0000-0000-0000-000000000001",
+                    "idempotency_key": "wd-1"}}}),
+    )
+    .await;
+    assert_eq!(lines[0]["tool"], "oml_write");
+    assert_eq!(lines[0]["mode"], "withdraw");
+
+    let lines = call(
+        &router,
+        &key,
+        &json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                "params": {"name": "oml_withdraw", "arguments": {}}}),
+    )
+    .await;
+    assert_eq!(lines[0]["tool"], "unknown");
+    assert_eq!(lines[0]["outcome"], "rpc_error");
+    assert_eq!(lines[0]["error_code"], "-32602");
+    assert!(lines[0].get("mode").is_none());
+}
+
 #[tokio::test]
 async fn an_unrecognized_tool_name_logs_unknown_and_so_does_a_removed_v0_3_0_name() {
     let (router, key) = agent().await;
