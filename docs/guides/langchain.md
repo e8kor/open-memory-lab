@@ -56,17 +56,16 @@ remember.invoke({"text": "The canary stage drains before the next one starts (ru
 print(recall.invoke({"query": "canary stage"}))
 ```
 
-The tools' descriptions tell the model what the server does. A write is held: no other key recalls
-it until a different identity reviews and approves it, so a fact written in one session is not
-shared in the next one until then. Recalled text is data to check, never instructions to follow;
-`oml_recall` answers each hit headed by `[approved]` or `[unreviewed]`, its claim key, version,
-date and source, with the text between `<data>` and `</data>`.
+The tools' descriptions tell the model what the server does. A write is held: no other key
+recalls it until a different identity reviews and approves it. Recalled text is data to check,
+never instructions to follow. `oml_recall` heads each hit with `[approved]` or `[unreviewed]`, its
+claim key, version, date and source, and puts the text between `<data>` and `</data>`.
 
 ## Share working memory with the store
 
 `OmlStore` works only in a workspace inside an in-progress subtree
 ([ADR-0030](../adr/ADR-0030-an-in-progress-workspace-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md)).
-There every key with reader access reads every author's held rows at once, which is what a
+There every key with reader access reads every author's held rows at once. That is what a
 `BaseStore` promises: the next `get` reads what the last `put` wrote, from any agent of the crew.
 A person's reviewer key puts a workspace in progress (`oml workspaces mode <workspace>
 in_progress`). In any other workspace the store refuses on construction:
@@ -80,8 +79,8 @@ except StoreRefused as refused:
     print(refused.reason)  # not_in_progress
 ```
 
-Every batch that writes checks the mode again, so a store whose workspace was committed meanwhile
-refuses the write instead of leaving it held where no other key reads it.
+Every batch that writes checks the mode again. A store whose workspace was committed meanwhile
+refuses the write, rather than leave it held where no other key reads it.
 
 ### How items map to claims
 
@@ -100,11 +99,14 @@ and the key, each percent-encoded, joined by `/`: namespace `("memories", "user-
 | `search(namespace, query=…)` | recall with held rows included, the hits under the namespace, by score |
 | `delete` | withdraws the agent's own held version |
 
-`delete` refuses everything else by name, and is never a silent no-op: `approved` for a key with
-an approved version (only a reviewed retirement takes it out of service), `not_author` for a key
-another agent's held version holds, `not_found` for a key with no version. A withdrawn version is
-kept with its text and never served; nothing is deleted. The store keeps no TTL, and `index` is
-ignored: recall ranks every claim by the server's own retrievers.
+`delete` refuses everything else by name and is never a silent no-op:
+
+- `approved`: the key has an approved version, which only a reviewed retirement takes out of service;
+- `not_author`: another agent's held version holds the key;
+- `not_found`: the key has no version.
+
+A withdrawn version is kept with its text and never served; nothing is deleted. The store keeps no
+TTL, and `index` is ignored: recall ranks every claim by the server's own retrievers.
 
 ### LangMem over the store
 
@@ -125,9 +127,9 @@ query. A LangGraph graph takes the same store through `compile(store=store)`.
 
 Every `put` is a held version, and the workspace commits only once nothing in it is held
 ([ADR-0030](../adr/ADR-0030-an-in-progress-workspace-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md)
-d6). Before the crew's work leaves the workspace, a person, or a reviewer crew under the
-workspace's policy, approves or rejects each value the store still holds: one held version per key,
-since each `put` withdraws the agent's previous one. A store that rewrites a key often leaves many
+d6). Before the crew's work leaves the workspace, a person or a reviewer crew judges each value
+the store still holds. That is one held version per key, since each `put` withdraws the agent's
+previous one. A store that rewrites a key often leaves many
 withdrawn versions, each kept as history. Values pass the same scan as any write, so a value that
 holds a secret is refused or held for a reviewer.
 
