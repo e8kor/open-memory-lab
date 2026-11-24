@@ -13,7 +13,7 @@ other default as drafted · proposed the same day, tracking #374, with the opera
 (d10) · aligned with ADR-0089 (admins fix production at once, a person confirms or reverts) · amended by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) (d12, 2026-11-15) · amendments of d11 and the workspace page of 2026-11-18, from the operator's batch (the "approved, not in a release" row and the stage tabs; #429), accepted 2026-11-19 by the operator · amendment of d13 of 2026-11-24, decided by the operator
   (withdraw is a mode of `oml_write`; proposed for acceptance)
 
-**Release:** built in v0.8.3, except the To do groups of unbuilt features (d11, d14) and the 2026-11-18 amendments, which wait for ADR-0085 and ADR-0089; the amendment of 2026-11-24 (withdraw as an `oml_write` mode) ships in v0.8.4
+**Release:** built in v0.8.3, except the To do groups of unbuilt features (d11, d14) and the 2026-11-18 amendments, which wait for ADR-0085 and ADR-0089; the amendment of 2026-11-24 (withdraw as an `oml_write` mode) is built in v0.8.4
 
 **Amends:** ADR-0045 (d9 and d11: the user page's Memories view gains Submitted, and its Review
 view becomes the To do page with Judge at `/web/todo/judge`; d10: the admin page's Memories and
