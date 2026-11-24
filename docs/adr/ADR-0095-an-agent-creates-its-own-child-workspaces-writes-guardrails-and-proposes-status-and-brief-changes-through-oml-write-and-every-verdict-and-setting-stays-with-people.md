@@ -1,18 +1,19 @@
 <!--
 id: adr/ADR-0095-an-agent-creates-its-own-child-workspaces-writes-guardrails-and-proposes-status-and-brief-changes-through-oml-write-and-every-verdict-and-setting-stays-with-people
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-24
 answers: which workspace acts an agent's MCP key reaches from v0.8.5 and which stay with people; whether they are modes of oml_write, modes of oml_workspace or a fourth tool; why kind guardrail was kept off oml_write and whether that reason still holds; which keys create a child workspace over MCP, where, under which name, with which grants, immediately or by proposal, and under which quota; how a status proposal and a brief proposal map to the existing events and who ratifies them; what bounds the number of children and proposals; what the annotations, the server instructions, the plugin skill and the LangChain tools say; whether an agent can escalate, bypass review or flood through these acts; the upgrade, the client notice and the build plan
 -->
 
 # ADR-0095 — An agent creates its own child workspaces, writes guardrails and proposes status and brief changes through `oml_write`, and every verdict and setting stays with people
 
-**Status:** proposed · 2026-11-24, at the operator's request of the same day ("develop further oml
+**Status:** accepted design · 2026-11-24, by the operator, who took the recommended answer to
+each of the eight questions (recorded as Q1 to Q8 in d11) · proposed the same day at the operator's request ("develop further oml
 workspace tool to allow creating and manipulating workspace itself, guardrails, skills, etc if it's
 not yet covered"), with the scope the operator chose, "Proposals + own children": an agent's MCP
 key may create child workspaces where its key allows, write guardrails, skills, documents and
 steering, each held for review, and propose status changes and brief edits; mode, crew, grants and
-export stay with people. The open questions at the end are the operator's.
+export stay with people.
 
 **Release:** v0.8.5 ([releases](../changelog.md))
 
@@ -186,8 +187,8 @@ Decided, not built.
       and the CLI. A held create would need two new events and a review queue for empty nodes,
       while what goes into the node is reviewed anyway. The cost: no workspace can be deleted
       ([workspaces](../architecture/workspaces.md)), so a child an agent creates stays in the
-      person's tree for good. d4 bounds how many there can be. The operator may choose a held
-      create instead (question 1).
+      person's tree for good. d4 bounds how many there can be. Immediate, decided
+      by the operator (d11 Q1).
     - **Answer.** `{mode: "create_workspace", id, name, path, parent, status, idempotent_replay}`;
       `workspace.create` names the key as actor, as on HTTP.
 
@@ -198,7 +199,7 @@ Decided, not built.
   d3) with `429 limit.quota`, `details: {quota: "workspaces", limit, used}`, journalling nothing.
   The limit comes from the account's quota profile. In the default profile it is unlimited, as
   `text_bytes` was until the operator set it (ADR-0071, decision of 2026-11-14). The public
-  server's value is the operator's (question 4). The meter also bounds depth, since a chain of
+  server's value is 100 per account (d11 Q4). The meter also bounds depth, since a chain of
   children is never longer than their count, so no depth limit is added. The per-key
   `requests_per_minute` (ADR-0068 d5) bounds the rate of creates and proposals alike. Doctor:
   ADR-0071's `warn quota:` and `warn usage: … drift` lines cover the new meter with no new text.
@@ -213,8 +214,8 @@ Decided, not built.
   reviewer key, such as a crew's, or a person's reviewer key. A contributor key is refused
   `access.verb_ceiling`, and an admin key is refused as in d3. In a user root every proposal is
   refused `workspace.transition_refused`, reason `user_root` (ADR-0085 d17), so for an agent's
-  own children this mode does nothing; it serves shared workspaces. Opening it to contributors
-  is question 2. Today a workspace takes any number of identical live proposals. From this
+  own children this mode does nothing; it serves shared workspaces. Contributors stay refused
+  (d11 Q2). Today a workspace takes any number of identical live proposals. From this
   record, on every transport, a proposal whose workspace already holds a live one to the same
   status is refused `409 proposal.pending`, `details.transition_id` naming the live one. A
   proposal is not refused because another key made the live one: ratification already refuses
@@ -324,6 +325,22 @@ Decided, not built.
   build. `oml doctor` reports any account whose backfilled count differs, as ADR-0071 d3 does for
   every meter.
 
+- **d11 — The operator's answers of 2026-11-24.** The operator took the recommended answer to
+  each question this record put.
+    - **Q1 — An agent's create is immediate**, under the `workspaces` quota (d3, d4); a held create
+      is rejected.
+    - **Q2 — A contributor key does not propose a status move**; the reviewer floor stays (d5).
+    - **Q3 — A contributor key proposes a brief member**, on every transport (d6).
+    - **Q4 — The public server's `workspaces` quota is 100 per account**; the default profile stays
+      unlimited, and the value is recalibrated with the other limits under #164 (d4). The number
+      is unmeasured.
+    - **Q5 — No key creates a child in a shared workspace in v0.8.5**; ADR-0044 d6's tenant rule
+      stands (d3).
+    - **Q6 — Connector keys get the modes** (security analysis).
+    - **Q7 — The modes go on `oml_write`**, and `oml_workspace` stays read-only (d1).
+    - **Q8 — One live proposal per target holds on every transport**, not over MCP alone (d5, d6).
+    - A guardrail written over MCP needs a person's approval (d2), as every instruction does.
+
 ## Security analysis
 
 - **Escalation: create a workspace, then gain grants there.** It cannot. A create writes no grant
@@ -389,41 +406,12 @@ Decided, not built.
 | **d2 — Keep guardrails off MCP** | The recorded reason was flat inputs, and `skill` and `document` objects ended it in v0.8.3. The review reason is met by the person's verdict on every instruction (ADR-0080 d16). The exclusion bound only connector keys, which reach `/mcp` alone, since a bearer agent key writes a guardrail with `oml write --severity`. What protects a rule is its review, not its transport. |
 | **d2 — Flat `severity` and `rule` fields on `oml_write`** | Each kind's own fields live in that kind's object, as `skill` and `document` do, so one refusal names the object on every other kind. |
 | **d2 — A `guardrail.name` field** | It would be a second spelling of `claim_key`, which `oml_write` already takes and which the console's Name field fills (B2). |
-| **d3 — A held create, ratified by a second identity** | It needs two new events, a review queue for empty nodes, and a person's look before an agent can separate two tasks. What goes into the node is reviewed anyway, and the same key creates immediately over HTTP. The operator may still choose it (question 1). |
-| **d3 — Create wherever the key holds submitter, shared workspaces included** | ADR-0044 d6 keeps tenant keys from creating, so that shared structure stays an admin's. Agents would add permanent nodes to trees many teams read. Question 5. |
+| **d3 — A held create, ratified by a second identity** | It needs two new events, a review queue for empty nodes, and a person's look before an agent can separate two tasks. What goes into the node is reviewed anyway, and the same key creates immediately over HTTP. Rejected by the operator (d11 Q1). |
+| **d3 — Create wherever the key holds submitter, shared workspaces included** | ADR-0044 d6 keeps tenant keys from creating, so that shared structure stays an admin's. Agents would add permanent nodes to trees many teams read. Rejected for v0.8.5 (d11 Q5). |
 | **d3 — Admin keys create over MCP** | The admin role is no agent's role, and an admin key reads no content (ADR-0026 d15), so on the agent surface it would do structure blind. |
 | **d4 — A depth limit or a per-parent child limit** | A chain of children is never longer than their count, so the count meter bounds both with one setting the operator already knows how to set. |
 | **d4 — Count only children created over MCP** | A meter counts rows, not transports (ADR-0071 d2). An agent would escape it through the CLI, and a person's console creates would be free while an agent's were not, for the same node. |
-| **d5 — Open status proposals to contributors** | Protected and frozen stop writes for every key below. In a user root no move exists (ADR-0085 d17), so opening proposals would serve contributor agents only in shared workspaces, where the move is a production decision. Question 2. |
+| **d5 — Open status proposals to contributors** | Protected and frozen stop writes for every key below. In a user root no move exists (ADR-0085 d17), so opening proposals would serve contributor agents only in shared workspaces, where the move is a production decision. Rejected by the operator (d11 Q2). |
 | **d6 — Keep the brief proposer at reviewer** | A contributor agent could then never propose its child's brief, which the operator's scope names. The member is already approved, and its place is approved again by a different reviewer. |
 | **d7 — Mode over MCP for the agent's own children** | An agent would choose who reads unreviewed work, and committing releases it. ADR-0030 d1 made the mode a person's act for that reason. |
 | **d8 — Grow ADR-0094's LangChain tools** | ADR-0094 rejected creating workspaces from inside an agent loop. Its store and tools stay inside one workspace. |
-
-## Open questions for the operator
-
-Each has a recommended answer. A record accepted without an answer takes the recommendation.
-
-1. **Is an agent's create immediate or held?** (d3) *Recommended: immediate*, under the
-   `workspaces` quota, as the same key creates over HTTP. The alternative is a held create that a
-   person or the root's reviewer ratifies, which costs two events and a queue.
-2. **May a contributor key propose a status move?** (d5) *Recommended: no.* A user root never
-   leaves development, so the mode serves reviewer keys in shared workspaces. The alternative
-   opens the proposal floor to contributors and leaves ratification where it is.
-3. **May a contributor key propose a brief member?** (d6) *Recommended: yes*, on every transport,
-   with `proposal.pending` against duplicates. The alternative keeps the reviewer floor, and over
-   MCP only reviewer keys propose.
-4. **What is the public server's `workspaces` quota?** (d4) *Recommended: 100 per account*, with
-   the default profile unlimited and the value recalibrated with the other limits under #164. The
-   number is unmeasured.
-5. **May a tenant contributor key create children in shared workspaces where it holds
-   submitter?** (d3) *Recommended: no, not in v0.8.5.* Shared structure stays an admin's
-   (ADR-0044 d6).
-6. **Do connector keys get the modes?** (security analysis) *Recommended: yes.* They are the
-   claude.ai and mobile case the request is for. The alternative refuses the structure modes to a
-   key that authenticates only through a connection.
-7. **Modes on `oml_write`, or on `oml_workspace`?** (d1) *Recommended: `oml_write`*, which keeps
-   the read tool read-only. The alternative matches the request's wording at the cost the first
-   rejected alternative names.
-8. **Does the one-live-proposal rule hold on every transport, or over MCP alone?** (d5, d6)
-   *Recommended: every transport*, since a refusal belongs to the verb, not the transport. The cost
-   is a new 409 for a script that proposes twice.
