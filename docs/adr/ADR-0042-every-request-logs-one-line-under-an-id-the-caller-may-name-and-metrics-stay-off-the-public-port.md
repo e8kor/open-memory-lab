@@ -186,7 +186,7 @@ Decided, not built.
     | `rpc_method` | `initialize`, `ping`, `tools/list`, `tools/call`, a notification's method, or `unknown` for one the facade does not serve |
     | `tool` | for `tools/call`, the served name (`oml_write`, `oml_read`, `oml_workspace`), a v0.3.0 alias name, a designed tool's name, or `unknown`; an unrecognized caller-chosen name is never logged |
     | `alias_of` | the successor, for an alias; `mcp_alias_called` still logs as [ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md) d12 says. Both were removed with the aliases in v0.5.1 (2026-11-04), when a v0.3.0 name became an unknown tool |
-    | `mode` | `oml_write`'s `submit` or `supersede`, `oml_read`'s `get`, `recall` or `listing`; `null` for a tool without modes |
+    | `mode` | `oml_write`'s `submit`, `supersede` or `withdraw` (the last since [ADR-0083](ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) d13's amendment of 2026-11-24), `oml_read`'s `get`, `recall` or `listing`; `null` for a tool without modes |
     | `outcome` | `result`, `tool_error` (`isError` set) or `rpc_error` |
     | `error_code` | the tool refusal envelope's `error.code`, or the JSON-RPC error code as a string |
     | `duration_ms` | the call's time inside the facade |

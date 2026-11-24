@@ -10,9 +10,10 @@ answers: what the views of the Memories cockpit show and which API call serves e
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with the screen
 choices settled from the approved design system v18 mockups (d2, d3, d5 to d9, d11, d12), the withdraw act (d13) decided the same day, and every
 other default as drafted · proposed the same day, tracking #374, with the operator's answers
-(d10) · aligned with ADR-0089 (admins fix production at once, a person confirms or reverts) · amended by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) (d12, 2026-11-15) · amendments of d11 and the workspace page of 2026-11-18, from the operator's batch (the "approved, not in a release" row and the stage tabs; #429), accepted 2026-11-19 by the operator
+(d10) · aligned with ADR-0089 (admins fix production at once, a person confirms or reverts) · amended by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) (d12, 2026-11-15) · amendments of d11 and the workspace page of 2026-11-18, from the operator's batch (the "approved, not in a release" row and the stage tabs; #429), accepted 2026-11-19 by the operator · amendment of d13 of 2026-11-24, decided by the operator
+  (withdraw is a mode of `oml_write`; proposed for acceptance)
 
-**Release:** built in v0.8.3, except the To do groups of unbuilt features (d11, d14) and the 2026-11-18 amendments, which wait for ADR-0085 and ADR-0089
+**Release:** built in v0.8.3, except the To do groups of unbuilt features (d11, d14) and the 2026-11-18 amendments, which wait for ADR-0085 and ADR-0089; the amendment of 2026-11-24 (withdraw as an `oml_write` mode) ships in v0.8.4
 
 **Amends:** ADR-0045 (d9 and d11: the user page's Memories view gains Submitted, and its Review
 view becomes the To do page with Judge at `/web/todo/judge`; d10: the admin page's Memories and
@@ -295,7 +296,8 @@ release" row and the stage tabs), which wait for releases (ADR-0085).
   2026-11-17 in #401). A version's author withdraws it with
   `POST /v1/memories/{artifact_id}/withdraw {reason?}`, and over MCP with the tool
   `oml_withdraw {artifact_id, reason?, idempotency_key}`, which joins the agent-safe catalog
-  (amends ADR-0025 d12 and ADR-0039's tool table). Who may: the author key itself, an agent's key
+  (amends ADR-0025 d12 and ADR-0039's tool table); since the amendment of 2026-11-24 it is
+  `oml_write {withdraw: <artifact_id>, reason?, idempotency_key}`, and `oml_withdraw` is no tool. Who may: the author key itself, an agent's key
   included, on its own held version; and a person's session web key, from the console, for a held
   version any key of that person wrote (read the one way `same_user` reads it, as ADR-0082 d2 reads
   it for supersession) (the operator, 2026-11-14). R1 is untouched: a withdrawal is the author
@@ -446,3 +448,54 @@ proposed and marked **[operator batch]**, and the operator accepted every one on
   batch].** Drafts · Candidate · Published, captioned Development / Staging / Production, the
   captions following the place and not the binding; ADR-0085's amendments of 2026-11-18 hold the
   text.
+
+## Amendment of 2026-11-24: withdraw is a mode of `oml_write` (amends d13)
+
+Decided by the operator, 2026-11-24 ("Fold in, inside v0.8.4"); the text below is proposed for the
+operator's acceptance. It ships in v0.8.4.
+
+- **The MCP server serves three tools again: `oml_write`, `oml_read` and `oml_workspace`.** d13's
+  `oml_withdraw` becomes `oml_write`'s withdraw mode, so the catalog is ADR-0039 d2's three tools
+  and ADR-0039 d8 holds: a new agent capability is a parameter before it is a tool, and d13 gave
+  no record of why no parameter of the three carried withdraw. Only the MCP surface changes:
+  `POST /v1/memories/{artifact_id}/withdraw`, `oml withdraw <artifact_id>` and the console's
+  Withdraw stay as d13 and its build note describe them.
+- **The mode.** `oml_write {withdraw: <artifact_id>, reason?, idempotency_key}` is one
+  `POST /v1/memories/{withdraw}/withdraw`, exactly the call `oml_withdraw` made, so who may, the
+  state it sets, the journal event and the metric are d13's unchanged. `withdraw` chooses the mode
+  as `replaces` chooses supersession (ADR-0039 d3), and the rule of every mode holds: a field
+  outside the chosen mode is refused with `request.validation` naming it in `details.field`,
+  never dropped. In withdraw mode that is every field but `withdraw`, `reason` and
+  `idempotency_key`, `text` and `replaces` included; `reason` here is the withdrawal's reason,
+  journalled with `memory.withdrawn` and scanned as d13 says.
+- **`text` is required in every mode but withdraw.** The input schema lists only
+  `idempotency_key` as required and says so on `text`; a submission or a supersession without
+  `text` is refused with `request.validation` naming `/text`. The schema stays one flat object, as
+  every served tool's is (ADR-0039 d3).
+- **The refusals are the ring's, unchanged.** A version in any state but held answers
+  `memory.not_held`, another author's version `access.author_only`, and an id the key cannot see
+  `access.not_found`; a retry with the same idempotency key and request replays with
+  `idempotent_replay: true`. The idempotency key is scoped to the calling key alone, as a
+  supersession's is, so one key reused between a supersession and a withdrawal is the typed
+  error a changed request is, never a second act; reused between a submission and a withdrawal
+  it is a separate act, as between a submission and a supersession.
+- **The answer is the write answer with `mode: "withdraw"`:** `{mode, artifact_id, state,
+  idempotent_replay}`, `state` being `withdrawn`. Every `oml_write` answer names its mode
+  (`submit`, `supersede`), so a client reads one field to know what happened; the fields a
+  withdrawal does not produce (`claim_key`, `version`, `workspace`, `retirement`, `replaces`,
+  `similar`) are absent, not null.
+- **Annotations are unchanged.** `oml_write` stays not read-only and not destructive: a
+  withdrawal keeps the version and its text (ADR-0001 R4), as a supersession and a retirement
+  proposal keep theirs. R1 is untouched, as d13 says.
+- **A hard cut.** `oml_withdraw` is removed from `tools/list` and the dispatcher; calling it
+  answers as any unknown tool does, JSON-RPC -32602 with the unknown-tool message, with no alias,
+  as ADR-0091 cut its former names before the first release. An MCP client that calls
+  `oml_withdraw` moves to `oml_write {withdraw}` when the server is upgraded; the upgrade notes
+  carry the notice.
+
+**Rejected alternatives**
+
+| Alternative | Why not |
+|---|---|
+| **Keep `oml_withdraw` as a separate tool** | A fourth tool for one act a parameter carries: ADR-0039 d8 asks a tool to show that no parameter of the three carries it, and d13 recorded no such reason. Each tool costs every session its listing and description. |
+| **Fold it into `replaces` with `retirement`** | A retirement is a proposal a reviewer decides, which leaves the version held and adds another; a withdrawal is the author's own act, no reviewer involved and no verdict recorded (d13). One flag would mean two acts with different authority depending on the target's state. |

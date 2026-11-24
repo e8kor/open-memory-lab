@@ -94,6 +94,8 @@ def metadata_checks(meta: email.message.Message, version: str, what: str) -> Non
         fail(f"{what}: Project-URL Repository is {urls.get('Repository')!r}, not {REPO_URL}")
     if not meta["Requires-Python"]:
         fail(f"{what}: no Requires-Python")
+    if "langchain" not in (meta.get_all("Provides-Extra") or []):
+        fail(f"{what}: no extra langchain, which oml_sdk.langchain needs (ADR-0094)")
     if re.search(r"\.\./\.\./", meta.get_payload() or ""):
         fail(f"{what}: the README links a repository-relative path, which no registry page resolves")
 
@@ -158,6 +160,8 @@ def python_package(out: Path, scratch: Path, version: str) -> None:
             check_licence(z.read(name).decode(), f"{wheel.name} {name}")
         if not any(n.startswith("oml_sdk/generated/") for n in names) or "oml_sdk/client.py" not in names:
             fail(f"{wheel.name}: the generated layer or the wrapper is missing")
+        if "oml_sdk/langchain/__init__.py" not in names:
+            fail(f"{wheel.name}: oml_sdk.langchain is missing (ADR-0094)")
         if [n for n in names if not (n.startswith("oml_sdk/") or n.startswith(info + "/"))]:
             fail(f"{wheel.name}: files outside oml_sdk/ and {info}/")
 

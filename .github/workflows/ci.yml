@@ -916,7 +916,9 @@ jobs:
           OML_CLI_BIN: ${{ github.workspace }}/target/release/oml
           OML_SDK_TEST_DATABASE_URL: postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev
           OML_TEST_REQUIRE_SPLIT: "1"
-        run: uv run --locked --python 3.11 pytest -v
+        # The langchain extra and the LangMem group, so oml_sdk.langchain's
+        # tests run here too (ADR-0094); without them they fail to import.
+        run: uv run --locked --python 3.11 --extra langchain --group langmem pytest -v
 
   sdk-typescript:
     name: TypeScript SDK against the release server

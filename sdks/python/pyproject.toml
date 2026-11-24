@@ -21,6 +21,15 @@ dependencies = [
     "httpx>=0.23.1,<0.29.0",
 ]
 
+# docs/adr/ADR-0094: oml_sdk.langchain, the retriever, the two tools and the
+# in-progress store. `import oml_sdk` never imports either package; only
+# `import oml_sdk.langchain` does, and it needs this extra.
+[project.optional-dependencies]
+langchain = [
+    "langchain-core>=1.7.6,<2",
+    "langgraph>=1.2.20,<2",
+]
+
 [project.urls]
 Homepage = "https://e8kor.github.io/open-memory-lab/"
 Documentation = "https://e8kor.github.io/open-memory-lab/engineering/sdks/"
@@ -33,6 +42,21 @@ Changelog = "https://e8kor.github.io/open-memory-lab/changelog/"
 [dependency-groups]
 dev = ["pytest==9.1.1"]
 generate = ["openapi-python-client==0.29.1"]
+# The LangMem smoke test's own dependency: never a dependency of the package.
+langmem = ["langmem==0.0.30"]
+
+# What the lock resolves the langchain extra and the langmem group to: the
+# pins below, and for everything they pull in, releases published before the
+# cutoff, at least two weeks old when they were locked (2026-11-24). Moving
+# the cutoff is part of any later upgrade. The extra itself keeps the ranges
+# above, so an installer is free to take newer releases.
+[tool.uv]
+exclude-newer = "2026-11-10T00:00:00Z"
+constraint-dependencies = [
+    "langchain-core==1.7.6",
+    "langgraph==1.2.20",
+    "langgraph-checkpoint==4.3.1",
+]
 
 [build-system]
 requires = ["hatchling==1.32.4"]

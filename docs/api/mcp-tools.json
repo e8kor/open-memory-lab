@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "comment": "Status: design draft for review - decided, built where served. This file is the normative machine shape of the MCP tool catalog declared in mcp-plugin.md: exactly the tools/list result payload the server serves, the four tools oml_write, oml_read, oml_workspace (ADR-0039 d2) and oml_withdraw (ADR-0083 d13), each with its MCP annotations (d5). It declares only what is served: a served tool's entry changes only in the same change as the code that serves it, so the server never advertises a field it refuses. The designed tools and the served tools' designed arguments live in mcp-tools.designed.json, which is never served and names no tool this file names (scripts/check_contract_sync.py). pending_design names, per served tool, what mcp-plugin.md decides that the build does not carry yet. Target MCP specification revision: 2025-06-18 (streamable HTTP transport, run stateless per mcp-plugin.md).",
+    "comment": "Status: design draft for review - decided, built where served. This file is the normative machine shape of the MCP tool catalog declared in mcp-plugin.md: exactly the tools/list result payload the server serves, the three tools oml_write, oml_read and oml_workspace (ADR-0039 d2; withdraw is oml_write's withdraw mode, ADR-0083 d13 as amended 2026-11-24), each with its MCP annotations (d5). It declares only what is served: a served tool's entry changes only in the same change as the code that serves it, so the server never advertises a field it refuses. The designed tools and the served tools' designed arguments live in mcp-tools.designed.json, which is never served and names no tool this file names (scripts/check_contract_sync.py). pending_design names, per served tool, what mcp-plugin.md decides that the build does not carry yet. Target MCP specification revision: 2025-06-18 (streamable HTTP transport, run stateless per mcp-plugin.md).",
     "spec_revision_targeted": "2025-06-18",
     "catalog_page": "mcp-plugin.md",
     "designed_annex": "mcp-tools.designed.json",
@@ -15,7 +15,7 @@
     {
       "name": "oml_write",
       "title": "Remember",
-      "description": "Stores a claim, a claim derived from others, a new version of one, or a proposal to retire one. Held on arrival: scanned in the same call, then reviewed by an identity that did not write it, and visible to others only after approval, or marked unreviewed inside an in-progress workspace. It only adds a held row and never changes or deletes an existing one; a new version or a retirement is a proposal that a reviewer decides. Without replaces it is a submission on POST /v1/memories, journalled learn when derives_from is non-empty and remember otherwise; with replaces it supersedes that version on POST /v1/memories/{artifact_id}/supersede. A field outside the chosen mode is refused with request.validation naming it in details.field, never dropped. The answer's similar names up to three memories the key may read that hold the same text or a near copy, each with relation, jaccard, version and own.",
+      "description": "Stores a claim, a claim derived from others, a new version of one, or a proposal to retire one, or withdraws a held write of this key. Held on arrival: scanned in the same call, then reviewed by an identity that did not write it, and visible to others only after approval, or marked unreviewed inside an in-progress workspace. It never deletes a row: it adds a held row, except withdraw, which marks this key's own held version withdrawn and keeps its text; a new version or a retirement is a proposal that a reviewer decides. Without replaces it is a submission on POST /v1/memories, journalled learn when derives_from is non-empty and remember otherwise; with replaces it supersedes that version on POST /v1/memories/{artifact_id}/supersede. With withdraw it withdraws a held version this key wrote, for a mistaken write, on POST /v1/memories/{artifact_id}/withdraw: the version is kept as withdrawn with its text, leaves every review queue and is never served, no reviewer is involved and no verdict is recorded; only a held version is withdrawn (memory.not_held), another key's version is refused (access.author_only), and the answer is mode withdraw with artifact_id, state and idempotent_replay. A field outside the chosen mode is refused with request.validation naming it in details.field, never dropped. The answer's similar names up to three memories the key may read that hold the same text or a near copy, each with relation, jaccard, version and own.",
       "annotations": {
         "readOnlyHint": false,
         "destructiveHint": false,
@@ -27,11 +27,11 @@
         "properties": {
           "text": {
             "type": "string",
-            "description": "The claim text, or, with retirement true, why the claim is retired. At most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized text; larger is refused with request.payload_too_large."
+            "description": "Required in every mode but withdraw, which refuses it. The claim text, or, with retirement true, why the claim is retired. At most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized text; larger is refused with request.payload_too_large."
           },
           "idempotency_key": {
             "type": "string",
-            "description": "Without replaces it is scoped to (key, resolved workspace), as a submission's; with replaces to the calling key alone, whatever the target's workspace, as a supersession's. Within one scope, a retry with the same key and an identical request returns the stored response with idempotent_replay true, and the same key with a different request is a typed error, never a second write (D13). The same key reused across the two modes, or on two submissions into different workspaces, is a separate write."
+            "description": "Without replaces or withdraw it is scoped to (key, resolved workspace), as a submission's; with replaces or withdraw to the calling key alone, whatever the target's workspace, as a supersession's and a withdrawal's. Within one scope, a retry with the same key and an identical request returns the stored response with idempotent_replay true, and the same key with a different request is a typed error, never a second write (D13). The same key reused between a submission and another mode, or on two submissions into different workspaces, is a separate write; reused between a supersession and a withdrawal, which share the calling key's scope, it is that typed error."
           },
           "claim_key": {
             "type": "string",
@@ -106,6 +106,10 @@
             "type": "string",
             "description": "The artifact id of the claim's current served tip to supersede (submission.tip_conflict otherwise). A target of a vocabulary kind (term, term_mapping, vocab_release) is refused; supersede it on the HTTP API."
           },
+          "withdraw": {
+            "type": "string",
+            "description": "The artifact id of a held version this key wrote, to withdraw it. Withdraw takes only reason and idempotency_key beside it: every other field, text included, is refused with request.validation naming it. A version in any other state is refused (memory.not_held), another key's version too (access.author_only); a reviewed version is changed with replaces instead."
+          },
           "expected_version": {
             "type": "integer",
             "minimum": 1,
@@ -118,7 +122,7 @@
           },
           "reason": {
             "type": "string",
-            "description": "With replaces, the reason for the change. Refused without replaces."
+            "description": "With replaces, the reason for the change; with withdraw, why the version is withdrawn, journalled with the act and scanned as a verdict's reason is. Refused in a submission."
           },
           "origin": {
             "type": "object",
@@ -203,7 +207,6 @@
           }
         },
         "required": [
-          "text",
           "idempotency_key"
         ],
         "additionalProperties": false
@@ -460,39 +463,6 @@
           }
         },
         "required": [],
-        "additionalProperties": false
-      }
-    },
-    {
-      "name": "oml_withdraw",
-      "title": "Withdraw",
-      "description": "Withdraws a held version this key wrote, for a mistaken write: the version is kept as withdrawn with its text, leaves every review queue and is never served; no reviewer is involved and no verdict is recorded. Only a held version is withdrawn (memory.not_held); another key's version is refused (access.author_only). A reviewed version is changed through oml_write with replaces instead. Rides POST /v1/memories/{artifact_id}/withdraw, one call.",
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false
-      },
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "artifact_id": {
-            "type": "string",
-            "description": "The held version to withdraw, by its artifact id."
-          },
-          "reason": {
-            "type": "string",
-            "description": "Optional: why it is withdrawn, journalled with the act and scanned as a verdict's reason is."
-          },
-          "idempotency_key": {
-            "type": "string",
-            "description": "Scoped to the calling key. A retry with the same key and an identical request returns the stored response with idempotent_replay true, and the same key with a different request is a typed error, never a second act (D13)."
-          }
-        },
-        "required": [
-          "artifact_id",
-          "idempotency_key"
-        ],
         "additionalProperties": false
       }
     }

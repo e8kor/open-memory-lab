@@ -6,7 +6,7 @@ answers: "how OpenAI Codex CLI, Cursor, Gemini CLI, VS Code and Claude Desktop r
 
 # Connect Codex, Cursor, Gemini CLI, VS Code and Claude Desktop
 
-Every tool here reaches the same `/mcp` endpoint with the same four tools. The configuration
+Every tool here reaches the same `/mcp` endpoint with the same three tools. The configuration
 for each comes from the agent kit, `oml-agent-kit-X.Y.Z.tar.gz` (or `.zip`), attached to each
 release and signed with cosign. The kit's
 [README](https://github.com/e8kor/open-memory-lab/blob/main/kit/README.md) names each file, where
@@ -59,7 +59,7 @@ find it after a reviewer approves it. If it fails, see [client troubleshooting](
 
 ## What these tools get
 
-The four tools and the `AGENTS.md` guidance. Gemini CLI also gets the session-start context
+The three tools and the `AGENTS.md` guidance. Gemini CLI also gets the session-start context
 through `oml hook session-start`, when `oml` is on `PATH`. Cursor's session-start hook uses a
 different output field, so the kit wires none. No tool here gets the librarian or failure recall.
 
@@ -69,7 +69,7 @@ different output field, so the kit wires none. No tool here gets the librarian o
 claude mcp add --transport http oml <server address>/mcp --header "Authorization: Bearer $OML_API_KEY"
 ```
 
-This gives the four tools and nothing else: no skill, no hooks, no librarian. The shell expands
+This gives the three tools and nothing else: no skill, no hooks, no librarian. The shell expands
 the key into the command line, and Claude Code stores the header in its own configuration file,
 not the keychain. The plugin, through `oml setup claude-code`, keeps the key in the keychain
 ([Claude Code guide](claude-code.md)).
