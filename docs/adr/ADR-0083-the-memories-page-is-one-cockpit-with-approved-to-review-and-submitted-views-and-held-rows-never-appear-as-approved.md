@@ -11,7 +11,7 @@ answers: what the views of the Memories cockpit show and which API call serves e
 choices settled from the approved design system v18 mockups (d2, d3, d5 to d9, d11, d12), the withdraw act (d13) decided the same day, and every
 other default as drafted · proposed the same day, tracking #374, with the operator's answers
 (d10) · aligned with ADR-0089 (admins fix production at once, a person confirms or reverts) · amended by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) (d12, 2026-11-15) · amendments of d11 and the workspace page of 2026-11-18, from the operator's batch (the "approved, not in a release" row and the stage tabs; #429), accepted 2026-11-19 by the operator · amendment of d13 of 2026-11-24, decided by the operator
-  (withdraw is a mode of `oml_write`; proposed for acceptance)
+  (withdraw is a mode of `oml_write`), accepted 2026-11-24 by the operator
 
 **Release:** built in v0.8.3, except the To do groups of unbuilt features (d11, d14) and the 2026-11-18 amendments, which wait for ADR-0085 and ADR-0089; the amendment of 2026-11-24 (withdraw as an `oml_write` mode) is built in v0.8.4
 
@@ -451,8 +451,8 @@ proposed and marked **[operator batch]**, and the operator accepted every one on
 
 ## Amendment of 2026-11-24: withdraw is a mode of `oml_write` (amends d13)
 
-Decided by the operator, 2026-11-24 ("Fold in, inside v0.8.4"); the text below is proposed for the
-operator's acceptance. It ships in v0.8.4.
+Decided by the operator, 2026-11-24 ("Fold in, inside v0.8.4"), and the text below accepted by the
+operator the same day. It is built in v0.8.4.
 
 - **The MCP server serves three tools again: `oml_write`, `oml_read` and `oml_workspace`.** d13's
   `oml_withdraw` becomes `oml_write`'s withdraw mode, so the catalog is ADR-0039 d2's three tools

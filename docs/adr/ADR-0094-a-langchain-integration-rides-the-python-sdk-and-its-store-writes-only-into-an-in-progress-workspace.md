@@ -11,7 +11,8 @@ answers: where the LangChain and LangGraph integration lives and how it is insta
 integration over the Python SDK, shipped and published in v0.8.4 ("lets add it as well and
 publish") and agreed its design: a retriever, a remember and a recall tool, and a LangGraph store
 usable only in an in-progress workspace. The packaging (d1) is the coordinator's reading, taken
-because it needs no new registry project.
+because it needs no new registry project. Accepted again by the operator on 2026-11-24 as built,
+with the tool names `oml_write` and `oml_read` and the edits of the fix round.
 
 **Release:** v0.8.4 ([releases](../changelog.md))
 
