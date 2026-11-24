@@ -386,10 +386,10 @@ async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and
     let (agent, other, wa) = (&crew.agent, &crew.other, crew.workspace.as_str());
     let mut texts: HashMap<String, &str> = HashMap::new();
 
-    // 1. One connection lists the four tools, oml_write, oml_read,
-    // oml_workspace and oml_withdraw, and the journey calls only those:
-    // Claude Code offers the model nothing else (ADR-0025 d12; ADR-0039 d2;
-    // ADR-0083 d13).
+    // 1. One connection lists the three tools, oml_write, oml_read and
+    // oml_workspace, and the journey calls only those: Claude Code offers
+    // the model nothing else (ADR-0025 d12; ADR-0039 d2; ADR-0083 d13,
+    // amendment of 2026-11-24).
     let listed = agent.rpc("tools/list", json!({})).await;
     let names = set(listed["result"]["tools"]
         .as_array()
@@ -398,7 +398,7 @@ async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and
         .map(|t| t["name"].as_str().expect("name")));
     assert_eq!(
         names,
-        set(["oml_write", "oml_read", "oml_workspace", "oml_withdraw"])
+        set(["oml_write", "oml_read", "oml_workspace"])
     );
 
     // 2. On its default workspace the one key both remembers and recalls

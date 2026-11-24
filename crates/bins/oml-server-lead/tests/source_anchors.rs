@@ -1325,9 +1325,9 @@ async fn mcp_oml_write_and_oml_read_carry_the_anchor_with_no_new_tool() {
         "jsonrpc": "2.0", "id": 5, "method": "tools/list", "params": {}})),
     )
     .await;
-    // The four tools, none of them new for anchors (ADR-0083 d13 added
-    // oml_withdraw).
-    assert_eq!(list["result"]["tools"].as_array().expect("tools").len(), 4);
+    // The three tools, none of them new for anchors (ADR-0039 d2; ADR-0083
+    // d13's amendment of 2026-11-24 made withdraw a mode of oml_write).
+    assert_eq!(list["result"]["tools"].as_array().expect("tools").len(), 3);
     w.done().await;
 }
 
