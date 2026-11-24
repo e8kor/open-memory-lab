@@ -97,8 +97,8 @@ OML="$BIN/oml"
     --tenant-name eval --principal eval/admin <<<"$TOKEN" >/dev/null || fail "bootstrap claim"
 "$OML" --json workspaces create universe eval-crew >/dev/null || fail "workspace"
 (umask 077
- "$OML" --json keys issue eval-writer --role writer --used-by agent --principal crew/writer \
-     --default-workspace eval-crew --grant eval-crew:writer --grant eval-crew:reader \
+ "$OML" --json keys issue eval-writer --role contributor --used-by agent --principal crew/writer \
+     --default-workspace eval-crew --grant eval-crew:submitter --grant eval-crew:reader \
      | jq -r .value >"$STATE/writer.key"
  "$OML" --json keys issue eval-reviewer --role reviewer --used-by person --principal crew/reviewer \
      --default-workspace eval-crew --grant eval-crew:reviewer \

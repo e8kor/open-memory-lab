@@ -251,7 +251,7 @@ pub enum MetadataFold {
     NamesAssigned(Naming),
     /// `grant.issued`: one grant row on `key_id`, its epoch this commit's
     /// seq. The store refuses a grant on a key or node it does not hold, and
-    /// a grant role other than reader, writer or reviewer (postgres-schema.md
+    /// a grant role other than reader, submitter or reviewer (postgres-schema.md
     /// `grants`).
     GrantIssued {
         key_id: Uuid,

@@ -119,11 +119,11 @@ async fn world(reranker: Arc<FakeReranker>, policy: RerankPolicy) -> World {
     let writer = issue(
         &app,
         &admin,
-        Role::Writer,
+        Role::Contributor,
         vec![
-            grant(crew, Role::Writer),
+            grant(crew, Role::Submitter),
             grant(crew, Role::Reader),
-            grant(other, Role::Writer),
+            grant(other, Role::Submitter),
         ],
     )
     .await;

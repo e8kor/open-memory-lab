@@ -6,16 +6,17 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use oml_domain::access::{
     AccessRefusal, Covers, Grant, IssuanceRefusal, KeyDenial, TailCaller, TailSubject,
-    admissible_grant_roles, check_issuance, effective_roles, effective_verbs, resolve,
-    tail_visible,
+    admissible_grant_roles, check_contributor_grants, check_issuance, contributor_without_recall,
+    effective_roles, effective_verbs, recall_ancestries_needed, resolve, tail_visible,
 };
 use oml_domain::{Role, UsedBy};
 use proptest::prelude::*;
 use uuid::Uuid;
 
-const ALL_ROLES: [Role; 5] = [
+const ALL_ROLES: [Role; 6] = [
     Role::Reader,
-    Role::Writer,
+    Role::Contributor,
+    Role::Submitter,
     Role::Reviewer,
     Role::Admin,
     Role::Operator,
@@ -104,32 +105,138 @@ fn a_reader_key_admits_reader_grants_only() {
 }
 
 #[test]
-fn a_writer_key_admits_reader_and_writer_grants_only() {
+fn a_contributor_key_admits_reader_and_submitter_grants_only() {
     assert_eq!(
-        admissible_grant_roles(Role::Writer),
-        &[Role::Reader, Role::Writer]
+        admissible_grant_roles(Role::Contributor),
+        &[Role::Reader, Role::Submitter]
     );
     let tree = Tree::new();
     for role in ALL_ROLES {
         let result = check_issuance(
             Role::Admin,
-            Role::Writer,
-            &[grant(1, tree.research_crew, role, &[])],
+            Role::Contributor,
+            &[
+                grant(1, tree.research_crew, Role::Reader, &[]),
+                grant(2, tree.research_crew, Role::Submitter, &[]),
+                grant(3, tree.research_crew, role, &[]),
+            ],
         );
-        if matches!(role, Role::Reader | Role::Writer) {
+        if matches!(role, Role::Reader | Role::Submitter) {
             assert_eq!(result, Ok(()), "{role:?}");
         } else {
             assert_eq!(
                 result,
                 Err(IssuanceRefusal::IssuerCeiling {
                     role,
-                    admissible: &[Role::Reader, Role::Writer],
+                    admissible: &[Role::Reader, Role::Submitter],
+                    grant_index: Some(2),
+                }),
+                "{role:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_submitter_key_admits_submitter_grants_only() {
+    assert_eq!(admissible_grant_roles(Role::Submitter), &[Role::Submitter]);
+    let tree = Tree::new();
+    for role in ALL_ROLES {
+        let result = check_issuance(
+            Role::Admin,
+            Role::Submitter,
+            &[grant(1, tree.research_crew, role, &[])],
+        );
+        if role == Role::Submitter {
+            assert_eq!(result, Ok(()), "{role:?}");
+        } else {
+            assert_eq!(
+                result,
+                Err(IssuanceRefusal::IssuerCeiling {
+                    role,
+                    admissible: &[Role::Submitter],
                     grant_index: Some(0),
                 }),
                 "{role:?}"
             );
         }
     }
+}
+
+#[test]
+fn a_contributor_key_without_a_reader_or_a_submitter_grant_is_refused_as_contributor_grants() {
+    let tree = Tree::new();
+    let reader = grant(1, tree.research_crew, Role::Reader, &[]);
+    let submitter = grant(2, tree.research_crew, Role::Submitter, &[]);
+    let roles = |grants: &[Grant]| grants.iter().map(|g| g.role).collect::<Vec<_>>();
+    for grants in [
+        vec![],
+        vec![reader.clone()],
+        vec![submitter.clone()],
+        vec![submitter.clone(), submitter.clone()],
+    ] {
+        assert_eq!(
+            check_issuance(Role::Admin, Role::Contributor, &grants),
+            Ok(()),
+            "steps 1-3 pass: {grants:?}"
+        );
+        assert_eq!(
+            check_contributor_grants(Role::Contributor, &roles(&grants)),
+            Err(IssuanceRefusal::ContributorGrants),
+            "{grants:?}"
+        );
+    }
+    // Only a contributor key is shaped so.
+    for key_role in [Role::Reader, Role::Submitter, Role::Reviewer, Role::Admin] {
+        assert_eq!(
+            check_contributor_grants(key_role, &[]),
+            Ok(()),
+            "{key_role:?}"
+        );
+    }
+    // The reader grant need not sit on the submitter grant's node
+    // (ADR-0093 d2: `<user>-curate` writes on one node and reads elsewhere).
+    let curate = [
+        node_grant(3, tree.universe, Role::Submitter),
+        grant(4, tree.ops_crew, Role::Reader, &[]),
+    ];
+    assert_eq!(
+        check_issuance(Role::Admin, Role::Contributor, &curate),
+        Ok(())
+    );
+    assert_eq!(
+        check_contributor_grants(Role::Contributor, &roles(&curate)),
+        Ok(())
+    );
+    // An inadmissible grant answers first, at step 3.
+    assert_eq!(
+        check_issuance(
+            Role::Admin,
+            Role::Contributor,
+            &[grant(5, tree.research_crew, Role::Reviewer, &[])],
+        ),
+        Err(IssuanceRefusal::IssuerCeiling {
+            role: Role::Reviewer,
+            admissible: &[Role::Reader, Role::Submitter],
+            grant_index: Some(0),
+        })
+    );
+}
+
+#[test]
+fn a_submitter_key_cannot_recall_whatever_its_grants() {
+    let tree = Tree::new();
+    let eff = roles(&[Role::Reader, Role::Submitter, Role::Reviewer]);
+    assert_eq!(
+        resolve(Role::Submitter, &eff, Role::Reader),
+        Err(AccessRefusal::VerbCeiling {
+            role: Role::Submitter,
+            needed: Role::Reader,
+        })
+    );
+    let grants = [grant(1, tree.research_crew, Role::Submitter, &[])];
+    let eff = effective_roles(&grants, &[], &tree.ancestry(tree.research_crew));
+    assert_eq!(resolve(Role::Submitter, &eff, Role::Submitter), Ok(()));
 }
 
 #[test]
@@ -183,10 +290,10 @@ fn admin_and_operator_keys_admit_no_grant() {
         check_issuance(
             Role::Operator,
             Role::Operator,
-            &[grant(1, tree.research_crew, Role::Writer, &[])],
+            &[grant(1, tree.research_crew, Role::Submitter, &[])],
         ),
         Err(IssuanceRefusal::IssuerCeiling {
-            role: Role::Writer,
+            role: Role::Submitter,
             admissible: &[],
             grant_index: Some(0),
         })
@@ -220,15 +327,21 @@ fn an_admin_minting_an_operator_key_is_issuer_ceiling_naming_the_issuable_roles(
         check_issuance(Role::Admin, Role::Operator, &[]),
         Err(IssuanceRefusal::IssuerCeiling {
             role: Role::Operator,
-            admissible: &[Role::Reader, Role::Writer, Role::Reviewer, Role::Admin],
+            admissible: &[
+                Role::Reader,
+                Role::Contributor,
+                Role::Submitter,
+                Role::Reviewer,
+                Role::Admin,
+            ],
             grant_index: None,
         })
     );
     // The operator issues operator keys and a tenant's first admin key only.
     assert_eq!(
-        check_issuance(Role::Operator, Role::Writer, &[]),
+        check_issuance(Role::Operator, Role::Contributor, &[]),
         Err(IssuanceRefusal::IssuerCeiling {
-            role: Role::Writer,
+            role: Role::Contributor,
             admissible: &[Role::Admin, Role::Operator],
             grant_index: None,
         })
@@ -247,7 +360,13 @@ fn the_key_role_ceiling_answers_before_grant_admissibility() {
         ),
         Err(IssuanceRefusal::IssuerCeiling {
             role: Role::Operator,
-            admissible: &[Role::Reader, Role::Writer, Role::Reviewer, Role::Admin],
+            admissible: &[
+                Role::Reader,
+                Role::Contributor,
+                Role::Submitter,
+                Role::Reviewer,
+                Role::Admin,
+            ],
             grant_index: None,
         })
     );
@@ -258,15 +377,15 @@ fn the_first_inadmissible_grant_is_named_by_its_index() {
     let tree = Tree::new();
     let grants = [
         grant(1, tree.research_crew, Role::Reader, &[]),
-        grant(2, tree.research_crew, Role::Writer, &[]),
+        grant(2, tree.research_crew, Role::Submitter, &[]),
         grant(3, tree.lit_review, Role::Reviewer, &[]),
         grant(4, tree.ops_crew, Role::Admin, &[]),
     ];
     assert_eq!(
-        check_issuance(Role::Admin, Role::Writer, &grants),
+        check_issuance(Role::Admin, Role::Contributor, &grants),
         Err(IssuanceRefusal::IssuerCeiling {
             role: Role::Reviewer,
-            admissible: &[Role::Reader, Role::Writer],
+            admissible: &[Role::Reader, Role::Submitter],
             grant_index: Some(2),
         })
     );
@@ -321,17 +440,17 @@ fn the_workspaces_md_worked_example_resolves_row_for_row() {
 fn a_per_grant_deny_never_defeats_another_grant() {
     let tree = Tree::new();
     let grants = [
-        grant(1, tree.research_crew, Role::Writer, &[tree.experiments]),
+        grant(1, tree.research_crew, Role::Submitter, &[tree.experiments]),
         grant(2, tree.research_crew, Role::Reader, &[]),
     ];
-    // The writer grant's deny holes the writer grant only.
+    // The submitter grant's deny holes the submitter grant only.
     assert_eq!(
         effective_roles(&grants, &[], &tree.ancestry(tree.run_grid)),
         roles(&[Role::Reader])
     );
     assert_eq!(
         effective_roles(&grants, &[], &tree.ancestry(tree.lit_review)),
-        roles(&[Role::Reader, Role::Writer])
+        roles(&[Role::Reader, Role::Submitter])
     );
 }
 
@@ -339,7 +458,7 @@ fn a_per_grant_deny_never_defeats_another_grant() {
 fn a_global_deny_defeats_every_grant() {
     let tree = Tree::new();
     let grants = [
-        grant(1, tree.research_crew, Role::Writer, &[]),
+        grant(1, tree.research_crew, Role::Submitter, &[]),
         grant(2, tree.research_crew, Role::Reader, &[]),
         grant(3, tree.experiments, Role::Reader, &[]),
     ];
@@ -348,7 +467,7 @@ fn a_global_deny_defeats_every_grant() {
     assert!(effective_roles(&grants, &global, &tree.ancestry(tree.run_grid)).is_empty());
     assert_eq!(
         effective_roles(&grants, &global, &tree.ancestry(tree.lit_review)),
-        roles(&[Role::Reader, Role::Writer])
+        roles(&[Role::Reader, Role::Submitter])
     );
 }
 
@@ -371,30 +490,30 @@ fn a_grant_covers_its_subtree_and_nothing_above_or_beside_it() {
 #[test]
 fn a_role_outside_the_key_roles_set_is_verb_ceiling() {
     // Step 1 needs no node: it answers even where the role is effective.
-    let all = roles(&[Role::Reader, Role::Writer, Role::Reviewer]);
+    let all = roles(&[Role::Reader, Role::Submitter, Role::Reviewer]);
     assert_eq!(
-        resolve(Role::Reader, &all, Role::Writer),
+        resolve(Role::Reader, &all, Role::Submitter),
         Err(AccessRefusal::VerbCeiling {
             role: Role::Reader,
-            needed: Role::Writer,
+            needed: Role::Submitter,
         })
     );
     assert_eq!(
-        resolve(Role::Writer, &all, Role::Reviewer),
+        resolve(Role::Contributor, &all, Role::Reviewer),
         Err(AccessRefusal::VerbCeiling {
-            role: Role::Writer,
+            role: Role::Contributor,
             needed: Role::Reviewer,
         })
     );
     assert_eq!(
-        resolve(Role::Reviewer, &BTreeSet::new(), Role::Writer),
+        resolve(Role::Reviewer, &BTreeSet::new(), Role::Submitter),
         Err(AccessRefusal::VerbCeiling {
             role: Role::Reviewer,
-            needed: Role::Writer,
+            needed: Role::Submitter,
         })
     );
     for key_role in [Role::Admin, Role::Operator] {
-        for needed in [Role::Reader, Role::Writer, Role::Reviewer] {
+        for needed in [Role::Reader, Role::Submitter, Role::Reviewer] {
             assert_eq!(
                 resolve(key_role, &all, needed),
                 Err(AccessRefusal::VerbCeiling {
@@ -410,16 +529,16 @@ fn a_role_outside_the_key_roles_set_is_verb_ceiling() {
 fn an_unreadable_node_is_not_found() {
     let tree = Tree::new();
     let grants = [
-        grant(1, tree.research_crew, Role::Writer, &[]),
+        grant(1, tree.research_crew, Role::Submitter, &[]),
         grant(2, tree.research_crew, Role::Reader, &[]),
     ];
     let eff = effective_roles(&grants, &[], &tree.ancestry(tree.ops_crew));
     assert_eq!(
-        resolve(Role::Writer, &eff, Role::Writer),
+        resolve(Role::Contributor, &eff, Role::Submitter),
         Err(AccessRefusal::NotFound)
     );
     assert_eq!(
-        resolve(Role::Writer, &eff, Role::Reader),
+        resolve(Role::Contributor, &eff, Role::Reader),
         Err(AccessRefusal::NotFound)
     );
 }
@@ -430,9 +549,9 @@ fn a_readable_node_without_the_role_is_grant_refused() {
     let grants = [grant(1, tree.research_crew, Role::Reader, &[])];
     let eff = effective_roles(&grants, &[], &tree.ancestry(tree.lit_review));
     assert_eq!(
-        resolve(Role::Writer, &eff, Role::Writer),
+        resolve(Role::Contributor, &eff, Role::Submitter),
         Err(AccessRefusal::GrantRefused {
-            needed_role: Role::Writer,
+            needed_role: Role::Submitter,
         })
     );
     let reviewer_grants = [grant(2, tree.research_crew, Role::Reader, &[])];
@@ -446,38 +565,38 @@ fn a_readable_node_without_the_role_is_grant_refused() {
 }
 
 #[test]
-fn a_writer_only_grant_admits_submit_on_its_node() {
+fn a_submitter_grant_alone_admits_submit_on_its_node() {
     let tree = Tree::new();
-    let grants = [grant(1, tree.research_crew, Role::Writer, &[])];
+    let grants = [grant(1, tree.research_crew, Role::Submitter, &[])];
     for node in [tree.research_crew, tree.experiments] {
         let eff = effective_roles(&grants, &[], &tree.ancestry(node));
-        assert_eq!(resolve(Role::Writer, &eff, Role::Writer), Ok(()));
+        assert_eq!(resolve(Role::Contributor, &eff, Role::Submitter), Ok(()));
         // No reader grant: recall there is absence, never grant_refused.
         assert_eq!(
-            resolve(Role::Writer, &eff, Role::Reader),
+            resolve(Role::Contributor, &eff, Role::Reader),
             Err(AccessRefusal::NotFound)
         );
     }
 }
 
 #[test]
-fn one_writer_key_with_writer_and_reader_grants_remembers_and_recalls() {
+fn one_contributor_key_with_submitter_and_reader_grants_remembers_and_recalls() {
     let tree = Tree::new();
     let grants = [
-        grant(1, tree.research_crew, Role::Writer, &[]),
+        grant(1, tree.research_crew, Role::Submitter, &[]),
         grant(2, tree.research_crew, Role::Reader, &[]),
     ];
     let eff = effective_roles(&grants, &[], &tree.ancestry(tree.lit_review));
-    assert_eq!(resolve(Role::Writer, &eff, Role::Writer), Ok(()));
-    assert_eq!(resolve(Role::Writer, &eff, Role::Reader), Ok(()));
+    assert_eq!(resolve(Role::Contributor, &eff, Role::Submitter), Ok(()));
+    assert_eq!(resolve(Role::Contributor, &eff, Role::Reader), Ok(()));
 }
 
 // ---- Effective verbs (roles-and-keys.md#effective-verbs) ----
 
 #[test]
-fn effective_verbs_for_writer_and_reader_are_the_union_of_the_table() {
+fn effective_verbs_for_submitter_and_reader_are_the_union_of_the_table() {
     assert_eq!(
-        effective_verbs(&roles(&[Role::Writer, Role::Reader]), UsedBy::Agent),
+        effective_verbs(&roles(&[Role::Submitter, Role::Reader]), UsedBy::Agent),
         [
             "recall",
             "read",
@@ -510,10 +629,10 @@ fn effective_verbs_for_reviewer_and_reader_list_supersede_once_in_table_order() 
             "supersede",
         ]
     );
-    // No key role admits both writer and reviewer, but the union is still
+    // No key role admits both submitter and reviewer, but the union is still
     // free of duplicates in table order.
     assert_eq!(
-        effective_verbs(&roles(&[Role::Writer, Role::Reviewer]), UsedBy::Agent),
+        effective_verbs(&roles(&[Role::Submitter, Role::Reviewer]), UsedBy::Agent),
         [
             "remember",
             "learn",
@@ -545,11 +664,11 @@ fn a_service_keys_effective_verbs_omit_review() {
 const ME: Uuid = Uuid::from_u128(0xC1);
 const OTHER: Uuid = Uuid::from_u128(0xC2);
 
-/// A writer-role key holding writer and reader on `research-crew`, tailing
+/// A contributor key holding submitter and reader on `research-crew`, tailing
 /// `research-crew`.
-fn writer_reader_grants(tree: &Tree) -> Vec<Grant> {
+fn submitter_reader_grants(tree: &Tree) -> Vec<Grant> {
     vec![
-        grant(1, tree.research_crew, Role::Writer, &[]),
+        grant(1, tree.research_crew, Role::Submitter, &[]),
         grant(2, tree.research_crew, Role::Reader, &[]),
     ]
 }
@@ -576,7 +695,7 @@ fn subject(workspaces: &[Vec<Uuid>], author: Option<Uuid>, promoted: bool) -> Ta
 #[test]
 fn another_keys_submission_event_is_invisible() {
     let tree = Tree::new();
-    let grants = writer_reader_grants(&tree);
+    let grants = submitter_reader_grants(&tree);
     let me = caller(&grants, &[], tree.research_crew);
     let at = [tree.ancestry(tree.lit_review)];
     for event_type in [
@@ -599,7 +718,7 @@ fn another_keys_submission_event_is_invisible() {
 #[test]
 fn an_authors_own_submission_is_visible_without_a_reader_grant() {
     let tree = Tree::new();
-    let grants = [grant(1, tree.research_crew, Role::Writer, &[])];
+    let grants = [grant(1, tree.research_crew, Role::Submitter, &[])];
     let me = caller(&grants, &[], tree.research_crew);
     let at = [tree.ancestry(tree.experiments)];
     assert!(tail_visible(
@@ -612,7 +731,7 @@ fn an_authors_own_submission_is_visible_without_a_reader_grant() {
 #[test]
 fn a_global_denial_hides_the_authors_own_submission() {
     let tree = Tree::new();
-    let grants = writer_reader_grants(&tree);
+    let grants = submitter_reader_grants(&tree);
     let global = [denial(1, tree.experiments)];
     let me = caller(&grants, &global, tree.research_crew);
     let denied = [tree.ancestry(tree.run_grid)];
@@ -632,7 +751,7 @@ fn a_global_denial_hides_the_authors_own_submission() {
 #[test]
 fn an_event_outside_the_tails_subtree_is_hidden() {
     let tree = Tree::new();
-    let grants = writer_reader_grants(&tree);
+    let grants = submitter_reader_grants(&tree);
     let me = caller(&grants, &[], tree.experiments);
     let beside = [tree.ancestry(tree.lit_review)];
     assert!(!tail_visible(
@@ -671,13 +790,13 @@ fn a_promoted_subjects_lifecycle_event_is_visible_to_a_reader_of_its_workspace()
             "{event_type}"
         );
     }
-    // A writer-only key is no reader: another author's promotion stays out.
-    let writer = [grant(1, tree.research_crew, Role::Writer, &[])];
-    let writer_only = caller(&writer, &[], tree.research_crew);
+    // A submitter grant alone is no reader: another author's promotion stays out.
+    let submitter = [grant(1, tree.research_crew, Role::Submitter, &[])];
+    let without_recall = caller(&submitter, &[], tree.research_crew);
     assert!(!tail_visible(
         "lifecycle.promote",
         &subject(&at, Some(OTHER), true),
-        &writer_only
+        &without_recall
     ));
 }
 
@@ -685,7 +804,7 @@ fn a_promoted_subjects_lifecycle_event_is_visible_to_a_reader_of_its_workspace()
 fn a_never_promoted_subjects_lifecycle_event_reaches_only_its_author() {
     // The erase of a held version never reaches another key (R3).
     let tree = Tree::new();
-    let grants = writer_reader_grants(&tree);
+    let grants = submitter_reader_grants(&tree);
     let me = caller(&grants, &[], tree.research_crew);
     let at = [tree.ancestry(tree.lit_review)];
     assert!(!tail_visible(
@@ -734,7 +853,7 @@ fn a_self_signed_subjects_lifecycle_event_shows_only_on_a_tail_scoped_to_its_wor
 #[test]
 fn a_subject_outside_the_audience_is_hidden_even_from_its_author() {
     let tree = Tree::new();
-    let grants = writer_reader_grants(&tree);
+    let grants = submitter_reader_grants(&tree);
     let me = caller(&grants, &[], tree.research_crew);
     let at = [tree.ancestry(tree.lit_review)];
     for (event_type, author) in [
@@ -830,7 +949,7 @@ fn a_workspace_event_needs_reader_on_its_node_and_a_relate_event_on_both_endpoin
 fn review_and_key_events_are_never_visible_on_the_content_tail() {
     // Even to the acting key's own author, reading everything.
     let tree = Tree::new();
-    let grants = writer_reader_grants(&tree);
+    let grants = submitter_reader_grants(&tree);
     let me = caller(&grants, &[], tree.research_crew);
     let at = [tree.ancestry(tree.lit_review)];
     for event_type in [
@@ -869,7 +988,7 @@ fn review_and_key_events_are_never_visible_on_the_content_tail() {
 #[test]
 fn a_subject_with_the_wrong_number_of_workspaces_is_hidden() {
     let tree = Tree::new();
-    let grants = writer_reader_grants(&tree);
+    let grants = submitter_reader_grants(&tree);
     let me = caller(&grants, &[], tree.research_crew);
     let none: [Vec<Uuid>; 0] = [];
     let two = [
@@ -955,7 +1074,7 @@ proptest! {
             let n = parents.len();
             let grant_spec = (
                 0..n,
-                proptest::sample::select(vec![Role::Reader, Role::Writer, Role::Reviewer]),
+                proptest::sample::select(vec![Role::Reader, Role::Submitter, Role::Reviewer]),
                 proptest::collection::vec(0..n, 0..3),
             );
             (
@@ -1038,4 +1157,82 @@ fn a_node_grant_covers_its_node_and_no_descendant() {
         Some(Covers::Subtree)
     );
     assert_eq!(Covers::parse("tree"), None);
+}
+
+// ---- A contributor without recall (ADR-0093 d3, as read on 2026-11-20) ----
+
+/// The answer for a key of `role` holding `grants` over the example tree,
+/// reading the ancestries the helper asks for and no other.
+fn without_recall(tree: &Tree, role: Role, grants: &[Grant]) -> bool {
+    let ancestries: BTreeMap<Uuid, Vec<Uuid>> = recall_ancestries_needed(role, grants)
+        .into_iter()
+        .map(|n| (n, tree.ancestry(n)))
+        .collect();
+    contributor_without_recall(role, grants, &ancestries)
+}
+
+/// A v0.8.3 write-only user key, migrated: a contributor holding
+/// submitter on its user root and, as its one reader grant, the `universe`
+/// node grant issuance added. The reader grant reaches `universe` alone, so
+/// the key writes its root without recall and is named, though it holds a
+/// reader grant.
+#[test]
+fn a_migrated_write_only_user_key_with_a_universe_reader_grant_is_a_contributor_without_recall() {
+    let tree = Tree::new();
+    // research-crew stands for the user root, directly under universe.
+    let migrated = [
+        grant(1, tree.research_crew, Role::Submitter, &[]),
+        node_grant(2, tree.universe, Role::Reader),
+    ];
+    assert!(without_recall(&tree, Role::Contributor, &migrated));
+    assert_eq!(
+        recall_ancestries_needed(Role::Contributor, &migrated),
+        roles_nodes(&[tree.research_crew]),
+        "the submitter node no reader grant names is the one read"
+    );
+}
+
+/// A contributor is named when any one submitter grant's node is reached by
+/// no reader grant, and not when a reader grant reaches each, on the same
+/// node or as a subtree grant above it; a key of any other role is never a
+/// contributor without recall.
+#[test]
+fn a_contributor_is_without_recall_where_one_submitter_node_is_reached_by_no_reader_grant() {
+    let tree = Tree::new();
+    let beside = [
+        grant(1, tree.research_crew, Role::Submitter, &[]),
+        grant(2, tree.research_crew, Role::Reader, &[]),
+    ];
+    assert!(!without_recall(&tree, Role::Contributor, &beside));
+    assert!(recall_ancestries_needed(Role::Contributor, &beside).is_empty());
+    let above = [
+        grant(1, tree.run_grid, Role::Submitter, &[]),
+        grant(2, tree.research_crew, Role::Reader, &[]),
+    ];
+    assert!(!without_recall(&tree, Role::Contributor, &above));
+    let one_uncovered = [
+        grant(1, tree.lit_review, Role::Submitter, &[]),
+        grant(2, tree.ops_crew, Role::Submitter, &[]),
+        grant(3, tree.research_crew, Role::Reader, &[]),
+    ];
+    assert!(without_recall(&tree, Role::Contributor, &one_uncovered));
+    let node_reader_below = [
+        grant(1, tree.research_crew, Role::Submitter, &[]),
+        node_grant(2, tree.lit_review, Role::Reader),
+    ];
+    assert!(without_recall(&tree, Role::Contributor, &node_reader_below));
+    for role in [Role::Submitter, Role::Reviewer, Role::Reader] {
+        assert!(
+            !without_recall(
+                &tree,
+                role,
+                &[grant(1, tree.ops_crew, Role::Submitter, &[])]
+            ),
+            "{role:?}"
+        );
+    }
+}
+
+fn roles_nodes(nodes: &[Uuid]) -> BTreeSet<Uuid> {
+    nodes.iter().copied().collect()
 }

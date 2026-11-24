@@ -94,17 +94,17 @@ async fn rig<S: WebStore + ConnectionStore + Clone>(store: S) -> Rig<S> {
         }
     };
     let person = issue(
-        Role::Writer,
+        Role::Contributor,
         UsedBy::Person,
         "ada-desk",
-        vec![Role::Writer, Role::Reader],
+        vec![Role::Submitter, Role::Reader],
     )
     .await;
     let agent = issue(
-        Role::Writer,
+        Role::Contributor,
         UsedBy::Agent,
         "ada-agent",
-        vec![Role::Writer, Role::Reader],
+        vec![Role::Submitter, Role::Reader],
     )
     .await;
     let review = issue(

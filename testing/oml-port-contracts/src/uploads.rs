@@ -167,7 +167,7 @@ async fn a_bundle_of_several_parts_uploads_resumes_after_an_interruption_and_ver
     store: S,
 ) {
     let rig = rig(store).await;
-    let alice = key(&rig, "alice-writer", Role::Writer).await;
+    let alice = key(&rig, "alice-writer", Role::Submitter).await;
     let bytes = bundle(2 * PART_SIZE + 4_000);
     let opened = rig
         .app
@@ -240,7 +240,7 @@ async fn a_part_is_stored_as_ciphertext_and_nothing_about_an_upload_is_journalle
     store: S,
 ) {
     let rig = rig(store).await;
-    let alice = key(&rig, "alice-writer", Role::Writer).await;
+    let alice = key(&rig, "alice-writer", Role::Submitter).await;
     let head = rig.store.chain_head(rig.tenant_id).await.expect("head");
     let bytes = b"a decrypted bundle, in plaintext".to_vec();
     let id = rig
@@ -281,8 +281,8 @@ async fn a_part_is_stored_as_ciphertext_and_nothing_about_an_upload_is_journalle
 
 async fn another_key_can_neither_read_nor_touch_an_upload<S: JournalStore + Clone>(store: S) {
     let rig = rig(store).await;
-    let alice = key(&rig, "alice-writer", Role::Writer).await;
-    let bob = key(&rig, "bob-writer", Role::Writer).await;
+    let alice = key(&rig, "alice-writer", Role::Submitter).await;
+    let bob = key(&rig, "bob-writer", Role::Submitter).await;
     let bytes = b"alice's bundle".to_vec();
     let id = rig
         .app
@@ -327,8 +327,56 @@ async fn another_key_can_neither_read_nor_touch_an_upload<S: JournalStore + Clon
     );
 }
 
-async fn only_a_writer_key_opens_an_upload<S: JournalStore + Clone>(store: S) {
+/// A contributor and a submitter key open an upload; a reader, a reviewer
+/// and an admin key are refused by their role (ADR-0004 d3; ADR-0093 d6).
+async fn only_a_contributor_or_a_submitter_key_opens_an_upload<S: JournalStore + Clone>(store: S) {
     let rig = rig(store).await;
+    let on_universe = |role| GrantRequest {
+        node: Reference::parse("universe").expect("a reference"),
+        role,
+        deny: Vec::new(),
+        covers: Covers::Subtree,
+    };
+    let contributor = rig
+        .app
+        .issue_key(
+            &rig.admin,
+            &IssueKeyRequest {
+                profile: None,
+                role: Role::Contributor,
+                name: name("erin-contributor"),
+                principal: "erin/laptop".to_owned(),
+                used_by: Some(UsedBy::Person),
+                default_workspace: None,
+                crew: None,
+                grants: vec![on_universe(Role::Submitter), on_universe(Role::Reader)],
+                user: None,
+                connect_code: false,
+                guardrail_scope: None,
+                expiry: None,
+                requests_per_minute: None,
+            },
+        )
+        .await
+        .expect("a contributor key")
+        .value;
+    let submitter = key(&rig, "sam-submitter", Role::Submitter).await;
+    for opener in [&contributor, &submitter] {
+        rig.app
+            .open_upload(opener.as_str(), UploadPurpose::Import, 10, &"a".repeat(64))
+            .await
+            .expect("a contributor or a submitter opens an upload");
+    }
+    let reader = key(&rig, "rhea-reader", Role::Reader).await;
+    assert!(matches!(
+        rig.app
+            .open_upload(reader.as_str(), UploadPurpose::Import, 10, &"a".repeat(64))
+            .await,
+        Err(AppError::VerbCeiling {
+            role: Role::Reader,
+            ..
+        })
+    ));
     let reviewer = key(&rig, "carol-reviewer", Role::Reviewer).await;
     assert!(matches!(
         rig.app
@@ -360,7 +408,7 @@ async fn an_unbound_upload_expires_and_its_key_is_shredded_before_its_objects<
     store: S,
 ) {
     let rig = rig(store).await;
-    let alice = key(&rig, "alice-writer", Role::Writer).await;
+    let alice = key(&rig, "alice-writer", Role::Submitter).await;
     let bytes = b"a bundle nobody imports".to_vec();
     let id = rig
         .app
@@ -442,7 +490,7 @@ async fn an_open_session_slides_with_each_part_and_expires_72_hours_after_it_ope
     store: S,
 ) {
     let rig = rig(store).await;
-    let alice = key(&rig, "alice-writer", Role::Writer).await;
+    let alice = key(&rig, "alice-writer", Role::Submitter).await;
     let bytes = bundle(4 * PART_SIZE);
     let id = rig
         .app
@@ -478,8 +526,8 @@ async fn an_open_session_slides_with_each_part_and_expires_72_hours_after_it_ope
 
 async fn every_upload_refusal_is_named<S: JournalStore + Clone>(store: S) {
     let rig = rig_with(store, 3 * PART_SIZE, 5 * PART_SIZE).await;
-    let alice = key(&rig, "alice-writer", Role::Writer).await;
-    let bob = key(&rig, "bob-writer", Role::Writer).await;
+    let alice = key(&rig, "alice-writer", Role::Submitter).await;
+    let bob = key(&rig, "bob-writer", Role::Submitter).await;
     let digest = |b: &[u8]| sha256_hex(b);
 
     // Over uploads.max_bytes.
@@ -640,7 +688,7 @@ async fn without_an_object_store_no_upload_opens<S: JournalStore + Clone>(store:
             &boot.admin_key.value,
             &IssueKeyRequest {
                 profile: None,
-                role: Role::Writer,
+                role: Role::Submitter,
                 name: name("dan-writer"),
                 principal: "dan".to_owned(),
                 used_by: Some(UsedBy::Person),
@@ -672,7 +720,7 @@ async fn an_abandoned_upload_is_shredded_and_abandoning_it_again_answers_the_sam
     store: S,
 ) {
     let rig = rig(store).await;
-    let alice = key(&rig, "alice-writer", Role::Writer).await;
+    let alice = key(&rig, "alice-writer", Role::Submitter).await;
     let bytes = b"second thoughts".to_vec();
     let id = rig
         .app
@@ -723,7 +771,7 @@ async fn a_part_the_store_lost_is_named_incomplete_at_completion_and_sending_it_
     store: S,
 ) {
     let rig = rig(store).await;
-    let alice = key(&rig, "alice-writer", Role::Writer).await;
+    let alice = key(&rig, "alice-writer", Role::Submitter).await;
     let bytes = bundle(PART_SIZE + 4_000);
     let id = rig
         .app
@@ -785,7 +833,7 @@ where
     .await;
     a_part_is_stored_as_ciphertext_and_nothing_about_an_upload_is_journalled(make().await).await;
     another_key_can_neither_read_nor_touch_an_upload(make().await).await;
-    only_a_writer_key_opens_an_upload(make().await).await;
+    only_a_contributor_or_a_submitter_key_opens_an_upload(make().await).await;
     an_unbound_upload_expires_and_its_key_is_shredded_before_its_objects(make().await).await;
     an_open_session_slides_with_each_part_and_expires_72_hours_after_it_opened(make().await).await;
     every_upload_refusal_is_named(make().await).await;

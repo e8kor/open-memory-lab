@@ -704,9 +704,9 @@ async fn bulk_review_lists_confirms_by_id_and_records_each_outcome_once() {
         json_post(
             "/v2/keys",
             &admin,
-            json!({"role": "writer", "name": "alice-loader", "principal": "alice/loader",
+            json!({"role": "contributor", "name": "alice-loader", "principal": "alice/loader",
                    "user": "alice", "grants": [
-                       {"workspace": "alice", "role": "writer"},
+                       {"workspace": "alice", "role": "submitter"},
                        {"workspace": "alice", "role": "reader"}]}),
         ),
     )
@@ -935,16 +935,16 @@ async fn cockpit() -> Option<Cockpit> {
     for (name, body) in [
         (
             "alice-loader",
-            json!({"role": "writer", "name": "alice-loader", "principal": "alice/loader",
+            json!({"role": "contributor", "name": "alice-loader", "principal": "alice/loader",
                    "user": "alice", "grants": [
-                       {"workspace": "alice", "role": "writer"},
+                       {"workspace": "alice", "role": "submitter"},
                        {"workspace": "alice", "role": "reader"}]}),
         ),
         (
             "alice-laptop",
-            json!({"role": "writer", "name": "alice-laptop", "principal": "alice/laptop",
+            json!({"role": "contributor", "name": "alice-laptop", "principal": "alice/laptop",
                    "user": "alice", "grants": [
-                       {"workspace": "alice", "role": "writer"},
+                       {"workspace": "alice", "role": "submitter"},
                        {"workspace": "alice", "role": "reader"}]}),
         ),
         (

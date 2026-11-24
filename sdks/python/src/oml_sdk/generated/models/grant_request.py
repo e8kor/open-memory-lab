@@ -26,7 +26,9 @@ class GrantRequest:
             namespace (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is universe,
             is neither, and is refused (request.validation).
         role (GrantRequestRole): A grant role, admissible under the key's role (the admissibility table in
-            docs/architecture/roles-and-keys.md); never admin or operator.
+            docs/architecture/roles-and-keys.md); never contributor, admin or operator. A contributor key carries at least
+            one reader and one submitter grant, else request.validation with details.reason contributor_grants (ADR-0093
+            d2).
         deny (list[GrantRequestDenyItem] | Unset): Per-grant masks; each masks a subtree within this grant only and must
             lie inside it (request.validation otherwise). A node grant takes none (request.validation, details.field
             /grants/<i>/deny).

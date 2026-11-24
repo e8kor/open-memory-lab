@@ -683,6 +683,9 @@ where
                 "expiry": k.key.expiry.as_ref().map(|at| at.as_str()),
                 "expired": st.app.key_expired(&k.key),
                 "requests_per_minute": k.key.requests_per_minute,
+                // A contributor without recall, which the console marks
+                // "no recall" (ADR-0093 d3).
+                "without_recall": k.without_recall,
                 "grants": grants,
             }));
         }
@@ -1358,7 +1361,7 @@ where
     // -- d5's unchanged key operations, as a session key -------------------
 
     /// `POST /v2/keys` as `<user>-web`: the person's own issuance, a reader
-    /// or writer key named `<user>-<suffix>` on their root, its grants the
+    /// or contributor key named `<user>-<suffix>` on their root, its grants the
     /// use case's, never the body's. The person may set the key's `expiry`,
     /// under the rule of every issuance (ADR-0079 d1, the operator's answer
     /// 3); every other field, `requests_per_minute` included, is refused

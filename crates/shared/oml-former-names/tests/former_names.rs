@@ -311,3 +311,93 @@ fn a_payload_holding_both_a_former_key_and_its_successor_fails_closed() {
     .expect_err("held_by beside used_by");
     assert_eq!(err.name, "held_by");
 }
+
+// ---- Rule 7: the writer role of v0.8.3 (ADR-0093 d4) ----
+
+#[test]
+fn a_key_issued_whose_role_is_writer_reads_as_a_contributor() {
+    let (_, payload) = read(
+        "key.issued",
+        &json!({"role": "writer", "used_by": "agent", "name": "ada-writer"}),
+    );
+    assert_eq!(
+        payload,
+        json!({"role": "contributor", "used_by": "agent", "name": "ada-writer"}),
+        "the role is read; the name is content and keeps its spelling"
+    );
+}
+
+#[test]
+fn a_grant_issued_whose_role_is_writer_reads_as_a_submitter() {
+    let (_, payload) = read(
+        "grant.issued",
+        &json!({"role": "writer", "workspace_node_id": "n"}),
+    );
+    assert_eq!(
+        payload,
+        json!({"role": "submitter", "workspace_node_id": "n"})
+    );
+}
+
+#[test]
+fn a_writer_inside_a_review_policy_reads_as_a_submitter() {
+    let (_, payload) = read(
+        "review.ratify",
+        &json!({"policy_snapshot": {"k": 1, "required_roles": ["writer", "reviewer"]}}),
+    );
+    assert_eq!(
+        payload,
+        json!({"policy_snapshot": {"k": 1, "required_roles": ["submitter", "reviewer"]}})
+    );
+    for event_type in ["lifecycle.promote", "lifecycle.supersede"] {
+        let (_, payload) = read(
+            event_type,
+            &json!({"policy": {"k": 1, "required_roles": ["writer"]}}),
+        );
+        assert_eq!(
+            payload,
+            json!({"policy": {"k": 1, "required_roles": ["submitter"]}}),
+            "{event_type}"
+        );
+    }
+}
+
+#[test]
+fn a_writer_outside_the_listed_fields_is_named_as_unmapped() {
+    assert_eq!(
+        unmapped_former_names("crew.updated", &json!({"role": "writer"})),
+        ["role: writer"]
+    );
+    // A claim's text and a key's name are content, never read.
+    assert_eq!(
+        unmapped_former_names(
+            "key.issued",
+            &json!({"role": "writer", "name": "the-writer"})
+        ),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        unmapped_former_names("submission.remember", &json!({"claim": "the writer role"})),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn the_map_is_the_identity_on_the_v0_8_4_roles() {
+    for (event_type, payload) in [
+        ("key.issued", json!({"role": "contributor"})),
+        ("key.issued", json!({"role": "submitter"})),
+        ("grant.issued", json!({"role": "submitter"})),
+        (
+            "lifecycle.promote",
+            json!({"policy": {"required_roles": ["reviewer"]}}),
+        ),
+    ] {
+        let read = read_event(event_type, &payload).expect("mapped");
+        assert_eq!(read.payload, payload, "{event_type}");
+        assert_eq!(
+            unmapped_former_names(event_type, &payload),
+            Vec::<String>::new()
+        );
+    }
+}

@@ -269,9 +269,9 @@ def seed(lead, admin, workspaces, memories):
         _, node = lead.json("POST", "/v2/workspaces", admin, {"parent": root, "name": f"p{i}"})
         names.append(node["id"])
     _, writer = lead.json("POST", "/v2/keys", admin, {
-        "role": "writer", "name": f"{USER}-bench-writer", "user": USER, "used_by": "agent",
+        "role": "submitter", "name": f"{USER}-bench-writer", "user": USER, "used_by": "agent",
         "principal": "bench/writer", "default_workspace": root,
-        "grants": [{"workspace": root, "role": "writer"}]})
+        "grants": [{"workspace": root, "role": "submitter"}]})
     reviewers = []
     for side in ("a", "b"):
         _, key = lead.json("POST", "/v2/keys", admin, {

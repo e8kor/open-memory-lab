@@ -177,13 +177,13 @@ async fn ada_key(router: &Router, admin: &str, name: &str, used_by: &str) -> Str
         "/v2/keys",
         admin,
         json!({
-            "role": "writer",
+            "role": "contributor",
             "name": name,
             "principal": format!("ada/{name}"),
             "used_by": used_by,
             "user": "ada",
             "grants": [
-                { "workspace": "ada", "role": "writer" },
+                { "workspace": "ada", "role": "submitter" },
                 { "workspace": "ada", "role": "reader" },
             ],
         }),

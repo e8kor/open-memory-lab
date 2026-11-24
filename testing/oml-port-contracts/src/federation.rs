@@ -146,11 +146,11 @@ impl<S: JournalStore + Clone> FedWorld<S> {
             async move { app.issue_key(admin.as_str(), &req).await.expect("issue") }
         };
         let writer = issue(
-            Role::Writer,
+            Role::Contributor,
             UsedBy::Agent,
             "fed-writer",
             vec![
-                grant(root, Role::Writer, Vec::new()),
+                grant(root, Role::Submitter, Vec::new()),
                 grant(root, Role::Reader, Vec::new()),
             ],
         )

@@ -2639,7 +2639,7 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
 
 /// The lead's subscriber: every line `tracing-subscriber`'s JSON format,
 /// `timestamp` (RFC 3339, UTC), `level`, `target`, then the event's fields
-/// at the top level, and no span fields, on `writer`, which `main` sets to
+/// at the top level, and no span fields, on the writer argument, which `main` sets to
 /// stderr: stdout is the show-once enrollment token's (ADR-0042 d1).
 pub fn log_subscriber<W>(writer: W) -> impl tracing::Subscriber + Send + Sync
 where

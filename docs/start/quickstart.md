@@ -65,7 +65,7 @@ The result is a server, a workspace `crew`, an agent key, a second agent key cal
 
     credentials stored in /…/oml/credentials (owner-only); the server keeps only the key hash.
     created crew (2e82c1a8-7505-44ec-97b1-1f4bde4dc2b2) universe.crew (status: development)
-    key agent (c773a866-0619-4a9a-9c94-58c67d6689a4) issued to crew/agent (writer, used by agent): …
+    key agent (c773a866-0619-4a9a-9c94-58c67d6689a4) issued to crew/agent (contributor, used by agent): …
     ```
 
 === "Docker"
@@ -155,7 +155,7 @@ OML_API_KEY=$A oml review approve --ids $ID
 ```
 
 ```text
-refused (403): access.verb_ceiling — bulk review needs a reviewer key used by a person, and this is a writer key used by agent
+refused (403): access.verb_ceiling — bulk review needs a reviewer key used by a person, and this is a contributor key used by agent
   rule: R1: the surface an agent can call never promotes, signs, demotes or deletes; bulk review is a person's act.
 ```
 

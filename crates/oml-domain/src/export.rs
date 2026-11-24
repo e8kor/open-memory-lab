@@ -68,7 +68,7 @@ mod tests {
         assert!(may_export(Role::Reader, UsedBy::Person, false, false));
         assert!(may_export(Role::Reviewer, UsedBy::Person, false, false));
         assert!(!may_export(Role::Admin, UsedBy::Person, false, false));
-        assert!(!may_export(Role::Writer, UsedBy::Agent, false, false));
+        assert!(!may_export(Role::Contributor, UsedBy::Agent, false, false));
         assert!(!may_export(Role::Reviewer, UsedBy::Person, true, false));
     }
 
@@ -76,6 +76,6 @@ mod tests {
     fn a_crew_key_never_exports() {
         // I18: a key that belongs to a crew is refused as an agent key is.
         assert!(!may_export(Role::Reader, UsedBy::Person, false, true));
-        assert!(!may_export(Role::Writer, UsedBy::Person, false, true));
+        assert!(!may_export(Role::Contributor, UsedBy::Person, false, true));
     }
 }

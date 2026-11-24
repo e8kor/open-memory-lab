@@ -209,7 +209,7 @@ decisions, its conventions and where things are (#136).
 One reviewed `derived_fact` that summarizes the whole workspace, loaded at session start where the
 workspace has no brief and read by any agent that asks (#136).
 
-- **Written by a crew, never by OML.** A reviewer crew's summarizing agent, under a key with writer
+- **Written by a crew, never by OML.** A reviewer crew's summarizing agent, under a key with submitter
   and reader on the workspace, writes it with [`oml_learn`](https://github.com/e8kor/open-memory-lab/blob/main/docs/api/mcp-plugin.md#oml_learn), so its
   `derives_from` names the claims it summarizes. OML writes no summary: it extracts nothing,
   synthesizes no profile and answers no question

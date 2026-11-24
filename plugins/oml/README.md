@@ -102,9 +102,9 @@ from whichever was added, and only one is held at a time. See
 [release artifacts](../../docs/contributing/ci-and-toolchain.md).
 
 The plugin registers one MCP connection, `oml`, and every tool runs on the one key behind
-it. Issue that key with the writer role, a writer grant and a reader grant on the agent's
-workspace, and that workspace as its default. A key without the reader grant still writes,
-but recall through `oml_read` refuses it with `access.not_found`.
+it. Issue that key with the contributor role, a submitter grant and a reader grant on the agent's
+workspace, and that workspace as its default. A submitter key, which holds no reader grant,
+still writes, but recall through `oml_read` refuses it with `access.verb_ceiling`.
 
 Every tool argument that takes a workspace is `workspace`, and takes its name, such as
 `metals-crew`, or its id. A workspace's name is unique in the tenant and never changes. A name
@@ -145,7 +145,7 @@ their own work, both depend on it. To run a server, see the
 [self-hosting guide](../../docs/start/run-your-own.md).
 
 `oml keys issue-agent <key-name> --principal <principal> --workspace <workspace>` issues an
-agent's key in one call: a writer key named `<key-name>`, with a writer and a reader grant on the
+agent's key in one call: a contributor key named `<key-name>`, with a submitter and a reader grant on the
 workspace, given by its name or id, which is also its default. With `--out <path>` the value goes
 to a new owner-only file, the file the shell path under "Install" reads, and the CLI prints
 that path's `oml setup claude-code --key-file` line and its `jq | claude plugin configure`
@@ -209,7 +209,7 @@ The broader rule, `mcp__plugin_oml_oml`, allows every tool of the plugin, the wr
 costs the user the sight of it: Claude then calls `oml_write`, which can propose retiring a claim,
 without showing the call, so whatever the session
 chooses to record leaves for the server unseen. What it chooses is shaped by the stored text the
-hook adds at session start, which other writers in the workspace can influence. Every write is
+hook adds at session start, which other writing keys in the workspace can influence. Every write is
 still held until a different identity reviews it, so nothing it records is shared before then.
 
 ## Recall after a failed command (opt-in)

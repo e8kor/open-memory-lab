@@ -44,7 +44,7 @@ before the connector is added; the page does not make one.
 
 1. Open the server's `/web` page and sign in.
 2. Find **Connect Claude on the web or a phone**.
-3. Type a name, keep the role **writer**, and click **Issue connector key**.
+3. Type a name, keep the role **contributor**, and click **Issue connector key**.
 4. Copy the connect code the page shows. It is shown once and works for ten minutes.
 
 If the code is lost or ran out, click **New connect code** on that key's row. The button is on

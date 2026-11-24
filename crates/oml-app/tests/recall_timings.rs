@@ -42,7 +42,7 @@ async fn reader_with_a_hit(timings: bool) -> (TestApp, String) {
     let root = boot.root_workspace_id;
     let mut keys = Vec::new();
     for (n, role) in [
-        ("w", Role::Writer),
+        ("w", Role::Submitter),
         ("d", Role::Reviewer),
         ("r", Role::Reader),
     ] {

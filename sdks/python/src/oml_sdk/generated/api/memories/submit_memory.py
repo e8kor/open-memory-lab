@@ -98,7 +98,7 @@ def sync_detailed(
 ) -> Response[ErrorEnvelope | SubmitAccepted]:
     """Submit a memory (remember or learn); held on arrival, scanned same-call.
 
-     Requires: writer effective access on the resolved workspace, or, for a person's session key whose
+     Requires: submitter effective access on the resolved workspace, or, for a person's session key whose
     role is reviewer, reviewer and reader effective access there: the version is held and its lineage
     excludes that key, and every other reviewer key is access.verb_ceiling (ADR-0082 d2, d10); every
     derives_from ancestor must be readable by the key — promoted within its reader effective access, or
@@ -159,7 +159,7 @@ def sync(
 ) -> ErrorEnvelope | SubmitAccepted | None:
     """Submit a memory (remember or learn); held on arrival, scanned same-call.
 
-     Requires: writer effective access on the resolved workspace, or, for a person's session key whose
+     Requires: submitter effective access on the resolved workspace, or, for a person's session key whose
     role is reviewer, reviewer and reader effective access there: the version is held and its lineage
     excludes that key, and every other reviewer key is access.verb_ceiling (ADR-0082 d2, d10); every
     derives_from ancestor must be readable by the key — promoted within its reader effective access, or
@@ -215,7 +215,7 @@ async def asyncio_detailed(
 ) -> Response[ErrorEnvelope | SubmitAccepted]:
     """Submit a memory (remember or learn); held on arrival, scanned same-call.
 
-     Requires: writer effective access on the resolved workspace, or, for a person's session key whose
+     Requires: submitter effective access on the resolved workspace, or, for a person's session key whose
     role is reviewer, reviewer and reader effective access there: the version is held and its lineage
     excludes that key, and every other reviewer key is access.verb_ceiling (ADR-0082 d2, d10); every
     derives_from ancestor must be readable by the key — promoted within its reader effective access, or
@@ -274,7 +274,7 @@ async def asyncio(
 ) -> ErrorEnvelope | SubmitAccepted | None:
     """Submit a memory (remember or learn); held on arrival, scanned same-call.
 
-     Requires: writer effective access on the resolved workspace, or, for a person's session key whose
+     Requires: submitter effective access on the resolved workspace, or, for a person's session key whose
     role is reviewer, reviewer and reader effective access there: the version is held and its lineage
     excludes that key, and every other reviewer key is access.verb_ceiling (ADR-0082 d2, d10); every
     derives_from ancestor must be readable by the key — promoted within its reader effective access, or

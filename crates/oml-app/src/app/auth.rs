@@ -340,7 +340,7 @@ where
     Sc: Scanner,
 {
     /// The first sign-in's keys (ADR-0045 d6, d20 e): `<user>-web`, a user
-    /// key whose issuance creates `universe.<user>`, writer and reader on
+    /// key whose issuance creates `universe.<user>`, submitter and reader on
     /// it; `<user>-review`, a tenant reviewer key with reviewer and reader on
     /// that root; and, for an admin entry, `<user>-admin`. Each is issued
     /// by the admin key that added the entry, only when missing, so a sign-in
@@ -386,8 +386,8 @@ where
             let name = key_name(&entry.user, capacity.suffix())?;
             let (role, grants, user) = match capacity {
                 Capacity::Web => (
-                    Role::Writer,
-                    vec![grant(Role::Writer), grant(Role::Reader)],
+                    Role::Contributor,
+                    vec![grant(Role::Submitter), grant(Role::Reader)],
                     Some(entry.user.clone()),
                 ),
                 Capacity::Review => (

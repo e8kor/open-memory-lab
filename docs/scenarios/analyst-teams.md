@@ -12,7 +12,7 @@ The controls cost the analysts two things: a second analyst's look at each item,
 
 ## 1. Draft on staging
 
-Built. An admin on staging creates `pricing.draft`, issues priya and sam a writer key and a reviewer key each (`--used-by person`, as for [engineering teams](engineering-teams.md#1-set-up-the-shared-workspace)), and priya puts it in progress:
+Built. An admin on staging creates `pricing.draft`, issues priya and sam a contributor key and a reviewer key each (`--used-by person`, as for [engineering teams](engineering-teams.md#1-set-up-the-shared-workspace)), and priya puts it in progress:
 
 ```sh
 oml workspaces create universe pricing
@@ -74,7 +74,7 @@ Built today: the ladder. Moving `pricing.draft` to `protected` needs zero held i
 **Designed** ([ADR-0084](../adr/ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md), [import and export](import-export.md)).
 
 1. On staging, priya exports the release, encrypted to the production team's age key: `oml workspaces export draft --release 2.0.0 --recipient age1… --out pricing-2.0.0.oml`. The tenant's export policy must allow a shared workspace's export.
-2. On production, an admin has created `pricing.prod` and granted the team. An analyst makes its drafts visible to everyone working here and imports with a writer key, and so becomes the author of every imported version on production. The production scan runs on each version.
+2. On production, an admin has created `pricing.prod` and granted the team. An analyst makes its drafts visible to everyone working here and imports with a contributor key, and so becomes the author of every imported version on production. The production scan runs on each version.
 3. A second analyst on production reviews every imported item again, attesting no authorship of it on staging. The staging verdicts show as evidence and count for nothing.
 4. Two analysts cut and publish `pricing.prod@2.0.0`.
 

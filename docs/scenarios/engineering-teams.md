@@ -18,7 +18,7 @@ An admin does this once. Built.
 oml workspaces create universe payments       # the team's root, universe.payments
 oml workspaces create payments dev            # universe.payments.dev, written payments.dev below
 oml crews create payments-crew
-oml keys issue alice-dev --role writer --used-by person --principal people/alice --grant dev:writer
+oml keys issue alice-dev --role contributor --used-by person --principal people/alice --grant dev:submitter --grant dev:reader
 oml keys issue alice-dev-review --role reviewer --used-by person --principal people/alice \
   --grant dev:reviewer --grant dev:reader
 oml keys issue-agent pay-agent-1 --principal crew/payments/agent-1 --workspace dev \

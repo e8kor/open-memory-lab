@@ -16,7 +16,9 @@ answers: "the terms the OML docs use and what each means"
 | **unreviewed** | The label recall puts on held memories inside an in-progress workspace and on the key's own held memories. |
 | **workspace** | A node in a tenant's tree, not an account or environment: memory is written into a workspace, grants bind to its node and reach its subtree, and workspaces nest under the root, `universe`. The tenant is the boundary. In Databricks and Microsoft Fabric a workspace is an environment boundary; in OML it is a node in the tree. Called a workarea before v0.8.3. |
 | **status** | Where a workspace stands on its ladder: `development`, then `protected`, then `frozen`, each step proposed by one identity and ratified by another, never undone. A `protected` workspace needs two persons to reach and takes no shared drafts; a `frozen` one takes no new writes. Called `committed` and `validated` before v0.8.3. |
-| **key** | An API key with one role: `reader`, `writer`, `reviewer`, `admin` or `operator`. |
+| **key** | An API key with one role: `reader`, `contributor`, `submitter`, `reviewer`, `admin` or `operator`. |
+| **contributor key** | A key that recalls and writes: at least one `reader` grant and one `submitter` grant. Called a writer key before v0.8.4. One holding a submitter grant on a node no reader grant of it reaches, such as a writer key issued with `--write-only`, is a contributor without recall, named by `oml doctor`. |
+| **submitter** | A key that writes without recall, holding `submitter` grants alone, and the grant role that confers writing (`remember`, `learn`, `attach`, `supersede`). It reads its own memories and nothing else. |
 | **reviewer key** | A key with the role `reviewer`. It proposes edits and connections and reviews other identities' writes, never on a lineage it proposed in. The role was called `dreamer` before v0.8.3. |
 | **take** | A reviewer takes one held memory at a time to judge it; another reviewer cannot take it meanwhile. |
 | **used by** | Who a key is for, attested by the admin who issued it: `agent`, `person` or `service`, the field `used_by`. Called `held_by`, with `human` for a person, before v0.8.3. |

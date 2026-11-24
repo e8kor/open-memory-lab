@@ -48,7 +48,7 @@ text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Aria
 </style>
 <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0 0 L10 5 L0 10 z"/></marker><marker id="aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="aha" d="M0 0 L10 5 L0 10 z"/></marker><marker id="ai" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ahi" d="M0 0 L10 5 L0 10 z"/></marker></defs>
 <rect class="plate" x="0.5" y="0.5" width="1099" height="609" rx="6"/>
-<text class="lanet hi" x="24" y="30">KEY A: AN AGENT KEY, WRITER, BOUND TO TIP, SCOPED IN payments.dev</text>
+<text class="lanet hi" x="24" y="30">KEY A: AN AGENT KEY, CONTRIBUTOR, BOUND TO TIP, SCOPED IN payments.dev</text>
 <rect class="reg outer" x="40" y="50" width="690" height="480" rx="12"/>
 <text class="t" x="54" y="72">payments</text>
 <text class="s" x="54" y="89">team root, protected</text>

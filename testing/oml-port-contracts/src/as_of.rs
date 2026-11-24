@@ -109,9 +109,9 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
         let writer = issue(
             &app,
             &admin,
-            Role::Writer,
+            Role::Contributor,
             UsedBy::Agent,
-            vec![grant(root, Role::Writer), grant(root, Role::Reader)],
+            vec![grant(root, Role::Submitter), grant(root, Role::Reader)],
         )
         .await;
         let reviewer = issue(
@@ -1166,9 +1166,9 @@ pub async fn a_read_at_an_ancestor_serves_a_descendant_in_progress_subtree_besid
     let second = issue(
         &w.app,
         &w.admin,
-        Role::Writer,
+        Role::Contributor,
         UsedBy::Agent,
-        vec![grant(w.home, Role::Writer), grant(w.home, Role::Reader)],
+        vec![grant(w.home, Role::Submitter), grant(w.home, Role::Reader)],
     )
     .await;
     let inside = w
@@ -1394,7 +1394,13 @@ pub async fn a_claim_whose_approved_versions_are_all_demoted_takes_a_new_version
 ) {
     let w = AsOfWorld::new(store.clone(), searches).await;
     let ada = fresh("ada");
-    let writer = user_key(&w, &ada, Role::Writer, &[Role::Writer, Role::Reader]).await;
+    let writer = user_key(
+        &w,
+        &ada,
+        Role::Contributor,
+        &[Role::Submitter, Role::Reader],
+    )
+    .await;
     let reviewer = user_key(&w, &ada, Role::Reviewer, &[Role::Reviewer, Role::Reader]).await;
     let root = store
         .resolve_name(w.tenant, oml_app::domain::name::NamedKind::Workspace, &ada)

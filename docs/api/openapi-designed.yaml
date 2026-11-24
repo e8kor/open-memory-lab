@@ -145,7 +145,7 @@ paths:
       tags: [attachments]
       operationId: createUploadSession
       summary: Open a resumable upload session recording the expected plaintext digest up front.
-      description: 'Requires: writer effective access. The session is scoped to the uploading key and expires (D3).'
+      description: 'Requires: submitter effective access. The session is scoped to the uploading key and expires (D3).'
       parameters: [{ $ref: 'openapi.yaml#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
@@ -181,7 +181,7 @@ paths:
       tags: [attachments]
       operationId: putUploadPart
       summary: Upload one part; replaying a part is harmless (verified by digest at completion).
-      description: 'Requires: writer, session owner. No Idempotency-Key — a part is addressed by (session, part_number). Parts are 5–64 MiB (http-api.md Limits); an oversized part answers 413 request.payload_too_large.'
+      description: 'Requires: submitter, session owner. No Idempotency-Key — a part is addressed by (session, part_number). Parts are 5–64 MiB (http-api.md Limits); an oversized part answers 413 request.payload_too_large.'
       parameters:
         - { name: session_id, in: path, required: true, schema: { type: string } }
         - { name: part_number, in: path, required: true, schema: { type: integer, minimum: 1 } }
@@ -206,7 +206,7 @@ paths:
       tags: [attachments]
       operationId: completeUploadSession
       summary: Assemble, hash, compare against the expected digest; store encrypted on match.
-      description: 'Requires: writer, session owner. upload.digest_mismatch when the bytes are not what the session promised.'
+      description: 'Requires: submitter, session owner. upload.digest_mismatch when the bytes are not what the session promised.'
       parameters:
         - { name: session_id, in: path, required: true, schema: { type: string } }
         - { $ref: 'openapi.yaml#/components/parameters/IdempotencyKey' }
@@ -529,7 +529,7 @@ paths:
               example:
                 key_id: 080b4bed-308d-48f7-8b3e-90b6f403e2e3
                 name: procure-agent-7-r2
-                role: writer
+                role: contributor
                 principal: crew-procure/agent-7
                 crew_id: d10bcbe9-032d-4080-aa0c-cc06f8acd89f
                 default_workspace_id: fbbb41c5-9630-4274-ae53-166f562f5286
@@ -540,7 +540,7 @@ paths:
                 rotated_from: 4b155359-710a-4417-811c-904cc3959fcc
                 grants:
                 - workspace_node_id: fbbb41c5-9630-4274-ae53-166f562f5286
-                  role: writer
+                  role: submitter
                   grant_id: gr_01JB2YX3EY5G7J9LN2Q4S6U8W1
                   epoch: 8
                 denials: []
@@ -566,7 +566,7 @@ paths:
           application/json:
             example:
               workspace: q1-2027
-              role: writer
+              role: submitter
             schema: { $ref: 'openapi.yaml#/components/schemas/GrantRequest' }
       responses:
         '201':
@@ -577,7 +577,7 @@ paths:
             application/json:
               example:
                 workspace_node_id: a4497daf-cfc8-4ddc-a0e5-4817efdb56c8
-                role: writer
+                role: submitter
                 grant_id: gr_01JB2YQ6R8TA1CW3EY5G7J9LN2
                 epoch: 9
               schema: { $ref: 'openapi.yaml#/components/schemas/Grant' }
@@ -654,11 +654,11 @@ paths:
                 entries:
                 - workspace_node_id: fbbb41c5-9630-4274-ae53-166f562f5286
                   path: universe.procurement.metals-crew
-                  role: writer
+                  role: submitter
                   masked_by: null
                 - workspace_node_id: a4497daf-cfc8-4ddc-a0e5-4817efdb56c8
                   path: universe.procurement.metals-crew.q1-2027
-                  role: writer
+                  role: submitter
                   masked_by: dn_01JB2YH9K2M4P6R8TA1CV3EX5G
               schema: { $ref: '#/components/schemas/EffectiveAccess' }
         default: { $ref: 'openapi.yaml#/components/responses/Error' }
@@ -1088,7 +1088,7 @@ components:
       scheme: bearer
       bearerFormat: OML API key
       description: >-
-        One key, one role (reader | writer | reviewer | admin | operator), grants scoping it to
+        One key, one role (reader | contributor | submitter | reviewer | admin | operator), grants scoping it to
         workspace subtrees. Tenant derives from the key server-side. Each operation's description
         states its ceiling; refusals are typed (access.verb_ceiling, access.grant_refused,
         access.not_found) per docs/api/errors.md. Key wire format: "oml_" followed by 43

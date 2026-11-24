@@ -14,7 +14,7 @@ use uuid::Uuid;
 use oml_domain::upload::{self, MAX_SESSIONS_PER_KEY, UploadPurpose, UploadRefusal, UploadState};
 use oml_domain::{EventTime, Role};
 
-use super::{App, require_role};
+use super::App;
 use crate::ports::{Clock, IdGen, JournalStore, ObjectStore, Scanner, Signer};
 use crate::types::{AppError, Bearer, KeyRecord, UploadSession, UploadStats};
 
@@ -124,7 +124,7 @@ where
             .ok_or(AppError::Upload(UploadRefusal::StorageFailed))
     }
 
-    /// `POST /v2/uploads {purpose, size, sha256}`: a writer key opens a
+    /// `POST /v2/uploads {purpose, size, sha256}`: a contributor or submitter key opens a
     /// session for `size` bytes whose SHA-256 is `sha256` (64 lowercase hex
     /// digits, checked by the transport). Over `uploads.max_bytes` is
     /// `upload.too_large`; the key's fifth open or unbound session is
@@ -137,7 +137,13 @@ where
         sha256: &str,
     ) -> Result<UploadSession, AppError> {
         let key = self.authenticate_bearer(bearer.into()).await?.key;
-        require_role(&key, Role::Writer, "upload")?;
+        // A contributor or a submitter key uploads (ADR-0093 d6).
+        if !matches!(key.role, Role::Contributor | Role::Submitter) {
+            return Err(AppError::VerbCeiling {
+                role: key.role,
+                verb: "upload",
+            });
+        }
         if size > self.uploads.max_bytes {
             return Err(AppError::Upload(UploadRefusal::TooLarge {
                 max_bytes: self.uploads.max_bytes,

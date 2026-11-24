@@ -137,11 +137,11 @@ fn classifier_grants(tree: &Tree) -> Vec<LabelledGrant> {
     ]
 }
 
-/// A term creator as add-member issues it: a writer and a reader grant on
+/// A term creator as add-member issues it: a submitter and a reader grant on
 /// its `--vocabulary`.
 fn term_creator_grants(tree: &Tree) -> Vec<LabelledGrant> {
     vec![
-        grant(1, tree.metals_vocab, Role::Writer),
+        grant(1, tree.metals_vocab, Role::Submitter),
         grant(2, tree.metals_vocab, Role::Reader),
     ]
 }
@@ -206,7 +206,7 @@ fn edge_labels_are_admitted_on_a_reviewer_grant_only_as_distinct_oml_labels() {
         Ok(Some(reviewer.clone()))
     );
 
-    for role in [Role::Reader, Role::Writer] {
+    for role in [Role::Reader, Role::Contributor, Role::Submitter] {
         assert_eq!(
             LabelledGrant::new(plain(2, tree.research, role, &[]), Some(&[ABOUT])),
             Err(EdgeLabelsRefusal::NotReviewer { role }),
@@ -398,10 +398,15 @@ fn the_plain_refusal_order_allows_nothing_the_narrowed_one_refuses() {
             let ancestry = tree.ancestry(node);
             let access = effective_access(&grants, &denials, &ancestry);
             let roles = effective_roles(&plain_grants, &denials, &ancestry);
-            for key_role in [Role::Reader, Role::Writer, Role::Reviewer] {
+            for key_role in [
+                Role::Reader,
+                Role::Contributor,
+                Role::Submitter,
+                Role::Reviewer,
+            ] {
                 for (needed, verb) in [
                     (Role::Reader, Verb::Needs(Role::Reader)),
-                    (Role::Writer, Verb::Needs(Role::Writer)),
+                    (Role::Submitter, Verb::Needs(Role::Submitter)),
                     (Role::Reviewer, Verb::Needs(Role::Reviewer)),
                     (Role::Reviewer, Verb::ClaimEdge(ABOUT)),
                     (Role::Reviewer, Verb::ClaimEdge("oml:is_a")),
@@ -426,7 +431,7 @@ fn the_plain_refusal_order_is_the_narrowed_one_where_no_grant_is_narrowed() {
     let mixed = vec![
         grant(1, tree.metals_vocab, Role::Reviewer),
         LabelledGrant::from(plain(2, tree.universe, Role::Reader, &[tree.research])),
-        grant(3, tree.research, Role::Writer),
+        grant(3, tree.research, Role::Submitter),
     ];
     let as_plain = |refusal: VerbRefusal| match refusal {
         VerbRefusal::VerbCeiling { role, needed } => AccessRefusal::VerbCeiling { role, needed },
@@ -448,12 +453,13 @@ fn the_plain_refusal_order_is_the_narrowed_one_where_no_grant_is_narrowed() {
             assert_eq!(access.edge_labels, None, "{node}");
             for key_role in [
                 Role::Reader,
-                Role::Writer,
+                Role::Contributor,
+                Role::Submitter,
                 Role::Reviewer,
                 Role::Admin,
                 Role::Operator,
             ] {
-                for needed in [Role::Reader, Role::Writer, Role::Reviewer] {
+                for needed in [Role::Reader, Role::Submitter, Role::Reviewer] {
                     assert_eq!(
                         resolve_verb(key_role, &access, Verb::Needs(needed)).map_err(as_plain),
                         resolve(key_role, &roles, needed),
@@ -491,16 +497,16 @@ fn a_role_outside_the_key_roles_set_is_verb_ceiling_before_any_narrowing() {
     let tree = Tree::new();
     let access = effective_access(&classifier_grants(&tree), &[], &tree.ancestry(tree.alloys));
     assert_eq!(
-        resolve_verb(Role::Reviewer, &access, Verb::Needs(Role::Writer)),
+        resolve_verb(Role::Reviewer, &access, Verb::Needs(Role::Submitter)),
         Err(VerbRefusal::VerbCeiling {
             role: Role::Reviewer,
-            needed: Role::Writer,
+            needed: Role::Submitter,
         })
     );
     assert_eq!(
-        resolve_verb(Role::Writer, &access, Verb::ClaimEdge(ABOUT)),
+        resolve_verb(Role::Contributor, &access, Verb::ClaimEdge(ABOUT)),
         Err(VerbRefusal::VerbCeiling {
-            role: Role::Writer,
+            role: Role::Contributor,
             needed: Role::Reviewer,
         })
     );
@@ -545,7 +551,7 @@ fn each_member_profile_admits_the_grants_add_member_issues() {
         ),
         (
             MemberProfile::TermCreator,
-            Role::Writer,
+            Role::Contributor,
             term_creator_grants(&tree),
         ),
         (
@@ -630,7 +636,7 @@ fn a_profile_on_another_key_role_is_a_profile_mismatch_on_key_role() {
             &tree,
             Some(CrewKind::Ontology),
             curator,
-            Role::Writer,
+            Role::Contributor,
             Some(UsedBy::Agent),
             &term_creator_grants(&tree),
         ),
@@ -724,7 +730,7 @@ fn a_curator_or_term_creator_grant_outside_its_row_is_a_profile_mismatch_naming_
     let term_creator = Some(MemberProfile::TermCreator);
     for stray in [
         grant(3, tree.research, Role::Reader),
-        grant(3, tree.universe, Role::Writer),
+        grant(3, tree.universe, Role::Submitter),
     ] {
         let mut grants = term_creator_grants(&tree);
         grants.push(stray);
@@ -733,7 +739,7 @@ fn a_curator_or_term_creator_grant_outside_its_row_is_a_profile_mismatch_naming_
                 &tree,
                 ontology,
                 term_creator,
-                Role::Writer,
+                Role::Contributor,
                 Some(UsedBy::Agent),
                 &grants
             ),
@@ -754,7 +760,7 @@ fn a_member_key_without_its_must_grant_is_a_profile_mismatch_on_required_grant()
         ),
         (
             MemberProfile::TermCreator,
-            Role::Writer,
+            Role::Contributor,
             vec![grant(1, tree.metals_vocab, Role::Reader)],
         ),
         (

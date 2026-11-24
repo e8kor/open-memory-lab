@@ -102,7 +102,7 @@ def render(doc: dict) -> str:
         "A request names its workspace in one field, `workspace`, by id or name; omitted, it takes the key's default workspace.\n",
         f"*{docgen.BANNER.format(script='scripts/gen_http_api_reference.py')} Source: `docs/api/openapi.yaml`. It lists {total} operations.*\n",
         "## Conventions\n",
-        "- **Authentication.** Send `Authorization: Bearer <key>`. The key carries one role (`reader`, `writer`, `reviewer`, `admin`, `operator`); the server derives the tenant from it, never from the request.",
+        "- **Authentication.** Send `Authorization: Bearer <key>`. The key carries one role (`reader`, `contributor`, `submitter`, `reviewer`, `admin`, `operator`); the server derives the tenant from it, never from the request.",
         "- **Idempotency.** Every `POST` that creates state needs an `Idempotency-Key` header. A replay returns the stored answer and sets `Idempotency-Replay: true`. A refused request records nothing, so a retry under the same key runs again and may answer differently.",
         "- **Request ids.** Every response carries `X-Request-Id` and `X-Correlation-Id`. The caller may send its own `X-Request-Id`, `X-Correlation-Id` and `traceparent`.",
         "- **Errors.** Every failure has one JSON shape with a `code` from the [error codes](errors.md). Any operation can answer `429 limit.rate` or `limit.quota`.",

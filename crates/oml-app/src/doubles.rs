@@ -1064,7 +1064,8 @@ fn poc_required_id(payload: &Value, field: &str) -> Result<Uuid, StoreError> {
 fn role_from_str(role: &str) -> Result<Role, StoreError> {
     [
         Role::Reader,
-        Role::Writer,
+        Role::Contributor,
+        Role::Submitter,
         Role::Reviewer,
         Role::Admin,
         Role::Operator,
@@ -2113,9 +2114,9 @@ fn apply_fold(
         }
         MetadataFold::GrantIssued { key_id, grant } => {
             require_held(state, key_id, grant.node)?;
-            if !matches!(grant.role, Role::Reader | Role::Writer | Role::Reviewer) {
+            if !matches!(grant.role, Role::Reader | Role::Submitter | Role::Reviewer) {
                 return Err(StoreError::Backend(format!(
-                    "a grant role is reader, writer or reviewer, never {}",
+                    "a grant role is reader, submitter or reviewer, never {}",
                     grant.role.as_str()
                 )));
             }

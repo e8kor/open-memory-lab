@@ -56,7 +56,7 @@ console form, error details (`needed_role`), the docs and the plugins' key skill
 made the same kind of cut when it renamed the reviewer role (d13); this record follows its rules and states
 only where a split word differs from a renamed one.
 
-Decided, not built.
+Built for v0.8.4; the implementation notes below record the readings the build took.
 
 ## Decision
 
@@ -220,3 +220,80 @@ Decided, not built.
 | **Accept `writer` as an alias of `contributor` for one release** | ADR-0091 d2 rejected aliases. A client that meant write-only would get a key that recalls. |
 | **Edit the applied role checks of migrations 0001, 0004 and 0047** | It changes their sqlx checksums, and an applied migration is never edited. |
 | **v0.9.0** | The operator wants the roles right in v0.8.4, the release that closes this phase, rather than in a later minor release after work parks. |
+
+## Implementation notes
+
+Recorded with the build (branch `feat/role-names`, 2026-11-20). Each is a reading the decisions
+above left open; the operator confirms or amends them in review.
+
+- **The contributor's shape is checked after steps 4 to 6, over the grants sent.** A request that
+  names a node the tenant does not hold, a deny outside its grant or an uncovered default is told
+  that first; then a contributor without a reader or a submitter grant is `contributor_grants`.
+  The check reads the grants the request sent, not the `universe` node read a user key also gets
+  (ADR-0044 d3). Adding grants to an issued key checks step 3 alone, since an added grant cannot
+  take a reader or a submitter grant away.
+- **A submitter reads its own rows by id.** The read by id admits a submitter key at step 1 and
+  serves it its own rows alone (ADR-0025 d3). Every recall-class verb (recall, the listing of a
+  workspace, the events tail, workspace info and tree, the edge listings, skills, guardrails) is
+  `access.verb_ceiling` for a submitter key, where a v0.8.3 writer key without a reader grant was
+  `access.not_found` at step 4; a contributor without recall still answers `access.not_found`.
+- **A term creator is a contributor.** ADR-0027's term-creator profile named the writer key role;
+  it now names `contributor`, as the migration and rule 7 read its existing keys, with the
+  submitter grant in its "must" cell.
+- **The doctor line reads the key doctor runs under.** `key_contributor_without_recall` comes from
+  `whoami`'s `without_recall` and names that key. No route lists every key of a tenant, so the
+  doctor names each such key when its holder runs it; the console's Keys pages mark each one "no
+  recall" for the person and the admin, from the same member of `GET /v2/keys`.
+- **What the migration found to rewrite.** On a database migrated through 0065, `api_keys.role`
+  and `grants.role` are the only role columns and their two checks the only constraints naming the
+  role; no function body compares a role to `writer`; and `required_roles` is stored only in
+  `journal.payload` and `outbox.payload`, which are signed events read through rule 7. Migration
+  0066 therefore rewrites two columns and replaces two checks. A stored idempotency answer keeps
+  the words it was answered with.
+- **The rebuild law waits for ADR-0090's compare, as ADR-0091 d5's does.** Two laws stand in its
+  place: `the_schema_holds_no_writer_role_after_the_role_migration`, and
+  `a_database_migrated_across_the_role_rename_holds_its_rows_in_the_roles_rule_7_reads`, which
+  seeds two v0.8.3 tenants' rows and signed `key.issued` and `grant.issued` events at 0065 and
+  asserts after 0066 that each row's role is the role rule 7 reads its event as.
+- **The vocabulary lint has its own allow list.** `lint_allow/roles.txt` holds the reasons for the
+  former role, apart from `rename.txt`, so an allowed path for one rename never hides the other.
+
+### Fix round, 2026-11-20 (the coordinator's readings, for the operator to confirm)
+
+The review of PR #506 found two readings the build had taken wrongly. The coordinator decided
+these; the operator confirms or amends them here.
+
+- **A submitter key gets no implicit `universe` reader grant.** ADR-0044 d3 adds a reader node
+  grant on `universe` to every user key; a submitter key recalls nothing (d2), so issuance adds it
+  none, and a user's submitter key holds exactly the submitter grants it was sent. A contributor,
+  reader or reviewer user key still gets the grant.
+- **A submitter's read by id serves only the rows that key wrote, whatever its grants.** Any other
+  id, a promoted `universe` claim included, is `access.not_found`, as any unreadable id is. The
+  same holds wherever a submitter key's read of a row is decided (a lineage's ancestors, a
+  refusal's served tip), so a submitter is never told of another key's row.
+- **"Without recall" is per node.** A contributor without recall is a contributor key holding a
+  submitter grant on some node that no reader grant of the same key reaches, not a key with no
+  reader grant at all: a migrated v0.8.3 `--write-only --user` key, whose one reader grant is the
+  `universe` node grant, writes its root without recall and is named. A reader grant reaches a
+  node as `Grant::reaches` reads it, before its deny masks, so the answer names no masked subtree
+  to the key (ADR-0039 d15).
+- **One definition, served.** `oml_domain::access::contributor_without_recall` decides it on the
+  server, which reads a submitter grant's ancestry only where no reader grant sits on its own node.
+  `whoami` and each key of `GET /v2/keys` serve the answer as `without_recall`; the doctor line and
+  the console's "no recall" mark read that member and decide nothing of their own, since neither
+  `whoami`'s grants nor the listing's carry the ancestry the answer needs.
+
+
+### Second fix round, 2026-11-20 (the coordinator's reading, for the operator to confirm)
+
+The re-verification of PR #506 found that a person's `<user>-curate`, which ADR-0044 d7 and
+`grant_curation_capacity` issue with submitter on the `universe` node and a reader grant on each
+designated workspace alone, was served as without recall, so the Keys page offered a reissue no
+person can make. The coordinator decided this reading; the operator confirms or amends it here.
+
+- **A session key is never without recall.** The keys the server holds for a person's session
+  (`<user>-web`, `-review`, `-curate`, `-admin`, and any key the server issues for a session) are
+  served with `without_recall` false: the server issues them, no person reissues one, and their
+  grants follow ADR-0044 d7 by design. The exemption sits in the one place the answer is computed,
+  so `whoami`, each key of `GET /v2/keys`, the doctor line and the console's mark agree. Every other
+  key keeps the per-node definition above.

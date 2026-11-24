@@ -11,6 +11,11 @@ with `person`. Code written against a v0.7 client that names a workarea type, th
 or `held_by` does not compile against it, and a v0.7 client does not work against a v0.8.3
 server: upgrade the client before the server.
 
+From v0.8.4 the role `writer` is gone (ADR-0093): a key that recalls and writes is a
+`contributor`, one that writes without recall is a `submitter`, and the grant role that
+confers writing is `submitter`. A v0.8.3 client that sends the former role is refused and
+issues nothing: upgrade the client before the server.
+
 Node 24 or later. Each release attaches an npm tarball to its GitHub release; install it from the
 file, or build from a checkout of the repository, then install from that directory:
 

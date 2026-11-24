@@ -206,10 +206,10 @@ def oml_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[OmlServer]:
         workspace = oml("workspaces", "create", root, "sdk")["id"]
         review_workspace = oml("workspaces", "create", root, "sdk-review")["id"]
         agent = oml(
-            "keys", "issue", "sdk-agent", "--role", "writer", "--used-by", "agent",
+            "keys", "issue", "sdk-agent", "--role", "contributor", "--used-by", "agent",
             "--principal", "sdk/agent", "--default-workspace", workspace,
-            "--grant", f"{workspace}:writer", "--grant", f"{workspace}:reader",
-            "--grant", f"{review_workspace}:writer", "--grant", f"{review_workspace}:reader",
+            "--grant", f"{workspace}:submitter", "--grant", f"{workspace}:reader",
+            "--grant", f"{review_workspace}:submitter", "--grant", f"{review_workspace}:reader",
         )["value"]  # fmt: skip
         reviewer = oml(
             "keys", "issue", "sdk-reviewer", "--role", "reviewer", "--used-by", "person",

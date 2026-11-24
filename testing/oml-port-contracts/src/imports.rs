@@ -91,13 +91,13 @@ async fn rig<S: JournalStore + Clone>(store: S) -> Rig<S> {
     let admin = boot.admin_key.value.clone();
     let issue = |user: &str, used_by: UsedBy| IssueKeyRequest {
         profile: None,
-        role: Role::Writer,
+        role: Role::Contributor,
         name: fresh("import-key"),
         principal: format!("{user}/{}", NAMES.fetch_add(1, Ordering::Relaxed)),
         used_by: Some(used_by),
         default_workspace: None,
         crew: None,
-        grants: [Role::Writer, Role::Reader]
+        grants: [Role::Submitter, Role::Reader]
             .into_iter()
             .map(|role| GrantRequest {
                 node: Reference::parse(user).expect("a reference"),
@@ -516,8 +516,10 @@ async fn an_older_bundle_is_refused_unless_allow_older<S: JournalStore + Clone>(
     assert_eq!(stats.allow_older, 1);
 }
 
-/// d11, I4: only a person's writer key imports; a dry run binds nothing;
-/// an import binds its upload once and nulls the upload's key at its end.
+/// d11, I4: only a person's contributor key imports, since an import acts on
+/// a tree the key must read: a person's submitter key, which uploads, is
+/// refused the import (ADR-0093 d6); a dry run binds nothing; an import
+/// binds its upload once and nulls the upload's key at its end.
 async fn the_upload_binds_once_and_its_key_is_nulled_at_the_end<S: JournalStore + Clone>(store: S) {
     let rig = rig(store).await;
     let expect = Some(fingerprint(&source_key()));
@@ -526,6 +528,47 @@ async fn the_upload_binds_once_and_its_key_is_nulled_at_the_end<S: JournalStore 
     assert!(matches!(
         import(&rig, &rig.agent, &request(agents, "notes", expect.clone())).await,
         Err(AppError::ImportPersonOnly { .. })
+    ));
+    let submitter = rig
+        .app
+        .issue_key(
+            rig.admin.as_str(),
+            &IssueKeyRequest {
+                profile: None,
+                role: Role::Submitter,
+                name: fresh("import-key"),
+                principal: "ada/ingest".to_owned(),
+                used_by: Some(UsedBy::Person),
+                default_workspace: None,
+                crew: None,
+                grants: vec![GrantRequest {
+                    node: Reference::parse("ada").expect("a reference"),
+                    role: Role::Submitter,
+                    deny: Vec::new(),
+                    covers: Covers::Subtree,
+                }],
+                connect_code: false,
+                user: Some(name("ada")),
+                guardrail_scope: None,
+                expiry: None,
+                requests_per_minute: None,
+            },
+        )
+        .await
+        .expect("ada's submitter key")
+        .value;
+    let submitters = upload(&rig, &submitter, &bytes).await;
+    assert!(matches!(
+        import(
+            &rig,
+            &submitter,
+            &request(submitters, "notes", expect.clone())
+        )
+        .await,
+        Err(AppError::ImportPersonOnly {
+            role: Role::Submitter,
+            used_by: UsedBy::Person,
+        })
     ));
 
     let up = upload(&rig, &rig.writer, &bytes).await;

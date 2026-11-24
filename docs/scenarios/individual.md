@@ -15,7 +15,7 @@ A personal root stays under development rules for good. It is capped at `develop
 ## 1. Sign in and connect
 
 1. Dana signs in at `<server>/web` with Google or GitHub. The first sign-in creates `universe.dana` and the console's own keys for the person: `dana-web` for the pages and `dana-review` for review ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)).
-2. On the **Keys** page Dana issues a `writer` key named `dana-laptop` and stores it in a file only the owner reads. On a self-run server, an admin issues the same key with `oml keys issue-agent dana-laptop --principal people/dana/laptop --user dana --out ~/.config/oml/keys/laptop` ([get an agent key](../guides/get-an-agent-key.md)).
+2. On the **Keys** page Dana issues a `contributor` key named `dana-laptop` and stores it in a file only the owner reads. On a self-run server, an admin issues the same key with `oml keys issue-agent dana-laptop --principal people/dana/laptop --user dana --out ~/.config/oml/keys/laptop` ([get an agent key](../guides/get-an-agent-key.md)).
 3. In a terminal: `oml setup claude-code --url <server> --key-file ~/.config/oml/keys/laptop` installs the plugin with that key ([Claude Code](../guides/claude-code.md)).
 4. On **Start**, Dana chooses "claude.ai, Desktop or phone". The page issues a connector key and shows its connect code once. The server goes into claude.ai as a custom connector, and the code is entered once. The phone app, signed in to the same account, has the same three tools ([claude.ai and a phone](../guides/claude-ai-and-mobile.md)).
 

@@ -116,7 +116,7 @@ Capture runs from three hooks: `oml hook user-prompt`, `oml hook stop` and `oml 
 
 1. Set `OML_CHAT_CAPTURE=1` and `OML_CHAT_WORKSPACE` in the environment Claude Code runs from.
 2. Confirm the plugin is loaded and `oml` is on the `PATH` Claude Code uses for hooks.
-3. Check the key has a writer grant on the workspace named by `OML_CHAT_WORKSPACE`.
+3. Check the key has a submitter grant on the workspace named by `OML_CHAT_WORKSPACE`.
 
 Capture fires every `OML_CHAT_CAPTURE_EVERY` turns (default 5) and after a compaction. See [chat memory](../use/chat-memory.md).
 

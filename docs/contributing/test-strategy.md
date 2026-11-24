@@ -139,7 +139,7 @@ is a citation target. A documentation page may then say "verified by conformance
 
 | Area | Covers | Example ids |
 |---|---|---|
-| `CONF-CONST-*` | the constitution invariants, observed through the API: verb ceilings per transport, non-author review refusal, held-row invisibility | `CONF-CONST-001` — a writer key's promote attempt is refused on both rings |
+| `CONF-CONST-*` | the constitution invariants, observed through the API: verb ceilings per transport, non-author review refusal, held-row invisibility | `CONF-CONST-001` — a contributor key's promote attempt is refused on both rings |
 | `CONF-CHAIN-*` | commit and chain semantics: genesis shape, contiguity, signature verification against the exported head, chain order equals visibility order | `CONF-CHAIN-002` — an exported chain verifies against the [chain format](../data/chain-format.md) test vectors' rules |
 | `CONF-ADMIT-*` | admission end to end: hold, scan veto, serve binding and expiry, idempotent replay inside the committed 24-hour minimum window | `CONF-ADMIT-003` — same idempotency key, different digest is the typed error |
 | `CONF-ERASE-*` | erasure end to end across the copy classes reachable in the profile | `CONF-ERASE-001` — post-erase, body unrecoverable, attribution intact |

@@ -4,7 +4,7 @@ from enum import StrEnum
 class GrantRole(StrEnum):
     READER = "reader"
     REVIEWER = "reviewer"
-    WRITER = "writer"
+    SUBMITTER = "submitter"
 
     def __str__(self) -> str:
         return str(self.value)

@@ -30,7 +30,7 @@ Every write has a producer and needs a reviewer who is not that producer. Three 
 | Instruction | agent key A of person P | P's review key, inside P's own root | yes | not applicable: the root stays `development` | `same_user: true` | built |
 | Instruction | agent key A | agent key B (`used_by: agent`) | no: `review.person_required` ([ADR-0080](../adr/ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) d16) | no | none | built for every instruction kind: the approval is refused with `details.reason: instruction_needs_person`, the version stays held, and a reject from the same key is admitted |
 | Instruction: `skill` | agent key A or a person | a person, as above | as above | as above | as above | stored and reviewed as a kind over the HTTP API, a person's verdict required; offered as an MCP prompt and resource and listed by `GET /v1/skills` ([ADR-0080](../adr/ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md)) |
-| Vocabulary: `term`, `term_mapping`, `vocab_release` | a writer key, over HTTP only | as knowledge, an agent's key included | yes | yes | as knowledge | built |
+| Vocabulary: `term`, `term_mapping`, `vocab_release` | a contributor or submitter key, over HTTP only | as knowledge, an agent's key included | yes | yes | as knowledge | built |
 | Any class | any key | the author's key, or any key sharing a principal with the lineage | no | no | none | built: refused `review.author_in_lineage` |
 | Any class, in progress | any key | an agent `curator` profile | never approves; rejects, proposes retirements, flags contradictions | not applicable | none | built |
 

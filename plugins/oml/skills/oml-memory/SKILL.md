@@ -13,7 +13,7 @@ than writing the same fact twice.
 ## One connection, one key
 
 The plugin connects once, as `oml`, with the agent's one key, and every tool runs there.
-The key holds a writer grant and a reader grant on its default workspace, so the whole loop
+The key is a contributor: it holds a submitter grant and a reader grant on its default workspace, so the whole loop
 is one connection:
 
 1. recall before you act (`oml_read` with a `query`);

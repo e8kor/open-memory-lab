@@ -258,7 +258,7 @@ async fn world() -> Option<World> {
     let (admin, root) = bootstrap(&rig.router).await;
     let node = create_workspace(&rig.router, &admin, root, "adr-import").await;
     let writer_grants = json!([
-        { "workspace": node, "role": "writer" },
+        { "workspace": node, "role": "submitter" },
         { "workspace": node, "role": "reader" },
     ]);
     let reviewer_grants = json!([
@@ -269,7 +269,7 @@ async fn world() -> Option<World> {
         &rig.router,
         &admin,
         "loader",
-        "writer",
+        "contributor",
         "crew/loader",
         "agent",
         writer_grants,
@@ -465,7 +465,7 @@ async fn an_agent_key_cannot_list_or_bulk_approve_on_any_transport() {
     // the person's own reviewer key too: /mcp names no review tool for any
     // of them, and a call naming one is an unknown tool.
     for (who, token) in [
-        ("writer", &w.agent),
+        ("contributor", &w.agent),
         ("crew reviewer", &w.agent_reviewer),
         ("person's reviewer", &w.reviewer),
     ] {
@@ -544,11 +544,11 @@ async fn an_item_the_reviewer_authored_or_derives_from_is_skipped_not_approved()
             r,
             &w.admin,
             "eugene-loader",
-            "writer",
+            "contributor",
             "eugene-review",
             "agent",
             json!([
-                { "workspace": w.node, "role": "writer" },
+                { "workspace": w.node, "role": "submitter" },
                 { "workspace": w.node, "role": "reader" },
             ]),
         )
@@ -807,11 +807,11 @@ async fn the_listing_serves_only_what_review_next_would_and_claims_nothing() {
         r,
         &w.admin,
         "notes-writer",
-        "writer",
+        "contributor",
         "crew/notes",
         "agent",
         json!([
-            { "workspace": w.node, "role": "writer" },
+            { "workspace": w.node, "role": "submitter" },
             { "workspace": w.node, "role": "reader" },
         ]),
     )
@@ -987,9 +987,9 @@ async fn a_bulk_approval_of_the_persons_own_agents_writes_is_marked_same_user() 
         };
     let loader = user_key(
         "eugene-agent",
-        "writer",
+        "contributor",
         "agent",
-        json!([{ "workspace": "eugene", "role": "writer" }, { "workspace": "eugene", "role": "reader" }]),
+        json!([{ "workspace": "eugene", "role": "submitter" }, { "workspace": "eugene", "role": "reader" }]),
     )
     .await;
     let reviewer = user_key(
@@ -1099,7 +1099,7 @@ async fn review_scale_measurement() {
         }));
     }
     for task in tasks {
-        task.await.expect("writer");
+        task.await.expect("contributor");
     }
     println!(
         "loaded {held} held rows in {:.1} s",

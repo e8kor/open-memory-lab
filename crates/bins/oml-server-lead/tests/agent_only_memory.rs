@@ -238,15 +238,15 @@ async fn crew(router: &Router) -> Crew {
     for (idem, role, principal, grants) in [
         (
             "issue-agent",
-            "writer",
+            "contributor",
             "crew/agent-7",
-            vec!["writer", "reader"],
+            vec!["submitter", "reader"],
         ),
         (
             "issue-other",
-            "writer",
+            "contributor",
             "crew/agent-7",
-            vec!["writer", "reader"],
+            vec!["submitter", "reader"],
         ),
         (
             "issue-reviewer",
@@ -1036,7 +1036,7 @@ async fn scoped_key(router: &Router, crew: &Crew) -> (McpKey, String) {
     .await;
     assert_eq!(status, StatusCode::CREATED, "{child}");
     let child = child["id"].as_str().expect("child id").to_owned();
-    let grants: Vec<Value> = ["writer", "reader"]
+    let grants: Vec<Value> = ["submitter", "reader"]
         .into_iter()
         .map(|role| json!({"workspace": crew.workspace, "role": role}))
         .collect();
@@ -1047,7 +1047,7 @@ async fn scoped_key(router: &Router, crew: &Crew) -> (McpKey, String) {
         Some(&crew.admin),
         Some("issue-scoped"),
         Some(&json!({
-            "role": "writer",
+            "role": "contributor",
             "name": "issue-scoped",
             "principal": "crew/agent-9",
             "grants": grants,

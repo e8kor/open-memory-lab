@@ -86,7 +86,7 @@ Writes enter held. Nothing in this family makes anything readable to anyone new:
 |---|---|---|
 | `workspace.create` | `workspace_id`, `parent_id`, `name`, `status`, `crew_id`, `prefix`, `user_root` | A new node under a parent. A tenant's root has the name `universe` and a null `parent_id`. A non-null `prefix` registers a vocabulary. The prefix is permanent. |
 | `workspace.mode_set` | `workspace_id`, `mode`, `from` | A person's reviewer key puts a workspace in progress or commits it back to `standard`. |
-| `workspace.imported` | `import_id`, `workspace_id`, `manifest_digest`, `source` {`server_id`, `tenant_id`}, `exported_at`, `counts`, `refused`, `authenticated`, `allow_older`, `signer_fingerprint`, `upload_digest`, `versions` [{`memory_id`, `source` {`artifact_id`, `version`}, `outcome`}] | A person's writer key imported a bundle into an in-progress workspace. `counts` holds the plan's outcomes and `refused` the versions the target skipped; `versions` lists each version the import wrote, so the journal rebuilds what each import wrote (I14). `authenticated` says whether the signature was checked against `expect_key`. Each version it wrote has its own `submission.remember` event, held by that key ([ADR-0084](../adr/ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) d11, d15). |
+| `workspace.imported` | `import_id`, `workspace_id`, `manifest_digest`, `source` {`server_id`, `tenant_id`}, `exported_at`, `counts`, `refused`, `authenticated`, `allow_older`, `signer_fingerprint`, `upload_digest`, `versions` [{`memory_id`, `source` {`artifact_id`, `version`}, `outcome`}] | A person's contributor key imported a bundle into an in-progress workspace. `counts` holds the plan's outcomes and `refused` the versions the target skipped; `versions` lists each version the import wrote, so the journal rebuilds what each import wrote (I14). `authenticated` says whether the signature was checked against `expect_key`. Each version it wrote has its own `submission.remember` event, held by that key ([ADR-0084](../adr/ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md) d11, d15). |
 | `workspace.federation_set` | `workspace_id`, `field`, `value`, `from` | A person's reviewer key or an admin sets whether recalls scoped elsewhere may search the workspace (`accept_federated`). It grants nothing. |
 | `workspace.status_proposed` | `workspace_id`, `from`, `to`, `transition_id`, `proposed_by_key_id` | A forward step of the status ladder is proposed. It stays pending until a different principal ratifies it. |
 | `workspace.status_transition` | `workspace_id`, `from`, `to`, `transition_id`, `proposed_by_key_id`, `ratified_by_key_id`, `policy_snapshot`, `same_user` | The ratification of a pending proposal. A step to `frozen` also records `children_all_frozen`. |
@@ -157,7 +157,7 @@ Events signed before v0.8.3 keep the names they were signed with, and every read
 lake writer's projection, the events tail and its visibility, `oml events`) reads them through
 one map, after the stored bytes are verified as they stand
 ([ADR-0091](../adr/ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md)
-d4). The map is the identity on every event v0.8.3 writes. A `workarea.*` type outside the first
+d4). Events signed before v0.8.4 keep the role `writer` and are read through the map's rule 7 ([ADR-0093](../adr/ADR-0093-contributor-and-submitter-replace-writer.md) d4). The map is the identity on every event v0.8.3 and v0.8.4 write. A `workarea.*` type outside the first
 table fails the reader closed, named `journal_unmapped_former_name`, as does an object that holds a
 former key beside its successor. This table is the only place
 the catalog spells the former names.
@@ -179,6 +179,8 @@ the catalog spells the former names.
 | a payload key holding `workarea` or `workareas`, at any depth | every event | the same key with `workspace` or `workspaces` |
 | `workarea` | `kind` of each row of `system.names_assigned`'s `names`; `guardrail_scope` of `key.issued` and of any event that records it | `workspace` |
 | `dreamer` | `role` of `key.issued` and `grant.issued`; each of `required_roles` inside a `policy_snapshot`, and inside the `policy` of `lifecycle.promote` and `lifecycle.supersede` | `reviewer` |
+| `writer` (rule 7, [ADR-0093](../adr/ADR-0093-contributor-and-submitter-replace-writer.md) d4) | `role` of `key.issued` | `contributor` |
+| `writer` (rule 7) | `role` of `grant.issued`; each of `required_roles` inside a `policy_snapshot`, and inside the `policy` of `lifecycle.promote` and `lifecycle.supersede` | `submitter` |
 | `committed`, `validated` | `status` of `workspace.create`; `from` and `to` of `workspace.status_proposed` and `workspace.status_transition` | `protected`, `frozen` |
 | `children_all_validated` | a key of `workspace.status_transition`'s `policy_snapshot` | `children_all_frozen` |
 | `held_by`, valued `human` | a key of `key.issued` | `used_by`, valued `person` |

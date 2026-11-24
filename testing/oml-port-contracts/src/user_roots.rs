@@ -152,7 +152,11 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
         let ada = app
             .issue_key(
                 admin.as_str(),
-                &user_key(Role::Writer, UsedBy::Agent, &[Role::Writer, Role::Reader]),
+                &user_key(
+                    Role::Contributor,
+                    UsedBy::Agent,
+                    &[Role::Submitter, Role::Reader],
+                ),
             )
             .await
             .expect("ada's writer key");
@@ -193,8 +197,11 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
         let tenant_writer = tenant_key(
             &app,
             &admin,
-            Role::Writer,
-            vec![grant(universe, Role::Writer), grant(universe, Role::Reader)],
+            Role::Contributor,
+            vec![
+                grant(universe, Role::Submitter),
+                grant(universe, Role::Reader),
+            ],
         )
         .await;
         let tenant_reviewer = tenant_key(
@@ -210,8 +217,8 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
         let stranger = tenant_key(
             &app,
             &admin,
-            Role::Writer,
-            vec![grant(shared, Role::Writer), grant(shared, Role::Reader)],
+            Role::Contributor,
+            vec![grant(shared, Role::Submitter), grant(shared, Role::Reader)],
         )
         .await;
         RootsWorld {
@@ -398,12 +405,20 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
                     }),
                     default_workspace: None,
                     crew: None,
-                    grants: vec![GrantRequest {
-                        node: bo,
+                    // A contributor carries a submitter and a reader grant
+                    // (ADR-0093 d2); every other role its own.
+                    grants: match role {
+                        Role::Contributor => vec![Role::Submitter, Role::Reader],
+                        other => vec![other],
+                    }
+                    .into_iter()
+                    .map(|role| GrantRequest {
+                        node: bo.clone(),
                         role,
                         deny: Vec::new(),
                         covers: Covers::Subtree,
-                    }],
+                    })
+                    .collect(),
                     connect_code: false,
                     user: Some(Name::parse("bo").expect("a user name")),
                     guardrail_scope: None,
@@ -627,12 +642,15 @@ pub async fn a_key_that_is_not_the_users_starts_no_memory_in_a_users_root_or_bel
         .expect("a tenant key writes in a shared workspace");
     let reads_only = w
         .tenant_key(
-            Role::Writer,
-            vec![grant(w.root, Role::Reader), grant(w.shared, Role::Writer)],
+            Role::Contributor,
+            vec![
+                grant(w.root, Role::Reader),
+                grant(w.shared, Role::Submitter),
+            ],
         )
         .await;
     let bos_writer = w
-        .bos_key_granted_on_adas_root(Role::Writer, &[Role::Writer, Role::Reader])
+        .bos_key_granted_on_adas_root(Role::Contributor, &[Role::Submitter, Role::Reader])
         .await;
     // A claim_key every version of which was rejected is released
     // (ADR-0025 d18): the next claim under it is a version 1 again.

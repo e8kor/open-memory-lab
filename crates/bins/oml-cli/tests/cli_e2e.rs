@@ -325,7 +325,7 @@ async fn full_ceremony_through_the_cli() {
         let field = |name: &str| response[name].as_str().expect(name).to_owned();
         (field("value"), field("key_id"))
     };
-    let (writer, writer_id) = issue("writer", "crew/agent-1");
+    let (writer, writer_id) = issue("submitter", "crew/agent-1");
     let (reviewer, _) = issue("reviewer", "crew/reviewer-1");
     let (reader, _) = issue("reader", "crew/recall-1");
 
@@ -788,11 +788,11 @@ async fn keys_issue_with_one_writer_grant_sends_a_reader_grant_on_the_same_works
         "crew-agent-1",
         &[
             "--role",
-            "writer",
+            "contributor",
             "--principal",
             "crew/agent-1",
             "--grant",
-            &format!("{wa}:writer"),
+            &format!("{wa}:submitter"),
         ],
     );
 
@@ -800,13 +800,13 @@ async fn keys_issue_with_one_writer_grant_sends_a_reader_grant_on_the_same_works
     assert_eq!(routes(&seen), ["POST /v2/keys"]);
     assert_eq!(
         seen[0].body["grants"],
-        json!([grant(&wa, "writer"), grant(&wa, "reader")]),
+        json!([grant(&wa, "submitter"), grant(&wa, "reader")]),
         "the reader grant rides beside the writer grant in the one request"
     );
     assert_eq!(
         granted(&issued),
         [
-            (wa.clone(), "writer".to_owned()),
+            (wa.clone(), "submitter".to_owned()),
             (wa.clone(), "reader".to_owned())
         ]
     );
@@ -832,11 +832,11 @@ async fn the_claim_and_keys_issue_send_their_positional_key_name_as_the_bodys_na
         "claude-laptop",
         &[
             "--role",
-            "writer",
+            "contributor",
             "--principal",
             "claude/laptop",
             "--grant",
-            &format!("{wa}:writer"),
+            &format!("{wa}:submitter"),
         ],
     );
     let seen = lab.take_requests();
@@ -847,7 +847,7 @@ async fn the_claim_and_keys_issue_send_their_positional_key_name_as_the_bodys_na
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn keys_issue_with_write_only_sends_only_the_writer_grant() {
+async fn keys_issue_with_role_submitter_sends_only_the_submitter_grant() {
     let Some(lab) = Lab::start().await else {
         return;
     };
@@ -858,19 +858,67 @@ async fn keys_issue_with_write_only_sends_only_the_writer_grant() {
         "crew-agent-1",
         &[
             "--role",
-            "writer",
+            "submitter",
             "--principal",
             "crew/agent-1",
             "--grant",
-            &format!("{wa}:writer"),
-            "--write-only",
+            &format!("{wa}:submitter"),
         ],
     );
 
     let seen = lab.take_requests();
     assert_eq!(routes(&seen), ["POST /v2/keys"]);
-    assert_eq!(seen[0].body["grants"], json!([grant(&wa, "writer")]));
-    assert_eq!(granted(&issued), [(wa.clone(), "writer".to_owned())]);
+    assert_eq!(seen[0].body["grants"], json!([grant(&wa, "submitter")]));
+    assert_eq!(granted(&issued), [(wa.clone(), "submitter".to_owned())]);
+    lab.stop().await;
+}
+
+/// `--write-only` is retired and `writer` is no role: clap refuses the flag
+/// before any request, and the server refuses `--role writer` as unknown
+/// input, so neither issues a key (ADR-0093 d6).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn write_only_and_the_writer_role_are_refused_and_issue_nothing() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let wa = lab.workspace("metals");
+    lab.take_requests();
+    let (code, _, stderr) = lab.text(&[
+        "keys",
+        "issue-agent",
+        "agent-8",
+        "--principal",
+        "crew/agent-8",
+        "--workspace",
+        &wa,
+        "--write-only",
+    ]);
+    assert_ne!(code, 0, "{stderr}");
+    assert!(stderr.contains("--write-only"), "{stderr}");
+    assert!(
+        lab.take_requests().is_empty(),
+        "clap refuses before any request"
+    );
+    let (code, envelope, log) = lab.json(
+        None,
+        &[
+            "keys",
+            "issue",
+            "agent-8",
+            "--role",
+            "writer",
+            "--principal",
+            "crew/agent-8",
+            "--grant",
+            &format!("{wa}:submitter"),
+        ],
+    );
+    assert_eq!(code, 1, "{log}");
+    assert_eq!(envelope["error"]["code"], "request.validation", "{log}");
+    assert!(
+        envelope["error"]["details"].get("renamed_to").is_none(),
+        "{log}"
+    );
     lab.stop().await;
 }
 
@@ -898,12 +946,12 @@ async fn issue_agent_sends_one_post_v2_keys_and_no_other_request() {
     assert_eq!(
         seen[0].body,
         json!({
-            "role": "writer",
+            "role": "contributor",
             "name": "agent-7",
             "used_by": "agent",
             "principal": "crew/agent-7",
             "default_workspace": wa,
-            "grants": [grant(&wa, "writer"), grant(&wa, "reader")],
+            "grants": [grant(&wa, "submitter"), grant(&wa, "reader")],
         })
     );
     lab.stop().await;
@@ -1039,7 +1087,7 @@ async fn keys_issue_agent_connect_code_with_an_expiry_and_a_rate_prints_both_lim
                     axum::Json(json!({
                         "key_id": "00000000-0000-4000-8000-0000000000c7",
                         "name": "claude-mobile",
-                        "role": "writer",
+                        "role": "contributor",
                         "principal": "crew/claude-mobile",
                         "default_workspace_id": "00000000-0000-4000-8000-000000000007",
                         "expiry": "2999-01-01T00:00:00.000000Z",
@@ -1528,9 +1576,9 @@ async fn keys_issue_agent_sends_the_v0_4_0_field_names() {
                         "key_id": "00000000-0000-4000-8000-000000000009",
                         "name": "agent-7",
                         "value": STUB_VALUE,
-                        "role": "writer",
+                        "role": "contributor",
                         "default_workspace_id": "00000000-0000-4000-8000-000000000007",
-                        "grants": [],
+                        "grants": [{ "role": "submitter" }, { "role": "reader" }],
                     })),
                 )
             }
@@ -1551,13 +1599,13 @@ async fn keys_issue_agent_sends_the_v0_4_0_field_names() {
     assert_eq!(
         *sent.lock().expect("the recorder"),
         [json!({
-            "role": "writer",
+            "role": "contributor",
             "name": "agent-7",
             "used_by": "agent",
             "principal": "crew/agent-7",
             "default_workspace": wa,
             "grants": [
-                { "workspace": wa, "role": "writer" },
+                { "workspace": wa, "role": "submitter" },
                 { "workspace": wa, "role": "reader" },
             ],
         })]
@@ -1568,7 +1616,7 @@ async fn keys_issue_agent_sends_the_v0_4_0_field_names() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_writer_key_issued_without_write_only_recalls_promoted_memories_on_its_workspace() {
+async fn a_contributor_key_issued_by_the_cli_recalls_promoted_memories_on_its_workspace() {
     let Some(lab) = Lab::start().await else {
         return;
     };
@@ -1577,11 +1625,11 @@ async fn a_writer_key_issued_without_write_only_recalls_promoted_memories_on_its
         "crew-agent-1",
         &[
             "--role",
-            "writer",
+            "contributor",
             "--principal",
             "crew/agent-1",
             "--grant",
-            &format!("{wa}:writer"),
+            &format!("{wa}:submitter"),
         ],
     )["value"]
         .as_str()
@@ -1647,7 +1695,7 @@ async fn a_writer_key_issued_without_write_only_recalls_promoted_memories_on_its
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_writer_key_issued_with_write_only_is_refused_recall_but_still_reads_its_own_held_row() {
+async fn a_submitter_key_is_refused_recall_but_still_reads_its_own_held_row() {
     let Some(lab) = Lab::start().await else {
         return;
     };
@@ -1656,12 +1704,11 @@ async fn a_writer_key_issued_with_write_only_is_refused_recall_but_still_reads_i
         "crew-agent-1",
         &[
             "--role",
-            "writer",
+            "submitter",
             "--principal",
             "crew/agent-1",
             "--grant",
-            &format!("{wa}:writer"),
-            "--write-only",
+            &format!("{wa}:submitter"),
         ],
     )["value"]
         .as_str()
@@ -1680,8 +1727,8 @@ async fn a_writer_key_issued_with_write_only_is_refused_recall_but_still_reads_i
     let artifact = accepted["artifact_id"].as_str().expect("artifact id");
 
     let (code, envelope, log) = lab.json(Some(&writer), &["read", "--query", "Accra Metals"]);
-    assert_eq!(code, 1, "recall needs a reader grant: {log}");
-    assert_eq!(envelope["error"]["code"], "access.not_found", "{log}");
+    assert_eq!(code, 1, "a submitter never recalls: {log}");
+    assert_eq!(envelope["error"]["code"], "access.verb_ceiling", "{log}");
 
     // Own work needs no grant (roles-and-keys.md "Own", ADR-0025 d3).
     let client = oml_cli::client::Client::new(lab.server.clone(), Some(writer.clone()));
@@ -1752,13 +1799,13 @@ async fn issue_agent_takes_a_key_name_and_the_issued_key_answers_to_it() {
     assert_eq!(
         seen[0].body,
         json!({
-            "role": "writer",
+            "role": "contributor",
             "name": "claude-laptop",
             "used_by": "agent",
             "principal": "claude/laptop",
             "default_workspace": "metals",
             "crew": "metals-crew",
-            "grants": [grant("metals", "writer"), grant("metals", "reader")],
+            "grants": [grant("metals", "submitter"), grant("metals", "reader")],
         }),
         "every reference goes as spelled; the CLI resolves nothing"
     );
@@ -1809,11 +1856,11 @@ async fn keys_show_names_a_revoked_key_as_revoked_in_its_human_layout() {
         "agent-7-laptop",
         &[
             "--role",
-            "writer",
+            "contributor",
             "--principal",
             "crew/agent-7",
             "--grant",
-            &format!("{wa}:writer"),
+            &format!("{wa}:submitter"),
         ],
     );
     let revoked_line = |stdout: &str| -> Vec<String> {
@@ -2096,11 +2143,11 @@ async fn a_grant_by_workspace_name_issues_the_same_grant_as_by_id() {
         "agent-by-id",
         &[
             "--role",
-            "writer",
+            "contributor",
             "--principal",
             "crew/agent-1",
             "--grant",
-            &format!("{wa}:writer"),
+            &format!("{wa}:submitter"),
             "--default-workspace",
             &wa,
         ],
@@ -2109,11 +2156,11 @@ async fn a_grant_by_workspace_name_issues_the_same_grant_as_by_id() {
         "agent-by-name",
         &[
             "--role",
-            "writer",
+            "contributor",
             "--principal",
             "crew/agent-2",
             "--grant",
-            "metals:writer",
+            "metals:submitter",
             "--default-workspace",
             "metals",
         ],
@@ -2123,14 +2170,14 @@ async fn a_grant_by_workspace_name_issues_the_same_grant_as_by_id() {
     assert_eq!(routes(&seen), ["POST /v2/keys", "POST /v2/keys"]);
     assert_eq!(
         seen[1].body["grants"],
-        json!([grant("metals", "writer"), grant("metals", "reader")]),
+        json!([grant("metals", "submitter"), grant("metals", "reader")]),
         "the name goes as spelled, with its reader grant beside it"
     );
     assert_eq!(seen[1].body["default_workspace"], "metals");
     assert_eq!(
         granted(&by_id),
         [
-            (wa.clone(), "writer".to_owned()),
+            (wa.clone(), "submitter".to_owned()),
             (wa.clone(), "reader".to_owned())
         ]
     );
@@ -2683,11 +2730,11 @@ impl Crew {
             &principal.replace('/', "-"),
             &[
                 "--role",
-                "writer",
+                "contributor",
                 "--principal",
                 principal,
                 "--grant",
-                &format!("{}:writer", self.wa),
+                &format!("{}:submitter", self.wa),
             ],
         )["value"]
             .as_str()
@@ -3279,18 +3326,17 @@ async fn the_hook_prints_nothing_and_exits_0_when_the_server_refuses() {
     assert!(stderr.lines().count() == 1, "one line: {stderr}");
     assert_eq!(routes(&crew.lab.take_requests()), ["GET /v1/memories"]);
 
-    // A write-only key reads its own work, and recall refuses it: the
+    // A submitter key reads its own work, and recall refuses it: the
     // context is whole or absent, never the listing alone.
     let write_only = crew.lab.issue(
         "crew-agent-9",
         &[
             "--role",
-            "writer",
+            "submitter",
             "--principal",
             "crew/agent-9",
             "--grant",
-            &format!("{}:writer", crew.wa),
-            "--write-only",
+            &format!("{}:submitter", crew.wa),
         ],
     )["value"]
         .as_str()
@@ -3306,7 +3352,7 @@ async fn the_hook_prints_nothing_and_exits_0_when_the_server_refuses() {
     let (code, stdout, stderr) = crew.hook_as(&write_only, &[], &stdin);
     assert_eq!(code, 0, "{stderr}");
     assert!(stdout.is_empty(), "no partial context: {stdout}");
-    assert!(stderr.contains("access.not_found"), "{stderr}");
+    assert!(stderr.contains("access.verb_ceiling"), "{stderr}");
     assert_eq!(
         routes(&crew.lab.take_requests()),
         ["GET /v1/memories", "POST /v1/memories/recall"]
@@ -4278,13 +4324,13 @@ async fn doctor_stub_with(
                     "/v2/whoami" => json!({
                         "key_id": "k1",
                         "name": "agent-7",
-                        "role": "writer",
+                        "role": "contributor",
                         "principal": "crew/agent-7",
                         "used_by": "agent",
                         "tenant": { "id": "t1", "name": "acme" },
                         "default_workspace": { "id": "w1", "name": "metals", "path": "acme/metals" },
                         "crew": null,
-                        "grants": [],
+                        "grants": [{ "role": "submitter" }, { "role": "reader" }],
                     }),
                     "/v2/events" => json!({ "events": [], "head_seq": 7 }),
                     _ => json!({}),
@@ -4391,7 +4437,7 @@ async fn doctor_with_a_whole_pair_reads_whoami_and_the_events_tail_under_that_so
         key_source.contains(path) && key_source.contains("api_key"),
         "{log}"
     );
-    assert_eq!(doctor["whoami"]["role"], "writer", "{log}");
+    assert_eq!(doctor["whoami"]["role"], "contributor", "{log}");
     assert_eq!(doctor["whoami"]["tenant"], "acme", "{log}");
     assert_eq!(
         doctor["whoami"]["default_workspace"], "acme/metals",
@@ -4536,13 +4582,13 @@ async fn login_stub() -> (String, Calls, tokio::task::JoinHandle<()>) {
                 return axum::Json(json!({
                     "key_id": "k1",
                     "name": "agent-7",
-                    "role": "writer",
+                    "role": "contributor",
                     "principal": "crew/agent-7",
                     "used_by": "agent",
                     "tenant": { "id": "t1", "name": "acme" },
                     "default_workspace": { "id": "w1", "name": "metals", "path": "acme/metals" },
                     "crew": null,
-                    "grants": [],
+                    "grants": [{ "role": "submitter" }, { "role": "reader" }],
                 }))
                 .into_response();
             }
@@ -5053,7 +5099,7 @@ async fn doctor_prints_role_tenant_and_default_workspace_from_whoami() {
     assert_eq!(
         doctor["whoami"],
         json!({
-            "role": "writer",
+            "role": "contributor",
             "tenant": "acme",
             "user": null,
             "default_workspace": "acme/metals",
@@ -5063,7 +5109,9 @@ async fn doctor_prints_role_tenant_and_default_workspace_from_whoami() {
     let (code, text) = doctor_text(&pair, &[]);
     assert_eq!(code, 0, "{text}");
     assert!(
-        text.contains("whoami      : role writer, tenant acme, default workspace acme/metals\n"),
+        text.contains(
+            "whoami      : role contributor, tenant acme, default workspace acme/metals\n"
+        ),
         "{text}"
     );
     // A key that names no user says so (ADR-0044 d14).
@@ -5613,11 +5661,11 @@ async fn review_approve_without_serve_id_approves_the_one_claimed_item() {
         "crew-agent-1",
         &[
             "--role",
-            "writer",
+            "contributor",
             "--principal",
             "crew/agent-1",
             "--grant",
-            &format!("{wa}:writer"),
+            &format!("{wa}:submitter"),
         ],
     )["value"]
         .as_str()
@@ -6876,8 +6924,8 @@ async fn oml_review_list_and_approve_ids_judge_each_listed_item() {
             .expect("value")
             .to_owned()
     };
-    let loader = issue("loader", "writer", "agent", "crew/loader", "writer");
-    let twin = issue("twin", "writer", "agent", "eugene", "writer");
+    let loader = issue("loader", "submitter", "agent", "crew/loader", "submitter");
+    let twin = issue("twin", "submitter", "agent", "eugene", "submitter");
     let reviewer = issue("eugene-review", "reviewer", "person", "eugene", "reviewer");
     for key in ["adr-0001-d1", "adr-0001-d2"] {
         let (code, _, log) = lab.json(
@@ -7050,7 +7098,14 @@ async fn oml_sync_keeps_a_workspace_in_step_with_a_clones_records() {
                 "--principal",
                 principal,
                 "--grant",
-                &format!("{wa}:{role}"),
+                &format!(
+                    "{wa}:{}",
+                    if role == "contributor" {
+                        "submitter"
+                    } else {
+                        role
+                    }
+                ),
                 // A person's reviewer reads the tips it links (ADR-0057 d10).
                 "--grant",
                 &format!("{wa}:reader"),
@@ -7060,7 +7115,7 @@ async fn oml_sync_keeps_a_workspace_in_step_with_a_clones_records() {
             .expect("value")
             .to_owned()
     };
-    let sync = issue("design-sync", "writer", "service", "crew/design-sync");
+    let sync = issue("design-sync", "contributor", "service", "crew/design-sync");
     let reviewer = issue("eugene-review", "reviewer", "person", "eugene");
     let ratifier = issue("ana-review", "reviewer", "person", "ana");
     let clone = lab.dir.join("clone");
@@ -7238,7 +7293,14 @@ async fn oml_sync_loads_a_crates_docs_and_a_code_edit_writes_nothing() {
                 "--principal",
                 principal,
                 "--grant",
-                &format!("{wa}:{role}"),
+                &format!(
+                    "{wa}:{}",
+                    if role == "contributor" {
+                        "submitter"
+                    } else {
+                        role
+                    }
+                ),
                 "--grant",
                 &format!("{wa}:reader"),
             ],
@@ -7247,7 +7309,7 @@ async fn oml_sync_loads_a_crates_docs_and_a_code_edit_writes_nothing() {
             .expect("value")
             .to_owned()
     };
-    let sync = issue("code-sync", "writer", "service", "crew/code-sync");
+    let sync = issue("code-sync", "contributor", "service", "crew/code-sync");
     let reviewer = issue("eugene-code-review", "reviewer", "person", "eugene");
     let clone = lab.dir.join("code-clone");
     std::fs::create_dir_all(clone.join("crates/demo/src")).expect("clone dir");

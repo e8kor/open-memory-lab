@@ -208,13 +208,12 @@ oml keys issue [OPTIONS] --role <ROLE> <KEY_NAME>
 
 | Option | Meaning |
 |---|---|
-| `--role <ROLE>` | reader \| writer \| reviewer \| admin |
+| `--role <ROLE>` | reader \| contributor \| submitter \| reviewer \| admin. A contributor recalls and writes; a submitter writes without recall |
 | `--used-by <USED_BY>` | agent \| person \| service [default: agent] |
 | `--default-workspace <DEFAULT_WORKSPACE>` | Default workspace (id or name) for provider requests without one; must be covered by a grant. Defaults to the first grant's workspace |
-| `--grant <GRANTS>` | Grant <workspace>:<role>, or <workspace>:<role>:node for one node; workspace may be id or name. Repeatable. Writer grants include reader access unless --write-only |
+| `--grant <GRANTS>` | Grant <workspace>:<role>, or <workspace>:<role>:node for one node; workspace may be id or name. Repeatable. For a contributor key, each submitter grant brings a reader grant on the same workspace |
 | `--crew <CREW>` | Crew record (id or name), fixed for the key's life |
 | `--user <USER>` | User the key acts for. Grants must be under `universe.<user>`, where workspace names resolve; the first key creates that root |
-| `--write-only` | Send writer grants without matching reader grants |
 | `--principal <PRINCIPAL>` | Principal the key acts as |
 | `--label <LABEL>` |  |
 | `--guardrail-scope <GUARDRAIL_SCOPE>` | Guardrail scope: workspace loads only the default workspace's guardrails; ancestors also loads every readable ancestor. Defaults to ancestors [possible values: workspace, ancestors] |
@@ -241,7 +240,7 @@ oml keys issue-agent [OPTIONS] --principal <PRINCIPAL> <KEY_NAME>
 | `--user <USER>` | User the key acts for, under `universe.<user>`; the first key for a user creates that root |
 | `--crew <CREW>` | Crew record (id or name), fixed for the key's life |
 | `--used-by <USED_BY>` | Who holds the key [default: agent] [possible values: agent, person] |
-| `--write-only` | Send the writer grant without a matching reader grant |
+| `--role <ROLE>` | contributor recalls and writes the workspace; submitter writes it without recall [default: contributor] [possible values: contributor, submitter] |
 | `--out <OUT>` | Write the key to a new 0600 file without overwriting and print a line that reads it instead of the value |
 | `--connect-code` | Issue a claude.ai custom-connector key with a single-use connect code instead of a key value |
 | `--guardrail-scope <GUARDRAIL_SCOPE>` | Guardrail scope: workspace loads only the default workspace's guardrails; ancestors also loads every readable ancestor. Defaults to ancestors [possible values: workspace, ancestors] |
@@ -514,7 +513,7 @@ oml workspaces status pending [OPTIONS] <WORKSPACE>
 
 ### `oml workspaces import`
 
-Import an encrypted bundle into an in-progress workspace, or a new name created in progress. The bundle is decrypted here, twice, and verified before upload; nothing decrypted is written to disk. Every version lands held by this key. A writer key used by a person only
+Import an encrypted bundle into an in-progress workspace, or a new name created in progress. The bundle is decrypted here, twice, and verified before upload; nothing decrypted is written to disk. Every version lands held by this key. A contributor key used by a person only
 
 ```
 oml workspaces import [OPTIONS] --into <INTO> --identity <IDENTITY> <FILE>

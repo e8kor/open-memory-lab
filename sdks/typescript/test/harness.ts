@@ -239,10 +239,10 @@ export async function startServer(): Promise<OmlServer> {
     const reviewWorkspace = String(oml("workspaces", "create", root, "sdk-review").id);
     const agentKey = String(
       oml(
-        "keys", "issue", "sdk-agent", "--role", "writer", "--used-by", "agent",
+        "keys", "issue", "sdk-agent", "--role", "contributor", "--used-by", "agent",
         "--principal", "sdk/agent", "--default-workspace", workspace,
-        "--grant", `${workspace}:writer`, "--grant", `${workspace}:reader`,
-        "--grant", `${reviewWorkspace}:writer`, "--grant", `${reviewWorkspace}:reader`,
+        "--grant", `${workspace}:submitter`, "--grant", `${workspace}:reader`,
+        "--grant", `${reviewWorkspace}:submitter`, "--grant", `${reviewWorkspace}:reader`,
       ).value,
     );
     const reviewerKey = String(

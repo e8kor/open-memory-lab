@@ -12,7 +12,7 @@ OML serves one JSON API on one keyed listener. `/v1` is the provider ring that a
 
 ## Conventions
 
-- **Authentication.** Send `Authorization: Bearer <key>`. The key carries one role (`reader`, `writer`, `reviewer`, `admin`, `operator`); the server derives the tenant from it, never from the request.
+- **Authentication.** Send `Authorization: Bearer <key>`. The key carries one role (`reader`, `contributor`, `submitter`, `reviewer`, `admin`, `operator`); the server derives the tenant from it, never from the request.
 - **Idempotency.** Every `POST` that creates state needs an `Idempotency-Key` header. A replay returns the stored answer and sets `Idempotency-Replay: true`. A refused request records nothing, so a retry under the same key runs again and may answer differently.
 - **Request ids.** Every response carries `X-Request-Id` and `X-Correlation-Id`. The caller may send its own `X-Request-Id`, `X-Correlation-Id` and `traceparent`.
 - **Errors.** Every failure has one JSON shape with a `code` from the [error codes](errors.md). Any operation can answer `429 limit.rate` or `limit.quota`.
@@ -61,7 +61,7 @@ Write, list, recall and replace memories on the provider ring.
 
 Submit a memory (remember or learn); held on arrival, scanned same-call.
 
-Requires: writer effective access on the resolved workspace, or, for a person's session key whose role is reviewer, reviewer and reader effective access there: the version is held and its lineage excludes that key, and every other reviewer key is access.verb_ceiling; every derives_from ancestor must be readable by the key — promoted within its reader effective access, or its own row in any state — else 404 access.not_found, indistinguishable from a nonexistent id; lineage is attribution, not a verb of its own.
+Requires: submitter effective access on the resolved workspace, or, for a person's session key whose role is reviewer, reviewer and reader effective access there: the version is held and its lineage excludes that key, and every other reviewer key is access.verb_ceiling; every derives_from ancestor must be readable by the key — promoted within its reader effective access, or its own row in any state — else 404 access.not_found, indistinguishable from a nonexistent id; lineage is attribution, not a verb of its own.
 
 | Parameter | In | Type | Required | Meaning |
 |---|---|---|---|---|
@@ -183,7 +183,7 @@ One memory with its text (decrypted on the serving path) and attachment descript
 
 Propose a replacement version, or with retirement true propose retiring the claim; a new attributed submission, held like any write.
 
-Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order) — a writer on a target version it authored, a person's session web key on one any key of its person authored, read as same_user reads it, a reviewer through edit-as-proposal.
+Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order) — a key with submitter effective access on a target version it authored, a person's session web key on one any key of its person authored, read as same_user reads it, a reviewer through edit-as-proposal.
 
 | Parameter | In | Type | Required | Meaning |
 |---|---|---|---|---|
@@ -221,7 +221,7 @@ Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Gr
 
 Record that a promoted version's anchored span was compared with its source at a commit.
 
-Requires: the version's author key (writer), or a reviewer with reviewer effective access on its workspace; any other writer that can read the version is 403 access.author_only, and a key that cannot read it is 404 access.not_found.
+Requires: the version's author key (a contributor or a submitter), or a reviewer with reviewer effective access on its workspace; any other key without the reviewer role that can read the version is 403 access.author_only, and a key that cannot read it is 404 access.not_found.
 
 | Parameter | In | Type | Required | Meaning |
 |---|---|---|---|---|
@@ -850,9 +850,9 @@ Issue a key under the issuer ceiling; the value appears exactly once, here.
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `role` | `reader` \| `writer` \| `reviewer` \| `admin` \| `operator` | yes |  |
+| `role` | `reader` \| `contributor` \| `submitter` \| `reviewer` \| `admin` \| `operator` | yes |  |
 | `name` | string | yes | The key's name: unique in its namespace (409 name.taken), never changed, never released; distinct from principal and label. |
-| `grants` | array of object | no | Taken exactly as sent, except that a user key also gets a reader grant on the universe node alone. |
+| `grants` | array of object | no | Taken exactly as sent, except that a user key other than a submitter key also gets a reader grant on the universe node alone. |
 | `user` | string | no | The person the key acts for, by the user's name: a user key, whose every grant must lie in its user root universe.<user> (403 access.issuer_ceiling, details user) and whose workspace references resolve in that root's namespace. |
 | `default_workspace` | WorkspaceRef | no | The provider-ring target, by id or name; its validation and its default when omitted are declared in the issuance order of docs/architecture/roles-and-keys.md. |
 | `used_by` | `agent` \| `person` \| `service` | no | The issuing admin's journalled attestation; never verified as fact. |
@@ -1263,7 +1263,7 @@ Requires: admin key role. mode is signup.mode; address_limit_shared is true when
 
 Give a person's session key a capacity on workspaces, review or curation.
 
-Requires: admin key role. review: <user>-review gains reviewer and reader on each workspace; curate: <user>-curate, a tenant writer key with writer on the universe node alone, is created at the first designation, and gains reader on each workspace.
+Requires: admin key role. review: <user>-review gains reviewer and reader on each workspace; curate: <user>-curate, a tenant contributor key with submitter on the universe node alone, is created at the first designation, and gains reader on each workspace.
 
 | Parameter | In | Type | Required | Meaning |
 |---|---|---|---|---|
@@ -1841,7 +1841,7 @@ Requires: any key of an account, a user root's key.
 
 Open a resumable upload session for bytes of a declared size and SHA-256.
 
-Requires: a writer key; any other role is access.verb_ceiling (as amended 2026-11-17). purpose is import, the one purpose built; size is 1 byte to uploads.max_bytes (1 GiB by default), or 413 upload.too_large; sha256 is the plaintext's SHA-256 as 64 lowercase hex digits.
+Requires: a contributor or a submitter key; any other role is access.verb_ceiling. purpose is import, the one purpose built; size is 1 byte to uploads.max_bytes (1 GiB by default), or 413 upload.too_large; sha256 is the plaintext's SHA-256 as 64 lowercase hex digits.
 
 **Request body** (`application/json`)
 
@@ -1922,7 +1922,7 @@ Requires: the key that opened the session, or access.not_found (as amended 2026-
 
 Plan or run an import of a completed upload into an in-progress workspace; every version lands held.
 
-Requires: a writer key used by a person; any other key is access.verb_ceiling with details.reason import_person_only. upload_id is a completed upload session of purpose import that this key opened, holding the decrypted bundle; another key's is access.not_found, one in another state upload.session_invalid, one past its expiry 410 upload.expired. target is a development workspace in progress the key writes, or a bare name this key may create, which the import creates in progress; any other target is 409 import.target_not_in_progress, and a taken name name.taken.
+Requires: a contributor key used by a person; any other key, a submitter key included, is access.verb_ceiling with details.reason import_person_only. upload_id is a completed upload session of purpose import that this key opened, holding the decrypted bundle; another key's is access.not_found, one in another state upload.session_invalid, one past its expiry 410 upload.expired. target is a development workspace in progress the key writes, or a bare name this key may create, which the import creates in progress; any other target is 409 import.target_not_in_progress, and a taken name name.taken.
 
 **Request body** (`application/json`)
 

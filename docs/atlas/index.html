@@ -1112,7 +1112,7 @@ function Universe(){
         sel=null;selMarker.visible=false;
         panel.innerHTML=`<button class="x" id="pxw">✕</button>
           <div class="head"><h4>${w.name}</h4>
-          <div class="crew">${w.crew} — writer keys with reader grants, plus reviewer keys</div></div>
+          <div class="crew">${w.crew} — contributor keys, plus reviewer keys</div></div>
           <div class="body"><table>
           <tr><td>status ladder</td><td>${w.ladder}</td></tr>
           ${w.child?`<tr><td>children</td><td>${w.child} (development)</td></tr>`:''}
@@ -1122,7 +1122,7 @@ function Universe(){
           ${w.sim?`<tr><td>simulation</td><td>${w.sim.id} · audience ${w.sim.audience}</td></tr>`:''}
           <tr><td>review policy</td><td>k=${w.k} (${w.k} approving verdict${w.k>1?'s':''})${w.vocab&&w.human?'<br>· human gate (vocab.*)':''}</td></tr>
           <tr><td>reads</td><td>own subtree + grants:<br>${w.grants.join(', ')||'—'}</td></tr>
-          <tr><td>writes</td><td>own subtree (writer grant)</td></tr></table>
+          <tr><td>writes</td><td>own subtree (submitter grant)</td></tr></table>
           <div class="bar"><i style="width:${prog}%"></i></div>
           ${w.ladder==='frozen'?'<div class="docsrow">frozen: serves reads · refuses new writes · demote and erase stay journalled</div>'
             :w.child&&w.ladder==='protected'?`<div class="docsrow">freeze blocked while child ${w.child} is development (child-status rule)</div>`
