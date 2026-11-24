@@ -56,7 +56,7 @@ console form, error details (`needed_role`), the docs and the plugins' key skill
 made the same kind of cut when it renamed the reviewer role (d13); this record follows its rules and states
 only where a split word differs from a renamed one.
 
-Built for v0.8.4; the implementation notes below record the readings the build took.
+Built in v0.8.4; the implementation notes below record the readings the build took.
 
 ## Decision
 
