@@ -115,6 +115,7 @@ branch that reserved later renumbers.
 | adr | 0091 | `main` |  | workareas become workspaces and the dreamer role becomes reviewer on e | used |
 | adr | 0092 | `main` |  | search filters by every claim kind and ranks skills and guardrails as  | used |
 | adr | 0093 | `main` |  | contributor and submitter replace writer | used |
+| adr | 0094 | `feat/sdk-langchain` |  | a LangChain integration rides the Python SDK; its store writes only into an in-progress workspace | reserved |
 | migration | 0001 | `main` |  | init | used |
 | migration | 0002 | `main` |  | poc adapter | used |
 | migration | 0003 | `main` |  | lead startup | used |
@@ -178,7 +179,7 @@ branch that reserved later renumbers.
 | migration | 0060 | `main` |  | document passages served index | used |
 | migration | 0061 | `main` |  | memories author person | used |
 | migration | 0062 | `main` |  | search every hit kind | used |
-| migration | 0063 | `bulk/v083-2` |  | admin investigations | reserved |
-| migration | 0064 | `bulk/v083-2` |  | admin fixes and the fix mark on memories | reserved |
+| migration | 0063 | `main` |  | admin investigations | used |
+| migration | 0064 | `main` |  | admin fixes | used |
 | migration | 0065 | `main` |  | session key account | used |
-| migration | 0066 | `feat/role-names` |  | contributor and submitter replace writer (ADR-0093) | reserved |
+| migration | 0066 | `main` |  | contributor and submitter | used |

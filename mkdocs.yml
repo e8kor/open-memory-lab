@@ -116,6 +116,7 @@ nav:
       - Integrate:
           - Integrate a reviewer crew over HTTP: api/reviewer-crews.md
           - Use the client SDKs: engineering/sdks.md
+          - Use LangChain and LangGraph: guides/langchain.md
   - Operate:
       - operations/index.md
       - Administer a server: guides/administering.md
