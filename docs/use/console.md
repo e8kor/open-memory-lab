@@ -60,7 +60,7 @@ and no reviewer is involved
 
 The console withdraws any held version a key of the person wrote, an agent's included. A held
 skill, guardrail or document on a workspace's page offers **Withdraw** the same way. An agent
-withdraws its own write with `oml_withdraw`, and the CLI with `oml withdraw <artifact_id>`
+withdraws its own write with `oml_write` and `withdraw`, and the CLI with `oml withdraw <artifact_id>`
 ([write and read memories](remember-and-recall.md#correct-withdraw-retire-and-link)). An approved version
 is not withdrawn: it is corrected or retired by a new held version. A withdrawn version is never
 reopened; a new write or a supersession of the served tip follows it.

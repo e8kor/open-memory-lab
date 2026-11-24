@@ -32,8 +32,8 @@ The account gets a private space nobody else can read, up to 1,000 memories, 5 k
 
 | Tool | How it connects | Gives | Page |
 |---|---|---|---|
-| Claude Code | plugin over MCP, installed by `oml setup claude-code` | the four tools, a session-start hook, a librarian agent | [Connect Claude Code](../guides/claude-code.md) |
-| claude.ai, Claude Desktop connectors, Claude phone apps | custom connector with a one-time connect code | the four tools | [claude.ai and the phone](../guides/claude-ai-and-mobile.md) |
-| Codex CLI, Cursor, Gemini CLI, VS Code, Claude Desktop | files from the agent kit | the four tools over MCP | [Other agent tools](../guides/other-harnesses.md) |
+| Claude Code | plugin over MCP, installed by `oml setup claude-code` | the three tools, a session-start hook, a librarian agent | [Connect Claude Code](../guides/claude-code.md) |
+| claude.ai, Claude Desktop connectors, Claude phone apps | custom connector with a one-time connect code | the three tools | [claude.ai and the phone](../guides/claude-ai-and-mobile.md) |
+| Codex CLI, Cursor, Gemini CLI, VS Code, Claude Desktop | files from the agent kit | the three tools over MCP | [Other agent tools](../guides/other-harnesses.md) |
 | The user's own code | Python and TypeScript SDKs | write, read and review calls | [Client SDKs](../engineering/sdks.md) |
 | A reviewer crew | HTTP review loop | a crew that approves or rejects | [Reviewer crews](../api/reviewer-crews.md) |

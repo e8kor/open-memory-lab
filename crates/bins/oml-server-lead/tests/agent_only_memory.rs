@@ -396,10 +396,7 @@ async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and
         .expect("tools")
         .iter()
         .map(|t| t["name"].as_str().expect("name")));
-    assert_eq!(
-        names,
-        set(["oml_write", "oml_read", "oml_workspace"])
-    );
+    assert_eq!(names, set(["oml_write", "oml_read", "oml_workspace"]));
 
     // 2. On its default workspace the one key both remembers and recalls
     // (d1, d14; roles-and-keys.md, effective verbs).

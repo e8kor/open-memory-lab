@@ -1,7 +1,7 @@
 # The `oml` agent plugin
 
-This plugin connects Claude Code to an Open Memory Lab server over MCP. It adds four
-tools, `oml_write`, `oml_read`, `oml_workspace` and `oml_withdraw`, a skill that explains when to use
+This plugin connects Claude Code to an Open Memory Lab server over MCP. It adds three
+tools, `oml_write`, `oml_read` and `oml_workspace`, a skill that explains when to use
 them, and a read-only subagent that searches. Every write is held until a
 different identity approves it.
 That is the point of the server, and it means a stored fact is not shared the moment
@@ -355,11 +355,10 @@ tool: an agent learns what became of its writes with `oml_read`, `own: true` and
 
 *Eight tools since v0.2.0; three task-shaped tools since v0.4.0 · [releases](https://e8kor.github.io/open-memory-lab/changelog/)*
 
-[docs/api/mcp-tools.json](../../docs/api/mcp-tools.json) declares exactly the four tools above,
-each with its MCP annotations: `oml_read` and `oml_workspace` are read-only, `oml_write` is
-neither read-only nor destructive, since every write is held and a retirement is a proposal, and
-`oml_withdraw` is neither, since a withdrawn version is kept and only its own key's held write is
-withdrawn.
+[docs/api/mcp-tools.json](../../docs/api/mcp-tools.json) declares exactly the three tools above,
+each with its MCP annotations: `oml_read` and `oml_workspace` are read-only, and `oml_write` is
+neither read-only nor destructive, since every write is held, a retirement is a proposal, and a
+withdrawn version is kept with its text and only the key's own held write is withdrawn.
 [docs/api/mcp-tools.designed.json](../../docs/api/mcp-tools.designed.json) holds what is designed
 and not served: `oml_relate_propose`, `oml_vocab`, `oml_read`'s lineage mode and `oml_write`'s
 `attachments`. A designed tool answers an error saying it is designed. No tool uploads files,

@@ -878,7 +878,7 @@ fn the_instructions_and_tool_descriptions_describe_and_do_not_command() {
                 .to_owned(),
         ));
     }
-    assert_eq!(texts.len(), 5);
+    assert_eq!(texts.len(), 4);
     // An imperative aimed at the model: a sentence that opens with a verb
     // about calling, trying, recording or treating, or tells it to do so
     // "before" or "after" something.
@@ -2196,8 +2196,8 @@ async fn a_reused_idempotency_key_across_modes_is_a_separate_write() {
         .as_str()
         .expect("description");
     assert!(
-        said.contains("Without replaces it is scoped to (key, resolved workspace)")
-            && said.contains("with replaces to the calling key alone")
+        said.contains("Without replaces or withdraw it is scoped to (key, resolved workspace)")
+            && said.contains("with replaces or withdraw to the calling key alone")
             && said.contains("is a separate write"),
         "{said}"
     );
@@ -4316,7 +4316,10 @@ async fn withdraw_through_oml_write_replays_under_the_same_idempotency_key() {
     let (writer, _, _, _) = crew(&router).await;
     let id = held_write(&router, &writer, 1, "A note written twice.", "w-1").await;
     let first = withdraw_through_oml_write(&router, &writer, 2, &id, "wd-1").await;
-    assert_eq!(first["structuredContent"]["idempotent_replay"], false, "{first}");
+    assert_eq!(
+        first["structuredContent"]["idempotent_replay"], false,
+        "{first}"
+    );
     let replay = withdraw_through_oml_write(&router, &writer, 3, &id, "wd-1").await;
     assert_eq!(replay["isError"], false, "{replay}");
     assert_eq!(
@@ -4400,7 +4403,11 @@ async fn a_withdraw_carrying_text_or_kind_is_refused_naming_the_field() {
         let mut args = json!({"withdraw": id, "idempotency_key": format!("wd-{field}")});
         args[field] = value;
         let refused = call_tool(&router, &writer, n, "oml_write", args).await;
-        assert_eq!(refusal_code(&refused), "request.validation", "{field}: {refused}");
+        assert_eq!(
+            refusal_code(&refused),
+            "request.validation",
+            "{field}: {refused}"
+        );
         assert_eq!(
             refused["structuredContent"]["error"]["details"]["field"],
             format!("/{field}"),

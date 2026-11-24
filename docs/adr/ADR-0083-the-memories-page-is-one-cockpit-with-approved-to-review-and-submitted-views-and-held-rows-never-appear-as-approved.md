@@ -475,7 +475,10 @@ operator's acceptance. It ships in v0.8.4.
 - **The refusals are the ring's, unchanged.** A version in any state but held answers
   `memory.not_held`, another author's version `access.author_only`, and an id the key cannot see
   `access.not_found`; a retry with the same idempotency key and request replays with
-  `idempotent_replay: true`.
+  `idempotent_replay: true`. The idempotency key is scoped to the calling key alone, as a
+  supersession's is, so one key reused between a supersession and a withdrawal is the typed
+  error a changed request is, never a second act; reused between a submission and a withdrawal
+  it is a separate act, as between a submission and a supersession.
 - **The answer is the write answer with `mode: "withdraw"`:** `{mode, artifact_id, state,
   idempotent_replay}`, `state` being `withdrawn`. Every `oml_write` answer names its mode
   (`submit`, `supersede`), so a client reads one field to know what happened; the fields a

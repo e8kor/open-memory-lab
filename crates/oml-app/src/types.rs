@@ -3140,7 +3140,7 @@ pub struct SourceCheckRequest {
     pub fragment: Option<String>,
 }
 
-/// `POST /v1/memories/{artifact_id}/withdraw` and `oml_withdraw` (ADR-0083
+/// `POST /v1/memories/{artifact_id}/withdraw` and `oml_write {withdraw}` (ADR-0083
 /// d13): the author retracts its own held version, with an optional reason.
 #[derive(Debug, Clone)]
 pub struct WithdrawRequest {

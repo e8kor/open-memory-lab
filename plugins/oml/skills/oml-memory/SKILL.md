@@ -24,15 +24,15 @@ is one connection:
    `own: true` and `state`);
 5. revise or retire what no longer holds (`oml_write` with `replaces`).
 
-## Four tools, chosen by their arguments
+## Three tools, chosen by their arguments
 
-`oml_write` stores, `oml_read` reads, `oml_workspace` describes a workspace and
-`oml_withdraw` withdraws a held write of your own key. The
+`oml_write` stores, `oml_read` reads and `oml_workspace` describes a workspace. The
 arguments you pass choose what `oml_write` and `oml_read` do, and the result's `mode` says
 which ran:
 
 - `oml_write` without `replaces` writes a new claim; with `replaces` it proposes a new
   version of that claim, and with `replaces` and `retirement: true` it proposes retiring it.
+  With `withdraw` it withdraws a held write of your own key.
 - `oml_read` with `artifact_id` reads one memory, with `query` recalls, and with neither
   lists. Never pass `query` and `artifact_id` together.
 
@@ -176,11 +176,12 @@ stays readable with `oml_read`.
 
 ## Withdraw a mistaken write
 
-A write your key made by mistake, still held, is withdrawn with `oml_withdraw`, its
-`artifact_id`, an optional `reason` and an `idempotency_key`. The version is kept as
-`withdrawn` with its text, leaves review and is never served; no reviewer is involved. Only a
-held version is withdrawn (`memory.not_held`): a reviewed one is revised or retired with
-`oml_write` and `replaces`. Another key's write is refused `access.author_only`.
+A write your key made by mistake, still held, is withdrawn with `oml_write` and `withdraw`
+set to its `artifact_id`, an optional `reason` and an `idempotency_key`, and nothing else:
+any other field, `text` included, is refused naming it. The answer's `mode` is `withdraw`. The
+version is kept as `withdrawn` with its text, leaves review and is never served; no reviewer is
+involved. Only a held version is withdrawn (`memory.not_held`): a reviewed one is revised or
+retired with `oml_write` and `replaces`. Another key's write is refused `access.author_only`.
 
 ## What the tools cannot do
 

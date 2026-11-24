@@ -85,8 +85,8 @@ Update the plugin with `claude plugin update oml@open-memory-lab`. Then set its 
 
 ## Upgrading to v0.8.4
 
-v0.8.4 runs three migrations, renames the writer role, and makes links and sign-in emails wait on
-their person.
+v0.8.4 runs three migrations, renames the writer role, folds `oml_withdraw` into `oml_write`, and
+makes links and sign-in emails wait on their person.
 
 ### Contributor and submitter replace writer: clients upgrade before the server
 
@@ -137,6 +137,24 @@ The steps follow ADR-0093 d8 and ADR-0091 d12's runbook:
 5. Upgrade the operator's own clients, and reissue any key `oml doctor` names under
    `key_contributor_without_recall`: issue a submitter key with
    `oml keys issue-agent <name> --role submitter` and cut the old one off.
+
+### `oml_withdraw` is now `oml_write {withdraw}`
+
+v0.8.4 serves three MCP tools, `oml_write`, `oml_read` and `oml_workspace`
+([ADR-0083](../adr/ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md),
+amendment of d13 of 2026-11-24). A held write is withdrawn with `oml_write` and
+`withdraw: <artifact_id>`, an optional `reason` and an `idempotency_key`; the answer carries
+`mode: "withdraw"`. `oml_withdraw` is no longer listed, and a call to it is refused as an
+unknown tool (JSON-RPC -32602), with no alias. The HTTP route
+`POST /v1/memories/{artifact_id}/withdraw`, `oml withdraw` and the console's **Withdraw** are
+unchanged. A client that lists tools at each session start, as the plugin and the claude.ai
+connector do, needs nothing; a script or an agent prompt that names `oml_withdraw` changes before
+the upgrade. The notice to send with the role-rename notice:
+
+> OML v0.8.4 folds the `oml_withdraw` MCP tool into `oml_write`. Withdraw a held write with
+> `oml_write` and `withdraw` set to its artifact id, with an optional `reason` and an
+> `idempotency_key`. After the upgrade a call to `oml_withdraw` is refused as an unknown tool.
+> The HTTP route, `oml withdraw` and the console's Withdraw are unchanged.
 
 ### Admin fixes, links and sign-in emails
 

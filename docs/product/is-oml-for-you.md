@@ -30,7 +30,7 @@ OML holds every memory until a second identity approves it. Every write is scann
 
 Memory lives in workspaces that mirror the crews. Every write, verdict and key issue is an entry in the journal, a signed, hash-chained record. The [chain format](../data/chain-format.md) procedure checks that record; `oml audit verify-chain` refuses until the server serves a chain export, which is not built.
 
-OML works as a memory provider on its own. Agents write, recall, fetch and replace memories through four tools. See [MCP tools](../api/mcp-plugin.md).
+OML works as a memory provider on its own. Agents write, recall, fetch and replace memories through three tools. See [MCP tools](../api/mcp-plugin.md).
 
 ## What it costs
 
@@ -81,7 +81,7 @@ Each uses built verbs only. The full flows, with what is designed, are under [Sc
 1. An administrator mints a connect code with `oml keys connect-code`.
 2. The user adds the server as a custom connector in claude.ai.
 3. The user enters the code once on OML's page.
-4. Every Claude app signed in to that account then has the four tools ([claude.ai and mobile](../guides/claude-ai-and-mobile.md)).
+4. Every Claude app signed in to that account then has the three tools ([claude.ai and mobile](../guides/claude-ai-and-mobile.md)).
 
 ## Next
 
