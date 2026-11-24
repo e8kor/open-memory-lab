@@ -148,13 +148,20 @@ amendment of d13 of 2026-11-24). A held write is withdrawn with `oml_write` and
 unknown tool (JSON-RPC -32602), with no alias. The HTTP route
 `POST /v1/memories/{artifact_id}/withdraw`, `oml withdraw` and the console's **Withdraw** are
 unchanged. A client that lists tools at each session start, as the plugin and the claude.ai
-connector do, needs nothing; a script or an agent prompt that names `oml_withdraw` changes before
-the upgrade. The notice to send with the role-rename notice:
+connector do, finds the new mode without a change to its tool list; a script or an agent prompt
+that names `oml_withdraw` changes before the upgrade, and so do the client's permission rules. A
+permission rule that names the old tool, such as a deny or ask rule on
+`mcp__plugin_oml_oml__oml_withdraw`, protects nothing after the upgrade: no tool has that name. A
+rule that allows `mcp__plugin_oml_oml__oml_write` without a prompt, or `mcp__plugin_oml_oml` for
+all three tools, now lets withdraw through without one too. To keep a prompt before a withdrawal,
+put `oml_write` under an ask rule. The notice to send with the role-rename notice:
 
 > OML v0.8.4 folds the `oml_withdraw` MCP tool into `oml_write`. Withdraw a held write with
 > `oml_write` and `withdraw` set to its artifact id, with an optional `reason` and an
 > `idempotency_key`. After the upgrade a call to `oml_withdraw` is refused as an unknown tool.
-> The HTTP route, `oml withdraw` and the console's Withdraw are unchanged.
+> A permission rule that names `mcp__plugin_oml_oml__oml_withdraw`, a deny or ask rule included,
+> protects nothing, and a rule that allows `oml_write` without a prompt now lets withdraw through
+> without one too. The HTTP route, `oml withdraw` and the console's Withdraw are unchanged.
 
 ### Admin fixes, links and sign-in emails
 

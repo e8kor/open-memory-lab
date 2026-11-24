@@ -816,7 +816,9 @@ async fn tools_list_serves_exactly_three_tools_each_with_its_annotations() {
     let listed = rpc(&router, &writer, 1, "tools/list", json!({})).await;
     let tools = listed["result"]["tools"].as_array().expect("tools");
     // Each tool also carries the human title the Connectors Directory asks for
-    // (ADR-0067 d1), and a write that only adds a held row is not destructive.
+    // (ADR-0067 d1), and a write that never deletes a row is not destructive:
+    // it adds a held row, or with withdraw marks the key's own held version
+    // withdrawn and keeps its text.
     let titles: Vec<(&str, &str)> = tools
         .iter()
         .map(|t| {
@@ -919,8 +921,12 @@ fn the_instructions_and_tool_descriptions_describe_and_do_not_command() {
     );
     let write = &texts[1].1;
     assert!(
-        write.contains("never changes or deletes"),
+        write.contains("never deletes a row"),
         "the write tool says why it is not destructive: {write}"
+    );
+    assert!(
+        write.contains("except withdraw"),
+        "the write tool names the one mode that changes an existing row: {write}"
     );
 }
 
@@ -2016,7 +2022,7 @@ fn refusal_code(result: &Value) -> &str {
 }
 
 #[tokio::test]
-async fn oml_write_by_a_reader_key_is_refused_at_the_verb_ceiling_in_every_mode() {
+async fn oml_write_by_a_reader_key_is_refused_at_the_verb_ceiling_in_every_mode_but_withdraw() {
     let Some((router, db)) = fresh_router().await else {
         return;
     };
@@ -2026,6 +2032,10 @@ async fn oml_write_by_a_reader_key_is_refused_at_the_verb_ceiling_in_every_mode(
     // A reader key's role admits no writer grant, so each of oml_write's
     // modes stops at step 1 of the refusal order, before the target or the
     // workspace is read (R1; roles-and-keys.md, refusal order; ADR-0039 d2).
+    // Withdraw has no verb ceiling: it retracts the key's own held write, so
+    // the ring refuses a reader key access.author_only on another key's
+    // version and access.not_found on one it cannot see (ADR-0083 d13,
+    // amendment of 2026-11-24).
     for (id, (mode, args)) in (1..).zip([
         (
             "submit",
@@ -4430,6 +4440,41 @@ async fn a_withdraw_carrying_text_or_kind_is_refused_naming_the_field() {
     );
     // Nothing was withdrawn: the version is still held.
     let done = withdraw_through_oml_write(&router, &writer, 21, &id, "wd-ok").await;
+    assert_eq!(done["structuredContent"]["state"], "withdrawn", "{done}");
+
+    drop_db(&db).await;
+}
+
+/// `oml_write` with `artifact_id`, the removed `oml_withdraw`'s argument,
+/// is refused with `request.validation` naming `/artifact_id` and saying
+/// that withdraw takes the id, and withdraws nothing (ADR-0083 d13,
+/// amendment of 2026-11-24).
+#[tokio::test]
+async fn oml_write_with_the_old_artifact_id_argument_is_refused_naming_it() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let (writer, _, _, _) = crew(&router).await;
+    let id = held_write(&router, &writer, 1, "A note still held.", "w-1").await;
+    for (n, args) in (2..).zip([
+        json!({"withdraw": true, "artifact_id": id, "idempotency_key": "wd-1"}),
+        json!({"withdraw": id, "artifact_id": id, "idempotency_key": "wd-2"}),
+        json!({"artifact_id": id, "idempotency_key": "wd-3"}),
+    ]) {
+        let refused = call_tool(&router, &writer, n, "oml_write", args).await;
+        assert_eq!(refusal_code(&refused), "request.validation", "{refused}");
+        let error = &refused["structuredContent"]["error"];
+        assert_eq!(error["details"]["field"], "/artifact_id", "{refused}");
+        assert!(
+            error["message"]
+                .as_str()
+                .expect("message")
+                .contains("withdraw takes the artifact id"),
+            "{refused}"
+        );
+    }
+    // Nothing was withdrawn: the version is still held.
+    let done = withdraw_through_oml_write(&router, &writer, 10, &id, "wd-ok").await;
     assert_eq!(done["structuredContent"]["state"], "withdrawn", "{done}");
 
     drop_db(&db).await;

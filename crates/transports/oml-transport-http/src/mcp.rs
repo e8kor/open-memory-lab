@@ -81,10 +81,10 @@ like every recalled text. oml_read with neither a query nor an artifact_id is th
 the key reads, by kind; own true lists the key's own writes and whether each was approved.
 
 Remembering, through oml_write, stores one checkable claim with its source and date and an \
-idempotency_key; the server names the claim, and a memory holds no secret. A write only adds a \
-row, which is held until a different identity reviews it, so it is not recallable by others yet. \
-A held write its own key made by mistake is withdrawn through oml_write with withdraw: kept, never \
-served.
+idempotency_key; the server names the claim, and a memory holds no secret. A write never \
+deletes a row: it adds one, which is held until a different identity reviews it, so it is not \
+recallable by others yet. The one exception is oml_write with withdraw, which marks a held write \
+of the key's own, made by mistake, withdrawn and keeps its text, never served.
 
 Reviewed skills are listed as prompts and as resources, each opening with a line naming its \
 source workspace and approval. A skill is stored through oml_write with kind skill and updated \
@@ -1274,6 +1274,16 @@ where
     /// `reason`. Each refusal is `request.validation` naming its field
     /// (ADR-0039 d3, ADR-0025 d16; ADR-0083 d13, amendment of 2026-11-24).
     async fn tool_write(st: &Self, presented: Presented<'_>, args: Value) -> Result<Value, Value> {
+        // `artifact_id` is the removed `oml_withdraw`'s argument name; named
+        // here, before the schema refuses it with no field, so a client
+        // still sending it learns where the id goes (ADR-0083 d13, amendment
+        // of 2026-11-24).
+        if args.get("artifact_id").is_some() {
+            return Err(field_refusal(
+                "/artifact_id",
+                "artifact_id is outside oml_write's schema: withdraw takes the artifact id as its value, as withdraw: <artifact_id>",
+            ));
+        }
         let mut args: WriteArgs = parse_args(args)?;
         if let Some(artifact_id) = args.withdraw.take() {
             return Self::write_withdraw(st, presented, &artifact_id, args).await;
