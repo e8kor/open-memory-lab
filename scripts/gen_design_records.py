@@ -47,11 +47,9 @@ BLURB = {
 
 
 # Records the page leaves out although they are accepted: ADR-0064, ADR-0080 to ADR-0087,
-# ADR-0089 to ADR-0093 are decided and not built (ADR-0088 is deferred, not decided), and
+# ADR-0089 to ADR-0093, ADR-0095 and ADR-0096 are decided and not built (ADR-0088 is deferred, not decided), and
 # ADR-0066 is about how this repository tracks work, which readers of the site do not need.
-HELD_BACK = {64, 66, 80, 81, 82, 83, 84, 85, 86, 87, 89, 90, 91, 92, 93}
-# ADR-0096 is decided and not built either.
-HELD_BACK |= {96}
+HELD_BACK = {64, 66, 80, 81, 82, 83, 84, 85, 86, 87, 89, 90, 91, 92, 93, 95, 96}
 
 
 RENAMED_ROW = re.compile(r"^\|\s*`(ADR-\d{4}[^`]*\.md)`\s*\|\s*\[`(ADR-\d{4}[^`]*\.md)`\]", re.M)
