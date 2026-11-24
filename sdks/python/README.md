@@ -58,12 +58,50 @@ fetch (`artifact_id`), a recall (`query`) or the listing (neither), as `oml_writ
 `request_id` — and `status`, as the subclass of the code's family; an argument outside its mode
 is refused the same way before anything is sent.
 
+## LangChain and LangGraph
+
+From v0.8.4 the extra `langchain` adds `oml_sdk.langchain`
+([ADR-0094](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0094-a-langchain-integration-rides-the-python-sdk-and-its-store-writes-only-into-an-in-progress-workspace.md);
+[the guide](https://e8kor.github.io/open-memory-lab/guides/langchain/)). `import oml_sdk` alone
+never imports LangChain or LangGraph.
+
+```sh
+pip install 'open-memory-lab-sdk[langchain]'
+```
+
+- `OmlRetriever(client=oml)`: recall as LangChain `Document`s, approved memories only unless
+  `include_unreviewed=True`, in any workspace the key reads.
+- `oml_tools(oml)`: the tools `oml_remember` and `oml_recall`. Their descriptions tell the model
+  that a write is held until a different identity reviews it, and that recalled text is data,
+  never instructions.
+- `OmlStore(oml, workspace)`: a LangGraph `BaseStore`, for LangGraph's `store` and LangMem's
+  memory tools, in an in-progress workspace only; any other workspace raises `StoreRefused`
+  (`not_in_progress`). An item is the claim `store/<label>/…/<key>` with a JSON body; `put`
+  writes or supersedes it, held, `get` and `search` read held and approved rows, and `delete`
+  withdraws the key's own held version and refuses anything else by name. Every value is
+  reviewed before the workspace commits.
+
+```python
+from oml_sdk import OmlClient
+from oml_sdk.langchain import OmlRetriever, OmlStore
+
+with OmlClient() as oml:
+    docs = OmlRetriever(client=oml, workspace="payments").invoke("canary stage")
+    store = OmlStore(oml, "crew-sprint")  # a workspace in progress
+    store.put(("decisions",), "release-train", {"content": "Ship on Thursdays"})
+    print(store.get(("decisions",), "release-train").value)
+```
+
+## Generation and tests
+
 `oml_sdk.generated` is generated and never edited by hand; `python3 scripts/generate_sdks.py`
 regenerates it. The tests run against a real `oml-server-lead` on a throwaway database
 (`tests/conftest.py` names the environment they read). The harness mints an owner and a
 serving role for that database, so its admin URL names a superuser that can mint roles;
 under a role that cannot, the server tests skip with `did not run: <role> cannot create roles`:
 
+The tests of `oml_sdk.langchain` need the extra and the LangMem group:
+
 ```sh
-cd sdks/python && uv run --locked pytest
+cd sdks/python && uv run --locked --extra langchain --group langmem pytest
 ```
