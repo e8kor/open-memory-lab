@@ -50,7 +50,7 @@ fluent v0.16.1
 fluent-bundle v0.15.3
 fluent-langneg v0.13.1
 fluent-syntax v0.11.1
-form_urlencoded v1.2.2
+form_urlencoded v1.2.3
 futures v0.3.34
 futures-channel v0.3.34
 futures-core v0.3.34
@@ -190,7 +190,7 @@ unicode-normalization v0.1.26
 universal-hash v0.5.1
 untrusted v0.9.0
 ureq v2.12.1
-url v2.5.8
+url v2.5.9
 utf8_iter v1.1.0
 utf8parse v0.2.2
 utf_types v1.0.0
