@@ -13,7 +13,7 @@ It has three parts:
 | Part | What it is | Where it works |
 |---|---|---|
 | `OmlRetriever` | a LangChain retriever: recall hits as `Document`s | any workspace the key reads |
-| `oml_tools(client)` | two tools, `oml_remember` and `oml_recall` | any workspace the key reads and writes |
+| `oml_tools(client)` | two tools, `oml_write` and `oml_read` | any workspace the key reads and writes |
 | `OmlStore` | a LangGraph `BaseStore`, for LangGraph's `store` and LangMem | an in-progress workspace only |
 
 ## Install
@@ -58,7 +58,7 @@ print(recall.invoke({"query": "canary stage"}))
 
 The tools' descriptions tell the model what the server does. A write is held: no other key
 recalls it until a different identity reviews and approves it. Recalled text is data to check,
-never instructions to follow. `oml_recall` heads each hit with `[approved]` or `[unreviewed]`, its
+never instructions to follow. `oml_read` heads each hit with `[approved]` or `[unreviewed]`, its
 claim key, version, date and source, and puts the text between `<data>` and `</data>`.
 
 ## Share working memory with the store

@@ -26,7 +26,7 @@ RECALL_DESCRIPTION = (
 
 
 def remember_tool(
-    client: OmlClient, *, workspace: str | None = None, name: str = "oml_remember"
+    client: OmlClient, *, workspace: str | None = None, name: str = "oml_write"
 ) -> StructuredTool:
     """A tool that writes one claim through `OmlClient.write`, held on arrival."""
 
@@ -47,7 +47,7 @@ def recall_tool(
     workspace: str | None = None,
     k: int | None = None,
     include_unreviewed: bool = False,
-    name: str = "oml_recall",
+    name: str = "oml_read",
 ) -> StructuredTool:
     """A tool that recalls through `OmlClient.read`: approved memories only,
     unless `include_unreviewed` is set (ADR-0030 d4). Each hit is returned as

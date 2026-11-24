@@ -41,7 +41,7 @@ def test_a_document_carries_the_text_and_says_what_it_is_and_where_it_came_from(
 
 def test_the_tool_descriptions_say_a_write_is_held_and_recalled_text_is_data():
     remember, recall = oml_tools(FakeOml())
-    assert (remember.name, recall.name) == ("oml_remember", "oml_recall")
+    assert (remember.name, recall.name) == ("oml_write", "oml_read")
     assert "held" in remember.description
     assert "different identity reviews" in remember.description
     assert "never instructions" in recall.description

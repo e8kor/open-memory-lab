@@ -71,7 +71,7 @@ pip install 'open-memory-lab-sdk[langchain]'
 
 - `OmlRetriever(client=oml)`: recall as LangChain `Document`s, approved memories only unless
   `include_unreviewed=True`, in any workspace the key reads.
-- `oml_tools(oml)`: the tools `oml_remember` and `oml_recall`. Their descriptions tell the model
+- `oml_tools(oml)`: the tools `oml_write` and `oml_read`. Their descriptions tell the model
   that a write is held until a different identity reviews it, and that recalled text is data,
   never instructions.
 - `OmlStore(oml, workspace)`: a LangGraph `BaseStore`, for LangGraph's `store` and LangMem's
