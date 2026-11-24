@@ -58,6 +58,12 @@ class OmlServer:
     reviewer_key: str
     workspace: str
     review_workspace: str
+    # In progress (ADR-0030), for oml_sdk.langchain's store (ADR-0094): the
+    # agent and a second agent write there, and a person's reviewer key of
+    # its own set the mode, so the review queue above never sees its rows.
+    progress_workspace: str
+    other_agent_key: str
+    progress_reviewer_key: str
 
     def __repr__(self) -> str:  # never the key values
         return f"OmlServer(url={self.url!r})"
@@ -205,18 +211,45 @@ def oml_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[OmlServer]:
         root = boot["root_workspace_id"]
         workspace = oml("workspaces", "create", root, "sdk")["id"]
         review_workspace = oml("workspaces", "create", root, "sdk-review")["id"]
+        progress = oml("workspaces", "create", root, "sdk-progress")["id"]
         agent = oml(
             "keys", "issue", "sdk-agent", "--role", "contributor", "--used-by", "agent",
             "--principal", "sdk/agent", "--default-workspace", workspace,
             "--grant", f"{workspace}:submitter", "--grant", f"{workspace}:reader",
             "--grant", f"{review_workspace}:submitter", "--grant", f"{review_workspace}:reader",
+            "--grant", f"{progress}:submitter", "--grant", f"{progress}:reader",
         )["value"]  # fmt: skip
+        other_agent = oml(
+            "keys", "issue", "sdk-other-agent", "--role", "contributor", "--used-by", "agent",
+            "--principal", "sdk/other-agent", "--default-workspace", progress,
+            "--grant", f"{progress}:submitter", "--grant", f"{progress}:reader",
+        )["value"]  # fmt: skip
+        progress_reviewer = oml(
+            "keys", "issue", "sdk-progress-reviewer", "--role", "reviewer", "--used-by", "person",
+            "--principal", "sdk/progress-reviewer", "--default-workspace", progress,
+            "--grant", f"{progress}:reviewer", "--grant", f"{progress}:reader",
+        )["value"]  # fmt: skip
+        # Only a person's reviewer key that reads the node puts it in progress (ADR-0030 d1).
+        marked = httpx.post(
+            f"{url}/v2/workspaces/{progress}/mode",
+            json={"mode": "in_progress"},
+            headers={
+                "Authorization": f"Bearer {progress_reviewer}",
+                "Idempotency-Key": secrets.token_hex(16),
+            },
+            timeout=10,
+        )
+        if marked.status_code != 200:  # the envelope names the refusal; it holds no key
+            pytest.fail(f"sdk-progress was not put in progress:\n{marked.text}")
         reviewer = oml(
             "keys", "issue", "sdk-reviewer", "--role", "reviewer", "--used-by", "person",
             "--principal", "sdk/reviewer", "--default-workspace", review_workspace,
             "--grant", f"{review_workspace}:reviewer",
         )["value"]  # fmt: skip
-        yield OmlServer(url, agent, reviewer, workspace, review_workspace)
+        yield OmlServer(
+            url, agent, reviewer, workspace, review_workspace, progress, other_agent,
+            progress_reviewer,
+        )  # fmt: skip
     finally:
         if server is not None and server.poll() is None:
             server.terminate()
@@ -251,6 +284,14 @@ def reviewer(oml_server: OmlServer):
     from oml_sdk import OmlClient
 
     with OmlClient(url=oml_server.url, api_key=oml_server.reviewer_key) as client:
+        yield client
+
+
+@pytest.fixture
+def other_agent(oml_server: OmlServer):
+    from oml_sdk import OmlClient
+
+    with OmlClient(url=oml_server.url, api_key=oml_server.other_agent_key) as client:
         yield client
 
 
