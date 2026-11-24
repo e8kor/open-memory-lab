@@ -40,7 +40,17 @@ class FakeOml:
 
     # -- seeding --------------------------------------------------------------
 
-    def seed(self, claim_key: str, text: str, *, state: str, author: str, version: int = 1):
+    def seed(
+        self,
+        claim_key: str,
+        text: str,
+        *,
+        state: str,
+        author: str,
+        version: int = 1,
+        retirement: bool = False,
+        anchor: dict | None = None,
+    ):
         row = {
             "artifact_id": f"art_{next(_ids)}",
             "claim_key": claim_key,
@@ -48,6 +58,8 @@ class FakeOml:
             "state": state,
             "text": text,
             "author": author,
+            "retirement": retirement,
+            "anchor": anchor,
             "created_at": datetime.datetime(2026, 11, 24, tzinfo=datetime.UTC)
             + datetime.timedelta(seconds=next(_clock)),
         }
@@ -67,14 +79,14 @@ class FakeOml:
                 "state": row["state"],
                 "unreviewed": row["state"] == "held",
                 "tokens": 1,
-                "retirement": False,
+                "retirement": row["retirement"],
                 "replaces": None,
                 "held_expires_at": None,
                 "created_at": row["created_at"].isoformat(),
                 "promoted_at": row["created_at"].isoformat()
                 if row["state"] == "promoted"
                 else None,
-                "anchor": None,
+                "anchor": row["anchor"],
                 "stale": None,
                 "source_checked": None,
                 "text": row["text"],

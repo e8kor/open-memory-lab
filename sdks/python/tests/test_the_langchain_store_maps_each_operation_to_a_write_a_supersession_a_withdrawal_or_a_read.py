@@ -174,3 +174,124 @@ def test_the_async_variants_answer_as_the_sync_ones():
     assert got.value == {"content": "x"}
     assert [i.key for i in found] == ["a"]
     assert after is None
+
+
+def _retired(oml: FakeOml, key: str) -> None:
+    """A claim whose approved tip is a reviewed retirement (audit-and-lineage.md);
+    the listing serves the tip alone, so version 1 is not seeded."""
+    oml.seed(
+        claim_key_for(NS, key), "no longer true", state="promoted", author="agent",
+        version=2, retirement=True,
+    )  # fmt: skip
+
+
+def test_a_key_whose_approved_tip_is_a_retirement_reads_as_absent_to_get_search_and_listing():
+    oml = FakeOml()
+    _retired(oml, "a")
+    store = OmlStore(oml)
+    store.put(NS, "b", {"content": "kept"})
+    assert store.get(NS, "a") is None
+    assert [i.key for i in store.search(NS)] == ["b"]
+    assert [i.key for i in store.search(NS, query="true kept")] == ["b"]
+    _retired(oml, "c")
+    assert store.list_namespaces() == [NS]
+    store.delete(NS, "b")
+    assert store.list_namespaces() == []
+
+
+def test_a_delete_of_a_retired_key_is_refused_not_found():
+    oml = FakeOml()
+    _retired(oml, "a")
+    with pytest.raises(StoreRefused) as refused:
+        OmlStore(oml).delete(NS, "a")
+    assert refused.value.reason == "not_found"
+
+
+def test_a_put_after_a_retirement_supersedes_it_and_the_key_reads_the_new_value():
+    oml = FakeOml()
+    _retired(oml, "a")
+    store = OmlStore(oml)
+    store.put(NS, "a", {"content": "back"})
+    (write,) = [args for name, args in oml.calls if name == "write"]
+    assert write["expected_version"] == 2
+    assert store.get(NS, "a").value == {"content": "back"}
+
+
+def test_a_held_retirement_proposal_is_not_a_value_and_the_approved_one_is_still_served():
+    oml = FakeOml()
+    oml.seed(claim_key_for(NS, "a"), '{"content": "approved"}', state="promoted", author="agent")
+    oml.seed(
+        claim_key_for(NS, "a"), "stale now", state="held", author="other",
+        version=2, retirement=True,
+    )  # fmt: skip
+    store = OmlStore(oml)
+    assert store.get(NS, "a").value == {"content": "approved"}
+    assert [i.value for i in store.search(NS)] == [{"content": "approved"}]
+
+
+def test_a_search_with_a_query_drops_a_hit_that_is_not_the_newest_version_of_its_claim():
+    oml = FakeOml()
+    oml.seed(claim_key_for(NS, "a"), '{"content": "oolong"}', state="promoted", author="agent")
+    oml.seed(
+        claim_key_for(NS, "a"), '{"content": "espresso"}', state="held", author="agent", version=2
+    )
+    store = OmlStore(oml)
+    assert store.search(NS, query="oolong") == []
+    assert [i.value for i in store.search(NS, query="espresso")] == [{"content": "espresso"}]
+
+
+def test_a_put_of_an_empty_key_is_refused_empty_key_and_writes_nothing():
+    oml = FakeOml()
+    with pytest.raises(StoreRefused) as refused:
+        OmlStore(oml).put(NS, "", {"content": "x"})
+    assert refused.value.reason == "empty_key"
+    assert "write" not in oml.verbs()
+
+
+def test_a_search_with_a_query_past_the_recall_cap_is_refused_limit_exceeded_before_any_read():
+    oml = FakeOml()
+    store = OmlStore(oml)
+    with pytest.raises(StoreRefused) as refused:
+        store.search(NS, query="tea", limit=10, offset=91)
+    assert refused.value.reason == "limit_exceeded"
+    assert "read" not in oml.verbs()
+    assert store.search(NS, query="tea", limit=10, offset=90) == []
+
+
+def test_a_search_without_a_query_is_not_capped_at_the_recall_maximum():
+    oml = FakeOml()
+    store = OmlStore(oml)
+    for n in range(3):
+        store.put(NS, f"k{n}", {"content": "x"})
+    assert [i.key for i in store.search(NS, limit=1000, offset=1)] == ["k1", "k2"]
+
+
+def test_a_put_over_another_authors_held_version_is_refused_not_author_and_writes_nothing():
+    oml = FakeOml()
+    oml.seed(claim_key_for(NS, "a"), '{"content": "theirs"}', state="held", author="other")
+    with pytest.raises(StoreRefused) as refused:
+        OmlStore(oml).put(NS, "a", {"content": "mine"})
+    assert refused.value.reason == "not_author"
+    assert "write" not in oml.verbs()
+
+
+def test_a_filter_with_an_unknown_operator_raises_value_error():
+    oml = FakeOml()
+    store = OmlStore(oml)
+    store.put(NS, "a", {"content": "x", "n": 3})
+    with pytest.raises(ValueError, match=r"\$in"):
+        store.search(NS, filter={"n": {"$in": [3]}})
+    assert [i.key for i in store.search(NS, filter={"n": {"$gte": 3}})] == ["a"]
+
+
+def test_a_namespace_condition_with_an_empty_path_matches_every_namespace():
+    from langgraph.store.base import ListNamespacesOp, MatchCondition
+
+    oml = FakeOml()
+    store = OmlStore(oml)
+    store.put(NS, "a", {"content": "x"})
+    for match_type in ("prefix", "suffix"):
+        op = ListNamespacesOp(
+            match_conditions=(MatchCondition(match_type=match_type, path=()),), limit=10, offset=0
+        )
+        assert store.batch([op]) == [[NS]]

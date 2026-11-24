@@ -119,3 +119,76 @@ def test_a_put_over_an_approved_value_supersedes_it_and_a_delete_of_it_is_refuse
     with pytest.raises(StoreRefused) as refused:
         store.delete(namespace, "a")
     assert refused.value.reason == "approved"
+
+
+def _own_row(client, marker: str, version: int):
+    (row,) = [
+        r for r in client.iter_memories(own=True) if marker in r.claim_key and r.version == version
+    ]
+    return row
+
+
+def test_a_key_whose_approved_tip_is_a_retirement_reads_as_absent_and_a_put_returns_it_to_service(
+    oml_server, agent, marker
+):
+    store = OmlStore(agent, oml_server.progress_workspace)
+    namespace = ("memories", marker)
+    store.put(namespace, "a", {"content": "approved"})
+    _approve(oml_server, _own_row(agent, marker, 1).artifact_id)
+    retirement = agent.write(
+        "no longer true",
+        replaces=_own_row(agent, marker, 1).artifact_id,
+        retirement=True,
+        expected_version=1,
+        workspace=oml_server.progress_workspace,
+    ).value
+    _approve(oml_server, retirement.artifact_id)
+
+    assert store.get(namespace, "a") is None
+    assert store.search(namespace) == []
+    assert all(i.namespace != namespace for i in store.search(("memories",), limit=1000))
+    assert namespace not in store.list_namespaces(prefix=("memories",), limit=1000)
+    with pytest.raises(StoreRefused) as refused:
+        store.delete(namespace, "a")
+    assert refused.value.reason == "not_found"
+
+    store.put(namespace, "a", {"content": "back"})
+    assert store.get(namespace, "a").value == {"content": "back"}
+
+
+def test_a_search_with_a_query_serves_the_newest_value_never_a_superseded_one(
+    oml_server, agent, marker
+):
+    store = OmlStore(agent, oml_server.progress_workspace)
+    namespace = ("memories", marker)
+    store.put(namespace, "a", {"content": f"oolongzz {marker}"})
+    _approve(oml_server, _own_row(agent, marker, 1).artifact_id)
+    store.put(namespace, "a", {"content": f"espressozz {marker}"})
+
+    assert store.search(namespace, query="oolongzz") == []
+    found = store.search(namespace, query="espressozz")
+    assert [i.value for i in found] == [{"content": f"espressozz {marker}"}]
+    assert found[0].score is not None
+
+
+def test_a_put_over_another_keys_held_write_is_refused_not_author(
+    oml_server, agent, other_agent, marker
+):
+    namespace = ("memories", marker)
+    OmlStore(other_agent, oml_server.progress_workspace).put(namespace, "a", {"content": "theirs"})
+    with pytest.raises(StoreRefused) as refused:
+        OmlStore(agent, oml_server.progress_workspace).put(namespace, "a", {"content": "mine"})
+    assert refused.value.reason == "not_author"
+    item = OmlStore(agent, oml_server.progress_workspace).get(namespace, "a")
+    assert item.value == {"content": "theirs"}
+
+
+def test_a_put_over_another_keys_approved_value_is_refused_not_author(
+    oml_server, agent, other_agent, marker
+):
+    namespace = ("memories", marker)
+    OmlStore(other_agent, oml_server.progress_workspace).put(namespace, "a", {"content": "v1"})
+    _approve(oml_server, _own_row(other_agent, marker, 1).artifact_id)
+    with pytest.raises(StoreRefused) as refused:
+        OmlStore(agent, oml_server.progress_workspace).put(namespace, "a", {"content": "mine"})
+    assert refused.value.reason == "not_author"
