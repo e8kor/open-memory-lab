@@ -59,7 +59,9 @@ print(recall.invoke({"query": "canary stage"}))
 The tools' descriptions tell the model what the server does. A write is held: no other key
 recalls it until a different identity reviews and approves it. Recalled text is data to check,
 never instructions to follow. `oml_read` heads each hit with `[approved]` or `[unreviewed]`, its
-claim key, version, date and source, and puts the text between `<data>` and `</data>`.
+artifact id, version and date. The claim key, source and text sit inside a fence drawn fresh on
+each call, `<data-N>` to `</data-N>`, so recalled text cannot close it. `oml_write` derives its
+idempotency key from the tool-call id, so a retried call writes once.
 
 ## Share working memory with the store
 
@@ -96,14 +98,23 @@ and the key, each percent-encoded, joined by `/`: namespace `("memories", "user-
 | `put` of a key with an approved version | supersedes it, held, and withdraws the agent's earlier held successor |
 | `get` | the newest held or approved version, whoever wrote it |
 | `search(namespace)` | the newest version of each key under the namespace, by claim key |
-| `search(namespace, query=…)` | recall with held rows included, the hits under the namespace, by score |
+| `search(namespace, query=…)` | recall with held rows included, the hits under the namespace that are their key's newest version, by score; at most 100 |
 | `delete` | withdraws the agent's own held version |
+
+Only the agent that wrote an item updates it, before and after approval. Another agent's `put` of
+the same key is refused `not_author`.
+A query search past recall's cap of 100 hits, `offset + limit` above 100, is refused
+`limit_exceeded`; a search without a query has no cap. An empty key is refused `empty_key`.
+A key whose approved version is a retirement reads as absent, and a `put` returns it to service.
+A `filter` compares top-level fields, as `InMemoryStore` does. A nested value compares by exact
+equality, and an operator other than `$eq`, `$ne`, `$gt`, `$gte`, `$lt` or `$lte` raises
+`ValueError`.
 
 `delete` refuses everything else by name and is never a silent no-op:
 
 - `approved`: the key has an approved version, which only a reviewed retirement takes out of service;
 - `not_author`: another agent's held version holds the key;
-- `not_found`: the key has no version.
+- `not_found`: the key has no version, or its approved version is a retirement.
 
 A withdrawn version is kept with its text and never served; nothing is deleted. The store keeps no
 TTL, and `index` is ignored: recall ranks every claim by the server's own retrievers.

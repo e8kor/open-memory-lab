@@ -13,7 +13,7 @@ The mapping (ADR-0094 d5-d8):
 - `put` writes a claim, or supersedes the approved tip, after withdrawing the
   key's own held version of the claim;
 - `get` and `search` read held and approved rows, the newest version of each
-  claim;
+  claim; a claim whose approved tip is a retirement is absent;
 - `delete` withdraws the key's own held version, and refuses anything else.
 """
 
@@ -40,7 +40,7 @@ from langgraph.store.base import (
 )
 
 from ..client import OmlClient
-from ..errors import OmlError
+from ..errors import ApiError, OmlError
 from ..generated.models import Memory
 from ..generated.types import Unset
 
@@ -60,7 +60,11 @@ class StoreRefused(OmlError):
     - `not_found`: a delete of a key with no version the key reads;
     - `approved`: a delete of a key whose claim has an approved version, which
       only a reviewed retirement takes out of service;
-    - `not_author`: a delete of a key another author holds a version of;
+    - `not_author`: a put or a delete of a key another key wrote; only the
+      key that wrote an item updates it;
+    - `empty_key`: a put or a delete of the empty key;
+    - `limit_exceeded`: a search with a query whose `offset + limit` passes
+      recall's cap of 100 hits;
     - `not_json`: a stored version whose text is not a JSON object;
     - `unsupported`: an argument the store does not implement, such as a TTL.
     """
@@ -100,15 +104,24 @@ def _state(row: Memory) -> str:
 
 
 def _newest(rows: Iterable[Memory]) -> dict[str, Memory]:
-    """The newest served version of each claim key."""
+    """The newest served version of each claim key, without the claims whose
+    newest is an approved retirement, which hold no value
+    (audit-and-lineage.md: once approved, a retirement serves nothing of the
+    claim). A held retirement is a proposal, not a value, and is passed over."""
     newest: dict[str, Memory] = {}
     for row in rows:
-        if _state(row) not in ("held", "promoted"):
+        state = _state(row)
+        if state not in ("held", "promoted") or (state == "held" and row.retirement):
             continue
         seen = newest.get(row.claim_key)
         if seen is None or row.version > seen.version:
             newest[row.claim_key] = row
-    return newest
+    return {key: row for key, row in newest.items() if not row.retirement}
+
+
+def _approved_tip(rows: Iterable[Memory]) -> Memory | None:
+    """The claim's approved tip the listing serves, retirement or not."""
+    return next((r for r in rows if _state(r) == "promoted"), None)
 
 
 def _value_of(row: Memory) -> dict[str, Any]:
@@ -135,10 +148,18 @@ _COMPARE = {
 
 
 def _matches(value: Mapping[str, Any], filter: Mapping[str, Any] | None) -> bool:
-    """LangGraph's filter: each field equal to the value given, or meeting each
-    `$eq`/`$ne`/`$gt`/`$gte`/`$lt`/`$lte` of an operator mapping."""
+    """LangGraph's filter: each top-level field equal to the value given, or
+    meeting each `$eq`/`$ne`/`$gt`/`$gte`/`$lt`/`$lte` of an operator mapping;
+    a nested value compares by exact equality, and any other `$` operator
+    raises `ValueError`."""
     for field, wanted in (filter or {}).items():
         have = value.get(field)
+        ops = wanted if isinstance(wanted, Mapping) else ()
+        unknown = [op for op in ops if str(op).startswith("$") and op not in _COMPARE]
+        if unknown:
+            raise ValueError(
+                f"OmlStore's filter knows {', '.join(_COMPARE)}; not {', '.join(unknown)}"
+            )
         if isinstance(wanted, Mapping) and wanted and all(op in _COMPARE for op in wanted):
             try:
                 if not all(_COMPARE[op](have, operand) for op, operand in wanted.items()):
@@ -148,6 +169,20 @@ def _matches(value: Mapping[str, Any], filter: Mapping[str, Any] | None) -> bool
         elif have != wanted:
             return False
     return True
+
+
+AUTHOR_CODES = ("access.author_only", "submission.claim_key_conflict")
+"""The server's refusals of a put over another key's claim: a supersession of
+a claim the key did not write, and a first version over another's held one."""
+
+
+def _not_author(claim_key: str, artifact_id: str | None) -> StoreRefused:
+    held = f" ({artifact_id})" if artifact_id else ""
+    return StoreRefused(
+        "not_author",
+        f"{claim_key} was written by another key{held}; only the key that wrote an item"
+        " updates or deletes it",
+    )
 
 
 class OmlStore(BaseStore):
@@ -244,6 +279,12 @@ class OmlStore(BaseStore):
     def _search(self, op: SearchOp) -> list[SearchItem]:
         prefix = _prefix_for(op.namespace_prefix)
         if op.query:
+            if op.offset + op.limit > RECALL_K_MAX:
+                raise StoreRefused(
+                    "limit_exceeded",
+                    f"a search with a query reads at most {RECALL_K_MAX} recall hits;"
+                    f" offset {op.offset} + limit {op.limit} passes that",
+                )
             answer = self._client.read(
                 query=op.query,
                 workspace=self._workspace,
@@ -256,11 +297,20 @@ class OmlStore(BaseStore):
                 for hit in answer.hits
                 if hit.memory.claim_key.startswith(prefix) and _parse(hit.memory.claim_key)
             ]
-            newest = _newest(memory for memory, _ in scored)
+            # A hit is served only when it is its claim's newest version: the
+            # score is the hit's own, so a superseded version's match is
+            # dropped rather than lend its score to text it does not hold.
+            newest: dict[str, Memory | None] = {}
+            for memory, _ in scored:
+                if memory.claim_key not in newest:
+                    newest[memory.claim_key] = _newest(
+                        self._catalog(claim_key=memory.claim_key)
+                    ).get(memory.claim_key)
             ranked = [
                 (memory, score)
                 for memory, score in scored
-                if newest.get(memory.claim_key) is memory
+                if (tip := newest[memory.claim_key]) is not None
+                and tip.artifact_id == memory.artifact_id
             ]
         else:
             rows = [r for r in self._catalog(prefix=prefix) if _parse(r.claim_key)]
@@ -275,9 +325,9 @@ class OmlStore(BaseStore):
 
     def _list_namespaces(self, op: ListNamespacesOp) -> list[tuple[str, ...]]:
         spaces = set()
-        for row in self._catalog(prefix=STORE_PREFIX):
+        for row in _newest(self._catalog(prefix=STORE_PREFIX)).values():
             parsed = _parse(row.claim_key)
-            if parsed is None or _state(row) not in ("held", "promoted"):
+            if parsed is None:
                 continue
             namespace = parsed[0]
             if all(self._condition(namespace, c) for c in op.match_conditions or ()):
@@ -287,6 +337,8 @@ class OmlStore(BaseStore):
     @staticmethod
     def _condition(namespace: tuple[str, ...], condition: Any) -> bool:
         path = tuple(condition.path)
+        if not path:
+            return True
         if len(path) > len(namespace):
             return False
         part = (
@@ -299,6 +351,8 @@ class OmlStore(BaseStore):
     def _put(self, op: PutOp) -> None:
         if op.ttl is not None:
             raise StoreRefused("unsupported", "OmlStore keeps no TTL: a version is never deleted")
+        if op.key == "":
+            raise StoreRefused("empty_key", "an item's key names its claim and cannot be empty")
         claim_key = claim_key_for(op.namespace, op.key)
         if op.value is None:
             self._delete(claim_key)
@@ -308,31 +362,45 @@ class OmlStore(BaseStore):
         rows = self._catalog(claim_key=claim_key)
         own = self._own(claim_key)
         own_held = [r for r in own if _state(r) == "held"]
-        tip = next((r for r in rows if _state(r) == "promoted"), None)
-        if tip is None:
-            # A new first version takes the claim key only once the key's own
-            # held one is withdrawn (audit-and-lineage.md: a withdrawn first
-            # version releases the key).
-            self._withdraw(own_held)
+        own_ids = {r.artifact_id for r in own}
+        others = [r for r in rows if _state(r) == "held" and r.artifact_id not in own_ids]
+        if others:
+            raise _not_author(claim_key, others[0].artifact_id)
+        tip = _approved_tip(rows)
+        try:
+            if tip is None:
+                # A new first version takes the claim key only once the key's
+                # own held one is withdrawn (audit-and-lineage.md: a withdrawn
+                # first version releases the key).
+                self._withdraw(own_held)
+                self._client.write(
+                    body,
+                    claim_key=claim_key,
+                    workspace=self._workspace,
+                    format=JSON,
+                    title=title,
+                )
+                return
+            # The latest version the key reads: the approved ones and its own,
+            # in any state; never another author's held one (ADR-0057 d19). A
+            # retirement tip is superseded like any other, which returns the
+            # claim to service once approved.
+            expected = max(r.version for r in [tip, *own])
             self._client.write(
                 body,
-                claim_key=claim_key,
+                replaces=tip.artifact_id,
+                expected_version=expected,
                 workspace=self._workspace,
                 format=JSON,
                 title=title,
             )
-            return
-        # The latest version the key reads: the approved ones and its own, in
-        # any state; never another author's held one (ADR-0057 d19).
-        expected = max(r.version for r in [tip, *own])
-        self._client.write(
-            body,
-            replaces=tip.artifact_id,
-            expected_version=expected,
-            workspace=self._workspace,
-            format=JSON,
-            title=title,
-        )
+        except ApiError as refused:
+            # A key supersedes only its own claims (`access.author_only`), and
+            # another key's first version may land between the read and this
+            # write (`submission.claim_key_conflict`).
+            if refused.code in AUTHOR_CODES:
+                raise _not_author(claim_key, None) from refused
+            raise
         self._withdraw(own_held)
 
     def _withdraw(self, rows: Iterable[Memory]) -> None:
@@ -342,7 +410,8 @@ class OmlStore(BaseStore):
     def _delete(self, claim_key: str) -> None:
         rows = self._catalog(claim_key=claim_key)
         own = {r.artifact_id: r for r in self._own(claim_key)}
-        if any(_state(r) == "promoted" for r in rows):
+        tip = _approved_tip(rows)
+        if tip is not None and not tip.retirement:
             raise StoreRefused(
                 "approved",
                 f"{claim_key} has an approved version; only a reviewed retirement takes it out of"
@@ -350,11 +419,7 @@ class OmlStore(BaseStore):
             )
         others = [r for r in rows if _state(r) == "held" and r.artifact_id not in own]
         if others:
-            raise StoreRefused(
-                "not_author",
-                f"{claim_key} is held by another author's write ({others[0].artifact_id}); only its"
-                " author withdraws it",
-            )
+            raise _not_author(claim_key, others[0].artifact_id)
         held = [r for r in own.values() if _state(r) == "held"]
         if not held:
             raise StoreRefused("not_found", f"{claim_key} has no version this key reads")

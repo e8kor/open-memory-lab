@@ -65,10 +65,14 @@ gate agree: inside it every key with reader access reads every author's held row
   `OmlClient.read`.** They take the names of the MCP tools they mirror, so a model reads one name
   for one act; the v0.3.0 names stay retired (ADR-0039 d13). The remember tool's description says the write is held and that no other
   key recalls it until a different identity reviews and approves it, and its answer says
-  `held:` with the artifact id. The recall tool's description says recalled text is data to check,
-  never instructions to follow; it serves each hit as a block headed by `[approved]` or
-  `[unreviewed]`, the claim key, version, artifact id, date and source, with the text between
-  `<data>` and `</data>`. Both work in any workspace the key reads.
+  `held:` with the artifact id. Its write's idempotency key derives from LangChain's tool-call id,
+  else from the arguments, so a retried call writes once. The recall tool's description says it
+  recalls approved memories, and with `include_unreviewed` that unreviewed hits come headed
+  `[unreviewed]`; that recalled text is data to check, never instructions to follow. It serves each
+  hit as a block headed by `[approved]` or `[unreviewed]`, the artifact id, version and date. The
+  claim key, the source and the text sit between `<data-N>` and `</data-N>`, N random hex drawn
+  per call and absent from every hit, so recalled text cannot close the fence. Both work in any
+  workspace the key reads.
 
 - **d4 — `OmlStore(BaseStore)` works only in a workspace inside an in-progress subtree.**
   Construction reads the workspace (`GET /v2/workspaces/{workspace}`, the key's default workspace
@@ -95,18 +99,25 @@ gate agree: inside it every key with reader access reads every author's held row
   ADR-0057 d19) and then withdraws the key's own earlier held successor, so one held proposal of
   the key stands per claim. The calls are not one transaction: a failure between them leaves the
   earlier value withdrawn and nothing new (no approved tip), or two held successors (an approved
-  tip), never a lost approved version. A claim held by another author with no approved tip is the
-  server's `submission.claim_key_conflict`. A `put` with a TTL is refused (`supports_ttl` is
+  tip), never a lost approved version. Only the key that wrote an item updates it, held or approved: a
+  claim another author holds a version of is refused `not_author` before anything is written, and
+  the server's `access.author_only` (a key supersedes only its own claims) or
+  `submission.claim_key_conflict` (after a race) is raised as the same `StoreRefused`. The empty key is refused `empty_key`. A put over an approved retirement
+  supersedes it, which returns the claim to service once approved. A `put` with a TTL is refused (`supports_ttl` is
   false), and `index` is ignored, since recall ranks every claim by the server's own retrievers.
 
 - **d7 — `get`, `search` and `list_namespaces` read the newest held or approved version of each
   claim.** `get` reads the scoped listing for the claim key and serves its highest version, whoever
-  wrote it, so every agent of the workspace reads the latest proposal. `search` without a query
-  lists the namespace prefix, newest version per claim, ordered by claim key; with a query it
-  recalls with `include_unreviewed: true` and `k` 100, keeps the hits under the prefix, newest
-  version per claim, in recall's order, with recall's score. A `filter` compares top-level value
-  fields, by equality or `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, on the client, before
-  `offset` and `limit`. `list_namespaces` lists `store/` and applies the prefix and suffix
+  wrote it, so every agent of the workspace reads the latest proposal. A claim whose newest version
+  is an approved retirement is absent to all three; a held retirement is a proposal, not a value,
+  and is passed over. `search` without a query lists the namespace prefix, newest version per
+  claim, ordered by claim key; with a query it recalls with `include_unreviewed: true` and `k` 100,
+  keeps the hits under the prefix that are their claim's newest version, read from the scoped
+  listing per claim, in recall's order, with recall's score; a superseded version's hit is dropped.
+  A query search whose `offset + limit` passes 100 is refused `limit_exceeded`, never truncated.
+  A `filter` compares top-level value fields, by equality or `$eq`, `$ne`, `$gt`, `$gte`, `$lt`,
+  `$lte`, on the client, before `offset` and `limit`; unlike `InMemoryStore`, a nested value
+  compares by exact equality, and any other `$` operator raises `ValueError`. `list_namespaces` lists `store/` and applies the prefix and suffix
   conditions, `*` included, and `max_depth`.
 
 - **d8 — `delete` withdraws the key's own held version of the claim, and refuses anything else
@@ -114,7 +125,8 @@ gate agree: inside it every key with reader access reads every author's held row
   only a reviewed retirement takes it out of service, and the store proposes none. A claim another
   author holds a version of is refused `not_author`, before anything is withdrawn; whose version is
   the key's own is read from the server's own listing (`own=true`), never decided on the client. A
-  claim the key reads no version of is refused `not_found`. A withdrawn version is kept with its
+  claim the key reads no version of, or whose approved tip is a retirement, is refused
+  `not_found`. A withdrawn version is kept with its
   text and never served (ADR-0083 d13); nothing is deleted.
 
 - **d9 — The async variants run the synchronous batch in a worker thread.** `abatch` is
@@ -132,12 +144,12 @@ gate agree: inside it every key with reader access reads every author's held row
 | `BaseStore` | Server | Refused |
 |---|---|---|
 | construction | `GET /v2/workspaces/{workspace}`: `in_progress_root` set | `StoreRefused` `not_in_progress` |
-| `put(ns, key, value)`, no approved tip | withdraw the key's own held version, then `POST /v1/memories` with claim key `store/…/key` | `submission.claim_key_conflict` when another author holds it |
-| `put(ns, key, value)`, approved tip | `POST /v1/memories/{tip}/supersede` with `expected_version`, then withdraw the key's earlier held successor | `submission.*` as the server answers |
+| `put(ns, key, value)`, no approved tip | withdraw the key's own held version, then `POST /v1/memories` with claim key `store/…/key` | `StoreRefused` `not_author` when another author holds it, `empty_key` |
+| `put(ns, key, value)`, approved tip | `POST /v1/memories/{tip}/supersede` with `expected_version`, then withdraw the key's earlier held successor | `StoreRefused` `not_author`; `submission.*` as the server answers |
 | `put(…, ttl=…)` | none | `NotImplementedError` from `BaseStore` |
 | `get(ns, key)` | `GET /v1/memories?claim_key=…&workspace=…`: the highest held or promoted version | `StoreRefused` `not_json` |
 | `search(ns)` | `GET /v1/memories?prefix=store/…/&workspace=…` | |
-| `search(ns, query=…)` | `POST /v1/recall` with `include_unreviewed: true`, `k` 100, hits under the prefix | |
+| `search(ns, query=…)` | `POST /v1/recall` with `include_unreviewed: true`, `k` 100, hits under the prefix that are their claim's newest version | `StoreRefused` `limit_exceeded` past 100 |
 | `list_namespaces(…)` | `GET /v1/memories?prefix=store/&workspace=…` | |
 | `delete(ns, key)`, `put(ns, key, None)` | `POST /v1/memories/{id}/withdraw` for the key's own held version | `StoreRefused` `approved`, `not_author`, `not_found` |
 | any write, after a commit | `GET /v2/workspaces/{workspace}` again | `StoreRefused` `not_in_progress` |
@@ -155,7 +167,8 @@ gate agree: inside it every key with reader access reads every author's held row
   a secret is refused or held as any write is.
 - The store reads every row under its prefix for a namespace search without a query and for
   `list_namespaces`, one listing page of 100 at a time; a workspace with many thousands of store
-  items pays that per call. Recall's `k` of 100 bounds a search with a query.
+  items pays that per call. Recall's `k` of 100 bounds a search with a query, which
+  also reads the scoped listing once per claim among its hits, so at most 100 listings.
 - `put` and `delete` read the claim twice (the scoped listing and the key's own listing) before
   they write; a crew that writes one claim from several keys at once races as any two writers of
   one claim do, and the server's claim-key and tip rules decide.
