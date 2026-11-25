@@ -10,6 +10,7 @@
 mod acts;
 pub mod admin;
 pub mod atlas;
+pub mod brief;
 pub mod builder;
 mod card;
 pub mod catalog;
@@ -71,6 +72,7 @@ pub use oml_page::SIGN_IN_PATH;
 pub const PAGES: &[(&str, &str)] = &[
     ("GET", GUARDRAILS_PATH),
     ("GET", workspace::WORKSPACE_PATH),
+    ("POST", workspace::WORKSPACE_PATH),
     ("GET", workspace::NEW_PATH),
     ("POST", workspace::NEW_PATH),
     ("GET", workspace::EDIT_PATH),
@@ -97,6 +99,8 @@ pub const PAGES: &[(&str, &str)] = &[
     ("POST", TODO_PATH),
     ("GET", TODO_JUDGE_PATH),
     ("POST", TODO_JUDGE_PATH),
+    ("GET", todo::TODO_FIX_PATH),
+    ("POST", todo::TODO_FIX_PATH),
     ("GET", ADMIN_TODO_PATH),
     ("GET", USER_KEYS_PATH),
     ("POST", USER_KEYS_PATH),
@@ -352,7 +356,10 @@ async fn not_found() -> StatusCode {
 /// page routes the session load.
 pub fn router(web: Web) -> Router {
     let pages = Router::new()
-        .route(workspace::WORKSPACE_PATH, get(workspace::user_page))
+        .route(
+            workspace::WORKSPACE_PATH,
+            get(workspace::user_page).post(brief::act),
+        )
         .route(
             workspace::NEW_PATH,
             get(workspace::new_page).post(workspace::new_act),
@@ -383,6 +390,7 @@ pub fn router(web: Web) -> Router {
         .route(ADMIN_ATLAS_PATH, get(memories::admin_atlas))
         .route(TODO_PATH, get(todo::user_page).post(todo::user_act))
         .route(TODO_JUDGE_PATH, get(todo::judge_page).post(todo::judge_act))
+        .route(todo::TODO_FIX_PATH, get(todo::fix_page).post(todo::fix_act))
         .route(ADMIN_TODO_PATH, get(todo::admin_page))
         .route(USER_KEYS_PATH, get(keys::user_page).post(keys::user_act))
         .route(keys::NEW_KEY_PATH, get(builder::page))
@@ -480,7 +488,10 @@ mod tests {
         // The Guardrails view's path answers its 308 (ADR-0083 d12); the
         // workspace page and its forms are this process's (ADR-0082 d1).
         assert!(serves("GET", "/web/guardrails"));
-        assert!(serves("GET", "/web/workspace") && !serves("POST", "/web/workspace"));
+        // The workspace page posts its status and brief acts to itself
+        // (ADR-0096 P7, P9).
+        assert!(serves("GET", "/web/workspace") && serves("POST", "/web/workspace"));
+        assert!(serves("GET", "/web/todo/fix") && serves("POST", "/web/todo/fix"));
         for path in [
             "/web/workspace/new",
             "/web/workspace/edit",

@@ -1320,3 +1320,84 @@ async fn the_v085_console_pages_reads_cost_their_measured_store_calls() {
     assert_eq!(briefs.store_calls(), 5, "{}", briefs.line);
     assert_eq!(person.store_calls(), 6, "{}", person.line);
 }
+
+/// The reads the v0.8.5 frames the integration finished add (ADR-0096,
+/// `WorkspaceManage` P7, P9; `TodoScreen` P14; `AdminTodo`), each recorded
+/// as measured (ADR-0083 d6's rule): the Brief kind's proposals, `GET
+/// /v2/edges?kind=brief` as `<user>-web`; the status section's `GET
+/// /v2/workspaces/{w}/offers` as `<user>-review`, made only outside the
+/// person's root; To do's fixes group and the fix page's `GET
+/// /v2/review/fixes` as `<user>-review`; and the admin To do's `GET
+/// /v2/admin/investigations` as `<user>-admin`. The brief's members ride
+/// on the node read, which keeps its count (ADR-0095's amendment of
+/// 2026-11-24: `proposed_at` and `proposed_by` come from the rows it
+/// returns). Printed, so the counts the report states are the ones
+/// measured.
+#[tokio::test]
+async fn the_v085_finished_frames_reads_cost_their_measured_store_calls() {
+    let rig = rig().await;
+    let node = get(
+        &rig.router,
+        "/v2/workspaces/alice",
+        &web(&rig.alice, "web"),
+        true,
+    )
+    .await;
+    assert_eq!(node.status, StatusCode::OK, "{}", node.body);
+    assert!(node.body["brief"]["items"].is_array(), "{}", node.body);
+    let id = node.body["id"].as_str().expect("an id").to_owned();
+    let brief = get(
+        &rig.router,
+        &format!("/v2/edges?kind=brief&limit=200&workspace_id={id}"),
+        &web(&rig.alice, "web"),
+        true,
+    )
+    .await;
+    assert_eq!(brief.status, StatusCode::OK, "{}", brief.body);
+    let offers = get(
+        &rig.router,
+        "/v2/workspaces/alice/offers",
+        &web(&rig.alice, "review"),
+        true,
+    )
+    .await;
+    assert_eq!(offers.status, StatusCode::OK, "{}", offers.body);
+    let fixes = get(
+        &rig.router,
+        "/v2/review/fixes",
+        &web(&rig.alice, "review"),
+        true,
+    )
+    .await;
+    assert_eq!(fixes.status, StatusCode::OK, "{}", fixes.body);
+    let investigations = get(
+        &rig.router,
+        "/v2/admin/investigations",
+        &web(&rig.alice, "admin"),
+        true,
+    )
+    .await;
+    assert_eq!(
+        investigations.status,
+        StatusCode::OK,
+        "{}",
+        investigations.body
+    );
+    println!(
+        "store calls: node {}, brief edges {}, offers {}, review fixes {}, investigations {}",
+        node.store_calls(),
+        brief.store_calls(),
+        offers.store_calls(),
+        fixes.store_calls(),
+        investigations.store_calls()
+    );
+    // Measured 2026-11-25: the node 10, as before the round; the brief's
+    // edges 4; the offers 37, the operation's own cost, which the status
+    // section spends only on a shared workspace's page; the review fixes
+    // 2; the investigations 2.
+    assert_eq!(node.store_calls(), 10, "{}", node.line);
+    assert_eq!(brief.store_calls(), 4, "{}", brief.line);
+    assert_eq!(offers.store_calls(), 37, "{}", offers.line);
+    assert_eq!(fixes.store_calls(), 2, "{}", fixes.line);
+    assert_eq!(investigations.store_calls(), 2, "{}", investigations.line);
+}

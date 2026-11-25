@@ -412,6 +412,13 @@ fn csrf_of(page: &str) -> String {
     page[start..start + page[start..].find('"').expect("a quote")].to_owned()
 }
 
+/// A signed-in browser that opened no investigation: its cookie header.
+async fn signed_in_without_investigation(rig: &Rig, subject: &str, email: &str) -> String {
+    let (status, token, body) = sign_in_google(rig, subject, email).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    format!("{SESSION_COOKIE}={}", token.expect("a session"))
+}
+
 /// A signed-in browser: its cookie header. An admin's browser opens an
 /// investigation through the console's own form first, as the console asks
 /// an admin who reads claim text to (ADR-0089 d10).
@@ -2203,9 +2210,11 @@ async fn every_signed_in_page_draws_the_sign_out_control_in_its_header() {
             _ => (*path).to_owned(),
         };
         let (status, _, page) = send(&rig.router, get(&url, Some(&cookie))).await;
+        // The fix page opens on a fix's id, which none here names.
         let refused = [
             oml_web::workspace::EDIT_PATH,
             oml_web::workspace::RETIRE_PATH,
+            oml_web::todo::TODO_FIX_PATH,
         ];
         let want = if refused.contains(path) {
             StatusCode::BAD_REQUEST
@@ -2220,7 +2229,7 @@ async fn every_signed_in_page_draws_the_sign_out_control_in_its_header() {
         );
         drawn += 1;
     }
-    assert_eq!(drawn, 26, "every page route of oml_web::PAGES was read");
+    assert_eq!(drawn, 27, "every page route of oml_web::PAGES was read");
     // A page an act answers is drawn by the same chrome.
     let (status, _, page) = act(
         &rig,
@@ -8485,7 +8494,8 @@ fn link_free(page: &str, text: &str) -> bool {
 async fn the_admin_todo_page_has_no_judge_and_refuses_the_judge_act() {
     let rig = rig().await;
     rig.allow("boss@example.com", "boss", true).await;
-    let cookie = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    // A browser that opened no investigation: an open one is a group.
+    let cookie = signed_in_without_investigation(&rig, "sub-boss", "boss@example.com").await;
     let value = laptop_key(&rig, &cookie).await;
     let memory = agent_writes(&rig, &value, "Releases ship on Thursdays.").await;
     let (status, _, page) = send(&rig.router, get("/web/admin/todo", Some(&cookie))).await;
@@ -9577,7 +9587,7 @@ async fn the_workspace_page_lists_skills_with_edit_and_retire_on_an_approved_tip
         "{page}"
     );
     assert!(
-        page.contains(r#"<nav class="oml-views" aria-label="Approved contents by kind"><a href="/web/memories?workspace=alice">Memories <span class="n">1</span></a><a href="/web/workspace?workspace=alice&amp;kind=skill" aria-current="page">Skills <span class="n">1</span></a><a href="/web/workspace?workspace=alice&amp;kind=guardrail">Guardrails <span class="n">0</span></a><a href="/web/workspace?workspace=alice&amp;kind=document">Documents <span class="n">0</span></a></nav>"#),
+        page.contains(r#"<nav class="oml-views" aria-label="Approved contents by kind"><a href="/web/memories?workspace=alice">Memories <span class="n">1</span></a><a href="/web/workspace?workspace=alice&amp;kind=skill" aria-current="page">Skills <span class="n">1</span></a><a href="/web/workspace?workspace=alice&amp;kind=guardrail">Guardrails <span class="n">0</span></a><a href="/web/workspace?workspace=alice&amp;kind=document">Documents <span class="n">0</span></a><a href="/web/workspace?workspace=alice&amp;kind=brief">Brief <span class="n">0</span></a></nav>"#),
         "{page}"
     );
     assert!(
@@ -11474,7 +11484,8 @@ async fn the_admin_one_key_page_sets_limits_and_denies_on_a_workspace() {
 async fn the_admin_todo_offers_no_verdict_and_says_when_nothing_waits() {
     let rig = rig().await;
     rig.allow("boss@example.com", "boss", true).await;
-    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    // A browser that opened no investigation: an open one is a group.
+    let boss = signed_in_without_investigation(&rig, "sub-boss", "boss@example.com").await;
     let (status, _, page) = send(&rig.router, get("/web/admin/todo", Some(&boss))).await;
     assert_eq!(status, StatusCode::OK, "{page}");
     assert!(page.contains("Nothing waits for this account."), "{page}");
@@ -11588,4 +11599,296 @@ async fn todo_folds_an_empty_brief_group_and_ratify_is_confirmed_first() {
         confirm.contains(r#"name="confirm" value="yes""#),
         "{confirm}"
     );
+}
+
+// -- v0.8.5: the brief, the status proposal, the fix page and the admin's
+// investigations (ADR-0095 d5, d6; ADR-0096 P7, P8, P9, P14) ---------------
+
+/// The value of the `Location` an act answered with.
+fn location(headers: &HeaderMap) -> String {
+    headers[header::LOCATION]
+        .to_str()
+        .expect("ASCII")
+        .to_owned()
+}
+
+/// alice signed in with an agent whose row her review key approved through
+/// Judge: her cookie and the approved row's id.
+async fn alice_with_an_approved_memory(rig: &Rig) -> (String, String) {
+    let (cookie, value) = person_with_agent(rig, "sub-1", EMAIL).await;
+    let id = agent_writes(rig, &value, "the deploy runs from main")
+        .await
+        .to_string();
+    let (status, _, page) = judge(rig, &cookie, &id, "approve", None).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    (cookie, id)
+}
+
+/// P8 and P7: an approved memory's page offers Propose for brief, which
+/// asks first and then proposes once as `alice-web`, landing on the
+/// workspace's Brief with the proposal named by its key and marked same
+/// user; a second proposal comes back to the memory naming the live one
+/// with its code; and `alice-review` ratifies it from the Brief after a
+/// confirmation, so it is a member and no longer a proposal.
+#[tokio::test]
+async fn propose_for_brief_asks_first_names_the_live_proposal_the_second_time_and_the_brief_ratifies_it()
+ {
+    let rig = rig().await;
+    let (cookie, id) = alice_with_an_approved_memory(&rig).await;
+    let (status, _, page) = send(
+        &rig.router,
+        get(&format!("/web/memory?id={id}"), Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("Propose for brief"), "{page}");
+    let (_, _, confirm) = send(
+        &rig.router,
+        get(&format!("/web/memory?id={id}&act=brief"), Some(&cookie)),
+    )
+    .await;
+    assert!(
+        confirm.contains("Proposed as <code>alice-web</code> for the brief of"),
+        "{confirm}"
+    );
+    let workspace = field_of(&confirm, "workspace");
+    let fields = [
+        ("action", "propose_brief"),
+        ("memory", id.as_str()),
+        ("workspace", workspace.as_str()),
+    ];
+    let (status, _, brief) = act_and_follow(&rig, &cookie, "/web/memory", &fields).await;
+    assert_eq!(status, StatusCode::OK, "{brief}");
+    assert!(brief.contains("Proposed for the brief"), "{brief}");
+    assert!(brief.contains("Proposals · 1"), "{brief}");
+    assert!(
+        brief.contains("by <code>alice-web</code> · same user"),
+        "{brief}"
+    );
+    assert!(brief.contains("Brief · 0"), "{brief}");
+    // The same proposal again, from another form.
+    let (status, headers, _) = act(&rig, &cookie, "/web/memory", &fields).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let back = location(&headers);
+    assert!(back.contains("act=brief&pending="), "{back}");
+    let (_, _, pending) = send(&rig.router, get(&back, Some(&cookie))).await;
+    assert!(
+        pending.contains("<code>proposal.pending</code>"),
+        "{pending}"
+    );
+    assert!(
+        pending.contains("Already proposed for this brief, made"),
+        "{pending}"
+    );
+    assert!(pending.contains("by <code>alice-web</code>"), "{pending}");
+    // Ratify from the Brief, confirmed first.
+    let edge = field_of(&brief, "edge_id");
+    let (status, _, ask) = act(
+        &rig,
+        &cookie,
+        "/web/workspace",
+        &[
+            ("action", "ratify_brief"),
+            ("workspace", "alice"),
+            ("edge_id", edge.as_str()),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{ask}");
+    assert!(ask.contains("Ratify the brief proposal?"), "{ask}");
+    let (status, _, after) = act_and_follow(
+        &rig,
+        &cookie,
+        "/web/workspace",
+        &[
+            ("action", "ratify_brief"),
+            ("workspace", "alice"),
+            ("edge_id", edge.as_str()),
+            ("confirm", "yes"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{after}");
+    assert!(
+        after.contains("Ratified: the memory joins the brief."),
+        "{after}"
+    );
+    assert!(after.contains("Brief · 1"), "{after}");
+    assert!(after.contains("Proposals · 0"), "{after}");
+}
+
+/// P8: a held memory's page offers no Propose for brief, and its brief
+/// view says why with no act.
+#[tokio::test]
+async fn a_held_memory_offers_no_proposal_for_a_brief_and_says_why() {
+    let rig = rig().await;
+    let (cookie, value) = person_with_agent(&rig, "sub-1", EMAIL).await;
+    let id = agent_writes(&rig, &value, "a held row").await;
+    let (_, _, page) = send(
+        &rig.router,
+        get(&format!("/web/memory?id={id}"), Some(&cookie)),
+    )
+    .await;
+    assert!(!page.contains("Propose for brief"), "{page}");
+    let (_, _, view) = send(
+        &rig.router,
+        get(&format!("/web/memory?id={id}&act=brief"), Some(&cookie)),
+    )
+    .await;
+    assert!(
+        view.contains("Only an approved memory joins a brief"),
+        "{view}"
+    );
+    assert!(!view.contains(r#"value="propose_brief""#), "{view}");
+}
+
+/// P9: a shared workspace where `alice-review` holds reviewer offers its
+/// next status, asks before proposing, proposes once, draws the live
+/// proposal with its date and key, and names the live one with its code
+/// when the same move is proposed again; alice's root offers no status
+/// move (ADR-0085 d17).
+#[tokio::test]
+async fn a_shared_workspace_proposes_its_status_after_asking_and_names_the_live_proposal_the_second_time()
+ {
+    let rig = rig().await;
+    shared_team(&rig).await;
+    let _first = signed_in(&rig, "sub-1", EMAIL).await;
+    let request = Request::post("/v2/web/users/alice/capacities")
+        .header(
+            header::AUTHORIZATION,
+            format!("Bearer {}", rig.boot.admin_key.value),
+        )
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("idempotency-key", "review-alice-team")
+        .body(Body::from(
+            json!({"capacity": "review", "workspaces": ["team"]}).to_string(),
+        ))
+        .expect("a request");
+    let (status, _, granted) = send(&rig.router, request).await;
+    assert_eq!(status, StatusCode::OK, "{granted}");
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (_, _, root) = send(&rig.router, get("/web/workspace", Some(&cookie))).await;
+    assert!(!root.contains("Propose protected"), "{root}");
+    let (status, _, page) = send(
+        &rig.router,
+        get("/web/workspace?workspace=team", Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("Propose protected"), "{page}");
+    let (_, _, ask) = send(
+        &rig.router,
+        get(
+            "/web/workspace?workspace=team&propose=protected",
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert!(ask.contains("Propose protected for team?"), "{ask}");
+    let fields = [
+        ("action", "propose_status"),
+        ("workspace", "team"),
+        ("to", "protected"),
+    ];
+    let (status, _, after) = act_and_follow(&rig, &cookie, "/web/workspace", &fields).await;
+    assert_eq!(status, StatusCode::OK, "{after}");
+    assert!(after.contains("Proposed: the status changes"), "{after}");
+    assert!(
+        after.contains("A proposal to protected is live, made"),
+        "{after}"
+    );
+    assert!(after.contains("by <code>alice-review</code>"), "{after}");
+    let (status, headers, _) = act(&rig, &cookie, "/web/workspace", &fields).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let back = location(&headers);
+    assert!(back.contains("pending="), "{back}");
+    let (_, _, pending) = send(&rig.router, get(&back, Some(&cookie))).await;
+    assert!(
+        pending.contains(
+            "<code>proposal.pending</code> A proposal to protected is already live, made"
+        ),
+        "{pending}"
+    );
+}
+
+/// P14 and the To do group: an admin's fix in alice's root waits in
+/// alice's To do under Admin fixes to confirm; its page names the act, the
+/// claim and the reason, never the admin, and offers Confirm and Revert,
+/// each asked first; Confirm settles it and To do says so.
+#[tokio::test]
+async fn an_admin_fix_waits_in_to_do_and_its_page_confirms_it_after_asking() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let (cookie, id) = alice_with_an_approved_memory(&rig).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (status, _, fixed) = act(
+        &rig,
+        &boss,
+        "/web/admin/fixes",
+        &[
+            ("action", "fix"),
+            ("workspace", "alice"),
+            ("act", "demote"),
+            ("target", id.as_str()),
+            ("reason", "names the wrong branch"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{fixed}");
+    let (_, _, todo) = send(&rig.router, get("/web/todo", Some(&cookie))).await;
+    assert!(todo.contains("Admin fixes to confirm · 1"), "{todo}");
+    assert!(todo.contains("names the wrong branch"), "{todo}");
+    let at = todo.find("/web/todo/fix?id=").expect("a fix link") + "/web/todo/fix?id=".len();
+    let fix = todo[at..at + 36].to_owned();
+    let (status, _, page) = send(
+        &rig.router,
+        get(&format!("/web/todo/fix?id={fix}"), Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(
+        page.contains(r#"<span class="oml-chip is-adminfix">unconfirmed</span>"#),
+        "{page}"
+    );
+    assert!(page.contains("names the wrong branch"), "{page}");
+    assert!(!page.contains("boss"), "{page}");
+    assert!(
+        page.contains("act=confirm") && page.contains("act=revert"),
+        "{page}"
+    );
+    let (_, _, ask) = send(
+        &rig.router,
+        get(
+            &format!("/web/todo/fix?id={fix}&act=confirm"),
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert!(ask.contains("Confirm the fix?"), "{ask}");
+    let (status, _, after) = act_and_follow(
+        &rig,
+        &cookie,
+        "/web/todo/fix",
+        &[("action", "confirm"), ("fix_id", fix.as_str())],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{after}");
+    assert!(
+        after.contains("Confirmed: the version the fix serves"),
+        "{after}"
+    );
+    assert!(!after.contains("Admin fixes to confirm ·"), "{after}");
+}
+
+/// The admin To do lists the admin key's open investigations, each with
+/// its reason and the reads journalled under it (AdminTodo, group 2).
+#[tokio::test]
+async fn the_admin_to_do_lists_the_admin_keys_open_investigations() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (status, _, todo) = send(&rig.router, get("/web/admin/todo", Some(&boss))).await;
+    assert_eq!(status, StatusCode::OK, "{todo}");
+    assert!(todo.contains("Open investigations · 1"), "{todo}");
+    assert!(todo.contains("the console tests"), "{todo}");
 }

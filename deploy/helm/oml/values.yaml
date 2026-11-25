@@ -149,6 +149,8 @@ web:
       pathType: Exact
     - path: /web/todo/judge
       pathType: Exact
+    - path: /web/todo/fix
+      pathType: Exact
     - path: /web/admin/todo
       pathType: Exact
     - path: /web/keys

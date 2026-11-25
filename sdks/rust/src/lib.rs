@@ -286,6 +286,62 @@ pub struct Transition {
     pub from: String,
     pub to: String,
     pub state: String,
+    /// The instant of its `workspace.status_proposed`; absent from an API
+    /// before v0.8.5 (ADR-0095 d5 as amended 2026-11-24).
+    #[serde(default)]
+    pub proposed_at: Option<String>,
+    /// The proposing key, served to a key of the proposer's person and null
+    /// to every other reader (ADR-0095, amendment of 2026-11-24).
+    #[serde(default)]
+    pub proposed_by: Option<ProposedBy>,
+}
+
+/// The key that made a live proposal, as `proposed_by` serves it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ProposedBy {
+    pub id: String,
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+/// A workspace's ratified brief as the calling key reads it (openapi.yaml
+/// `Brief`; ADR-0046 d8): its members in ratification order, cut by the
+/// budget, and the budget itself.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Brief {
+    pub items: Vec<Memory>,
+    #[serde(default)]
+    pub budget: Option<BriefBudget>,
+}
+
+/// A brief's budget (openapi.yaml `RecallBudget`), the field read here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct BriefBudget {
+    #[serde(default)]
+    pub max_tokens: Option<u64>,
+}
+
+/// One brief edge as `GET /v2/edges?kind=brief` lists it (openapi.yaml
+/// `BriefEdge`); a pending one carries `proposed_at` and `proposed_by`
+/// from v0.8.5 (ADR-0095 d6 as amended 2026-11-24).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct BriefEdge {
+    pub edge_id: String,
+    pub from_artifact_id: String,
+    pub to_workspace_id: String,
+    pub state: String,
+    pub proposer_key_id: String,
+    #[serde(default)]
+    pub proposed_at: Option<String>,
+    #[serde(default)]
+    pub proposed_by: Option<ProposedBy>,
+}
+
+/// `GET /v2/edges?kind=brief`: one page of a workspace's brief edges.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct BriefEdgePage {
+    pub items: Vec<BriefEdge>,
+    pub next_cursor: Option<String>,
 }
 
 /// `GET /v2/workspaces/{workspace}` (openapi.yaml `WorkspaceView`), the fields
@@ -318,6 +374,10 @@ pub struct WorkspaceView {
     /// kind links carry no number (ADR-0082 d8 item 7, d10).
     #[serde(default)]
     pub approved_by_kind: Option<std::collections::BTreeMap<String, u64>>,
+    /// The ratified brief as the calling key reads it; `None` from an API
+    /// that does not serve it (ADR-0046 d8).
+    #[serde(default)]
+    pub brief: Option<Brief>,
 }
 
 /// A workspace's review policy (openapi.yaml `ReviewPolicy`): how many
@@ -1640,6 +1700,34 @@ pub struct BriefProposalPage {
     pub next_cursor: Option<String>,
 }
 
+/// One admin fix as a person's review read serves it (openapi.yaml `Fix`;
+/// ADR-0089 d15): never the admin's key or person, and the acts the
+/// reading key may take.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Fix {
+    pub fix_id: String,
+    pub act: String,
+    pub target_artifact_id: String,
+    pub workspace_id: String,
+    pub claim_key: String,
+    #[serde(default)]
+    pub replaced_artifact_id: Option<String>,
+    #[serde(default)]
+    pub served_artifact_id: Option<String>,
+    pub reason: String,
+    pub loosens_guardrail: bool,
+    pub state: String,
+    pub fixed_at: String,
+    #[serde(default)]
+    pub same_user: Option<bool>,
+    #[serde(default)]
+    pub restored_artifact_id: Option<String>,
+    /// `confirm` and `revert`, `confirm` alone for an erasure, or none
+    /// where this key acts for the admin's own person outside its root.
+    #[serde(default)]
+    pub acts: Vec<String>,
+}
+
 /// One admin fix as the admin's own listing serves it (ADR-0089 d15).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct AdminFix {
@@ -2847,6 +2935,74 @@ impl<T: Transport> Client<T> {
     pub async fn admin_fixes(&self, call: &Call<'_>) -> Result<Vec<AdminFix>, Error> {
         let answer: Items<AdminFix> = self.get(Some(call), "/v2/admin/fixes".to_owned()).await?;
         Ok(answer.items)
+    }
+
+    /// `GET /v2/review/fixes`: the unconfirmed admin fixes where a person's
+    /// reviewer key holds reviewer, each with the acts it may take
+    /// (ADR-0089 d15).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn review_fixes(&self, call: &Call<'_>) -> Result<Vec<Fix>, Error> {
+        let answer: Items<Fix> = self.get(Some(call), "/v2/review/fixes".to_owned()).await?;
+        Ok(answer.items)
+    }
+
+    /// `POST /v2/review/fixes/{id}/confirm` or `/revert` (ADR-0089 d8,
+    /// d15): `revert` true reverts.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn settle_fix(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        fix_id: &str,
+        revert: bool,
+    ) -> Result<Value, Error> {
+        self.post(
+            call,
+            format!(
+                "/v2/review/fixes/{}/{}",
+                encode(fix_id),
+                if revert { "revert" } else { "confirm" }
+            ),
+            idempotency_key,
+            &serde_json::json!({}),
+        )
+        .await
+    }
+
+    /// `GET /v2/admin/investigations`: the admin key's own open
+    /// investigations (ADR-0089 d10, d15).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn investigations(&self, call: &Call<'_>) -> Result<Vec<Investigation>, Error> {
+        let answer: Items<Investigation> = self
+            .get(Some(call), "/v2/admin/investigations".to_owned())
+            .await?;
+        Ok(answer.items)
+    }
+
+    /// `GET /v2/edges?kind=brief&workspace_id=`: the first page of a
+    /// workspace's brief edges, pending and ratified (ADR-0046 d7).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn brief_edges(
+        &self,
+        call: &Call<'_>,
+        workspace: &str,
+    ) -> Result<BriefEdgePage, Error> {
+        self.get(
+            Some(call),
+            format!(
+                "/v2/edges?kind=brief&limit=200&workspace_id={}",
+                encode(workspace)
+            ),
+        )
+        .await
     }
 
     /// `POST /v2/admin/fixes`: `body` is `{act, target, reason, body?}`

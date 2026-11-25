@@ -3871,7 +3871,8 @@ async fn a_persons_review_session_proposes_a_shared_workspaces_status_and_a_seco
     assert_eq!(status, StatusCode::OK, "{granted}");
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     let path = "/v2/workspaces/platform/transitions";
-    let (status, proposed) = as_web(&rig, &cookie, "review", path, json!({"to": "protected"})).await;
+    let (status, proposed) =
+        as_web(&rig, &cookie, "review", path, json!({"to": "protected"})).await;
     assert_eq!(status, StatusCode::ACCEPTED, "{proposed}");
     let transition = proposed["transition_id"]
         .as_str()
