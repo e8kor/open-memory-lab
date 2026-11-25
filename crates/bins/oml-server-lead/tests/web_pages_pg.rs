@@ -329,6 +329,19 @@ async fn the_first_admin_email_is_added_under_an_admin_key_and_signs_in_through_
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(token, None);
 
+    // alice's is the last admin entry, kept on every surface (ADR-0097 d25,
+    // d27 item 4), so a second admin first.
+    let (status, _, body) = send(
+        &router,
+        json_post_under(
+            "second-admin",
+            "/v2/web/emails",
+            &boot.admin_key.value,
+            json!({"email": "ops@example.com", "user": "ops", "admin": true}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
     // Removing the email ends its session in the same commit.
     let (status, _, body) = send(
         &router,

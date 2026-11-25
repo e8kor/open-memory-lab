@@ -202,6 +202,106 @@ pub enum KeyLimitsRefusal {
     AdminKeyRate,
 }
 
+/// Why a key takes no new value (ADR-0096 d13), each refused by name as
+/// `request.validation` with `details.reason`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyRotationRefusal {
+    /// A session key ends with its web session and has no value to rotate.
+    SessionKey,
+    /// A connector key has no value: it connects through a connect code.
+    ConnectorKey,
+    /// A revoked key authenticates nothing.
+    Revoked,
+    /// A key cut off stays cut off.
+    CutOff,
+    /// An expired key authenticates nothing; an admin moves its date first.
+    Expired,
+    /// A grace longer than 24 hours.
+    GraceTooLong,
+    /// An admin names another admin's key: until the confirmation of
+    /// ADR-0097 lands in v0.8.6, an admin rotates its own admin key alone
+    /// (the operator's decision of 2026-11-25).
+    NotAdminsKey,
+    /// An admin names a key in a person's root, a user key or one linked
+    /// to a person: that person rotates it from their own session (the
+    /// operator's decision of 2026-11-25).
+    InPersonsRoot,
+    /// A person's session names a key of theirs whose role the console
+    /// never issues: a person rotates the contributor, reader and
+    /// submitter keys alone, as `issue_own_key` admits them.
+    NotPersonsRole,
+}
+
+impl KeyRotationRefusal {
+    /// `details.field`: `key` for the path's key, `/grace_seconds` for the
+    /// grace.
+    #[must_use]
+    pub fn field(self) -> &'static str {
+        match self {
+            KeyRotationRefusal::GraceTooLong => "/grace_seconds",
+            _ => "key",
+        }
+    }
+
+    /// `details.reason`.
+    #[must_use]
+    pub fn reason(self) -> &'static str {
+        match self {
+            KeyRotationRefusal::SessionKey => "session_key",
+            KeyRotationRefusal::ConnectorKey => "connector_key",
+            KeyRotationRefusal::Revoked => "revoked",
+            KeyRotationRefusal::CutOff => "cut_off",
+            KeyRotationRefusal::Expired => "expired",
+            KeyRotationRefusal::GraceTooLong => "grace_too_long",
+            KeyRotationRefusal::NotAdminsKey => "not_admins_key",
+            KeyRotationRefusal::InPersonsRoot => "in_persons_root",
+            KeyRotationRefusal::NotPersonsRole => "not_persons_role",
+        }
+    }
+
+    /// The sentence the refusal answers.
+    #[must_use]
+    pub fn message(self) -> &'static str {
+        match self {
+            KeyRotationRefusal::SessionKey => {
+                "a session key ends with its web session and has no value to rotate"
+            }
+            KeyRotationRefusal::ConnectorKey => {
+                "a connector key has no value: mint a new connect code for it instead"
+            }
+            KeyRotationRefusal::Revoked => "a revoked key takes no new value",
+            KeyRotationRefusal::CutOff => "a cut-off key takes no new value",
+            KeyRotationRefusal::Expired => {
+                "an expired key takes no new value; an admin moves its expiry first"
+            }
+            KeyRotationRefusal::GraceTooLong => {
+                "grace_seconds is a whole number from 0 to 86400 (24 hours)"
+            }
+            KeyRotationRefusal::NotAdminsKey => {
+                "an admin rotates its own admin key, not another admin's"
+            }
+            KeyRotationRefusal::InPersonsRoot => {
+                "a key in a person's root is rotated by that person, from their own session"
+            }
+            KeyRotationRefusal::NotPersonsRole => {
+                "a person rotates their contributor, reader and submitter keys; a reviewer or curator key rotates itself"
+            }
+        }
+    }
+}
+
+/// A rotated key (ADR-0096 d13): the key as it stands, its new value, shown
+/// once, the instant of the rotation, and the end of the previous value's
+/// grace, `None` where it stopped at once.
+#[derive(Debug, Clone)]
+pub struct RotatedKey {
+    pub key: KeyRecord,
+    pub value: String,
+    pub rotated_at: EventTime,
+    pub previous_valid_until: Option<EventTime>,
+    pub journal_seq: u64,
+}
+
 impl KeyLimitsRefusal {
     /// `details.field`: the body member as its JSON pointer, `key` for the
     /// path's key, and none for a body that names no limit.
@@ -995,6 +1095,9 @@ pub struct TransitionRecord {
     pub proposer_principal: String,
     /// `None` while pending; the ratifying key once ratified.
     pub ratifier_key_id: Option<Uuid>,
+    /// The instant of its `workspace.status_proposed` (ADR-0095, amendment
+    /// of 2026-11-24).
+    pub proposed_at: EventTime,
 }
 
 /// A workspace's status read (http-api.md workspaces, `GET
@@ -1028,6 +1131,21 @@ pub struct TransitionView {
     /// The proposing key when it is in the reader's own key set; `None`
     /// to every other reader, an admin key included.
     pub proposed_by_key_id: Option<Uuid>,
+    /// The instant of its `workspace.status_proposed`, to every reader
+    /// (ADR-0095 d5 as amended 2026-11-24).
+    pub proposed_at: EventTime,
+    /// The proposing key's id and name when it is the reader's key or
+    /// another key of the reader's person; `None` to every other reader
+    /// (ADR-0095 d5 as amended 2026-11-24).
+    pub proposed_by: Option<ProposedBy>,
+}
+
+/// Who made a live proposal, as a reader of the same person is told it
+/// (ADR-0095, amendment of 2026-11-24): the proposing key and its name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProposedBy {
+    pub key_id: Uuid,
+    pub name: Option<Name>,
 }
 
 /// A crew record: named, recorded and not operated — OML never contacts the
@@ -2213,6 +2331,9 @@ pub struct TodoCounts {
     /// The To review group: the held rows the person's reviewer key may
     /// judge.
     pub review: u64,
+    /// The Brief proposals group: the pending brief edges the person's
+    /// reviewer key may ratify (ADR-0096 d7).
+    pub briefs: u64,
     /// Whether a count passed [`TODO_COUNT_CAP`].
     pub truncated: bool,
 }
@@ -2222,8 +2343,33 @@ pub struct TodoCounts {
 /// until then it answers `truncated` alone.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct AdminTodoCounts {
+    /// The guardrail-loosening alerts: the tenant's unconfirmed fixes that
+    /// loosen a guardrail (ADR-0096 d7).
+    pub alerts: u64,
     /// Whether a count passed [`TODO_COUNT_CAP`].
     pub truncated: bool,
+}
+
+/// One pending brief edge a person's reviewer key may ratify, as the To do
+/// group lists it (ADR-0096 d7): the edge, the claim's key and title, the
+/// workspace's name, the proposing key's name, and whether the proposer
+/// acts for the reviewer's person (ADR-0046 d2).
+#[derive(Debug, Clone)]
+pub struct BriefProposal {
+    pub edge: BriefEdgeRecord,
+    pub claim_key: Option<String>,
+    pub title: Option<String>,
+    pub workspace: Option<Name>,
+    pub proposer: Option<Name>,
+    pub same_user: bool,
+}
+
+/// A page of [`BriefProposal`]s, oldest first, and the position after the
+/// last one where more remain.
+#[derive(Debug, Clone)]
+pub struct BriefProposalPage {
+    pub items: Vec<BriefProposal>,
+    pub next: Option<(EventTime, Uuid)>,
 }
 
 #[derive(Debug, Clone)]
@@ -3068,6 +3214,11 @@ pub struct Whoami {
     /// Whether the key is a contributor without recall (ADR-0093 d3, as
     /// read on 2026-11-20): `oml doctor`'s `key_contributor_without_recall`.
     pub without_recall: bool,
+    /// For a bearer key, the end of its previous value's grace while that
+    /// value still authenticates after a rotation: `oml doctor`'s
+    /// `key.rotation_grace_open` (ADR-0096 d13). `None` otherwise, and for a
+    /// session key, whose whoami reads nothing more.
+    pub rotation_grace_until: Option<EventTime>,
 }
 
 /// `POST /v1/memories/{artifact_id}/supersede` (http-api.md supersede;
@@ -3230,6 +3381,8 @@ pub struct ProposeBriefEdge {
     pub artifact_id: Uuid,
     /// The workspace by id or name, as sent.
     pub workspace: Reference,
+    /// The proposer's reason, scanned and journalled (ADR-0095 d1).
+    pub reason: Option<String>,
 }
 
 /// A brief edge as openapi.yaml's `Edge` serves it with `kind: brief`, and
@@ -3285,8 +3438,19 @@ pub enum EdgeRatification {
 /// One page of a workspace's brief edges, pending and ratified, newest first.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BriefEdgePage {
-    pub items: Vec<BriefEdgeView>,
+    pub items: Vec<BriefEdgeListed>,
     pub next_cursor: Option<String>,
+}
+
+/// One brief edge as `GET /v2/edges?kind=brief` lists it: the edge, and for
+/// a pending one when it was proposed and, to a key of the proposer's
+/// person, by which key (ADR-0095 d6 as amended 2026-11-24).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BriefEdgeListed {
+    pub edge: BriefEdgeView,
+    /// The instant of its `brief_edge.proposed`; `None` once ratified.
+    pub proposed_at: Option<EventTime>,
+    pub proposed_by: Option<ProposedBy>,
 }
 
 /// A workspace's brief as the workspace read and the session-start hook
@@ -3433,8 +3597,8 @@ pub struct SignupPolicy {
     pub quotas: oml_domain::signup::Quotas,
 }
 
-/// One account's six meters (ADR-0071 d2): the four stocks now and the
-/// two flows of one UTC month.
+/// One account's seven meters (ADR-0071 d2; ADR-0095 d4): the five stocks
+/// now and the two flows of one UTC month.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct UserUsage {
     /// Live chains the account started.
@@ -3449,6 +3613,9 @@ pub struct UserUsage {
     pub keys: u64,
     /// Open connections of those keys.
     pub connections: u64,
+    /// Live workspaces under the account's root, the root excluded
+    /// (ADR-0095 d4).
+    pub workspaces: u64,
 }
 
 impl UserUsage {
@@ -3463,6 +3630,7 @@ impl UserUsage {
             Quota::Keys => self.keys,
             Quota::Connections => self.connections,
             Quota::RequestsPerMinute => 0,
+            Quota::Workspaces => self.workspaces,
         }
     }
 
@@ -3476,6 +3644,7 @@ impl UserUsage {
             Meter::Recalls => self.recalls,
             Meter::Keys => self.keys,
             Meter::Connections => self.connections,
+            Meter::Workspaces => self.workspaces,
         }
     }
 }
@@ -3734,6 +3903,9 @@ pub enum AppError {
     /// d5).
     #[error("{}", .0.message())]
     KeyLimits(KeyLimitsRefusal),
+    /// A key that takes no new value, or a grace too long (ADR-0096 d13).
+    #[error("{}", .0.message())]
+    KeyRotation(KeyRotationRefusal),
     #[error(
         "{verb} is outside the {role:?} verb ceiling (roles-and-keys.md permission matrix, R1)"
     )]
@@ -3790,6 +3962,15 @@ pub enum AppError {
         "{verb} is refused: this session key carries a denial (ADR-0070 d2, access.verb_ceiling)"
     )]
     SessionKeyDenied { role: Role, verb: &'static str },
+    /// A caller that authenticated with a rotated key's previous value,
+    /// inside its grace, reads and writes memories and runs no other act: no
+    /// key act, no admin verb, no workspace creation or governance change
+    /// (ADR-0096 d13, the operator's decision of 2026-11-25 and its fix
+    /// round; access.verb_ceiling, reason previous_value).
+    #[error(
+        "{verb} is refused: this value is the key's previous one, kept only for its grace (ADR-0096 d13, access.verb_ceiling)"
+    )]
+    PreviousKeyValue { verb: &'static str },
     /// A new memory, or a successor of a ratified retirement, addresses a
     /// user root or a workspace beneath one with a key that is not that
     /// user's: answered where the key reads the node or the target, in
@@ -4123,6 +4304,19 @@ pub enum AppError {
     /// ADR-0084 d6).
     #[error("the import target is not an in-progress development workspace (ADR-0084 d6)")]
     ImportTargetNotInProgress { workspace_id: Uuid },
+    /// `oml_write`'s `create_workspace` from a key that is not a contributor
+    /// key naming a user: refused before any lookup (`access.verb_ceiling`,
+    /// `create_is_own_root_only`; ADR-0095 d3).
+    #[error("an agent creates a workspace only inside its own person's root (ADR-0095 d3)")]
+    CreateIsOwnRootOnly { role: Role },
+    /// A workspace already holds a live proposal to this status
+    /// (`proposal.pending`, `details.transition_id`; ADR-0095 d5, #515).
+    #[error("a live proposal to this status is pending (ADR-0095 d5)")]
+    TransitionPending { transition_id: Uuid },
+    /// The claim is already a live proposal or a ratified member of this
+    /// brief (`proposal.pending`, `details.edge_id`; ADR-0095 d6, #515).
+    #[error("the claim is already proposed for or a member of this brief (ADR-0095 d6)")]
+    BriefEdgePending { edge_id: Uuid },
     /// Only a contributor key used by a person imports (`access.verb_ceiling`,
     /// `import_person_only`; ADR-0084 d11).
     #[error("an import needs a contributor key used by a person (ADR-0084 d11)")]
@@ -4174,10 +4368,6 @@ pub enum AppError {
         field: &'static str,
         reason: &'static str,
     },
-    #[error(
-        "oml_write does not supersede a guardrail: a guardrail is written and superseded on the HTTP API only (proposed ADR-0037 d10, request.validation)"
-    )]
-    GuardrailTarget,
     #[error(
         "derives_from names {0}, which the key cannot read or no row is (fail closed, access.not_found)"
     )]
@@ -4796,6 +4986,14 @@ pub struct ImportRecord {
     pub refusals: Vec<ImportRefusal>,
     pub created_at: EventTime,
     pub ended_at: Option<EventTime>,
+}
+
+/// A page of imports with each importing key's name, newest first, and the
+/// position after the last one where more remain (ADR-0096 d6).
+#[derive(Debug, Clone)]
+pub struct ImportListing {
+    pub items: Vec<(ImportRecord, Option<Name>)>,
+    pub next: Option<(EventTime, Uuid)>,
 }
 
 /// The target's tip of one claim key, held versions included, as the plan

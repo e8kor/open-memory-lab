@@ -1155,6 +1155,7 @@ async fn a_brief_edge_made_before_a_mark_serves_no_inside_claim_outside() {
             &ProposeBriefEdge {
                 artifact_id: claim,
                 workspace: w.side.into(),
+                reason: None,
             },
             None,
         )
@@ -1204,6 +1205,7 @@ async fn an_edge_across_the_boundary_is_neither_proposed_nor_ratified_after_a_ma
             &ProposeBriefEdge {
                 artifact_id: inside,
                 workspace: w.side.into(),
+                reason: None,
             },
             None,
         )

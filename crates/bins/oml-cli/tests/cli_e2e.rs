@@ -2235,11 +2235,32 @@ async fn the_first_admin_email_is_added_by_the_cli_under_an_admin_key() {
             seen.query
         );
     }
+    // The last admin entry is kept on every surface, the CLI's included
+    // (ADR-0097 d25, d27 item 4): removing it is refused naming admin.
+    let (code, refused, log) = lab.json(None, &["web", "remove", "alice@example.com"]);
+    assert_ne!(code, 0, "web remove: {log}");
+    assert_eq!(refused["error"]["details"]["field"], "admin", "{log}");
+    let (code, _, log) = lab.json(
+        None,
+        &[
+            "web",
+            "allow",
+            "ops@example.com",
+            "--user",
+            "ops",
+            "--admin",
+        ],
+    );
+    assert_eq!(code, 0, "web allow: {log}");
     let (code, _, log) = lab.json(None, &["web", "remove", "alice@example.com"]);
     assert_eq!(code, 0, "web remove: {log}");
     let (code, listed, log) = lab.json(None, &["web", "list"]);
     assert_eq!(code, 0, "{log}");
-    assert_eq!(listed["items"], json!([]));
+    assert_eq!(
+        listed["items"].as_array().map(Vec::len),
+        Some(1),
+        "{listed}"
+    );
     lab.stop().await;
 }
 
@@ -7458,5 +7479,228 @@ async fn oml_sync_loads_a_crates_docs_and_a_code_edit_writes_nothing() {
         );
         assert_eq!(whole["summary"]["removed"], 0, "{log}");
     }
+    lab.stop().await;
+}
+
+/// A skill written from the CLI is held, and lists under `oml skills list`
+/// once approved: `oml write --kind skill --skill-name --skill-description`
+/// sends the skill object, and a person's reviewer key approves it
+/// (ADR-0080 d1; the operator's addition of 2026-11-25).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_skill_written_from_the_cli_is_held_and_lists_under_oml_skills_list_once_approved() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let wa = lab.workspace("tools");
+    let writer = lab.issue(
+        "tools-agent",
+        &[
+            "--role",
+            "contributor",
+            "--principal",
+            "crew/tools-agent",
+            "--grant",
+            &format!("{wa}:submitter"),
+        ],
+    )["value"]
+        .as_str()
+        .expect("writer value")
+        .to_owned();
+    let reviewer = lab.issue(
+        "tools-person",
+        &[
+            "--role",
+            "reviewer",
+            "--used-by",
+            "person",
+            "--principal",
+            "crew/tools-person",
+            "--grant",
+            &format!("{wa}:reviewer"),
+        ],
+    )["value"]
+        .as_str()
+        .expect("reviewer value")
+        .to_owned();
+    let (code, accepted, log) = lab.json(
+        Some(&writer),
+        &[
+            "write",
+            "1. Run the suite. 2. Tag the release.",
+            "--kind",
+            "skill",
+            "--skill-name",
+            "release-checklist",
+            "--skill-description",
+            "Steps before a release.",
+            "--workspace",
+            &wa,
+        ],
+    );
+    assert_eq!(code, 0, "write: {log}");
+    assert_eq!(accepted["state"], "held", "{log}");
+    let artifact = accepted["artifact_id"].as_str().expect("artifact id");
+    let (code, listed, log) = lab.json(Some(&writer), &["skills", "list", "--workspace", &wa]);
+    assert_eq!(code, 0, "skills list: {log}");
+    assert!(
+        !listed.to_string().contains("release-checklist"),
+        "{listed}"
+    );
+    let (code, serve, log) = lab.json(Some(&reviewer), &["review", "next"]);
+    assert_eq!(code, 0, "review next: {log}");
+    assert_eq!(
+        serve["item"]["artifact_id"].as_str(),
+        Some(artifact),
+        "{log}"
+    );
+    let (code, verdict, log) = lab.json(
+        Some(&reviewer),
+        &[
+            "review",
+            "approve",
+            serve["serve_id"].as_str().expect("serve id"),
+        ],
+    );
+    assert_eq!(code, 0, "verdict: {log}");
+    assert_eq!(verdict["state"], "promoted", "{log}");
+    let (code, listed, log) = lab.json(Some(&writer), &["skills", "list", "--workspace", &wa]);
+    assert_eq!(code, 0, "skills list: {log}");
+    assert!(listed.to_string().contains("release-checklist"), "{listed}");
+    lab.stop().await;
+}
+
+/// `--skill-*` on another kind or with no `--kind` at all, and a skill
+/// missing either flag, are usage errors before anything is sent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn skill_flags_on_another_kind_and_a_skill_missing_one_are_refused_before_anything_is_sent() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let _ = lab.take_requests();
+    for args in [
+        &[
+            "write",
+            "x",
+            "--kind",
+            "memory",
+            "--skill-name",
+            "a",
+            "--skill-description",
+            "b",
+        ][..],
+        &["write", "x", "--kind", "skill", "--skill-name", "a"][..],
+        &["write", "x", "--kind", "skill"][..],
+        &[
+            "write",
+            "x",
+            "--skill-name",
+            "a",
+            "--skill-description",
+            "b",
+        ][..],
+    ] {
+        let (code, _, log) = lab.text(args);
+        assert_eq!(code, 2, "{args:?}: {log}");
+    }
+    assert!(
+        !routes(&lab.take_requests())
+            .iter()
+            .any(|r| r.contains("/v1/memories")),
+        "nothing is written"
+    );
+    let (code, help, _) = lab.text(&["write", "--help"]);
+    assert_eq!(code, 0);
+    let words = help.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(words.contains("guardrail | skill | document"), "{help}");
+    lab.stop().await;
+}
+
+/// `oml keys rotate <key> --grace 1h --out <file>` writes the new value to
+/// a new 0600 file and prints no value; both values work during the grace,
+/// and the key keeps its grants (ADR-0096 d13).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn keys_rotate_out_writes_the_new_value_to_a_0600_file_and_prints_no_value() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let wa = lab.workspace("rotating");
+    let old = lab.issue(
+        "rot-agent",
+        &[
+            "--role",
+            "contributor",
+            "--principal",
+            "crew/rot",
+            "--grant",
+            &format!("{wa}:submitter"),
+        ],
+    )["value"]
+        .as_str()
+        .expect("value")
+        .to_owned();
+    let path = lab.dir.join("rot-agent.key");
+    let shown = path.to_str().expect("a UTF-8 path");
+    let (code, stdout, stderr) = lab.text(&[
+        "keys",
+        "rotate",
+        "rot-agent",
+        "--grace",
+        "1h",
+        "--out",
+        shown,
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(mode_of(&path), 0o600);
+    let written = std::fs::read_to_string(&path).expect("the key file");
+    let new = written.strip_suffix('\n').expect("one line").to_owned();
+    assert!(new.starts_with("oml_") && new != old, "{written}");
+    assert!(!stdout.contains(&new) && !stderr.contains(&new), "{stdout}");
+    for (value, text) in [
+        (&old, "written with the old value"),
+        (&new, "written with the new value"),
+    ] {
+        let (code, accepted, log) = lab.json(Some(value), &["write", text, "--workspace", &wa]);
+        assert_eq!(code, 0, "{log}");
+        assert_eq!(accepted["state"], "held", "{accepted}");
+    }
+    let (code, _, stderr) = lab.text(&["keys", "rotate", "rot-agent", "--out", shown]);
+    assert_ne!(code, 0, "an existing file is refused: {stderr}");
+    lab.stop().await;
+}
+
+/// `oml keys rotate --out` creates and claims its owner-only file before it
+/// sends anything, as `issue-agent --out` does: a path that cannot hold the
+/// value is refused and the server is never called, so no value is minted
+/// that nothing keeps (ADR-0096 d13; ADR-0028 d1).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn keys_rotate_out_with_a_path_that_cannot_be_created_calls_no_server() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let wa = lab.workspace("rotating");
+    let _ = lab.issue(
+        "rot-agent",
+        &[
+            "--role",
+            "contributor",
+            "--principal",
+            "crew/rot",
+            "--grant",
+            &format!("{wa}:submitter"),
+        ],
+    );
+    let path = lab.dir.join("no-such-dir").join("rot-agent.key");
+    lab.take_requests();
+    let (code, stdout, stderr) = lab.text(&[
+        "keys",
+        "rotate",
+        "rot-agent",
+        "--out",
+        path.to_str().expect("a UTF-8 path"),
+    ]);
+    assert_eq!(code, 2, "a local refusal: {stdout}{stderr}");
+    assert!(stderr.contains("nothing was sent"), "{stderr}");
+    assert!(lab.take_requests().is_empty(), "the server is not called");
+    assert!(!path.exists());
     lab.stop().await;
 }

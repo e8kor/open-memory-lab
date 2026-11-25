@@ -61,6 +61,11 @@ def _parse_response(
 
         return response_415
 
+    if response.status_code == 429:
+        response_429 = ErrorEnvelope.from_dict(response.json())
+
+        return response_429
+
     response_default = ErrorEnvelope.from_dict(response.json())
 
     return response_default
@@ -97,7 +102,11 @@ def sync_detailed(
     recorded creation with Idempotency-Replay: true and creates nothing again; the same key with another
     body is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.7.0). A person's web session key
     (<user>-web, through its capacity credential) creates under its own root, as the web console's
-    Workspaces view does (ADR-0070 d5).
+    Workspaces view does (ADR-0070 d5). A node below a user root counts on that account's workspaces
+    meter, whoever creates it; past the account's limit the create is 429 limit.quota with details.quota
+    workspaces, and nothing is journalled (ADR-0095 d4; since v0.8.5). MCP's oml_write create_workspace
+    rides this operation for a contributor key that names a user alone; every other key is
+    access.verb_ceiling with details.reason create_is_own_root_only there (ADR-0095 d3).
 
     Args:
         x_request_id (str | Unset):
@@ -149,7 +158,11 @@ def sync(
     recorded creation with Idempotency-Replay: true and creates nothing again; the same key with another
     body is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.7.0). A person's web session key
     (<user>-web, through its capacity credential) creates under its own root, as the web console's
-    Workspaces view does (ADR-0070 d5).
+    Workspaces view does (ADR-0070 d5). A node below a user root counts on that account's workspaces
+    meter, whoever creates it; past the account's limit the create is 429 limit.quota with details.quota
+    workspaces, and nothing is journalled (ADR-0095 d4; since v0.8.5). MCP's oml_write create_workspace
+    rides this operation for a contributor key that names a user alone; every other key is
+    access.verb_ceiling with details.reason create_is_own_root_only there (ADR-0095 d3).
 
     Args:
         x_request_id (str | Unset):
@@ -196,7 +209,11 @@ async def asyncio_detailed(
     recorded creation with Idempotency-Replay: true and creates nothing again; the same key with another
     body is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.7.0). A person's web session key
     (<user>-web, through its capacity credential) creates under its own root, as the web console's
-    Workspaces view does (ADR-0070 d5).
+    Workspaces view does (ADR-0070 d5). A node below a user root counts on that account's workspaces
+    meter, whoever creates it; past the account's limit the create is 429 limit.quota with details.quota
+    workspaces, and nothing is journalled (ADR-0095 d4; since v0.8.5). MCP's oml_write create_workspace
+    rides this operation for a contributor key that names a user alone; every other key is
+    access.verb_ceiling with details.reason create_is_own_root_only there (ADR-0095 d3).
 
     Args:
         x_request_id (str | Unset):
@@ -246,7 +263,11 @@ async def asyncio(
     recorded creation with Idempotency-Replay: true and creates nothing again; the same key with another
     body is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.7.0). A person's web session key
     (<user>-web, through its capacity credential) creates under its own root, as the web console's
-    Workspaces view does (ADR-0070 d5).
+    Workspaces view does (ADR-0070 d5). A node below a user root counts on that account's workspaces
+    meter, whoever creates it; past the account's limit the create is 429 limit.quota with details.quota
+    workspaces, and nothing is journalled (ADR-0095 d4; since v0.8.5). MCP's oml_write create_workspace
+    rides this operation for a contributor key that names a user alone; every other key is
+    access.verb_ceiling with details.reason create_is_own_root_only there (ADR-0095 d3).
 
     Args:
         x_request_id (str | Unset):

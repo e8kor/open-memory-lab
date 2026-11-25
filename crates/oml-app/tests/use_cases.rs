@@ -2561,6 +2561,7 @@ async fn workspace_info_names_the_verbs_this_keys_grants_confer() {
                 "learn",
                 "attach",
                 "supersede",
+                "propose_brief",
             ],
         ),
         (&reader, vec!["recall", "read", "graph_read", "events_tail"]),
@@ -2574,6 +2575,7 @@ async fn workspace_info_names_the_verbs_this_keys_grants_confer() {
                 "propose",
                 "review",
                 "supersede",
+                "propose_brief",
             ],
         ),
         // A service key is refused review whatever its grants (ADR-0025 d1).
@@ -2586,6 +2588,7 @@ async fn workspace_info_names_the_verbs_this_keys_grants_confer() {
                 "events_tail",
                 "propose",
                 "supersede",
+                "propose_brief",
             ],
         ),
     ] {
@@ -10385,8 +10388,10 @@ async fn the_serve_of_a_held_guardrail_carries_the_load_warning() {
     );
 }
 
+/// `oml_write` supersedes a guardrail with its fields, as the HTTP API does,
+/// and the successor is held for review (ADR-0095 d2).
 #[tokio::test]
-async fn oml_write_supersession_refuses_a_guardrail_target() {
+async fn oml_write_supersession_admits_a_guardrail_target_with_its_fields() {
     let app = app();
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
@@ -10399,7 +10404,7 @@ async fn oml_write_supersession_refuses_a_guardrail_target() {
         &guardrail_req("g1", Severity::Must, "Run the tests first.", crew),
     )
     .await;
-    let err = app
+    let successor = app
         .supersede(
             &writer.value,
             &SupersedeRequest {
@@ -10410,8 +10415,8 @@ async fn oml_write_supersession_refuses_a_guardrail_target() {
             },
         )
         .await
-        .unwrap_err();
-    assert!(matches!(err, AppError::GuardrailTarget), "{err:?}");
+        .expect("a guardrail successor over oml_write");
+    assert_eq!(successor.receipt.state, "held", "{successor:?}");
 }
 
 #[tokio::test]
@@ -12342,16 +12347,18 @@ fn seen_by_another(t: &oml_app::types::TransitionRecord) -> TransitionView {
         to: t.to,
         state: t.state,
         proposed_by_key_id: None,
+        proposed_at: t.proposed_at.clone(),
+        proposed_by: None,
     }
 }
 
 /// The status read serves the node's stored status, the review policy in
-/// force and its live proposals in proposal order; a ratification makes
-/// every other proposal from the old rung stale, and the read drops them
-/// (http-api.md `GET /v2/workspaces/{id}/status`; workspaces.md, the status
-/// read lists only live proposals; ADR-0009 d3).
+/// force and its live proposal, one per target status since ADR-0095 d5;
+/// once it is ratified the node has moved and the read lists none until
+/// the next rung is proposed (http-api.md `GET /v2/workspaces/{id}/status`;
+/// workspaces.md, the status read lists only live proposals; ADR-0009 d3).
 #[tokio::test]
-async fn the_status_read_lists_pending_transitions_in_proposal_order_and_the_policy_in_force() {
+async fn the_status_read_lists_the_live_transition_and_the_policy_in_force() {
     let store = MemStore::new();
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
@@ -12363,15 +12370,6 @@ async fn the_status_read_lists_pending_transitions_in_proposal_order_and_the_pol
         .propose_transition(admin, crew.into(), WorkspaceStatus::Protected)
         .await
         .expect("a proposal");
-    let second = app
-        .propose_transition(&dora.value, crew.into(), WorkspaceStatus::Protected)
-        .await
-        .expect("a second proposal");
-    let third = app
-        .propose_transition(admin, crew.into(), WorkspaceStatus::Protected)
-        .await
-        .expect("a third proposal");
-
     let view = app
         .workspace_status(&rita.value, by_name("crew"))
         .await
@@ -12382,10 +12380,7 @@ async fn the_status_read_lists_pending_transitions_in_proposal_order_and_the_pol
         view.policy,
         json!({ "k": 1, "required_roles": ["reviewer"] })
     );
-    assert_eq!(
-        view.pending,
-        [&first, &second, &third].map(seen_by_another).to_vec()
-    );
+    assert_eq!(view.pending, vec![seen_by_another(&first)]);
 
     app.ratify_transition(&dora.value, crew.into(), first.transition_id)
         .await
@@ -12395,12 +12390,7 @@ async fn the_status_read_lists_pending_transitions_in_proposal_order_and_the_pol
         .await
         .expect("a reader reads the status");
     assert_eq!(view.status, WorkspaceStatus::Protected);
-    assert!(view.pending.is_empty(), "stale proposals are not live");
-    let stored = store
-        .pending_transitions(boot.tenant_id, crew)
-        .await
-        .expect("read");
-    assert_eq!(stored, vec![second, third], "the stale rows stay pending");
+    assert!(view.pending.is_empty(), "the ratified proposal is not live");
 
     let next = app
         .propose_transition(admin, crew.into(), WorkspaceStatus::Frozen)
@@ -12500,13 +12490,18 @@ async fn a_status_read_never_names_the_proposers_principal_and_names_the_proposi
         .propose_transition(&dora.value, crew.into(), WorkspaceStatus::Protected)
         .await
         .expect("a reviewer proposes");
-    let served = |proposed_by_key_id| TransitionView {
+    let served = |proposed_by_key_id: Option<Uuid>| TransitionView {
         transition_id: proposal.transition_id,
         workspace_id: crew,
         from: WorkspaceStatus::Development,
         to: WorkspaceStatus::Protected,
         state: TransitionState::Pending,
         proposed_by_key_id,
+        proposed_at: proposal.proposed_at.clone(),
+        proposed_by: proposed_by_key_id.map(|key_id| oml_app::types::ProposedBy {
+            key_id,
+            name: Some(dora.name.clone()),
+        }),
     };
 
     let own = app
@@ -14535,6 +14530,7 @@ fn brief_req(artifact_id: Uuid, workspace: Uuid) -> ProposeBriefEdge {
     ProposeBriefEdge {
         artifact_id,
         workspace: workspace.into(),
+        reason: None,
     }
 }
 
@@ -14603,7 +14599,7 @@ async fn a_held_claim_cannot_join_a_brief_and_a_reader_key_cannot_propose_one() 
         .memory_id;
     let err = r
         .app
-        .propose_brief_edge(&r.writer.value, &brief_req(held, r.crew), None)
+        .propose_brief_edge(&r.rita.value, &brief_req(held, r.crew), None)
         .await
         .unwrap_err();
     assert!(matches!(err, AppError::VerbCeiling { .. }), "{err:?}");
@@ -14784,14 +14780,14 @@ async fn a_page_of_brief_edges_lists_pending_and_ratified_newest_first_to_a_read
         .await
         .expect("a page");
     assert_eq!(page.items.len(), 1);
-    assert_eq!(page.items[0].edge_id, second);
+    assert_eq!(page.items[0].edge.edge_id, second);
     let next = r
         .app
         .brief_edges(&r.rita.value, r.crew.into(), page.next_cursor.as_deref(), 1)
         .await
         .expect("the next page");
-    assert_eq!(next.items[0].edge_id, first);
-    assert_eq!(next.items[0].state, "ratified");
+    assert_eq!(next.items[0].edge.edge_id, first);
+    assert_eq!(next.items[0].edge.state, "ratified");
     assert!(next.next_cursor.is_none());
 }
 
@@ -19510,4 +19506,1066 @@ async fn every_served_hit_satisfies_the_read_path_law() {
         fixed, 2,
         "the edit's version and the demotion's restored tip"
     );
+}
+
+// -- agents shape workspaces over MCP: the workspaces meter, one live
+// proposal per target, the brief proposer floor, the effective verbs and
+// who proposed a live proposal (ADR-0095 d3-d6, d8, d9; amendment of
+// 2026-11-24; #515) ---------------------------------------------------------
+
+/// The `workspaces` meter of the account `key` belongs to: used and limit.
+async fn workspaces_meter(app: &TestApp, key: &str) -> (u64, Option<u64>) {
+    let usage = app.account_usage(key).await.expect("the account's usage");
+    let reading = usage
+        .meters
+        .iter()
+        .find(|m| m.meter == oml_app::domain::usage::Meter::Workspaces)
+        .expect("the workspaces meter");
+    (reading.used, reading.limit)
+}
+
+/// A create past the account's `workspaces` limit is `limit.quota` naming
+/// the quota, its limit and what is used, and journals nothing (ADR-0095
+/// d4; ADR-0071 d3).
+#[tokio::test]
+async fn a_create_past_the_workspaces_quota_is_refused_and_journals_nothing() {
+    use oml_app::domain::signup::{Quota, Quotas};
+    use oml_app::types::QuotaProfiles;
+    let (app, store, _clock, boot) = metered_on_a_clock(
+        QuotaProfiles::only(Quotas::default().with(Quota::Workspaces, 2)),
+        None,
+    )
+    .await;
+    let admin = boot.admin_key.value.as_str();
+    let (writer, _) = account_keys(&app, admin).await;
+    for child in ["notes", "drafts"] {
+        app.create_own_workspace(&writer.value, &name(child), None, None)
+            .await
+            .expect("a child under the limit");
+    }
+    assert_eq!(workspaces_meter(&app, &writer.value).await, (2, Some(2)));
+    let head = journal(&store, boot.tenant_id).await.len();
+    let refused = app
+        .create_own_workspace(&writer.value, &name("third"), None, None)
+        .await
+        .unwrap_err();
+    let reached = match refused {
+        AppError::QuotaReached(reached) | AppError::Store(StoreError::QuotaReached(reached)) => {
+            reached
+        }
+        other => panic!("expected limit.quota, got {other:?}"),
+    };
+    assert_eq!(
+        (reached.quota, reached.limit, reached.used),
+        (Quota::Workspaces, 2, 2)
+    );
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+    assert_eq!(workspaces_meter(&app, &writer.value).await, (2, Some(2)));
+}
+
+/// The meter counts every node below the account's root, whoever created
+/// it, the root itself and every shared node left out (ADR-0095 d4).
+#[tokio::test]
+async fn the_workspaces_meter_counts_every_child_under_the_root_whoever_created_it() {
+    use oml_app::domain::signup::Quotas;
+    use oml_app::types::QuotaProfiles;
+    let (app, _store, _clock, boot) =
+        metered_on_a_clock(QuotaProfiles::only(Quotas::default()), None).await;
+    let admin = boot.admin_key.value.as_str();
+    let (writer, _) = account_keys(&app, admin).await;
+    assert_eq!(workspaces_meter(&app, &writer.value).await, (0, None));
+    let notes = app
+        .create_own_workspace(&writer.value, &name("notes"), None, None)
+        .await
+        .expect("the agent's child")
+        .workspace
+        .workspace_id;
+    app.create_workspace(admin, &name("q1"), Some(notes.into()), None)
+        .await
+        .expect("an admin's grandchild");
+    app.create_workspace(&writer.value, &name("drafts"), None, None)
+        .await
+        .expect("a child over the HTTP create");
+    // A shared node counts on no account.
+    workspace(&app, admin, "shared", boot.root_workspace_id).await;
+    assert_eq!(workspaces_meter(&app, &writer.value).await, (3, None));
+}
+
+/// A workspace holds one live proposal per target status: a second, by any
+/// key, is `proposal.pending` naming the live one, and once that one is
+/// ratified the next rung is open again (ADR-0095 d5; #515).
+#[tokio::test]
+async fn a_second_live_proposal_to_the_same_status_is_refused_proposal_pending() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let dora = curator(&app, admin, "dora", crew).await;
+    let dan = curator(&app, admin, "dan", crew).await;
+    let live = app
+        .propose_transition(&dora.value, crew.into(), WorkspaceStatus::Protected)
+        .await
+        .expect("the first proposal");
+    let head = journal(&store, boot.tenant_id).await.len();
+    for proposer in [&dan.value, &dora.value, admin] {
+        let err = app
+            .propose_transition(proposer, crew.into(), WorkspaceStatus::Protected)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, AppError::TransitionPending { transition_id } if transition_id == live.transition_id),
+            "{err:?}"
+        );
+    }
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+    app.ratify_transition(&dan.value, crew.into(), live.transition_id)
+        .await
+        .expect("a second identity ratifies");
+    app.propose_transition(&dora.value, crew.into(), WorkspaceStatus::Frozen)
+        .await
+        .expect("the next rung");
+}
+
+/// A claim already proposed for a brief, or already its member, is
+/// `proposal.pending` naming that edge, whoever proposes it again (ADR-0095
+/// d6; #515).
+#[tokio::test]
+async fn a_brief_proposal_of_a_claim_already_proposed_or_a_member_is_refused_proposal_pending() {
+    let r = brief_rig().await;
+    let claim = promoted(
+        &r.app,
+        &r.writer.value,
+        &r.dora.value,
+        &submit_into("p1", "the canary drains first", r.crew),
+    )
+    .await;
+    let edge = r
+        .app
+        .propose_brief_edge(&r.dora.value, &brief_req(claim, r.crew), None)
+        .await
+        .expect("the first proposal")
+        .proposal
+        .edge_id;
+    let head = journal(&r.store, r.boot.tenant_id).await.len();
+    for proposer in [&r.dan.value, &r.writer.value] {
+        let err = r
+            .app
+            .propose_brief_edge(proposer, &brief_req(claim, r.crew), None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, AppError::BriefEdgePending { edge_id } if edge_id == edge),
+            "{err:?}"
+        );
+    }
+    assert_eq!(journal(&r.store, r.boot.tenant_id).await.len(), head);
+    r.app
+        .ratify_brief_edge(&r.dan.value, edge, None)
+        .await
+        .expect("a ratification");
+    let err = r
+        .app
+        .propose_brief_edge(&r.dan.value, &brief_req(claim, r.crew), None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::BriefEdgePending { edge_id } if edge_id == edge),
+        "a member: {err:?}"
+    );
+}
+
+/// A contributor key proposes a promoted claim it reads for the brief, and
+/// ratification stays a reviewer's: the contributor is refused it at the
+/// verb ceiling (ADR-0095 d6; ADR-0046 d8).
+#[tokio::test]
+async fn a_contributor_proposes_a_brief_edge_and_cannot_ratify_it() {
+    let r = brief_rig().await;
+    let claim = promoted(
+        &r.app,
+        &r.writer.value,
+        &r.dora.value,
+        &submit_into("p2", "deploys go out on tuesdays", r.crew),
+    )
+    .await;
+    let outcome = r
+        .app
+        .propose_brief_edge(&r.writer.value, &brief_req(claim, r.crew), None)
+        .await
+        .expect("a contributor proposes");
+    assert_eq!(outcome.proposal.state, "pending");
+    assert_eq!(outcome.proposal.proposer_key_id, r.writer.key_id);
+    let events = journal(&r.store, r.boot.tenant_id).await;
+    assert_eq!(
+        events.last().expect("an event").envelope.event_type,
+        event_types::BRIEF_EDGE_PROPOSED
+    );
+    let err = r
+        .app
+        .ratify_brief_edge(&r.writer.value, outcome.proposal.edge_id, None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::VerbCeiling { .. }), "{err:?}");
+    // A reader key proposes none.
+    let err = r
+        .app
+        .propose_brief_edge(&r.rita.value, &brief_req(claim, r.crew), None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::VerbCeiling { .. }), "{err:?}");
+}
+
+/// `my_effective_verbs` lists `create_workspace` exactly where the agent
+/// create admits the key, a contributor key naming a user inside its own
+/// root, and `propose_brief` for a contributor holding submitter or a
+/// reviewer holding reviewer (ADR-0095 d3, d6, d8).
+#[tokio::test]
+async fn my_effective_verbs_names_create_workspace_exactly_where_the_create_check_admits() {
+    use oml_app::domain::signup::Quotas;
+    use oml_app::types::QuotaProfiles;
+    let (app, _store, _clock, boot) =
+        metered_on_a_clock(QuotaProfiles::only(Quotas::default()), None).await;
+    let admin = boot.admin_key.value.as_str();
+    let crew = workspace(&app, admin, "crew", boot.root_workspace_id).await;
+    let (ada_agent, ada_reviewer) = account_keys(&app, admin).await;
+    let tenant_agent = agent(&app, admin, "crew/agent", crew).await;
+    let rita = issue(&app, admin, Role::Reader, "rita", crew).await;
+    let verbs = |info: oml_app::types::WorkspaceInfo| info.my_effective_verbs;
+    let own_root = verbs(
+        app.workspace_info(ada_agent.value.as_str(), Some(by_name("ada")))
+            .await
+            .expect("ada's root"),
+    );
+    assert!(own_root.contains(&"create_workspace"), "{own_root:?}");
+    assert!(own_root.contains(&"propose_brief"), "{own_root:?}");
+    app.create_own_workspace(&ada_agent.value, &name("notes"), None, None)
+        .await
+        .expect("the check admits it here");
+    let child = verbs(
+        app.workspace_info(ada_agent.value.as_str(), Some(by_name("notes")))
+            .await
+            .expect("ada's child"),
+    );
+    assert!(child.contains(&"create_workspace"), "{child:?}");
+
+    let shared = verbs(
+        app.workspace_info(tenant_agent.value.as_str(), Some(crew.into()))
+            .await
+            .expect("the crew"),
+    );
+    assert!(!shared.contains(&"create_workspace"), "{shared:?}");
+    assert!(shared.contains(&"propose_brief"), "{shared:?}");
+    let refused = app
+        .create_own_workspace(&tenant_agent.value, &name("side"), Some(crew.into()), None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(refused, AppError::CreateIsOwnRootOnly { .. }),
+        "{refused:?}"
+    );
+
+    let reviewer = verbs(
+        app.workspace_info(ada_reviewer.value.as_str(), Some(by_name("ada")))
+            .await
+            .expect("ada's root"),
+    );
+    assert!(!reviewer.contains(&"create_workspace"), "{reviewer:?}");
+    assert!(reviewer.contains(&"propose_brief"), "{reviewer:?}");
+    let refused = app
+        .create_own_workspace(&ada_reviewer.value, &name("side"), None, None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(refused, AppError::CreateIsOwnRootOnly { .. }),
+        "{refused:?}"
+    );
+
+    let reader = verbs(
+        app.workspace_info(rita.value.as_str(), Some(crew.into()))
+            .await
+            .expect("the crew"),
+    );
+    assert!(
+        !reader.contains(&"create_workspace") && !reader.contains(&"propose_brief"),
+        "{reader:?}"
+    );
+}
+
+/// Links each key of `keys` to the person `person` through one console
+/// admin session and the person's own, as [`link_person`] links one.
+async fn link_keys(app: &TestApp, admin: &str, keys: &[Uuid], person: &str) {
+    use oml_app::app::Capacity;
+    use oml_app::domain::web::Email;
+    use oml_app::types::{Bearer, WebEmailRequest};
+    let mut sessions = Vec::new();
+    for (user, is_admin) in [(format!("ops-{person}"), true), (person.to_owned(), false)] {
+        let (entry, _) = app
+            .allow_web_email(
+                admin,
+                &WebEmailRequest {
+                    email: Email::parse(&format!("{user}@example.com")).expect("an email"),
+                    user: name(&user),
+                    admin: is_admin,
+                },
+            )
+            .await
+            .expect("the entry is added");
+        app.web_ensure_keys(&entry).await.expect("the session keys");
+        let token = app
+            .web_session_open(&entry, 3600, None)
+            .await
+            .expect("the session opens")
+            .token;
+        sessions.push(app.web_session(&token).await.expect("read").expect("live"));
+    }
+    let ops = app
+        .web_caller(&sessions[0], Capacity::Admin)
+        .await
+        .expect("the console admin");
+    let own = app
+        .web_caller(&sessions[1], Capacity::Web)
+        .await
+        .expect("the person's console");
+    for key_id in keys {
+        app.link_key_to_person(Bearer::Session(&ops), (*key_id).into(), &name(person))
+            .await
+            .expect("linked, pending");
+        app.accept_key_link(Bearer::Session(&own), (*key_id).into())
+            .await
+            .expect("accepted");
+    }
+}
+
+/// Two reviewer keys of the person `alice`, a reviewer key of `bob` and a
+/// reader with no person, each on the crew workspace.
+struct PeopleRig {
+    app: TestApp,
+    crew: Uuid,
+    alice_a: IssuedKey,
+    alice_b: IssuedKey,
+    bob: IssuedKey,
+    rita: IssuedKey,
+    writer: IssuedKey,
+}
+
+async fn people_rig() -> PeopleRig {
+    let app = app();
+    let (boot, crew) = tenant(&app).await;
+    let admin = boot.admin_key.value.clone();
+    let alice_a = curator(&app, &admin, "alice/a", crew).await;
+    let alice_b = curator(&app, &admin, "alice/b", crew).await;
+    let bob = curator(&app, &admin, "bob/desk", crew).await;
+    let rita = issue(&app, &admin, Role::Reader, "rita", crew).await;
+    let writer = agent(&app, &admin, "crew/writer", crew).await;
+    link_keys(&app, &admin, &[alice_a.key_id, alice_b.key_id], "alice").await;
+    link_keys(&app, &admin, &[bob.key_id], "bob").await;
+    PeopleRig {
+        app,
+        crew,
+        alice_a,
+        alice_b,
+        bob,
+        rita,
+        writer,
+    }
+}
+
+/// A live status proposal serves when it was proposed to every reader, and
+/// the proposing key's id and name to that key and to another key of the
+/// same person; `proposed_by_key_id` keeps its own-key rule (ADR-0095 d5
+/// as amended 2026-11-24; ADR-0025 d15).
+#[tokio::test]
+async fn a_pending_transition_names_its_proposer_to_a_key_of_the_same_person() {
+    let r = people_rig().await;
+    let proposal = r
+        .app
+        .propose_transition(&r.alice_a.value, r.crew.into(), WorkspaceStatus::Protected)
+        .await
+        .expect("a proposal");
+    let read = |key: &IssuedKey| {
+        let app = &r.app;
+        let value = key.value.clone();
+        let crew = r.crew;
+        async move {
+            app.workspace_info(value.as_str(), Some(crew.into()))
+                .await
+                .expect("the workspace read")
+                .pending_transitions
+                .into_iter()
+                .next()
+                .expect("the live proposal")
+        }
+    };
+    let own = read(&r.alice_a).await;
+    let same_person = read(&r.alice_b).await;
+    for seen in [&own, &same_person] {
+        assert_eq!(seen.proposed_at, proposal.proposed_at);
+        let by = seen.proposed_by.as_ref().expect("named to alice");
+        assert_eq!(by.key_id, r.alice_a.key_id);
+        assert_eq!(by.name.as_ref(), Some(&r.alice_a.name));
+    }
+    assert_eq!(own.proposed_by_key_id, Some(r.alice_a.key_id));
+    assert_eq!(same_person.proposed_by_key_id, None, "ADR-0025 d15 holds");
+}
+
+/// `proposed_by` is null to a key of another person and to a key that acts
+/// for no person, and `proposed_at` is served to each (ADR-0095, amendment
+/// of 2026-11-24).
+#[tokio::test]
+async fn proposed_by_is_null_for_another_persons_key() {
+    let r = people_rig().await;
+    let proposal = r
+        .app
+        .propose_transition(&r.alice_a.value, r.crew.into(), WorkspaceStatus::Protected)
+        .await
+        .expect("a proposal");
+    for reader in [&r.bob, &r.rita] {
+        let seen = r
+            .app
+            .workspace_info(reader.value.as_str(), Some(r.crew.into()))
+            .await
+            .expect("the workspace read")
+            .pending_transitions
+            .into_iter()
+            .next()
+            .expect("the live proposal");
+        assert_eq!(seen.proposed_at, proposal.proposed_at);
+        assert_eq!(seen.proposed_by, None);
+        assert_eq!(seen.proposed_by_key_id, None);
+    }
+}
+
+/// A pending brief edge on the brief's listing serves when it was proposed
+/// and, under the same rule, which key proposed it; a ratified one serves
+/// neither (ADR-0095 d6 as amended 2026-11-24).
+#[tokio::test]
+async fn a_pending_brief_edge_names_its_proposer_to_a_key_of_the_same_person() {
+    let r = people_rig().await;
+    let claim = promoted(
+        &r.app,
+        &r.writer.value,
+        &r.bob.value,
+        &submit_into("pb1", "the canary drains first", r.crew),
+    )
+    .await;
+    let proposal = r
+        .app
+        .propose_brief_edge(&r.alice_a.value, &brief_req(claim, r.crew), None)
+        .await
+        .expect("a proposal")
+        .proposal;
+    let listed = |key: &IssuedKey| {
+        let app = &r.app;
+        let value = key.value.clone();
+        let crew = r.crew;
+        async move {
+            app.brief_edges(value.as_str(), crew.into(), None, 10)
+                .await
+                .expect("the brief's edges")
+                .items
+                .into_iter()
+                .next()
+                .expect("the pending edge")
+        }
+    };
+    let same_person = listed(&r.alice_b).await;
+    assert_eq!(same_person.edge.edge_id, proposal.edge_id);
+    assert!(same_person.proposed_at.is_some());
+    assert_eq!(
+        same_person.proposed_by.map(|by| by.key_id),
+        Some(r.alice_a.key_id)
+    );
+    let other = listed(&r.bob).await;
+    assert_eq!(other.proposed_at, same_person.proposed_at);
+    assert_eq!(other.proposed_by, None);
+    r.app
+        .ratify_brief_edge(&r.bob.value, proposal.edge_id, None)
+        .await
+        .expect("bob ratifies");
+    let ratified = listed(&r.alice_b).await;
+    assert_eq!((ratified.proposed_at, ratified.proposed_by), (None, None));
+}
+
+/// ADR-0097 d27 item 2: a denial's reason is scanned and journalled in
+/// `key.denied`'s payload as `reason` when sent, in `bulk085/mcp`'s field
+/// shape, and a denial sent without one journals none.
+#[tokio::test]
+async fn a_denials_reason_is_journalled_in_key_denied_when_sent_and_absent_when_not() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let quarantine = workspace(&app, admin, "quarantine", crew).await;
+    let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
+    let other = issue(&app, admin, Role::Reader, "otto", crew).await;
+    app.deny_key_with_reason(
+        admin,
+        reader.key_id.into(),
+        quarantine.into(),
+        Some("leaked to a public gist"),
+    )
+    .await
+    .expect("deny with a reason");
+    app.deny_key(admin, other.key_id.into(), quarantine.into())
+        .await
+        .expect("deny without one");
+    let denied: Vec<_> = journal(&store, boot.tenant_id)
+        .await
+        .into_iter()
+        .filter(|e| e.envelope.event_type == "key.denied")
+        .map(|e| e.envelope.payload)
+        .collect();
+    assert_eq!(denied.len(), 2, "{denied:?}");
+    assert_eq!(denied[0]["reason"], "leaked to a public gist", "{denied:?}");
+    assert!(denied[1].get("reason").is_none(), "{denied:?}");
+}
+
+// -- key rotation (ADR-0096 d13, the operator's decision of 2026-11-25) -----
+
+/// An app over `store` with a clock the test moves.
+fn rotation_app(store: MemStore) -> (TestApp, FixedClock) {
+    let clock = FixedClock::new();
+    let app = App::new(
+        store,
+        MemSigner::new(TEST_SEED),
+        clock.clone(),
+        SeqIdGen::new(),
+        MarkerScanner::default(),
+    )
+    .with_oauth_issuer(Issuer::parse(ISSUER).expect("a public origin"));
+    (app, clock)
+}
+
+/// Without grace, the old value stops at once and the new one
+/// authenticates the same key.
+#[tokio::test]
+async fn a_rotated_keys_old_value_stops_at_once_without_grace() {
+    let (app, _) = rotation_app(MemStore::new());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let agent = agent(&app, admin, "ana", crew).await;
+    let rotated = app
+        .rotate_key(admin.as_str(), agent.key_id.into(), None)
+        .await
+        .expect("rotate");
+    assert_ne!(rotated.value, agent.value);
+    assert_eq!(rotated.previous_valid_until, None);
+    assert!(matches!(
+        app.whoami(&agent.value).await,
+        Err(AppError::Unauthorized)
+    ));
+    let me = app.whoami(&rotated.value).await.expect("the new value");
+    assert_eq!(me.key.key_id, agent.key_id);
+}
+
+/// With a grace, both values authenticate until its end, then only the new
+/// one does.
+#[tokio::test]
+async fn with_grace_both_values_work_until_its_end_and_then_only_the_new_one() {
+    let (app, clock) = rotation_app(MemStore::new());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let agent = agent(&app, admin, "ana", crew).await;
+    let rotated = app
+        .rotate_key(admin.as_str(), agent.key_id.into(), Some(3600))
+        .await
+        .expect("rotate");
+    assert!(rotated.previous_valid_until.is_some());
+    clock.advance(3599);
+    app.whoami(&agent.value)
+        .await
+        .expect("the old value in its grace");
+    app.whoami(&rotated.value).await.expect("the new value");
+    clock.advance(1);
+    assert!(matches!(
+        app.whoami(&agent.value).await,
+        Err(AppError::Unauthorized)
+    ));
+    app.whoami(&rotated.value).await.expect("the new value");
+}
+
+/// A rotation keeps the key's id, name, grants and history, and journals
+/// `key.rotated` with neither the value nor a hash.
+#[tokio::test]
+async fn a_rotation_keeps_grants_and_history_and_journals_no_value() {
+    let store = MemStore::new();
+    let (app, _) = rotation_app(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let agent = agent(&app, admin, "ana", crew).await;
+    let before = store
+        .key_access(boot.tenant_id, agent.key_id)
+        .await
+        .expect("access")
+        .expect("held");
+    let events_before = journal(&store, boot.tenant_id).await;
+    let named = store
+        .key(boot.tenant_id, agent.key_id)
+        .await
+        .expect("read")
+        .expect("held")
+        .name;
+    let rotated = app
+        .rotate_key(admin.as_str(), agent.key_id.into(), None)
+        .await
+        .expect("rotate");
+    let after = store
+        .key_access(boot.tenant_id, agent.key_id)
+        .await
+        .expect("access")
+        .expect("held");
+    assert_eq!(before.grants, after.grants);
+    let events = journal(&store, boot.tenant_id).await;
+    assert_eq!(
+        hashes(&events[..events_before.len()]),
+        hashes(&events_before)
+    );
+    let last = &events.last().expect("an event").envelope;
+    assert_eq!(last.event_type, "key.rotated");
+    assert_eq!(last.payload["key_id"], agent.key_id.to_string());
+    let text = last.payload.to_string();
+    assert!(
+        !text.contains(&rotated.value) && !text.contains("sha256"),
+        "{text}"
+    );
+    let key = store
+        .key(boot.tenant_id, agent.key_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert_eq!(key.name, named);
+    assert_eq!(key.key_id, agent.key_id);
+}
+
+/// A key rotates itself, so an agent rolls its own secret.
+#[tokio::test]
+async fn a_key_rotates_itself() {
+    let (app, _) = rotation_app(MemStore::new());
+    let (boot, crew) = tenant(&app).await;
+    let agent = agent(&app, &boot.admin_key.value, "ana", crew).await;
+    let rotated = app
+        .rotate_key(agent.value.as_str(), agent.key_id.into(), None)
+        .await
+        .expect("self-rotation");
+    app.whoami(&rotated.value).await.expect("the new value");
+}
+
+/// Each refusal, by name: another key that is not an admin key, a
+/// connector key, a cut-off key, an expired key, a revoked key and a grace
+/// over 24 hours.
+#[tokio::test]
+async fn rotation_refuses_each_key_that_takes_no_new_value_by_name() {
+    let store = MemStore::new();
+    let (app, clock) = rotation_app(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let ana = agent(&app, admin, "ana", crew).await;
+    let bea = agent(&app, admin, "bea", crew).await;
+    let refused = |r: Result<oml_app::types::RotatedKey, AppError>| match r {
+        Err(AppError::KeyRotation(refusal)) => refusal.reason(),
+        Err(AppError::VerbCeiling { .. }) => "verb_ceiling",
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        refused(
+            app.rotate_key(ana.value.as_str(), bea.key_id.into(), None)
+                .await
+        ),
+        "verb_ceiling"
+    );
+    assert_eq!(
+        refused(app.rotate_key(admin, ana.key_id.into(), Some(86_401)).await),
+        "grace_too_long"
+    );
+    let (connector, _) = connected(&app, admin, crew).await;
+    assert_eq!(
+        refused(app.rotate_key(admin, connector.key_id.into(), None).await),
+        "connector_key"
+    );
+    app.deny_key(admin, bea.key_id.into(), boot.root_workspace_id.into())
+        .await
+        .expect("cut off");
+    assert_eq!(
+        refused(app.rotate_key(admin, bea.key_id.into(), None).await),
+        "cut_off"
+    );
+    let soon = oml_app::domain::EventTime::from_unix_micros(
+        oml_app::ports::Clock::now(&clock).unix_micros() + 60_000_000,
+    )
+    .expect("an instant");
+    app.set_key_limits(
+        admin,
+        ana.key_id.into(),
+        oml_app::types::KeyLimitsChange {
+            expiry: Some(Some(soon)),
+            requests_per_minute: None,
+        },
+    )
+    .await
+    .expect("limits");
+    clock.advance(61);
+    assert_eq!(
+        refused(app.rotate_key(admin, ana.key_id.into(), None).await),
+        "expired"
+    );
+    let cyd = agent(&app, admin, "cyd", crew).await;
+    revoke_key(&store, boot.tenant_id, cyd.key_id).await;
+    assert_eq!(
+        refused(app.rotate_key(admin, cyd.key_id.into(), None).await),
+        "revoked"
+    );
+}
+
+/// A thief holding a rotated key's previous value inside its grace cannot
+/// rotate the key to outlive that grace: the previous value runs no key
+/// act, so the old admin value issues, mints, denies, cuts off, sets limits
+/// and links nothing either, while it still authenticates a read and the
+/// new value runs every act (ADR-0096 d13, the fix round of 2026-11-25).
+#[tokio::test]
+async fn a_previous_value_in_its_grace_runs_no_key_act() {
+    let (app, _) = rotation_app(MemStore::new());
+    let (boot, crew) = tenant(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let ana = agent(&app, admin, "ana", crew).await;
+    let bea = agent(&app, admin, "bea", crew).await;
+    let rotated = app
+        .rotate_key(admin, ana.key_id.into(), Some(3600))
+        .await
+        .expect("rotate with grace");
+    let previous = |r: Result<oml_app::types::RotatedKey, AppError>| match r {
+        Err(AppError::PreviousKeyValue { verb }) => verb,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        previous(
+            app.rotate_key(ana.value.as_str(), ana.key_id.into(), None)
+                .await
+        ),
+        "rotate_key"
+    );
+    app.whoami(&ana.value)
+        .await
+        .expect("the previous value still reads in its grace");
+    app.whoami(&rotated.value).await.expect("the new value");
+
+    let renewed = app
+        .rotate_key(admin, boot.admin_key.key_id.into(), Some(3600))
+        .await
+        .expect("an admin rotates its own key");
+    let verb_of = |e: AppError| match e {
+        AppError::PreviousKeyValue { verb } => verb,
+        other => panic!("{other:?}"),
+    };
+    let old = admin;
+    assert_eq!(
+        verb_of(
+            app.issue_key(
+                old,
+                &issue_req(Role::Reader, "cyd", vec![grant(crew, Role::Reader)])
+            )
+            .await
+            .unwrap_err()
+        ),
+        "issue_key"
+    );
+    assert_eq!(
+        verb_of(
+            app.mint_connect_code(old, bea.key_id.into())
+                .await
+                .unwrap_err()
+        ),
+        "mint_connect_code"
+    );
+    assert_eq!(
+        verb_of(
+            app.deny_key(old, bea.key_id.into(), crew.into())
+                .await
+                .unwrap_err()
+        ),
+        "deny_key"
+    );
+    assert_eq!(
+        verb_of(
+            app.deny_key(old, bea.key_id.into(), boot.root_workspace_id.into())
+                .await
+                .unwrap_err()
+        ),
+        "deny_key"
+    );
+    assert_eq!(
+        verb_of(
+            app.set_key_limits(
+                old,
+                bea.key_id.into(),
+                oml_app::types::KeyLimitsChange {
+                    expiry: None,
+                    requests_per_minute: Some(Some(10)),
+                },
+            )
+            .await
+            .unwrap_err()
+        ),
+        "set_key_limits"
+    );
+    assert_eq!(
+        verb_of(
+            app.link_key_to_person(old, bea.key_id.into(), &name("alice"))
+                .await
+                .unwrap_err()
+        ),
+        "link_key"
+    );
+    assert_eq!(
+        verb_of(
+            app.unlink_key_from_person(old, bea.key_id.into())
+                .await
+                .unwrap_err()
+        ),
+        "unlink_key"
+    );
+    // Every other act that is not a memory read or write is refused too:
+    // the people the tenant admits and what they hold, crews, workspaces
+    // and their mode and status, the tenant's settings, fixes and
+    // investigations (the authority re-review of PR #518, A1).
+    let thief = oml_app::types::WebEmailRequest {
+        email: oml_app::domain::web::Email::parse("thief@example.com").expect("an email"),
+        user: name("thief"),
+        admin: true,
+    };
+    assert_eq!(
+        verb_of(app.allow_web_email(old, &thief).await.unwrap_err()),
+        "web_emails"
+    );
+    assert_eq!(
+        verb_of(
+            app.allow_web_email_keeping(old, &thief, false)
+                .await
+                .unwrap_err()
+        ),
+        "web_emails"
+    );
+    assert_eq!(
+        verb_of(app.remove_web_email(old, &thief.email).await.unwrap_err()),
+        "web_emails"
+    );
+    assert_eq!(
+        verb_of(app.list_web_emails(old, None, 10).await.unwrap_err()),
+        "web_emails"
+    );
+    let old_caller = app
+        .caller(oml_app::types::Bearer::Key(old))
+        .await
+        .expect("the previous value authenticates");
+    let alice = name("alice");
+    assert_eq!(
+        verb_of(
+            app.grant_review_capacity(&old_caller, &alice, crew.into())
+                .await
+                .unwrap_err()
+        ),
+        "grant_review"
+    );
+    assert_eq!(
+        verb_of(
+            app.grant_read_capacity(&old_caller, &alice, crew.into())
+                .await
+                .unwrap_err()
+        ),
+        "grant_read"
+    );
+    assert_eq!(
+        verb_of(
+            app.grant_curation_capacity(&old_caller, &alice, crew.into())
+                .await
+                .unwrap_err()
+        ),
+        "grant_curation"
+    );
+    assert_eq!(
+        verb_of(app.disable_web_user(&old_caller, &alice).await.unwrap_err()),
+        "web_users"
+    );
+    assert_eq!(
+        verb_of(
+            app.close_web_deletion(&old_caller, &alice)
+                .await
+                .unwrap_err()
+        ),
+        "web_users"
+    );
+    assert_eq!(
+        verb_of(
+            app.set_web_user_quota(
+                &old_caller,
+                &alice,
+                oml_app::domain::signup::Quota::Keys,
+                Some(99)
+            )
+            .await
+            .unwrap_err()
+        ),
+        "web_users"
+    );
+    assert_eq!(
+        verb_of(
+            app.create_crew(
+                old,
+                &CrewCreateRequest {
+                    name: name("thief-crew"),
+                    charter_uri: None,
+                    external_manager: None,
+                },
+            )
+            .await
+            .unwrap_err()
+        ),
+        "create_crew"
+    );
+    assert_eq!(
+        verb_of(
+            app.update_crew(old, by_name("thief-crew"), &CrewUpdate::default())
+                .await
+                .unwrap_err()
+        ),
+        "update_crew"
+    );
+    assert_eq!(
+        verb_of(
+            app.set_workspace_crew(old, crew.into(), by_name("thief-crew"))
+                .await
+                .unwrap_err()
+        ),
+        "set_workspace_crew"
+    );
+    assert_eq!(
+        verb_of(
+            app.create_workspace(old, &name("thief-node"), Some(crew.into()), None)
+                .await
+                .unwrap_err()
+        ),
+        "create_workspace"
+    );
+    assert_eq!(
+        verb_of(
+            app.set_workspace_mode(
+                old,
+                crew.into(),
+                oml_app::domain::in_progress::WorkspaceMode::InProgress,
+            )
+            .await
+            .unwrap_err()
+        ),
+        "set_workspace_mode"
+    );
+    assert_eq!(
+        verb_of(
+            app.set_workspace_federation(old, crew.into(), true)
+                .await
+                .unwrap_err()
+        ),
+        "set_workspace_federation"
+    );
+    assert_eq!(
+        verb_of(
+            app.propose_transition(old, crew.into(), WorkspaceStatus::Protected)
+                .await
+                .unwrap_err()
+        ),
+        "propose_transition"
+    );
+    assert_eq!(
+        verb_of(
+            app.set_search_default(old, Some("keyword-all"))
+                .await
+                .unwrap_err()
+        ),
+        "search_default"
+    );
+    assert_eq!(
+        verb_of(app.set_usage_settings(old, true).await.unwrap_err()),
+        "usage_settings"
+    );
+    assert_eq!(
+        verb_of(
+            app.open_investigation(old, "a thief's case")
+                .await
+                .unwrap_err()
+        ),
+        "investigate"
+    );
+    assert_eq!(
+        verb_of(app.demote_version(old, Uuid::nil()).await.unwrap_err()),
+        "demote"
+    );
+    assert_eq!(
+        verb_of(app.erase_claim(old, Uuid::nil()).await.unwrap_err()),
+        "erase"
+    );
+    assert_eq!(
+        verb_of(app.verify_chain(old).await.unwrap_err()),
+        "verify_chain"
+    );
+    // The grace still serves what it is for: the agent's previous value
+    // writes and reads memories as the key does.
+    app.submit_memory(
+        ana.value.as_str(),
+        &submit_into("grace-write", "a write in the grace", crew),
+    )
+    .await
+    .expect("the previous value writes a memory in its grace");
+    app.recall(ana.value.as_str(), &recall_req("grace"))
+        .await
+        .expect("the previous value recalls in its grace");
+    app.deny_key(renewed.value.as_str(), bea.key_id.into(), crew.into())
+        .await
+        .expect("the new value denies");
+    app.allow_web_email(renewed.value.as_str(), &thief)
+        .await
+        .expect("the new value admits an email");
+}
+
+/// An admin rotates its own admin key and a tenant key that names no user,
+/// and another admin's key is refused by name until ADR-0097's
+/// confirmation lands (ADR-0096 d13, the operator's decision of
+/// 2026-11-25).
+#[tokio::test]
+async fn an_admin_rotates_its_own_key_and_a_tenant_key_and_never_another_admins_key() {
+    let (app, _) = rotation_app(MemStore::new());
+    let (boot, crew) = tenant(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let ana = agent(&app, admin, "ana", crew).await;
+    let second = issue_with(&app, admin, Role::Admin, "second-admin", vec![]).await;
+    app.rotate_key(admin, ana.key_id.into(), None)
+        .await
+        .expect("a tenant key");
+    match app.rotate_key(admin, second.key_id.into(), None).await {
+        Err(AppError::KeyRotation(refusal)) => assert_eq!(refusal.reason(), "not_admins_key"),
+        other => panic!("{other:?}"),
+    }
+    app.rotate_key(second.value.as_str(), second.key_id.into(), None)
+        .await
+        .expect("the second admin rotates its own key");
+    app.rotate_key(admin, boot.admin_key.key_id.into(), None)
+        .await
+        .expect("an admin rotates its own key");
+}
+
+/// A rotation's `rotated_at` is its `key.rotated` envelope's `at`, and the
+/// grace ends that instant plus the grace, read off no second clock
+/// (ADR-0096 d13).
+#[tokio::test]
+async fn a_rotation_takes_its_instant_and_its_grace_from_the_envelope() {
+    let store = MemStore::new();
+    let (app, _) = rotation_app(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let ana = agent(&app, admin, "ana", crew).await;
+    let rotated = app
+        .rotate_key(admin, ana.key_id.into(), Some(60))
+        .await
+        .expect("rotate");
+    let events = journal(&store, boot.tenant_id).await;
+    let at = events.last().expect("key.rotated").envelope.at.clone();
+    assert_eq!(rotated.rotated_at, at);
+    let until = rotated.previous_valid_until.expect("a grace");
+    assert_eq!(until.unix_micros(), at.unix_micros() + 60_000_000);
 }

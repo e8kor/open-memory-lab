@@ -6167,7 +6167,7 @@ async fn crew_given_at_create_is_persisted_and_returned() {
             "edges": [],
             "my_effective_verbs": [
                 "recall", "read", "graph_read", "events_tail",
-                "remember", "learn", "attach", "supersede",
+                "remember", "learn", "attach", "supersede", "propose_brief",
             ],
             "permission_epoch": view["permission_epoch"],
             "stale_versions": 0,
@@ -8148,8 +8148,8 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     );
     assert_eq!(
         declared.len(),
-        107,
-        "the source check (ADR-0057 d5), the workspace mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the four web routes the lead keeps (ADR-0045 d25; its two JSON routes are oml-web's, ADR-0070 d7 (b), and GET and POST /web/admin are deleted, ADR-0070 \"The old URLs deleted\"), open sign-up's one the lead keeps, POST /web/sign-up (ADR-0068 d10; the onboarding and users pages are oml-web's, ADR-0070 d7 (b)), the web console's ten (ADR-0070 d5), the sign-in page oml-web sends to (ADR-0070 d4) , federation's three (ADR-0072 d5), usage metering's six (ADR-0071 d5, d6), a key's limits (ADR-0079 d5), a key's link, unlink and acceptance (ADR-0085 d16), the withdrawal (ADR-0083 d13), the skill read (ADR-0080 d11), the five upload routes (ADR-0004 d3), the workspace export and the import and its status (ADR-0084 d15), the admin investigation's open, list and close (ADR-0089 d10, d15), the five fix routes, the admin's fix and list and a person's list, confirm and revert (ADR-0089 d15), and a pending sign-in email's acceptance and removal by its person (ADR-0045 d2, the operator's decision of 2026-11-19)"
+        110,
+        "the source check (ADR-0057 d5), the workspace mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the four web routes the lead keeps (ADR-0045 d25; its two JSON routes are oml-web's, ADR-0070 d7 (b), and GET and POST /web/admin are deleted, ADR-0070 \"The old URLs deleted\"), open sign-up's one the lead keeps, POST /web/sign-up (ADR-0068 d10; the onboarding and users pages are oml-web's, ADR-0070 d7 (b)), the web console's ten (ADR-0070 d5), the sign-in page oml-web sends to (ADR-0070 d4) , federation's three (ADR-0072 d5), usage metering's six (ADR-0071 d5, d6), a key's limits (ADR-0079 d5), a key's link, unlink and acceptance (ADR-0085 d16), the withdrawal (ADR-0083 d13), the skill read (ADR-0080 d11), the five upload routes (ADR-0004 d3), the workspace export and the import and its status (ADR-0084 d15), the admin investigation's open, list and close (ADR-0089 d10, d15), the five fix routes, the admin's fix and list and a person's list, confirm and revert (ADR-0089 d15), a pending sign-in email's acceptance and removal by its person (ADR-0045 d2, the operator's decision of 2026-11-19), and the imports listing and the brief proposals (ADR-0096 d6, d7)"
     );
     assert_eq!(oauth.len(), 6, "the six OAuth operations");
 
@@ -10196,6 +10196,32 @@ impl WebRig {
         body["value"].as_str().expect("value").to_owned()
     }
 
+    /// A tenant key named `name`, of `role`, naming no user, with `role`
+    /// on the tenant's root; its value.
+    async fn tenant_key(&self, name: &str, role: &str) -> String {
+        let grants = if role == "admin" {
+            json!([])
+        } else {
+            json!([{ "workspace": self.root.to_string(), "role": "reader" }])
+        };
+        let (status, _, body) = send(
+            &self.router,
+            "POST",
+            "/v2/keys",
+            Call::auth(&self.admin)
+                .idem(&format!("tenant-{name}"))
+                .body(json!({
+                    "role": role,
+                    "name": name,
+                    "principal": name,
+                    "grants": grants,
+                })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        body["value"].as_str().expect("value").to_owned()
+    }
+
     /// A held memory written by `key` in `workspace`; its id.
     async fn held(&self, key: &str, workspace: &str, claim_key: &str) -> String {
         let (status, _, body) = send(
@@ -11659,8 +11685,11 @@ async fn a_web_session_key_issues_connects_and_cuts_off_its_own_keys() {
     assert!(issued["value"].is_string(), "{issued}");
     for (body, field) in [
         (json!({ "name": "phone", "role": "contributor" }), "/name"),
+        // Since v0.8.5 a session takes grants inside the root, at most 16
+        // (ADR-0096 d1): a grant outside it is access.issuer_ceiling, and
+        // more than 16 is refused naming /grants.
         (
-            json!({ "name": "alice-x", "role": "submitter", "grants": [{ "workspace": "universe", "role": "submitter" }] }),
+            json!({ "name": "alice-x", "role": "submitter", "grants": vec![json!({ "workspace": "alice", "role": "submitter" }); 17] }),
             "/grants",
         ),
         (
@@ -12699,5 +12728,303 @@ async fn an_unlinked_admin_keys_fix_answers_fix_requires_person_unlinked() {
     assert_eq!(status, StatusCode::FORBIDDEN, "{fix}");
     assert_envelope(&fix, "admin.fix_requires_person");
     assert_eq!(fix["error"]["details"]["reason"], "unlinked", "{fix}");
+    drop_db(&rig.db_name).await;
+}
+
+// -- key rotation (ADR-0096 d13) --------------------------------------------
+
+/// `GET /v2/whoami?person=false` under `value`: its status.
+async fn whoami_status(rig: &WebRig, value: &str) -> StatusCode {
+    send(
+        &rig.router,
+        "GET",
+        "/v2/whoami?person=false",
+        Call::auth(value),
+    )
+    .await
+    .0
+}
+
+/// Rotation answers the new value once: with a grace both values work, a
+/// resubmission under the same Idempotency-Key replays the answer without
+/// the value and rotates nothing, and a later rotation without grace stops
+/// every earlier value at once, on Postgres (ADR-0096 d13; migration 0069).
+#[tokio::test]
+async fn a_rotation_answers_its_value_once_and_a_replay_hides_it_and_rotates_nothing() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let first = rig.tenant_key("team-reader", "reader").await;
+    let rotate = |idem: &'static str, body: Value| Call::auth(&rig.admin).idem(idem).body(body);
+    let (status, headers, rotated) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/team-reader/rotate",
+        rotate("rot-1", json!({ "grace_seconds": 3600 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{rotated}");
+    assert!(headers.get("idempotency-replay").is_none());
+    let second = rotated["value"]
+        .as_str()
+        .expect("the value, once")
+        .to_owned();
+    assert!(rotated["previous_valid_until"].is_string(), "{rotated}");
+    assert!(rotated["rotated_at"].is_string(), "{rotated}");
+    assert_eq!(whoami_status(&rig, &first).await, StatusCode::OK);
+    assert_eq!(whoami_status(&rig, &second).await, StatusCode::OK);
+    let (status, headers, replayed) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/team-reader/rotate",
+        rotate("rot-1", json!({ "grace_seconds": 3600 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{replayed}");
+    assert!(headers.get("idempotency-replay").is_some());
+    assert!(replayed.get("value").is_none(), "{replayed}");
+    assert_eq!(whoami_status(&rig, &second).await, StatusCode::OK);
+    let (status, _, again) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/team-reader/rotate",
+        rotate("rot-2", json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert!(again["previous_valid_until"].is_null(), "{again}");
+    let third = again["value"].as_str().expect("the value").to_owned();
+    assert_eq!(whoami_status(&rig, &first).await, StatusCode::UNAUTHORIZED);
+    assert_eq!(whoami_status(&rig, &second).await, StatusCode::UNAUTHORIZED);
+    assert_eq!(whoami_status(&rig, &third).await, StatusCode::OK);
+    drop_db(&rig.db_name).await;
+}
+
+/// A person's web session rotates the person's own key, and is refused a
+/// session key by name and another person's key as absent.
+#[tokio::test]
+async fn a_persons_web_session_rotates_its_own_key_and_never_a_session_key() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let token = rig.signed_in("alice@example.com", "alice", false).await;
+    let web = credential(&token, "web");
+    let _bob = rig.signed_in("bob@example.com", "bob", false).await;
+    let _laptop = rig.agent_key("alice", "alice-laptop").await;
+    let _bobs = rig.agent_key("bob", "bob-laptop").await;
+    let (status, _, rotated) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/alice-laptop/rotate",
+        web_call(&web).idem("own").body(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{rotated}");
+    assert!(rotated["value"].is_string(), "{rotated}");
+    let (status, _, refused) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/alice-review/rotate",
+        web_call(&web).idem("session").body(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    assert_eq!(
+        refused["error"]["details"]["reason"], "session_key",
+        "{refused}"
+    );
+    let (status, _, absent) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/bob-laptop/rotate",
+        web_call(&web).idem("other").body(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{absent}");
+    drop_db(&rig.db_name).await;
+}
+
+/// The refusal a rotation answers by name: `request.validation` with
+/// `details.reason`.
+fn assert_rotation_refused(status: StatusCode, answer: &Value, reason: &str) {
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
+    assert_envelope(answer, "request.validation");
+    assert_eq!(answer["error"]["details"]["reason"], reason, "{answer}");
+}
+
+/// An admin rotates its own admin key and a tenant key naming no user; a
+/// key in a person's root and another admin's key are refused by name,
+/// `in_persons_root` and `not_admins_key`, and nothing rotates, until
+/// ADR-0097's confirmation lands in v0.8.6 (ADR-0096 d13, the operator's
+/// decision of 2026-11-25).
+#[tokio::test]
+async fn an_admin_rotates_its_own_and_tenant_keys_and_never_a_persons_or_another_admins() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let _alice = rig.signed_in("alice@example.com", "alice", false).await;
+    let laptop = rig.agent_key("alice", "alice-laptop").await;
+    let _reader = rig.tenant_key("team-reader", "reader").await;
+    let other = rig.tenant_key("other-admin", "admin").await;
+    let rotate = |idem: &'static str| Call::auth(&rig.admin).idem(idem).body(json!({}));
+    let (status, _, rotated) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/team-reader/rotate",
+        rotate("tenant"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{rotated}");
+    let (status, _, refused) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/alice-laptop/rotate",
+        rotate("persons"),
+    )
+    .await;
+    assert_rotation_refused(status, &refused, "in_persons_root");
+    assert_eq!(whoami_status(&rig, &laptop).await, StatusCode::OK);
+    let (status, _, refused) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/other-admin/rotate",
+        rotate("admins"),
+    )
+    .await;
+    assert_rotation_refused(status, &refused, "not_admins_key");
+    assert_eq!(whoami_status(&rig, &other).await, StatusCode::OK);
+    let (status, _, own) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/other-admin/rotate",
+        Call::auth(&other).idem("own").body(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{own}");
+    drop_db(&rig.db_name).await;
+}
+
+/// A person's web session rotates the contributor, reader and submitter
+/// keys `issue_own_key` admits; a reviewer key in the person's root is
+/// refused by name, `not_persons_role` (ADR-0096 d13).
+#[tokio::test]
+async fn a_persons_web_session_rotates_no_reviewer_key_in_its_root() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let token = rig.signed_in("alice@example.com", "alice", false).await;
+    let web = credential(&token, "web");
+    let (status, _, issued) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys",
+        Call::auth(&rig.admin).idem("alice-judge").body(json!({
+            "role": "reviewer",
+            "name": "alice-judge",
+            "principal": "alice-judge",
+            "user": "alice",
+            "grants": [{ "workspace": "alice", "role": "reviewer" }],
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{issued}");
+    let (status, _, refused) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/alice-judge/rotate",
+        web_call(&web).idem("judge").body(json!({})),
+    )
+    .await;
+    assert_rotation_refused(status, &refused, "not_persons_role");
+    drop_db(&rig.db_name).await;
+}
+
+/// A thief holding a key's previous value inside its grace cannot rotate
+/// the key to outlive the grace: `access.verb_ceiling`, reason
+/// `previous_value`, and the new value stays the key's (ADR-0096 d13).
+#[tokio::test]
+async fn a_previous_value_in_its_grace_rotates_nothing() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let old = rig.tenant_key("team-reader", "reader").await;
+    let (status, _, rotated) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/team-reader/rotate",
+        Call::auth(&rig.admin)
+            .idem("grace")
+            .body(json!({ "grace_seconds": 3600 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{rotated}");
+    let new = rotated["value"].as_str().expect("the value").to_owned();
+    let (status, _, refused) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/team-reader/rotate",
+        Call::auth(&old).idem("thief").body(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+    assert_envelope(&refused, "access.verb_ceiling");
+    assert_eq!(
+        refused["error"]["details"]["reason"], "previous_value",
+        "{refused}"
+    );
+    assert_eq!(whoami_status(&rig, &new).await, StatusCode::OK);
+    assert_eq!(whoami_status(&rig, &old).await, StatusCode::OK);
+    drop_db(&rig.db_name).await;
+}
+
+/// An admin key's previous value inside its grace admits no one: adding
+/// an email with the admin flag is `access.verb_ceiling`, reason
+/// `previous_value`, no entry is added, and the new value adds it (ADR-0096
+/// d13; the authority re-review of PR #518, A1).
+#[tokio::test]
+async fn an_admin_keys_previous_value_in_its_grace_adds_no_web_email() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let old = rig.tenant_key("other-admin", "admin").await;
+    let (status, _, rotated) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/other-admin/rotate",
+        Call::auth(&old)
+            .idem("grace")
+            .body(json!({ "grace_seconds": 3600 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{rotated}");
+    let new = rotated["value"].as_str().expect("the value").to_owned();
+    let thief = json!({ "email": "thief@example.com", "user": "thief", "admin": true });
+    let (status, _, refused) = send(
+        &rig.router,
+        "POST",
+        "/v2/web/emails",
+        Call::auth(&old).idem("thief").body(thief.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+    assert_envelope(&refused, "access.verb_ceiling");
+    assert_eq!(
+        refused["error"]["details"]["reason"], "previous_value",
+        "{refused}"
+    );
+    let (_, _, list) = send(&rig.router, "GET", "/v2/web/emails", Call::auth(&new)).await;
+    assert!(
+        !list.to_string().contains("thief@example.com"),
+        "the previous value added no entry: {list}"
+    );
+    let (status, _, added) = send(
+        &rig.router,
+        "POST",
+        "/v2/web/emails",
+        Call::auth(&new).idem("owner").body(thief),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{added}");
+    assert_eq!(whoami_status(&rig, &old).await, StatusCode::OK);
     drop_db(&rig.db_name).await;
 }

@@ -74,9 +74,9 @@ def sync_detailed(
 
      Requires: a person's admin session key, <user>-admin, through its capacity credential; any other
     key, <user>-curate and a tenant admin key included, answers access.verb_ceiling with details.reason
-    session_key_only (ADR-0083 d11). Its groups (unconfirmed admin fixes, guardrail-loosening alerts,
-    open investigations) join with ADR-0089's acts; until then it answers truncated alone, false
-    (ADR-0083 d14). Takes no query parameter. Journals nothing. Since v0.8.3.
+    session_key_only (ADR-0083 d11). alerts counts the tenant's unconfirmed fixes that loosen a
+    guardrail, from the rows GET /v2/admin/fixes serves, up to 1,000 with truncated past it (ADR-0096
+    d7; since v0.8.5). Takes no query parameter. Journals nothing. Since v0.8.3.
 
     Args:
         x_request_id (str | Unset):
@@ -115,9 +115,9 @@ def sync(
 
      Requires: a person's admin session key, <user>-admin, through its capacity credential; any other
     key, <user>-curate and a tenant admin key included, answers access.verb_ceiling with details.reason
-    session_key_only (ADR-0083 d11). Its groups (unconfirmed admin fixes, guardrail-loosening alerts,
-    open investigations) join with ADR-0089's acts; until then it answers truncated alone, false
-    (ADR-0083 d14). Takes no query parameter. Journals nothing. Since v0.8.3.
+    session_key_only (ADR-0083 d11). alerts counts the tenant's unconfirmed fixes that loosen a
+    guardrail, from the rows GET /v2/admin/fixes serves, up to 1,000 with truncated past it (ADR-0096
+    d7; since v0.8.5). Takes no query parameter. Journals nothing. Since v0.8.3.
 
     Args:
         x_request_id (str | Unset):
@@ -151,9 +151,9 @@ async def asyncio_detailed(
 
      Requires: a person's admin session key, <user>-admin, through its capacity credential; any other
     key, <user>-curate and a tenant admin key included, answers access.verb_ceiling with details.reason
-    session_key_only (ADR-0083 d11). Its groups (unconfirmed admin fixes, guardrail-loosening alerts,
-    open investigations) join with ADR-0089's acts; until then it answers truncated alone, false
-    (ADR-0083 d14). Takes no query parameter. Journals nothing. Since v0.8.3.
+    session_key_only (ADR-0083 d11). alerts counts the tenant's unconfirmed fixes that loosen a
+    guardrail, from the rows GET /v2/admin/fixes serves, up to 1,000 with truncated past it (ADR-0096
+    d7; since v0.8.5). Takes no query parameter. Journals nothing. Since v0.8.3.
 
     Args:
         x_request_id (str | Unset):
@@ -190,9 +190,9 @@ async def asyncio(
 
      Requires: a person's admin session key, <user>-admin, through its capacity credential; any other
     key, <user>-curate and a tenant admin key included, answers access.verb_ceiling with details.reason
-    session_key_only (ADR-0083 d11). Its groups (unconfirmed admin fixes, guardrail-loosening alerts,
-    open investigations) join with ADR-0089's acts; until then it answers truncated alone, false
-    (ADR-0083 d14). Takes no query parameter. Journals nothing. Since v0.8.3.
+    session_key_only (ADR-0083 d11). alerts counts the tenant's unconfirmed fixes that loosen a
+    guardrail, from the rows GET /v2/admin/fixes serves, up to 1,000 with truncated past it (ADR-0096
+    d7; since v0.8.5). Takes no query parameter. Journals nothing. Since v0.8.3.
 
     Args:
         x_request_id (str | Unset):

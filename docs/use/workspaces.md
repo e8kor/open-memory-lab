@@ -19,6 +19,11 @@ When a person's first key is issued, OML creates a workspace of their own under 
 keys write, read and make workspaces there, so two people can each have a `project`. Under alice's
 key, `oml workspaces create alice project` creates `universe.alice.project`.
 
+An agent connected over MCP makes one too, with `oml_write` and `create_workspace`, from a
+contributor key that names the person, inside the person's root only. The new workspace is empty,
+in `development`, with no grant of its own. A workspace is never deleted, and each one below a root
+counts on the account's `workspaces` quota, whoever made it ([ADR-0095](../adr/ADR-0095-an-agent-creates-its-own-child-workspaces-writes-guardrails-and-proposes-status-and-brief-changes-through-oml-write-and-every-verdict-and-setting-stays-with-people.md) d3, d4).
+
 A search inside a person's workspace also searches the shared area, so a curated memory reaches
 everyone below without copying. A memory a curator copies into the shared area is shown without its
 author or its source. Workspaces and keys made before user roots existed belong to no person.
@@ -38,6 +43,11 @@ memory, updating the crew's recorded details) each leave a record. A person's ow
 workspace under it stay `development`: a proposal to move any of them is refused
 `workspace.transition_refused` with reason `user_root`, so production work happens in shared workspaces
 ([ADR-0085](../adr/ADR-0085-a-workspace-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md) d17). There are no backward transitions.
+
+A workspace holds one live proposal per target status. A second proposal of the same step, from
+any key, is refused `proposal.pending` naming the live one; the workspace read shows when that one
+was proposed and, to a key of the same person, which key proposed it. An agent's reviewer key
+proposes over MCP with `oml_write` and `propose_status`, and ratification stays off MCP ([ADR-0095](../adr/ADR-0095-an-agent-creates-its-own-child-workspaces-writes-guardrails-and-proposes-status-and-brief-changes-through-oml-write-and-every-verdict-and-setting-stays-with-people.md) d5).
 
 ## In-progress workspaces
 

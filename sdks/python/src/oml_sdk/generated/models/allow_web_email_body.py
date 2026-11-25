@@ -17,9 +17,10 @@ class AllowWebEmailBody:
         email (str):
         user (str): A name under the creation grammar, at most 56 characters.
         admin (bool):
-        keep_an_admin (bool | Unset): true: un-flagging the tenant's last admin entry is refused, request.validation
-            with details.field admin, and nothing changes; the store reads the admin entries under lock in the commit's own
-            transaction (ADR-0045 d10; ADR-0070 d5). Since v0.6.4.
+        keep_an_admin (bool | Unset): Read and ignored since v0.8.5, when the guard holds whatever is sent (ADR-0097
+            d25, d27): un-flagging the tenant's last admin entry is refused, request.validation with details.field admin,
+            and nothing changes; the store reads the admin entries under lock in the commit's own transaction (ADR-0045 d10;
+            ADR-0070 d5). Since v0.6.4.
     """
 
     email: str

@@ -126,8 +126,9 @@ where
         key: Reference,
         change: KeyLimitsChange,
     ) -> Result<KeyRecord, AppError> {
-        let admin = self.authenticate_bearer(bearer.into()).await?.key;
+        let admin = self.key_act_caller(bearer.into(), "set_key_limits").await?;
         require_role(&admin, Role::Admin, "set_key_limits")?;
+        let admin = admin.key;
         if change.expiry.is_none() && change.requests_per_minute.is_none() {
             return Err(AppError::KeyLimits(KeyLimitsRefusal::Empty));
         }

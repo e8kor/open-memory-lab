@@ -34,8 +34,9 @@ impl SignupMode {
     }
 }
 
-/// One of the six per-person quotas (ADR-0068 d5; ADR-0071 d5): the
-/// closed set the refusal's `details.quota` and the metric's label take.
+/// One of the seven per-person quotas (ADR-0068 d5; ADR-0071 d5; ADR-0095
+/// d4): the closed set the refusal's `details.quota` and the metric's label
+/// take.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Quota {
     Memories,
@@ -44,17 +45,21 @@ pub enum Quota {
     Keys,
     Connections,
     RequestsPerMinute,
+    /// The live workspaces under the account's root, the root excluded
+    /// (ADR-0095 d4).
+    Workspaces,
 }
 
 impl Quota {
     /// Every quota, in the order the pages list them.
-    pub const ALL: [Quota; 6] = [
+    pub const ALL: [Quota; 7] = [
         Quota::Memories,
         Quota::TextBytes,
         Quota::WritesPerMonth,
         Quota::Keys,
         Quota::Connections,
         Quota::RequestsPerMinute,
+        Quota::Workspaces,
     ];
 
     #[must_use]
@@ -66,6 +71,7 @@ impl Quota {
             Quota::Keys => "keys",
             Quota::Connections => "connections",
             Quota::RequestsPerMinute => "requests_per_minute",
+            Quota::Workspaces => "workspaces",
         }
     }
 
@@ -91,8 +97,9 @@ pub const QUOTA_LIMIT_MAX: u64 = 1_000_000;
 /// The largest `text_bytes` limit, a terabyte (ADR-0071 d5).
 pub const TEXT_BYTES_LIMIT_MAX: u64 = 1_000_000_000_000;
 
-/// A limit no count reaches: `text_bytes` and `writes_per_month` in the
-/// `default` profile until the operator sets them (ADR-0071 d5).
+/// A limit no count reaches: `text_bytes`, `writes_per_month` and
+/// `workspaces` in the `default` profile until the operator sets them
+/// (ADR-0071 d5; ADR-0095 d4).
 pub const UNLIMITED: u64 = u64::MAX;
 
 /// The per-person limits: a profile's, or one person's after an admin's
@@ -105,11 +112,14 @@ pub struct Quotas {
     pub keys: u64,
     pub connections: u64,
     pub requests_per_minute: u64,
+    pub workspaces: u64,
 }
 
 impl Default for Quotas {
     /// The operator's defaults of 2026-11-06, unmeasured (issue #164);
-    /// `text_bytes` and `writes_per_month` unlimited until set (ADR-0071 d5).
+    /// `text_bytes` and `writes_per_month` unlimited until set (ADR-0071 d5),
+    /// and `workspaces` unlimited in the default profile (ADR-0095 d4, d11
+    /// Q4).
     fn default() -> Self {
         Self {
             memories: 1000,
@@ -118,6 +128,7 @@ impl Default for Quotas {
             keys: 5,
             connections: 5,
             requests_per_minute: 120,
+            workspaces: UNLIMITED,
         }
     }
 }
@@ -137,6 +148,7 @@ impl Quotas {
             keys: 0,
             connections: 0,
             requests_per_minute,
+            workspaces: 0,
         }
     }
 
@@ -149,6 +161,7 @@ impl Quotas {
             Quota::Keys => self.keys,
             Quota::Connections => self.connections,
             Quota::RequestsPerMinute => self.requests_per_minute,
+            Quota::Workspaces => self.workspaces,
         }
     }
 
@@ -162,6 +175,7 @@ impl Quotas {
             Quota::Keys => self.keys = limit,
             Quota::Connections => self.connections = limit,
             Quota::RequestsPerMinute => self.requests_per_minute = limit,
+            Quota::Workspaces => self.workspaces = limit,
         }
         self
     }

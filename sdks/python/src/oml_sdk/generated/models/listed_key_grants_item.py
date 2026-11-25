@@ -7,6 +7,7 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.listed_key_grants_item_covers import ListedKeyGrantsItemCovers
 from ..models.role import Role
 
 T = TypeVar("T", bound="ListedKeyGrantsItem")
@@ -19,11 +20,14 @@ class ListedKeyGrantsItem:
         role (Role):
         workspace_id (UUID):
         path (str):
+        covers (ListedKeyGrantsItemCovers): The grant's coverage; a client reads an answer without it, from a server
+            before v0.8.5, as subtree (ADR-0096 d8).
     """
 
     role: Role
     workspace_id: UUID
     path: str
+    covers: ListedKeyGrantsItemCovers
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -33,6 +37,8 @@ class ListedKeyGrantsItem:
 
         path = self.path
 
+        covers = self.covers.value
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -40,6 +46,7 @@ class ListedKeyGrantsItem:
                 "role": role,
                 "workspace_id": workspace_id,
                 "path": path,
+                "covers": covers,
             }
         )
 
@@ -54,10 +61,13 @@ class ListedKeyGrantsItem:
 
         path = d.pop("path")
 
+        covers = ListedKeyGrantsItemCovers(d.pop("covers"))
+
         listed_key_grants_item = cls(
             role=role,
             workspace_id=workspace_id,
             path=path,
+            covers=covers,
         )
 
         listed_key_grants_item.additional_properties = d

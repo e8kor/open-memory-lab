@@ -81,7 +81,7 @@ After the request's names resolve and its limits are checked, checks run in this
 
 `oml keys issue` and `oml keys issue-agent` print the key value once. OML stores a SHA-256 hash only, so there is no "show me the key again". `oml keys show` displays grants, denials, crew and connections, never the value.
 
-Not available: revoking or rotating a key. To cut a key off today, add a global denial with `oml deny set`.
+A bearer key is rotated with `oml keys rotate <key>` (`POST /v2/keys/{key}/rotate`), or **Rotate** on the console's Keys tabs: it gets a new value, shown once, and keeps its id, name, grants, denials and limits. The previous value stops at once, or with `--grace` (at most 24 hours) keeps working until then. An admin key rotates any key, a person's console session the person's own keys, and a key itself; a session key, a connector key (it takes a new connect code), a revoked, cut-off or expired key is refused by name ([ADR-0096](../adr/ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md) d13). Not available: revoking a key. A connection is revoked (see [Connections](#connections)), but the key behind it stays. To cut a key off today, add a global denial with `oml deny set`.
 
 ### Expiry and rate
 
@@ -125,6 +125,10 @@ A contributor or submitter key supersedes only its own memory; a person's sessio
 
 A `service` key omits `review`.
 
+Two of `oml_write`'s modes are listed where their checks admit the key ([ADR-0095](../adr/ADR-0095-an-agent-creates-its-own-child-workspaces-writes-guardrails-and-proposes-status-and-brief-changes-through-oml-write-and-every-verdict-and-setting-stays-with-people.md) d8): `create_workspace` for a contributor key that names a user, on a node inside that user's own root where it holds submitter, and `propose_brief` for a contributor key holding submitter or a reviewer key holding reviewer. `propose` keeps its meaning, a reviewer's claim-edge and status proposal.
+
+Over MCP, `oml_write`'s `create_workspace` admits a contributor key that names a user, inside that person's root, and nothing else: every other key, an admin key included, is refused `access.verb_ceiling` with `details.reason` `create_is_own_root_only` before any lookup. The child carries no grant of its own, so every key's effective access on it is what it held on the parent, and it counts on the account's `workspaces` quota ([ADR-0095](../adr/ADR-0095-an-agent-creates-its-own-child-workspaces-writes-guardrails-and-proposes-status-and-brief-changes-through-oml-write-and-every-verdict-and-setting-stays-with-people.md) d3, d4). A brief member is proposed by a contributor key with submitter or a reviewer key with reviewer on the workspace, on every transport, and ratified by a different reviewer as before; a status move is still proposed by a reviewer key alone ([ADR-0095](../adr/ADR-0095-an-agent-creates-its-own-child-workspaces-writes-guardrails-and-proposes-status-and-brief-changes-through-oml-write-and-every-verdict-and-setting-stays-with-people.md) d5, d6). Mode, crew, grants, keys, export, import, federation, claim edges and every verdict stay off MCP (d7).
+
 A person's session key whose role is reviewer also starts a new claim, held as every write is, where it holds reviewer and reader outside that person's own root (inside it the person's web key writes, and the review key is refused `access.verb_ceiling`, reason `review_key_in_own_root`), and lists `remember` in `my_effective_verbs` there, so the verbs it lists are the verbs it may use; its lineage excludes it from judging that claim. No other reviewer key starts one or lists `remember` ([ADR-0082](../adr/ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) d2, d10).
 
 ## Review independence
@@ -145,7 +149,7 @@ An admin key reads any memory of its tenant with its text and attribution: every
 
 An admin key gives no verdict and writes no memory. An admin who needs to write uses a separate contributor key; the write is held and reviewed like any other.
 
-Demotion ([ADR-0010](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0010-roles-and-keys.md) d6) and erasure by crypto-shredding ([ADR-0005](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0005-erasure-by-crypto-shredding.md)) are designed and not built: no key can demote or erase a memory in this build. A memory leaves recall only by an approved [retirement](audit-and-lineage.md#which-version-is-current), which keeps every version. Bans and reassignment between workspaces are not built either.
+Demotion ([ADR-0010](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0010-roles-and-keys.md) d6) and erasure by crypto-shredding ([ADR-0005](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0005-erasure-by-crypto-shredding.md)) are built as acts of an admin fix ([ADR-0089](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md)): `POST /v2/admin/fixes` with `act: demote` or `erase`, marked, and confirmed or reverted by a person afterwards; no other route demotes or erases. Otherwise a memory leaves recall only by an approved [retirement](audit-and-lineage.md#which-version-is-current), which keeps every version. Bans and reassignment between workspaces are not built.
 
 ## The operator and the first admin key
 

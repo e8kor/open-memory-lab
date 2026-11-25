@@ -26,11 +26,14 @@ class WorkspaceCreate:
             is neither, and is refused (request.validation).
         crew (str | Unset): A crew record, by its id or its name, resolved server-side like every reference (ADR-0026
             d4).
+        reason (str | Unset): Why, scanned as a verdict's reason is and journalled with workspace.create (ADR-0095 d1).
+            Since v0.8.5.
     """
 
     name: str
     parent: str | Unset = UNSET
     crew: str | Unset = UNSET
+    reason: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         name = self.name
@@ -47,6 +50,8 @@ class WorkspaceCreate:
         else:
             crew = self.crew
 
+        reason = self.reason
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -58,6 +63,8 @@ class WorkspaceCreate:
             field_dict["parent"] = parent
         if crew is not UNSET:
             field_dict["crew"] = crew
+        if reason is not UNSET:
+            field_dict["reason"] = reason
 
         return field_dict
 
@@ -80,10 +87,13 @@ class WorkspaceCreate:
 
         crew = _parse_crew(d.pop("crew", UNSET))
 
+        reason = d.pop("reason", UNSET)
+
         workspace_create = cls(
             name=name,
             parent=parent,
             crew=crew,
+            reason=reason,
         )
 
         return workspace_create

@@ -134,13 +134,13 @@ fn name_of(m: &Memory) -> String {
 
 /// The workspace a page acts on: the node as the acting key reads it, its
 /// reference, and which of the person's keys acts there.
-struct Place {
-    view: WorkspaceView,
-    reference: String,
+pub(crate) struct Place {
+    pub(crate) view: WorkspaceView,
+    pub(crate) reference: String,
     /// `Web` inside the person's root, `Review` outside it (d2).
-    capacity: Capacity,
-    in_root: bool,
-    user: String,
+    pub(crate) capacity: Capacity,
+    pub(crate) in_root: bool,
+    pub(crate) user: String,
 }
 
 impl Place {
@@ -204,7 +204,7 @@ fn is_id(value: &str) -> bool {
 /// The node at `sent`, or the person's root where nothing is sent, read
 /// as `<user>-web` and, where that key does not read it or it lies
 /// outside the root, as `<user>-review` (ADR-0082 d2).
-async fn place(
+pub(crate) async fn place(
     web: &Web,
     session: &Session,
     calls: &PageCalls,
@@ -289,7 +289,7 @@ fn kind_field(fields: &Fields, calls: &PageCalls) -> Result<Kind, Box<Response>>
 }
 
 /// The breadcrumb to `place`, and to `act` below it where given.
-fn crumbs(place: &Place, kind: Kind, act: Option<&str>, admin: bool) -> String {
+pub(crate) fn crumbs(place: &Place, kind: Kind, act: Option<&str>, admin: bool) -> String {
     let (side, list) = if admin {
         ("Administration", ADMIN_WORKSPACES_PATH)
     } else {
@@ -325,10 +325,11 @@ fn admin_link(reference: &str, kind: Kind) -> String {
 /// claims where the API serves the counts: Memories sums the kinds the
 /// Memories cockpit lists, from the cockpit's own kind set (ADR-0082 d1,
 /// d10).
-fn kinds_nav(
+pub(crate) fn kinds_nav(
     reference: &str,
-    current: Kind,
+    current: Option<Kind>,
     counts: Option<&BTreeMap<String, u64>>,
+    brief: Option<usize>,
     admin: bool,
 ) -> String {
     let n =
@@ -354,13 +355,35 @@ fn kinds_nav(
             out,
             r#"<a href="{page}?workspace={encoded}&amp;kind={}"{}>{}{}</a>"#,
             kind.as_str(),
-            if kind == current {
+            if Some(kind) == current {
                 r#" aria-current="page""#
             } else {
                 ""
             },
             kind.plural(),
             n(counts.map(|c| c.get(kind.as_str()).copied().unwrap_or(0)))
+        );
+    }
+    // The brief's members, on the Personal side (ADR-0046 d8; ADR-0096
+    // P7): the count is the members the node read serves, never a read
+    // of its own.
+    if let Some(members) = brief {
+        let _ = write!(
+            out,
+            r#"<a href="{page}?workspace={encoded}&amp;kind=brief"{}>Brief <span class="n">{members}</span></a>"#,
+            if current.is_none() {
+                r#" aria-current="page""#
+            } else {
+                ""
+            },
+        );
+    }
+    // The admin page's Fix tab while the Releases view is unbuilt
+    // (ADR-0096 d5).
+    if admin {
+        let _ = write!(
+            out,
+            r#"<a href="{page}?workspace={encoded}&amp;view=fix">Fix</a>"#
         );
     }
     out.push_str("</nav>");
@@ -757,6 +780,9 @@ pub async fn user_page(
     let next = uri
         .path_and_query()
         .map_or(WORKSPACE_PATH, |pq| pq.as_str());
+    if fields.get("kind") == Some("brief") {
+        return crate::brief::page(&web, &session, &calls, &fields, next).await;
+    }
     let kind = match kind_field(&fields, &calls) {
         Ok(kind) => kind,
         Err(refusal) => return *refusal,
@@ -878,10 +904,12 @@ pub async fn user_page(
     body.push_str(&field);
     body.push_str(&kinds_nav(
         &place.reference,
-        kind,
+        Some(kind),
         place.view.approved_by_kind.as_ref(),
+        Some(brief_members(&place)),
         false,
     ));
+    body.push_str(&crate::brief::status_section(&web, &session, &calls, &place, &fields).await);
     if place.in_progress() {
         body.push_str(r#"<p class="desc">Drafts visible to everyone working here: held items are served to agents connected to this workspace, marked unreviewed, until reviewed.</p>"#);
     }
@@ -980,9 +1008,21 @@ pub async fn user_page(
     )
 }
 
+/// The members of the node's brief as its read serves them.
+pub(crate) fn brief_members(place: &Place) -> usize {
+    place.view.brief.as_ref().map_or(0, |b| b.items.len())
+}
+
 /// The notice a write answers with (Post/Redirect/Get).
-fn notice(done: Option<&str>) -> Option<&'static str> {
+pub(crate) fn notice(done: Option<&str>) -> Option<&'static str> {
     match done? {
+        "status_proposed" => Some(
+            "Proposed: the status changes once a key and principal other than the proposer's ratifies it.",
+        ),
+        "brief_proposed" => Some(
+            "Proposed for the brief: the memory joins once a key and principal other than the proposer's ratifies it.",
+        ),
+        "ratified" => Some("Ratified: the memory joins the brief."),
         "proposed" => Some(
             "Proposed: the new version is held until it is approved; the version in force stays served until then.",
         ),
@@ -1013,6 +1053,10 @@ pub async fn admin_page(
         Ok(fields) => fields,
         Err(message) => return acts::invalid(&message, &calls),
     };
+    // The Fix tab while the Releases view is unbuilt (ADR-0096 d5).
+    if fields.given("view") == Some("fix") {
+        return crate::fix::tab(&web, &session, &calls, &fields).await;
+    }
     let next = uri
         .path_and_query()
         .map_or(ADMIN_WORKSPACE_PATH, |pq| pq.as_str());
@@ -1082,8 +1126,9 @@ pub async fn admin_page(
     let _ = write!(body, r#"<h1 class="mono">{}</h1>"#, text(&place.reference));
     body.push_str(&kinds_nav(
         &place.reference,
-        kind,
+        Some(kind),
         place.view.approved_by_kind.as_ref(),
+        None,
         true,
     ));
     let user = session.whoami.user.as_ref().map_or("", |u| u.name.as_str());
@@ -1092,6 +1137,26 @@ pub async fn admin_page(
         r#"<p class="desc">Read as <code>{}-admin</code>, journalled. An admin key writes no claim: nothing here proposes, edits or retires.</p>"#,
         text(user)
     );
+    // Browse as the admin's own person, where `<user>-web` holds read here
+    // (ADR-0096, the operator's decision of 2026-11-25): the Personal
+    // Memories view on this workspace, read without an investigation.
+    if !user.is_empty() {
+        let personal = session.credential(Capacity::Web);
+        let ids = calls.next_ids();
+        if web
+            .api
+            .workspace(&call(&personal, &ids), &place.view.id)
+            .await
+            .is_ok()
+        {
+            let _ = write!(
+                body,
+                r#"<p><a class="button" href="{USER_MEMORIES_PATH}?workspace={}">Browse as {}</a></p>"#,
+                attr(&encode(&place.view.id)),
+                text(user)
+            );
+        }
+    }
     if claims.is_empty() {
         let _ = write!(
             body,

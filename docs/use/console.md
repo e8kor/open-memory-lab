@@ -1,7 +1,7 @@
 ---
 status: Stable
-verified: 2026-11-19
-answers: "how a person works in the web console day to day: what To do lists and how an item is judged, what the Memories page's Approved and Submitted views show, how a held write is withdrawn, and where skills, guardrails and documents are built"
+verified: 2026-11-25
+answers: "how a person works in the web console day to day: what To do lists and how an item is judged, how an admin fix is confirmed, a brief and a status proposal made, a key rotated, what the Memories page's Approved and Submitted views show, how a held write is withdrawn, and where skills, guardrails and documents are built"
 ---
 
 # Work in the web console
@@ -30,6 +30,65 @@ its own inverted bar.
 
 With nothing to judge, To do says "Nothing waits for this account." What to check before
 approving is in [review held memories](../guides/reviewing.md#check-the-memory).
+
+## Brief proposals to ratify
+
+A memory another key proposed for a workspace's brief waits in To do's **Brief proposals to
+ratify**, after To review, when `<user>-review` may ratify it. A proposal by the review key
+itself, or under its principal, never appears there. **Ratify** asks for confirmation first, then
+the memory joins the brief. A proposal by another key of the same person is marked **same user**
+([ADR-0096](../adr/ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md) d7).
+
+## Admin fixes to confirm
+
+An admin's break-glass fix in a workspace where `<user>-review` reviews waits in To do's **Admin
+fixes to confirm**, with its act, claim, reason and how long it has waited; the admin is never
+named. **Confirm or revert** opens the fix's own page, `/web/todo/fix`, which shows the act, the
+version, the reason and the time. **Confirm** keeps what the fix serves, marked confirmed;
+**Revert** brings back the text the fix took out of service as a new version this account
+approves. Each asks first. Where the fix lies outside this account's root and the admin acted for
+this same person, the page offers no act and says another person settles it.
+
+## A workspace's brief and status
+
+A workspace page's **Brief** kind lists the approved memories an agent connected there is served
+first, and the proposals waiting to join, each with who proposed it and when. **Ratify** adds one,
+as `<user>-review`, never on a proposal that key made. An approved memory's page offers **Propose
+for brief**, which asks first and proposes it as `<user>-web`; proposing it again names the live
+proposal instead. On a shared workspace where `<user>-review` holds reviewer, the page offers the
+next status, protected or frozen, asked first; a second proposal of the same move names the live
+one, made when and by which key. A user root takes no status move
+([ADR-0095](../adr/ADR-0095-an-agent-creates-its-own-child-workspaces-writes-guardrails-and-proposes-status-and-brief-changes-through-oml-write-and-every-verdict-and-setting-stays-with-people.md) d5, d6).
+
+## Build a key
+
+1. **Open Keys, then New key.** The builder at `/web/keys/new` starts from a shape: the whole
+   root, one workspace, read only, write only, or a connector for Claude.
+2. **Shape it.** Name the key after the `<user>-` prefix and pick its role: contributor (recall
+   and write), reader (recall only) or submitter (write without recall). Each grant row names a
+   workspace in the root, reader or submitter, the workspace and below or the workspace only, and
+   the workspaces below it to leave out. **Add a grant** adds a row. A date works through that day
+   in every time zone, and a rate caps the key's requests a minute.
+3. **Review it.** The review restates the access in words, marks the root's tree and shows the
+   exact request. A refusal the page can decide, such as a session key's name or a grant outside
+   the root, is listed at the top with its code and a link to the field.
+4. **Issue key.** The value, or the connect code for a connector, is shown once. Only an admin
+   changes the key's date or rate afterwards.
+
+## Rotate a key
+
+**Rotate**, beside **Cut off** on the Keys tab, gives a bearer key a new value and keeps its
+name, grants and limits. The confirmation offers how long the previous value keeps working: no
+time, one hour or 24 hours. The new value is shown once, with when the previous one stops. A
+connector key takes **New connect code** instead, and a cut-off or expired key takes no new value.
+An admin rotates any key from the admin Keys tab
+([ADR-0096](../adr/ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md) d13).
+
+## Follow an import
+
+An import runs from the command line. `/web/workspaces/import` shows the `oml workspaces import`
+line for a target and a source key's fingerprint, and lists every import a key of the person ran,
+with its state, the versions recorded and its counts.
 
 ## Memories: Approved and Submitted
 

@@ -7,8 +7,8 @@
 //! at 80% of the limit and at the limit, by the rule the API's own
 //! `warning` and `reached` states follow. The six usage routes of ADR-0071
 //! d6 take a key and no session credential (ADR-0070 d2), so the page reads
-//! none of them: the profile's name, the month and the recall count are not
-//! on these fields and are not shown (#322).
+//! none of them: the profile's name, the month and the recall count are
+//! fields of the same reads since v0.8.5 (ADR-0096 d9).
 
 use std::fmt::Write as _;
 
@@ -119,8 +119,9 @@ fn halves(n: u64) -> String {
 }
 
 /// The meters `usage` and `limits` carry, in the order the API lists them:
-/// memories, text stored, writes this month, keys, connections. A count an
-/// API before the meters does not serve is left out, never shown as zero.
+/// memories, text stored, writes this month, keys, connections, workspaces.
+/// A count an API before the meters does not serve is left out, never shown
+/// as zero.
 /// `recalls`, which has no limit, is not on these fields.
 pub(crate) fn readings(usage: &Usage, limits: &Limits) -> Vec<Reading> {
     let mut out = vec![Reading {
@@ -145,6 +146,15 @@ pub(crate) fn readings(usage: &Usage, limits: &Limits) -> Vec<Reading> {
             bytes: false,
         });
     }
+    // This month's recalls, a count with no limit (ADR-0096 d9).
+    if let Some(used) = usage.recalls {
+        out.push(Reading {
+            name: "Recalls this month",
+            used,
+            limit: None,
+            bytes: false,
+        });
+    }
     out.push(Reading {
         name: "Keys",
         used: usage.keys,
@@ -157,6 +167,16 @@ pub(crate) fn readings(usage: &Usage, limits: &Limits) -> Vec<Reading> {
         limit: limits.connections,
         bytes: false,
     });
+    // The workspaces below the person's root, the root excluded (ADR-0095
+    // d4).
+    if let Some(used) = usage.workspaces {
+        out.push(Reading {
+            name: "Workspaces",
+            used,
+            limit: limits.workspaces,
+            bytes: false,
+        });
+    }
     out
 }
 
@@ -245,6 +265,18 @@ pub(crate) fn card(person: &Person) -> Option<String> {
         (false, _) => "No limit holds for this account; these are counts.",
     };
     let mut out = format!(r#"<section class="card" id="usage">{}"#, head(desc));
+    // The profile and the month as facts, where the API serves them
+    // (ADR-0096 d9).
+    let mut facts = Vec::new();
+    if let Some(profile) = &person.profile {
+        facts.push(format!("Profile <code>{}</code>", text(profile)));
+    }
+    if let Some(period) = &person.period {
+        facts.push(format!("Month <code>{}</code> (UTC)", text(period)));
+    }
+    if !facts.is_empty() {
+        let _ = write!(out, r#"<p class="desc">{}</p>"#, facts.join(" · "));
+    }
     out.push_str("<table><tr><th>meter</th><th>used</th><th></th></tr>");
     for r in &readings {
         let bar = match r.limit {

@@ -121,12 +121,14 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/review/verdicts/bulk"),
     ("GET", "/v2/review/queue"),
     ("GET", "/v2/todo/counts"),
+    ("GET", "/v2/review/briefs"),
     ("GET", "/v2/admin/todo/counts"),
     ("GET", "/v2/keys"),
     ("POST", "/v2/keys"),
     ("GET", "/v2/keys/{key}"),
     ("POST", "/v2/keys/{key}/denials"),
     ("POST", "/v2/keys/{key}/limits"),
+    ("POST", "/v2/keys/{key}/rotate"),
     ("POST", "/v2/keys/{key}/link"),
     ("POST", "/v2/keys/{key}/unlink"),
     ("POST", "/v2/keys/{key}/accept_link"),
@@ -189,6 +191,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/uploads/{upload_id}/complete"),
     ("DELETE", "/v2/uploads/{upload_id}"),
     ("POST", "/v2/imports"),
+    ("GET", "/v2/imports"),
     ("GET", "/v2/imports/{import_id}"),
     ("GET", "/v2/admin/usage"),
     ("GET", "/v2/admin/usage/drift"),
@@ -391,12 +394,14 @@ where
             ("POST", "/v2/review/verdicts/bulk") => post(Self::review_bulk),
             ("GET", "/v2/review/queue") => get(Self::review_queue),
             ("GET", "/v2/todo/counts") => get(Self::todo_counts),
+            ("GET", "/v2/review/briefs") => get(Self::brief_proposals),
             ("GET", "/v2/admin/todo/counts") => get(Self::admin_todo_counts),
             ("GET", "/v2/keys") => get(Self::list_keys),
             ("POST", "/v2/keys") => post(Self::issue_key),
             ("GET", "/v2/keys/{key}") => get(Self::get_key),
             ("POST", "/v2/keys/{key}/denials") => post(Self::deny_key),
             ("POST", "/v2/keys/{key}/limits") => post(Self::set_key_limits),
+            ("POST", "/v2/keys/{key}/rotate") => post(Self::rotate_key),
             ("POST", "/v2/keys/{key}/link") => post(Self::link_key),
             ("POST", "/v2/keys/{key}/unlink") => post(Self::unlink_key),
             ("POST", "/v2/keys/{key}/accept_link") => post(Self::accept_key_link),
@@ -472,6 +477,7 @@ where
             ("POST", "/v2/uploads/{upload_id}/complete") => post(Self::complete_upload_route),
             ("DELETE", "/v2/uploads/{upload_id}") => delete(Self::abandon_upload_route),
             ("POST", "/v2/imports") => post(Self::import_route),
+            ("GET", "/v2/imports") => get(Self::list_imports_route),
             ("GET", "/v2/imports/{import_id}") => get(Self::import_status_route),
             ("GET", "/v2/admin/usage") => get(Self::admin_usage_route),
             ("GET", "/v2/admin/usage/drift") => get(Self::admin_usage_drift_route),
@@ -2105,26 +2111,7 @@ where
         };
         // Every workspace and crew reference is an id or a name, each
         // refusal naming its JSON Pointer (errors.md; ADR-0026 d3).
-        let grants = req
-            .grants
-            .iter()
-            .enumerate()
-            .map(|(i, g)| {
-                Ok(GrantRequest {
-                    node: reference(&format!("/grants/{i}/workspace"), &g.workspace)?,
-                    role: parse_grant_role(&g.role)?,
-                    covers: parse_covers(i, g.covers.as_deref())?,
-                    deny: g
-                        .deny
-                        .iter()
-                        .enumerate()
-                        .map(|(j, d)| {
-                            reference(&format!("/grants/{i}/deny/{j}/workspace"), &d.workspace)
-                        })
-                        .collect::<Result<_, _>>()?,
-                })
-            })
-            .collect::<Result<Vec<_>, ApiError>>()?;
+        let grants = grant_requests(&req.grants)?;
         let default_workspace =
             optional_reference("/default_workspace", req.default_workspace.as_deref())?;
         let crew = optional_reference("/crew", req.crew.as_deref())?;
@@ -2220,13 +2207,84 @@ where
         let node = reference("/workspace", &req.workspace)?;
         // A session key cuts off one key on universe, as the pages do
         // (ADR-0070 d5; ADR-0045 d9, d13).
+        let reason = req.reason.as_deref();
         if let Some(caller) = session::session_caller() {
-            return Self::cut_off_as_session(st, caller, &key, &node, &idem, key_id, body).await;
+            return Self::cut_off_as_session(st, caller, &key, &node, &idem, key_id, body, reason)
+                .await;
         }
-        let denial = retry_chain(|| st.app.deny_key(acting.bearer(), key.clone(), node.clone()))
-            .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        let denial = retry_chain(|| {
+            st.app
+                .deny_key_with_reason(acting.bearer(), key.clone(), node.clone(), reason)
+        })
+        .await
+        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(StatusCode::CREATED, &denial_json(&denial)))
+    }
+
+    async fn rotate_key(
+        State(st): State<Self>,
+        rid: Rid,
+        Path(key_id): Path<String>,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
+        finish(
+            &rid,
+            Self::rotate_key_inner(&st, &key_id, &headers, &body).await,
+        )
+    }
+
+    /// `POST /v2/keys/{key}/rotate {grace_seconds?}` (ADR-0096 d13): a new
+    /// value, answered once as `value` with `rotated_at` and, with a grace,
+    /// `previous_valid_until`. The `Idempotency-Key` is claimed for the
+    /// caller before the rotation, so a resubmission replays the answer
+    /// without the value and rotates nothing again, as an issuance does.
+    async fn rotate_key_inner(
+        st: &Self,
+        key_id: &str,
+        headers: &HeaderMap,
+        body: &Bytes,
+    ) -> Result<Response, ApiError> {
+        st.require_writes_open()?;
+        let idem = idempotency_key(headers)?;
+        let key = reference("key", key_id)?;
+        let req: RotateBody = if body.is_empty() {
+            RotateBody::default()
+        } else {
+            parse_json(headers, body)?
+        };
+        let caller = Arc::new(st.console_caller(headers).await?);
+        let acting: Acting<'static> = Acting::Session(caller.clone());
+        let digest = console::act_digest(key_id, body);
+        let claim = match st.claim(&caller, "keys.rotate", &idem, &digest).await? {
+            console::Claimed::Replayed(replayed) => return Ok(replayed),
+            console::Claimed::Act(claim) => claim,
+        };
+        let st = st.clone();
+        claim
+            .run(async move {
+                let rotated = retry_chain(|| {
+                    st.app
+                        .rotate_key(acting.bearer(), key.clone(), req.grace_seconds)
+                })
+                .await
+                .map_err(|e| console::ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
+                let answer = json!({
+                    "key_id": rotated.key.key_id,
+                    "name": rotated.key.name.as_ref().map(Name::as_str),
+                    "value": rotated.value,
+                    "rotated_at": rotated.rotated_at.as_str(),
+                    "previous_valid_until": rotated.previous_valid_until.as_ref().map(|t| t.as_str()),
+                    "journal_seq": rotated.journal_seq,
+                });
+                let kept = console::without_secrets(&answer);
+                Ok(console::Acted {
+                    status: StatusCode::OK,
+                    answer,
+                    kept,
+                })
+            })
+            .await
     }
 
     async fn set_key_limits(
@@ -2254,7 +2312,7 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let acting = acting(headers, None)?;
-        idempotency_key(headers)?;
+        let idem = idempotency_key(headers)?;
         let key = reference("key", key_id)?;
         let req: KeyLimitsBody = parse_json(headers, body)?;
         let change = KeyLimitsChange {
@@ -2264,22 +2322,48 @@ where
                 .transpose()?,
             requests_per_minute: req.requests_per_minute,
         };
+        let limits_json = |st: &Self, set: &KeyRecord| {
+            json!({
+                "key_id": set.key_id,
+                "name": set.name.as_ref().map(Name::as_str),
+                "expiry": set.expiry.as_ref().map(|at| at.as_str()),
+                "expired": st.app.key_expired(set),
+                "requests_per_minute": set.requests_per_minute,
+            })
+        };
+        // A person's `<user>-admin` session claims the `Idempotency-Key`
+        // and replays the recorded answer, so the form's nonce journals one
+        // `key.limits_set`; a bearer admin key keeps the unreplayed
+        // behaviour (ADR-0096 d4, decided by the operator, 2026-11-24).
+        if let Some(caller) = session::session_caller() {
+            console::require_admin_session(&caller, "set_key_limits")?;
+            let digest = console::act_digest(key_id, body);
+            let claim = match st.claim(&caller, "keys.limits", &idem, &digest).await? {
+                console::Claimed::Replayed(replayed) => return Ok(replayed),
+                console::Claimed::Act(claim) => claim,
+            };
+            let st = st.clone();
+            return claim
+                .run(async move {
+                    let set = retry_chain(|| {
+                        st.app
+                            .set_key_limits(Bearer::Session(&caller), key.clone(), change.clone())
+                    })
+                    .await
+                    .map_err(|e| {
+                        console::ActFailure::first(map_app_error(e, ErrorContext::Write))
+                    })?;
+                    Ok(console::Acted::new(StatusCode::OK, limits_json(&st, &set)))
+                })
+                .await;
+        }
         let set = retry_chain(|| {
             st.app
                 .set_key_limits(acting.bearer(), key.clone(), change.clone())
         })
         .await
         .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        Ok(json_response(
-            StatusCode::OK,
-            &json!({
-                "key_id": set.key_id,
-                "name": set.name.as_ref().map(Name::as_str),
-                "expiry": set.expiry.as_ref().map(|at| at.as_str()),
-                "expired": st.app.key_expired(&set),
-                "requests_per_minute": set.requests_per_minute,
-            }),
-        ))
+        Ok(json_response(StatusCode::OK, &limits_json(st, &set)))
     }
 
     async fn link_key(
@@ -2401,17 +2485,23 @@ where
     ) -> Response {
         finish(
             &rid,
-            Self::create_workspace_inner(&st, &headers, &body).await,
+            Self::create_workspace_inner(&st, &headers, &body, None, false).await,
         )
     }
 
-    async fn create_workspace_inner(
+    /// `POST /v2/workspaces`, and `oml_write`'s `create_workspace` mode with
+    /// `own_root_only`: the app's agent create, which admits a contributor
+    /// user key alone (ADR-0095 d3). `connection` is the MCP connection
+    /// whose access token presented the request.
+    pub(crate) async fn create_workspace_inner(
         st: &Self,
         headers: &HeaderMap,
         body: &Bytes,
+        connection: Option<&Caller>,
+        own_root_only: bool,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        acting(headers, None)?;
+        acting(headers, connection)?;
         let idem = idempotency_key(headers)?;
         let req: WorkspaceCreateBody = parse_json_renamed(headers, body, |body| {
             refuse_renamed(body, "", &[("parent_id", "parent")])
@@ -2420,7 +2510,7 @@ where
         // and creates nothing again (ADR-0070 d3 layer 4).
         // The act runs as the caller this request just resolved, so the
         // request costs one of its key's rate, not two (#253).
-        let caller = Arc::new(st.console_caller(headers).await?);
+        let caller = Arc::new(st.acting_caller(headers, connection).await?);
         let acting: Acting<'static> = Acting::Session(caller.clone());
         let digest = console::act_digest("", body);
         let claim = match st
@@ -2442,9 +2532,23 @@ where
         let st = st.clone();
         claim
             .run(async move {
-                let created = retry_chain(|| {
-                    st.app
-                        .create_workspace(acting.bearer(), &name, parent.clone(), crew.clone())
+                let reason = req.reason.as_deref();
+                let created = retry_chain(|| async {
+                    if own_root_only {
+                        st.app
+                            .create_own_workspace(acting.bearer(), &name, parent.clone(), reason)
+                            .await
+                    } else {
+                        st.app
+                            .create_workspace_with_reason(
+                                acting.bearer(),
+                                &name,
+                                parent.clone(),
+                                crew.clone(),
+                                reason,
+                            )
+                            .await
+                    }
                 })
                 .await
                 .map_err(|e| console::ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
@@ -2505,7 +2609,7 @@ where
     ) -> Response {
         finish(
             &rid,
-            Self::propose_transition_inner(&st, &workspace, &headers, &body).await,
+            Self::propose_transition_inner(&st, &workspace, &headers, &body, None).await,
         )
     }
 
@@ -2513,14 +2617,15 @@ where
     /// `202` and pending until a second identity ratifies it; `to` is
     /// `protected` or `frozen`, anything else `request.validation`
     /// naming `/to` (http-api.md workspaces; ADR-0009 d3; ADR-0046 d3).
-    async fn propose_transition_inner(
+    pub(crate) async fn propose_transition_inner(
         st: &Self,
         workspace: &str,
         headers: &HeaderMap,
         body: &Bytes,
+        connection: Option<&Caller>,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        acting(headers, None)?;
+        acting(headers, connection)?;
         let idem = idempotency_key(headers)?;
         let node = reference("workspace", workspace)?;
         let req: TransitionBody = parse_json(headers, body)?;
@@ -2528,7 +2633,7 @@ where
         // and proposes nothing again (ADR-0070 d3 layer 4).
         // The act runs as the caller this request just resolved, so the
         // request costs one of its key's rate, not two (#253).
-        let caller = Arc::new(st.console_caller(headers).await?);
+        let caller = Arc::new(st.acting_caller(headers, connection).await?);
         let acting: Acting<'static> = Acting::Session(caller.clone());
         let digest = console::act_digest(workspace, body);
         let claim = match st
@@ -2551,12 +2656,13 @@ where
         let st = st.clone();
         claim
             .run(async move {
-                let proposal =
-                    retry_chain(|| st.app.propose_transition(acting.bearer(), node.clone(), to))
-                        .await
-                        .map_err(|e| {
-                            console::ActFailure::first(map_app_error(e, ErrorContext::Write))
-                        })?;
+                let reason = req.reason.as_deref();
+                let proposal = retry_chain(|| {
+                    st.app
+                        .propose_transition_with_reason(acting.bearer(), node.clone(), to, reason)
+                })
+                .await
+                .map_err(|e| console::ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
                 Ok(console::Acted::new(
                     StatusCode::ACCEPTED,
                     json!({
@@ -2567,6 +2673,7 @@ where
                         "state": proposal.state.as_str(),
                         "proposed_by_key_id": proposal.proposer_key_id,
                         "ratified_by_key_id": Value::Null,
+                        "proposed_at": proposal.proposed_at.as_str(),
                     }),
                 ))
             })
@@ -2668,7 +2775,9 @@ where
         params: &[(String, String)],
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
-        let token = bearer(headers)?;
+        // A person's session reads a brief's edges as the workspace page's
+        // Brief kind does (ADR-0096); claim edges keep the key value.
+        let acting = acting(headers, None)?;
         let mut seen = HashSet::new();
         let (mut kind, mut workspace, mut artifact, mut cursor) = (None, None, None, None);
         let mut limit = PAGE_LIMIT_DEFAULT;
@@ -2698,6 +2807,7 @@ where
         }
         let body = match kind {
             Some("claim") => {
+                let token = bearer(headers)?;
                 let page = st
                     .app
                     .claim_edges(
@@ -2729,11 +2839,11 @@ where
                 })?;
                 let page = st
                     .app
-                    .brief_edges(&token, workspace, cursor, limit)
+                    .brief_edges(acting.bearer(), workspace, cursor, limit)
                     .await
                     .map_err(|e| map_app_error(e, ErrorContext::Write))?;
                 json!({
-                    "items": page.items.iter().map(brief_edge_json).collect::<Vec<_>>(),
+                    "items": page.items.iter().map(listed_brief_edge_json).collect::<Vec<_>>(),
                     "next_cursor": page.next_cursor,
                 })
             }
@@ -2748,19 +2858,27 @@ where
         headers: HeaderMap,
         body: Bytes,
     ) -> Response {
-        finish(&rid, Self::propose_edge_inner(&st, &headers, &body).await)
+        finish(
+            &rid,
+            Self::propose_edge_inner(&st, &headers, &body, None).await,
+        )
     }
 
     /// `POST /v2/edges`: `kind: claim` `{from_artifact_id, to_artifact_id,
     /// label}` or `kind: brief` `{from_artifact_id, to_workspace_id}`, each
     /// `202` and pending (http-api.md edges; ADR-0046 d4, d7).
-    async fn propose_edge_inner(
+    pub(crate) async fn propose_edge_inner(
         st: &Self,
         headers: &HeaderMap,
         body: &Bytes,
+        connection: Option<&Caller>,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let token = bearer(headers)?;
+        // The key value, the MCP connection's caller, which rides in its
+        // access token's place (ADR-0031 d11), or a person's session, as
+        // ratify resolves it: `<user>-web` proposes for a brief from the
+        // memory page (ADR-0095 d6; ADR-0096).
+        let acting = acting(headers, connection)?;
         let idem = idempotency_key(headers)?;
         // The kind first, so a designed kind's members are refused as that
         // kind rather than as unknown fields.
@@ -2790,11 +2908,17 @@ where
                             .with_details(json!({ "field": "/to_workspace_id" })),
                     );
                 }
+                if req.reason.is_some() {
+                    return Err(ApiError::validation("reason belongs to kind brief")
+                        .with_details(json!({ "field": "/reason" })));
+                }
                 let request = ProposeClaimEdge {
                     from_artifact_id: from,
                     to_artifact_id: to,
                     label,
                 };
+                // A claim edge is never proposed over MCP (ADR-0095 d7).
+                let token = bearer(headers)?;
                 let outcome =
                     retry_chain(|| st.app.propose_claim_edge(&token, &request, Some(&idem)))
                         .await
@@ -2817,11 +2941,24 @@ where
                 let request = ProposeBriefEdge {
                     artifact_id: from,
                     workspace: reference("/to_workspace_id", workspace)?,
+                    reason: req.reason.clone(),
                 };
-                let outcome =
-                    retry_chain(|| st.app.propose_brief_edge(&token, &request, Some(&idem)))
-                        .await
-                        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+                let outcome = retry_chain(|| {
+                    st.app
+                        .propose_brief_edge(acting.bearer(), &request, Some(&idem))
+                })
+                .await
+                .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+                // A replay under the same key answers its record, as every
+                // write does, and says so (http-api.md idempotency).
+                if outcome.replayed {
+                    let mut response =
+                        json_response(StatusCode::ACCEPTED, &brief_edge_json(&outcome.proposal));
+                    response
+                        .headers_mut()
+                        .insert("idempotency-replay", HeaderValue::from_static("true"));
+                    return Ok(response);
+                }
                 (StatusCode::ACCEPTED, brief_edge_json(&outcome.proposal))
             }
             other => return Err(edge_kind_refused(Some(other))),
@@ -2846,13 +2983,15 @@ where
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let token = bearer(headers)?;
+        // A person's `<user>-review` session ratifies as the To do group's
+        // act (ADR-0096 d7); its capacity credential resolves here.
+        let acting = acting(headers, None)?;
         let idem = idempotency_key(headers)?;
         let edge_id = Uuid::parse_str(edge_id).map_err(|_| {
             ApiError::validation(format!("edge_id {edge_id:?} is not an id"))
                 .with_details(json!({ "field": "edge_id" }))
         })?;
-        let ratified = retry_chain(|| st.app.ratify_edge(&token, edge_id, Some(&idem)))
+        let ratified = retry_chain(|| st.app.ratify_edge(acting.bearer(), edge_id, Some(&idem)))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Review))?;
         let body = match ratified {
@@ -3195,29 +3334,36 @@ where
     /// `GET /v2/keys/{key}`: one key, by id or name, admin by key role,
     /// a revoked key's included; never its value (http-api.md keys, grants,
     /// denials; ADR-0026 d4, d9, d10).
+    ///
+    /// The caller resolves as `/limits` and `/denials` resolve it, so a
+    /// person's `<user>-admin` session reads one key; any other session
+    /// capacity is `session_capacity` (ADR-0096 d4).
     async fn get_key_inner(
         st: &Self,
         key_id: &str,
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
-        let token = bearer(headers)?;
+        let acting = acting(headers, None)?;
+        if let Some(caller) = session::session_caller() {
+            console::require_admin_session(&caller, "get_key")?;
+        }
         let key = reference("key", key_id)?;
         let detail = st
             .app
-            .key(&token, key)
+            .key(acting.bearer(), key)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         // A connector key's open and revoked connections; a bearer key has
         // none (ADR-0031 d11).
         let connections = st
             .app
-            .list_connections(&token, Reference::Id(detail.key.key_id))
+            .list_connections(acting.bearer(), Reference::Id(detail.key.key_id))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         // The key's live connect code, named but never shown (ADR-0067 d3).
         let live_code = st
             .app
-            .live_connect_code(&token, Reference::Id(detail.key.key_id))
+            .live_connect_code(acting.bearer(), Reference::Id(detail.key.key_id))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         let mut view = key_json(&detail, &connections, st.app.key_expired(&detail.key));
@@ -3996,6 +4142,9 @@ fn parse_needs(needs: Option<&str>, field: &str) -> Result<Option<ReviewLane>, A
 #[serde(deny_unknown_fields)]
 struct TransitionBody {
     to: String,
+    /// Why, scanned and journalled with the proposal (ADR-0095 d1).
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 /// `POST /v2/edges`'s body; which members a kind takes is checked after
@@ -4008,6 +4157,8 @@ struct EdgeBody {
     to_artifact_id: Option<String>,
     to_workspace_id: Option<String>,
     label: Option<String>,
+    /// A brief proposal's reason, scanned and journalled (ADR-0095 d1).
+    reason: Option<String>,
 }
 
 /// `POST /v2/review/verdicts/bulk`'s body (ADR-0055 d3): the ids as
@@ -4131,6 +4282,14 @@ struct VerdictBody {
 
 /// A workspace or crew reference is a string, classified after the body
 /// parses so that a refusal names its JSON Pointer (errors.md; ADR-0026 d3).
+/// `POST /v2/keys/{key}/rotate`'s body, which may be empty (ADR-0096 d13).
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct RotateBody {
+    #[serde(default)]
+    grace_seconds: Option<u32>,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DenyBody {
@@ -4245,11 +4404,9 @@ fn expiry_instant(sent: &str) -> Result<EventTime, ApiError> {
 #[serde(deny_unknown_fields)]
 struct DenialBody {
     workspace: String,
+    /// Scanned and journalled in `key.denied` when sent (ADR-0097 d27
+    /// item 2).
     #[serde(default)]
-    #[allow(
-        dead_code,
-        reason = "key.denied journals no reason (event-catalog.md); the text is accepted, not stored"
-    )]
     reason: Option<String>,
 }
 
@@ -4267,6 +4424,9 @@ struct WorkspaceCreateBody {
     crew: Option<String>,
     #[serde(default)]
     prefix: Option<String>,
+    /// Why, scanned and journalled with `workspace.create` (ADR-0095 d1).
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 /// openapi.yaml `WorkspaceCrewUpdate`, closed.
@@ -4522,6 +4682,33 @@ fn acting<'a>(headers: &HeaderMap, connection: Option<&'a Caller>) -> Result<Act
     }
 }
 
+/// A listing's position, `created_at` and an id, as the opaque cursor a
+/// page names (ADR-0096 d6, d7).
+pub(crate) fn position_cursor_of(at: &oml_app::domain::EventTime, id: uuid::Uuid) -> String {
+    hex::encode(format!("{}|{id}", at.as_str()))
+}
+
+/// The position a cursor [`position_cursor_of`] served names, else
+/// `request.validation` naming `cursor`.
+pub(crate) fn position_cursor(
+    value: &str,
+) -> Result<(oml_app::domain::EventTime, uuid::Uuid), ApiError> {
+    hex::decode(value)
+        .ok()
+        .and_then(|b| String::from_utf8(b).ok())
+        .and_then(|text| {
+            let (at, id) = text.split_once('|')?;
+            Some((
+                oml_app::domain::EventTime::parse(at).ok()?,
+                uuid::Uuid::parse_str(id).ok()?,
+            ))
+        })
+        .ok_or_else(|| {
+            ApiError::validation("cursor is not a cursor this listing served")
+                .with_details(json!({ "field": "cursor" }))
+        })
+}
+
 fn idempotency_key(headers: &HeaderMap) -> Result<String, ApiError> {
     let value = headers
         .get("idempotency-key")
@@ -4655,6 +4842,31 @@ fn not_the_shape(e: serde_json::Error) -> ApiError {
 
 /// A grant's `covers`, `subtree` when omitted; any other value is
 /// `request.validation` naming `/grants/<i>/covers` (ADR-0044 d4).
+/// An issuance body's grants as the use case takes them, every workspace
+/// and deny reference an id or a name, each refusal naming its JSON Pointer
+/// (errors.md; ADR-0026 d3).
+fn grant_requests(grants: &[GrantBody]) -> Result<Vec<GrantRequest>, ApiError> {
+    grants
+        .iter()
+        .enumerate()
+        .map(|(i, g)| {
+            Ok(GrantRequest {
+                node: reference(&format!("/grants/{i}/workspace"), &g.workspace)?,
+                role: parse_grant_role(&g.role)?,
+                covers: parse_covers(i, g.covers.as_deref())?,
+                deny: g
+                    .deny
+                    .iter()
+                    .enumerate()
+                    .map(|(j, d)| {
+                        reference(&format!("/grants/{i}/deny/{j}/workspace"), &d.workspace)
+                    })
+                    .collect::<Result<_, _>>()?,
+            })
+        })
+        .collect()
+}
+
 fn parse_covers(index: usize, covers: Option<&str>) -> Result<Covers, ApiError> {
     match covers {
         None => Ok(Covers::Subtree),
@@ -4903,6 +5115,11 @@ fn whoami_json(whoami: &Whoami) -> Value {
     if let (Some(denied), Some(obj)) = (whoami.denied, out.as_object_mut()) {
         obj.insert("denied".to_owned(), Value::Bool(denied));
     }
+    // While a rotated key's previous value still works, when it stops
+    // (ADR-0096 d13); absent otherwise.
+    if let (Some(until), Some(obj)) = (&whoami.rotation_grace_until, out.as_object_mut()) {
+        obj.insert("rotation_grace_until".to_owned(), json!(until.as_str()));
+    }
     out
 }
 
@@ -4922,6 +5139,9 @@ fn person_json(person: &oml_app::app::Person) -> Value {
         "under_quotas": person.limits.is_some(),
         "usage": usage,
         "quotas": quotas,
+        // The quota profile's name and the UTC month (ADR-0096 d9).
+        "profile": person.profile,
+        "period": person.period,
         "deletion_requested_at": person.deletion_requested_at.as_ref().map(|t| t.as_str()),
         "linked_keys": person
             .linked_keys
@@ -6220,7 +6440,33 @@ pub fn transition_json(t: &oml_app::types::TransitionView) -> Value {
         "state": t.state.as_str(),
         "proposed_by_key_id": t.proposed_by_key_id,
         "ratified_by_key_id": Value::Null,
+        "proposed_at": t.proposed_at.as_str(),
+        "proposed_by": proposed_by_json(t.proposed_by.as_ref()),
     })
+}
+
+/// `proposed_by` as the reads serve it: `{id, name}` to a key of the
+/// proposer's person, else null (ADR-0095, amendment of 2026-11-24).
+fn proposed_by_json(by: Option<&oml_app::types::ProposedBy>) -> Value {
+    by.map_or(
+        Value::Null,
+        |by| json!({ "id": by.key_id, "name": by.name.as_ref().map(|n| n.as_str()) }),
+    )
+}
+
+/// A brief edge as `GET /v2/edges?kind=brief` lists it: the edge, and for a
+/// pending one `proposed_at` and `proposed_by` (ADR-0095 d6 as amended
+/// 2026-11-24).
+fn listed_brief_edge_json(listed: &oml_app::types::BriefEdgeListed) -> Value {
+    let mut value = brief_edge_json(&listed.edge);
+    if let (Some(at), Some(obj)) = (&listed.proposed_at, value.as_object_mut()) {
+        obj.insert("proposed_at".to_owned(), json!(at.as_str()));
+        obj.insert(
+            "proposed_by".to_owned(),
+            proposed_by_json(listed.proposed_by.as_ref()),
+        );
+    }
+    value
 }
 
 /// The event-catalog envelope as the tail serves it (digest-only payloads by

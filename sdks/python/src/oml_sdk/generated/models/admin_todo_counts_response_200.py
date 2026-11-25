@@ -13,19 +13,25 @@ T = TypeVar("T", bound="AdminTodoCountsResponse200")
 class AdminTodoCountsResponse200:
     """
     Attributes:
+        alerts (int): The guardrail-loosening alerts: unconfirmed fixes that loosen a guardrail (ADR-0096 d7). Since
+            v0.8.5.
         truncated (bool):
     """
 
+    alerts: int
     truncated: bool
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        alerts = self.alerts
+
         truncated = self.truncated
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "alerts": alerts,
                 "truncated": truncated,
             }
         )
@@ -35,9 +41,12 @@ class AdminTodoCountsResponse200:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
+        alerts = d.pop("alerts")
+
         truncated = d.pop("truncated")
 
         admin_todo_counts_response_200 = cls(
+            alerts=alerts,
             truncated=truncated,
         )
 

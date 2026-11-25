@@ -62,6 +62,7 @@ class ErrorCode(StrEnum):
     OAUTH_REDIRECT_REFUSED = "oauth.redirect_refused"
     OAUTH_REFRESH_INVALID = "oauth.refresh_invalid"
     OAUTH_RESOURCE_MISMATCH = "oauth.resource_mismatch"
+    PROPOSAL_PENDING = "proposal.pending"
     REQUEST_IDEMPOTENCY_KEY_REQUIRED = "request.idempotency_key_required"
     REQUEST_PAYLOAD_TOO_LARGE = "request.payload_too_large"
     REQUEST_UNSUPPORTED_MEDIA = "request.unsupported_media"
@@ -112,3 +113,15 @@ class ErrorCode(StrEnum):
 
     def __str__(self) -> str:
         return str(self.value)
+
+    @classmethod
+    def _missing_(cls, value: object) -> "ErrorCode | None":
+        # A value a later server adds is kept as the string it is, never
+        # refused: an SDK from v0.8.5 on reads a newer server's answers
+        # (docs/engineering/sdks.md, forward compatibility).
+        if not isinstance(value, str):
+            return None
+        member = str.__new__(cls, value)
+        member._name_ = value
+        member._value_ = value
+        return member

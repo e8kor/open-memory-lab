@@ -343,6 +343,9 @@ Decided; introduced in v0.5.0 demotion (d12) followed in v0.6.0 with its verb.
       page is refused, `request.validation` with `details.field: admin`, since the page cannot
       then be reopened; the CLI under an admin key can still do it. The removal confirmation
       lists the user's keys (d13).
+      *Superseded (2026-11-25, ADR-0097 d25 and d27 item 4, built in v0.8.5):* the guard holds on
+      every surface, so the CLI under an admin key is refused as the page is, and
+      `keep_an_admin` is read and changes nothing.
     - **People's capacities**, through `<user>-admin`: `grant_review` (`{user, workspace}`)
       extends that user's `<user>-review`, which the user's first sign-in created, with reviewer
       and reader on the workspace;
@@ -419,6 +422,9 @@ Decided; introduced in v0.5.0 demotion (d12) followed in v0.6.0 with its verb.
       which version is the tip, what recall serves and what the lineage of every successor
       reads, a use case of its own with its own refusals. The page does not ship it before its
       verb.
+      *Superseded (noted 2026-11-25, ADR-0097 d27 item 3):* the designed `POST
+      /v2/memories/{artifact_id}/demote` route is not built; [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md)
+      made the admin fix, `POST /v2/admin/fixes` with `act: demote`, the one surface for demotion.
 
     No page has a delete, an erase, a reassignment, a tip override or a ban: those stay CLI
     ceremonies with their dry-run previews ([ADR-0015](ADR-0015-cli-administration.md) d3).

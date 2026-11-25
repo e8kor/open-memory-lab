@@ -1609,6 +1609,8 @@ async fn a_pending_protected_proposal_in_a_user_root_is_refused_at_ratification(
             proposer_key_id: first.key_id,
             proposer_principal: "alice/first".to_owned(),
             ratifier_key_id: None,
+            proposed_at: oml_app::domain::EventTime::parse("2026-11-01T00:00:00.000000Z")
+                .expect("a time"),
         })
         .expect("a pending proposal");
     let before = store
@@ -1779,6 +1781,7 @@ async fn a_user_keys_claim_or_brief_edge_with_an_endpoint_in_universe_is_refused
             &oml_app::types::ProposeBriefEdge {
                 artifact_id: c.placed,
                 workspace: by_name("alice"),
+                reason: None,
             },
             None,
         )
@@ -1800,6 +1803,7 @@ async fn a_user_keys_claim_or_brief_edge_with_an_endpoint_in_universe_is_refused
         &oml_app::types::ProposeBriefEdge {
             artifact_id: c.source,
             workspace: by_name("alice"),
+            reason: None,
         },
         None,
     )
@@ -6778,7 +6782,13 @@ async fn a_key_issued_in_the_authors_root_reverts_a_fix_of_the_authors_claim_as_
     let web = console_of(&r.app, &r.store, "dora").await;
     let own = r
         .app
-        .issue_own_key(&web, "laptop", Role::Contributor, false, None)
+        .issue_own_key(
+            &web,
+            "laptop",
+            Role::Contributor,
+            false,
+            &Default::default(),
+        )
         .await
         .expect("dora issues her own key");
     let claim = written(
@@ -6838,7 +6848,13 @@ async fn a_write_records_the_person_its_key_counts_as_not_the_root_it_was_issued
     let web = console_of(&r.app, &r.store, "dora").await;
     let own = r
         .app
-        .issue_own_key(&web, "laptop", Role::Contributor, false, None)
+        .issue_own_key(
+            &web,
+            "laptop",
+            Role::Contributor,
+            false,
+            &Default::default(),
+        )
         .await
         .expect("dora issues her own key");
     let mine = written(
@@ -7099,4 +7115,70 @@ async fn a_bootstrap_claim_refused_at_its_email_leaves_no_partial_tenant() {
         .await
         .expect("the retried claim takes the name the refused one left free");
     assert_eq!(boot.admin_key.access.issued_seq, 3);
+}
+
+/// ADR-0097 d25 and d27 item 4: the last live admin entry is never
+/// removed or un-flagged on any surface: a bearer admin key, as the CLI
+/// sends it with no `keep_an_admin`, is refused as the console is,
+/// `request.validation` naming `admin`, and nothing changes. This reverses
+/// ADR-0045 d10's CLI allowance.
+#[tokio::test]
+async fn the_last_admin_entry_is_never_removed_or_unflagged_by_a_bearer_admin_key_either() {
+    let r = fix_rig().await;
+    let admin = r.boot.admin_key.value.as_str();
+    let err = r
+        .app
+        .allow_web_email(
+            admin,
+            &WebEmailRequest {
+                email: email("ops@example.com"),
+                user: name("ops"),
+                admin: false,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::WebField { field: "admin", .. }),
+        "{err:?}"
+    );
+    let err = r
+        .app
+        .remove_web_email(admin, &email("ops@example.com"))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::WebField { field: "admin", .. }),
+        "{err:?}"
+    );
+}
+
+/// The last admin entry is a tenant's own: another tenant's admin entry
+/// in the same store does not count toward it, so the entry stays kept
+/// (ADR-0097 d25; ADR-0045 d10).
+#[tokio::test]
+async fn another_tenants_admin_entry_does_not_count_toward_the_last_admin() {
+    let r = fix_rig().await;
+    let other = r
+        .app
+        .bootstrap_tenant_for(
+            &BootstrapRequest {
+                tenant_name: name("zeta"),
+                admin_key_name: name("zeta-admin"),
+                admin_principal: "zeta-admin".to_owned(),
+            },
+            None,
+        )
+        .await
+        .expect("a second tenant");
+    let _zed = console_admin(&r.app, other.admin_key.value.as_str(), "zed").await;
+    let err = r
+        .app
+        .remove_web_email(r.boot.admin_key.value.as_str(), &email("ops@example.com"))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::WebField { field: "admin", .. }),
+        "{err:?}"
+    );
 }

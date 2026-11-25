@@ -1377,6 +1377,9 @@ async fn the_allowlist_routes_take_an_admin_key_and_the_email_only_in_a_body() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    // bob's is the last admin entry, kept on every surface (ADR-0097 d25,
+    // d27 item 4), so another admin is added before it is removed.
+    rig.allow(EMAIL, "alice", true).await;
     let (status, _, body) = send(
         &rig.router,
         json_post(
@@ -1394,6 +1397,8 @@ async fn the_allowlist_routes_take_an_admin_key_and_the_email_only_in_a_body() {
 async fn the_journal_holds_an_email_digest_and_never_the_address() {
     let rig = rig().await;
     rig.allow(EMAIL, "alice", true).await;
+    // The last admin entry is kept (ADR-0097 d25), so a second admin first.
+    rig.allow("ops@example.com", "ops", true).await;
     rig.app
         .remove_web_email(&rig.boot.admin_key.value, &Email::parse(EMAIL).unwrap())
         .await
@@ -1404,9 +1409,13 @@ async fn the_journal_holds_an_email_digest_and_never_the_address() {
         .await
         .expect("the chain");
     let digest = Email::parse(EMAIL).unwrap().digest().to_prefixed();
+    // alice's address's events; the second admin's entry has its own.
     let web: Vec<_> = events
         .iter()
-        .filter(|e| e.envelope.event_type.starts_with("web."))
+        .filter(|e| {
+            e.envelope.event_type.starts_with("web.")
+                && e.envelope.payload["email_digest"] == digest.as_str()
+        })
         .collect();
     let types: Vec<&str> = web.iter().map(|e| e.envelope.event_type.as_str()).collect();
     assert_eq!(
@@ -1501,11 +1510,24 @@ async fn as_web(
         .header(header::AUTHORIZATION, format!("Bearer {credential}"))
         .header("oml-web-client", WEB_CLIENT_SECRET)
         .header(header::CONTENT_TYPE, "application/json")
-        .header("idempotency-key", format!("k-{path}-{body}"))
+        .header("idempotency-key", idempotency_for(path, &body))
         .body(Body::from(body.to_string()))
         .expect("a request");
     let (status, _, answer) = send(&rig.router, request).await;
     (status, serde_json::from_str(&answer).unwrap_or(Value::Null))
+}
+
+/// The `Idempotency-Key` `as_web` sends: the same for the same path and
+/// body, within the header's 256 characters.
+fn idempotency_for(path: &str, body: &Value) -> String {
+    use std::hash::{Hash, Hasher};
+    let key = format!("k-{path}-{body}");
+    if key.len() <= 256 {
+        return key;
+    }
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    key.hash(&mut hasher);
+    format!("k-{path}-{:016x}", hasher.finish())
 }
 
 /// The person's own `<user>-<name>` writer key, issued through the API as
@@ -1660,18 +1682,20 @@ async fn a_session_key_has_no_value_and_no_connect_code() {
 /// limits: `POST /v2/keys` as `<user>-web` with `expiry` issues a key that
 /// carries the date, under the rule of every issuance, so a bare date or an
 /// instant that is not later than the server's clock is `request.validation`
-/// naming `/expiry`; `requests_per_minute` is still `request.validation`
-/// naming the member. A refusal journals nothing and issues no key. Changing
+/// naming `/expiry`; a `requests_per_minute` outside 1 to 1,000,000 is
+/// `request.validation` naming the member (ADR-0096 d2). A refusal
+/// journals nothing and issues no key. Changing
 /// or clearing the date afterwards stays with the admin key role: the
 /// person's session key is refused the limits route (ADR-0079 d1, d5, the
 /// operator's answer 3; ADR-0045 d9).
 #[tokio::test]
-async fn a_persons_own_issuance_takes_an_expiry_and_no_rate() {
+async fn a_persons_own_issuance_takes_an_expiry_and_refuses_a_rate_out_of_bound() {
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     let head = rig.head().await;
     for (member, value) in [
-        ("requests_per_minute", json!(60)),
+        ("requests_per_minute", json!(0)),
+        ("requests_per_minute", json!(1_000_001)),
         ("expiry", json!("2999-01-01")),
         ("expiry", json!("2999-01-01T00:00:00")),
         ("expiry", json!("2000-01-01T00:00:00Z")),
@@ -2491,6 +2515,28 @@ async fn a_cut_off_session_key_cuts_off_no_key() {
     assert_eq!(rig.head().await, head, "nothing journalled");
 }
 
+/// A `<user>-web` key an admin cut off rotates none of the person's keys:
+/// a new value would hand on access the session no longer holds whole
+/// (ADR-0070 d2; ADR-0096 d13; #325).
+#[tokio::test]
+async fn a_cut_off_session_key_rotates_no_key() {
+    for workspace in ["universe", "alice", "notes"] {
+        let rig = rig().await;
+        let cookie = alice_denied_on(&rig, workspace).await;
+        let head = rig.head().await;
+        let (status, answer) = as_web(
+            &rig,
+            &cookie,
+            "web",
+            "/v2/keys/alice-laptop/rotate",
+            json!({}),
+        )
+        .await;
+        assert_session_key_denied(status, &answer, "rotate_key");
+        assert_eq!(rig.head().await, head, "{workspace}: nothing journalled");
+    }
+}
+
 /// The refusal is permanent, and any denial brings it: `alice-web` denied on
 /// a workspace outside alice's root, where the key holds no grant, runs none
 /// of its key acts, and it runs none after the admin removes alice's entry,
@@ -3091,4 +3137,930 @@ async fn a_denied_session_key_still_files_its_deletion_request() {
             "{workspace}: under the denied session key"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0096: the console key builder, the admin one-key read, limits and deny
+// ---------------------------------------------------------------------------
+
+/// alice signed in, with `alice.proj` and `alice.notes` made in her root:
+/// her cookie and the two workspaces' ids.
+async fn alice_with_two_workspaces(rig: &Rig) -> (String, String, String) {
+    let cookie = signed_in(rig, "sub-1", EMAIL).await;
+    let mut ids = Vec::new();
+    for name in ["proj", "notes"] {
+        let (status, made) =
+            as_web(rig, &cookie, "web", "/v2/workspaces", json!({"name": name})).await;
+        assert_eq!(status, StatusCode::CREATED, "{made}");
+        ids.push(made["id"].as_str().expect("an id").to_owned());
+    }
+    let notes = ids.pop().expect("notes");
+    let proj = ids.pop().expect("proj");
+    (cookie, proj, notes)
+}
+
+/// The stored grants of the key `name`, as (role, workspace, covers, denials).
+async fn stored_grants(rig: &Rig, name: &str) -> Vec<(String, String, String, usize)> {
+    let key = key_named(rig, name).await;
+    let access = rig
+        .store
+        .key_access(rig.boot.tenant_id, key.key_id)
+        .await
+        .expect("a read")
+        .expect("the key's access");
+    let mut grants: Vec<_> = access
+        .grants
+        .iter()
+        .map(|g| {
+            (
+                g.grant.role.as_str().to_owned(),
+                g.grant.node.to_string(),
+                g.grant.covers.as_str().to_owned(),
+                g.grant.deny.len(),
+            )
+        })
+        .collect();
+    grants.sort();
+    grants
+}
+
+/// The tenant's `universe` node's id.
+async fn universe_id(rig: &Rig) -> String {
+    rig.store
+        .resolve_name(
+            rig.boot.tenant_id,
+            oml_app::domain::name::NamedKind::Workspace,
+            &Name::parse("universe").expect("a name"),
+        )
+        .await
+        .expect("a lookup")
+        .expect("universe")
+        .to_string()
+}
+
+/// d1: with `grants`, a person's web session issues exactly the grants it
+/// sent, each inside the root, a deny and a node grant included, and the
+/// default workspace and guardrail scope it named; the server adds only
+/// `universe`'s reader node grant to a contributor (ADR-0096 d1; ADR-0025
+/// d2; ADR-0044 d3).
+#[tokio::test]
+async fn a_persons_web_session_issues_a_key_with_grants_inside_its_root_taken_exactly_as_sent() {
+    let rig = rig().await;
+    let (cookie, proj, notes) = alice_with_two_workspaces(&rig).await;
+    let (status, key) = as_web(
+        &rig,
+        &cookie,
+        "web",
+        "/v2/keys",
+        json!({
+            "name": "alice-proj-bot",
+            "role": "contributor",
+            "connect_code": false,
+            "grants": [
+                {"workspace": "alice", "role": "reader", "deny": [{"workspace": notes}]},
+                {"workspace": proj, "role": "submitter", "covers": "node"},
+            ],
+            "default_workspace": proj,
+            "guardrail_scope": "workspace",
+            "requests_per_minute": 60,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{key}");
+    assert_eq!(key["requests_per_minute"], 60, "{key}");
+    let record = key_named(&rig, "alice-proj-bot").await;
+    assert_eq!(record.role, Role::Contributor);
+    assert_eq!(record.requests_per_minute, Some(60));
+    assert_eq!(record.guardrail_scope.as_str(), "workspace");
+    assert_eq!(
+        record.default_workspace.map(|w| w.to_string()),
+        Some(proj.clone())
+    );
+    let alice = rig
+        .store
+        .resolve_name(
+            rig.boot.tenant_id,
+            oml_app::domain::name::NamedKind::Workspace,
+            &Name::parse("alice").expect("a name"),
+        )
+        .await
+        .expect("a lookup")
+        .expect("alice's root")
+        .to_string();
+    let mut expected = vec![
+        ("reader".to_owned(), alice, "subtree".to_owned(), 1),
+        ("submitter".to_owned(), proj, "node".to_owned(), 0),
+        (
+            "reader".to_owned(),
+            universe_id(&rig).await,
+            "node".to_owned(),
+            0,
+        ),
+    ];
+    expected.sort();
+    assert_eq!(stored_grants(&rig, "alice-proj-bot").await, expected);
+}
+
+/// d1: a grant outside the person's root is `403 access.issuer_ceiling`
+/// naming the user, and nothing is issued or journalled.
+#[tokio::test]
+async fn a_persons_web_session_is_refused_a_grant_outside_its_root_with_issuer_ceiling() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let head = rig.head().await;
+    let (status, answer) = as_web(
+        &rig,
+        &cookie,
+        "web",
+        "/v2/keys",
+        json!({
+            "name": "alice-wide",
+            "role": "reader",
+            "connect_code": false,
+            "grants": [{"workspace": "universe", "role": "reader"}],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
+    assert_eq!(answer["error"]["code"], "access.issuer_ceiling", "{answer}");
+    assert_eq!(answer["error"]["details"]["user"], "alice", "{answer}");
+    assert_eq!(rig.head().await, head, "nothing journalled");
+}
+
+/// d3: a submitter key from a web session carries its submitter grant and
+/// no `universe` grant; a reader grant sent with it is
+/// `access.issuer_ceiling` (ADR-0093 d2).
+#[tokio::test]
+async fn a_submitter_key_from_a_web_session_gets_no_universe_grant() {
+    let rig = rig().await;
+    let (cookie, proj, _) = alice_with_two_workspaces(&rig).await;
+    let (status, key) = as_web(
+        &rig,
+        &cookie,
+        "web",
+        "/v2/keys",
+        json!({"name": "alice-ingest", "role": "submitter", "connect_code": false}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{key}");
+    let grants = stored_grants(&rig, "alice-ingest").await;
+    assert_eq!(grants.len(), 1, "{grants:?}");
+    assert_eq!(
+        (grants[0].0.as_str(), grants[0].2.as_str()),
+        ("submitter", "subtree")
+    );
+    let (status, answer) = as_web(
+        &rig,
+        &cookie,
+        "web",
+        "/v2/keys",
+        json!({
+            "name": "alice-ingest-2",
+            "role": "submitter",
+            "connect_code": false,
+            "grants": [
+                {"workspace": proj, "role": "submitter"},
+                {"workspace": proj, "role": "reader"},
+            ],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
+    assert_eq!(answer["error"]["code"], "access.issuer_ceiling", "{answer}");
+    assert_eq!(answer["error"]["details"]["grant_index"], 1, "{answer}");
+}
+
+/// d1: the role check is the one guard that keeps a reviewer key out of the
+/// console, since the person's issuance runs under the admin role's
+/// ceiling: `reviewer`, `admin` and `operator` are `request.validation`
+/// naming `/role`, and a reviewer grant on a contributor key is
+/// `access.issuer_ceiling` (R1).
+#[tokio::test]
+async fn a_persons_web_session_issues_only_contributor_reader_or_submitter_keys_and_never_a_reviewer_key()
+ {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let head = rig.head().await;
+    for role in ["reviewer", "admin", "operator"] {
+        let (status, answer) = as_web(
+            &rig,
+            &cookie,
+            "web",
+            "/v2/keys",
+            json!({"name": format!("alice-{role}-x"), "role": role, "connect_code": false}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{role}: {answer}");
+        assert_eq!(answer["error"]["code"], "request.validation", "{answer}");
+        assert_eq!(answer["error"]["details"]["field"], "/role", "{answer}");
+    }
+    let (status, answer) = as_web(
+        &rig,
+        &cookie,
+        "web",
+        "/v2/keys",
+        json!({
+            "name": "alice-judge",
+            "role": "contributor",
+            "connect_code": false,
+            "grants": [
+                {"workspace": "alice", "role": "submitter"},
+                {"workspace": "alice", "role": "reviewer"},
+            ],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
+    assert_eq!(answer["error"]["code"], "access.issuer_ceiling", "{answer}");
+    assert_eq!(rig.head().await, head, "nothing journalled");
+    // The fields the server sets stay refused, each named.
+    for field in ["user", "used_by", "crew", "label", "principal", "profile"] {
+        let mut body = json!({"name": "alice-x", "role": "reader", "connect_code": false});
+        body[field] = json!("agent");
+        let (status, answer) = as_web(&rig, &cookie, "web", "/v2/keys", body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{field}: {answer}");
+        assert_eq!(
+            answer["error"]["details"]["field"],
+            format!("/{field}"),
+            "{answer}"
+        );
+    }
+}
+
+/// d1: exactly the four session names are reserved: `alice-review` is
+/// refused naming `/name`, and `alice-proj-review` is issued.
+#[tokio::test]
+async fn only_the_four_session_names_are_refused_and_a_longer_name_ending_in_review_is_issued() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    for suffix in ["web", "review", "curate", "admin"] {
+        let (status, answer) = as_web(
+            &rig,
+            &cookie,
+            "web",
+            "/v2/keys",
+            json!({"name": format!("alice-{suffix}"), "role": "reader", "connect_code": false}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{suffix}: {answer}");
+        assert_eq!(answer["error"]["details"]["field"], "/name", "{answer}");
+    }
+    let (status, key) = as_web(
+        &rig,
+        &cookie,
+        "web",
+        "/v2/keys",
+        json!({"name": "alice-proj-review", "role": "reader", "connect_code": false}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{key}");
+}
+
+/// d1: past sixteen grants, or sixteen denials on one grant, a session
+/// issuance is `request.validation`, `details.reason: too_many`, naming
+/// `/grants` or `/grants/<i>/deny`.
+#[tokio::test]
+async fn a_web_session_issuance_past_sixteen_grants_is_refused_too_many() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let grants: Vec<Value> = (0..17)
+        .map(|_| json!({"workspace": "alice", "role": "reader"}))
+        .collect();
+    let (status, answer) = as_web(
+        &rig,
+        &cookie,
+        "web",
+        "/v2/keys",
+        json!({"name": "alice-many", "role": "reader", "connect_code": false, "grants": grants}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
+    assert_eq!(answer["error"]["details"]["field"], "/grants", "{answer}");
+    assert_eq!(answer["error"]["details"]["reason"], "too_many", "{answer}");
+    let deny: Vec<Value> = (0..17).map(|_| json!({"workspace": "alice"})).collect();
+    let (status, answer) = as_web(
+        &rig,
+        &cookie,
+        "web",
+        "/v2/keys",
+        json!({
+            "name": "alice-many",
+            "role": "reader",
+            "connect_code": false,
+            "grants": [{"workspace": "alice", "role": "reader", "deny": deny}],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
+    assert_eq!(
+        answer["error"]["details"]["field"], "/grants/0/deny",
+        "{answer}"
+    );
+    assert_eq!(answer["error"]["details"]["reason"], "too_many", "{answer}");
+}
+
+/// d2: the rate a person sets at issuance changes only by an admin key: the
+/// web session is refused the limits route, and the admin session moves it.
+#[tokio::test]
+async fn a_rate_set_at_a_persons_issuance_changes_only_by_an_admin_key() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (status, key) = as_web(
+        &rig,
+        &cookie,
+        "web",
+        "/v2/keys",
+        json!({"name": "alice-ci", "role": "reader", "connect_code": false, "requests_per_minute": 60}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{key}");
+    let (status, answer) = as_web(
+        &rig,
+        &cookie,
+        "web",
+        "/v2/keys/alice-ci/limits",
+        json!({"requests_per_minute": 600}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
+    assert_eq!(
+        key_named(&rig, "alice-ci").await.requests_per_minute,
+        Some(60)
+    );
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (status, set) = as_web(
+        &rig,
+        &boss,
+        "admin",
+        "/v2/keys/alice-ci/limits",
+        json!({"requests_per_minute": 600}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{set}");
+    assert_eq!(
+        key_named(&rig, "alice-ci").await.requests_per_minute,
+        Some(600)
+    );
+}
+
+/// d4: `GET /v2/keys/{key}` resolves the session caller, so `<user>-admin`
+/// reads one key with its grants' coverage and denials; `<user>-web` is
+/// refused `session_capacity`.
+#[tokio::test]
+async fn the_admin_session_reads_one_key_through_get_key() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let _ = issued(&rig, &cookie, "laptop").await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (status, key) = get_as(&rig, &boss, "admin", "/v2/keys/alice-laptop").await;
+    assert_eq!(status, StatusCode::OK, "{key}");
+    assert_eq!(key["name"], "alice-laptop", "{key}");
+    assert!(
+        key["grants"].as_array().is_some_and(|g| !g.is_empty()),
+        "{key}"
+    );
+    let (status, answer) = get_as(&rig, &cookie, "web", "/v2/keys/alice-laptop").await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
+    assert_eq!(
+        answer["error"]["details"]["reason"], "session_capacity",
+        "{answer}"
+    );
+}
+
+/// d4: the admin session's limits act claims the `Idempotency-Key`, so a
+/// resubmitted form journals one `key.limits_set`, and the refusals by key
+/// stand: a session key and an admin key are `request.validation` naming
+/// `key`.
+#[tokio::test]
+async fn the_admin_session_reads_one_key_and_sets_its_limits_once_per_nonce() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let _ = issued(&rig, &cookie, "laptop").await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let before = journalled(&rig, "key.limits_set").await.len();
+    for _ in 0..2 {
+        // `as_web` sends the same Idempotency-Key for the same path and body.
+        let (status, set) = as_web(
+            &rig,
+            &boss,
+            "admin",
+            "/v2/keys/alice-laptop/limits",
+            json!({"expiry": "2999-01-02T23:59:59Z", "requests_per_minute": 30}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{set}");
+        assert_eq!(set["requests_per_minute"], 30, "{set}");
+    }
+    assert_eq!(journalled(&rig, "key.limits_set").await.len(), before + 1);
+    for (target, reason) in [("alice-web", "session_key"), ("root-admin", "admin_key")] {
+        let (status, answer) = as_web(
+            &rig,
+            &boss,
+            "admin",
+            &format!("/v2/keys/{target}/limits"),
+            json!({"requests_per_minute": 30}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{target}: {answer}");
+        assert_eq!(answer["error"]["details"]["field"], "key", "{answer}");
+        assert_eq!(answer["error"]["details"]["reason"], reason, "{answer}");
+    }
+}
+
+/// d4: the admin session denies a key on any workspace of the tenant;
+/// `<user>-web` cuts a key off on `universe` alone; neither denies an admin
+/// key, refused naming `key`.
+#[tokio::test]
+async fn the_admin_session_denies_a_key_on_a_workspace_and_the_web_session_on_universe_only() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let (cookie, proj, _) = alice_with_two_workspaces(&rig).await;
+    let _ = issued(&rig, &cookie, "laptop").await;
+    let (status, answer) = as_web(
+        &rig,
+        &cookie,
+        "web",
+        "/v2/keys/alice-laptop/denials",
+        json!({"workspace": proj}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
+    assert_eq!(
+        answer["error"]["details"]["field"], "/workspace",
+        "{answer}"
+    );
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (status, denial) = as_web(
+        &rig,
+        &boss,
+        "admin",
+        "/v2/keys/alice-laptop/denials",
+        json!({"workspace": proj, "reason": "leaked in a log"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{denial}");
+    let key = key_named(&rig, "alice-laptop").await;
+    let access = rig
+        .store
+        .key_access(rig.boot.tenant_id, key.key_id)
+        .await
+        .expect("a read")
+        .expect("access");
+    assert!(
+        access
+            .denials
+            .iter()
+            .any(|d| d.denial.node.to_string() == proj),
+        "{access:?}"
+    );
+    let (status, answer) = as_web(
+        &rig,
+        &boss,
+        "admin",
+        "/v2/keys/root-admin/denials",
+        json!({"workspace": proj}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
+    assert_eq!(answer["error"]["details"]["field"], "key", "{answer}");
+    assert!(
+        answer["error"]["details"].get("reason").is_none(),
+        "{answer}"
+    );
+}
+
+/// d4: admin issuance stays off the console: `POST /v2/keys` from
+/// `<user>-admin` is `access.verb_ceiling`, `session_capacity`.
+#[tokio::test]
+async fn the_admin_session_still_issues_no_key() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let head = rig.head().await;
+    let (status, answer) = as_web(
+        &rig,
+        &boss,
+        "admin",
+        "/v2/keys",
+        json!({"name": "boss-x", "role": "reader", "connect_code": false}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
+    assert_eq!(
+        answer["error"]["details"]["reason"], "session_capacity",
+        "{answer}"
+    );
+    assert_eq!(rig.head().await, head);
+}
+
+/// d8: each listed grant carries its coverage, `node` for a node grant.
+#[tokio::test]
+async fn the_key_list_serves_each_grants_coverage() {
+    let rig = rig().await;
+    let (cookie, proj, _) = alice_with_two_workspaces(&rig).await;
+    let (status, key) = as_web(
+        &rig,
+        &cookie,
+        "web",
+        "/v2/keys",
+        json!({
+            "name": "alice-one",
+            "role": "reader",
+            "connect_code": false,
+            "grants": [{"workspace": proj, "role": "reader", "covers": "node"}],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{key}");
+    let (status, list) = get_as_web(&rig, &cookie, "/v2/keys").await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    let one = list["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .find(|k| k["name"] == "alice-one")
+        .expect("alice-one listed");
+    let covers: Vec<(&str, &str)> = one["grants"]
+        .as_array()
+        .expect("grants")
+        .iter()
+        .map(|g| {
+            (
+                g["path"].as_str().unwrap_or(""),
+                g["covers"].as_str().expect("covers"),
+            )
+        })
+        .collect();
+    assert!(covers.contains(&("universe.alice.proj", "node")), "{one}");
+    assert!(covers.contains(&("universe", "node")), "{one}");
+}
+
+/// d7: the brief group lists the pending brief edges `<user>-review` may
+/// ratify, marked `same_user` for a proposal by another key of the person,
+/// never one it proposed, and `briefs` counts them; any other caller is
+/// `access.verb_ceiling`.
+#[tokio::test]
+async fn the_brief_group_lists_what_the_review_key_may_ratify_and_never_its_own_proposal() {
+    let rig = rig().await;
+    let (cookie, value) = person_with_agent(&rig, "sub-1", EMAIL).await;
+    let id = agent_writes(&rig, &value, "the deploy runs from main").await;
+    // A claim takes one live proposal per brief (ADR-0095 d6), so each key
+    // proposes a row of its own.
+    let other = agent_writes(&rig, &value, "the deploy runs on Fridays").await;
+    // alice's review key approves the agent's rows, so they can join a brief.
+    let (status, verdict) = as_web(
+        &rig,
+        &cookie,
+        "review",
+        "/v2/review/verdicts/bulk",
+        json!({"verdict": "approve", "artifact_ids": [id.to_string(), other.to_string()]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{verdict}");
+    assert_eq!(verdict["items"][0]["outcome"], "approved", "{verdict}");
+    assert_eq!(verdict["items"][1]["outcome"], "approved", "{verdict}");
+    // Two bearer reviewer keys of alice's, issued by the tenant admin: one
+    // under its own principal, one under `alice-review`'s, each proposing
+    // the row for alice's brief.
+    for (name, principal, proposed) in [
+        ("alice-rev-a", "alice-rev-a", id),
+        ("alice-rev-b", "alice-review", other),
+    ] {
+        let (status, key) = as_admin(
+            &rig,
+            "/v2/keys",
+            &format!("issue-{name}"),
+            json!({
+                "name": name,
+                "role": "reviewer",
+                "principal": principal,
+                "user": "alice",
+                "grants": [
+                    {"workspace": "alice", "role": "reviewer"},
+                    {"workspace": "alice", "role": "reader"},
+                ],
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{key}");
+        let request = Request::post("/v2/edges")
+            .header(
+                header::AUTHORIZATION,
+                format!("Bearer {}", key["value"].as_str().expect("a value")),
+            )
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("idempotency-key", format!("edge-{name}"))
+            .body(Body::from(
+                json!({"kind": "brief", "from_artifact_id": proposed, "to_workspace_id": "alice"})
+                    .to_string(),
+            ))
+            .expect("a request");
+        let (status, _, edge) = send(&rig.router, request).await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{name}: {edge}");
+    }
+    let (status, page) = get_as(&rig, &cookie, "review", "/v2/review/briefs").await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let items = page["items"].as_array().expect("items");
+    // The proposal under alice-review's principal is not listed: the
+    // ratification would refuse it (R2).
+    assert_eq!(items.len(), 1, "{page}");
+    assert_eq!(items[0]["proposed_by"]["name"], "alice-rev-a", "{page}");
+    assert_eq!(items[0]["same_user"], true, "{page}");
+    let (status, counts) = get_as_web(&rig, &cookie, "/v2/todo/counts").await;
+    assert_eq!(status, StatusCode::OK, "{counts}");
+    assert_eq!(counts["briefs"], items.len(), "{counts}");
+    let (status, answer) = get_as_web(&rig, &cookie, "/v2/review/briefs").await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
+    assert_eq!(answer["error"]["code"], "access.verb_ceiling", "{answer}");
+}
+
+/// d6: `GET /v2/imports` as a person's web session lists every import the
+/// person's keys ran (none yet), refuses an unknown state, and a web
+/// session reads no import that no key of the person ran.
+#[tokio::test]
+async fn a_persons_web_session_reads_and_lists_the_imports_of_every_key_of_the_person() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (status, page) = get_as_web(&rig, &cookie, "/v2/imports").await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(page["items"], json!([]), "{page}");
+    assert_eq!(page["next_cursor"], Value::Null, "{page}");
+    let (status, answer) = get_as_web(&rig, &cookie, "/v2/imports?state=paused").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
+    assert_eq!(answer["error"]["details"]["field"], "state", "{answer}");
+    let (status, answer) = get_as_web(
+        &rig,
+        &cookie,
+        "/v2/imports/00000000-0000-4000-8000-000000000001",
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{answer}");
+}
+
+/// d9: whoami's person block serves the profile, the UTC month and this
+/// month's recalls beside the other usage.
+#[tokio::test]
+async fn whoami_serves_the_persons_profile_month_and_recalls() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (status, me) = get_as_web(&rig, &cookie, "/v2/whoami").await;
+    assert_eq!(status, StatusCode::OK, "{me}");
+    let period = me["person"]["period"].as_str().expect("a month");
+    assert_eq!(period.len(), 7, "{me}");
+    assert_eq!(&period[4..5], "-", "{me}");
+    assert!(me["person"].get("profile").is_some(), "{me}");
+}
+
+// ---------------------------------------------------------------------------
+// v0.8.5: the console proposes as a person's session (ADR-0095 d5, d6;
+// ADR-0096 P8, P9)
+// ---------------------------------------------------------------------------
+
+/// alice signed in, her agent's row approved by `alice-review`, so it is a
+/// promoted memory of her root that can join a brief: her cookie and the
+/// row's id.
+async fn alice_with_a_promoted_memory(rig: &Rig) -> (String, uuid::Uuid) {
+    let (cookie, value) = person_with_agent(rig, "sub-1", EMAIL).await;
+    let id = agent_writes(rig, &value, "the deploy runs from main").await;
+    let (status, verdict) = as_web(
+        rig,
+        &cookie,
+        "review",
+        "/v2/review/verdicts/bulk",
+        json!({"verdict": "approve", "artifact_ids": [id.to_string()]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{verdict}");
+    assert_eq!(verdict["items"][0]["outcome"], "approved", "{verdict}");
+    (cookie, id)
+}
+
+/// P8: `<user>-web`, a contributor key with submitter on the root, proposes
+/// a promoted memory for the root's brief as the console's Propose for
+/// brief does, and a second proposal of the same memory is `409
+/// proposal.pending` naming the live edge, whose listing serves when and by
+/// which of the person's keys it was proposed (ADR-0095 d6 and its
+/// amendment of 2026-11-24).
+#[tokio::test]
+async fn a_persons_web_session_proposes_a_memory_for_the_brief_and_a_second_proposal_is_proposal_pending()
+ {
+    let rig = rig().await;
+    let (cookie, id) = alice_with_a_promoted_memory(&rig).await;
+    let proposal = json!({"kind": "brief", "from_artifact_id": id, "to_workspace_id": "alice"});
+    let (status, edge) = as_web(&rig, &cookie, "web", "/v2/edges", proposal.clone()).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{edge}");
+    assert_eq!(edge["state"], "pending", "{edge}");
+    let edge_id = edge["edge_id"].as_str().expect("an edge id").to_owned();
+    // The same proposal under another key (another form's nonce).
+    let mut again = proposal;
+    again["reason"] = json!("again");
+    let (status, answer) = as_web(&rig, &cookie, "web", "/v2/edges", again).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{answer}");
+    assert_eq!(answer["error"]["code"], "proposal.pending", "{answer}");
+    assert_eq!(answer["error"]["details"]["edge_id"], edge_id, "{answer}");
+    let root = get_as_web(&rig, &cookie, "/v2/workspaces/alice").await.1["id"]
+        .as_str()
+        .expect("the root's id")
+        .to_owned();
+    let (status, page) = get_as_web(
+        &rig,
+        &cookie,
+        &format!("/v2/edges?kind=brief&workspace_id={root}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let listed = &page["items"][0];
+    assert_eq!(listed["edge_id"], edge_id, "{page}");
+    assert!(listed["proposed_at"].is_string(), "{page}");
+    assert_eq!(listed["proposed_by"]["name"], "alice-web", "{page}");
+}
+
+/// P9: `<user>-review`, granted reviewer on a shared workspace, proposes
+/// its status move as the workspace page does, and a second proposal to
+/// the same status is `409 proposal.pending` naming the live transition,
+/// which the workspace read serves with its instant and, to the same
+/// person, its proposer (ADR-0095 d5 and its amendment of 2026-11-24).
+#[tokio::test]
+async fn a_persons_review_session_proposes_a_shared_workspaces_status_and_a_second_proposal_is_proposal_pending()
+ {
+    let rig = rig().await;
+    let _first = signed_in(&rig, "sub-1", EMAIL).await;
+    let (status, platform) = as_admin(
+        &rig,
+        "/v2/workspaces",
+        "platform",
+        json!({"name": "platform", "parent": "universe"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{platform}");
+    let (status, granted) = as_admin(
+        &rig,
+        "/v2/web/users/alice/capacities",
+        "review-alice",
+        json!({"capacity": "review", "workspaces": ["platform"]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{granted}");
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let path = "/v2/workspaces/platform/transitions";
+    let (status, proposed) =
+        as_web(&rig, &cookie, "review", path, json!({"to": "protected"})).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{proposed}");
+    let transition = proposed["transition_id"]
+        .as_str()
+        .expect("a transition id")
+        .to_owned();
+    let (status, answer) = as_web(
+        &rig,
+        &cookie,
+        "review",
+        path,
+        json!({"to": "protected", "reason": "again"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{answer}");
+    assert_eq!(answer["error"]["code"], "proposal.pending", "{answer}");
+    assert_eq!(
+        answer["error"]["details"]["transition_id"], transition,
+        "{answer}"
+    );
+    let (status, view) = get_as(&rig, &cookie, "review", "/v2/workspaces/platform").await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    let pending = &view["pending_transitions"][0];
+    assert_eq!(pending["transition_id"], transition, "{view}");
+    assert!(pending["proposed_at"].is_string(), "{view}");
+    assert_eq!(pending["proposed_by"]["name"], "alice-review", "{view}");
+}
+
+// ---------------------------------------------------------------------------
+// v0.8.5: Grant read (ADR-0096, the operator's decision of 2026-11-25)
+// ---------------------------------------------------------------------------
+
+/// The shared workspace `team` holding one approved memory, written by a
+/// tenant contributor and approved by a tenant reviewer: the memory's id.
+async fn team_with_an_approved_memory(rig: &Rig) -> (uuid::Uuid, String) {
+    let (status, team) = as_admin(
+        rig,
+        "/v2/workspaces",
+        "team",
+        json!({"name": "team", "parent": "universe"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{team}");
+    let mut values = Vec::new();
+    for (name, role, grants) in [
+        (
+            "team-writer",
+            "submitter",
+            json!([{"workspace": "team", "role": "submitter"}]),
+        ),
+        (
+            "team-reviewer",
+            "reviewer",
+            json!([{"workspace": "team", "role": "reviewer"}, {"workspace": "team", "role": "reader"}]),
+        ),
+    ] {
+        let (status, key) = as_admin(
+            rig,
+            "/v2/keys",
+            &format!("issue-{name}"),
+            json!({"name": name, "role": role, "principal": name, "used_by": "agent", "grants": grants}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{key}");
+        values.push(key["value"].as_str().expect("a value").to_owned());
+    }
+    let id = agent_writes_in(
+        rig,
+        &values[0],
+        Some("team"),
+        "the team deploys on Tuesdays",
+    )
+    .await;
+    rig.app
+        .post_verdict(
+            values[1].as_str(),
+            id,
+            oml_app::types::Verdict::Approve,
+            None,
+        )
+        .await
+        .expect("the team reviewer approves");
+    let team = team["id"]
+        .as_str()
+        .or_else(|| team["workspace_id"].as_str())
+        .expect("the workspace's id")
+        .to_owned();
+    (id, team)
+}
+
+/// Grants `read` on `team` to alice's web session key, as the People
+/// page's Grant read does.
+async fn grant_read_on_team(rig: &Rig) {
+    let (status, granted) = as_admin(
+        rig,
+        "/v2/web/users/alice/capacities",
+        "read-alice-team",
+        json!({"capacity": "read", "workspaces": ["team"]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{granted}");
+    assert_eq!(granted["key"]["name"], "alice-web", "{granted}");
+    assert_eq!(granted["grants_added"][0]["role"], "reader", "{granted}");
+}
+
+/// The read grant lets the web key list the approved items of that
+/// workspace, which it did not list before.
+#[tokio::test]
+async fn the_read_grant_lets_the_web_key_list_the_approved_items_of_that_workspace() {
+    let rig = rig().await;
+    let (id, team) = team_with_an_approved_memory(&rig).await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    // A person's key names a shared workspace by its id: a bare name is
+    // read inside the person's root.
+    let listing = format!("/v1/memories?workspace={team}");
+    let (_, before) = get_as_web(&rig, &cookie, &listing).await;
+    assert!(!before.to_string().contains(&id.to_string()), "{before}");
+    grant_read_on_team(&rig).await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (status, after) = get_as_web(&rig, &cookie, &listing).await;
+    assert_eq!(status, StatusCode::OK, "{after}");
+    assert!(after.to_string().contains(&id.to_string()), "{after}");
+}
+
+/// The read grant gives no reviewer verb: on the workspace the web key
+/// holds only reading verbs, and a verdict from it is refused.
+#[tokio::test]
+async fn the_read_grant_gives_the_web_key_no_reviewer_verb() {
+    let rig = rig().await;
+    let (id, team) = team_with_an_approved_memory(&rig).await;
+    let _first = signed_in(&rig, "sub-1", EMAIL).await;
+    grant_read_on_team(&rig).await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (status, view) = get_as_web(&rig, &cookie, &format!("/v2/workspaces/{team}")).await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    for verb in view["my_effective_verbs"].as_array().expect("verbs") {
+        assert!(
+            matches!(
+                verb.as_str(),
+                Some("recall" | "read" | "graph_read" | "events_tail")
+            ),
+            "{view}"
+        );
+    }
+    let (status, answer) = as_web(
+        &rig,
+        &cookie,
+        "web",
+        "/v2/review/verdicts/bulk",
+        json!({"verdict": "reject", "artifact_ids": [id.to_string()]}),
+    )
+    .await;
+    assert_ne!(
+        answer["items"][0]["outcome"], "rejected",
+        "{status} {answer}"
+    );
 }

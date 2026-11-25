@@ -119,7 +119,11 @@ web:
       pathType: Exact
     - path: /web/admin/workspace
       pathType: Exact
+    - path: /web/admin/fixes
+      pathType: Exact
     - path: /web/workspaces
+      pathType: Exact
+    - path: /web/workspaces/import
       pathType: Exact
     - path: /web/admin/workspaces
       pathType: Exact
@@ -145,9 +149,13 @@ web:
       pathType: Exact
     - path: /web/todo/judge
       pathType: Exact
+    - path: /web/todo/fix
+      pathType: Exact
     - path: /web/admin/todo
       pathType: Exact
     - path: /web/keys
+      pathType: Exact
+    - path: /web/keys/new
       pathType: Exact
     - path: /web/admin/keys
       pathType: Exact

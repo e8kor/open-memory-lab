@@ -22,7 +22,7 @@ class AccountProfileRequest:
     Attributes:
         profile (str):
         overrides (AccountProfileRequestOverrides | Unset): A quota's limit for this account alone: memories,
-            text_bytes, writes_per_month, keys, connections or requests_per_minute.
+            text_bytes, writes_per_month, keys, connections, requests_per_minute or workspaces.
     """
 
     profile: str

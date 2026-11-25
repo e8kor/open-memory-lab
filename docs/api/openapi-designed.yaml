@@ -502,55 +502,6 @@ paths:
         '415': { $ref: 'openapi.yaml#/components/responses/UnsupportedMedia' }
         default: { $ref: 'openapi.yaml#/components/responses/Error' }
 
-  /v2/keys/{key}/rotate:
-    post:
-      tags: [keys]
-      operationId: rotateKey
-      summary: Mint a successor key (new key_id, linked by rotated_from, grants reproduced from the journalled records); the old key enters a bounded grace window, then is revoked.
-      description: 'Requires: admin key role. One journalled act (key.rotated) carries both key ids, the successor''s name and the grace deadline; at the deadline the old key is revoked (journalled, epoch bump). The successor takes its own name (409 name.taken when held), since both keys are live through the grace window, and carries the old key''s crew (ADR-0026 d9). A connector key is not rotated: 422 oauth.connect_refused with details.reason connector_key, because a successor''s value would make it a bearer key; a fresh connection is a new connect code, a fresh identity a new connector key (ADR-0031 d7). Per key in v1; bulk crew rotation is open — #120.'
-      parameters:
-        - { $ref: 'openapi.yaml#/components/parameters/KeyId' }
-        - { $ref: 'openapi.yaml#/components/parameters/IdempotencyKey' }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            example:
-              name: procure-agent-7-r2
-              grace: 72h
-            schema: { $ref: '#/components/schemas/KeyRotateRequest' }
-      responses:
-        '201':
-          description: The successor key, value shown once, rotated_from naming the old key.
-          headers:
-            X-Request-Id: { $ref: 'openapi.yaml#/components/headers/XRequestId' }
-          content:
-            application/json:
-              example:
-                key_id: 080b4bed-308d-48f7-8b3e-90b6f403e2e3
-                name: procure-agent-7-r2
-                role: contributor
-                principal: crew-procure/agent-7
-                crew_id: d10bcbe9-032d-4080-aa0c-cc06f8acd89f
-                default_workspace_id: fbbb41c5-9630-4274-ae53-166f562f5286
-                used_by: agent
-                label: procure agent 7
-                expiry: null
-                revoked_at: null
-                rotated_from: 4b155359-710a-4417-811c-904cc3959fcc
-                grants:
-                - workspace_node_id: fbbb41c5-9630-4274-ae53-166f562f5286
-                  role: submitter
-                  grant_id: gr_01JB2YX3EY5G7J9LN2Q4S6U8W1
-                  epoch: 8
-                denials: []
-                epoch: 8
-                value: oml_9rT2wXq5bD0eG7hJ4kM8vN3pL6sU1yZaC4fQ7xT9mK2
-              schema: { $ref: 'openapi.yaml#/components/schemas/KeyIssued' }
-        '415': { $ref: 'openapi.yaml#/components/responses/UnsupportedMedia' }
-        '422': { $ref: 'openapi.yaml#/components/responses/Unprocessable' }
-        default: { $ref: 'openapi.yaml#/components/responses/Error' }
-
   /v2/keys/{key}/grants:
     post:
       tags: [keys]

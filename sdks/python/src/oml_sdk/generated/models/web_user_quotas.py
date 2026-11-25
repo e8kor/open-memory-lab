@@ -21,6 +21,7 @@ class WebUserQuotas:
         keys (int | Unset):
         connections (int | Unset):
         requests_per_minute (int | Unset):
+        workspaces (int | None | Unset): Null is unlimited, as in the default profile (ADR-0095 d4). Since v0.8.5.
     """
 
     memories: int | Unset = UNSET
@@ -29,6 +30,7 @@ class WebUserQuotas:
     keys: int | Unset = UNSET
     connections: int | Unset = UNSET
     requests_per_minute: int | Unset = UNSET
+    workspaces: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -52,6 +54,12 @@ class WebUserQuotas:
 
         requests_per_minute = self.requests_per_minute
 
+        workspaces: int | None | Unset
+        if isinstance(self.workspaces, Unset):
+            workspaces = UNSET
+        else:
+            workspaces = self.workspaces
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -67,6 +75,8 @@ class WebUserQuotas:
             field_dict["connections"] = connections
         if requests_per_minute is not UNSET:
             field_dict["requests_per_minute"] = requests_per_minute
+        if workspaces is not UNSET:
+            field_dict["workspaces"] = workspaces
 
         return field_dict
 
@@ -99,6 +109,15 @@ class WebUserQuotas:
 
         requests_per_minute = d.pop("requests_per_minute", UNSET)
 
+        def _parse_workspaces(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        workspaces = _parse_workspaces(d.pop("workspaces", UNSET))
+
         web_user_quotas = cls(
             memories=memories,
             text_bytes=text_bytes,
@@ -106,6 +125,7 @@ class WebUserQuotas:
             keys=keys,
             connections=connections,
             requests_per_minute=requests_per_minute,
+            workspaces=workspaces,
         )
 
         web_user_quotas.additional_properties = d

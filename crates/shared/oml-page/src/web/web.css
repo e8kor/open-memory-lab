@@ -423,3 +423,44 @@ header.top.admin .oml-todo-b[aria-current]{box-shadow:inset 0 calc(-1 * var(--st
 .oml-table.cat td.c-meta{font-family:var(--font-mono);font-size:var(--t-meta-size);color:var(--ink-dim);font-variant-ligatures:none}
 .oml-table.cat td.c-state .when{display:block;font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-dim)}
 @media (max-width:479px){.oml-views.kinds{flex-wrap:nowrap;overflow-x:auto;overscroll-behavior-x:contain}.oml-views.kinds a{flex:none}.oml-table.cat,.oml-table.cat tbody{display:block;overflow:visible}.oml-table.cat thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}.oml-table.cat tr{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-1) var(--space-3);margin:0 0 var(--space-3);padding:var(--space-3) var(--space-4);background:var(--ground-alt);border:1px solid var(--rule);border-radius:var(--radius-md)}.oml-table.cat tr:hover td{background:none}.oml-table.cat td{display:block;padding:0;border:0}.oml-table.cat td.c-name{order:1;flex-basis:100%}.oml-table.cat td.c-kind{order:2}.oml-table.cat td.c-ws{order:3}.oml-table.cat td.c-ver{order:4}.oml-table.cat td.c-state{order:5;flex-basis:100%}.oml-table.cat td.c-desc{order:6;flex-basis:100%}.oml-table.cat td.c-when{order:7;flex-basis:100%}.oml-table.cat td.c-state .when{display:inline;margin-left:var(--space-1)}}
+/* v0.8.5 console round (ADR-0096): the key builder, the one-key page, the Fix tab, the import pages */
+.oml-col{display:flex;flex-direction:column;gap:var(--space-4);max-width:var(--card-max);min-width:0}
+.oml-steps{display:flex;flex-wrap:wrap;gap:var(--space-4);margin:0;padding:0;list-style:none;font:var(--t-meta-weight) var(--t-meta-size)/var(--t-meta-line) var(--font-mono);color:var(--ink-dim)}
+.oml-steps li[aria-current]{color:var(--ink);border-bottom:var(--stroke-strong) solid var(--ice)}
+a.oml-choice{display:flex;flex-direction:column;gap:var(--space-1);padding:var(--space-3) var(--space-4);border:1px solid var(--rule);border-radius:var(--radius-md);text-decoration:none;color:var(--ink)}
+a.oml-choice[aria-current]{border-color:var(--ice);box-shadow:inset 0 0 0 1px var(--ice)}
+a.oml-choice:hover{border-color:var(--ice)}
+.oml-radios{display:flex;flex-direction:column;gap:var(--space-2);border:1px solid var(--rule);border-radius:var(--radius-md);padding:var(--space-3);margin:0;min-width:0}
+.oml-radios legend{font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-dim);padding:0 var(--space-1)}
+.oml-radios.oml-grant{gap:var(--space-3)}
+.oml-radios.oml-grant.is-invalid{border-color:var(--error)}
+.oml-prefix{display:flex;align-items:stretch;min-width:0;width:100%}
+.oml-prefix>.p{display:inline-flex;align-items:center;flex:none;padding:0 var(--space-2);font:var(--t-body-dense-weight) var(--t-body-dense-size)/var(--t-body-dense-line) var(--font-mono);color:var(--ink-dim);background:var(--panel);border:1px solid var(--control-border);border-right:0;border-radius:var(--radius-md) 0 0 var(--radius-md);font-variant-ligatures:none}
+.oml-prefix>.oml-input{flex:1 1 0;min-width:0;border-radius:0 var(--radius-md) var(--radius-md) 0}
+.oml-notice{border-left:var(--stroke-strong) solid var(--ice);padding:var(--space-2) var(--space-3);background:var(--panel);border-radius:var(--radius-sm)}
+.oml-notice.err{border-left-color:var(--error);display:flex;flex-direction:column;gap:var(--space-1)}
+.oml-notice.err:focus{outline:var(--stroke-strong) solid var(--focus);outline-offset:var(--space-0\.5)}
+.oml-notice p{margin:0}
+.oml-notice ul{margin:0;padding-left:var(--space-4);font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body)}
+.oml-notice a{color:var(--ink)}
+.oml-select[multiple]{min-height:calc(var(--control-h) * 2.5);padding:var(--space-1) var(--space-2)}
+.oml-select[multiple] option:checked{background:var(--panel);color:var(--ink)}
+.oml-check{display:flex;align-items:flex-start;gap:var(--space-2);min-height:var(--target-min);font:var(--t-body-dense-weight) var(--t-body-dense-size)/var(--t-body-dense-line) var(--font-body);color:var(--ink)}
+/* A check's or radio's label is a sentence beside its box, not a field's caption: it resets
+   the global label rules, a form's column layout among them, at that rule's specificity. */
+label.oml-check,form.oml-form label.oml-check{flex-direction:row;align-items:flex-start;letter-spacing:normal;text-transform:none;font:var(--t-body-dense-weight) var(--t-body-dense-size)/var(--t-body-dense-line) var(--font-body);color:var(--ink)}
+label .desc{font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);letter-spacing:normal;text-transform:none;color:var(--ink-dim)}
+.oml-filterrow.top{display:flex;flex-wrap:wrap;gap:var(--space-3);align-items:flex-start}
+.oml-panel{border:1px solid var(--rule);border-radius:var(--radius-md);padding:var(--space-3) var(--space-4)}
+.oml-panel h2.oml-h3{font:var(--t-heading-weight) var(--t-body-size)/var(--t-heading-line) var(--font-body);margin-top:0}
+.oml-tree{list-style:none;margin:var(--space-3) 0 0;padding:0}
+.oml-tree .n{display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:center}
+.oml-tree .d2{padding-left:var(--space-4)}.oml-tree .d3{padding-left:var(--space-8)}.oml-tree .d4{padding-left:var(--space-12)}.oml-tree .d5,.oml-tree .d6{padding-left:var(--space-16)}
+.oml-tree .n.off .name{color:var(--ink-faint)}
+.oml-tree .n .oml-tag{font:var(--t-meta-weight) var(--t-meta-size)/var(--t-meta-line) var(--font-mono);color:var(--ink-dim);border:1px solid var(--rule);border-radius:var(--radius-pill);padding:0 var(--space-2)}
+.oml-table td.c-meta.prose .oml-mono{font-size:var(--t-meta-size)}
+/* A grant's role is one word: it never breaks, at 390px either (the one-key page, ADR-0096 d4). */
+.oml-table td.c-grant{white-space:nowrap}
+.oml-usage meter,section#usage meter{width:100%;min-width:var(--space-16)}
+button.danger{border:var(--stroke-strong) solid var(--error);color:var(--error)}
+@container (max-width:479px){.oml-table td.c-act{order:5;flex-basis:100%}}

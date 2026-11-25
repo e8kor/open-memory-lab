@@ -8,9 +8,9 @@
 use serde_json::json;
 use uuid::Uuid;
 
-use oml_domain::{Role, event_types};
+use oml_domain::event_types;
 
-use super::{App, require_role};
+use super::App;
 use crate::ports::{Clock, IdGen, JournalStore, MetadataFold, Scanner, Signer};
 use crate::types::{AppError, Bearer, Investigation, KeyRecord};
 
@@ -41,8 +41,7 @@ where
         bearer: impl Into<Bearer<'_>>,
         reason: &str,
     ) -> Result<Investigation, AppError> {
-        let admin = self.authenticate_bearer(bearer.into()).await?.key;
-        require_role(&admin, Role::Admin, "investigate")?;
+        let admin = self.admin_caller(bearer.into(), "investigate").await?.key;
         let reason = reason.trim();
         if reason.is_empty() || reason.len() > INVESTIGATION_REASON_MAX_BYTES {
             return Err(AppError::AdminField {
@@ -100,8 +99,7 @@ where
         bearer: impl Into<Bearer<'_>>,
         investigation_id: Uuid,
     ) -> Result<Investigation, AppError> {
-        let admin = self.authenticate_bearer(bearer.into()).await?.key;
-        require_role(&admin, Role::Admin, "investigate")?;
+        let admin = self.admin_caller(bearer.into(), "investigate").await?.key;
         let found = self
             .journal
             .investigation(admin.tenant_id, investigation_id)
@@ -147,8 +145,7 @@ where
         bearer: impl Into<Bearer<'_>>,
         open: bool,
     ) -> Result<Vec<Investigation>, AppError> {
-        let admin = self.authenticate_bearer(bearer.into()).await?.key;
-        require_role(&admin, Role::Admin, "investigate")?;
+        let admin = self.admin_caller(bearer.into(), "investigate").await?.key;
         let all = self
             .journal
             .investigations(admin.tenant_id, Some(admin.key_id), open)

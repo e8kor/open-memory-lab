@@ -327,6 +327,21 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         )
     }
 
+    fn imports_of_keys(
+        &self,
+        tenant_id: Uuid,
+        key_ids: &[Uuid],
+        state: Option<oml_app::domain::import::ImportState>,
+        before: Option<(&EventTime, Uuid)>,
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<oml_app::types::ImportRecord>, StoreError>> + Send {
+        timed(
+            "imports_of_keys",
+            self.inner
+                .imports_of_keys(tenant_id, key_ids, state, before, limit),
+        )
+    }
+
     fn import_stats(
         &self,
         tenant_id: Uuid,
@@ -496,6 +511,21 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         timed(
             "brief_edges",
             self.inner.brief_edges(tenant_id, workspace_id),
+        )
+    }
+
+    fn pending_brief_edges(
+        &self,
+        tenant_id: Uuid,
+        workspace_ids: &[Uuid],
+        ratifier: (Uuid, &str),
+        after: Option<(&EventTime, Uuid)>,
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<BriefEdgeRecord>, StoreError>> + Send {
+        timed(
+            "pending_brief_edges",
+            self.inner
+                .pending_brief_edges(tenant_id, workspace_ids, ratifier, after, limit),
         )
     }
 
@@ -1049,6 +1079,27 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         key_hash: &str,
     ) -> impl Future<Output = Result<Option<KeyRecord>, StoreError>> + Send {
         timed("key_by_hash", self.inner.key_by_hash(key_hash))
+    }
+
+    fn key_by_previous_hash(
+        &self,
+        key_hash: &str,
+    ) -> impl Future<Output = Result<Option<(KeyRecord, EventTime)>, StoreError>> + Send {
+        timed(
+            "key_by_previous_hash",
+            self.inner.key_by_previous_hash(key_hash),
+        )
+    }
+
+    fn key_previous_valid_until(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+    ) -> impl Future<Output = Result<Option<EventTime>, StoreError>> + Send {
+        timed(
+            "key_previous_valid_until",
+            self.inner.key_previous_valid_until(tenant_id, key_id),
+        )
     }
 
     fn key_access(

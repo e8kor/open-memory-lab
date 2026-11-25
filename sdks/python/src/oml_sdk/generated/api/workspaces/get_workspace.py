@@ -85,8 +85,11 @@ def sync_detailed(
     (ordered by edge_id) outside read access are absent; my_effective_verbs is the union over the grant
     roles effective on the node (the effective-verbs table in docs/architecture/roles-and-keys.md), with
     remember for a person's session reviewer key where it holds reviewer and reader outside its person's
-    own root (ADR-0082 d11, d10); permission_epoch is the calling key's permission epoch as declared in
-    docs/architecture/workspaces.md (ADR-0025 d14). One call carries all of it.
+    own root (ADR-0082 d11, d10), create_workspace for a contributor key that names a user on a node
+    inside that user's root where it holds submitter, and propose_brief for a contributor key holding
+    submitter or a reviewer key holding reviewer (ADR-0095 d8; since v0.8.5); permission_epoch is the
+    calling key's permission epoch as declared in docs/architecture/workspaces.md (ADR-0025 d14). One
+    call carries all of it.
 
     Args:
         workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
@@ -139,8 +142,11 @@ def sync(
     (ordered by edge_id) outside read access are absent; my_effective_verbs is the union over the grant
     roles effective on the node (the effective-verbs table in docs/architecture/roles-and-keys.md), with
     remember for a person's session reviewer key where it holds reviewer and reader outside its person's
-    own root (ADR-0082 d11, d10); permission_epoch is the calling key's permission epoch as declared in
-    docs/architecture/workspaces.md (ADR-0025 d14). One call carries all of it.
+    own root (ADR-0082 d11, d10), create_workspace for a contributor key that names a user on a node
+    inside that user's root where it holds submitter, and propose_brief for a contributor key holding
+    submitter or a reviewer key holding reviewer (ADR-0095 d8; since v0.8.5); permission_epoch is the
+    calling key's permission epoch as declared in docs/architecture/workspaces.md (ADR-0025 d14). One
+    call carries all of it.
 
     Args:
         workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
@@ -188,8 +194,11 @@ async def asyncio_detailed(
     (ordered by edge_id) outside read access are absent; my_effective_verbs is the union over the grant
     roles effective on the node (the effective-verbs table in docs/architecture/roles-and-keys.md), with
     remember for a person's session reviewer key where it holds reviewer and reader outside its person's
-    own root (ADR-0082 d11, d10); permission_epoch is the calling key's permission epoch as declared in
-    docs/architecture/workspaces.md (ADR-0025 d14). One call carries all of it.
+    own root (ADR-0082 d11, d10), create_workspace for a contributor key that names a user on a node
+    inside that user's root where it holds submitter, and propose_brief for a contributor key holding
+    submitter or a reviewer key holding reviewer (ADR-0095 d8; since v0.8.5); permission_epoch is the
+    calling key's permission epoch as declared in docs/architecture/workspaces.md (ADR-0025 d14). One
+    call carries all of it.
 
     Args:
         workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
@@ -240,8 +249,11 @@ async def asyncio(
     (ordered by edge_id) outside read access are absent; my_effective_verbs is the union over the grant
     roles effective on the node (the effective-verbs table in docs/architecture/roles-and-keys.md), with
     remember for a person's session reviewer key where it holds reviewer and reader outside its person's
-    own root (ADR-0082 d11, d10); permission_epoch is the calling key's permission epoch as declared in
-    docs/architecture/workspaces.md (ADR-0025 d14). One call carries all of it.
+    own root (ADR-0082 d11, d10), create_workspace for a contributor key that names a user on a node
+    inside that user's root where it holds submitter, and propose_brief for a contributor key holding
+    submitter or a reviewer key holding reviewer (ADR-0095 d8; since v0.8.5); permission_epoch is the
+    calling key's permission epoch as declared in docs/architecture/workspaces.md (ADR-0025 d14). One
+    call carries all of it.
 
     Args:
         workspace (str): A workspace, by its node id, its name or its qualified name. Resolved

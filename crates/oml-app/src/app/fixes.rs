@@ -25,7 +25,7 @@ use oml_domain::{
 
 use super::{
     App, claim_review_policy, commit_request, guardrail_fields, guardrail_payload, kind_fields,
-    nfc, require_role, valid_time, with_format_fields, with_kind_fields, with_valid_time,
+    nfc, valid_time, with_format_fields, with_kind_fields, with_valid_time,
 };
 use crate::ports::{
     AdmissionEnvelope, Clock, CommitRequest, IdGen, JournalStore, MetadataFold, ScanOutcome,
@@ -107,8 +107,7 @@ where
         bearer: impl Into<Bearer<'_>>,
         memory_id: Uuid,
     ) -> Result<Demotion, AppError> {
-        let admin = self.authenticate_bearer(bearer.into()).await?.key;
-        require_role(&admin, Role::Admin, "demote")?;
+        let admin = self.admin_caller(bearer.into(), "demote").await?.key;
         let planned = self.plan_demotion(&admin, memory_id, None).await?;
         self.commit_requests(vec![commit_request(planned.event, planned.fold, None)])
             .await?;
@@ -225,8 +224,7 @@ where
         bearer: impl Into<Bearer<'_>>,
         memory_id: Uuid,
     ) -> Result<Erasure, AppError> {
-        let admin = self.authenticate_bearer(bearer.into()).await?.key;
-        require_role(&admin, Role::Admin, "erase")?;
+        let admin = self.admin_caller(bearer.into(), "erase").await?.key;
         let (event, fold, erasure, _) = self.plan_erasure(&admin, memory_id, None).await?;
         self.commit_requests(vec![commit_request(event, fold, None)])
             .await?;
@@ -417,8 +415,7 @@ where
         bearer: impl Into<Bearer<'_>>,
         req: &FixRequest,
     ) -> Result<FixRecord, AppError> {
-        let admin = self.authenticate_bearer(bearer.into()).await?.key;
-        require_role(&admin, Role::Admin, "fix")?;
+        let admin = self.admin_caller(bearer.into(), "fix").await?.key;
         if admin.used_by != UsedBy::Person {
             return Err(AppError::FixRequiresPerson {
                 reason: "not_used_by_person",
@@ -987,8 +984,7 @@ where
         bearer: impl Into<Bearer<'_>>,
         unconfirmed_only: bool,
     ) -> Result<Vec<FixRecord>, AppError> {
-        let admin = self.authenticate_bearer(bearer.into()).await?.key;
-        require_role(&admin, Role::Admin, "fix")?;
+        let admin = self.admin_caller(bearer.into(), "fix").await?.key;
         Ok(self
             .journal
             .fixes(admin.tenant_id, unconfirmed_only)
@@ -1694,8 +1690,7 @@ where
         &self,
         bearer: impl Into<Bearer<'_>>,
     ) -> Result<FixStats, AppError> {
-        let admin = self.authenticate_bearer(bearer.into()).await?.key;
-        require_role(&admin, Role::Admin, "rescan")?;
+        let admin = self.admin_caller(bearer.into(), "rescan").await?.key;
         self.fix_stats(admin.tenant_id).await
     }
 }

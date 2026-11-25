@@ -36,8 +36,8 @@ use axum::extract::{Form, State};
 use axum::response::Response;
 use http::{StatusCode, Uri};
 use oml_page::web::{
-    ADMIN_TODO_PATH, Bar, TODO_JUDGE_PATH, TODO_PATH, USER_MEMORIES_PATH, attr, form, hidden,
-    input, select, shell, short, text,
+    ADMIN_MEMORIES_PATH, ADMIN_TODO_PATH, Bar, TODO_JUDGE_PATH, TODO_PATH, USER_MEMORIES_PATH,
+    attr, form, hidden, input, select, shell, short, text,
 };
 use oml_sdk::{HeldItem, HeldPage, LinkedKey, Memory, encode};
 
@@ -58,7 +58,14 @@ pub const TODO_PAGE: u32 = 200;
 const OWN_KEYS_PAGE: u32 = 200;
 
 /// To do's one act, Next (ADR-0083 d11, d14).
-pub const TODO_ACTIONS: &[&str] = &["next"];
+pub const TODO_ACTIONS: &[&str] = &["next", "ratify"];
+
+/// One admin fix's page below To do, where a person confirms or reverts
+/// it (ADR-0089 d8, d15; ADR-0096 P14).
+pub const TODO_FIX_PATH: &str = "/web/todo/fix";
+
+/// The fix page's acts.
+pub const FIX_ACTIONS: &[&str] = &["confirm", "revert"];
 
 /// Judge's one act, the verdict (ADR-0083 d2).
 pub const JUDGE_ACTIONS: &[&str] = &["judge"];
@@ -100,6 +107,19 @@ fn notice(fields: &Fields) -> Option<String> {
             ))
         }
         "empty" => Some("Nothing waits for this account.".to_owned()),
+        "ratified" => Some("Ratified: the memory joins the brief.".to_owned()),
+        "fix_confirmed" => Some(
+            "Confirmed: the version the fix serves reads confirmed from now on.".to_owned(),
+        ),
+        "fix_reverted" => Some(
+            "Reverted: the text the fix took out of service returns as a new version this account approved.".to_owned(),
+        ),
+        "fix_confirmed_same_user" => Some(
+            "Confirmed, marked same user: the person the admin acted for settled it in their own root.".to_owned(),
+        ),
+        "fix_reverted_same_user" => Some(
+            "Reverted, marked same user: the person the admin acted for settled it in their own root.".to_owned(),
+        ),
         _ => None,
     }
 }
@@ -408,9 +428,11 @@ async fn todo_body(
     browse: Option<&Browse>,
 ) -> Result<String, Refusal> {
     let cursor = fields.given("cursor");
-    let (read, counted) = tokio::join!(
+    let (read, counted, briefs, fixes) = tokio::join!(
         listing(ctx, &chosen, TODO_PAGE, cursor),
-        group_count(ctx, &chosen)
+        group_count(ctx, &chosen),
+        brief_proposals(ctx, &chosen),
+        review_fixes(ctx, &chosen)
     );
     let read = read.map_err(|e| Box::new(outcome::page(&e, ctx.calls, TODO_PATH)))?;
     let roots = ctx
@@ -499,12 +521,45 @@ async fn todo_body(
         // The field's refusal stands in for the groups.
         return Ok(body);
     }
+    let briefs_section = briefs.as_ref().map(|b| brief_group(ctx, b));
+    // Admin fixes to confirm, after To review (TodoScreen, v0.8.5).
+    let fixes_section = fixes.as_deref().map(fix_group);
+    let after_review = |body: &mut String| {
+        let mut nothing = Vec::new();
+        for (section, title) in [
+            (&fixes_section, "Admin fixes to confirm"),
+            (&briefs_section, "Brief proposals to ratify"),
+        ] {
+            match section {
+                Some(Some(section)) => body.push_str(section),
+                Some(None) => nothing.push(title),
+                None => {}
+            }
+        }
+        if !nothing.is_empty() {
+            let _ = write!(
+                body,
+                r#"<p class="desc">Nothing waits in {}.</p>"#,
+                nothing.join(" or ")
+            );
+        }
+    };
+    let others_wait =
+        matches!(fixes_section, Some(Some(_))) || matches!(briefs_section, Some(Some(_)));
     if page.items.is_empty() && cursor.is_none() {
-        let _ = write!(
-            body,
-            r#"<div class="oml-empty"><p>Nothing waits for this account.</p><p class="desc">Held writes of other keys that {} may judge appear here. This account's own writes and their state are under <a href="{USER_MEMORIES_PATH}?view=submitted">Memories, Submitted</a>.</p></div>"#,
-            code(&reviewer)
-        );
+        match others_wait {
+            true => {
+                body.push_str(r#"<p class="desc">Nothing waits in To review.</p>"#);
+                after_review(&mut body);
+            }
+            false => {
+                let _ = write!(
+                    body,
+                    r#"<div class="oml-empty"><p>Nothing waits for this account.</p><p class="desc">Held writes of other keys that {} may judge, admin fixes it may confirm or revert, and brief proposals it may ratify, appear here. This account's own writes and their state are under <a href="{USER_MEMORIES_PATH}?view=submitted">Memories, Submitted</a>.</p></div>"#,
+                    code(&reviewer)
+                );
+            }
+        }
         return Ok(body);
     }
     let shown = shown_count(counted, &page).map_or_else(String::new, |n| format!(" · {n}"));
@@ -529,7 +584,325 @@ async fn todo_body(
         );
     }
     body.push_str("</section>");
+    after_review(&mut body);
     Ok(body)
+}
+
+/// The unconfirmed admin fixes `<user>-review` may settle, `GET
+/// /v2/review/fixes` (ADR-0089 d15), under the filter: a fix serves its
+/// workspace's id alone, so a filter by name is read once as the
+/// workspace's id, `GET /v2/workspaces/{workspace}`. `None` where the page
+/// judges as a linked key, or a read fails, which the group then leaves
+/// out.
+async fn review_fixes(ctx: &Ctx<'_>, chosen: &Chosen) -> Option<Vec<oml_sdk::Fix>> {
+    if ctx.acting.is_some() {
+        return None;
+    }
+    let credential = ctx.session.credential(Capacity::Review);
+    let workspace = match chosen.value() {
+        None => None,
+        Some(w) if is_id(w) => Some(w.to_owned()),
+        Some(name) => {
+            let ids = ctx.calls.next_ids();
+            let view = ctx
+                .web
+                .api
+                .workspace(&call(&credential, &ids), name)
+                .await
+                .ok()?;
+            Some(view.id)
+        }
+    };
+    let ids = ctx.calls.next_ids();
+    let fixes = ctx
+        .web
+        .api
+        .review_fixes(&call(&credential, &ids))
+        .await
+        .ok()?;
+    Some(match workspace {
+        Some(w) => fixes.into_iter().filter(|f| f.workspace_id == w).collect(),
+        None => fixes,
+    })
+}
+
+/// The group "Admin fixes to confirm" (TodoScreen P13): the act, the
+/// claim key, `unconfirmed`, `alert` where it loosens a guardrail, the
+/// reason and the wait, and **Confirm or revert**, which opens the fix's
+/// page. The admin is never named. `None` when nothing waits.
+fn fix_group(fixes: &[oml_sdk::Fix]) -> Option<String> {
+    if fixes.is_empty() {
+        return None;
+    }
+    let mut out = format!(
+        r#"<section class="oml-todo-g" aria-labelledby="todo-fixes"><h2 id="todo-fixes">Admin fixes to confirm · {}</h2><p class="desc">Break-glass changes an admin made where this account reviews; each stays marked until a person confirms or reverts it.</p><ul class="oml-todo">"#,
+        fixes.len()
+    );
+    for f in fixes {
+        let _ = write!(
+            out,
+            r#"<li><span class="oml-decision">{}</span> {} · <span class="oml-chip is-adminfix">unconfirmed</span>{} · {} · fixed {} · <a class="button" href="{TODO_FIX_PATH}?id={}">{}</a></li>"#,
+            text(&f.act),
+            code(&f.claim_key),
+            if f.loosens_guardrail { " · alert" } else { "" },
+            text(&f.reason),
+            instant(&f.fixed_at),
+            attr(&encode(&f.fix_id)),
+            settle_label(&f.acts)
+        );
+    }
+    out.push_str("</ul></section>");
+    Some(out)
+}
+
+/// The fix's link as the served `acts` name it, never computed here
+/// (ADR-0096 d5): **Confirm or revert**, **Confirm** for an erasure, and
+/// **Open** where this account is served no act.
+fn settle_label(acts: &[String]) -> &'static str {
+    let may = |a: &str| acts.iter().any(|x| x == a);
+    match (may("confirm"), may("revert")) {
+        (true, true) => "Confirm or revert",
+        (true, false) => "Confirm",
+        (false, true) => "Revert",
+        (false, false) => "Open",
+    }
+}
+
+/// The sentence saying what this account may do with a fix, read off the
+/// served `acts` (ADR-0096 d5).
+fn may_settle(acts: &[String]) -> &'static str {
+    match settle_label(acts) {
+        "Confirm or revert" => "This account may confirm or revert it.",
+        "Confirm" => "This account may confirm it; an erasure is not reverted.",
+        "Revert" => "This account may revert it.",
+        _ => "",
+    }
+}
+
+/// What a fix's act does once settled, for its confirmation.
+fn settles(act: &str, fix: &oml_sdk::Fix) -> &'static str {
+    match (act, fix.act.as_str()) {
+        ("revert", _) => {
+            "The text the fix took out of service returns as a new version, derived from it and approved by this account's verdict."
+        }
+        (_, "erase") => "The erasure stands, and the mark reads confirmed.",
+        _ => "The version the fix serves stays served and reads confirmed from now on.",
+    }
+}
+
+/// `GET /web/todo/fix?id=` (P14): the fix as `<user>-review` reads it,
+/// with the replaced version's number from the target card's read, and
+/// **Confirm** and **Revert** as `acts` serves them, each confirmed on
+/// `act=` before its one POST; served no act, one line why.
+pub async fn fix_page(
+    State(web): State<Web>,
+    Extension(session): Extension<Session>,
+    Extension(calls): Extension<Arc<PageCalls>>,
+    uri: Uri,
+) -> Response {
+    let fields = match Fields::of(&uri) {
+        Ok(fields) => fields,
+        Err(message) => return acts::invalid(&message, &calls),
+    };
+    let Some(id) = fields.given("id").filter(|id| is_id(id)) else {
+        return acts::invalid("id is an admin fix's id", &calls);
+    };
+    let credential = session.credential(Capacity::Review);
+    let ids = calls.next_ids();
+    let fixes = match web.api.review_fixes(&call(&credential, &ids)).await {
+        Ok(fixes) => fixes,
+        Err(e) => return outcome::page(&e, &calls, TODO_PATH),
+    };
+    let Some(fix) = fixes.into_iter().find(|f| f.fix_id == id) else {
+        return refused(
+            StatusCode::NOT_FOUND,
+            "access.not_found",
+            "no unconfirmed admin fix with that id waits for this account",
+            &calls,
+        );
+    };
+    let ids = calls.next_ids();
+    let target = web
+        .api
+        .get_memory(&call(&credential, &ids), &fix.target_artifact_id)
+        .await
+        .ok();
+    let version = target
+        .as_ref()
+        .map_or_else(String::new, |m| format!(" v{}", m.version));
+    let mut body = format!(
+        r#"<nav class="crumbs" aria-label="Breadcrumb">Personal / <a href="{TODO_PATH}">To do</a> / Admin fix</nav><h1>Admin fix</h1><div class="oml-card"><p><span class="oml-decision">{}</span> {}{version} · <span class="oml-chip is-adminfix">unconfirmed</span>{}</p><p>{}</p><p class="desc">Fixed {}{}.</p></div>"#,
+        text(&fix.act),
+        code(&fix.claim_key),
+        if fix.loosens_guardrail {
+            " · alert: it loosens a guardrail"
+        } else {
+            ""
+        },
+        text(&fix.reason),
+        instant(&fix.fixed_at),
+        target
+            .as_ref()
+            .and_then(|m| m.workspace_path.as_deref())
+            .map_or_else(String::new, |w| format!(" in {}", code(w)))
+    );
+    if fix.acts.is_empty() {
+        body.push_str(r#"<p class="desc">No act: this account is the person the admin acted for, and the fix lies outside this account's root, or in a protected or frozen workspace, or in a release, so another person confirms or reverts it.</p>"#);
+    } else if let Some(act) = fields
+        .given("act")
+        .filter(|a| fix.acts.iter().any(|x| x == a))
+    {
+        let word = if act == "revert" { "Revert" } else { "Confirm" };
+        let _ = write!(
+            body,
+            r#"<h2>{word} the fix?</h2><p class="desc">{} The settlement is journalled under {}.</p>{}<p><a href="{TODO_FIX_PATH}?id={}">Keep it waiting</a></p>"#,
+            settles(act, &fix),
+            code(&format!(
+                "{}-review",
+                session
+                    .whoami
+                    .user
+                    .as_ref()
+                    .map_or("the", |u| u.name.as_str())
+            )),
+            form(
+                TODO_FIX_PATH,
+                act,
+                &session.csrf(),
+                &format!("{}{}", hidden("fix_id", &fix.fix_id), acts::nonce_field()),
+                word,
+                true
+            ),
+            attr(&encode(&fix.fix_id))
+        );
+    } else {
+        let _ = write!(body, r#"<p class="desc">{}</p>"#, may_settle(&fix.acts));
+        body.push_str("<p>");
+        for act in &fix.acts {
+            let _ = write!(
+                body,
+                r#"<a class="button" href="{TODO_FIX_PATH}?id={}&amp;act={}">{}</a> "#,
+                attr(&encode(&fix.fix_id)),
+                attr(act),
+                if act == "revert" { "Revert" } else { "Confirm" }
+            );
+        }
+        body.push_str("</p>");
+    }
+    outcome::html(
+        StatusCode::OK,
+        shell("Admin fix", &session.personal(), TODO_PATH, None, &body),
+    )
+}
+
+/// `POST /web/todo/fix`: `POST /v2/review/fixes/{id}/confirm` or
+/// `/revert` as `<user>-review` (ADR-0089 d15), and back to To do with its
+/// notice; a refusal is drawn with its code beside its sentence.
+pub async fn fix_act(
+    State(web): State<Web>,
+    Extension(session): Extension<Session>,
+    Extension(calls): Extension<Arc<PageCalls>>,
+    form_sent: Result<Form<Vec<(String, String)>>, FormRejection>,
+) -> Response {
+    let (fields, action) = match acts::read(form_sent, FIX_ACTIONS, |_, n| n == "fix_id", &calls) {
+        Ok(read) => read,
+        Err(refusal) => return *refusal,
+    };
+    let Some(fix) = fields.given("fix_id").filter(|id| is_id(id)) else {
+        return acts::invalid("fix_id is an admin fix's id", &calls);
+    };
+    let key = match acts::key(&session, &fields, &calls) {
+        Ok(key) => key,
+        Err(refusal) => return *refusal,
+    };
+    let _in_flight = acts::hold(&key).await;
+    let credential = session.credential(Capacity::Review);
+    let ids = calls.next_ids();
+    let revert = action == "revert";
+    match web
+        .api
+        .settle_fix(&call(&credential, &ids), &key, fix, revert)
+        .await
+    {
+        Ok(settled) => {
+            // The server records whether the admin's own person settled
+            // it; the notice reads that, never a rule of its own.
+            let same_user = settled.get("same_user") == Some(&serde_json::Value::Bool(true));
+            let done = match (revert, same_user) {
+                (true, true) => "fix_reverted_same_user",
+                (true, false) => "fix_reverted",
+                (false, true) => "fix_confirmed_same_user",
+                (false, false) => "fix_confirmed",
+            };
+            acts::see_other(&format!("{TODO_PATH}?done={done}"), &[])
+        }
+        Err(e) => outcome::page(&e, &calls, TODO_FIX_PATH),
+    }
+}
+
+/// The brief proposals `<user>-review` may ratify, under the filter
+/// (ADR-0096 d7): `None` where the page judges as a linked key, which this
+/// group does not serve, or where the read fails, which the group then
+/// leaves out.
+async fn brief_proposals(ctx: &Ctx<'_>, chosen: &Chosen) -> Option<oml_sdk::BriefProposalPage> {
+    if ctx.acting.is_some() {
+        return None;
+    }
+    let credential = ctx.session.credential(Capacity::Review);
+    let ids = ctx.calls.next_ids();
+    ctx.web
+        .api
+        .brief_proposals(&call(&credential, &ids), chosen.value())
+        .await
+        .ok()
+}
+
+/// The group "Brief proposals to ratify", after To review (ADR-0096 d7):
+/// each row's claim, workspace, proposer and `same user`, and **Ratify**,
+/// which asks for confirmation first. `None` when nothing waits.
+fn brief_group(ctx: &Ctx<'_>, page: &oml_sdk::BriefProposalPage) -> Option<String> {
+    if page.items.is_empty() {
+        return None;
+    }
+    let reviewer = ctx.reviewer();
+    let mut out = format!(
+        r#"<section class="oml-todo-g" aria-labelledby="todo-briefs"><h2 id="todo-briefs">Brief proposals to ratify · {}{}</h2><p class="desc">Memories other keys proposed for a workspace's brief, which {} may ratify, oldest first. A proposal by this key, or under its principal, is never listed.</p><ul class="oml-todo">"#,
+        page.items.len(),
+        if page.next_cursor.is_some() { "+" } else { "" },
+        code(&reviewer)
+    );
+    let csrf = ctx.session.csrf();
+    for p in &page.items {
+        let title = p
+            .title
+            .as_deref()
+            .or(p.claim_key.as_deref())
+            .unwrap_or(p.artifact_id.as_str());
+        let _ = write!(
+            out,
+            r#"<li><span class="oml-decision">Brief</span> {} · into {} · proposed by {}{} · {} {}</li>"#,
+            text(title),
+            code(p.workspace.name.as_deref().unwrap_or(&p.workspace.id)),
+            code(p.proposed_by.name.as_deref().unwrap_or(&p.proposed_by.id)),
+            if p.same_user { " · same user" } else { "" },
+            instant(&p.proposed_at),
+            form(
+                TODO_PATH,
+                "ratify",
+                &csrf,
+                &format!(
+                    "{}{}{}",
+                    hidden("edge_id", &p.edge_id),
+                    hidden("title", title),
+                    acts::nonce_field()
+                ),
+                "Ratify",
+                false
+            )
+        );
+    }
+    out.push_str("</ul></section>");
+    Some(out)
 }
 
 fn personal(session: &Session) -> Bar {
@@ -585,6 +958,7 @@ pub async fn user_page(
 fn defined(action: &str, name: &str) -> bool {
     match action {
         "next" => matches!(name, "workspace" | "as" | "after"),
+        "ratify" => matches!(name, "edge_id" | "title" | "confirm"),
         "judge" => matches!(name, "artifact_id" | "verdict" | "reason" | "as"),
         _ => false,
     }
@@ -610,10 +984,13 @@ pub async fn user_act(
     Extension(calls): Extension<Arc<PageCalls>>,
     form: Result<Form<Vec<(String, String)>>, FormRejection>,
 ) -> Response {
-    let (fields, _) = match acts::read(form, TODO_ACTIONS, defined, &calls) {
+    let (fields, action) = match acts::read(form, TODO_ACTIONS, defined, &calls) {
         Ok(read) => read,
         Err(refusal) => return *refusal,
     };
+    if action == "ratify" {
+        return ratify(&web, &session, &calls, &fields).await;
+    }
     let acting = match fields.given("as") {
         None => None,
         Some(id) if is_id(id) => Some(id),
@@ -697,6 +1074,59 @@ pub async fn user_act(
                 &[],
             )
         }
+    }
+}
+
+/// **Ratify** (ADR-0096 d7): a confirmation first, then `POST
+/// /v2/edges/{id}/ratify` as `<user>-review`, and back to To do.
+async fn ratify(web: &Web, session: &Session, calls: &PageCalls, fields: &Fields) -> Response {
+    let Some(edge) = fields.given("edge_id").filter(|id| is_id(id)) else {
+        return acts::invalid("edge_id is a brief proposal's id", calls);
+    };
+    let title = fields.given("title").unwrap_or(edge);
+    if fields.given("confirm") != Some("yes") {
+        let reviewer = session.whoami.user.as_ref().map_or_else(
+            || "the reviewer key".to_owned(),
+            |u| format!("{}-review", u.name),
+        );
+        let body = format!(
+            r#"<h1>Ratify the brief proposal?</h1><p class="desc">{} joins the brief, ratified by {}. An agent is served the brief up to its budget.</p>{}<p><a href="{TODO_PATH}">Keep it waiting</a></p>"#,
+            text(title),
+            code(&reviewer),
+            form(
+                TODO_PATH,
+                "ratify",
+                &session.csrf(),
+                &format!(
+                    "{}{}{}{}",
+                    hidden("edge_id", edge),
+                    hidden("title", title),
+                    hidden("confirm", "yes"),
+                    acts::nonce_field()
+                ),
+                "Ratify",
+                true
+            )
+        );
+        return outcome::html(
+            StatusCode::OK,
+            shell("Confirm", &session.personal(), TODO_PATH, None, &body),
+        );
+    }
+    let key = match acts::key(session, fields, calls) {
+        Ok(key) => key,
+        Err(refusal) => return *refusal,
+    };
+    let _in_flight = acts::hold(&key).await;
+    let credential = session.credential(Capacity::Review);
+    let ids = calls.next_ids();
+    match web
+        .api
+        .ratify_edge(&call(&credential, &ids), &key, edge)
+        .await
+    {
+        Ok(_) => acts::see_other(&format!("{TODO_PATH}?done=ratified"), &[]),
+        Err(e) => outcome::page(&e, calls, TODO_PATH),
     }
 }
 
@@ -1053,11 +1483,13 @@ pub async fn judge_act(
 // Administration
 // ---------------------------------------------------------------------
 
-/// `GET /web/admin/todo`: the administration To do. Its groups (unconfirmed
-/// admin fixes, guardrail-loosening alerts, open investigations) join with
-/// ADR-0089's acts; until then it says nothing waits, and it never draws a
-/// verdict, a confirmation or a ratification (ADR-0083 d11, d14).
+/// `GET /web/admin/todo`: the administration To do (ADR-0083 d11; ADR-0096
+/// d5, d7): the tenant's fixes no person has confirmed or reverted, the
+/// guardrail-loosening alerts among them, and the open investigations,
+/// each row opening the admin page where it is handled. No row offers a
+/// verdict, a confirmation or a ratification: those are a person's acts.
 pub async fn admin_page(
+    State(web): State<Web>,
     Extension(session): Extension<Session>,
     Extension(calls): Extension<Arc<PageCalls>>,
 ) -> Response {
@@ -1073,10 +1505,103 @@ pub async fn admin_page(
         || "the admin key".to_owned(),
         |u| format!("{}-admin", u.name),
     );
-    let body = format!(
-        r#"<header class="oml-section-head"><div class="top"><h1>To do</h1></div><p class="desc">What waits for {}, oldest first in each group. Verdicts, confirmations and ratifications are a person's acts, on the Personal side.</p></header><div class="oml-empty"><p>Nothing waits for this account.</p></div>"#,
+    let credential = session.credential(Capacity::Admin);
+    let (fix_ids, investigation_ids) = (calls.next_ids(), calls.next_ids());
+    let (fix_call, investigation_call) = (
+        call(&credential, &fix_ids),
+        call(&credential, &investigation_ids),
+    );
+    let (fixes, investigations) = tokio::join!(
+        web.api.admin_fixes(&fix_call),
+        web.api.investigations(&investigation_call)
+    );
+    let fixes = match fixes {
+        Ok(fixes) => fixes,
+        Err(e) => return outcome::page(&e, &calls, ADMIN_TODO_PATH),
+    };
+    let investigations = match investigations {
+        Ok(open) => open,
+        Err(e) => return outcome::page(&e, &calls, ADMIN_TODO_PATH),
+    };
+    let mut body = format!(
+        r#"<header class="oml-section-head"><div class="top"><h1>To do</h1></div><p class="desc">What waits for {}, oldest first in each group. Verdicts, confirmations and ratifications are a person's acts, on the Personal side.</p></header>"#,
         code(&admin)
     );
+    let row = |f: &oml_sdk::AdminFix| {
+        format!(
+            r#"<li><span class="oml-decision">{}</span> {} · <span class="oml-chip is-adminfix">unconfirmed</span> · {}{} · fixed {} · waits for a person with reviewer on the workspace · <a href="{}?workspace={}&amp;view=fix">Open</a></li>"#,
+            text(&f.act),
+            code(&f.claim_key),
+            text(&f.reason),
+            if f.loosens_guardrail { " · alert" } else { "" },
+            instant(&f.fixed_at),
+            crate::workspace::ADMIN_WORKSPACE_PATH,
+            attr(&encode(&f.workspace_id))
+        )
+    };
+    let (alerts, plain): (Vec<_>, Vec<_>) = fixes.iter().partition(|f| f.loosens_guardrail);
+    // Open investigations (AdminTodo, group 2): each opens the admin
+    // Memories page, whose reads name the session's open investigation;
+    // ADR-0089 d10 closes one from the line those pages draw.
+    let investigation_rows: Vec<String> = investigations
+        .iter()
+        .map(|i| {
+            format!(
+                r#"<li><span class="oml-decision">Investigation</span> {} · {} · {} read{} journalled · opened {} · <a href="{ADMIN_MEMORIES_PATH}">Open</a></li>"#,
+                text(&i.reason),
+                code(&i.investigation_id),
+                i.reads,
+                if i.reads == 1 { "" } else { "s" },
+                instant(&i.opened_at)
+            )
+        })
+        .collect();
+    let plain_rows: Vec<String> = plain.iter().map(|f| row(f)).collect();
+    let alert_rows: Vec<String> = alerts.iter().map(|f| row(f)).collect();
+    let mut empty = Vec::new();
+    for (id, title, desc, rows) in [
+        (
+            "todo-fixes",
+            "Admin fixes, unconfirmed",
+            "Fixes in this tenant that no person has confirmed or reverted.",
+            &plain_rows,
+        ),
+        (
+            "todo-investigations",
+            "Open investigations",
+            "This admin key's investigations still open: every read of claim text under one is journalled with its reason.",
+            &investigation_rows,
+        ),
+        (
+            "todo-alerts",
+            "Guardrail-loosening alerts",
+            "Unconfirmed fixes that loosen a guardrail: the doctor's alert stays open until a person confirms or reverts each.",
+            &alert_rows,
+        ),
+    ] {
+        if rows.is_empty() {
+            empty.push(title);
+            continue;
+        }
+        let _ = write!(
+            body,
+            r#"<section class="oml-todo-g" aria-labelledby="{id}"><h2 id="{id}">{title} · {}</h2><p class="desc">{desc}</p><ul class="oml-todo">"#,
+            rows.len()
+        );
+        for r in rows.iter() {
+            body.push_str(r);
+        }
+        body.push_str("</ul></section>");
+    }
+    if empty.len() == 3 {
+        body.push_str(r#"<div class="oml-empty"><p>Nothing waits for this account.</p><p class="desc">Admin fixes no person has confirmed or reverted, the alerts among them, and this key's open investigations appear here.</p></div>"#);
+    } else if !empty.is_empty() {
+        let _ = write!(
+            body,
+            r#"<p class="desc">Nothing waits in {}.</p>"#,
+            empty.join(" or ")
+        );
+    }
     outcome::html(
         StatusCode::OK,
         shell(

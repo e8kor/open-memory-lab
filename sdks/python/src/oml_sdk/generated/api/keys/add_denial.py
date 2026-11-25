@@ -88,23 +88,25 @@ def sync_detailed(
 ) -> Response[Denial | ErrorEnvelope]:
     """Create or extend the key's global deny object — deny-wins across all its grants.
 
-     A person's session key cuts a key off on universe alone, workspace universe, the key by name:
-    <user>-web one of their own keys, <user>-admin any key of the tenant, never a session key; another
-    capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9,
-    d13). The session key's access is read when the cut-off runs, and a session key that itself carries
-    a denial, on any workspace, cuts nothing off: access.verb_ceiling with details.reason
-    session_key_denied, nothing journalled (ADR-0070 d2; since v0.7.3). As a session key, a resubmission
-    under the same Idempotency-Key and body answers the recorded denial with Idempotency-Replay: true
-    and cuts nothing off again; the same key with another body is idempotency.digest_mismatch, and a
-    resubmission while the first attempt holds the key waits up to 5 s, then is idempotency.in_progress
-    (ADR-0070 d3 layer 4; since v0.6.4). Otherwise requires: admin key role, and the Idempotency-Key is
-    required but no outcome is recorded under it: only a session key claims it, so a resubmission by any
-    other key denies again. Distinct from a per-grant deny mask. Journalled as key.denied; the denial's
-    epoch is that event's journal seq. workspace takes an id or a name, and workarea_node_id, the v0.3.0
-    spelling, is refused with request.validation, details.renamed_to /workspace (ADR-0039 d7). A denial
-    on an admin key is refused with request.validation, details.field key: denials attenuate grants, and
-    an admin key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6;
-    ADR-0026 d15).
+     Since v0.8.5 a person's <user>-admin session key denies any key of the tenant on any workspace of
+    the tenant, with the request's reason, which, from any admin key, is scanned and journalled in
+    key.denied when sent (ADR-0096 d4; ADR-0097 d27). A person's web session key cuts a key off on
+    universe alone, workspace universe, the key by name: <user>-web one of their own keys, <user>-admin
+    any key of the tenant, never a session key; another capacity is access.verb_ceiling with
+    details.reason session_capacity (ADR-0070 d5; ADR-0045 d9, d13). The session key's access is read
+    when the cut-off runs, and a session key that itself carries a denial, on any workspace, cuts
+    nothing off: access.verb_ceiling with details.reason session_key_denied, nothing journalled
+    (ADR-0070 d2; since v0.7.3). As a session key, a resubmission under the same Idempotency-Key and
+    body answers the recorded denial with Idempotency-Replay: true and cuts nothing off again; the same
+    key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt
+    holds the key waits up to 5 s, then is idempotency.in_progress (ADR-0070 d3 layer 4; since v0.6.4).
+    Otherwise requires: admin key role, and the Idempotency-Key is required but no outcome is recorded
+    under it: only a session key claims it, so a resubmission by any other key denies again. Distinct
+    from a per-grant deny mask. Journalled as key.denied; the denial's epoch is that event's journal
+    seq. workspace takes an id or a name, and workarea_node_id, the v0.3.0 spelling, is refused with
+    request.validation, details.renamed_to /workspace (ADR-0039 d7). A denial on an admin key is refused
+    with request.validation, details.field key: denials attenuate grants, and an admin key carries none
+    (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -151,23 +153,25 @@ def sync(
 ) -> Denial | ErrorEnvelope | None:
     """Create or extend the key's global deny object — deny-wins across all its grants.
 
-     A person's session key cuts a key off on universe alone, workspace universe, the key by name:
-    <user>-web one of their own keys, <user>-admin any key of the tenant, never a session key; another
-    capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9,
-    d13). The session key's access is read when the cut-off runs, and a session key that itself carries
-    a denial, on any workspace, cuts nothing off: access.verb_ceiling with details.reason
-    session_key_denied, nothing journalled (ADR-0070 d2; since v0.7.3). As a session key, a resubmission
-    under the same Idempotency-Key and body answers the recorded denial with Idempotency-Replay: true
-    and cuts nothing off again; the same key with another body is idempotency.digest_mismatch, and a
-    resubmission while the first attempt holds the key waits up to 5 s, then is idempotency.in_progress
-    (ADR-0070 d3 layer 4; since v0.6.4). Otherwise requires: admin key role, and the Idempotency-Key is
-    required but no outcome is recorded under it: only a session key claims it, so a resubmission by any
-    other key denies again. Distinct from a per-grant deny mask. Journalled as key.denied; the denial's
-    epoch is that event's journal seq. workspace takes an id or a name, and workarea_node_id, the v0.3.0
-    spelling, is refused with request.validation, details.renamed_to /workspace (ADR-0039 d7). A denial
-    on an admin key is refused with request.validation, details.field key: denials attenuate grants, and
-    an admin key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6;
-    ADR-0026 d15).
+     Since v0.8.5 a person's <user>-admin session key denies any key of the tenant on any workspace of
+    the tenant, with the request's reason, which, from any admin key, is scanned and journalled in
+    key.denied when sent (ADR-0096 d4; ADR-0097 d27). A person's web session key cuts a key off on
+    universe alone, workspace universe, the key by name: <user>-web one of their own keys, <user>-admin
+    any key of the tenant, never a session key; another capacity is access.verb_ceiling with
+    details.reason session_capacity (ADR-0070 d5; ADR-0045 d9, d13). The session key's access is read
+    when the cut-off runs, and a session key that itself carries a denial, on any workspace, cuts
+    nothing off: access.verb_ceiling with details.reason session_key_denied, nothing journalled
+    (ADR-0070 d2; since v0.7.3). As a session key, a resubmission under the same Idempotency-Key and
+    body answers the recorded denial with Idempotency-Replay: true and cuts nothing off again; the same
+    key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt
+    holds the key waits up to 5 s, then is idempotency.in_progress (ADR-0070 d3 layer 4; since v0.6.4).
+    Otherwise requires: admin key role, and the Idempotency-Key is required but no outcome is recorded
+    under it: only a session key claims it, so a resubmission by any other key denies again. Distinct
+    from a per-grant deny mask. Journalled as key.denied; the denial's epoch is that event's journal
+    seq. workspace takes an id or a name, and workarea_node_id, the v0.3.0 spelling, is refused with
+    request.validation, details.renamed_to /workspace (ADR-0039 d7). A denial on an admin key is refused
+    with request.validation, details.field key: denials attenuate grants, and an admin key carries none
+    (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -209,23 +213,25 @@ async def asyncio_detailed(
 ) -> Response[Denial | ErrorEnvelope]:
     """Create or extend the key's global deny object — deny-wins across all its grants.
 
-     A person's session key cuts a key off on universe alone, workspace universe, the key by name:
-    <user>-web one of their own keys, <user>-admin any key of the tenant, never a session key; another
-    capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9,
-    d13). The session key's access is read when the cut-off runs, and a session key that itself carries
-    a denial, on any workspace, cuts nothing off: access.verb_ceiling with details.reason
-    session_key_denied, nothing journalled (ADR-0070 d2; since v0.7.3). As a session key, a resubmission
-    under the same Idempotency-Key and body answers the recorded denial with Idempotency-Replay: true
-    and cuts nothing off again; the same key with another body is idempotency.digest_mismatch, and a
-    resubmission while the first attempt holds the key waits up to 5 s, then is idempotency.in_progress
-    (ADR-0070 d3 layer 4; since v0.6.4). Otherwise requires: admin key role, and the Idempotency-Key is
-    required but no outcome is recorded under it: only a session key claims it, so a resubmission by any
-    other key denies again. Distinct from a per-grant deny mask. Journalled as key.denied; the denial's
-    epoch is that event's journal seq. workspace takes an id or a name, and workarea_node_id, the v0.3.0
-    spelling, is refused with request.validation, details.renamed_to /workspace (ADR-0039 d7). A denial
-    on an admin key is refused with request.validation, details.field key: denials attenuate grants, and
-    an admin key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6;
-    ADR-0026 d15).
+     Since v0.8.5 a person's <user>-admin session key denies any key of the tenant on any workspace of
+    the tenant, with the request's reason, which, from any admin key, is scanned and journalled in
+    key.denied when sent (ADR-0096 d4; ADR-0097 d27). A person's web session key cuts a key off on
+    universe alone, workspace universe, the key by name: <user>-web one of their own keys, <user>-admin
+    any key of the tenant, never a session key; another capacity is access.verb_ceiling with
+    details.reason session_capacity (ADR-0070 d5; ADR-0045 d9, d13). The session key's access is read
+    when the cut-off runs, and a session key that itself carries a denial, on any workspace, cuts
+    nothing off: access.verb_ceiling with details.reason session_key_denied, nothing journalled
+    (ADR-0070 d2; since v0.7.3). As a session key, a resubmission under the same Idempotency-Key and
+    body answers the recorded denial with Idempotency-Replay: true and cuts nothing off again; the same
+    key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt
+    holds the key waits up to 5 s, then is idempotency.in_progress (ADR-0070 d3 layer 4; since v0.6.4).
+    Otherwise requires: admin key role, and the Idempotency-Key is required but no outcome is recorded
+    under it: only a session key claims it, so a resubmission by any other key denies again. Distinct
+    from a per-grant deny mask. Journalled as key.denied; the denial's epoch is that event's journal
+    seq. workspace takes an id or a name, and workarea_node_id, the v0.3.0 spelling, is refused with
+    request.validation, details.renamed_to /workspace (ADR-0039 d7). A denial on an admin key is refused
+    with request.validation, details.field key: denials attenuate grants, and an admin key carries none
+    (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -270,23 +276,25 @@ async def asyncio(
 ) -> Denial | ErrorEnvelope | None:
     """Create or extend the key's global deny object — deny-wins across all its grants.
 
-     A person's session key cuts a key off on universe alone, workspace universe, the key by name:
-    <user>-web one of their own keys, <user>-admin any key of the tenant, never a session key; another
-    capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9,
-    d13). The session key's access is read when the cut-off runs, and a session key that itself carries
-    a denial, on any workspace, cuts nothing off: access.verb_ceiling with details.reason
-    session_key_denied, nothing journalled (ADR-0070 d2; since v0.7.3). As a session key, a resubmission
-    under the same Idempotency-Key and body answers the recorded denial with Idempotency-Replay: true
-    and cuts nothing off again; the same key with another body is idempotency.digest_mismatch, and a
-    resubmission while the first attempt holds the key waits up to 5 s, then is idempotency.in_progress
-    (ADR-0070 d3 layer 4; since v0.6.4). Otherwise requires: admin key role, and the Idempotency-Key is
-    required but no outcome is recorded under it: only a session key claims it, so a resubmission by any
-    other key denies again. Distinct from a per-grant deny mask. Journalled as key.denied; the denial's
-    epoch is that event's journal seq. workspace takes an id or a name, and workarea_node_id, the v0.3.0
-    spelling, is refused with request.validation, details.renamed_to /workspace (ADR-0039 d7). A denial
-    on an admin key is refused with request.validation, details.field key: denials attenuate grants, and
-    an admin key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6;
-    ADR-0026 d15).
+     Since v0.8.5 a person's <user>-admin session key denies any key of the tenant on any workspace of
+    the tenant, with the request's reason, which, from any admin key, is scanned and journalled in
+    key.denied when sent (ADR-0096 d4; ADR-0097 d27). A person's web session key cuts a key off on
+    universe alone, workspace universe, the key by name: <user>-web one of their own keys, <user>-admin
+    any key of the tenant, never a session key; another capacity is access.verb_ceiling with
+    details.reason session_capacity (ADR-0070 d5; ADR-0045 d9, d13). The session key's access is read
+    when the cut-off runs, and a session key that itself carries a denial, on any workspace, cuts
+    nothing off: access.verb_ceiling with details.reason session_key_denied, nothing journalled
+    (ADR-0070 d2; since v0.7.3). As a session key, a resubmission under the same Idempotency-Key and
+    body answers the recorded denial with Idempotency-Replay: true and cuts nothing off again; the same
+    key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt
+    holds the key waits up to 5 s, then is idempotency.in_progress (ADR-0070 d3 layer 4; since v0.6.4).
+    Otherwise requires: admin key role, and the Idempotency-Key is required but no outcome is recorded
+    under it: only a session key claims it, so a resubmission by any other key denies again. Distinct
+    from a per-grant deny mask. Journalled as key.denied; the denial's epoch is that event's journal
+    seq. workspace takes an id or a name, and workarea_node_id, the v0.3.0 spelling, is refused with
+    request.validation, details.renamed_to /workspace (ADR-0039 d7). A denial on an admin key is refused
+    with request.validation, details.field key: denials attenuate grants, and an admin key carries none
+    (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a

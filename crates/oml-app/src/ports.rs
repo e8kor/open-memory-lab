@@ -294,6 +294,17 @@ pub enum MetadataFold {
         expiry: Option<EventTime>,
         requests_per_minute: Option<u32>,
     },
+    /// `key.rotated`: the live bearer key's hash becomes `key_hash` from
+    /// this commit on; its previous hash, where `previous` names one, still
+    /// resolves through [`JournalStore::key_by_previous_hash`] with the end
+    /// of its grace, and any earlier previous hash of the key is gone. The
+    /// store refuses a key it does not hold, a revoked key and a key that
+    /// is not a bearer key (ADR-0096 d13).
+    KeyRotated {
+        key_id: Uuid,
+        key_hash: String,
+        previous: Option<(String, EventTime)>,
+    },
     /// `key.linked_person` (`Some`) or `key.unlinked_person` (`None`). A
     /// link `accepted` (the bootstrap's, made by the person who runs it)
     /// makes the tenant key act for the person whose user root is named
@@ -1223,6 +1234,18 @@ pub trait JournalStore: Retriever + Send + Sync {
         import_id: Uuid,
     ) -> impl Future<Output = Result<Option<crate::types::ImportRecord>, StoreError>> + Send;
 
+    /// The imports `key_ids` ran, newest first by `created_at`, then by id,
+    /// strictly before `before`, in `state` where one is named, at most
+    /// `limit`, each with its position (ADR-0096 d6).
+    fn imports_of_keys(
+        &self,
+        tenant_id: Uuid,
+        key_ids: &[Uuid],
+        state: Option<oml_domain::import::ImportState>,
+        before: Option<(&EventTime, Uuid)>,
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<crate::types::ImportRecord>, StoreError>> + Send;
+
     /// The tenant's imports by state, how many used `allow_older`, how many
     /// are `running` since before `stopped_before`, and the versions with an
     /// import's idempotency key and no provenance (ADR-0084 d15, I11, I14).
@@ -1829,6 +1852,22 @@ pub trait JournalStore: Retriever + Send + Sync {
         key_hash: &str,
     ) -> impl Future<Output = Result<Option<KeyRecord>, StoreError>> + Send;
 
+    /// One equality lookup on a rotated key's previous hash: the live key
+    /// and the end of the previous value's grace, which the caller compares
+    /// with its clock (ADR-0096 d13).
+    fn key_by_previous_hash(
+        &self,
+        key_hash: &str,
+    ) -> impl Future<Output = Result<Option<(KeyRecord, EventTime)>, StoreError>> + Send;
+
+    /// The end of `key_id`'s previous value's grace, past or not, where a
+    /// rotation gave one (ADR-0096 d13).
+    fn key_previous_valid_until(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+    ) -> impl Future<Output = Result<Option<EventTime>, StoreError>> + Send;
+
     /// The key's `issued_seq`, grants and global denials, read in one
     /// snapshot so their epochs label one journalled state; `None` for a key
     /// this tenant does not hold. This is the one grants read effective
@@ -2065,6 +2104,20 @@ pub trait JournalStore: Retriever + Send + Sync {
         &self,
         tenant_id: Uuid,
         workspace_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<BriefEdgeRecord>, StoreError>> + Send;
+
+    /// The tenant's pending brief edges into any of `workspace_ids` that
+    /// `ratifier` (a key id and its principal) did not propose, by key or
+    /// by principal, oldest first by `created_at`, then by edge id,
+    /// strictly after `after`, at most `limit` (ADR-0096 d7): one read for
+    /// the To do group and its count, whatever the number of workspaces.
+    fn pending_brief_edges(
+        &self,
+        tenant_id: Uuid,
+        workspace_ids: &[Uuid],
+        ratifier: (Uuid, &str),
+        after: Option<(&EventTime, Uuid)>,
+        limit: usize,
     ) -> impl Future<Output = Result<Vec<BriefEdgeRecord>, StoreError>> + Send;
 
     fn ratified_term_edges(

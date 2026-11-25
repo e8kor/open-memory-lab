@@ -33,6 +33,9 @@ which ran:
 - `oml_write` without `replaces` writes a new claim; with `replaces` it proposes a new
   version of that claim, and with `replaces` and `retirement: true` it proposes retiring it.
   With `withdraw` it withdraws a held write of your own key.
+- With `create_workspace` it creates a child workspace inside the person's own root; with
+  `propose_status` or `propose_brief` it proposes a status move or a brief member, which a
+  different identity ratifies.
 - `oml_read` with `artifact_id` reads one memory, with `query` recalls, and with neither
   lists. Never pass `query` and `artifact_id` together.
 
@@ -182,6 +185,31 @@ any other field, `text` included, is refused naming it. The answer's `mode` is `
 version is kept as `withdrawn` with its text, leaves review and is never served; no reviewer is
 involved. Only a held version is withdrawn (`memory.not_held`): a reviewed one is revised or
 retired with `oml_write` and `replaces`. Another key's write is refused `access.author_only`.
+
+## Organise work into workspaces
+
+A child workspace helps when a task is separate enough that another task should not recall
+its memories, such as an experiment beside the main work. `oml_write` with `create_workspace`
+set to a name, an optional `workspace` naming the parent (omitted, your default workspace), a
+`reason` and an `idempotency_key` creates it, empty and in development; `oml_workspace` lists
+`create_workspace` in `my_effective_verbs` where your key may. Only a contributor key that
+names a person creates, and only inside that person's own root; any other key is refused
+`access.verb_ceiling` with `details.reason` `create_is_own_root_only`. The child carries no
+grant of its own, so every key reads and writes it exactly as it does the parent. A workspace
+is never deleted, so a child stays in the person's tree for good, and each one counts against
+the account's `workspaces` quota: past it the create is `limit.quota`.
+
+`propose_status` (`protected` or `frozen`, from a reviewer key) and `propose_brief` (the
+`artifact_id` of an approved claim, from a contributor or reviewer key) each take `workspace`,
+`reason` and `idempotency_key` beside them. A proposal changes nothing until a different
+identity ratifies it, and a workspace holds one live proposal per status and a claim one per
+brief: a second is `proposal.pending`, naming the live one.
+
+A guardrail, a standing rule for every key below its workspace, is written with `kind:
+guardrail` and a `guardrail` object, `{"severity": "never" | "must" | "should", "rule"?: ...}`,
+its name as `claim_key`. A person approves every guardrail version. Until then it reaches
+your key and, in a workspace a person put in progress, the other keys working in that subtree,
+each as a marked line that asks and never denies.
 
 ## What the tools cannot do
 

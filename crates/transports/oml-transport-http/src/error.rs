@@ -300,6 +300,9 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             format!("this key expired at {}", expiry.as_str()),
         )
         .with_details(json!({ "reason": "expired", "expiry": expiry.as_str() })),
+        AppError::KeyRotation(refusal) => ApiError::validation(refusal.message()).with_details(
+            json!({ "field": refusal.field(), "reason": refusal.reason() }),
+        ),
         AppError::KeyLimits(refusal) => {
             let mut details = serde_json::Map::new();
             if let Some(field) = refusal.field() {
@@ -336,6 +339,20 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "verb": verb,
             "role": role.as_str(),
             "reason": "session_key_denied",
+        })),
+        // The grace keeps a deployed value working, never its key acts
+        // (ADR-0096 d13, the operator's decision of 2026-11-25).
+        AppError::PreviousKeyValue { verb } => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "access.verb_ceiling",
+            "A rotated key's previous value authenticates until its grace ends and runs none of the key acts: it rotates, issues, mints, cuts off, denies, sets limits and links nothing (ADR-0096 d13).",
+            format!(
+                "{verb} is refused: this value is the key's previous one, kept only for its grace; use the new value"
+            ),
+        )
+        .with_details(json!({
+            "verb": verb,
+            "reason": "previous_value",
         })),
         AppError::IssuerCeiling {
             role,
@@ -485,6 +502,34 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "the import target is not a development workspace in progress",
         )
         .with_details(json!({ "workspace_id": workspace_id.to_string() })),
+        AppError::CreateIsOwnRootOnly { role } => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "access.verb_ceiling",
+            "R1: over MCP a contributor key naming a user creates a child inside that person's own root, and no other key creates (ADR-0095 d3).",
+            format!(
+                "create_workspace needs a contributor key that names a user, and this is a {} key",
+                role.as_str()
+            ),
+        )
+        .with_details(json!({
+            "verb": "create_workspace",
+            "role": role.as_str(),
+            "reason": "create_is_own_root_only",
+        })),
+        AppError::TransitionPending { transition_id } => ApiError::new(
+            StatusCode::CONFLICT,
+            "proposal.pending",
+            "A workspace holds one live proposal per target status, and a claim one proposal per brief; a second identity ratifies the live one (ADR-0095 d5, d6).",
+            "a live proposal of this status move is already pending on this workspace",
+        )
+        .with_details(json!({ "transition_id": transition_id.to_string() })),
+        AppError::BriefEdgePending { edge_id } => ApiError::new(
+            StatusCode::CONFLICT,
+            "proposal.pending",
+            "A workspace holds one live proposal per target status, and a claim one proposal per brief; a second identity ratifies the live one (ADR-0095 d5, d6).",
+            "this claim is already proposed for this brief or is a member of it",
+        )
+        .with_details(json!({ "edge_id": edge_id.to_string() })),
         AppError::ImportPersonOnly { role, used_by } => ApiError::new(
             StatusCode::FORBIDDEN,
             "access.verb_ceiling",
@@ -728,12 +773,6 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "now must be YYYY, YYYY-MM, YYYY-MM-DD or an RFC 3339 date-time with an offset",
         )
         .with_details(json!({ "field": "/now" })),
-        // Raised only from the agent plugin, whose oml_write names the
-        // target `replaces` (proposed ADR-0037 d10, amending ADR-0039 d3).
-        AppError::GuardrailTarget => ApiError::validation(
-            "a guardrail is written and superseded on the HTTP API: oml_write does not supersede a guardrail",
-        )
-        .with_details(json!({ "field": "/replaces" })),
         // Raised only from the agent plugin, whose oml_write names the
         // target `replaces` (ADR-0039 d3).
         AppError::VocabularyTarget(kind) => ApiError::validation(format!(
@@ -1255,7 +1294,7 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         AppError::QuotaReached(reached) | AppError::Store(StoreError::QuotaReached(reached)) => ApiError::new(
             StatusCode::TOO_MANY_REQUESTS,
             "limit.quota",
-            "An account holds at most its profile's memories, text bytes, monthly writes, keys and connections; an administrator can raise one (ADR-0068 d5; ADR-0071 d5).",
+            "An account holds at most its profile's memories, text bytes, monthly writes, keys, connections and workspaces; an administrator can raise one (ADR-0068 d5; ADR-0071 d5; ADR-0095 d4).",
             format!(
                 "the {} quota of {} is reached",
                 reached.quota.as_str(),

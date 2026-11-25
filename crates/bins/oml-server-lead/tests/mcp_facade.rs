@@ -2426,7 +2426,7 @@ async fn oml_workspace_without_an_argument_describes_the_default_workspace() {
             "edges": [],
             "my_effective_verbs": [
                 "recall", "read", "graph_read", "events_tail",
-                "remember", "learn", "attach", "supersede",
+                "remember", "learn", "attach", "supersede", "propose_brief",
             ],
             "permission_epoch": view["permission_epoch"],
             "policy": {"k": 1, "required_roles": ["reviewer"]},
@@ -3816,6 +3816,7 @@ async fn oml_workspace_returns_the_node_with_the_callers_verbs() {
             "learn",
             "attach",
             "supersede",
+            "propose_brief",
         ]),
         "{view}"
     );

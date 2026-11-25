@@ -412,7 +412,8 @@ async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and
             "remember",
             "learn",
             "attach",
-            "supersede"
+            "supersede",
+            "propose_brief"
         ])
     );
     assert!(info["permission_epoch"].is_u64(), "{info}");

@@ -35,6 +35,8 @@ use crate::{Capacity, Web, acts, outcome, usage};
 
 /// The user page's acts, each the act of one documented operation.
 pub const USER_ACTIONS: &[&str] = &[
+    "build_key",
+    "rotate_key",
     "issue_key",
     "connect_key",
     "connect_code",
@@ -46,7 +48,14 @@ pub const USER_ACTIONS: &[&str] = &[
 
 /// The admin page's acts: the cut-off, and a tenant key's link to the
 /// listed person and its end (ADR-0085 d16).
-pub const ADMIN_ACTIONS: &[&str] = &["cut_off", "link_key", "unlink_key"];
+pub const ADMIN_ACTIONS: &[&str] = &[
+    "cut_off",
+    "rotate_key",
+    "link_key",
+    "unlink_key",
+    "set_limits",
+    "deny_on",
+];
 
 /// The most keys one listing call reads, the API's maximum.
 const KEY_PAGE: u32 = 200;
@@ -119,6 +128,47 @@ pub(crate) fn instant(at: &str) -> String {
     format!(r#"<time datetime="{}">{}</time>"#, attr(at), short(&shown))
 }
 
+/// A key's end as the lists show it (ADR-0096 d10): an instant at
+/// `23:59:59` UTC, the shape the console sends, reads "works through" the
+/// day before it, in every time zone, beside the stored instant; any other
+/// instant shows alone, since a computed date could fall before the key
+/// was issued. Never a date the server did not store.
+pub(crate) fn ends(at: &str, expired: bool) -> String {
+    let end_of_day = unix_of(at).is_some_and(|unix| unix.rem_euclid(86_400) == 86_399);
+    if end_of_day && let Some(unix) = unix_of(at) {
+        let through = &rfc3339(unix - 86_400)[..10];
+        let verb = if expired { "expired: worked" } else { "works" };
+        return format!(
+            "{verb} through {through}, every time zone · ends {}",
+            instant(at)
+        );
+    }
+    let verb = if expired { "ended" } else { "ends" };
+    format!("{verb} {}", instant(at))
+}
+
+/// The instant a form's date `YYYY-MM-DD` is sent as: the next UTC day's
+/// `23:59:59Z`, so the key works through the chosen date in every time
+/// zone (ADR-0096 d10); a day its month does not hold rolls over
+/// (ADR-0079's answer 3). `None` for any other shape.
+pub(crate) fn expiry_sent(day: &str) -> Option<String> {
+    let b = day.as_bytes();
+    if b.len() != 10 || b[4] != b'-' || b[7] != b'-' {
+        return None;
+    }
+    let n = |r: std::ops::Range<usize>| -> Option<i64> {
+        let part = &day[r];
+        part.bytes()
+            .all(|c| c.is_ascii_digit())
+            .then(|| part.parse().ok())?
+    };
+    let (y, m, d) = (n(0..4)?, n(5..7)?, n(8..10)?);
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+    Some(rfc3339((days_from_civil(y, m, d) + 2) * 86_400 - 1))
+}
+
 /// Whether the session's key carries a denial, as `GET /v2/whoami` says of
 /// a person's `<user>-web` and of no other key; the admin's page is never
 /// drawn for one, since an admin key takes no denial.
@@ -126,17 +176,12 @@ pub(crate) fn denied(session: &Session) -> bool {
     session.whoami.denied == Some(true)
 }
 
-/// The one optional input of a person's issue form: the day the key ends,
-/// which a browser sends as `YYYY-MM-DD` with no script. The label names
-/// the instant, so no zone is left to guess (ADR-0079 d1, the operator's
-/// answer 3).
-const EXPIRES_INPUT: &str = r#"<label>Key expires (optional; end of that day, UTC)<input type="date" name="expires"></label>"#;
-
-/// What the form's day becomes: its last second in UTC.
-const END_OF_DAY: &str = "T23:59:59Z";
-
 /// The line beside the input: a person sets the date once (ADR-0079 d5).
-const EXPIRES_NOTE: &str = "A key's expiry date is optional; only an admin can change it later.";
+const EXPIRES_NOTE: &str =
+    "A key's expiry date and rate are optional; only an admin can change them later.";
+
+/// The key builder's page (ADR-0096 d1, D5).
+pub const NEW_KEY_PATH: &str = "/web/keys/new";
 
 /// The notice a `done` the view's own acts name shows; any other is none.
 fn notice(done: Option<&str>) -> Option<&'static str> {
@@ -203,10 +248,22 @@ pub(crate) async fn keys(
 /// offers an act, and that key's row is marked.
 fn row(key: &ListedKey, side: Side, csrf: &str, user: &str, denied: Option<&str>) -> String {
     let name = key.name.as_deref().unwrap_or("");
+    // Each grant with its coverage: a node grant is marked "this
+    // workspace only" (ADR-0096 d8).
     let access: Vec<String> = key
         .grants
         .iter()
-        .map(|g| format!("{} on {}", g.role, short(&g.path)))
+        .map(|g| {
+            if g.covers == "node" {
+                format!(
+                    "{} on <code>{}</code> (this workspace only)",
+                    g.role,
+                    short(&g.path)
+                )
+            } else {
+                format!("{} on <code>{}</code> and below", g.role, short(&g.path))
+            }
+        })
         .collect();
     // The marks a key carries, in the place and style of `revoked` and `cut
     // off`; a key with none is live. An expired key stays cut-off-able (a
@@ -250,11 +307,10 @@ fn row(key: &ListedKey, side: Side, csrf: &str, user: &str, denied: Option<&str>
         .join(r#"<span class="sr-only">,</span> "#);
     let mut limits = String::new();
     if let Some(at) = &key.expiry {
-        let verb = if key.expired { "expired" } else { "expires" };
         let _ = write!(
             limits,
-            r#"<br><span class="dim">{verb} {}</span>"#,
-            instant(at)
+            r#"<br><span class="dim">{}</span>"#,
+            ends(at, key.expired)
         );
     }
     if let Some(n) = key.requests_per_minute {
@@ -283,10 +339,39 @@ fn row(key: &ListedKey, side: Side, csrf: &str, user: &str, denied: Option<&str>
             }
         }
         let listed = if side == Side::Admin {
+            // The one-key read and its limits (ADR-0096 d4); never on an
+            // admin key, which takes no limit.
+            let _ = write!(
+                acts,
+                r#"<a href="{ADMIN_KEYS_PATH}?key={k}">Open</a> "#,
+                k = attr(&encode(name))
+            );
+            if key.role != "admin" {
+                let _ = write!(
+                    acts,
+                    r#"<a href="{ADMIN_KEYS_PATH}?key={k}&amp;op=limits">Limits</a> "#,
+                    k = attr(&encode(name))
+                );
+            }
             hidden("user", user)
         } else {
             String::new()
         };
+        // Rotate, beside Cut off, on a live bearer key that has not
+        // expired: a connector key takes a new connect code instead
+        // (ADR-0096 d13). Never on the admin side, whose list is one
+        // person's keys, which their person rotates and an admin does not
+        // (the operator's decision of 2026-11-25).
+        if side == Side::User && key.credential == "bearer" && !key.expired {
+            acts.push_str(&form(
+                side.path(),
+                "rotate_key",
+                csrf,
+                &format!("{}{listed}", hidden("key", name)),
+                "Rotate",
+                false,
+            ));
+        }
         acts.push_str(&form(
             side.path(),
             "cut_off",
@@ -305,6 +390,28 @@ fn row(key: &ListedKey, side: Side, csrf: &str, user: &str, denied: Option<&str>
         access.join("<br>"),
         acts
     )
+}
+
+/// What an issuance shows once: the value, or the connect code; `None`
+/// for an answer with neither that is no replay.
+async fn secret_of(web: &Web, issued: oml_sdk::KeyIssued) -> Option<Secret> {
+    let code = issued
+        .connect_code
+        .and_then(|c| Some((c.code?, c.expires_at, c.connector_url)));
+    match (issued.value, code) {
+        (Some(value), _) => Some(Secret::Key {
+            name: issued.name,
+            value,
+            server: server(web).await,
+        }),
+        (None, Some((code, expires_at, connector_url))) => Some(Secret::Code {
+            name: issued.name,
+            code,
+            expires_at,
+            connector_url,
+        }),
+        (None, None) => None,
+    }
 }
 
 /// The keys as a table. `denied`: the id of the session's own key where it
@@ -452,6 +559,42 @@ fn secret_card(secret: &Secret) -> (&'static str, String) {
                 ),
             )
         }
+        Secret::Rotated {
+            name,
+            value,
+            server,
+            previous_valid_until,
+            back,
+        } => {
+            let url = if server.is_empty() {
+                String::new()
+            } else {
+                format!("OML_URL={}\n", attr(server))
+            };
+            let previous = previous_valid_until.as_deref().map_or_else(
+                || "The previous value stopped working now.".to_owned(),
+                |at| {
+                    format!(
+                        "The previous value works until {} UTC, then stops.",
+                        text(
+                            &at.replacen('T', " ", 1)
+                                .chars()
+                                .take(16)
+                                .collect::<String>()
+                        )
+                    )
+                },
+            );
+            (
+                "Key rotated",
+                format!(
+                    r#"<p class="label">Key rotated</p><h1>{}</h1><p class="desc">Shown once: copy it now. {previous}</p><div class="card secret"><p class="label">For the agent</p><pre>{url}OML_API_KEY={}</pre></div><p><a href="{}">Back to Keys</a></p>"#,
+                    short(name),
+                    attr(value),
+                    attr(back)
+                ),
+            )
+        }
         Secret::Code {
             name,
             code,
@@ -586,31 +729,11 @@ async fn user_view(
     if denied.is_some() {
         return outcome::html(StatusCode::OK, user_shell(session, fields, &body));
     }
-    let prefix = format!("{user}-");
-    let issue = |action: &str, button: &str, primary: bool| {
-        form(
-            USER_KEYS_PATH,
-            action,
-            &csrf,
-            &format!(
-                "{}{}{EXPIRES_INPUT}{}",
-                input("name", &format!("name, after {prefix}"), "", true),
-                select(
-                    "role",
-                    "role",
-                    &[("contributor", "contributor"), ("reader", "reader")]
-                ),
-                acts::nonce_field()
-            ),
-            button,
-            primary,
-        )
-    };
+    // The key builder is the page's one way to a new key (ADR-0096 d1, D5):
+    // the kind, the grants, the date and the rate are chosen there.
     let _ = write!(
         body,
-        "<h2>Agent key</h2><p class=\"desc\">The user's workspace only. The value is shown once. {EXPIRES_NOTE}</p>{}<h2>Connector key</h2><p class=\"desc\">For Claude on the web or a phone; its connect code is shown once. {EXPIRES_NOTE}</p>{}",
-        issue("issue_key", "Issue key", true),
-        issue("connect_key", "Issue connector key", false)
+        r#"<p><a class="button" href="{NEW_KEY_PATH}">New key</a></p><p class="desc">{EXPIRES_NOTE}</p>"#
     );
     outcome::html(StatusCode::OK, user_shell(session, fields, &body))
 }
@@ -745,11 +868,34 @@ pub async fn admin_page(
     State(web): State<Web>,
     Extension(session): Extension<Session>,
     Extension(calls): Extension<Arc<PageCalls>>,
+    headers: HeaderMap,
     uri: Uri,
 ) -> Response {
     if let Some(refusal) = admin_only(&session, &calls) {
         return refusal;
     }
+    // A rotated key's value, shown here once and cleared in the same answer
+    // (ADR-0096 d13); a seal that does not open is cleared unshown.
+    if let Some(sealed) = cookie(&headers, ONCE_COOKIE) {
+        if let Some(secret) = once::open(session.token(), ADMIN_KEYS_PATH, &sealed) {
+            let (title, body) = secret_card(&secret);
+            return clearing(outcome::html(
+                StatusCode::OK,
+                shell(
+                    title,
+                    &session.administration(),
+                    ADMIN_KEYS_PATH,
+                    None,
+                    &body,
+                ),
+            ));
+        }
+        return clearing(admin_view(web, session, calls, uri).await);
+    }
+    admin_view(web, session, calls, uri).await
+}
+
+async fn admin_view(web: Web, session: Session, calls: Arc<PageCalls>, uri: Uri) -> Response {
     let fields = match Fields::of(&uri) {
         Ok(fields) => fields,
         Err(message) => return acts::invalid(&message, &calls),
@@ -757,9 +903,12 @@ pub async fn admin_page(
     let next = uri
         .path_and_query()
         .map_or(ADMIN_KEYS_PATH, |pq| pq.as_str());
+    if let Some(key) = fields.given("key") {
+        return one_key(&web, &session, &calls, &fields, key, next).await;
+    }
     let user = fields.given("user");
     let mut body = format!(
-        r#"<h1>Keys</h1><p class="desc">One person's agent and connector keys; cut one off here.</p><form class="row" method="get" action="{ADMIN_KEYS_PATH}">{}<button type="submit">Show</button></form>"#,
+        r#"<h1>Keys</h1><p class="desc">One person's agent and connector keys; open one to read its record, set its limits or deny it on a workspace. No key is issued here.</p><form class="row" method="get" action="{ADMIN_KEYS_PATH}">{}<button type="submit">Show</button></form>"#,
         input("user", "user", user.unwrap_or(""), true)
     );
     if let Some(user) = user {
@@ -793,6 +942,290 @@ pub async fn admin_page(
 /// The admin's link forms for the listed person: a tenant key the person
 /// holds, by name, linked so the console acts with it for them in shared
 /// workspaces, or its link ended (ADR-0085 d16). The API judges the key.
+/// `/web/admin/keys?key=<key>`: one key's full record through `GET
+/// /v2/keys/{key}` as `<user>-admin`, with **Set limits**, **Deny on a
+/// workspace** and **Cut off**; `op=limits` and `op=deny` draw their forms,
+/// `step=review` the denial's confirmation (ADR-0096 d4). The read journals
+/// nothing, and the page says nothing of an audit trail.
+async fn one_key(
+    web: &Web,
+    session: &Session,
+    calls: &PageCalls,
+    fields: &Fields,
+    key: &str,
+    next: &str,
+) -> Response {
+    let credential = session.credential(Capacity::Admin);
+    let ids = calls.next_ids();
+    let record = match web.api.get_key(&call(&credential, &ids), key).await {
+        Ok(record) => record,
+        Err(e) => return outcome::page(&e, calls, next),
+    };
+    let csrf = session.csrf();
+    let name = record.name.clone().unwrap_or_else(|| record.key_id.clone());
+    let acting = session.whoami.user.as_ref().map_or_else(
+        || "the admin key".to_owned(),
+        |u| format!("{}-admin", u.name),
+    );
+    let enc = encode(&name);
+    let mut body = format!(
+        r#"<header class="oml-section-head"><div class="top"><h1>{}</h1></div><p class="desc">One key's record, read as <code>{}</code>.</p></header>"#,
+        short(&name),
+        short(&acting)
+    );
+    let revoked = record.revoked_at.is_some();
+    let state = if revoked {
+        "revoked"
+    } else if record.expired {
+        "expired"
+    } else {
+        "live"
+    };
+    let none = || "none".to_owned();
+    let facts: Vec<(&str, String)> = vec![
+        ("State", state_tag(state)),
+        (
+            "Whose",
+            record
+                .user
+                .as_ref()
+                .and_then(|u| u.name.clone())
+                .map_or_else(none, |u| format!("<code>{}</code>", short(&u))),
+        ),
+        (
+            "Role",
+            format!(
+                "{} · {} · {}",
+                text(&record.role),
+                text(&record.credential),
+                text(record.used_by.as_deref().unwrap_or("agent"))
+            ),
+        ),
+        (
+            "Crew",
+            record
+                .crew_id
+                .as_deref()
+                .map_or_else(none, |c| format!("<code>{}</code>", short(c))),
+        ),
+        ("Principal", format!("<code>{}</code>", short(&record.principal))),
+        (
+            "Profile",
+            record.profile.as_deref().map_or_else(none, text),
+        ),
+        ("Guardrails loaded", text(&record.guardrail_scope)),
+        (
+            "Default workspace",
+            record
+                .default_workspace_id
+                .as_deref()
+                .map_or_else(none, |w| format!("<code>{}</code>", short(w))),
+        ),
+        (
+            "Expiry",
+            record
+                .expiry
+                .as_deref()
+                .map_or_else(|| "does not expire".to_owned(), |at| ends(at, record.expired)),
+        ),
+        (
+            "Rate",
+            record.requests_per_minute.map_or_else(
+                || "no rate of its own; under the account's quota, the account's holds".to_owned(),
+                |n| format!("{n} requests a minute; under the account's quota, the lower of the two holds"),
+            ),
+        ),
+        (
+            "Connections",
+            if record.connections.is_empty() {
+                none()
+            } else {
+                record
+                    .connections
+                    .iter()
+                    .map(|c| text(&c.state))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            },
+        ),
+    ];
+    body.push_str(r#"<table class="oml-table"><tbody>"#);
+    for (label, value) in facts {
+        let _ = write!(
+            body,
+            r#"<tr><th scope="row">{label}</th><td class="c-meta wrap prose">{value}</td></tr>"#
+        );
+    }
+    body.push_str("</tbody></table><h2>Grants</h2>");
+    body.push_str(
+        r#"<table class="oml-table"><tr><th>Workspace</th><th>Grant</th><th>Covers</th></tr>"#,
+    );
+    for g in &record.grants {
+        let _ = write!(
+            body,
+            r#"<tr><td class="mono">{}</td><td class="c-grant">{}</td><td>{}</td></tr>"#,
+            short(&g.workspace_node_id),
+            text(&g.role),
+            if g.covers == "node" {
+                "this workspace only"
+            } else {
+                "this workspace and below"
+            }
+        );
+    }
+    body.push_str("</table>");
+    if !record.denials.is_empty() {
+        body.push_str("<h2>Except</h2><ul>");
+        for d in &record.denials {
+            let _ = write!(
+                body,
+                r#"<li>denied on <code>{}</code></li>"#,
+                short(&d.workspace_node_id)
+            );
+        }
+        body.push_str("</ul>");
+    }
+    if revoked {
+        body.push_str(r#"<p class="desc">A revoked key takes no act.</p>"#);
+    } else {
+        match fields.given("op") {
+            Some("limits") => body.push_str(&limits_form(&csrf, &name)),
+            Some("deny") => body.push_str(&deny_form(&csrf, &name, fields)),
+            _ => {
+                // A session key and an admin key take neither: the API
+                // refuses limits on them (`session_key`, `admin_key`) and a
+                // denial cuts off no session or admin key (ADR-0096 d4;
+                // ADR-0079 d5).
+                if record.credential != "session" && record.role != "admin" {
+                    let _ = write!(
+                        body,
+                        r#"<p><a class="button primary" href="{ADMIN_KEYS_PATH}?key={enc}&amp;op=limits">Set limits</a> <a class="button" href="{ADMIN_KEYS_PATH}?key={enc}&amp;op=deny">Deny on a workspace</a></p>"#,
+                        enc = attr(&enc)
+                    );
+                }
+                // Rotate where an admin may (ADR-0096 d13, the operator's
+                // decision of 2026-11-25): a live tenant bearer key that is
+                // not an admin key and names no person. The API refuses a
+                // key linked to a person by name, which the read serves no
+                // field for.
+                if record.credential == "bearer"
+                    && record.role != "admin"
+                    && record.user.is_none()
+                    && !record.expired
+                {
+                    body.push_str(&form(
+                        ADMIN_KEYS_PATH,
+                        "rotate_key",
+                        &csrf,
+                        &hidden("key", &name),
+                        "Rotate",
+                        false,
+                    ));
+                }
+                if record.credential != "session" && record.role != "admin" {
+                    body.push_str(&form(
+                        ADMIN_KEYS_PATH,
+                        "cut_off",
+                        &csrf,
+                        &format!("{}{}", hidden("key", &name), acts::nonce_field()),
+                        "Cut off",
+                        false,
+                    ));
+                }
+            }
+        }
+    }
+    let _ = write!(
+        body,
+        r#"<p><a href="{ADMIN_KEYS_PATH}?user={}">Back to the keys</a></p>"#,
+        attr(&encode(
+            record
+                .user
+                .as_ref()
+                .and_then(|u| u.name.as_deref())
+                .unwrap_or("")
+        ))
+    );
+    outcome::html(
+        StatusCode::OK,
+        shell(
+            "Key",
+            &session.administration(),
+            ADMIN_KEYS_PATH,
+            admin_notice(fields.get("done")),
+            &body,
+        ),
+    )
+}
+
+/// The notices the one-key page's acts name.
+fn admin_notice(done: Option<&str>) -> Option<&'static str> {
+    match done? {
+        "limits" => Some("limits set"),
+        "denied" => Some("denied on the workspace"),
+        other => notice(Some(other)),
+    }
+}
+
+/// The limits form (ADR-0096 d4, d10): the date as the next UTC day's end,
+/// or no expiry; a rate, or none of its own.
+fn limits_form(csrf: &str, key: &str) -> String {
+    format!(
+        r#"<h2>Set limits</h2><p class="desc">An expired key moved to a later date works again. The key works through the chosen date in every time zone.</p>{}"#,
+        form(
+            ADMIN_KEYS_PATH,
+            "set_limits",
+            csrf,
+            &format!(
+                r#"{}<label>Expires<input type="date" name="expires"></label><label class="oml-check"><input type="checkbox" name="no_expiry" value="yes"> No expiry</label><label>Requests a minute<input name="rate" inputmode="numeric"></label><label class="oml-check"><input type="checkbox" name="no_rate" value="yes"> No rate of its own</label>{}"#,
+                hidden("key", key),
+                acts::nonce_field()
+            ),
+            "Set limits",
+            true,
+        )
+    )
+}
+
+/// The denial's form, then with `step=review` its confirmation: one
+/// workspace of the tenant and a reason (ADR-0096 d4).
+fn deny_form(csrf: &str, key: &str, fields: &Fields) -> String {
+    let workspace = fields.given("workspace");
+    let reason = fields.given("reason");
+    if let (Some("review"), Some(workspace), Some(reason)) =
+        (fields.given("step"), workspace, reason)
+    {
+        return format!(
+            r#"<section class="card"><h2>Deny {} on {}?</h2><p class="oml-consequence">The key stops working on <code>{}</code> and below at once. Its memories stay.</p><p class="desc">Reason: {}</p>{}</section>"#,
+            short(key),
+            short(workspace),
+            short(workspace),
+            text(reason),
+            form(
+                ADMIN_KEYS_PATH,
+                "deny_on",
+                csrf,
+                &format!(
+                    "{}{}{}{}",
+                    hidden("key", key),
+                    hidden("workspace", workspace),
+                    hidden("reason", reason),
+                    acts::nonce_field()
+                ),
+                "Deny",
+                true,
+            )
+        );
+    }
+    format!(
+        r#"<h2>Deny on a workspace</h2><form class="oml-form" method="get" action="{ADMIN_KEYS_PATH}">{}{}{}{}<button type="submit" name="step" value="review">Review</button></form>"#,
+        hidden("key", key),
+        hidden("op", "deny"),
+        input("workspace", "Workspace", workspace.unwrap_or(""), true),
+        input("reason", "Reason", reason.unwrap_or(""), true),
+    )
+}
+
 fn link_forms(csrf: &str, user: &str) -> String {
     let fields = |placeholder: &str| {
         format!(
@@ -831,8 +1264,14 @@ fn link_forms(csrf: &str, user: &str) -> String {
 fn defined(side: Side, action: &str, name: &str) -> bool {
     match action {
         "issue_key" | "connect_key" => matches!(name, "name" | "role" | "expires"),
+        "build_key" => crate::builder::defined(name),
         "cut_off" => matches!(name, "key" | "confirm") || (side == Side::Admin && name == "user"),
+        "rotate_key" => {
+            matches!(name, "key" | "confirm" | "grace") || (side == Side::Admin && name == "user")
+        }
         "link_key" | "unlink_key" => matches!(name, "key" | "user"),
+        "set_limits" => matches!(name, "key" | "expires" | "no_expiry" | "rate" | "no_rate"),
+        "deny_on" => matches!(name, "key" | "workspace" | "reason"),
         "accept_email" => matches!(name, "email" | "admin"),
         "decline_email" => name == "email",
         _ => name == "key",
@@ -866,6 +1305,62 @@ fn cut_off_confirmation(session: &Session, side: Side, key: &str, user: Option<&
         true,
     ));
     let _ = write!(body, r#"<p><a href="{}">Keep it</a></p>"#, attr(&back));
+    let bar = match side {
+        Side::User => session.personal(),
+        Side::Admin => session.administration(),
+    };
+    outcome::html(StatusCode::OK, shell("Confirm", &bar, page, None, &body))
+}
+
+/// Where a rotation goes back to: the personal Keys page, or on the admin
+/// side the listed person's keys, else the one key's page.
+fn rotated_back(side: Side, key: &str, user: Option<&str>) -> String {
+    match (side, user) {
+        (Side::User, _) => side.path().to_owned(),
+        (Side::Admin, Some(u)) => format!("{ADMIN_KEYS_PATH}?user={}", encode(u)),
+        (Side::Admin, None) => format!("{ADMIN_KEYS_PATH}?key={}", encode(key)),
+    }
+}
+
+/// Rotate's confirmation, which records nothing: what a rotation does, the
+/// grace offered (none, one hour, 24 hours), and a form carrying
+/// `confirm=yes`, the listed `user` on the admin page, and a fresh nonce,
+/// so a resubmitted confirmation replays one rotation (ADR-0096 d13).
+fn rotate_confirmation(session: &Session, side: Side, key: &str, user: Option<&str>) -> Response {
+    let page = side.path();
+    let listed = user.map_or_else(String::new, |u| hidden("user", u));
+    let back = rotated_back(side, key, user);
+    let mut body = format!(
+        r#"<h1>Rotate {}?</h1><p class="oml-consequence">The key gets a new value, shown once. Its name, grants and limits stay. Every client that holds the previous value needs the new one.</p>"#,
+        short(key)
+    );
+    body.push_str(&form(
+        page,
+        "rotate_key",
+        &session.csrf(),
+        &format!(
+            "{}{listed}{}{}{}",
+            hidden("key", key),
+            select(
+                "grace",
+                "previous value works for",
+                &[
+                    ("0", "no time: it stops now"),
+                    ("3600", "1 hour"),
+                    ("86400", "24 hours")
+                ],
+            ),
+            hidden("confirm", "yes"),
+            acts::nonce_field()
+        ),
+        "Rotate it",
+        true,
+    ));
+    let _ = write!(
+        body,
+        r#"<p><a href="{}">Keep the value</a></p>"#,
+        attr(&back)
+    );
     let bar = match side {
         Side::User => session.personal(),
         Side::Admin => session.administration(),
@@ -929,8 +1424,9 @@ async fn act(
         Err(refusal) => return *refusal,
     };
     let required: &[&str] = match action {
-        "issue_key" | "connect_key" => &["name"],
+        "issue_key" | "connect_key" | "build_key" => &["name"],
         "link_key" => &["key", "user"],
+        "deny_on" => &["key", "workspace", "reason"],
         "accept_email" => &["email", "admin"],
         "decline_email" => &["email"],
         _ => &["key"],
@@ -948,6 +1444,14 @@ async fn act(
             fields.given("user"),
         );
     }
+    if action == "rotate_key" && fields.given("confirm") != Some("yes") {
+        return rotate_confirmation(
+            &session,
+            side,
+            fields.given("key").unwrap_or_default(),
+            fields.given("user"),
+        );
+    }
     let key = match acts::key(&session, &fields, &calls) {
         Ok(key) => key,
         Err(refusal) => return *refusal,
@@ -957,6 +1461,40 @@ async fn act(
     let ids = calls.next_ids();
     let call = call(&credential, &ids);
     let secret = match action {
+        "build_key" => {
+            // The builder's review posts the draft it showed; the API judges
+            // it and answers any refusal the page could not (ADR-0096 d1).
+            let draft = match crate::builder::of_form(&fields) {
+                Ok(draft) => draft,
+                Err(message) => return acts::invalid(&message, &calls),
+            };
+            let user = session.whoami.user.as_ref().map_or("", |u| u.name.as_str());
+            match web.api.issue_key_with(&call, &key, &draft.body(user)).await {
+                Ok(issued) if issued.replayed() => return acts::see_other(USER_KEYS_PATH, &[]),
+                Ok(issued) => match secret_of(&web, issued).await {
+                    Some(secret) => secret,
+                    None => return no_secret(&calls),
+                },
+                // A refusal only the server decides goes back to the
+                // review step with its notice, the draft kept (D12).
+                Err(oml_sdk::Error::Api(e))
+                    if crate::builder::server_refusal(&e.code).is_some() =>
+                {
+                    let mut back: Vec<String> = draft
+                        .fields()
+                        .into_iter()
+                        .map(|(n, v)| format!("{n}={}", encode(&v)))
+                        .collect();
+                    back.push("step=review".to_owned());
+                    back.push(format!("refused={}", encode(&e.code)));
+                    return acts::see_other(
+                        &format!("{}?{}", crate::keys::NEW_KEY_PATH, back.join("&")),
+                        &[],
+                    );
+                }
+                Err(e) => return outcome::page(&e, &calls, crate::keys::NEW_KEY_PATH),
+            }
+        }
         "issue_key" | "connect_key" => {
             // The form offers a contributor, the default, and a reader; a
             // submitter key is an act of the CLI and the admin (ADR-0093 d6).
@@ -971,9 +1509,13 @@ async fn act(
             // the instant, so a value that is not `YYYY-MM-DD`, or a day that
             // has passed, is refused by it and shown as it answers; a day its
             // month does not hold is read as that many days on (ADR-0079 d1).
-            let expiry = fields
-                .given("expires")
-                .map(|day| format!("{day}{END_OF_DAY}"));
+            let expiry = match fields.given("expires") {
+                Some(day) => match expiry_sent(day) {
+                    Some(at) => Some(at),
+                    None => return acts::invalid("expires is a date, YYYY-MM-DD", &calls),
+                },
+                None => None,
+            };
             match web
                 .api
                 .issue_key(&call, &key, &name, role, connector, expiry.as_deref())
@@ -1024,6 +1566,28 @@ async fn act(
                 Err(e) => return outcome::page(&e, &calls, page),
             }
         }
+        "rotate_key" => {
+            let name = fields.given("key").unwrap_or_default();
+            let grace = match fields.given("grace").unwrap_or("0") {
+                "0" => None,
+                g @ ("3600" | "86400") => g.parse().ok(),
+                _ => return acts::invalid("grace is 0, 3600 or 86400 seconds", &calls),
+            };
+            match web.api.rotate_key(&call, &key, name, grace).await {
+                Ok(rotated) => match rotated.value {
+                    Some(value) => Secret::Rotated {
+                        name: name.to_owned(),
+                        value,
+                        server: server(&web).await,
+                        previous_valid_until: rotated.previous_valid_until,
+                        back: rotated_back(side, name, fields.given("user")),
+                    },
+                    // A replay, which shows no value: as for an issue.
+                    None => return acts::see_other(page, &[]),
+                },
+                Err(e) => return outcome::page(&e, &calls, page),
+            }
+        }
         "accept_email" | "decline_email" => {
             let email = fields.given("email").unwrap_or_default();
             let (answer, done) = if action == "accept_email" {
@@ -1048,6 +1612,54 @@ async fn act(
             return match web.api.accept_key_link(&call, &key, name).await {
                 Ok(_) => acts::see_other(&format!("{page}?done=accepted"), &[]),
                 Err(e) => outcome::page(&e, &calls, page),
+            };
+        }
+        "set_limits" => {
+            let name = fields.given("key").unwrap_or_default();
+            let mut change = serde_json::Map::new();
+            if fields.given("no_expiry") == Some("yes") {
+                change.insert("expiry".to_owned(), serde_json::Value::Null);
+            } else if let Some(day) = fields.given("expires") {
+                match expiry_sent(day) {
+                    Some(at) => {
+                        change.insert("expiry".to_owned(), at.into());
+                    }
+                    None => return acts::invalid("expires is a date, YYYY-MM-DD", &calls),
+                }
+            }
+            if fields.given("no_rate") == Some("yes") {
+                change.insert("requests_per_minute".to_owned(), serde_json::Value::Null);
+            } else if let Some(rate) = fields.given("rate") {
+                match rate.parse::<u64>() {
+                    Ok(n) => {
+                        change.insert("requests_per_minute".to_owned(), n.into());
+                    }
+                    Err(_) => {
+                        return acts::invalid(
+                            "requests a minute is a whole number from 1 to 1,000,000",
+                            &calls,
+                        );
+                    }
+                }
+            }
+            let back = format!("{page}?key={}", encode(name));
+            return match web
+                .api
+                .set_key_limits(&call, &key, name, &serde_json::Value::Object(change))
+                .await
+            {
+                Ok(_) => acts::see_other(&format!("{back}&done=limits"), &[]),
+                Err(e) => outcome::page(&e, &calls, &back),
+            };
+        }
+        "deny_on" => {
+            let name = fields.given("key").unwrap_or_default();
+            let workspace = fields.given("workspace").unwrap_or_default();
+            let reason = fields.given("reason").unwrap_or_default();
+            let back = format!("{page}?key={}", encode(name));
+            return match web.api.deny_key(&call, &key, name, workspace, reason).await {
+                Ok(_) => acts::see_other(&format!("{back}&done=denied"), &[]),
+                Err(e) => outcome::page(&e, &calls, &back),
             };
         }
         "link_key" | "unlink_key" => {
@@ -1076,8 +1688,15 @@ async fn act(
             };
         }
     };
-    let sealed = once::seal(session.token(), USER_KEYS_PATH, &secret);
-    acts::see_other(USER_KEYS_PATH, &[once::set_cookie(&sealed)])
+    // The secret opens on the page that asked for it: a rotation from the
+    // admin Keys page shows on that page.
+    let shown_on = if matches!(secret, Secret::Rotated { .. }) {
+        page
+    } else {
+        USER_KEYS_PATH
+    };
+    let sealed = once::seal(session.token(), shown_on, &secret);
+    acts::see_other(shown_on, &[once::set_cookie(&sealed)])
 }
 
 /// `POST /web/keys`: an act of the user page's view.

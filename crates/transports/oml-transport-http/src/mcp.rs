@@ -86,6 +86,11 @@ deletes a row: it adds one, which is held until a different identity reviews it,
 recallable by others yet. The one exception is oml_write with withdraw, which marks a held write \
 of the key's own, made by mistake, withdrawn and keeps its text, never served.
 
+oml_write also creates a child workspace inside the person's own root that the key works in, \
+empty, in development and with no grant of its own, and proposes a workspace's next status or a \
+reviewed claim for its brief. A proposal changes nothing until a different identity ratifies it. \
+Mode, crew, grants, export and every verdict are people's acts, outside this server's tools.
+
 Reviewed skills are listed as prompts and as resources, each opening with a line naming its \
 source workspace and approval. A skill is stored through oml_write with kind skill and updated \
 with replaces; a stored skill is offered as a prompt to the key that wrote it at once, marked \
@@ -429,13 +434,86 @@ struct WriteArgs {
     skill: Option<Value>,
     /// A document's `{title?}`, with `kind: document` (ADR-0081 d1, d5).
     document: Option<Value>,
+    /// A guardrail's `{severity, rule?}`, with `kind: guardrail` (ADR-0095
+    /// d2).
+    guardrail: Option<Value>,
+    /// The name of a child to create under `workspace` (ADR-0095 d3).
+    create_workspace: Option<String>,
+    /// `protected` or `frozen`: the status move to propose (ADR-0095 d5).
+    propose_status: Option<String>,
+    /// A promoted claim's artifact id to propose for the brief (ADR-0095
+    /// d6).
+    propose_brief: Option<String>,
+}
+
+/// The fields that each choose one of `oml_write`'s modes, in the order a
+/// refusal of two at once reads them: the second one sent is named
+/// (ADR-0095 d1).
+const MODE_FIELDS: [&str; 5] = [
+    "withdraw",
+    "create_workspace",
+    "propose_status",
+    "propose_brief",
+    "replaces",
+];
+
+impl WriteArgs {
+    /// The mode fields sent, in [`MODE_FIELDS`] order.
+    fn modes(&self) -> Vec<&'static str> {
+        MODE_FIELDS
+            .into_iter()
+            .zip([
+                self.withdraw.is_some(),
+                self.create_workspace.is_some(),
+                self.propose_status.is_some(),
+                self.propose_brief.is_some(),
+                self.replaces.is_some(),
+            ])
+            .filter_map(|(field, sent)| sent.then_some(field))
+            .collect()
+    }
+
+    /// Every field outside a structure mode's own (the mode field,
+    /// `workspace`, `reason` and `idempotency_key`), each with whether it
+    /// was sent (ADR-0095 d1).
+    fn outside_structure_mode(&self) -> [(&'static str, bool); 18] {
+        [
+            ("text", self.text.is_some()),
+            ("claim_key", self.claim_key.is_some()),
+            ("kind", self.kind.is_some()),
+            ("derives_from", self.derives_from.is_some()),
+            ("expected_version", self.expected_version.is_some()),
+            ("retirement", self.retirement.is_some()),
+            ("on_similar", self.on_similar.is_some()),
+            ("valid_from", self.valid_from.is_some()),
+            ("valid_until", self.valid_until.is_some()),
+            ("anchor", self.anchor.is_some()),
+            ("format", self.format.is_some()),
+            ("title", self.title.is_some()),
+            ("origin", self.origin.is_some()),
+            ("skill", self.skill.is_some()),
+            ("document", self.document.is_some()),
+            ("guardrail", self.guardrail.is_some()),
+            ("replaces", self.replaces.is_some()),
+            ("withdraw", self.withdraw.is_some()),
+        ]
+    }
 }
 
 /// The successor kinds `oml_write` takes with `replaces`: no vocabulary
 /// kind, whose successors carry fields the tool does not (ADR-0039 d3), a
-/// skill, whose successor re-sends its `skill` object (ADR-0080 d3), and a
-/// document, whose successor re-sends the whole text (ADR-0081 d5).
-const SUPERSEDE_KINDS: [&str; 5] = ["memory", "derived_fact", "steering", "skill", "document"];
+/// skill, whose successor re-sends its `skill` object (ADR-0080 d3), a
+/// document, whose successor re-sends the whole text (ADR-0081 d5), and a
+/// guardrail, whose successor re-sends its `guardrail` object (ADR-0095
+/// d2).
+const SUPERSEDE_KINDS: [&str; 6] = [
+    "memory",
+    "derived_fact",
+    "steering",
+    "skill",
+    "document",
+    "guardrail",
+];
 
 /// `oml_read`'s one flat argument set: `artifact_id` fetches, `query`
 /// recalls, and neither lists; `lineage` and `depth` are parsed only to be
@@ -563,6 +641,7 @@ where
         let presented = Presented {
             token: &token,
             connection: connection.as_ref(),
+            key: &key,
         };
         // A revision the facade does not speak is a 400; an absent header
         // means 2025-03-26, whose stateless JSON shape this one shares.
@@ -1285,20 +1364,45 @@ where
             ));
         }
         let mut args: WriteArgs = parse_args(args)?;
+        // One mode a call: a second mode field is refused naming it, never
+        // dropped (ADR-0095 d1).
+        if let [_, second, ..] = args.modes().as_slice() {
+            return Err(field_refusal(
+                &format!("/{second}"),
+                &format!(
+                    "{second} is refused beside another mode field: oml_write takes one of {MODE_FIELDS:?} a call"
+                ),
+            ));
+        }
         if let Some(artifact_id) = args.withdraw.take() {
             return Self::write_withdraw(st, presented, &artifact_id, args).await;
+        }
+        if args.create_workspace.is_some()
+            || args.propose_status.is_some()
+            || args.propose_brief.is_some()
+        {
+            return Self::write_structure(st, presented, args).await;
         }
         let Some(text) = args.text else {
             return Err(field_refusal(
                 "/text",
-                "text is required: every mode of oml_write but withdraw stores a text",
+                "text is required: every mode of oml_write that stores a claim stores a text",
             ));
         };
-        refuse_guardrail_kind(args.kind.as_deref())?;
+        refuse_test_kind(args.kind.as_deref())?;
+        let guardrail = guardrail_fields(
+            args.kind.as_deref(),
+            args.retirement == Some(true),
+            args.replaces.is_some(),
+            args.guardrail.take(),
+        )?;
         let mut headers = ring_headers(presented);
         insert_header(&mut headers, "idempotency-key", &args.idempotency_key)?;
         let mut body = Map::new();
         body.insert("body".to_owned(), Value::String(text));
+        // The guardrail object's fields, flat on the ring's body as
+        // `POST /v1/memories` takes them (ADR-0037 d10; ADR-0095 d2).
+        body.extend(guardrail);
         let (mode, response) = if let Some(replaces) = args.replaces {
             if args.claim_key.is_some() {
                 return Err(field_refusal(
@@ -1607,6 +1711,127 @@ where
         Ok(out)
     }
 
+    /// `oml_write`'s three structure modes (ADR-0095 d1, d3, d5, d6), each
+    /// one ring call, so each answers what its route answers:
+    /// `create_workspace` rides `POST /v2/workspaces` as the agent create,
+    /// which admits a contributor user key alone (d3); `propose_status`
+    /// rides `POST /v2/workspaces/{workspace}/transitions` (d5); and
+    /// `propose_brief` rides `POST /v2/edges` with `kind: brief` (d6). In
+    /// each `workspace` names the node acted on, the parent of a create, and
+    /// omitted it is the key's default workspace. Every field but the mode's
+    /// own, `workspace`, `reason` and `idempotency_key` is refused naming
+    /// it, never dropped.
+    async fn write_structure(
+        st: &Self,
+        presented: Presented<'_>,
+        args: WriteArgs,
+    ) -> Result<Value, Value> {
+        for (field, sent) in args.outside_structure_mode() {
+            if sent {
+                return Err(field_refusal(
+                    &format!("/{field}"),
+                    &format!(
+                        "{field} is refused here: create_workspace, propose_status and propose_brief each take only their own field, workspace, reason and idempotency_key"
+                    ),
+                ));
+            }
+        }
+        let mut headers = ring_headers(presented);
+        insert_header(&mut headers, "idempotency-key", &args.idempotency_key)?;
+        let mut body = Map::new();
+        if let Some(reason) = &args.reason {
+            body.insert("reason".to_owned(), Value::String(reason.clone()));
+        }
+        // The workspace a proposal acts on, omitted the key's journalled
+        // default, read off the key this request resolved; a key with none
+        // is `request.workspace_unresolved`, as every omitted workspace is
+        // (mcp-plugin.md; ADR-0039 d7).
+        let node = || match (&args.workspace, presented.key.default_workspace) {
+            (Some(workspace), _) => Ok(workspace.clone()),
+            (None, Some(default)) => Ok(default.to_string()),
+            (None, None) => Err(refusal(map_app_error(
+                AppError::WorkspaceUnresolved,
+                ErrorContext::Write,
+            ))),
+        };
+        let (mode, response) = if let Some(name) = &args.create_workspace {
+            body.insert("name".to_owned(), Value::String(name.clone()));
+            // The parent is `workspace`, omitted the key's default; a key
+            // with neither creates under its person's root, as the route
+            // does with no parent (ADR-0044 d6).
+            if let Ok(parent) = node() {
+                body.insert("parent".to_owned(), Value::String(parent));
+            }
+            let response = Self::create_workspace_inner(
+                st,
+                &headers,
+                &Bytes::from(Value::Object(body).to_string()),
+                presented.connection,
+                true,
+            )
+            .await;
+            ("create_workspace", response)
+        } else if let Some(to) = &args.propose_status {
+            body.insert("to".to_owned(), Value::String(to.clone()));
+            let workspace = node()?;
+            let response = Self::propose_transition_inner(
+                st,
+                &workspace,
+                &headers,
+                &Bytes::from(Value::Object(body).to_string()),
+                presented.connection,
+            )
+            .await;
+            ("propose_status", response)
+        } else {
+            let artifact = args.propose_brief.clone().unwrap_or_default();
+            body.insert("kind".to_owned(), Value::from("brief"));
+            body.insert("from_artifact_id".to_owned(), Value::String(artifact));
+            body.insert("to_workspace_id".to_owned(), Value::String(node()?));
+            let response = Self::propose_edge_inner(
+                st,
+                &headers,
+                &Bytes::from(Value::Object(body).to_string()),
+                presented.connection,
+            )
+            .await;
+            ("propose_brief", response)
+        };
+        let replayed = response
+            .as_ref()
+            .is_ok_and(|r| r.headers().contains_key("idempotency-replay"));
+        let answer = ring_outcome(response)
+            .await
+            .map_err(|refused| structure_pointer(refused, mode))?;
+        let mut out = match mode {
+            "create_workspace" => json!({
+                "id": answer["id"],
+                "name": answer["name"],
+                "path": answer["path"],
+                "parent": answer["parent_id"],
+                "status": answer["status"],
+            }),
+            "propose_status" => json!({
+                "transition_id": answer["transition_id"],
+                "workspace": answer["workspace_id"],
+                "from": answer["from"],
+                "to": answer["to"],
+                "state": answer["state"],
+            }),
+            _ => json!({
+                "edge_id": answer["edge_id"],
+                "artifact_id": answer["from_artifact_id"],
+                "workspace": answer["to_workspace_id"],
+                "state": answer["state"],
+            }),
+        };
+        if let Some(obj) = out.as_object_mut() {
+            obj.insert("mode".to_owned(), Value::from(mode));
+            obj.insert("idempotent_replay".to_owned(), Value::Bool(replayed));
+        }
+        Ok(out)
+    }
+
     /// `oml_write`'s withdraw mode (ADR-0083 d13, amendment of 2026-11-24):
     /// one `POST /v1/memories/{withdraw}/withdraw`, so the mode answers
     /// exactly what the ring answers: the author retracting its own held
@@ -1638,6 +1863,7 @@ where
             ("origin", args.origin.is_some()),
             ("skill", args.skill.is_some()),
             ("document", args.document.is_some()),
+            ("guardrail", args.guardrail.is_some()),
         ] {
             if sent {
                 return Err(field_refusal(
@@ -1938,6 +2164,8 @@ fn recall_item(m: &Value, score: Option<&Value>) -> Value {
 pub(crate) struct Presented<'a> {
     token: &'a str,
     pub(crate) connection: Option<&'a Caller>,
+    /// The key the credential names, as resolved before dispatch.
+    key: &'a KeyRecord,
 }
 
 fn ring_headers(presented: Presented<'_>) -> HeaderMap {
@@ -2050,19 +2278,69 @@ fn field_refusal(field: &str, message: &str) -> Value {
     refusal(ApiError::validation(message).with_details(json!({ "field": field })))
 }
 
-/// A plugin write of kind `guardrail`, refused naming `kind`: a guardrail is
-/// written and superseded on the HTTP API only, so no tool carries its
-/// `severity` or `rule` (ADR-0037 d10, amending ADR-0039 d3).
-fn refuse_guardrail_kind(kind: Option<&str>) -> Result<(), Value> {
-    if kind == Some("guardrail") {
+/// `oml_write`'s `guardrail` object (ADR-0095 d2): `{severity, rule?}`,
+/// required with kind `guardrail`, a supersession's included, since a
+/// successor re-sends both fields, and refused on every other kind and on a
+/// retirement, each refusal naming its field. Its fields ride the ring's
+/// body flat, as `POST /v1/memories` takes them; the ring's own checks then
+/// hold the body and rule caps and the scan (ADR-0037 d7, d10). With
+/// `replaces` and no kind, the successor takes its target's kind, and the
+/// ring holds the object to it.
+fn guardrail_fields(
+    kind: Option<&str>,
+    retirement: bool,
+    replaces: bool,
+    guardrail: Option<Value>,
+) -> Result<Map<String, Value>, Value> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Guardrail {
+        severity: String,
+        #[serde(default)]
+        rule: Option<Value>,
+    }
+    let is_guardrail = kind == Some("guardrail") || (replaces && kind.is_none());
+    let Some(sent) = guardrail else {
+        if kind == Some("guardrail") && !retirement {
+            return Err(field_refusal(
+                "/guardrail",
+                "guardrail is required with kind guardrail: an object {severity, rule?}, also on a supersession, which re-sends both",
+            ));
+        }
+        return Ok(Map::new());
+    };
+    if !is_guardrail || retirement {
         return Err(field_refusal(
-            "/kind",
-            "kind guardrail is refused here: a guardrail is written with its severity and rule on the HTTP API (POST /v1/memories) or the CLI, and reviewed before it binds",
+            "/guardrail",
+            "guardrail is refused here: it belongs to kind guardrail, and a retirement carries no fields of its kind",
         ));
     }
-    // The test kind is written over the HTTP API until oml_write takes its
-    // object (#419); a skill is admitted with its `skill` object (ADR-0080
-    // d3) and a document with its `document` object (ADR-0081 d5).
+    let Guardrail { severity, rule } = serde_json::from_value(sent).map_err(|_| {
+        field_refusal(
+            "/guardrail",
+            "guardrail is an object {severity, rule?}: severity never, must or should, rule an oml-gr/1 rule",
+        )
+    })?;
+    if !matches!(severity.as_str(), "never" | "must" | "should") {
+        return Err(field_refusal(
+            "/guardrail/severity",
+            &format!("guardrail.severity must be never, must or should, not {severity:?}"),
+        ));
+    }
+    let mut fields = Map::new();
+    fields.insert("severity".to_owned(), Value::String(severity));
+    if let Some(rule) = rule {
+        fields.insert("rule".to_owned(), rule);
+    }
+    Ok(fields)
+}
+
+/// The kinds `oml_write` refuses naming `kind`: the test kind is written
+/// over the HTTP API until `oml_write` takes its object (#419); a skill is
+/// admitted with its `skill` object (ADR-0080 d3), a document with its
+/// `document` object (ADR-0081 d5) and a guardrail with its `guardrail`
+/// object (ADR-0095 d2).
+fn refuse_test_kind(kind: Option<&str>) -> Result<(), Value> {
     if let Some(kind @ "test") = kind {
         return Err(field_refusal(
             "/kind",
@@ -2072,6 +2350,31 @@ fn refuse_guardrail_kind(kind: Option<&str>) -> Result<(), Value> {
         ));
     }
     Ok(())
+}
+
+/// A ring refusal's `details.field` named as the structure mode's argument:
+/// the route's `/name` and `/parent` are the create's `/create_workspace`
+/// and `/workspace`, `/to` is `/propose_status`, and `/from_artifact_id` and
+/// `/to_workspace_id` are `/propose_brief` and `/workspace` (ADR-0025 d16).
+fn structure_pointer(mut refused: Value, mode: &str) -> Value {
+    if let Some(field) = refused
+        .get_mut("error")
+        .and_then(|e| e.get_mut("details"))
+        .and_then(|d| d.get_mut("field"))
+    {
+        let named = match (mode, field.as_str()) {
+            ("create_workspace", Some("/name")) => Some("/create_workspace"),
+            ("create_workspace", Some("/parent")) => Some("/workspace"),
+            ("propose_status", Some("/to")) => Some("/propose_status"),
+            ("propose_brief", Some("/from_artifact_id")) => Some("/propose_brief"),
+            ("propose_brief", Some("/to_workspace_id")) => Some("/workspace"),
+            _ => None,
+        };
+        if let Some(named) = named {
+            *field = Value::from(named);
+        }
+    }
+    refused
 }
 
 /// The ring handler's response, as the success body or the refusal body.

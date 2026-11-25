@@ -420,6 +420,23 @@ enum KeysCommand {
         #[arg(long)]
         no_rate_limit: bool,
     },
+    /// Give a key a new value and print it once, or with --out write it to a
+    /// new owner-only file and print none. The key keeps its name, grants,
+    /// denials and limits; journals key.rotated. An admin key rotates any
+    /// key, a key rotates itself.
+    Rotate {
+        /// Key id or name.
+        #[arg(value_name = "KEY")]
+        key_ref: String,
+        /// How long the previous value keeps working, such as 1h or 24h, at
+        /// most 24h; omitted, it stops at once.
+        #[arg(long, value_name = "DURATION")]
+        grace: Option<String>,
+        /// Write the new value to this new file, owner-only (0600), and print
+        /// no value.
+        #[arg(long, value_name = "FILE")]
+        out: Option<std::path::PathBuf>,
+    },
     /// Revoke one connector-key connection and journal connection.revoked.
     Disconnect {
         /// Connector key id or name.
@@ -1070,9 +1087,25 @@ struct WriteArgs {
     #[arg(long, conflicts_with = "replaces")]
     claim_key: Option<String>,
     /// memory | derived_fact | steering | term | term_mapping | vocab_release |
-    /// guardrail; defaults to memory, or the target's kind with --replaces.
+    /// guardrail | skill | document; defaults to memory, or the target's kind
+    /// with --replaces.
     #[arg(long)]
     kind: Option<String>,
+    /// Skill name, a lowercase label; required with --kind skill, and the
+    /// target's name with --replaces.
+    #[arg(
+        long = "skill-name",
+        required_if_eq("kind", "skill"),
+        requires = "skill_description"
+    )]
+    skill_name: Option<String>,
+    /// Skill description, one line; required with --kind skill.
+    #[arg(
+        long = "skill-description",
+        required_if_eq("kind", "skill"),
+        requires = "skill_name"
+    )]
+    skill_description: Option<String>,
     /// Guardrail severity: never, must, or should; required for non-retirement guardrails.
     #[arg(long, value_parser = ["never", "must", "should"])]
     severity: Option<String>,
@@ -1897,6 +1930,82 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
 
         Command::Keys {
             command:
+                KeysCommand::Rotate {
+                    key_ref,
+                    grace,
+                    out,
+                },
+        } => {
+            if cli.json && out.is_some() {
+                return Err(CliError::local(
+                    "--out writes the value to a file and prints none; drop --json",
+                ));
+            }
+            let body = match grace {
+                Some(grace) => {
+                    let secs = parse_ttl(grace)
+                        .map_err(|e| CliError::Local(e.replacen("--ttl", "--grace", 1)))?;
+                    json!({ "grace_seconds": secs })
+                }
+                None => json!({}),
+            };
+            let path = format!("/v2/keys/{}/rotate", segment(key_ref)?);
+            let client = resolve(cli, &stored)?;
+            // The owner-only file is created and claimed before anything is
+            // sent, as `issue-agent --out` does: a path that cannot hold the
+            // value fails while the previous value still stands, and no new
+            // value is minted that nothing keeps (ADR-0096 d13; ADR-0028 d1).
+            let key_file = match out {
+                Some(out) => Some(KeyFile::create(out).map_err(CliError::Local)?),
+                None => None,
+            };
+            let response = match client.post_keyed(&path, &body, &new_idempotency_key()) {
+                Ok((_, response)) => response,
+                Err(failure) => {
+                    if let Some(Err(e)) = key_file.map(KeyFile::discard) {
+                        eprintln!("note: {e}");
+                    }
+                    return Err(failure);
+                }
+            };
+            let value = response["value"].as_str().unwrap_or_default();
+            let until = response["previous_valid_until"].as_str().map_or_else(
+                || "now: it no longer authenticates".to_owned(),
+                |t| t.to_owned(),
+            );
+            match key_file {
+                Some(file) => {
+                    let shown = file.shown().to_owned();
+                    file.write_value(value).map_err(|e| {
+                        CliError::Unanswered(format!(
+                            "writing {shown} failed ({e}); key {} was rotated and its new value \
+                             is lost: rotate it again",
+                            field(&response, "name")
+                        ))
+                    })?;
+                    println!(
+                        "rotated — key {}; the new value is in {shown} (owner-only); the previous \
+                         value stops at {until}",
+                        field(&response, "name"),
+                    );
+                }
+                None if cli.json => print_json(&response),
+                None => {
+                    println!(
+                        "rotated — key {} ({})",
+                        field(&response, "name"),
+                        field(&response, "key_id")
+                    );
+                    println!("  value    : {value}");
+                    println!("  shown once: store it now; OML keeps only its hash");
+                    println!("  previous : stops at {until}");
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Keys {
+            command:
                 KeysCommand::Limit {
                     key_ref,
                     expires,
@@ -2264,7 +2373,10 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         Command::Usage { command } => run_usage(cli, &stored, command),
         Command::Admin { command } => run_admin(cli, &stored, command),
 
-        Command::Write(args) => run_write(cli, &stored, &Write::of(args)),
+        Command::Write(args) => {
+            refuse_skill_fields_on_another_kind(args);
+            run_write(cli, &stored, &Write::of(args))
+        }
         Command::Read(args) => run_read(cli, &stored, args),
         Command::Withdraw(args) => run_withdraw(cli, &stored, args),
         Command::Events(args) => run_events(cli, &stored, args),
@@ -2907,6 +3019,8 @@ struct Write<'a> {
     format: Option<&'a str>,
     title: Option<&'a str>,
     origin_kind: Option<&'a str>,
+    /// The skill object's name and description (ADR-0080 d1).
+    skill: Option<(&'a str, &'a str)>,
 }
 
 impl<'a> Write<'a> {
@@ -2928,7 +3042,25 @@ impl<'a> Write<'a> {
             format: args.format.as_deref(),
             title: args.title.as_deref(),
             origin_kind: args.origin_kind.as_deref(),
+            skill: args
+                .skill_name
+                .as_deref()
+                .zip(args.skill_description.as_deref()),
         }
+    }
+}
+
+/// `--skill-*` beside a `--kind` other than skill, or with no `--kind`,
+/// which writes a memory: a usage error, as clap draws one, before anything
+/// is sent (ADR-0080 d1: the skill object is refused on every other kind).
+fn refuse_skill_fields_on_another_kind(args: &WriteArgs) {
+    if args.skill_name.is_some() && args.kind.as_deref() != Some("skill") {
+        <Cli as clap::CommandFactory>::command()
+            .error(
+                clap::error::ErrorKind::ArgumentConflict,
+                "--skill-name and --skill-description go with --kind skill alone",
+            )
+            .exit();
     }
 }
 
@@ -2996,6 +3128,9 @@ fn run_write(cli: &Cli, stored: &Credentials, write: &Write<'_>) -> Result<ExitC
     }
     if let Some(rule) = write.rule {
         body["rule"] = rule.clone();
+    }
+    if let Some((name, description)) = write.skill {
+        body["skill"] = json!({ "name": name, "description": description });
     }
     if let Some(anchor) = write.anchor {
         body["anchor"] = anchor.clone();
@@ -6027,6 +6162,15 @@ fn key_doctor(me: Option<&Result<Value, CliError>>) -> Vec<String> {
                 lines.push(format!(
                     "ok rate: this key is held to {rate} requests per minute, counted by each \
                      server process alone"
+                ));
+            }
+            // A rotated key's previous value still works until its grace
+            // ends (ADR-0096 d13): information, not a fault.
+            if let Some(until) = me["rotation_grace_until"].as_str() {
+                lines.push(format!(
+                    "info key.rotation_grace_open: this key's previous value still \
+                     authenticates until {until}; move every client to the new value before \
+                     then"
                 ));
             }
             // The server decides it: `whoami`'s grants carry no ancestry.
@@ -9254,6 +9398,22 @@ mod tests {
         let plain = serde_json::json!({ "expiry": null, "requests_per_minute": null });
         assert!(key_doctor(Some(&Ok(plain))).is_empty());
         assert!(key_doctor(None).is_empty());
+    }
+
+    /// While a rotation's grace is open the doctor says until when the
+    /// previous value works, as information (ADR-0096 d13).
+    #[test]
+    fn doctor_says_when_a_rotated_keys_previous_value_stops_while_its_grace_is_open() {
+        let rotated = serde_json::json!({
+            "name": "ada",
+            "rotation_grace_until": "2026-11-26T10:00:00.000000Z",
+        });
+        assert_eq!(
+            key_doctor(Some(&Ok(rotated))),
+            vec![
+                "info key.rotation_grace_open: this key's previous value still authenticates until 2026-11-26T10:00:00.000000Z; move every client to the new value before then",
+            ]
+        );
     }
 
     /// The doctor names the key as the server serves it, by `whoami`'s

@@ -66,6 +66,9 @@ class Whoami:
                 oml doctor names it key_contributor_without_recall. false for every other key, and for every session key the
                 server holds for a person, <user>-curate included; optional here so a client reads an answer without it, from an
                 older server, as false (ADR-0093 d3, as read on 2026-11-20).
+            rotation_grace_until (datetime.datetime | Unset): For a bearer key rotated with a grace still open: when its
+                previous value stops authenticating; oml doctor prints key.rotation_grace_open. Absent otherwise (ADR-0096 d13).
+                Since v0.8.5.
             shared (bool | Unset): Whether the server's admins are not the caller's: true when the operator sets
                 server.shared or opens sign-up. oml sync asks consent of a shared server; a server from this release always
                 sends it; optional here so a client reads an answer without it, from an older server, as false (ADR-0076 d9).
@@ -94,6 +97,7 @@ class Whoami:
     denied: bool | Unset = UNSET
     person: None | Unset | WhoamiPerson = UNSET
     without_recall: bool | Unset = UNSET
+    rotation_grace_until: datetime.datetime | Unset = UNSET
     shared: bool | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
@@ -183,6 +187,10 @@ class Whoami:
 
         without_recall = self.without_recall
 
+        rotation_grace_until: str | Unset = UNSET
+        if not isinstance(self.rotation_grace_until, Unset):
+            rotation_grace_until = self.rotation_grace_until.isoformat()
+
         shared = self.shared
 
         field_dict: dict[str, Any] = {}
@@ -215,6 +223,8 @@ class Whoami:
             field_dict["person"] = person
         if without_recall is not UNSET:
             field_dict["without_recall"] = without_recall
+        if rotation_grace_until is not UNSET:
+            field_dict["rotation_grace_until"] = rotation_grace_until
         if shared is not UNSET:
             field_dict["shared"] = shared
 
@@ -414,6 +424,15 @@ class Whoami:
 
         without_recall = d.pop("without_recall", UNSET)
 
+        _rotation_grace_until = d.pop("rotation_grace_until", UNSET)
+        rotation_grace_until: datetime.datetime | Unset
+        if isinstance(_rotation_grace_until, Unset):
+            rotation_grace_until = UNSET
+        else:
+            rotation_grace_until = datetime.datetime.fromisoformat(
+                _rotation_grace_until
+            )
+
         shared = d.pop("shared", UNSET)
 
         whoami = cls(
@@ -434,6 +453,7 @@ class Whoami:
             denied=denied,
             person=person,
             without_recall=without_recall,
+            rotation_grace_until=rotation_grace_until,
             shared=shared,
         )
 

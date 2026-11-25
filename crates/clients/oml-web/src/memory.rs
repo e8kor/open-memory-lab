@@ -46,8 +46,9 @@ use crate::{Capacity, Web, acts, outcome, render};
 /// The admin memory page's one act.
 pub const MEMORY_ACTIONS: &[&str] = &["supersede"];
 
-/// The user memory page's one act (ADR-0083 d13).
-pub const USER_MEMORY_ACTIONS: &[&str] = &["withdraw"];
+/// The user memory page's acts: Withdraw (ADR-0083 d13) and Propose for
+/// brief (ADR-0095 d6; ADR-0096 P8).
+pub const USER_MEMORY_ACTIONS: &[&str] = &["withdraw", "propose_brief"];
 
 /// The Curate view's one act.
 pub const CURATE_ACTIONS: &[&str] = &["curate"];
@@ -161,6 +162,19 @@ pub async fn user_page(
     // Withdraw's confirmation, opened from a held row of the list: only a
     // held version a key of this person wrote is offered it (ADR-0083 d13,
     // note of 2026-11-17).
+    // Propose for brief (P8): offered on an approved memory, confirmed on
+    // its own view; a second proposal of the same memory comes back with
+    // the edge the `409 proposal.pending` named.
+    if memory.state == "promoted" && fields.get("act") != Some("brief") {
+        let _ = write!(
+            body,
+            r#"<p><a class="button" href="{USER_MEMORY_PATH}?id={}&amp;act=brief">Propose for brief</a></p>"#,
+            attr(&encode(&memory.artifact_id))
+        );
+    }
+    if fields.get("act") == Some("brief") {
+        body.push_str(&brief_proposal(&web, &session, &calls, &credential, &memory, &fields).await);
+    }
     if fields.get("act") == Some("withdraw") {
         let own = memory.state == "held"
             && match crate::memories::written_by_own_key(
@@ -215,15 +229,21 @@ pub async fn user_act(
     Extension(calls): Extension<Arc<PageCalls>>,
     form: Result<Form<Vec<(String, String)>>, FormRejection>,
 ) -> Response {
-    let (fields, _) = match acts::read(
+    let (fields, action) = match acts::read(
         form,
         USER_MEMORY_ACTIONS,
-        |_, n| matches!(n, "memory" | "reason"),
+        |action, n| match action {
+            "propose_brief" => matches!(n, "memory" | "workspace"),
+            _ => matches!(n, "memory" | "reason"),
+        },
         &calls,
     ) {
         Ok(read) => read,
         Err(refusal) => return *refusal,
     };
+    if action == "propose_brief" {
+        return propose_brief(&web, &session, &calls, &fields).await;
+    }
     let target = match id_in(&fields, "memory", &calls) {
         Ok(id) => id.to_owned(),
         Err(refusal) => return *refusal,
@@ -250,6 +270,134 @@ pub async fn user_act(
             &[],
         ),
         Err(e) => outcome::page(&e, &calls, USER_MEMORY_PATH),
+    }
+}
+
+/// Propose for brief's view (P8): a held or other unapproved memory gets
+/// one line why and no act; an approved one the confirmation card, which
+/// posts once as `<user>-web`; with `pending` set, the line naming the
+/// live edge, read from the brief's listing by the id the refusal named.
+async fn brief_proposal(
+    web: &Web,
+    session: &Session,
+    calls: &PageCalls,
+    credential: &str,
+    memory: &Memory,
+    fields: &Fields,
+) -> String {
+    let workspace = memory
+        .workspace_path
+        .as_deref()
+        .unwrap_or("this workspace")
+        .to_owned();
+    let Some(workspace_id) = memory.workspace_id.as_deref() else {
+        return String::new();
+    };
+    if memory.state != "promoted" {
+        return r#"<h2>Propose for brief</h2><p class="desc">Only an approved memory joins a brief: this version is not approved.</p>"#.to_owned();
+    }
+    let mut out = String::from("<h2>Propose for brief</h2>");
+    if let Some(edge) = fields.given("pending").filter(|id| is_id(id)) {
+        let ids = calls.next_ids();
+        let listed = web
+            .api
+            .brief_edges(&call(credential, &ids), workspace_id)
+            .await
+            .ok()
+            .and_then(|page| page.items.into_iter().find(|e| e.edge_id == edge));
+        let line = match listed {
+            Some(e) if e.state == "pending" => format!(
+                "Already proposed for this brief, {}.",
+                crate::brief::made(e.proposed_at.as_deref(), e.proposed_by.as_ref())
+            ),
+            Some(_) => "Already a member of this brief.".to_owned(),
+            None => "Already proposed for this brief.".to_owned(),
+        };
+        let _ = write!(
+            out,
+            r#"<p class="error" role="status"><code>{}</code> {line} <a href="{}?workspace={}&amp;kind=brief">Open the brief</a></p>"#,
+            crate::brief::PENDING,
+            crate::workspace::WORKSPACE_PATH,
+            attr(&encode(workspace_id))
+        );
+        return out;
+    }
+    let _ = write!(
+        out,
+        r#"<p class="desc">Proposed as <code>{}</code> for the brief of <code>{}</code>. It joins once a key and principal other than the proposer's ratifies it, and an agent connected there is then served it with the brief.</p>"#,
+        text(
+            &session
+                .whoami
+                .user
+                .as_ref()
+                .map_or_else(|| "the web key".to_owned(), |u| format!("{}-web", u.name))
+        ),
+        text(&workspace)
+    );
+    out.push_str(&form(
+        USER_MEMORY_PATH,
+        "propose_brief",
+        &session.csrf(),
+        &format!(
+            "{}{}{}",
+            hidden("memory", &memory.artifact_id),
+            hidden("workspace", workspace_id),
+            acts::nonce_field()
+        ),
+        "Propose for brief",
+        true,
+    ));
+    let _ = write!(
+        out,
+        r#"<p><a href="{USER_MEMORY_PATH}?id={}">Keep it out of the brief</a></p>"#,
+        attr(&encode(&memory.artifact_id))
+    );
+    out
+}
+
+/// `POST /web/memory`, Propose for brief: `POST /v2/edges` with `kind:
+/// brief` as `<user>-web` (ADR-0095 d6), then the workspace's brief; a
+/// second proposal of the same memory back to its view, naming the live
+/// edge.
+async fn propose_brief(
+    web: &Web,
+    session: &Session,
+    calls: &PageCalls,
+    fields: &Fields,
+) -> Response {
+    let target = match id_in(fields, "memory", calls) {
+        Ok(id) => id.to_owned(),
+        Err(refusal) => return *refusal,
+    };
+    let Some(workspace) = fields.given("workspace").filter(|id| is_id(id)) else {
+        return acts::invalid("workspace is the memory's workspace id", calls);
+    };
+    let key = match acts::key(session, fields, calls) {
+        Ok(key) => key,
+        Err(refusal) => return *refusal,
+    };
+    let _in_flight = acts::hold(&key).await;
+    let credential = session.credential(Capacity::Web);
+    let ids = calls.next_ids();
+    match web
+        .api
+        .propose_brief(&call(&credential, &ids), &key, &target, workspace)
+        .await
+    {
+        Ok(_) => acts::see_other(
+            &format!(
+                "{}?workspace={workspace}&kind=brief&done=brief_proposed",
+                crate::workspace::WORKSPACE_PATH
+            ),
+            &[],
+        ),
+        Err(e) => match crate::brief::pending_id(&e, "edge_id") {
+            Some(edge) => acts::see_other(
+                &format!("{USER_MEMORY_PATH}?id={target}&act=brief&pending={edge}"),
+                &[],
+            ),
+            None => outcome::page(&e, calls, USER_MEMORY_PATH),
+        },
     }
 }
 
@@ -438,7 +586,12 @@ pub async fn admin_page(
         .map_or("", |u| u.name.as_str())
         .to_owned();
     let mut body = format!(
-        r#"<p class="label">Memories</p><h1>One memory</h1><p><a href="{ADMIN_MEMORIES_PATH}">Back to the list</a></p>{}<h2>Replace it</h2><p class="desc">Proposed under <code>{}</code> and held until someone else reviews it: a reviewer key cannot judge its own version.</p>"#,
+        r#"<p class="label">Memories</p><h1>One memory</h1><p><a href="{ADMIN_MEMORIES_PATH}">Back to the list</a> · <a href="{}?workspace={}&amp;view=fix&amp;target={}">Fix this version</a></p>{}<h2>Replace it</h2><p class="desc">Proposed under <code>{}</code> and held until someone else reviews it: a reviewer key cannot judge its own version.</p>"#,
+        // The Fix tab takes its target from this read, made inside the
+        // open investigation (ADR-0096 d5).
+        crate::workspace::ADMIN_WORKSPACE_PATH,
+        attr(&encode(&roots.reference(&read.workspace_path))),
+        attr(&encode(&read.artifact_id)),
         attribution(
             &read,
             was_version,

@@ -31,7 +31,12 @@ struct AllowBody {
     email: Option<String>,
     user: Option<String>,
     admin: Option<bool>,
-    /// Refuse un-flagging the tenant's last admin entry (ADR-0045 d10).
+    /// Accepted and changes nothing: the last admin entry is kept on every
+    /// surface (ADR-0097 d25, d27 item 4).
+    #[allow(
+        dead_code,
+        reason = "accepted so an older client's request still parses; the guard holds whatever it says"
+    )]
     keep_an_admin: Option<bool>,
 }
 
@@ -56,15 +61,18 @@ fn entry_json(entry: &WebEntry) -> Value {
 }
 
 /// A person's counts as the users listing and whoami's `person` serve them
-/// (ADR-0068 d5; ADR-0071 d2): the stocks, and the versions submitted this
-/// UTC month.
+/// (ADR-0068 d5; ADR-0071 d2; ADR-0095 d4): the stocks, and the versions
+/// submitted this UTC month.
 pub(crate) fn counts_json(usage: &oml_app::types::UserUsage) -> Value {
     json!({
         "memories": usage.memories,
         "text_bytes": usage.text_bytes,
         "writes": usage.writes,
+        // This month's recalls, a count with no limit (ADR-0096 d9).
+        "recalls": usage.recalls,
         "keys": usage.keys,
         "connections": usage.connections,
+        "workspaces": usage.workspaces,
     })
 }
 
@@ -94,6 +102,8 @@ pub(crate) fn user_row_json(u: &UserRow) -> Value {
         "under_quotas": u.under_quotas,
         "usage": counts_json(&u.usage),
         "quotas": limits_json(&u.quotas),
+        "profile": u.profile,
+        "period": u.period,
         "admin_keys": u.admin_keys,
     })
 }
@@ -254,7 +264,10 @@ where
             ApiError::validation("admin is required").with_details(json!({ "field": "/admin" }))
         })?;
         let request = WebEmailRequest { email, user, admin };
-        let keep = req.keep_an_admin == Some(true);
+        // The last live admin entry is kept whatever the caller sends;
+        // `keep_an_admin` is still read, and changes nothing (ADR-0097 d25,
+        // d27 item 4).
+        let keep = true;
         let st = st.clone();
         claim
             .run(async move {
@@ -314,7 +327,10 @@ where
                 .with_details(json!({ "field": "/admin" })));
         }
         let email = email_field(req.email.as_deref())?;
-        let keep = req.keep_an_admin == Some(true);
+        // The last live admin entry is kept whatever the caller sends;
+        // `keep_an_admin` is still read, and changes nothing (ADR-0097 d25,
+        // d27 item 4).
+        let keep = true;
         let st = st.clone();
         claim
             .run(async move {

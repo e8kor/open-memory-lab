@@ -38,8 +38,9 @@ where
         key: Reference,
         user: &Name,
     ) -> Result<KeyRecord, AppError> {
-        let admin = self.authenticate_bearer(bearer.into()).await?.key;
+        let admin = self.key_act_caller(bearer.into(), "link_key").await?;
         require_role(&admin, Role::Admin, "link_key")?;
+        let admin = admin.key;
         let own_person = console_admin_person(&admin)?;
         let tenant_id = admin.tenant_id;
         let mut target = self.linkable_key(&admin, &key).await?;
@@ -105,8 +106,9 @@ where
         bearer: impl Into<Bearer<'_>>,
         key: Reference,
     ) -> Result<KeyRecord, AppError> {
-        let admin = self.authenticate_bearer(bearer.into()).await?.key;
+        let admin = self.key_act_caller(bearer.into(), "unlink_key").await?;
         require_role(&admin, Role::Admin, "unlink_key")?;
+        let admin = admin.key;
         console_admin_person(&admin)?;
         let tenant_id = admin.tenant_id;
         let key_id = self.resolve(&admin, NamedKind::Key, &key).await?;
@@ -162,7 +164,10 @@ where
         bearer: impl Into<Bearer<'_>>,
         key: Reference,
     ) -> Result<(KeyRecord, Name), AppError> {
-        let caller = self.authenticate_bearer(bearer.into()).await?.key;
+        let caller = self
+            .key_act_caller(bearer.into(), "accept_key_link")
+            .await?
+            .key;
         let Some(session_user) = caller
             .session_user
             .as_ref()

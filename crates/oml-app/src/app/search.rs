@@ -4,9 +4,9 @@
 
 use serde_json::json;
 
-use oml_domain::{Role, event_types};
+use oml_domain::event_types;
 
-use super::{App, require_role};
+use super::App;
 use crate::ports::{Clock, IdGen, JournalStore, MetadataFold, Scanner, Signer};
 use crate::search::{Pipeline, PostingsHealth};
 use crate::types::{AppError, Bearer};
@@ -52,8 +52,10 @@ where
         &self,
         bearer: impl Into<Bearer<'_>>,
     ) -> Result<SearchSettings, AppError> {
-        let admin = self.authenticate_bearer(bearer.into()).await?.key;
-        require_role(&admin, Role::Admin, "search_settings")?;
+        let admin = self
+            .admin_caller(bearer.into(), "search_settings")
+            .await?
+            .key;
         let mut settings = self.settings_of(admin.tenant_id).await?;
         if self.search.serves(Pipeline::Bm25Postings) || self.search.needs_sparse() {
             settings.postings = self.journal.postings_health(admin.tenant_id).await?;
@@ -75,8 +77,10 @@ where
         bearer: impl Into<Bearer<'_>>,
         pipeline: Option<&str>,
     ) -> Result<SearchSettings, AppError> {
-        let admin = self.authenticate_bearer(bearer.into()).await?.key;
-        require_role(&admin, Role::Admin, "search_default")?;
+        let admin = self
+            .admin_caller(bearer.into(), "search_default")
+            .await?
+            .key;
         let tenant_id = admin.tenant_id;
         let chosen = match pipeline {
             None => None,

@@ -126,6 +126,10 @@ no server serves `/v2/workspaces/{workspace}/releases` or `/v2/keys/{key}/bindin
   `code`, `message`, `rule`, `retryable`, `details`, `request_id` (`requestId` in TypeScript) and
   the HTTP status. Each error family has a subclass, such as `AuthError` or `AccessError`. An
   unknown code lands in its family's class, and an unknown family in `ApiError`.
+- **Forward compatibility.** An answer field's value that the spec an SDK was generated from does
+  not list, such as a verb a later server adds to `my_effective_verbs`, is read as its string:
+  the Python layer's enums are generated from `sdks/python/templates/str_enum.py.jinja`, whose
+  `_missing_` keeps an unknown value, and the TypeScript layer validates no enum. Since v0.8.5.
 - **Validation before sending.** Fields outside the chosen mode raise `request.validation`,
   with `details.field` naming the field, before anything reaches the network.
 

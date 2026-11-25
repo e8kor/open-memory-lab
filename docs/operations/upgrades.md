@@ -83,6 +83,152 @@ spellings that a new server refuses, and each refusal names the new spelling.
 Update the plugin with `claude plugin update oml@open-memory-lab`. Then set its `url` and `api_key` with
 `/plugin configure oml@open-memory-lab`. The plugin serves no tools until both are set.
 
+## Upgrading to v0.8.5
+
+v0.8.5 runs three migrations, 0067 to 0069, lets `oml_write` create a child workspace, write
+guardrails and propose status and brief changes, adds the console round's pages and key rotation.
+The server, the SDKs and the CLI upgrade in one window.
+
+### `oml_write` writes guardrails, creates a child workspace and proposes status and brief changes
+
+v0.8.5 adds three modes and one object to `oml_write`, and no tool ([ADR-0095](../adr/ADR-0095-an-agent-creates-its-own-child-workspaces-writes-guardrails-and-proposes-status-and-brief-changes-through-oml-write-and-every-verdict-and-setting-stays-with-people.md)). Kind `guardrail`
+takes a `guardrail` object, `{severity, rule?}`, and a person approves every version, as on the
+HTTP API. `create_workspace` creates a child inside the person's own root, from a contributor key
+that names that person and from no other key (`access.verb_ceiling`, `details.reason`
+`create_is_own_root_only`). `propose_status` proposes a status move from a reviewer key, and
+`propose_brief` proposes a brief member from a contributor or reviewer key; a different identity
+ratifies each, never over MCP. `oml_workspace` stays read-only, and `my_effective_verbs` gains
+`create_workspace` and `propose_brief` where a key may use them. Every annotation is unchanged, so
+a client permission rule that allows `mcp__plugin_oml_oml__oml_write` without a prompt, or
+`mcp__plugin_oml_oml` for all three tools, now admits a create and both proposals without one
+too. To keep a prompt before them, put `oml_write` under an ask rule.
+
+The HTTP API changes in five places. `POST /v2/edges` with `kind: brief` admits a contributor key
+holding submitter on the workspace. Both proposal routes answer `409 proposal.pending`, naming
+the live proposal in `details.transition_id` or `details.edge_id`, when one to the same status,
+or of the same claim for the same brief, is live: a script that proposed the same move twice now
+receives the 409. `limit.quota`'s `details.quota` gains `workspaces`, and the three create and
+proposal bodies take an optional `reason`. The pending transitions on `GET /v2/workspaces/{w}`
+and the pending brief edges on `GET /v2/edges?kind=brief` gain `proposed_at` and `proposed_by`,
+the latter `{id, name}` to a key of the proposer's person and null to every other. The two new
+verbs in `my_effective_verbs` are values the v0.8.4 Python SDK's generated model does not know: its
+workspace read raises `ValueError` on a v0.8.5 server wherever a key holds either, so the Python
+SDK upgrades with the server; the TypeScript SDK reads them as strings. The SDKs also gain a
+`ProposalError` class for the new `proposal` error family.
+
+From v0.8.5 on, both SDKs tolerate values a later server adds: the Python SDK keeps an enum value
+its spec does not list, such as a new verb or state, as its string instead of raising, and an
+error code it has never seen lands in its family's class, as the TypeScript SDK already did. So
+this is the last upgrade in which an SDK must move in the server's window for new values alone.
+
+The notice to send to client owners:
+
+> From v0.8.5 `oml_write` also writes guardrails (kind `guardrail` with a `guardrail` object),
+> creates a child workspace inside the person's own root (`create_workspace`), and proposes a
+> status move or a brief member (`propose_status`, `propose_brief`). Each proposal is ratified by a
+> different identity. A client rule that allows `oml_write` without a prompt now admits these too.
+>
+> Upgrade the Python SDK with the server: the v0.8.4 Python SDK raises `ValueError` on the new
+> `my_effective_verbs` values a v0.8.5 server serves. From v0.8.5 on the SDKs keep a value they do
+> not know as its string.
+>
+> A key can now be rotated: `oml keys rotate <key> [--grace <dur>]`, `POST
+> /v2/keys/{key}/rotate`, or **Rotate** on the console's Keys tab gives a key a new value, shown
+> once, and keeps its name, grants and limits. With a grace of up to 24 hours the previous value
+> keeps working until then; it runs no key act meanwhile.
+>
+> The last admin of a tenant is kept on every surface: `oml web allow` un-flagging, and `oml web
+> remove` removing, the last admin entry are now refused (`request.validation` naming `admin`)
+> under a bearer admin key too, as the console already refused them.
+
+### Migration 0067 adds the `workspaces` meter
+
+Migration 0067 adds `account_meters.workspaces` and `usage_daily.workspaces`, admits
+`workspaces` in `user_quotas`, and fills every account's counter from its tree: the workspaces
+below its root, whoever created them. It replaces `oml_account_source` with the same definition
+plus that count, so `oml doctor`'s `warn usage: … drift` line covers the meter, and the existing
+`warn quota:` line warns at 80% of its limit. What it costs a live database: two columns with a
+constant default, added without rewriting a row; one check on `user_quotas` replaced and validated
+by a scan of that small table; and one aggregate of `workspaces` and one update of
+`account_meters` per tenant. A lock is waited for at most 5 s.
+
+The `default` profile leaves `workspaces` unlimited. A deployment sets a limit with
+`quota.workspaces` (`OML_QUOTA__WORKSPACES`) or `quota.profile.<name>.workspaces`, as every
+other limit is set ([configuration](configuration.md)); 100 per account is the value ADR-0095
+records for an open sign-up deployment, an unmeasured value recalibrated with the other limits under
+[#164](https://github.com/e8kor/open-memory-lab/issues/164) ([ADR-0095](../adr/ADR-0095-an-agent-creates-its-own-child-workspaces-writes-guardrails-and-proposes-status-and-brief-changes-through-oml-write-and-every-verdict-and-setting-stays-with-people.md) d11 Q4). Past the limit a create
+is `429 limit.quota` and journals nothing.
+
+### Migration 0068 adds the imports index
+
+Migration 0068 adds one index on the imports table (`imports_importer_created`), which the new
+imports listing reads; a deployment with few imports builds it at once. Clients read the new
+answer fields as optional: `GET /v2/keys` serves each grant's `covers` and an older server's
+answer reads as `subtree`; `whoami`'s person block serves `profile`, `period` and
+`usage.recalls`. A person's own issuance now takes grants, a default workspace, a guardrail scope,
+a rate and the role `submitter` ([ADR-0096](../adr/ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md)).
+
+### Migration 0069 and key rotation
+
+`oml keys rotate <key> [--grace <dur>] [--out <file>]`, `POST /v2/keys/{key}/rotate` and **Rotate**
+give a bearer key a new value and keep everything else ([ADR-0096](../adr/ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md) d13). The key rotates
+itself; a person rotates their own contributor, reader and submitter keys from the Personal Keys
+tab; an admin rotates its own admin key and, from the admin one-key page, a tenant key that names
+no person. In v0.8.5 an admin is refused another admin's key (`not_admins_key`) and a key of a
+person (`in_persons_root`); v0.8.6 brings those under [ADR-0097](../adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md)'s confirmation. Migration
+0069 adds one empty table, `key_previous_hashes`, which holds a rotated key's previous hash while
+its grace lasts; it reads and locks nothing existing. A key value's `whoami` reads one row more,
+and serves `rotation_grace_until` while a grace is open, which `oml doctor` prints as `info
+key.rotation_grace_open`. The previous value reads and writes memories during the grace and
+runs nothing else: no key act, no admin verb, no workspace creation, mode, federation or status
+change (`access.verb_ceiling`, `previous_value`). To roll the operator's or a deployer's key, rotate it
+with a grace, move each client to the new value, and let the grace end.
+
+### The console's new paths, Grant read, the brief and the CLI's skills
+
+The console serves four new paths: `/web/keys/new` (the key builder), `/web/admin/fixes` (the
+Fix tab's act), `/web/workspaces/import` (the import hand-off and list) and `/web/todo/fix` (where
+a person confirms or reverts an admin fix). `POST /web/workspace`, the workspace page's status
+proposal and brief ratification, is on a path a proxy already routes. A proxy that routes
+`oml-web`'s paths by name adds the four, as `deploy/caddy/Caddyfile`, both compose files and the
+chart's `web.ingressPaths` do.
+
+Administration, People gains **Grant read** (user, workspace): `POST
+/v2/web/users/{user}/capacities` takes `capacity: read`, which gives `<user>-web` a `reader` grant
+on the workspace, reached at the person's next sign-in, so their Memories and Catalog list it. The
+admin workspace page links **Browse as <user>** where the admin's own person holds that read
+([ADR-0096](../adr/ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md), operator decision of 2026-11-25). `POST /v2/edges` with `kind: brief` and `GET
+/v2/edges?kind=brief` accept a person's session. `oml write --kind skill --skill-name <name>
+--skill-description <line>` writes a skill, and `oml write --help` lists `skill` and `document`.
+
+### The last admin entry, the deny's reason, and the counts before v0.8.6
+
+The last live admin entry of a tenant is now kept on every surface: `oml web allow` un-flagging it
+and `oml web remove` removing it under a bearer admin key are refused, `request.validation` naming
+`admin`, as the console already was, and `keep_an_admin` is read and changes nothing
+([ADR-0097](../adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) d25, d27). A denial's `reason` is scanned and journalled in `key.denied` when
+sent.
+
+Before the v0.8.6 upgrade the operator takes the read-only counts ADR-0097 sizes it by, on the
+database host, with the owner role's password in `PGPASSFILE` or `~/.pgpass`:
+
+```sh
+PGPASSFILE=~/.pgpass \
+OML_COUNTS_DATABASE_URL=postgres://<owner role>@<host>/<database> \
+  scripts/ops/read_only_counts.sh > counts.csv
+```
+
+The URL names the database owner role and carries no password; the script refuses one that does,
+so no process listing shows it. The owner role is `NOSUPERUSER NOBYPASSRLS` and every table forces
+row-level security, so the script lists the tenants under `oml.startup_check`, which the tenants
+table's listing policy admits, and counts each tenant under its own `oml.tenant_id`. It runs one
+`READ ONLY` transaction in a read-only session and ends in `ROLLBACK`, so it changes nothing. It
+prints `count,tenant,value` for unlinked admin keys, service admin keys, grants in another
+person's root, admin-issued user keys and connect codes, open investigations, and
+`admin_persons_ever`, 2 or more where a tenant ever had two admin persons, and exits non-zero,
+printing no counts, when the role sees no tenant. The HTTP API serves no tenant-wide key or grant
+listing, so the counts read the database.
+
 ## Upgrading to v0.8.4
 
 v0.8.4 runs three migrations, renames the writer role, folds `oml_withdraw` into `oml_write`, and

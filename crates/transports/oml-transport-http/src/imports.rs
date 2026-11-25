@@ -4,7 +4,8 @@
 //! refusals to the importing key alone.
 
 use axum::body::Bytes;
-use axum::extract::{Path, State};
+use axum::extract::rejection::QueryRejection;
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use serde::Deserialize;
@@ -12,13 +13,17 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use oml_app::app::{ImportPlan, ImportStart};
+use oml_app::domain::import::ImportState;
 use oml_app::domain::name::Reference;
 use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer, WebStore};
 use oml_app::types::ImportRecord;
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
 use crate::traffic::Rid;
-use crate::{ApiState, bearer, finish, json_response, parse_json};
+use crate::{
+    ApiState, acting, bearer, finish, json_response, parse_json, position_cursor,
+    position_cursor_of,
+};
 
 /// The `event` field of the log line an import whose staging key its end
 /// could not shred writes (ADR-0084 I11).
@@ -60,6 +65,9 @@ pub(crate) fn plan_json(p: &ImportPlan) -> Value {
 }
 
 /// openapi.yaml `Import`.
+/// The most imports one page of `GET /v2/imports` serves (ADR-0096 d6).
+const IMPORTS_PAGE_MAX: usize = 50;
+
 pub(crate) fn import_json(i: &ImportRecord) -> Value {
     json!({
         "import_id": i.import_id.to_string(),
@@ -199,7 +207,89 @@ where
         finish(&rid, result)
     }
 
-    /// `GET /v2/imports/{id}`.
+    /// `GET /v2/imports`: newest first, a page of at most 50, as a
+    /// person's `<user>-web` the imports of every key of the person, as any
+    /// other key its own; `state` is `running`, `done` or `failed`
+    /// (ADR-0096 d6).
+    pub(crate) async fn list_imports_route(
+        State(st): State<Self>,
+        rid: Rid,
+        query: Result<Query<Vec<(String, String)>>, QueryRejection>,
+        headers: HeaderMap,
+    ) -> Response {
+        let result = async {
+            let acting = acting(&headers, None)?;
+            let Query(params) = query.map_err(|e| {
+                ApiError::validation(format!(
+                    "the query string is not this operation's shape: {e}"
+                ))
+            })?;
+            let (mut state, mut limit, mut cursor) = (None, IMPORTS_PAGE_MAX, None);
+            let mut seen = std::collections::HashSet::new();
+            for (name, value) in &params {
+                if !seen.insert(name.as_str()) {
+                    return Err(ApiError::validation(format!(
+                        "the query parameter {name} is given more than once"
+                    )));
+                }
+                match name.as_str() {
+                    "state" => {
+                        state = Some(ImportState::parse(value).ok_or_else(|| {
+                            ApiError::validation("state is running, done or failed")
+                                .with_details(json!({ "field": "state" }))
+                        })?);
+                    }
+                    "limit" => {
+                        limit = value
+                            .parse::<usize>()
+                            .ok()
+                            .filter(|n| (1..=IMPORTS_PAGE_MAX).contains(n))
+                            .ok_or_else(|| {
+                                ApiError::validation(format!(
+                                    "limit is a whole number from 1 to {IMPORTS_PAGE_MAX}"
+                                ))
+                                .with_details(json!({ "field": "limit" }))
+                            })?;
+                    }
+                    "cursor" => cursor = Some(position_cursor(value)?),
+                    other => {
+                        return Err(ApiError::validation(format!(
+                            "unknown query parameter {other:?}"
+                        )));
+                    }
+                }
+            }
+            let listing = st
+                .app
+                .list_imports(acting.bearer(), state, cursor, limit)
+                .await
+                .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+            let items: Vec<Value> = listing
+                .items
+                .iter()
+                .map(|(import, name)| {
+                    let mut item = import_json(import);
+                    item["key"] = json!({
+                        "id": import.importer_key_id,
+                        "name": name.as_ref().map(oml_app::domain::name::Name::as_str),
+                    });
+                    item
+                })
+                .collect();
+            Ok(json_response(
+                StatusCode::OK,
+                &json!({
+                    "items": items,
+                    "next_cursor": listing.next.as_ref().map(|(at, id)| position_cursor_of(at, *id)),
+                }),
+            ))
+        }
+        .await;
+        finish(&rid, result)
+    }
+
+    /// `GET /v2/imports/{id}`: as the importing key, or as a person's
+    /// `<user>-web` for an import any key of the person ran (ADR-0096 d6).
     pub(crate) async fn import_status_route(
         State(st): State<Self>,
         rid: Rid,
@@ -207,11 +297,11 @@ where
         headers: HeaderMap,
     ) -> Response {
         let result = async {
-            let token = bearer(&headers)?;
+            let acting = acting(&headers, None)?;
             let id = import_id(&id)?;
             let import = st
                 .app
-                .import_status(token.as_str(), id)
+                .import_status(acting.bearer(), id)
                 .await
                 .map_err(|e| map_app_error(e, ErrorContext::Write))?;
             Ok(json_response(

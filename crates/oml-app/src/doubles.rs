@@ -382,6 +382,9 @@ struct TenantState {
     /// their names stay held (ADR-0026 d10); a key `key.revoked` folded
     /// carries its `revoked_at` and resolves by hash no more.
     keys: BTreeMap<Uuid, KeyRecord>,
+    /// A rotated key's previous hash and the end of its grace, by key id
+    /// (postgres-schema.md `key_previous_hashes`; ADR-0096 d13).
+    previous_hashes: BTreeMap<Uuid, (String, EventTime)>,
     /// Connect codes by id (postgres-schema.md `connect_codes`).
     connect_codes: BTreeMap<Uuid, ConnectCodeRecord>,
     /// Connections by id (postgres-schema.md `oauth_connections`).
@@ -2095,6 +2098,30 @@ fn apply_fold(
             key.linked_user = Some(user_root);
             key.link_pending = None;
         }
+        MetadataFold::KeyRotated {
+            key_id,
+            key_hash,
+            previous,
+        } => {
+            let Some(key) = state
+                .keys
+                .get_mut(&key_id)
+                .filter(|k| k.revoked_at.is_none() && k.credential == Credential::Bearer)
+            else {
+                return Err(StoreError::Backend(format!(
+                    "key {key_id} is not a live bearer key of this tenant"
+                )));
+            };
+            key.key_hash = Some(key_hash);
+            match previous {
+                Some(previous) => {
+                    state.previous_hashes.insert(key_id, previous);
+                }
+                None => {
+                    state.previous_hashes.remove(&key_id);
+                }
+            }
+        }
         MetadataFold::KeyLimitsSet {
             key_id,
             expiry,
@@ -3049,6 +3076,13 @@ fn account_usage(
         .values()
         .filter(|c| c.state == ConnectionState::Open && keys.contains(&c.key_id))
         .count() as u64;
+    // Every node whose name lies in the root's namespace: every node below
+    // it, never the root itself (ADR-0095 d4).
+    let workspaces = state
+        .workspaces
+        .values()
+        .filter(|w| w.namespace == Some(root))
+        .count() as u64;
     crate::types::UserUsage {
         memories,
         text_bytes,
@@ -3056,6 +3090,7 @@ fn account_usage(
         recalls,
         keys: keys.len() as u64,
         connections,
+        workspaces,
     }
 }
 
@@ -3869,6 +3904,43 @@ impl JournalStore for MemStore {
                 .count() as u64;
             import
         }))
+    }
+
+    async fn imports_of_keys(
+        &self,
+        tenant_id: Uuid,
+        key_ids: &[Uuid],
+        state_named: Option<oml_domain::import::ImportState>,
+        before: Option<(&EventTime, Uuid)>,
+        limit: usize,
+    ) -> Result<Vec<crate::types::ImportRecord>, StoreError> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = state.lock().expect("tenant lock");
+        let before = before.map(|(at, id)| (at.as_str().to_owned(), id));
+        let mut imports: Vec<crate::types::ImportRecord> = state
+            .imports
+            .values()
+            .filter(|i| {
+                key_ids.contains(&i.importer_key_id)
+                    && state_named.is_none_or(|s| i.state == s)
+                    && before
+                        .as_ref()
+                        .is_none_or(|b| (i.created_at.as_str().to_owned(), i.import_id) < *b)
+            })
+            .cloned()
+            .collect();
+        imports.sort_by_key(|i| std::cmp::Reverse((i.created_at.as_str().to_owned(), i.import_id)));
+        imports.truncate(limit);
+        for import in &mut imports {
+            import.position = state
+                .import_versions
+                .iter()
+                .filter(|(id, _)| *id == import.import_id)
+                .count() as u64;
+        }
+        Ok(imports)
     }
 
     async fn import_stats(
@@ -5384,6 +5456,49 @@ impl JournalStore for MemStore {
         Ok(None)
     }
 
+    async fn key_by_previous_hash(
+        &self,
+        key_hash: &str,
+    ) -> Result<Option<(KeyRecord, EventTime)>, StoreError> {
+        let tenants: Vec<_> = self
+            .tenants
+            .lock()
+            .expect("tenants lock")
+            .values()
+            .cloned()
+            .collect();
+        for tenant in tenants {
+            let state = tenant.lock().expect("tenant lock");
+            if let Some((key_id, (_, until))) = state
+                .previous_hashes
+                .iter()
+                .find(|(_, (hash, _))| hash == key_hash)
+            {
+                return Ok(state
+                    .keys
+                    .get(key_id)
+                    .filter(|k| k.revoked_at.is_none())
+                    .map(|k| (k.clone(), until.clone())));
+            }
+        }
+        Ok(None)
+    }
+
+    async fn key_previous_valid_until(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+    ) -> Result<Option<EventTime>, StoreError> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(None);
+        };
+        let state = state.lock().expect("tenant lock");
+        Ok(state
+            .previous_hashes
+            .get(&key_id)
+            .map(|(_, until)| until.clone()))
+    }
+
     async fn key_access(
         &self,
         tenant_id: Uuid,
@@ -5829,6 +5944,38 @@ impl JournalStore for MemStore {
             .cloned()
             .collect();
         edges.sort_by_key(|e| std::cmp::Reverse((e.created_at.as_str().to_owned(), e.edge_id)));
+        Ok(edges)
+    }
+
+    async fn pending_brief_edges(
+        &self,
+        tenant_id: Uuid,
+        workspace_ids: &[Uuid],
+        ratifier: (Uuid, &str),
+        after: Option<(&EventTime, Uuid)>,
+        limit: usize,
+    ) -> Result<Vec<BriefEdgeRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let after = after.map(|(at, id)| (at.as_str().to_owned(), id));
+        let mut edges: Vec<BriefEdgeRecord> = state
+            .brief_edges
+            .values()
+            .filter(|e| {
+                e.state == EdgeState::Pending
+                    && workspace_ids.contains(&e.workspace_id)
+                    && e.proposer_key_id != ratifier.0
+                    && e.proposer_principal != ratifier.1
+                    && after
+                        .as_ref()
+                        .is_none_or(|a| (e.created_at.as_str().to_owned(), e.edge_id) > *a)
+            })
+            .cloned()
+            .collect();
+        edges.sort_by_key(|e| (e.created_at.as_str().to_owned(), e.edge_id));
+        edges.truncate(limit);
         Ok(edges)
     }
 

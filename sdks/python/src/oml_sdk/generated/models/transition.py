@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import datetime
 from collections.abc import Mapping
-from typing import Any, Self, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -9,6 +10,11 @@ from attrs import field as _attrs_field
 from ..models.transition_from import TransitionFrom
 from ..models.transition_state import TransitionState
 from ..models.transition_to import TransitionTo
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.proposed_by_type_0 import ProposedByType0
+
 
 T = TypeVar("T", bound="Transition")
 
@@ -26,6 +32,11 @@ class Transition:
             admin key included (ADR-0025 d15).
         ratified_by_key_id (None | str): Null on this build's answers; the journal's workspace.status_transition names
             the ratifier.
+        proposed_at (datetime.datetime | Unset): The instant of its workspace.status_proposed, to every reader (ADR-0095
+            d5 as amended 2026-11-24). Since v0.8.5.
+        proposed_by (None | ProposedByType0 | Unset): The key that made a live proposal, served when it is the calling
+            key or another key of the same person, and null to every other reader (ADR-0095, amendment of 2026-11-24). Since
+            v0.8.5.
     """
 
     transition_id: str
@@ -35,9 +46,13 @@ class Transition:
     state: TransitionState
     proposed_by_key_id: None | str
     ratified_by_key_id: None | str
+    proposed_at: datetime.datetime | Unset = UNSET
+    proposed_by: None | ProposedByType0 | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.proposed_by_type_0 import ProposedByType0
+
         transition_id = self.transition_id
 
         workspace_id = self.workspace_id
@@ -54,6 +69,18 @@ class Transition:
         ratified_by_key_id: None | str
         ratified_by_key_id = self.ratified_by_key_id
 
+        proposed_at: str | Unset = UNSET
+        if not isinstance(self.proposed_at, Unset):
+            proposed_at = self.proposed_at.isoformat()
+
+        proposed_by: dict[str, Any] | None | Unset
+        if isinstance(self.proposed_by, Unset):
+            proposed_by = UNSET
+        elif isinstance(self.proposed_by, ProposedByType0):
+            proposed_by = self.proposed_by.to_dict()
+        else:
+            proposed_by = self.proposed_by
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -67,11 +94,17 @@ class Transition:
                 "ratified_by_key_id": ratified_by_key_id,
             }
         )
+        if proposed_at is not UNSET:
+            field_dict["proposed_at"] = proposed_at
+        if proposed_by is not UNSET:
+            field_dict["proposed_by"] = proposed_by
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.proposed_by_type_0 import ProposedByType0
+
         d = dict(src_dict)
         transition_id = d.pop("transition_id")
 
@@ -97,6 +130,30 @@ class Transition:
 
         ratified_by_key_id = _parse_ratified_by_key_id(d.pop("ratified_by_key_id"))
 
+        _proposed_at = d.pop("proposed_at", UNSET)
+        proposed_at: datetime.datetime | Unset
+        if isinstance(_proposed_at, Unset):
+            proposed_at = UNSET
+        else:
+            proposed_at = datetime.datetime.fromisoformat(_proposed_at)
+
+        def _parse_proposed_by(data: object) -> None | ProposedByType0 | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                componentsschemas_proposed_by_type_0 = ProposedByType0.from_dict(data)
+
+                return componentsschemas_proposed_by_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | ProposedByType0 | Unset, data)
+
+        proposed_by = _parse_proposed_by(d.pop("proposed_by", UNSET))
+
         transition = cls(
             transition_id=transition_id,
             workspace_id=workspace_id,
@@ -105,6 +162,8 @@ class Transition:
             state=state,
             proposed_by_key_id=proposed_by_key_id,
             ratified_by_key_id=ratified_by_key_id,
+            proposed_at=proposed_at,
+            proposed_by=proposed_by,
         )
 
         transition.additional_properties = d

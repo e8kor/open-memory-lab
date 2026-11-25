@@ -98,17 +98,20 @@ def sync_detailed(
 ) -> Response[ErrorEnvelope | KeyLimits]:
     """Set or clear a key's expiry and its requests per minute.
 
-     Requires: admin key role, in the key's own tenant; any other role is access.verb_ceiling, and no MCP
-    tool reaches the route. A member sent replaces the value, null clears it, and a member not sent
-    keeps it; a body that names neither is request.validation. expiry is later than the server's clock
-    (details.field /expiry) and requests_per_minute from 1 to 1000000 (details.field
-    /requests_per_minute). The key is never the calling key, a session key, a revoked key or an admin
-    key: request.validation with details.field key and details.reason own_key, session_key, revoked or
-    admin_key. No key that can change limits carries one, so none moves its own date or raises its own
-    rate, and no admin key ends another by a date. Journalled as key.limits_set with both values as they
-    stand after the change; the Idempotency-Key is required and not replayed, so a request sent twice
-    journals two events that leave the same limits. Moving an expired key's expiry later makes it
-    authenticate again; the rate holds from the key's next request (ADR-0079 d5; since v0.7.3).
+     Requires: admin key role, in the key's own tenant, a person's <user>-admin session key included,
+    which claims the Idempotency-Key and answers a resubmission with the recorded answer and
+    Idempotency-Replay: true, journalling one key.limits_set (ADR-0096 d4; since v0.8.5); any other role
+    is access.verb_ceiling, and no MCP tool reaches the route. A member sent replaces the value, null
+    clears it, and a member not sent keeps it; a body that names neither is request.validation. expiry
+    is later than the server's clock (details.field /expiry) and requests_per_minute from 1 to 1000000
+    (details.field /requests_per_minute). The key is never the calling key, a session key, a revoked key
+    or an admin key: request.validation with details.field key and details.reason own_key, session_key,
+    revoked or admin_key. No key that can change limits carries one, so none moves its own date or
+    raises its own rate, and no admin key ends another by a date. Journalled as key.limits_set with both
+    values as they stand after the change; the Idempotency-Key is required and not replayed, so a
+    request sent twice journals two events that leave the same limits. Moving an expired key's expiry
+    later makes it authenticate again; the rate holds from the key's next request (ADR-0079 d5; since
+    v0.7.3).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -156,17 +159,20 @@ def sync(
 ) -> ErrorEnvelope | KeyLimits | None:
     """Set or clear a key's expiry and its requests per minute.
 
-     Requires: admin key role, in the key's own tenant; any other role is access.verb_ceiling, and no MCP
-    tool reaches the route. A member sent replaces the value, null clears it, and a member not sent
-    keeps it; a body that names neither is request.validation. expiry is later than the server's clock
-    (details.field /expiry) and requests_per_minute from 1 to 1000000 (details.field
-    /requests_per_minute). The key is never the calling key, a session key, a revoked key or an admin
-    key: request.validation with details.field key and details.reason own_key, session_key, revoked or
-    admin_key. No key that can change limits carries one, so none moves its own date or raises its own
-    rate, and no admin key ends another by a date. Journalled as key.limits_set with both values as they
-    stand after the change; the Idempotency-Key is required and not replayed, so a request sent twice
-    journals two events that leave the same limits. Moving an expired key's expiry later makes it
-    authenticate again; the rate holds from the key's next request (ADR-0079 d5; since v0.7.3).
+     Requires: admin key role, in the key's own tenant, a person's <user>-admin session key included,
+    which claims the Idempotency-Key and answers a resubmission with the recorded answer and
+    Idempotency-Replay: true, journalling one key.limits_set (ADR-0096 d4; since v0.8.5); any other role
+    is access.verb_ceiling, and no MCP tool reaches the route. A member sent replaces the value, null
+    clears it, and a member not sent keeps it; a body that names neither is request.validation. expiry
+    is later than the server's clock (details.field /expiry) and requests_per_minute from 1 to 1000000
+    (details.field /requests_per_minute). The key is never the calling key, a session key, a revoked key
+    or an admin key: request.validation with details.field key and details.reason own_key, session_key,
+    revoked or admin_key. No key that can change limits carries one, so none moves its own date or
+    raises its own rate, and no admin key ends another by a date. Journalled as key.limits_set with both
+    values as they stand after the change; the Idempotency-Key is required and not replayed, so a
+    request sent twice journals two events that leave the same limits. Moving an expired key's expiry
+    later makes it authenticate again; the rate holds from the key's next request (ADR-0079 d5; since
+    v0.7.3).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -209,17 +215,20 @@ async def asyncio_detailed(
 ) -> Response[ErrorEnvelope | KeyLimits]:
     """Set or clear a key's expiry and its requests per minute.
 
-     Requires: admin key role, in the key's own tenant; any other role is access.verb_ceiling, and no MCP
-    tool reaches the route. A member sent replaces the value, null clears it, and a member not sent
-    keeps it; a body that names neither is request.validation. expiry is later than the server's clock
-    (details.field /expiry) and requests_per_minute from 1 to 1000000 (details.field
-    /requests_per_minute). The key is never the calling key, a session key, a revoked key or an admin
-    key: request.validation with details.field key and details.reason own_key, session_key, revoked or
-    admin_key. No key that can change limits carries one, so none moves its own date or raises its own
-    rate, and no admin key ends another by a date. Journalled as key.limits_set with both values as they
-    stand after the change; the Idempotency-Key is required and not replayed, so a request sent twice
-    journals two events that leave the same limits. Moving an expired key's expiry later makes it
-    authenticate again; the rate holds from the key's next request (ADR-0079 d5; since v0.7.3).
+     Requires: admin key role, in the key's own tenant, a person's <user>-admin session key included,
+    which claims the Idempotency-Key and answers a resubmission with the recorded answer and
+    Idempotency-Replay: true, journalling one key.limits_set (ADR-0096 d4; since v0.8.5); any other role
+    is access.verb_ceiling, and no MCP tool reaches the route. A member sent replaces the value, null
+    clears it, and a member not sent keeps it; a body that names neither is request.validation. expiry
+    is later than the server's clock (details.field /expiry) and requests_per_minute from 1 to 1000000
+    (details.field /requests_per_minute). The key is never the calling key, a session key, a revoked key
+    or an admin key: request.validation with details.field key and details.reason own_key, session_key,
+    revoked or admin_key. No key that can change limits carries one, so none moves its own date or
+    raises its own rate, and no admin key ends another by a date. Journalled as key.limits_set with both
+    values as they stand after the change; the Idempotency-Key is required and not replayed, so a
+    request sent twice journals two events that leave the same limits. Moving an expired key's expiry
+    later makes it authenticate again; the rate holds from the key's next request (ADR-0079 d5; since
+    v0.7.3).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -265,17 +274,20 @@ async def asyncio(
 ) -> ErrorEnvelope | KeyLimits | None:
     """Set or clear a key's expiry and its requests per minute.
 
-     Requires: admin key role, in the key's own tenant; any other role is access.verb_ceiling, and no MCP
-    tool reaches the route. A member sent replaces the value, null clears it, and a member not sent
-    keeps it; a body that names neither is request.validation. expiry is later than the server's clock
-    (details.field /expiry) and requests_per_minute from 1 to 1000000 (details.field
-    /requests_per_minute). The key is never the calling key, a session key, a revoked key or an admin
-    key: request.validation with details.field key and details.reason own_key, session_key, revoked or
-    admin_key. No key that can change limits carries one, so none moves its own date or raises its own
-    rate, and no admin key ends another by a date. Journalled as key.limits_set with both values as they
-    stand after the change; the Idempotency-Key is required and not replayed, so a request sent twice
-    journals two events that leave the same limits. Moving an expired key's expiry later makes it
-    authenticate again; the rate holds from the key's next request (ADR-0079 d5; since v0.7.3).
+     Requires: admin key role, in the key's own tenant, a person's <user>-admin session key included,
+    which claims the Idempotency-Key and answers a resubmission with the recorded answer and
+    Idempotency-Replay: true, journalling one key.limits_set (ADR-0096 d4; since v0.8.5); any other role
+    is access.verb_ceiling, and no MCP tool reaches the route. A member sent replaces the value, null
+    clears it, and a member not sent keeps it; a body that names neither is request.validation. expiry
+    is later than the server's clock (details.field /expiry) and requests_per_minute from 1 to 1000000
+    (details.field /requests_per_minute). The key is never the calling key, a session key, a revoked key
+    or an admin key: request.validation with details.field key and details.reason own_key, session_key,
+    revoked or admin_key. No key that can change limits carries one, so none moves its own date or
+    raises its own rate, and no admin key ends another by a date. Journalled as key.limits_set with both
+    values as they stand after the change; the Idempotency-Key is required and not replayed, so a
+    request sent twice journals two events that leave the same limits. Moving an expired key's expiry
+    later makes it authenticate again; the rate holds from the key's next request (ADR-0079 d5; since
+    v0.7.3).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a

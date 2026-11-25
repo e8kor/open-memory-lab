@@ -372,7 +372,9 @@ async fn whoami_names_a_denied_session_key_in_the_store_calls_it_already_makes()
 }
 
 /// A key value's `whoami` without the person block: the key's lookup, its
-/// access, and the record's references, one read each (#286).
+/// access, the record's references, one read each (#286), and since v0.8.5
+/// one read of a rotation's open grace, made for a bearer key alone
+/// (ADR-0096 d13).
 #[tokio::test]
 async fn whoami_of_a_key_value_without_the_person_block_reads_each_row_once() {
     let rig = rig().await;
@@ -380,7 +382,7 @@ async fn whoami_of_a_key_value_without_the_person_block_reads_each_row_once() {
     assert_eq!(me.status, StatusCode::OK, "{}", me.body);
     assert_eq!(me.body["name"], "root-admin", "{}", me.body);
     assert!(me.body.get("person").is_none(), "{}", me.body);
-    assert_eq!(me.store_calls(), 3, "{}", me.line);
+    assert_eq!(me.store_calls(), 4, "{}", me.line);
 }
 
 /// Without `person=false`, `whoami` serves the person block as it did, in
@@ -1005,15 +1007,19 @@ async fn the_todo_counts_reads_cost_the_same_store_calls_at_6_and_48_workspaces(
         )
         .await;
         assert_eq!(admin.status, StatusCode::OK, "{}", admin.body);
-        assert_eq!(admin.body, serde_json::json!({"truncated": false}));
+        assert_eq!(
+            admin.body,
+            serde_json::json!({"alerts": 0, "truncated": false})
+        );
         // Measured 2026-11-19 over the in-memory store: the gate's call and
         // the use case's own resolution of the admin key, which reads its
         // access afresh as every later resolution in a request does
-        // (ADR-0070 d8, #297); no group of it reads anything (d14).
+        // (ADR-0070 d8, #297); and since v0.8.5 the fixes read the alerts
+        // are counted from (ADR-0096 d7), one call whatever their number.
         assert_eq!(
             admin.store_calls(),
-            2,
-            "the gate's call and the key's resolution: {}",
+            3,
+            "the gate's call, the key's resolution and the fixes read: {}",
             admin.line
         );
     }
@@ -1236,4 +1242,209 @@ async fn the_catalog_pages_read_costs_the_gate_the_listing_and_on_the_first_page
     // other listings here pay too.
     assert_eq!(first.store_calls(), 11, "{}", first.line);
     assert_eq!(after.store_calls(), 10, "{}", after.line);
+}
+
+/// The v0.8.5 console round's reads (ADR-0096 Consequences, "Budget"),
+/// each a primary call of a new or changed page, measured over the
+/// in-memory store and printed so the counts the report states are the
+/// ones measured: the key builder's tree page as `<user>-web` (its form
+/// and review `GET`s make `whoami` and this, two rounds); the admin
+/// one-key page's `GET /v2/keys/{key}` as `<user>-admin`, which runs three
+/// use cases (d4); the import list and one import as `<user>-web` (d6);
+/// the To do brief group's `GET /v2/review/briefs` as `<user>-review`
+/// (d7); and `whoami` with the person block, whose profile, month and
+/// recalls ride on reads it already made (d9). The counts read's store
+/// calls grow by the one brief read whatever the workspaces' number, which
+/// `the_todo_counts_reads_cost_the_same_store_calls_at_6_and_48_workspaces`
+/// holds.
+#[tokio::test]
+async fn the_v085_console_pages_reads_cost_their_measured_store_calls() {
+    let rig = rig().await;
+    let tree = get(
+        &rig.router,
+        "/v2/workspaces/alice/tree?limit=200",
+        &web(&rig.alice, "web"),
+        true,
+    )
+    .await;
+    assert_eq!(tree.status, StatusCode::OK, "{}", tree.body);
+    let one_key = get(
+        &rig.router,
+        "/v2/keys/bob-web",
+        &web(&rig.alice, "admin"),
+        true,
+    )
+    .await;
+    assert_eq!(one_key.status, StatusCode::OK, "{}", one_key.body);
+    let imports = get(&rig.router, "/v2/imports", &web(&rig.alice, "web"), true).await;
+    assert_eq!(imports.status, StatusCode::OK, "{}", imports.body);
+    let import = get(
+        &rig.router,
+        "/v2/imports/00000000-0000-4000-8000-000000000001",
+        &web(&rig.alice, "web"),
+        true,
+    )
+    .await;
+    assert_eq!(import.status, StatusCode::NOT_FOUND, "{}", import.body);
+    let briefs = get(
+        &rig.router,
+        "/v2/review/briefs",
+        &web(&rig.alice, "review"),
+        true,
+    )
+    .await;
+    assert_eq!(briefs.status, StatusCode::OK, "{}", briefs.body);
+    let person = get(&rig.router, "/v2/whoami", &web(&rig.alice, "web"), true).await;
+    assert_eq!(person.status, StatusCode::OK, "{}", person.body);
+    assert!(
+        person.body["person"]["period"].is_string(),
+        "{}",
+        person.body
+    );
+    // Measured 2026-11-25: the tree page 8, as ADR-0096 d1 budgets it; the
+    // one-key read 12, its three use cases' resolutions and reads (d4); the
+    // import list 3 and one import 2 (d6); the brief group 5, the gate's
+    // call, the key's resolution, its reviewer nodes and the one pending
+    // read (d7); whoami with the person block 6, as before the round (d9).
+    println!(
+        "store calls: builder tree {}, one key {}, imports {}, one import {}, briefs {}, whoami with person {}",
+        tree.store_calls(),
+        one_key.store_calls(),
+        imports.store_calls(),
+        import.store_calls(),
+        briefs.store_calls(),
+        person.store_calls()
+    );
+    assert_eq!(tree.store_calls(), 8, "{}", tree.line);
+    assert_eq!(one_key.store_calls(), 12, "{}", one_key.line);
+    assert_eq!(imports.store_calls(), 3, "{}", imports.line);
+    assert_eq!(import.store_calls(), 2, "{}", import.line);
+    assert_eq!(briefs.store_calls(), 5, "{}", briefs.line);
+    assert_eq!(person.store_calls(), 6, "{}", person.line);
+}
+
+/// The reads the v0.8.5 frames the integration finished add (ADR-0096,
+/// `WorkspaceManage` P7, P9; `TodoScreen` P14; `AdminTodo`), each recorded
+/// as measured (ADR-0083 d6's rule): the Brief kind's proposals, `GET
+/// /v2/edges?kind=brief` as `<user>-web`; the status section's `GET
+/// /v2/workspaces/{w}/offers` as `<user>-review`, made only outside the
+/// person's root; To do's fixes group and the fix page's `GET
+/// /v2/review/fixes` as `<user>-review`; and the admin To do's `GET
+/// /v2/admin/investigations` as `<user>-admin`. The brief's members ride
+/// on the node read, which keeps its count (ADR-0095's amendment of
+/// 2026-11-24: `proposed_at` and `proposed_by` come from the rows it
+/// returns). Printed, so the counts the report states are the ones
+/// measured.
+#[tokio::test]
+async fn the_v085_finished_frames_reads_cost_their_measured_store_calls() {
+    let rig = rig().await;
+    let node = get(
+        &rig.router,
+        "/v2/workspaces/alice",
+        &web(&rig.alice, "web"),
+        true,
+    )
+    .await;
+    assert_eq!(node.status, StatusCode::OK, "{}", node.body);
+    assert!(node.body["brief"]["items"].is_array(), "{}", node.body);
+    let id = node.body["id"].as_str().expect("an id").to_owned();
+    let brief = get(
+        &rig.router,
+        &format!("/v2/edges?kind=brief&limit=200&workspace_id={id}"),
+        &web(&rig.alice, "web"),
+        true,
+    )
+    .await;
+    assert_eq!(brief.status, StatusCode::OK, "{}", brief.body);
+    let offers = get(
+        &rig.router,
+        "/v2/workspaces/alice/offers",
+        &web(&rig.alice, "review"),
+        true,
+    )
+    .await;
+    assert_eq!(offers.status, StatusCode::OK, "{}", offers.body);
+    let fixes = get(
+        &rig.router,
+        "/v2/review/fixes",
+        &web(&rig.alice, "review"),
+        true,
+    )
+    .await;
+    assert_eq!(fixes.status, StatusCode::OK, "{}", fixes.body);
+    let investigations = get(
+        &rig.router,
+        "/v2/admin/investigations",
+        &web(&rig.alice, "admin"),
+        true,
+    )
+    .await;
+    assert_eq!(
+        investigations.status,
+        StatusCode::OK,
+        "{}",
+        investigations.body
+    );
+    println!(
+        "store calls: node {}, brief edges {}, offers {}, review fixes {}, investigations {}",
+        node.store_calls(),
+        brief.store_calls(),
+        offers.store_calls(),
+        fixes.store_calls(),
+        investigations.store_calls()
+    );
+    // Measured 2026-11-25: the node 10, as before the round; the brief's
+    // edges 4; the offers 37, the operation's own cost, which the status
+    // section spends only on a shared workspace's page; the review fixes
+    // 2; the investigations 2.
+    assert_eq!(node.store_calls(), 10, "{}", node.line);
+    assert_eq!(brief.store_calls(), 4, "{}", brief.line);
+    assert_eq!(offers.store_calls(), 37, "{}", offers.line);
+    assert_eq!(fixes.store_calls(), 2, "{}", fixes.line);
+    assert_eq!(investigations.store_calls(), 2, "{}", investigations.line);
+}
+
+/// The People page's read, `GET /v2/web/emails` as `<user>-admin`, one page
+/// of the allowlist, costs what it cost before the Grant read form joined
+/// the page: the form adds no read (ADR-0096, the operator's decision of
+/// 2026-11-25).
+#[tokio::test]
+async fn the_people_pages_read_costs_its_measured_store_calls() {
+    let rig = rig().await;
+    let people = get(
+        &rig.router,
+        "/v2/web/emails?limit=200",
+        &web(&rig.alice, "admin"),
+        true,
+    )
+    .await;
+    assert_eq!(people.status, StatusCode::OK, "{}", people.body);
+    println!("store calls: people {}", people.store_calls());
+    // Measured 2026-11-25: the gate's call and the one allowlist page.
+    assert_eq!(people.store_calls(), 2, "{}", people.line);
+}
+
+/// Rotate's one act, `POST /v2/keys/{key}/rotate`, measured as the Keys
+/// tabs send it (ADR-0096 d13): the tab's list read is unchanged, since the
+/// button rides the rows it already lists, and the act costs the claim of
+/// its Idempotency-Key, the key read, the cut-off check and the commit.
+/// Here the tenant's admin key rotates itself with a grace.
+#[tokio::test]
+async fn the_rotate_act_costs_its_measured_store_calls() {
+    let rig = rig().await;
+    let rotated = send(
+        &rig.router,
+        Request::post("/v2/keys/root-admin/rotate").header("idempotency-key", "rotate-once"),
+        r#"{"grace_seconds": 3600}"#,
+        &rig.admin,
+        false,
+    )
+    .await;
+    assert_eq!(rotated.status, StatusCode::OK, "{}", rotated.body);
+    assert!(rotated.body["value"].is_string(), "{}", rotated.body);
+    println!("store calls: rotate {}", rotated.store_calls());
+    // Measured 2026-11-25: 12, the caller's resolution, the claim and its
+    // record, the name and key reads, the cut-off check, the head and the
+    // commit.
+    assert_eq!(rotated.store_calls(), 12, "{}", rotated.line);
 }

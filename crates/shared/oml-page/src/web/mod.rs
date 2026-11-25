@@ -159,10 +159,12 @@ pub const ADMIN_TABS: [(&str, &str); 7] = [
 
 /// The pages below a tab, each with the tab it sits under: a refusal on
 /// one leads back to that tab.
-const BELOW: [(&str, &str); 3] = [
+const BELOW: [(&str, &str); 4] = [
     (USER_MEMORY_PATH, USER_MEMORIES_PATH),
     (ADMIN_MEMORY_PATH, ADMIN_MEMORIES_PATH),
     ("/web/setup", START_PATH),
+    // The import hand-off and lists, reached from Workspaces (ADR-0096 d6).
+    ("/web/workspaces/import", USER_WORKSPACES_PATH),
 ];
 
 /// Which side of the console a page is on (the design system's
@@ -1083,6 +1085,18 @@ mod tests {
             page.contains(r#"<p><a href="/web/start">Back to Start</a></p>"#),
             "{page}"
         );
+        // The import pages sit under Workspaces, where the hand-off starts.
+        let page = refusal_page(
+            "access.not_found",
+            "no such import here",
+            None,
+            Some(&personal),
+            "/web/workspaces/import",
+        );
+        assert!(
+            page.contains(r#"<p><a href="/web/workspaces">Back to Workspaces</a></p>"#),
+            "{page}"
+        );
         let page = refusal_page(
             "request.validation",
             "x",
@@ -1132,6 +1146,60 @@ mod tests {
             sheet.contains("header.top{position:sticky;top:0"),
             "the bar is pinned"
         );
+    }
+
+    /// A check box's or radio's label, and a `.desc` line inside any
+    /// label, read as a sentence beside its control, not as a field's
+    /// upper-case caption: the rule that draws them resets the global
+    /// `label` rules, a form's column layout among them, so the box sits on
+    /// the line it ticks (ADR-0096 review, S4).
+    #[test]
+    fn a_check_label_and_a_desc_in_a_label_reset_the_caption_rules() {
+        // The sheet without its comments, rule by rule.
+        let mut sheet = String::new();
+        for (i, part) in include_str!("web.css").split("/*").enumerate() {
+            sheet.push_str(if i == 0 {
+                part
+            } else {
+                part.split_once("*/").map_or("", |(_, rest)| rest)
+            });
+        }
+        let declarations = |wanted: &str| {
+            sheet
+                .split('}')
+                .filter_map(|rule| rule.rsplit_once('{'))
+                .filter(|(selector, _)| selector.split(',').any(|s| s.trim() == wanted))
+                .map(|(_, d)| d.to_owned())
+                .collect::<Vec<_>>()
+                .join(";")
+        };
+        for (selector, resets) in [
+            (
+                "form.oml-form label.oml-check",
+                &[
+                    "flex-direction:row",
+                    "text-transform:none",
+                    "letter-spacing:normal",
+                ][..],
+            ),
+            (
+                "label.oml-check",
+                &[
+                    "flex-direction:row",
+                    "text-transform:none",
+                    "letter-spacing:normal",
+                ][..],
+            ),
+            (
+                "label .desc",
+                &["text-transform:none", "letter-spacing:normal"][..],
+            ),
+        ] {
+            let found = declarations(selector);
+            for reset in resets {
+                assert!(found.contains(reset), "{selector}: {reset} in {found:?}");
+            }
+        }
     }
 
     /// A page drawn for no one, the sign-in page among them, speaks of no

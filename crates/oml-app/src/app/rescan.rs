@@ -12,11 +12,11 @@
 use std::collections::BTreeMap;
 
 use oml_domain::anchor as anchor_grammar;
-use oml_domain::{MemoryStatus, Role, event_types};
+use oml_domain::{MemoryStatus, event_types};
 use serde_json::json;
 use uuid::Uuid;
 
-use super::{App, require_role, scan_targets, version_finding};
+use super::{App, scan_targets, version_finding};
 use crate::ports::{
     AdmissionEnvelope, Clock, IdGen, JournalStore, MetadataFold, Parsed, RecordedVersion,
     ScanFinding, Scanner, Signer,
@@ -218,8 +218,7 @@ where
         limit: usize,
         record_held: bool,
     ) -> Result<RescanReport, AppError> {
-        let admin = self.authenticate_bearer(bearer.into()).await?.key;
-        require_role(&admin, Role::Admin, "rescan")?;
+        let admin = self.admin_caller(bearer.into(), "rescan").await?.key;
         let tenant_id = admin.tenant_id;
         let limit = limit.clamp(1, RESCAN_MAX_EVENTS);
         let events = self

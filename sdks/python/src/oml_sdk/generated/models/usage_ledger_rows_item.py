@@ -6,6 +6,8 @@ from typing import Any, Self, TypeVar, cast
 
 from attrs import define as _attrs_define
 
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="UsageLedgerRowsItem")
 
 
@@ -24,6 +26,8 @@ class UsageLedgerRowsItem:
         recalls (int):
         keys (int):
         connections (int):
+        workspaces (int | Unset): Live workspaces under the account's root when the day closed (ADR-0095 d4). Since
+            v0.8.5.
     """
 
     day: datetime.date
@@ -36,6 +40,7 @@ class UsageLedgerRowsItem:
     recalls: int
     keys: int
     connections: int
+    workspaces: int | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         day = self.day.isoformat()
@@ -60,6 +65,8 @@ class UsageLedgerRowsItem:
 
         connections = self.connections
 
+        workspaces = self.workspaces
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -76,6 +83,8 @@ class UsageLedgerRowsItem:
                 "connections": connections,
             }
         )
+        if workspaces is not UNSET:
+            field_dict["workspaces"] = workspaces
 
         return field_dict
 
@@ -112,6 +121,8 @@ class UsageLedgerRowsItem:
 
         connections = d.pop("connections")
 
+        workspaces = d.pop("workspaces", UNSET)
+
         usage_ledger_rows_item = cls(
             day=day,
             account=account,
@@ -123,6 +134,7 @@ class UsageLedgerRowsItem:
             recalls=recalls,
             keys=keys,
             connections=connections,
+            workspaces=workspaces,
         )
 
         return usage_ledger_rows_item
