@@ -10196,6 +10196,32 @@ impl WebRig {
         body["value"].as_str().expect("value").to_owned()
     }
 
+    /// A tenant key named `name`, of `role`, naming no user, with `role`
+    /// on the tenant's root; its value.
+    async fn tenant_key(&self, name: &str, role: &str) -> String {
+        let grants = if role == "admin" {
+            json!([])
+        } else {
+            json!([{ "workspace": self.root.to_string(), "role": "reader" }])
+        };
+        let (status, _, body) = send(
+            &self.router,
+            "POST",
+            "/v2/keys",
+            Call::auth(&self.admin)
+                .idem(&format!("tenant-{name}"))
+                .body(json!({
+                    "role": role,
+                    "name": name,
+                    "principal": name,
+                    "grants": grants,
+                })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        body["value"].as_str().expect("value").to_owned()
+    }
+
     /// A held memory written by `key` in `workspace`; its id.
     async fn held(&self, key: &str, workspace: &str, claim_key: &str) -> String {
         let (status, _, body) = send(
@@ -12728,13 +12754,12 @@ async fn a_rotation_answers_its_value_once_and_a_replay_hides_it_and_rotates_not
     let Some(rig) = web_rig().await else {
         return;
     };
-    let _alice = rig.signed_in("alice@example.com", "alice", false).await;
-    let first = rig.agent_key("alice", "alice-laptop").await;
+    let first = rig.tenant_key("team-reader", "reader").await;
     let rotate = |idem: &'static str, body: Value| Call::auth(&rig.admin).idem(idem).body(body);
     let (status, headers, rotated) = send(
         &rig.router,
         "POST",
-        "/v2/keys/alice-laptop/rotate",
+        "/v2/keys/team-reader/rotate",
         rotate("rot-1", json!({ "grace_seconds": 3600 })),
     )
     .await;
@@ -12751,7 +12776,7 @@ async fn a_rotation_answers_its_value_once_and_a_replay_hides_it_and_rotates_not
     let (status, headers, replayed) = send(
         &rig.router,
         "POST",
-        "/v2/keys/alice-laptop/rotate",
+        "/v2/keys/team-reader/rotate",
         rotate("rot-1", json!({ "grace_seconds": 3600 })),
     )
     .await;
@@ -12762,7 +12787,7 @@ async fn a_rotation_answers_its_value_once_and_a_replay_hides_it_and_rotates_not
     let (status, _, again) = send(
         &rig.router,
         "POST",
-        "/v2/keys/alice-laptop/rotate",
+        "/v2/keys/team-reader/rotate",
         rotate("rot-2", json!({})),
     )
     .await;
@@ -12816,5 +12841,138 @@ async fn a_persons_web_session_rotates_its_own_key_and_never_a_session_key() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{absent}");
+    drop_db(&rig.db_name).await;
+}
+
+/// The refusal a rotation answers by name: `request.validation` with
+/// `details.reason`.
+fn assert_rotation_refused(status: StatusCode, answer: &Value, reason: &str) {
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
+    assert_envelope(answer, "request.validation");
+    assert_eq!(answer["error"]["details"]["reason"], reason, "{answer}");
+}
+
+/// An admin rotates its own admin key and a tenant key naming no user; a
+/// key in a person's root and another admin's key are refused by name,
+/// `in_persons_root` and `not_admins_key`, and nothing rotates, until
+/// ADR-0097's confirmation lands in v0.8.6 (ADR-0096 d13, the operator's
+/// decision of 2026-11-25).
+#[tokio::test]
+async fn an_admin_rotates_its_own_and_tenant_keys_and_never_a_persons_or_another_admins() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let _alice = rig.signed_in("alice@example.com", "alice", false).await;
+    let laptop = rig.agent_key("alice", "alice-laptop").await;
+    let _reader = rig.tenant_key("team-reader", "reader").await;
+    let other = rig.tenant_key("other-admin", "admin").await;
+    let rotate = |idem: &'static str| Call::auth(&rig.admin).idem(idem).body(json!({}));
+    let (status, _, rotated) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/team-reader/rotate",
+        rotate("tenant"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{rotated}");
+    let (status, _, refused) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/alice-laptop/rotate",
+        rotate("persons"),
+    )
+    .await;
+    assert_rotation_refused(status, &refused, "in_persons_root");
+    assert_eq!(whoami_status(&rig, &laptop).await, StatusCode::OK);
+    let (status, _, refused) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/other-admin/rotate",
+        rotate("admins"),
+    )
+    .await;
+    assert_rotation_refused(status, &refused, "not_admins_key");
+    assert_eq!(whoami_status(&rig, &other).await, StatusCode::OK);
+    let (status, _, own) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/other-admin/rotate",
+        Call::auth(&other).idem("own").body(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{own}");
+    drop_db(&rig.db_name).await;
+}
+
+/// A person's web session rotates the contributor, reader and submitter
+/// keys `issue_own_key` admits; a reviewer key in the person's root is
+/// refused by name, `not_persons_role` (ADR-0096 d13).
+#[tokio::test]
+async fn a_persons_web_session_rotates_no_reviewer_key_in_its_root() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let token = rig.signed_in("alice@example.com", "alice", false).await;
+    let web = credential(&token, "web");
+    let (status, _, issued) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys",
+        Call::auth(&rig.admin).idem("alice-judge").body(json!({
+            "role": "reviewer",
+            "name": "alice-judge",
+            "principal": "alice-judge",
+            "user": "alice",
+            "grants": [{ "workspace": "alice", "role": "reviewer" }],
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{issued}");
+    let (status, _, refused) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/alice-judge/rotate",
+        web_call(&web).idem("judge").body(json!({})),
+    )
+    .await;
+    assert_rotation_refused(status, &refused, "not_persons_role");
+    drop_db(&rig.db_name).await;
+}
+
+/// A thief holding a key's previous value inside its grace cannot rotate
+/// the key to outlive the grace: `access.verb_ceiling`, reason
+/// `previous_value`, and the new value stays the key's (ADR-0096 d13).
+#[tokio::test]
+async fn a_previous_value_in_its_grace_rotates_nothing() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let old = rig.tenant_key("team-reader", "reader").await;
+    let (status, _, rotated) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/team-reader/rotate",
+        Call::auth(&rig.admin)
+            .idem("grace")
+            .body(json!({ "grace_seconds": 3600 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{rotated}");
+    let new = rotated["value"].as_str().expect("the value").to_owned();
+    let (status, _, refused) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/team-reader/rotate",
+        Call::auth(&old).idem("thief").body(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+    assert_envelope(&refused, "access.verb_ceiling");
+    assert_eq!(
+        refused["error"]["details"]["reason"], "previous_value",
+        "{refused}"
+    );
+    assert_eq!(whoami_status(&rig, &new).await, StatusCode::OK);
+    assert_eq!(whoami_status(&rig, &old).await, StatusCode::OK);
     drop_db(&rig.db_name).await;
 }

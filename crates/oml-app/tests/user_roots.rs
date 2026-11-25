@@ -7152,3 +7152,33 @@ async fn the_last_admin_entry_is_never_removed_or_unflagged_by_a_bearer_admin_ke
         "{err:?}"
     );
 }
+
+/// The last admin entry is a tenant's own: another tenant's admin entry
+/// in the same store does not count toward it, so the entry stays kept
+/// (ADR-0097 d25; ADR-0045 d10).
+#[tokio::test]
+async fn another_tenants_admin_entry_does_not_count_toward_the_last_admin() {
+    let r = fix_rig().await;
+    let other = r
+        .app
+        .bootstrap_tenant_for(
+            &BootstrapRequest {
+                tenant_name: name("zeta"),
+                admin_key_name: name("zeta-admin"),
+                admin_principal: "zeta-admin".to_owned(),
+            },
+            None,
+        )
+        .await
+        .expect("a second tenant");
+    let _zed = console_admin(&r.app, other.admin_key.value.as_str(), "zed").await;
+    let err = r
+        .app
+        .remove_web_email(r.boot.admin_key.value.as_str(), &email("ops@example.com"))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::WebField { field: "admin", .. }),
+        "{err:?}"
+    );
+}

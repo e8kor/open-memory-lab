@@ -2515,6 +2515,28 @@ async fn a_cut_off_session_key_cuts_off_no_key() {
     assert_eq!(rig.head().await, head, "nothing journalled");
 }
 
+/// A `<user>-web` key an admin cut off rotates none of the person's keys:
+/// a new value would hand on access the session no longer holds whole
+/// (ADR-0070 d2; ADR-0096 d13; #325).
+#[tokio::test]
+async fn a_cut_off_session_key_rotates_no_key() {
+    for workspace in ["universe", "alice", "notes"] {
+        let rig = rig().await;
+        let cookie = alice_denied_on(&rig, workspace).await;
+        let head = rig.head().await;
+        let (status, answer) = as_web(
+            &rig,
+            &cookie,
+            "web",
+            "/v2/keys/alice-laptop/rotate",
+            json!({}),
+        )
+        .await;
+        assert_session_key_denied(status, &answer, "rotate_key");
+        assert_eq!(rig.head().await, head, "{workspace}: nothing journalled");
+    }
+}
+
 /// The refusal is permanent, and any denial brings it: `alice-web` denied on
 /// a workspace outside alice's root, where the key holds no grant, runs none
 /// of its key acts, and it runs none after the admin removes alice's entry,

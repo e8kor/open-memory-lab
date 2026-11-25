@@ -20214,3 +20214,159 @@ async fn rotation_refuses_each_key_that_takes_no_new_value_by_name() {
         "revoked"
     );
 }
+
+/// A thief holding a rotated key's previous value inside its grace cannot
+/// rotate the key to outlive that grace: the previous value runs no key
+/// act, so the old admin value issues, mints, denies, cuts off, sets limits
+/// and links nothing either, while it still authenticates a read and the
+/// new value runs every act (ADR-0096 d13, the fix round of 2026-11-25).
+#[tokio::test]
+async fn a_previous_value_in_its_grace_runs_no_key_act() {
+    let (app, _) = rotation_app(MemStore::new());
+    let (boot, crew) = tenant(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let ana = agent(&app, admin, "ana", crew).await;
+    let bea = agent(&app, admin, "bea", crew).await;
+    let rotated = app
+        .rotate_key(admin, ana.key_id.into(), Some(3600))
+        .await
+        .expect("rotate with grace");
+    let previous = |r: Result<oml_app::types::RotatedKey, AppError>| match r {
+        Err(AppError::PreviousKeyValue { verb }) => verb,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        previous(
+            app.rotate_key(ana.value.as_str(), ana.key_id.into(), None)
+                .await
+        ),
+        "rotate_key"
+    );
+    app.whoami(&ana.value)
+        .await
+        .expect("the previous value still reads in its grace");
+    app.whoami(&rotated.value).await.expect("the new value");
+
+    let renewed = app
+        .rotate_key(admin, boot.admin_key.key_id.into(), Some(3600))
+        .await
+        .expect("an admin rotates its own key");
+    let verb_of = |e: AppError| match e {
+        AppError::PreviousKeyValue { verb } => verb,
+        other => panic!("{other:?}"),
+    };
+    let old = admin;
+    assert_eq!(
+        verb_of(
+            app.issue_key(old, &issue_req(Role::Reader, "cyd", vec![grant(crew, Role::Reader)]))
+                .await
+                .unwrap_err()
+        ),
+        "issue_key"
+    );
+    assert_eq!(
+        verb_of(
+            app.mint_connect_code(old, bea.key_id.into())
+                .await
+                .unwrap_err()
+        ),
+        "mint_connect_code"
+    );
+    assert_eq!(
+        verb_of(
+            app.deny_key(old, bea.key_id.into(), crew.into())
+                .await
+                .unwrap_err()
+        ),
+        "deny_key"
+    );
+    assert_eq!(
+        verb_of(
+            app.deny_key(old, bea.key_id.into(), boot.root_workspace_id.into())
+                .await
+                .unwrap_err()
+        ),
+        "deny_key"
+    );
+    assert_eq!(
+        verb_of(
+            app.set_key_limits(
+                old,
+                bea.key_id.into(),
+                oml_app::types::KeyLimitsChange {
+                    expiry: None,
+                    requests_per_minute: Some(Some(10)),
+                },
+            )
+            .await
+            .unwrap_err()
+        ),
+        "set_key_limits"
+    );
+    assert_eq!(
+        verb_of(
+            app.link_key_to_person(old, bea.key_id.into(), &name("alice"))
+                .await
+                .unwrap_err()
+        ),
+        "link_key"
+    );
+    assert_eq!(
+        verb_of(
+            app.unlink_key_from_person(old, bea.key_id.into())
+                .await
+                .unwrap_err()
+        ),
+        "unlink_key"
+    );
+    app.deny_key(renewed.value.as_str(), bea.key_id.into(), crew.into())
+        .await
+        .expect("the new value denies");
+}
+
+/// An admin rotates its own admin key and a tenant key that names no user,
+/// and another admin's key is refused by name until ADR-0097's
+/// confirmation lands (ADR-0096 d13, the operator's decision of
+/// 2026-11-25).
+#[tokio::test]
+async fn an_admin_rotates_its_own_key_and_a_tenant_key_and_never_another_admins_key() {
+    let (app, _) = rotation_app(MemStore::new());
+    let (boot, crew) = tenant(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let ana = agent(&app, admin, "ana", crew).await;
+    let second = issue_with(&app, admin, Role::Admin, "second-admin", vec![]).await;
+    app.rotate_key(admin, ana.key_id.into(), None)
+        .await
+        .expect("a tenant key");
+    match app.rotate_key(admin, second.key_id.into(), None).await {
+        Err(AppError::KeyRotation(refusal)) => assert_eq!(refusal.reason(), "not_admins_key"),
+        other => panic!("{other:?}"),
+    }
+    app.rotate_key(second.value.as_str(), second.key_id.into(), None)
+        .await
+        .expect("the second admin rotates its own key");
+    app.rotate_key(admin, boot.admin_key.key_id.into(), None)
+        .await
+        .expect("an admin rotates its own key");
+}
+
+/// A rotation's `rotated_at` is its `key.rotated` envelope's `at`, and the
+/// grace ends that instant plus the grace, read off no second clock
+/// (ADR-0096 d13).
+#[tokio::test]
+async fn a_rotation_takes_its_instant_and_its_grace_from_the_envelope() {
+    let store = MemStore::new();
+    let (app, _) = rotation_app(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let ana = agent(&app, admin, "ana", crew).await;
+    let rotated = app
+        .rotate_key(admin, ana.key_id.into(), Some(60))
+        .await
+        .expect("rotate");
+    let events = journal(&store, boot.tenant_id).await;
+    let at = events.last().expect("key.rotated").envelope.at.clone();
+    assert_eq!(rotated.rotated_at, at);
+    let until = rotated.previous_valid_until.expect("a grace");
+    assert_eq!(until.unix_micros(), at.unix_micros() + 60_000_000);
+}

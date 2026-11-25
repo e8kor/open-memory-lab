@@ -218,6 +218,18 @@ pub enum KeyRotationRefusal {
     Expired,
     /// A grace longer than 24 hours.
     GraceTooLong,
+    /// An admin names another admin's key: until the confirmation of
+    /// ADR-0097 lands in v0.8.6, an admin rotates its own admin key alone
+    /// (the operator's decision of 2026-11-25).
+    NotAdminsKey,
+    /// An admin names a key in a person's root, a user key or one linked
+    /// to a person: that person rotates it from their own session (the
+    /// operator's decision of 2026-11-25).
+    InPersonsRoot,
+    /// A person's session names a key of theirs whose role the console
+    /// never issues: a person rotates the contributor, reader and
+    /// submitter keys alone, as `issue_own_key` admits them.
+    NotPersonsRole,
 }
 
 impl KeyRotationRefusal {
@@ -241,6 +253,9 @@ impl KeyRotationRefusal {
             KeyRotationRefusal::CutOff => "cut_off",
             KeyRotationRefusal::Expired => "expired",
             KeyRotationRefusal::GraceTooLong => "grace_too_long",
+            KeyRotationRefusal::NotAdminsKey => "not_admins_key",
+            KeyRotationRefusal::InPersonsRoot => "in_persons_root",
+            KeyRotationRefusal::NotPersonsRole => "not_persons_role",
         }
     }
 
@@ -261,6 +276,15 @@ impl KeyRotationRefusal {
             }
             KeyRotationRefusal::GraceTooLong => {
                 "grace_seconds is a whole number from 0 to 86400 (24 hours)"
+            }
+            KeyRotationRefusal::NotAdminsKey => {
+                "an admin rotates its own admin key, not another admin's"
+            }
+            KeyRotationRefusal::InPersonsRoot => {
+                "a key in a person's root is rotated by that person, from their own session"
+            }
+            KeyRotationRefusal::NotPersonsRole => {
+                "a person rotates their contributor, reader and submitter keys; a reviewer or curator key rotates itself"
             }
         }
     }
@@ -3938,6 +3962,15 @@ pub enum AppError {
         "{verb} is refused: this session key carries a denial (ADR-0070 d2, access.verb_ceiling)"
     )]
     SessionKeyDenied { role: Role, verb: &'static str },
+    /// A caller that authenticated with a rotated key's previous value,
+    /// inside its grace, runs no key act: the grace keeps a deployed value
+    /// working, and never lets it rotate, issue, mint, cut off, deny, set
+    /// limits or link (ADR-0096 d13, the operator's decision of 2026-11-25;
+    /// access.verb_ceiling, reason previous_value).
+    #[error(
+        "{verb} is refused: this value is the key's previous one, kept only for its grace (ADR-0096 d13, access.verb_ceiling)"
+    )]
+    PreviousKeyValue { verb: &'static str },
     /// A new memory, or a successor of a ratified retirement, addresses a
     /// user root or a workspace beneath one with a key that is not that
     /// user's: answered where the key reads the node or the target, in

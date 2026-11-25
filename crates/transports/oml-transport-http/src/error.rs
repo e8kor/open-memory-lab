@@ -340,6 +340,20 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "role": role.as_str(),
             "reason": "session_key_denied",
         })),
+        // The grace keeps a deployed value working, never its key acts
+        // (ADR-0096 d13, the operator's decision of 2026-11-25).
+        AppError::PreviousKeyValue { verb } => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "access.verb_ceiling",
+            "A rotated key's previous value authenticates until its grace ends and runs none of the key acts: it rotates, issues, mints, cuts off, denies, sets limits and links nothing (ADR-0096 d13).",
+            format!(
+                "{verb} is refused: this value is the key's previous one, kept only for its grace; use the new value"
+            ),
+        )
+        .with_details(json!({
+            "verb": verb,
+            "reason": "previous_value",
+        })),
         AppError::IssuerCeiling {
             role,
             admissible,
