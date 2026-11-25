@@ -100,6 +100,10 @@ class WorkspaceError(ApiError):
     """`workspace`: structure and status refusals."""
 
 
+class ProposalError(ApiError):
+    """`proposal`: a status move or a brief member already proposed (ADR-0095)."""
+
+
 class ReviewError(ApiError):
     """`review`: independence and the serve binding."""
 
@@ -161,6 +165,7 @@ FAMILIES: dict[str, type[ApiError]] = {
     "submission": SubmissionError,
     "name": NamingError,
     "workspace": WorkspaceError,
+    "proposal": ProposalError,
     "review": ReviewError,
     "simulation": SimulationError,
     "vocab": VocabError,

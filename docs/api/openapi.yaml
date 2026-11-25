@@ -726,7 +726,7 @@ paths:
                   to: 7724e9d7-ddd6-4b94-8855-aad97c28224c
                   label: continues
                   state: ratified
-                my_effective_verbs: [recall, read, graph_read, events_tail, remember, learn, attach, supersede]
+                my_effective_verbs: [recall, read, graph_read, events_tail, remember, learn, attach, supersede, propose_brief]
                 permission_epoch: 815
               schema: { $ref: '#/components/schemas/WorkspaceView' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -5589,7 +5589,7 @@ components:
             my_effective_verbs:
               type: array
               description: The effective-verbs table of docs/architecture/roles-and-keys.md, unioned over the grant roles effective on the node and listed in table order (the reader, submitter and reviewer rows, each left to right) without duplicates; the access conferred, not what this server build serves.
-              items: { type: string, enum: [recall, read, graph_read, events_tail, remember, learn, attach, supersede, propose, review] }
+              items: { type: string, enum: [recall, read, graph_read, events_tail, remember, learn, attach, supersede, propose, review, create_workspace, propose_brief] }
             permission_epoch: { type: integer, description: 'The calling key''s permission epoch as declared in docs/architecture/workspaces.md (ADR-0025 d14).' }
             policy: { $ref: '#/components/schemas/ReviewPolicy' }
             federation:

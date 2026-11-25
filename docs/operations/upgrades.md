@@ -106,7 +106,11 @@ or of the same claim for the same brief, is live: a script that proposed the sam
 receives the 409. `limit.quota`'s `details.quota` gains `workspaces`, and the three create and
 proposal bodies take an optional `reason`. The pending transitions on `GET /v2/workspaces/{w}`
 and the pending brief edges on `GET /v2/edges?kind=brief` gain `proposed_at` and `proposed_by`,
-the latter `{id, name}` to a key of the proposer's person and null to every other.
+the latter `{id, name}` to a key of the proposer's person and null to every other. The two new
+verbs in `my_effective_verbs` are values the v0.8.4 Python SDK's generated model does not know: its
+workspace read raises `ValueError` on a v0.8.5 server wherever a key holds either, so the Python
+SDK upgrades with the server; the TypeScript SDK reads them as strings. The SDKs also gain a
+`ProposalError` class for the new `proposal` error family.
 
 The notice to send to client owners:
 

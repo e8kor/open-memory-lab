@@ -3056,7 +3056,7 @@ export interface components {
                 state: "pending" | "ratified";
             }[];
             /** @description The effective-verbs table of docs/architecture/roles-and-keys.md, unioned over the grant roles effective on the node and listed in table order (the reader, submitter and reviewer rows, each left to right) without duplicates; the access conferred, not what this server build serves. */
-            my_effective_verbs: ("recall" | "read" | "graph_read" | "events_tail" | "remember" | "learn" | "attach" | "supersede" | "propose" | "review")[];
+            my_effective_verbs: ("recall" | "read" | "graph_read" | "events_tail" | "remember" | "learn" | "attach" | "supersede" | "propose" | "review" | "create_workspace" | "propose_brief")[];
             /** @description The calling key's permission epoch as declared in docs/architecture/workspaces.md (ADR-0025 d14). */
             permission_epoch: number;
             policy: components["schemas"]["ReviewPolicy"];
@@ -5245,7 +5245,8 @@ export interface operations {
                      *         "remember",
                      *         "learn",
                      *         "attach",
-                     *         "supersede"
+                     *         "supersede",
+                     *         "propose_brief"
                      *       ],
                      *       "permission_epoch": 815
                      *     }

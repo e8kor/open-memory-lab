@@ -52,7 +52,7 @@ ALTER TABLE user_quotas VALIDATE CONSTRAINT user_quotas_quota;
 ------------------------------------------------------------------------------
 -- oml_account_source — 0065's definition with the workspaces stock: the
 -- nodes whose name lies in a user root's namespace, which is every node
--- below that root and never the root itself (0014's workareas_user_root
+-- below that root and never the root itself (0014's user-root
 -- check). Its result type changes, so it is dropped and created again.
 ------------------------------------------------------------------------------
 DROP FUNCTION oml_account_source(uuid);
