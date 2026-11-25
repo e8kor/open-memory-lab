@@ -22,7 +22,7 @@ changes), [ADR-0009](ADR-0009-status-ladder.md) (d3),
 [ADR-0010](ADR-0010-roles-and-keys.md) (d1, d3),
 [ADR-0031](ADR-0031-oauth-connections-by-connect-code.md) (d7, d8),
 [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
-(d3, d7),
+(d3, d7; d6 by d31),
 [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)
 (d6, d10, and the decisions of 2026-11-19 and 2026-11-20),
 [ADR-0070](ADR-0070-the-web-console-is-a-client-of-the-public-http-api-in-a-crate-that-cannot-reach-the-application-core.md) (d2: the admin console creates workspaces and issues keys, d29),
@@ -34,7 +34,7 @@ changes), [ADR-0009](ADR-0009-status-ladder.md) (d3),
 (d2, d14, d16, and the decisions of 2026-11-19 and 2026-11-20),
 [ADR-0093](ADR-0093-contributor-and-submitter-replace-writer.md) (the key-role set),
 [ADR-0095](ADR-0095-an-agent-creates-its-own-child-workspaces-writes-guardrails-and-proposes-status-and-brief-changes-through-oml-write-and-every-verdict-and-setting-stays-with-people.md)
-(d5) and
+(d5; d3, d4 and the answer Q5 by d30 and d31) and
 [ADR-0096](ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md)
 (d4, d12; d12's deferral of the admin builder, d29). Each carries an amendment note dated
 2026-11-25. It supersedes nothing whole.
@@ -534,6 +534,63 @@ Decided, not built.
   the console issuing nothing and send admins to the CLI, which the operator reversed; an admin
   builder that issues at once, which would bypass d5.
 
+- **d30 — A key can start with its workspaces: existing ones picked at issuance, or new ones
+  created in the same act (decided by the operator, 2026-11-25; v0.8.6, CLI and console).**
+  Issuing a key through `oml keys issue`, `oml keys issue-agent`, the admin builder (d29) or the
+  personal builder (ADR-0096 d1) can:
+  - **pick existing workspaces**, each with its grant, and the default workspace. The CLI has this
+    today; the admin builder gains it, and the personal builder keeps it inside the own root.
+  - **create the key's new workspaces in the same step.** `--create-workspace <parent>/<name>`,
+    repeatable, creates the workspace and writes on it the grants the key's role takes by default
+    (a contributor reader and submitter, a submitter submitter, a reader reader, a reviewer
+    reviewer), covering the subtree. The builders offer the same as a "new workspace" row.
+
+  **The rule: the issuance is one act, and its strictest part decides when it applies.** The
+  creations, the key and its grants commit together or not at all. Creating a workspace alone is
+  neutral (d9), but inside an issuance it takes the issuance's state: when the key or a grant is
+  widening (d5), nothing is created until a second admin person confirms, and the confirmation
+  creates the workspaces, issues the key and writes the grants in one commit; under `sole_admin`
+  it all applies at once, marked. A pending issuance reserves no name; a confirmation that meets a
+  taken name answers `409 name.taken`, applies nothing, and the act waits until it is declined or
+  expires (d23). A person's own issuance in their own root creates at once, as ADR-0044 d6 allows
+  that person's keys, and is no admin act. Each creation journals `workspace.create` naming the
+  `act_id`, and counts against the `workspaces` meter as d31 says. *Rejected:* creating at once and
+  granting later, which leaves empty nodes behind every declined key; a creation that applies
+  while the grant waits, which splits one act in two; a separate confirmation for the creation,
+  which asks a second admin about a neutral act.
+
+- **d31 — A grant may carry `create`, which lets its key create child workspaces under that node
+  (decided by the operator, 2026-11-25; v0.8.6, CLI, console and MCP).** `--grant
+  <workspace>:<role>:create` on the CLI, a checkbox per grant in both builders, and `create: true`
+  on the grant in `POST /v2/keys`.
+  - **What it admits.** A key whose effective access at the parent comes from a grant carrying
+    `create` creates a child there, on HTTP, the CLI, the console and over MCP (`oml_write
+    {create_workspace}`), beside ADR-0095 d3's own-root rule, which is unchanged. The child starts
+    as ADR-0095 d3 says: `development`, mode `standard`, no crew.
+  - **The key's grant on the child.** Under a grant covering the subtree, the child is already
+    covered and no grant is written. Under a node grant, the create writes on the child the same
+    grant, role, coverage and `create` included, journalled in the create's commit.
+  - **Classes.** Granting `create` is widening (d5), whoever's key it is; a person's own issuance
+    sets it only inside the own root, as a person's own act. A child created under the flag is
+    neutral and needs no confirmation.
+  - **Refusals.** Under a `frozen` parent the create is refused, `access.verb_ceiling` with
+    `details.reason: parent_frozen`; under a denied node it is refused as any act there is. An
+    admin key never carries a grant and so never the flag; the admin keeps its own create (d29).
+  - **The quota.** Each child counts against ADR-0095 d4's `workspaces` meter. A child inside a
+    person's root counts against that person's account, as today. **Reading, for the operator to
+    confirm:** a child in the shared tree counts against the account of the person the creating
+    key counts as (d12), and, for a key that counts as no person (a tenant agent key belongs to no
+    account, ADR-0071 d1), against the account of the admin person whose act granted the flag.
+  - **Rate.** The key's `requests_per_minute` bounds how fast it creates, as for every create.
+
+  This reverses ADR-0095 d3's "own root only" for flagged grants and its answer Q5 (2026-11-24),
+  "no key creates a child in a shared workspace in v0.8.5", and ADR-0044 d6's rule that tenant
+  keys create nothing. *Rejected:* creation wherever a key holds submitter (ADR-0095's rejected
+  alternative to d3), which needs no grant of the right and lets every writer add permanent nodes;
+  a role of its own for creating, which would split every grant table; a flag that is neutral to
+  grant, which lets one admin hand an agent unbounded structure in shared trees; letting the child
+  carry a wider grant than its parent's, which is escalation by creation.
+
 ## Consequences
 
 ### Answers that go together
@@ -589,6 +646,16 @@ Decided, not built.
   recovered tenant keeps the dormant admins' flags, so its new admin cannot widen alone until a
   dormant admin returns or, with one dormant admin, the operator settles an un-flag (d19). A
   two-admin dispute freezes widening until the operator settles it.
+- **Creating children (d31).** The escalation bound: a key creates only under nodes where its
+  effective access comes from a grant carrying `create`, and the child carries the same grant or
+  is covered by the same subtree grant, so the key never gains a wider role than its grant and
+  never grants another key anything. Granting the flag is widening, so one admin cannot hand it out
+  alone outside `sole_admin`. Flood limits: the `workspaces` quota, which also bounds depth, and
+  the key's request rate; a workspace cannot be deleted, so a child stays for good. In-progress
+  parents: a child lies inside the in-progress subtree and gains no audience of its own (ADR-0095
+  d3), and granting the flag there is widening that a person holding reviewer there also confirms
+  (d5). Frozen parents refuse the create; a `protected` parent admits it, and the child starts in
+  `development`.
 - **Liveness.** In a multi-admin tenant widening waits on a second admin, who counts only after
   seven days; for the first seven days after a second admin arrives, the founder's widening waits.
   A person's own issuance in their own root never waits.
@@ -744,7 +811,14 @@ Each red first, named after the sentence it proves:
 `an_admin_entry_accepted_before_the_upgrade_still_opens_the_admin_console`,
 `recovery_keeps_the_dormant_admins_flags`,
 `the_admin_session_creates_a_workspace_under_universe_as_a_neutral_act`,
-`a_key_from_the_admin_builder_answers_pending_confirmation_until_a_second_admin_confirms`.
+`a_key_from_the_admin_builder_answers_pending_confirmation_until_a_second_admin_confirms`,
+`a_pending_issuance_creates_no_workspace_until_it_is_confirmed`,
+`an_issuance_with_new_workspaces_creates_them_and_grants_the_key_in_one_commit_or_not_at_all`,
+`a_key_creates_a_child_only_under_a_grant_that_carries_create`,
+`a_child_under_a_node_grant_carries_the_same_grant_and_no_wider_role`,
+`creating_a_child_under_a_frozen_parent_is_refused`,
+`a_flagged_child_counts_against_the_workspaces_quota`,
+`oml_write_create_workspace_reaches_a_shared_parent_only_through_the_create_flag`.
 
 ### The operator's answers of 2026-11-25 to the tensions
 
@@ -771,12 +845,15 @@ Two readings stay open for the operator: the connect code's life running from th
 
 ### Pages, API and issues
 
-- **OpenAPI:** `issueKey` and `createWorkspace` admit `<user>-admin` (d29); `revokeKey` (d14), `convertSelf` and `linkSelf` (d18, d22), `confirmAdminAct` and
+- **OpenAPI:** `issueKey` and `createWorkspace` admit `<user>-admin` (d29); `issueKey` takes
+  `create_workspaces[]` and a grant's `create` (d30, d31); the `oml_write` schema's
+  `create_workspace` description names the flag (d31); `revokeKey` (d14), `convertSelf` and `linkSelf` (d18, d22), `confirmAdminAct` and
   `declineAdminAct`, `listAdminActs`, `contest` (d8); `issueKey` requires `person` for an admin key
   and answers `pending_confirmation`; `claimBootstrap` requires `person` and `email`;
   `auth.invalid` gains `details.reason: pending_confirmation` and `suspended`. The Rust and Python
   SDKs are regenerated.
-- **Pages:** the admin key builder and the admin Workspaces page's create form (d29); To do's
+- **Pages:** the admin key builder and the admin Workspaces page's create form (d29); both
+  builders' workspace picker, "new workspace" rows and per-grant `create` box (d30, d31); To do's
   "Admin acts to confirm" with the confirm screen of d23; the one-key page's
   revoke button and the person's Keys page's; the contest-only sign-in page; the person's To do
   notice of a reach into their root under `sole_admin`; the limits form's "waits on another admin"; the
@@ -787,7 +864,8 @@ Two readings stay open for the operator: the connect code's life running from th
   `key.converted`, `key.suspended`, `operator.recovery`, `operator.settlement`).
 - **The CLI and the skill:** `oml keys issue` prints the value once and then "waits on another
   admin" for a pending act; `oml bootstrap claim` and `oml quickstart` require `--person` and
-  `--email`.
+  `--email`; `oml keys issue` and `issue-agent` take `--create-workspace <parent>/<name>` and
+  `--grant <workspace>:<role>:create` (d30, d31).
 - **Issues:** the build is tracked in milestone v0.8.6; the v0.8.5 pieces in milestone v0.8.5.
 - **The cost:** a multi-admin tenant's widening waits on a second person, who counts only after
   seven days; erase no longer destroys at once; a recovered tenant whose dormant admins never
