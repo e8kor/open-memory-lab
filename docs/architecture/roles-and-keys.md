@@ -81,7 +81,7 @@ After the request's names resolve and its limits are checked, checks run in this
 
 `oml keys issue` and `oml keys issue-agent` print the key value once. OML stores a SHA-256 hash only, so there is no "show me the key again". `oml keys show` displays grants, denials, crew and connections, never the value.
 
-Not available: revoking or rotating a key. To cut a key off today, add a global denial with `oml deny set`.
+Not available: revoking or rotating a key. A connection is revoked (see [Connections](#connections)), but the key behind it stays. To cut a key off today, add a global denial with `oml deny set`.
 
 ### Expiry and rate
 
@@ -149,7 +149,7 @@ An admin key reads any memory of its tenant with its text and attribution: every
 
 An admin key gives no verdict and writes no memory. An admin who needs to write uses a separate contributor key; the write is held and reviewed like any other.
 
-Demotion ([ADR-0010](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0010-roles-and-keys.md) d6) and erasure by crypto-shredding ([ADR-0005](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0005-erasure-by-crypto-shredding.md)) are designed and not built: no key can demote or erase a memory in this build. A memory leaves recall only by an approved [retirement](audit-and-lineage.md#which-version-is-current), which keeps every version. Bans and reassignment between workspaces are not built either.
+Demotion ([ADR-0010](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0010-roles-and-keys.md) d6) and erasure by crypto-shredding ([ADR-0005](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0005-erasure-by-crypto-shredding.md)) are built as acts of an admin fix ([ADR-0089](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md)): `POST /v2/admin/fixes` with `act: demote` or `erase`, marked, and confirmed or reverted by a person afterwards; no other route demotes or erases. Otherwise a memory leaves recall only by an approved [retirement](audit-and-lineage.md#which-version-is-current), which keeps every version. Bans and reassignment between workspaces are not built.
 
 ## The operator and the first admin key
 
