@@ -10,5 +10,8 @@
 --
 -- What it costs a live database: one CREATE INDEX on imports, which holds a
 -- row per import ever run; a deployment with few imports builds it at once.
+-- The build holds the table's share lock, so it waits at most five seconds
+-- for a writer and fails rather than queue behind one.
+SET LOCAL lock_timeout = '5s';
 CREATE INDEX imports_importer_created ON imports
     (tenant_id, importer_key_id, created_at DESC, id DESC);

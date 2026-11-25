@@ -891,7 +891,8 @@ pub(crate) fn review_body(draft: &Draft, user: &str, tree: &[WorkspaceNode], csr
         };
         let _ = write!(
             out,
-            r#"<li class="n{off}" style="--depth:{depth}"><span class="name">{}</span> {}</li>"#,
+            r#"<li class="n d{}{off}"><span class="name">{}</span> {}</li>"#,
+            depth.min(6),
             text(&node.name),
             marks
                 .iter()

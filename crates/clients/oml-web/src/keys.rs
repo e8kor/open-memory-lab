@@ -674,7 +674,7 @@ async fn user_view(
     // the kind, the grants, the date and the rate are chosen there.
     let _ = write!(
         body,
-        r#"<p><a class="oml-btn primary" href="{NEW_KEY_PATH}">New key</a></p><p class="desc">{EXPIRES_NOTE}</p>"#
+        r#"<p><a class="button" href="{NEW_KEY_PATH}">New key</a></p><p class="desc">{EXPIRES_NOTE}</p>"#
     );
     outcome::html(StatusCode::OK, user_shell(session, fields, &body))
 }
@@ -1012,7 +1012,7 @@ async fn one_key(
             _ => {
                 let _ = write!(
                     body,
-                    r#"<p><a class="oml-btn primary" href="{ADMIN_KEYS_PATH}?key={enc}&amp;op=limits">Set limits</a> <a class="oml-btn" href="{ADMIN_KEYS_PATH}?key={enc}&amp;op=deny">Deny on a workspace</a></p>"#,
+                    r#"<p><a class="button" href="{ADMIN_KEYS_PATH}?key={enc}&amp;op=limits">Set limits</a> <a class="button" href="{ADMIN_KEYS_PATH}?key={enc}&amp;op=deny">Deny on a workspace</a></p>"#,
                     enc = attr(&enc)
                 );
                 if record.credential != "session" && record.role != "admin" {

@@ -191,7 +191,7 @@ fn new_fix(session: &Session, workspace: &str, status: &str, fields: &Fields) ->
                 )
                 .replace(
                     r#"<button type="submit" class="primary">Erase</button>"#,
-                    r#"<button type="submit" class="oml-btn danger">Erase</button>"#,
+                    r#"<button type="submit" class="danger">Erase</button>"#,
                 )
             }
         );

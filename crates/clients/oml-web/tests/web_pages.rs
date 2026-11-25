@@ -11396,7 +11396,10 @@ async fn the_admin_one_key_page_sets_limits_and_denies_on_a_workspace() {
         "{page}"
     );
     // The read journals nothing, and its line says nothing of an audit trail.
-    assert!(page.contains("read as <code>boss-admin</code>.</p>"), "{page}");
+    assert!(
+        page.contains("read as <code>boss-admin</code>.</p>"),
+        "{page}"
+    );
     let (_, _, form) = send(
         &rig.router,
         get("/web/admin/keys?key=alice-laptop&op=limits", Some(&boss)),
@@ -11520,7 +11523,7 @@ async fn the_fix_tab_takes_its_target_from_an_investigation() {
     )
     .await;
     assert!(
-        review.contains(r#"class="oml-btn danger">Erase</button>"#),
+        review.contains(r#"class="danger">Erase</button>"#),
         "{review}"
     );
     assert!(review.contains("crypto-shredded"), "{review}");
