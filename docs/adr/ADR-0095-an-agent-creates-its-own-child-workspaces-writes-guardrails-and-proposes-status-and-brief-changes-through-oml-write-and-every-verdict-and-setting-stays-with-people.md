@@ -13,7 +13,7 @@ workspace tool to allow creating and manipulating workspace itself, guardrails, 
 not yet covered"), with the scope the operator chose, "Proposals + own children": an agent's MCP
 key may create child workspaces where its key allows, write guardrails, skills, documents and
 steering, each held for review, and propose status changes and brief edits; mode, crew, grants and
-export stay with people. · amended 2026-11-24 by the operator (d5, d6: the pending proposal's time and proposer are served; see [the amendment](#amendment-of-2026-11-24-who-proposed-the-live-proposal-and-when))
+export stay with people. · amended 2026-11-24 by the operator (d5, d6: the pending proposal's time and proposer are served; see [the amendment](#amendment-of-2026-11-24-who-proposed-the-live-proposal-and-when)) · amended by [ADR-0097](ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) (d3, d4, d5 and Q5, 2026-11-25, decided by the operator)
 
 **Release:** v0.8.5 ([releases](../changelog.md))
 
@@ -395,6 +395,25 @@ Decided, not built.
 - **Bottleneck:** the create's quota check reads and moves one counter row under the tenant's
   chain lock, as every metered write does (ADR-0071 d3). The two pending checks each add one
   indexed lookup to a proposal. Both are unmeasured and go in the register with the build.
+
+## Amendment of 2026-11-25: the ratifier is another person (amends d5; ADR-0097)
+
+Decided by the operator on 2026-11-25 (the break-glass and key-access questions); recorded in [ADR-0097](ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md).
+
+Proposers stay as d5 has them. Ratification needs a key that counts as a person other than the
+proposer's; when an agent key proposes, the ratifier also differs from the person who issued it,
+a reading ADR-0097 d17 flags for the operator. In a `sole_admin` tenant the proposer's own person
+may ratify, marked. Raising d4's `workspaces` quota is widening
+(ADR-0097 d15).
+
+**Also amends d3, d4 and the answer Q5 (decided by the operator, 2026-11-25; ADR-0097 d30,
+d31).** A grant may carry `create`, which lets its key create child workspaces under that node,
+shared workspaces included, over HTTP, the CLI, the console and `oml_write {create_workspace}`.
+d3's own-root rule stands beside it; the flag is the only way a create reaches beyond the own
+root. Under a node grant the child gets the same grant; a `frozen` parent refuses the create.
+Granting the flag is widening; a child created under it is neutral. Each child counts against d4's
+`workspaces` meter (a shared child counts against the account of the person the creating key counts as, or of the admin person who granted the flag, ADR-0097 d31). This reverses
+Q5, "no key creates a child in a shared workspace in v0.8.5", from v0.8.6.
 
 ## Rejected alternatives
 

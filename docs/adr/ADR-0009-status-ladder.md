@@ -7,7 +7,7 @@ answers: why a workspace's status is a forward-only ladder of development, prote
 
 # ADR-0009 — The status ladder: development, protected, frozen; forward only; medallion words stay in the lake
 
-**Status:** accepted design · 2026-10-29 · amended by [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d5, 2026-11-14) · amended by [ADR-0091](ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md) (d1, d4, d5, 2026-11-14)
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d5, 2026-11-14) · amended by [ADR-0091](ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md) (d1, d4, d5, 2026-11-14) · amended by [ADR-0097](ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) (d3, 2026-11-25, decided by the operator)
 
 **Release:** introduced in v0.5.2 ([releases](../changelog.md))
 
@@ -122,3 +122,15 @@ of running software.
   ([ADR-0005](ADR-0005-erasure-by-crypto-shredding.md)). Both are among d5's permitted mutations inside `frozen`.
   A status that hides an entire area without doing either would be a read-path visibility switch
   with no journalled per-row account — exactly the silent disappearance R4 exists to prevent.
+
+## Amendment of 2026-11-25: the ratifier is another person (Q12) (amends d3; ADR-0097)
+
+Decided by the operator on 2026-11-25 (the break-glass and key-access questions); recorded in [ADR-0097](ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md).
+
+Admins stay on the ladder. d3's two identities become two persons at ratification: the ratifier
+counts as a person (a session key, a key with an accepted link, or a user key by its issuer walk),
+and that person is not the proposer's. When the proposing key counts as no person, the ratifier
+also differs from the person whose admin act issued it, a reading ADR-0097 d17 flags for the
+operator. Proposers are unchanged (ADR-0095 d5), and frozen stays final. In a `sole_admin`
+tenant a ratification by the proposer's own person is admitted and marked (decided by the
+operator, 2026-11-25), so a tenant with one person still moves a workspace up the ladder.

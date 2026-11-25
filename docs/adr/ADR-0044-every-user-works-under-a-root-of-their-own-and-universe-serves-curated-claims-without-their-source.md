@@ -7,7 +7,7 @@ answers: what a user is and where their root workspace sits; how a key is tied t
 
 # ADR-0044 — Every user works under a root of their own beneath `universe`, and `universe` serves only curated claims, without their source
 
-**Status:** accepted design · 2026-11-04 · amended by [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · amended 2026-11-12 by [the amendment](#the-amendment-of-2026-11-12-a-memory-is-started-in-a-user-root-by-its-own-users-keys-only) (d16: a memory is started in a user root by that user's keys only; #329), which the operator accepted the same day · amended by [ADR-0082](ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) (d8, 2026-11-14) · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d7, 2026-11-14)
+**Status:** accepted design · 2026-11-04 · amended by [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · amended 2026-11-12 by [the amendment](#the-amendment-of-2026-11-12-a-memory-is-started-in-a-user-root-by-its-own-users-keys-only) (d16: a memory is started in a user root by that user's keys only; #329), which the operator accepted the same day · amended by [ADR-0082](ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) (d8, 2026-11-14) · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d7, 2026-11-14) · amended by [ADR-0097](ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) (d3, d6, d7, 2026-11-25, decided by the operator)
 
 **Release:** introduced in v0.5.0 ([releases](../changelog.md))
 
@@ -599,3 +599,21 @@ edits by proposal there. Asked "Which rule do you want?" the same day, the opera
 | **Refuse it in the store's commit** | The store does not know what the calling key reads, so it could not keep `access.not_found` for a key that reads nothing of the root. |
 | **Drop `remember` and `learn` from `my_effective_verbs` for such a key** | The field lists what grants confer (ADR-0025 d14) and stays silent on a `frozen` workspace too; changing what it means is a decision of its own. |
 | **Demote, reassign or delete what tenant keys already wrote in user roots** | R4: nothing is deleted silently, no verb reassigns a version, and each row is attributed truthfully to the key that wrote it. |
+
+## Amendment of 2026-11-25: an admin's reach into a person's root waits on a second admin (amends d3, d6, d7; ADR-0097)
+
+Decided by the operator on 2026-11-25 (the break-glass and key-access questions); recorded in [ADR-0097](ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md).
+
+- **d3.** An admin-issued key naming another person's `user` is widening: a second admin person
+  confirms it before it authenticates, except in a `sole_admin` tenant (ADR-0097 d6). The person's
+  consent is not asked, and any role the issuer ceiling admits, `reviewer` included, may still be
+  issued once confirmed.
+- **d7.** A curator's reader grants on a person's root, and every capacity grant there, are
+  widening likewise.
+
+Keys and grants of either kind that exist at the upgrade are journalled as admin acts: confirmed
+and marked `sole_admin` in a `sole_admin` tenant, otherwise pending a second admin person.
+
+- **d6** (ADR-0097 d31, decided by the operator, 2026-11-25). A tenant key creates a child
+  workspace under a node where its grant carries `create`, a flag whose granting is widening;
+  without the flag, tenant keys still create nothing.

@@ -118,6 +118,7 @@ branch that reserved later renumbers.
 | adr | 0094 | `main` |  | a langchain integration rides the python sdk and its store writes only | used |
 | adr | 0095 | `docs/adr-mcp-workspace` |  | agents manage workspaces over MCP by proposal | reserved |
 | adr | 0096 | `docs/adr-console-keys` |  | a person builds a key in the console with grants inside the own root and a rate, and the admin reads one key and sets its limits | reserved |
+| adr | 0097 | `docs/adr-break-glass` |  | every admin act is one journalled record: narrowing at once, widening waits on a second admin person, every admin key a person's | reserved |
 | migration | 0001 | `main` |  | init | used |
 | migration | 0002 | `main` |  | poc adapter | used |
 | migration | 0003 | `main` |  | lead startup | used |

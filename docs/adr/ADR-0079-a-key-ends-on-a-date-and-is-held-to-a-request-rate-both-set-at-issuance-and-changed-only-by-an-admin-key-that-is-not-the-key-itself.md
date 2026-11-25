@@ -7,7 +7,7 @@ answers: how a key is given an end date and a request rate; what a request under
 
 # ADR-0079 — A key ends on a date and is held to a request rate, both set at issuance and changed only by an admin key that is not the key itself
 
-**Status:** accepted design · 2026-11-12, by the operator, as built, with its five open questions decided at their recommendations (1: a connection has no date apart from its key's; 2: a rate every server process shares is decided with ADR-0073's nodes; 3: a person sets a date on their own keys from the web console when the keys page is next changed, and changing it afterwards stays with the admin key role, built in v0.7.3 (#352); 4: an expired key stays on its account's `keys` meter; 5: when the operator path is built, a date and a rate are refused on every role that can issue an admin key, before the first such key is issued) · proposed the same day with #323 · amended by [ADR-0096](ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md) (d1 and the operator's answer 3, 2026-11-24, decided by the operator)
+**Status:** accepted design · 2026-11-12, by the operator, as built, with its five open questions decided at their recommendations (1: a connection has no date apart from its key's; 2: a rate every server process shares is decided with ADR-0073's nodes; 3: a person sets a date on their own keys from the web console when the keys page is next changed, and changing it afterwards stays with the admin key role, built in v0.7.3 (#352); 4: an expired key stays on its account's `keys` meter; 5: when the operator path is built, a date and a rate are refused on every role that can issue an admin key, before the first such key is issued) · proposed the same day with #323 · amended by [ADR-0096](ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md) (d1 and the operator's answer 3, 2026-11-24, decided by the operator) · amended by [ADR-0097](ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) (d5, 2026-11-25, decided by the operator)
 
 **Release:** v0.7.3 (#323)
 
@@ -245,3 +245,15 @@ Decided, not built.
   that date in every time zone (ADR-0096 d10). The key lists show the stored instant in UTC. The
   admin console's limits form, which `<user>-admin` now posts (ADR-0096 d4), enters a date the
   same way.
+
+## Amendment of 2026-11-25: one revoke verb, and raising a limit waits (amends d5; ADR-0097)
+
+Decided by the operator on 2026-11-25 (the break-glass and key-access questions); recorded in [ADR-0097](ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md).
+
+- **Revocation.** One plain verb, `POST /v2/keys/{key}/revoke`, ends any key, admin keys
+  included, and cascades to none (ADR-0097 d14). This reverses the answers of 2026-11-12 that no
+  admin key ends another.
+- **Limits.** A raise, a cleared limit, a later expiry or a looser quota profile is widening: it
+  waits on a second admin person, except in a `sole_admin` tenant. Lowering takes effect at once
+  (ADR-0097 d15). "An admin key that is not the key itself" is no longer the only condition. A
+  limit on an admin key stays refused.
