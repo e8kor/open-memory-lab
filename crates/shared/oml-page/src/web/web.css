@@ -446,6 +446,10 @@ a.oml-choice:hover{border-color:var(--ice)}
 .oml-select[multiple]{min-height:calc(var(--control-h) * 2.5);padding:var(--space-1) var(--space-2)}
 .oml-select[multiple] option:checked{background:var(--panel);color:var(--ink)}
 .oml-check{display:flex;align-items:flex-start;gap:var(--space-2);min-height:var(--target-min);font:var(--t-body-dense-weight) var(--t-body-dense-size)/var(--t-body-dense-line) var(--font-body);color:var(--ink)}
+/* A check's or radio's label is a sentence beside its box, not a field's caption: it resets
+   the global label rules, a form's column layout among them, at that rule's specificity. */
+label.oml-check,form.oml-form label.oml-check{flex-direction:row;align-items:flex-start;letter-spacing:normal;text-transform:none;font:var(--t-body-dense-weight) var(--t-body-dense-size)/var(--t-body-dense-line) var(--font-body);color:var(--ink)}
+label .desc{font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);letter-spacing:normal;text-transform:none;color:var(--ink-dim)}
 .oml-filterrow.top{display:flex;flex-wrap:wrap;gap:var(--space-3);align-items:flex-start}
 .oml-panel{border:1px solid var(--rule);border-radius:var(--radius-md);padding:var(--space-3) var(--space-4)}
 .oml-panel h2.oml-h3{font:var(--t-heading-weight) var(--t-body-size)/var(--t-heading-line) var(--font-body);margin-top:0}
