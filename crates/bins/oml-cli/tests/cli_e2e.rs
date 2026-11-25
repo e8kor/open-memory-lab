@@ -2235,11 +2235,32 @@ async fn the_first_admin_email_is_added_by_the_cli_under_an_admin_key() {
             seen.query
         );
     }
+    // The last admin entry is kept on every surface, the CLI's included
+    // (ADR-0097 d25, d27 item 4): removing it is refused naming admin.
+    let (code, refused, log) = lab.json(None, &["web", "remove", "alice@example.com"]);
+    assert_ne!(code, 0, "web remove: {log}");
+    assert_eq!(refused["error"]["details"]["field"], "admin", "{log}");
+    let (code, _, log) = lab.json(
+        None,
+        &[
+            "web",
+            "allow",
+            "ops@example.com",
+            "--user",
+            "ops",
+            "--admin",
+        ],
+    );
+    assert_eq!(code, 0, "web allow: {log}");
     let (code, _, log) = lab.json(None, &["web", "remove", "alice@example.com"]);
     assert_eq!(code, 0, "web remove: {log}");
     let (code, listed, log) = lab.json(None, &["web", "list"]);
     assert_eq!(code, 0, "{log}");
-    assert_eq!(listed["items"], json!([]));
+    assert_eq!(
+        listed["items"].as_array().map(Vec::len),
+        Some(1),
+        "{listed}"
+    );
     lab.stop().await;
 }
 
