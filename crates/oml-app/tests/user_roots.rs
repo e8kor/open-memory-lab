@@ -7116,3 +7116,39 @@ async fn a_bootstrap_claim_refused_at_its_email_leaves_no_partial_tenant() {
         .expect("the retried claim takes the name the refused one left free");
     assert_eq!(boot.admin_key.access.issued_seq, 3);
 }
+
+/// ADR-0097 d25 and d27 item 4: the last live admin entry is never
+/// removed or un-flagged on any surface: a bearer admin key, as the CLI
+/// sends it with no `keep_an_admin`, is refused as the console is,
+/// `request.validation` naming `admin`, and nothing changes. This reverses
+/// ADR-0045 d10's CLI allowance.
+#[tokio::test]
+async fn the_last_admin_entry_is_never_removed_or_unflagged_by_a_bearer_admin_key_either() {
+    let r = fix_rig().await;
+    let admin = r.boot.admin_key.value.as_str();
+    let err = r
+        .app
+        .allow_web_email(
+            admin,
+            &WebEmailRequest {
+                email: email("ops@example.com"),
+                user: name("ops"),
+                admin: false,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::WebField { field: "admin", .. }),
+        "{err:?}"
+    );
+    let err = r
+        .app
+        .remove_web_email(admin, &email("ops@example.com"))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::WebField { field: "admin", .. }),
+        "{err:?}"
+    );
+}
