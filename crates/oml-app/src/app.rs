@@ -18,6 +18,7 @@ mod linked_keys;
 mod metering;
 mod pages;
 mod rescan;
+mod rotation;
 mod search;
 mod signup;
 mod sparse;
@@ -854,7 +855,7 @@ const BASE62: &[u8; 62] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnop
 
 /// 256 bits as exactly 43 base62 characters, zero-padded (roles-and-keys.md
 /// key format: `oml_` + 43 × `[A-Za-z0-9]`).
-fn base62_43(bytes: &[u8; 32]) -> String {
+pub(crate) fn base62_43(bytes: &[u8; 32]) -> String {
     let mut num = bytes.to_vec();
     let mut digits: Vec<u8> = Vec::with_capacity(43);
     while num.iter().any(|&b| b != 0) {
@@ -2147,7 +2148,21 @@ where
     /// (ADR-0079 d2).
     async fn key_of_value(&self, api_key: &str) -> Result<KeyRecord, AppError> {
         let hash = sha256_digest_string(api_key.as_bytes());
-        let key = self.journal.key_by_hash(&hash).await;
+        let mut key = self.journal.key_by_hash(&hash).await;
+        // A rotated key's previous value, until its grace ends (ADR-0096
+        // d13); past it, the value names no key.
+        if matches!(key, Ok(None)) {
+            let now = self.clock.now();
+            key = self
+                .journal
+                .key_by_previous_hash(&hash)
+                .await
+                .map(|found| {
+                    found
+                        .filter(|(_, until)| until.unix_micros() > now.unix_micros())
+                        .map(|(key, _)| key)
+                });
+        }
         if let Ok(found) = &key {
             self.observer.credential(found.as_ref(), None);
         }

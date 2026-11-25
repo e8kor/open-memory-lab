@@ -20018,3 +20018,188 @@ async fn a_denials_reason_is_journalled_in_key_denied_when_sent_and_absent_when_
     assert_eq!(denied[0]["reason"], "leaked to a public gist", "{denied:?}");
     assert!(denied[1].get("reason").is_none(), "{denied:?}");
 }
+
+// -- key rotation (ADR-0096 d13, the operator's decision of 2026-11-25) -----
+
+/// An app over `store` with a clock the test moves.
+fn rotation_app(store: MemStore) -> (TestApp, FixedClock) {
+    let clock = FixedClock::new();
+    let app = App::new(
+        store,
+        MemSigner::new(TEST_SEED),
+        clock.clone(),
+        SeqIdGen::new(),
+        MarkerScanner::default(),
+    )
+    .with_oauth_issuer(Issuer::parse(ISSUER).expect("a public origin"));
+    (app, clock)
+}
+
+/// Without grace, the old value stops at once and the new one
+/// authenticates the same key.
+#[tokio::test]
+async fn a_rotated_keys_old_value_stops_at_once_without_grace() {
+    let (app, _) = rotation_app(MemStore::new());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let agent = agent(&app, admin, "ana", crew).await;
+    let rotated = app
+        .rotate_key(admin.as_str(), agent.key_id.into(), None)
+        .await
+        .expect("rotate");
+    assert_ne!(rotated.value, agent.value);
+    assert_eq!(rotated.previous_valid_until, None);
+    assert!(matches!(
+        app.whoami(&agent.value).await,
+        Err(AppError::Unauthorized)
+    ));
+    let me = app.whoami(&rotated.value).await.expect("the new value");
+    assert_eq!(me.key.key_id, agent.key_id);
+}
+
+/// With a grace, both values authenticate until its end, then only the new
+/// one does.
+#[tokio::test]
+async fn with_grace_both_values_work_until_its_end_and_then_only_the_new_one() {
+    let (app, clock) = rotation_app(MemStore::new());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let agent = agent(&app, admin, "ana", crew).await;
+    let rotated = app
+        .rotate_key(admin.as_str(), agent.key_id.into(), Some(3600))
+        .await
+        .expect("rotate");
+    assert!(rotated.previous_valid_until.is_some());
+    clock.advance(3599);
+    app.whoami(&agent.value).await.expect("the old value in its grace");
+    app.whoami(&rotated.value).await.expect("the new value");
+    clock.advance(1);
+    assert!(matches!(
+        app.whoami(&agent.value).await,
+        Err(AppError::Unauthorized)
+    ));
+    app.whoami(&rotated.value).await.expect("the new value");
+}
+
+/// A rotation keeps the key's id, name, grants and history, and journals
+/// `key.rotated` with neither the value nor a hash.
+#[tokio::test]
+async fn a_rotation_keeps_grants_and_history_and_journals_no_value() {
+    let store = MemStore::new();
+    let (app, _) = rotation_app(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let agent = agent(&app, admin, "ana", crew).await;
+    let before = store
+        .key_access(boot.tenant_id, agent.key_id)
+        .await
+        .expect("access")
+        .expect("held");
+    let events_before = journal(&store, boot.tenant_id).await;
+    let named = store
+        .key(boot.tenant_id, agent.key_id)
+        .await
+        .expect("read")
+        .expect("held")
+        .name;
+    let rotated = app
+        .rotate_key(admin.as_str(), agent.key_id.into(), None)
+        .await
+        .expect("rotate");
+    let after = store
+        .key_access(boot.tenant_id, agent.key_id)
+        .await
+        .expect("access")
+        .expect("held");
+    assert_eq!(before.grants, after.grants);
+    let events = journal(&store, boot.tenant_id).await;
+    assert_eq!(hashes(&events[..events_before.len()]), hashes(&events_before));
+    let last = &events.last().expect("an event").envelope;
+    assert_eq!(last.event_type, "key.rotated");
+    assert_eq!(last.payload["key_id"], agent.key_id.to_string());
+    let text = last.payload.to_string();
+    assert!(!text.contains(&rotated.value) && !text.contains("sha256"), "{text}");
+    let key = store
+        .key(boot.tenant_id, agent.key_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert_eq!(key.name, named);
+    assert_eq!(key.key_id, agent.key_id);
+}
+
+/// A key rotates itself, so an agent rolls its own secret.
+#[tokio::test]
+async fn a_key_rotates_itself() {
+    let (app, _) = rotation_app(MemStore::new());
+    let (boot, crew) = tenant(&app).await;
+    let agent = agent(&app, &boot.admin_key.value, "ana", crew).await;
+    let rotated = app
+        .rotate_key(agent.value.as_str(), agent.key_id.into(), None)
+        .await
+        .expect("self-rotation");
+    app.whoami(&rotated.value).await.expect("the new value");
+}
+
+/// Each refusal, by name: another key that is not an admin key, a
+/// connector key, a cut-off key, an expired key, a revoked key and a grace
+/// over 24 hours.
+#[tokio::test]
+async fn rotation_refuses_each_key_that_takes_no_new_value_by_name() {
+    let store = MemStore::new();
+    let (app, clock) = rotation_app(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let ana = agent(&app, admin, "ana", crew).await;
+    let bea = agent(&app, admin, "bea", crew).await;
+    let refused = |r: Result<oml_app::types::RotatedKey, AppError>| match r {
+        Err(AppError::KeyRotation(refusal)) => refusal.reason(),
+        Err(AppError::VerbCeiling { .. }) => "verb_ceiling",
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        refused(app.rotate_key(ana.value.as_str(), bea.key_id.into(), None).await),
+        "verb_ceiling"
+    );
+    assert_eq!(
+        refused(app.rotate_key(admin, ana.key_id.into(), Some(86_401)).await),
+        "grace_too_long"
+    );
+    let (connector, _) = connected(&app, admin, crew).await;
+    assert_eq!(
+        refused(app.rotate_key(admin, connector.key_id.into(), None).await),
+        "connector_key"
+    );
+    app.deny_key(admin, bea.key_id.into(), boot.root_workspace_id.into())
+        .await
+        .expect("cut off");
+    assert_eq!(
+        refused(app.rotate_key(admin, bea.key_id.into(), None).await),
+        "cut_off"
+    );
+    let soon = oml_app::domain::EventTime::from_unix_micros(
+        oml_app::ports::Clock::now(&clock).unix_micros() + 60_000_000,
+    )
+    .expect("an instant");
+    app.set_key_limits(
+        admin,
+        ana.key_id.into(),
+        oml_app::types::KeyLimitsChange {
+            expiry: Some(Some(soon)),
+            requests_per_minute: None,
+        },
+    )
+    .await
+    .expect("limits");
+    clock.advance(61);
+    assert_eq!(
+        refused(app.rotate_key(admin, ana.key_id.into(), None).await),
+        "expired"
+    );
+    let cyd = agent(&app, admin, "cyd", crew).await;
+    revoke_key(&store, boot.tenant_id, cyd.key_id).await;
+    assert_eq!(
+        refused(app.rotate_key(admin, cyd.key_id.into(), None).await),
+        "revoked"
+    );
+}

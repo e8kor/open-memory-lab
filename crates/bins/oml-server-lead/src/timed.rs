@@ -1081,6 +1081,27 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         timed("key_by_hash", self.inner.key_by_hash(key_hash))
     }
 
+    fn key_by_previous_hash(
+        &self,
+        key_hash: &str,
+    ) -> impl Future<Output = Result<Option<(KeyRecord, EventTime)>, StoreError>> + Send {
+        timed(
+            "key_by_previous_hash",
+            self.inner.key_by_previous_hash(key_hash),
+        )
+    }
+
+    fn key_previous_valid_until(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+    ) -> impl Future<Output = Result<Option<EventTime>, StoreError>> + Send {
+        timed(
+            "key_previous_valid_until",
+            self.inner.key_previous_valid_until(tenant_id, key_id),
+        )
+    }
+
     fn key_access(
         &self,
         tenant_id: Uuid,

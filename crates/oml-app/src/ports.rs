@@ -294,6 +294,17 @@ pub enum MetadataFold {
         expiry: Option<EventTime>,
         requests_per_minute: Option<u32>,
     },
+    /// `key.rotated`: the live bearer key's hash becomes `key_hash` from
+    /// this commit on; its previous hash, where `previous` names one, still
+    /// resolves through [`JournalStore::key_by_previous_hash`] with the end
+    /// of its grace, and any earlier previous hash of the key is gone. The
+    /// store refuses a key it does not hold, a revoked key and a key that
+    /// is not a bearer key (ADR-0096 d13).
+    KeyRotated {
+        key_id: Uuid,
+        key_hash: String,
+        previous: Option<(String, EventTime)>,
+    },
     /// `key.linked_person` (`Some`) or `key.unlinked_person` (`None`). A
     /// link `accepted` (the bootstrap's, made by the person who runs it)
     /// makes the tenant key act for the person whose user root is named
@@ -1840,6 +1851,22 @@ pub trait JournalStore: Retriever + Send + Sync {
         &self,
         key_hash: &str,
     ) -> impl Future<Output = Result<Option<KeyRecord>, StoreError>> + Send;
+
+    /// One equality lookup on a rotated key's previous hash: the live key
+    /// and the end of the previous value's grace, which the caller compares
+    /// with its clock (ADR-0096 d13).
+    fn key_by_previous_hash(
+        &self,
+        key_hash: &str,
+    ) -> impl Future<Output = Result<Option<(KeyRecord, EventTime)>, StoreError>> + Send;
+
+    /// The end of `key_id`'s previous value's grace, past or not, where a
+    /// rotation gave one (ADR-0096 d13).
+    fn key_previous_valid_until(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+    ) -> impl Future<Output = Result<Option<EventTime>, StoreError>> + Send;
 
     /// The key's `issued_seq`, grants and global denials, read in one
     /// snapshot so their epochs label one journalled state; `None` for a key

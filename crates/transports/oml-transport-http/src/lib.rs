@@ -128,6 +128,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/v2/keys/{key}"),
     ("POST", "/v2/keys/{key}/denials"),
     ("POST", "/v2/keys/{key}/limits"),
+    ("POST", "/v2/keys/{key}/rotate"),
     ("POST", "/v2/keys/{key}/link"),
     ("POST", "/v2/keys/{key}/unlink"),
     ("POST", "/v2/keys/{key}/accept_link"),
@@ -400,6 +401,7 @@ where
             ("GET", "/v2/keys/{key}") => get(Self::get_key),
             ("POST", "/v2/keys/{key}/denials") => post(Self::deny_key),
             ("POST", "/v2/keys/{key}/limits") => post(Self::set_key_limits),
+            ("POST", "/v2/keys/{key}/rotate") => post(Self::rotate_key),
             ("POST", "/v2/keys/{key}/link") => post(Self::link_key),
             ("POST", "/v2/keys/{key}/unlink") => post(Self::unlink_key),
             ("POST", "/v2/keys/{key}/accept_link") => post(Self::accept_key_link),
@@ -2217,6 +2219,72 @@ where
         .await
         .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(StatusCode::CREATED, &denial_json(&denial)))
+    }
+
+    async fn rotate_key(
+        State(st): State<Self>,
+        rid: Rid,
+        Path(key_id): Path<String>,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
+        finish(
+            &rid,
+            Self::rotate_key_inner(&st, &key_id, &headers, &body).await,
+        )
+    }
+
+    /// `POST /v2/keys/{key}/rotate {grace_seconds?}` (ADR-0096 d13): a new
+    /// value, answered once as `value` with `rotated_at` and, with a grace,
+    /// `previous_valid_until`. The `Idempotency-Key` is claimed for the
+    /// caller before the rotation, so a resubmission replays the answer
+    /// without the value and rotates nothing again, as an issuance does.
+    async fn rotate_key_inner(
+        st: &Self,
+        key_id: &str,
+        headers: &HeaderMap,
+        body: &Bytes,
+    ) -> Result<Response, ApiError> {
+        st.require_writes_open()?;
+        let idem = idempotency_key(headers)?;
+        let key = reference("key", key_id)?;
+        let req: RotateBody = if body.is_empty() {
+            RotateBody::default()
+        } else {
+            parse_json(headers, body)?
+        };
+        let caller = Arc::new(st.console_caller(headers).await?);
+        let acting: Acting<'static> = Acting::Session(caller.clone());
+        let digest = console::act_digest(key_id, body);
+        let claim = match st.claim(&caller, "keys.rotate", &idem, &digest).await? {
+            console::Claimed::Replayed(replayed) => return Ok(replayed),
+            console::Claimed::Act(claim) => claim,
+        };
+        let st = st.clone();
+        claim
+            .run(async move {
+                let rotated = retry_chain(|| {
+                    st.app
+                        .rotate_key(acting.bearer(), key.clone(), req.grace_seconds)
+                })
+                .await
+                .map_err(|e| console::ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
+                let answer = json!({
+                    "key_id": rotated.key.key_id,
+                    "name": rotated.key.name.as_ref().map(Name::as_str),
+                    "value": rotated.value,
+                    "rotated_at": rotated.rotated_at.as_str(),
+                    "previous_valid_until": rotated.previous_valid_until.as_ref().map(|t| t.as_str()),
+                    "journal_seq": rotated.journal_seq,
+                });
+                let kept = console::without_secrets(&answer);
+                Ok(console::Acted {
+                    status: StatusCode::OK,
+                    answer,
+                    kept,
+                })
+            })
+            .await
     }
 
     async fn set_key_limits(
@@ -4214,6 +4282,14 @@ struct VerdictBody {
 
 /// A workspace or crew reference is a string, classified after the body
 /// parses so that a refusal names its JSON Pointer (errors.md; ADR-0026 d3).
+/// `POST /v2/keys/{key}/rotate`'s body, which may be empty (ADR-0096 d13).
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct RotateBody {
+    #[serde(default)]
+    grace_seconds: Option<u32>,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DenyBody {

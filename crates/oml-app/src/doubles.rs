@@ -382,6 +382,9 @@ struct TenantState {
     /// their names stay held (ADR-0026 d10); a key `key.revoked` folded
     /// carries its `revoked_at` and resolves by hash no more.
     keys: BTreeMap<Uuid, KeyRecord>,
+    /// A rotated key's previous hash and the end of its grace, by key id
+    /// (postgres-schema.md `key_previous_hashes`; ADR-0096 d13).
+    previous_hashes: BTreeMap<Uuid, (String, EventTime)>,
     /// Connect codes by id (postgres-schema.md `connect_codes`).
     connect_codes: BTreeMap<Uuid, ConnectCodeRecord>,
     /// Connections by id (postgres-schema.md `oauth_connections`).
@@ -2094,6 +2097,28 @@ fn apply_fold(
             };
             key.linked_user = Some(user_root);
             key.link_pending = None;
+        }
+        MetadataFold::KeyRotated {
+            key_id,
+            key_hash,
+            previous,
+        } => {
+            let Some(key) = state.keys.get_mut(&key_id).filter(|k| {
+                k.revoked_at.is_none() && k.credential == Credential::Bearer
+            }) else {
+                return Err(StoreError::Backend(format!(
+                    "key {key_id} is not a live bearer key of this tenant"
+                )));
+            };
+            key.key_hash = Some(key_hash);
+            match previous {
+                Some(previous) => {
+                    state.previous_hashes.insert(key_id, previous);
+                }
+                None => {
+                    state.previous_hashes.remove(&key_id);
+                }
+            }
         }
         MetadataFold::KeyLimitsSet {
             key_id,
@@ -5427,6 +5452,46 @@ impl JournalStore for MemStore {
             }
         }
         Ok(None)
+    }
+
+    async fn key_by_previous_hash(
+        &self,
+        key_hash: &str,
+    ) -> Result<Option<(KeyRecord, EventTime)>, StoreError> {
+        let tenants: Vec<_> = self
+            .tenants
+            .lock()
+            .expect("tenants lock")
+            .values()
+            .cloned()
+            .collect();
+        for tenant in tenants {
+            let state = tenant.lock().expect("tenant lock");
+            if let Some((key_id, (_, until))) = state
+                .previous_hashes
+                .iter()
+                .find(|(_, (hash, _))| hash == key_hash)
+            {
+                return Ok(state
+                    .keys
+                    .get(key_id)
+                    .filter(|k| k.revoked_at.is_none())
+                    .map(|k| (k.clone(), until.clone())));
+            }
+        }
+        Ok(None)
+    }
+
+    async fn key_previous_valid_until(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+    ) -> Result<Option<EventTime>, StoreError> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(None);
+        };
+        let state = state.lock().expect("tenant lock");
+        Ok(state.previous_hashes.get(&key_id).map(|(_, until)| until.clone()))
     }
 
     async fn key_access(

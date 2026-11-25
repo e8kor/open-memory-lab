@@ -5506,6 +5506,56 @@ async fn apply_fold(
             .await
             .map_err(backend)?;
         }
+        MetadataFold::KeyRotated {
+            key_id,
+            key_hash,
+            previous,
+        } => {
+            // The new hash on the live bearer key's row; the guard aborts
+            // the commit for anything else. The previous hash, with its
+            // grace's end, replaces the key's earlier one, or a rotation
+            // without grace deletes it (ADR-0096 d13; 0069).
+            let hash = key_hash_bytes(&key_hash)
+                .ok_or_else(|| StoreError::Backend("a rotated key's hash is not sha256".to_owned()))?;
+            let set = sqlx::query(
+                "UPDATE api_keys SET hash = $3 \
+                 WHERE tenant_id = $1 AND id = $2 AND revoked_at IS NULL \
+                 AND credential = 'bearer'",
+            )
+            .bind(tenant_id)
+            .bind(key_id)
+            .bind(&hash)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if set.rows_affected() != 1 {
+                return Err(StoreError::Backend(format!(
+                    "key {key_id} is not a live bearer key of this tenant"
+                )));
+            }
+            sqlx::query("DELETE FROM key_previous_hashes WHERE tenant_id = $1 AND key_id = $2")
+                .bind(tenant_id)
+                .bind(key_id)
+                .execute(&mut **tx)
+                .await
+                .map_err(backend)?;
+            if let Some((old, until)) = previous {
+                let old = key_hash_bytes(&old).ok_or_else(|| {
+                    StoreError::Backend("a rotated key's previous hash is not sha256".to_owned())
+                })?;
+                sqlx::query(
+                    "INSERT INTO key_previous_hashes (tenant_id, key_id, hash, valid_until) \
+                     VALUES ($1, $2, $3, ($4)::timestamptz)",
+                )
+                .bind(tenant_id)
+                .bind(key_id)
+                .bind(&old)
+                .bind(until.as_str())
+                .execute(&mut **tx)
+                .await
+                .map_err(backend)?;
+            }
+        }
         MetadataFold::KeyLimitsSet {
             key_id,
             expiry,
@@ -6528,6 +6578,7 @@ async fn meter_plan(
         // An expired key stays on its account's keys meter: its date can
         // be moved later (ADR-0079 d3).
         | MetadataFold::KeyLimitsSet { .. }
+        | MetadataFold::KeyRotated { .. }
         | MetadataFold::KeyLinked { .. }
         | MetadataFold::KeyLinkAccepted { .. }
         | MetadataFold::ConnectCodeIssued { .. }
@@ -11095,6 +11146,77 @@ impl JournalStore for PgStore {
         .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
         row.as_ref().map(key_from_row).transpose()
+    }
+
+    async fn key_by_previous_hash(
+        &self,
+        key_hash: &str,
+    ) -> Result<Option<(KeyRecord, EventTime)>, StoreError> {
+        let Some(hash) = key_hash_bytes(key_hash) else {
+            return Ok(None);
+        };
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        // 0069's key_resolution policy opens exactly the previous hash's
+        // row; the key's own row is then read under its tenant, since its
+        // current hash is another (ADR-0096 d13).
+        sqlx::query("SELECT set_config('oml.api_key_hash', $1, true)")
+            .bind(hex::encode(&hash))
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        let Some(previous) = sqlx::query(
+            "SELECT tenant_id, key_id, \
+             to_char(valid_until AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+             AS valid_until FROM key_previous_hashes WHERE hash = $1",
+        )
+        .bind(&hash)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?
+        else {
+            tx.commit().await.map_err(backend)?;
+            return Ok(None);
+        };
+        let tenant_id: Uuid = previous.try_get("tenant_id").map_err(backend)?;
+        let key_id: Uuid = previous.try_get("key_id").map_err(backend)?;
+        let until: String = previous.try_get("valid_until").map_err(backend)?;
+        let until = EventTime::parse(&until).map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let row = sqlx::query(&format!(
+            "SELECT {KEY_COLUMNS} FROM api_keys \
+             WHERE tenant_id = $1 AND id = $2 AND revoked_at IS NULL"
+        ))
+        .bind(tenant_id)
+        .bind(key_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        row.as_ref()
+            .map(|row| key_from_row(row).map(|key| (key, until.clone())))
+            .transpose()
+    }
+
+    async fn key_previous_valid_until(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+    ) -> Result<Option<EventTime>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let until: Option<String> = sqlx::query_scalar(
+            "SELECT to_char(valid_until AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+             FROM key_previous_hashes WHERE tenant_id = $1 AND key_id = $2",
+        )
+        .bind(tenant_id)
+        .bind(key_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        until
+            .map(|u| EventTime::parse(&u).map_err(backend))
+            .transpose()
     }
 
     async fn key_access(

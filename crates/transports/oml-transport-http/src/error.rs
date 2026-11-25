@@ -300,6 +300,9 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             format!("this key expired at {}", expiry.as_str()),
         )
         .with_details(json!({ "reason": "expired", "expiry": expiry.as_str() })),
+        AppError::KeyRotation(refusal) => ApiError::validation(refusal.message()).with_details(
+            json!({ "field": refusal.field(), "reason": refusal.reason() }),
+        ),
         AppError::KeyLimits(refusal) => {
             let mut details = serde_json::Map::new();
             if let Some(field) = refusal.field() {

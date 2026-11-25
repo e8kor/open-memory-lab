@@ -202,6 +202,82 @@ pub enum KeyLimitsRefusal {
     AdminKeyRate,
 }
 
+/// Why a key takes no new value (ADR-0096 d13), each refused by name as
+/// `request.validation` with `details.reason`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyRotationRefusal {
+    /// A session key ends with its web session and has no value to rotate.
+    SessionKey,
+    /// A connector key has no value: it connects through a connect code.
+    ConnectorKey,
+    /// A revoked key authenticates nothing.
+    Revoked,
+    /// A key cut off stays cut off.
+    CutOff,
+    /// An expired key authenticates nothing; an admin moves its date first.
+    Expired,
+    /// A grace longer than 24 hours.
+    GraceTooLong,
+}
+
+impl KeyRotationRefusal {
+    /// `details.field`: `key` for the path's key, `/grace_seconds` for the
+    /// grace.
+    #[must_use]
+    pub fn field(self) -> &'static str {
+        match self {
+            KeyRotationRefusal::GraceTooLong => "/grace_seconds",
+            _ => "key",
+        }
+    }
+
+    /// `details.reason`.
+    #[must_use]
+    pub fn reason(self) -> &'static str {
+        match self {
+            KeyRotationRefusal::SessionKey => "session_key",
+            KeyRotationRefusal::ConnectorKey => "connector_key",
+            KeyRotationRefusal::Revoked => "revoked",
+            KeyRotationRefusal::CutOff => "cut_off",
+            KeyRotationRefusal::Expired => "expired",
+            KeyRotationRefusal::GraceTooLong => "grace_too_long",
+        }
+    }
+
+    /// The sentence the refusal answers.
+    #[must_use]
+    pub fn message(self) -> &'static str {
+        match self {
+            KeyRotationRefusal::SessionKey => {
+                "a session key ends with its web session and has no value to rotate"
+            }
+            KeyRotationRefusal::ConnectorKey => {
+                "a connector key has no value: mint a new connect code for it instead"
+            }
+            KeyRotationRefusal::Revoked => "a revoked key takes no new value",
+            KeyRotationRefusal::CutOff => "a cut-off key takes no new value",
+            KeyRotationRefusal::Expired => {
+                "an expired key takes no new value; an admin moves its expiry first"
+            }
+            KeyRotationRefusal::GraceTooLong => {
+                "grace_seconds is a whole number from 0 to 86400 (24 hours)"
+            }
+        }
+    }
+}
+
+/// A rotated key (ADR-0096 d13): the key as it stands, its new value, shown
+/// once, the instant of the rotation, and the end of the previous value's
+/// grace, `None` where it stopped at once.
+#[derive(Debug, Clone)]
+pub struct RotatedKey {
+    pub key: KeyRecord,
+    pub value: String,
+    pub rotated_at: EventTime,
+    pub previous_valid_until: Option<EventTime>,
+    pub journal_seq: u64,
+}
+
 impl KeyLimitsRefusal {
     /// `details.field`: the body member as its JSON pointer, `key` for the
     /// path's key, and none for a body that names no limit.
@@ -3798,6 +3874,9 @@ pub enum AppError {
     /// d5).
     #[error("{}", .0.message())]
     KeyLimits(KeyLimitsRefusal),
+    /// A key that takes no new value, or a grace too long (ADR-0096 d13).
+    #[error("{}", .0.message())]
+    KeyRotation(KeyRotationRefusal),
     #[error(
         "{verb} is outside the {role:?} verb ceiling (roles-and-keys.md permission matrix, R1)"
     )]

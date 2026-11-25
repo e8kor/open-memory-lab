@@ -55,6 +55,9 @@ pub mod event_types {
     /// An admin key set another key's expiry and request rate: both values
     /// as they stand after the change (ADR-0079 d5).
     pub const KEY_LIMITS_SET: &str = "key.limits_set";
+    /// A key got a new value; the previous one works until
+    /// `previous_valid_until`, or stopped at once (ADR-0096 d13).
+    pub const KEY_ROTATED: &str = "key.rotated";
     /// An admin key linked a tenant key used by a person to that person's
     /// sign-in; the key acts for them once they accept it, or at once for
     /// the bootstrap's link, which the person makes (ADR-0085 d16, the

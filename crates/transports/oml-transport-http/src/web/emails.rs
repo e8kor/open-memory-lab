@@ -31,7 +31,12 @@ struct AllowBody {
     email: Option<String>,
     user: Option<String>,
     admin: Option<bool>,
-    /// Refuse un-flagging the tenant's last admin entry (ADR-0045 d10).
+    /// Accepted and changes nothing: the last admin entry is kept on every
+    /// surface (ADR-0097 d25, d27 item 4).
+    #[allow(
+        dead_code,
+        reason = "accepted so an older client's request still parses; the guard holds whatever it says"
+    )]
     keep_an_admin: Option<bool>,
 }
 
