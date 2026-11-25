@@ -297,7 +297,7 @@ oml keys limit [OPTIONS] <KEY>
 
 ### `oml keys rotate`
 
-Give a key a new value and print it once, or with --out write it to a new owner-only file and print none. The key keeps its name, grants, denials and limits; journals key.rotated. An admin key rotates any key, a key rotates itself
+Give a key a new value and print it once, or with --out write it to a new owner-only file and print none. The key keeps its name, grants, denials and limits; journals key.rotated. A key rotates itself; an admin key rotates its own admin key and a tenant key that names no person
 
 ```
 oml keys rotate [OPTIONS] <KEY>
