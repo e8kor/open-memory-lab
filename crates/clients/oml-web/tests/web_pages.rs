@@ -11540,6 +11540,80 @@ async fn the_fix_tab_takes_its_target_from_an_investigation() {
     assert!(review.contains("crypto-shredded"), "{review}");
 }
 
+/// The Fix tab of a nested workspace carries the workspace's id, never its
+/// bare name, which names no workspace on its own: the Memories link, the
+/// form, the review step and the act's way back each name the id
+/// (ADR-0096 d5).
+#[tokio::test]
+async fn the_fix_tab_of_a_nested_workspace_carries_its_id_everywhere() {
+    tokio::time::timeout(Duration::from_secs(120), async {
+        let rig = rig().await;
+        rig.allow("boss@example.com", "boss", true).await;
+        let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+        // One issuer for both workspaces: two issuers count their ids from
+        // the same start, and a second one would give `docs` the id of
+        // `team`, its own parent.
+        let issuer = issuer_app(&rig);
+        let team = issuer
+            .create_workspace(
+                rig.boot.admin_key.value.as_str(),
+                &Name::parse("team").expect("a name"),
+                Some(rig.boot.root_workspace_id.into()),
+                None,
+            )
+            .await
+            .expect("a shared workspace")
+            .workspace
+            .workspace_id;
+        let docs = issuer
+            .create_workspace(
+                rig.boot.admin_key.value.as_str(),
+                &Name::parse("docs").expect("a name"),
+                Some(team.into()),
+                None,
+            )
+            .await
+            .expect("a nested workspace")
+            .workspace
+            .workspace_id
+            .to_string();
+        assert_ne!(docs, team.to_string());
+        let target = "00000000-0000-4000-8000-000000000001";
+        let carried = format!(r#"<input type="hidden" name="workspace" value="{docs}">"#);
+        let (status, _, form) = send(
+            &rig.router,
+            get(
+                &format!("/web/admin/workspace?workspace={docs}&view=fix&target={target}"),
+                Some(&boss),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{form}");
+        assert!(form.contains(&carried), "{form}");
+        assert!(
+            form.contains(&format!(
+                r#"href="/web/admin/workspace?workspace={docs}">Memories"#
+            )),
+            "{form}"
+        );
+        let (_, _, review) = send(
+            &rig.router,
+            get(
+                &format!("/web/admin/workspace?workspace={docs}&view=fix&target={target}&act=retire&reason=stale&step=review"),
+                Some(&boss),
+            ),
+        )
+        .await;
+        assert!(review.contains(&carried), "{review}");
+        assert!(
+            !review.contains(r#"name="workspace" value="docs""#),
+            "{review}"
+        );
+    })
+    .await
+    .expect("the Fix tab answers within two minutes");
+}
+
 /// The import pages: the hand-off states the built rule, and the list of
 /// the person's imports reads through `GET /v2/imports` as `<user>-web`
 /// (ADR-0096 d6).
@@ -11856,6 +11930,24 @@ async fn an_admin_fix_waits_in_to_do_and_its_page_confirms_it_after_asking() {
         page.contains("act=confirm") && page.contains("act=revert"),
         "{page}"
     );
+    // Who settles it is read off the served acts, never computed: the
+    // person's page says what this account may do, and the admin's pages
+    // name no person it would exclude (ADR-0096 d5).
+    assert!(
+        page.contains("This account may confirm or revert it."),
+        "{page}"
+    );
+    for admin_page in [
+        "/web/admin/todo".to_owned(),
+        "/web/admin/workspace?workspace=alice&view=fix".to_owned(),
+    ] {
+        let (_, _, drawn) = send(&rig.router, get(&admin_page, Some(&boss))).await;
+        assert!(!drawn.contains("a person other than"), "{admin_page}: {drawn}");
+        assert!(
+            drawn.contains("waits for a person with reviewer on the workspace"),
+            "{admin_page}: {drawn}"
+        );
+    }
     let (_, _, ask) = send(
         &rig.router,
         get(
@@ -11878,6 +11970,64 @@ async fn an_admin_fix_waits_in_to_do_and_its_page_confirms_it_after_asking() {
         "{after}"
     );
     assert!(!after.contains("Admin fixes to confirm ·"), "{after}");
+}
+
+/// An admin's fix inside the admin's own person's root waits in that
+/// person's To do with the acts the server serves them: the page offers
+/// Confirm, and the confirmation the server records as `same_user` reads
+/// "marked same user" (ADR-0096 d5; ADR-0089, the amendment of 2026-11-18).
+#[tokio::test]
+async fn an_admin_fix_in_the_admins_own_root_is_confirmed_by_that_person_marked_same_user() {
+    tokio::time::timeout(Duration::from_secs(120), async {
+        let rig = rig().await;
+        rig.allow("boss@example.com", "boss", true).await;
+        let (boss, value) = person_with_agent(&rig, "sub-boss", "boss@example.com").await;
+        let id = agent_writes(&rig, &value, "the boss deploys on mondays")
+            .await
+            .to_string();
+        let (status, _, page) = judge(&rig, &boss, &id, "approve", None).await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        let (status, _, fixed) = act(
+            &rig,
+            &boss,
+            "/web/admin/fixes",
+            &[
+                ("action", "fix"),
+                ("workspace", "boss"),
+                ("act", "demote"),
+                ("target", id.as_str()),
+                ("reason", "says monday, it is tuesday"),
+            ],
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{fixed}");
+        let (_, _, todo) = send(&rig.router, get("/web/todo", Some(&boss))).await;
+        assert!(todo.contains("Admin fixes to confirm · 1"), "{todo}");
+        let at = todo.find("/web/todo/fix?id=").expect("a fix link") + "/web/todo/fix?id=".len();
+        let fix = todo[at..at + 36].to_owned();
+        let (status, _, page) = send(
+            &rig.router,
+            get(&format!("/web/todo/fix?id={fix}"), Some(&boss)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        assert!(page.contains("act=confirm"), "{page}");
+        assert!(
+            page.contains("This account may confirm or revert it."),
+            "{page}"
+        );
+        let (status, _, after) = act_and_follow(
+            &rig,
+            &boss,
+            "/web/todo/fix",
+            &[("action", "confirm"), ("fix_id", fix.as_str())],
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{after}");
+        assert!(after.contains("Confirmed, marked same user:"), "{after}");
+    })
+    .await
+    .expect("the pages answer within two minutes");
 }
 
 /// The admin To do lists the admin key's open investigations, each with
