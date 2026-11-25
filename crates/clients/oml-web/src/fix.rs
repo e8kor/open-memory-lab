@@ -8,8 +8,10 @@
 //! The tab never resolves a claim key to a version on its own: the admin
 //! reads a claim only inside an investigation, each read journalled
 //! (ADR-0089 d10), and the memory page's link carries the version here.
-//! The fix is served at once and waits for a person other than the admin's
-//! own person with reviewer on the workspace, who confirms or reverts it.
+//! The fix is served at once and waits for a person with reviewer on the
+//! workspace, who confirms or reverts it; which person may is what
+//! `GET /v2/review/fixes` serves that person as `acts`, never computed here
+//! (ADR-0096 d5).
 
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -63,12 +65,18 @@ pub(crate) async fn tab(
         return acts::invalid("workspace names the workspace to read", calls);
     };
     let admin = session.credential(Capacity::Admin);
-    let next = format!("{ADMIN_WORKSPACE_PATH}?workspace={}&view=fix", encode(sent));
+    let sent_back = format!("{ADMIN_WORKSPACE_PATH}?workspace={}&view=fix", encode(sent));
     let ids = calls.next_ids();
     let view = match web.api.workspace(&call(&admin, &ids), sent).await {
         Ok(view) => view,
-        Err(e) => return outcome::page(&e, calls, &next),
+        Err(e) => return outcome::page(&e, calls, &sent_back),
     };
+    // The tab names the workspace by its id from here on: a nested
+    // workspace's bare name names no workspace on its own (ADR-0096 d5).
+    let next = format!(
+        "{ADMIN_WORKSPACE_PATH}?workspace={}&view=fix",
+        encode(&view.id)
+    );
     let ids = calls.next_ids();
     let fixes = match web.api.admin_fixes(&call(&admin, &ids)).await {
         Ok(fixes) => fixes,
@@ -80,16 +88,17 @@ pub(crate) async fn tab(
         .user
         .as_ref()
         .map_or("the admin's person", |u| u.name.as_str());
+    // Who settles a fix is what `GET /v2/review/fixes` serves each
+    // reviewer as `acts`; the admin's routes serve no `acts`, so the tab
+    // names no person it would exclude (ADR-0096 d5; ADR-0089 d15).
     let mut body = format!(
-        r#"<p class="label"><a href="{ADMIN_WORKSPACES_PATH}">Workspaces</a> / {}</p><h1 class="mono">{}</h1><nav class="oml-views kinds" aria-label="Views"><a href="{ADMIN_WORKSPACE_PATH}?workspace={}">Memories</a> <a aria-current="page" href="{}">Fix {}</a></nav><p class="desc">Acting as <code>{}-admin</code>. A fix is served at once, marked admin fix, and waits for a person other than <code>{}</code> with reviewer on <code>{}</code> to confirm or revert it.</p>"#,
+        r#"<p class="label"><a href="{ADMIN_WORKSPACES_PATH}">Workspaces</a> / {}</p><h1 class="mono">{}</h1><nav class="oml-views kinds" aria-label="Views"><a href="{ADMIN_WORKSPACE_PATH}?workspace={}">Memories</a> <a aria-current="page" href="{}">Fix {}</a></nav><p class="desc">Acting as <code>{}-admin</code>. A fix is served at once, marked admin fix, and waits for a person with reviewer on the workspace to confirm or revert it, as that person's To do offers it.</p>"#,
         text(&view.name),
         text(&view.name),
-        attr(&encode(&view.name)),
+        attr(&encode(&view.id)),
         attr(&next),
         here.len(),
         text(person),
-        text(person),
-        text(&view.name),
     );
     body.push_str("<h2>Unconfirmed here</h2>");
     if here.is_empty() {
@@ -109,7 +118,7 @@ pub(crate) async fn tab(
         }
         body.push_str("</ul>");
     }
-    body.push_str(&new_fix(session, &view.name, &view.status, fields));
+    body.push_str(&new_fix(session, &view.id, &view.status, fields));
     outcome::html(
         StatusCode::OK,
         shell(
@@ -124,7 +133,9 @@ pub(crate) async fn tab(
 
 fn notice(done: Option<&str>) -> Option<&'static str> {
     match done? {
-        "fixed" => Some("fixed: served at once, waiting for a person to confirm or revert it"),
+        "fixed" => Some(
+            "fixed: served at once, waiting for a person with reviewer on the workspace to confirm or revert it",
+        ),
         _ => None,
     }
 }
@@ -146,11 +157,6 @@ fn new_fix(session: &Session, workspace: &str, status: &str, fields: &Fields) ->
         && !reason.is_empty()
         && (act != "edit" || !text_sent.is_empty())
     {
-        let person = session
-            .whoami
-            .user
-            .as_ref()
-            .map_or("the admin's person", |u| u.name.as_str());
         let consequence = match act {
             "erase" => {
                 "Every version of the claim is crypto-shredded at once and served by no read."
@@ -163,10 +169,9 @@ fn new_fix(session: &Session, workspace: &str, status: &str, fields: &Fields) ->
         };
         let _ = write!(
             out,
-            r#"<section class="card"><h3>{} version <code>{}</code>?</h3><p class="oml-consequence">{consequence} The fix waits for a person other than <code>{}</code> to confirm or revert it.</p><p class="desc">Reason: {}</p>{}</section>"#,
+            r#"<section class="card"><h3>{} version <code>{}</code>?</h3><p class="oml-consequence">{consequence} The fix waits for a person with reviewer on the workspace to confirm or revert it.</p><p class="desc">Reason: {}</p>{}</section>"#,
             text(act),
             short(&target[..8.min(target.len())]),
-            text(person),
             text(reason),
             {
                 let mut hidden_fields = format!(

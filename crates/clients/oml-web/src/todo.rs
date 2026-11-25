@@ -114,6 +114,12 @@ fn notice(fields: &Fields) -> Option<String> {
         "fix_reverted" => Some(
             "Reverted: the text the fix took out of service returns as a new version this account approved.".to_owned(),
         ),
+        "fix_confirmed_same_user" => Some(
+            "Confirmed, marked same user: the person the admin acted for settled it in their own root.".to_owned(),
+        ),
+        "fix_reverted_same_user" => Some(
+            "Reverted, marked same user: the person the admin acted for settled it in their own root.".to_owned(),
+        ),
         _ => None,
     }
 }
@@ -619,17 +625,42 @@ fn fix_group(fixes: &[oml_sdk::Fix]) -> Option<String> {
     for f in fixes {
         let _ = write!(
             out,
-            r#"<li><span class="oml-decision">{}</span> {} · <span class="oml-chip is-adminfix">unconfirmed</span>{} · {} · fixed {} · <a class="button" href="{TODO_FIX_PATH}?id={}">Confirm or revert</a></li>"#,
+            r#"<li><span class="oml-decision">{}</span> {} · <span class="oml-chip is-adminfix">unconfirmed</span>{} · {} · fixed {} · <a class="button" href="{TODO_FIX_PATH}?id={}">{}</a></li>"#,
             text(&f.act),
             code(&f.claim_key),
             if f.loosens_guardrail { " · alert" } else { "" },
             text(&f.reason),
             instant(&f.fixed_at),
-            attr(&encode(&f.fix_id))
+            attr(&encode(&f.fix_id)),
+            settle_label(&f.acts)
         );
     }
     out.push_str("</ul></section>");
     Some(out)
+}
+
+/// The fix's link as the served `acts` name it, never computed here
+/// (ADR-0096 d5): **Confirm or revert**, **Confirm** for an erasure, and
+/// **Open** where this account is served no act.
+fn settle_label(acts: &[String]) -> &'static str {
+    let may = |a: &str| acts.iter().any(|x| x == a);
+    match (may("confirm"), may("revert")) {
+        (true, true) => "Confirm or revert",
+        (true, false) => "Confirm",
+        (false, true) => "Revert",
+        (false, false) => "Open",
+    }
+}
+
+/// The sentence saying what this account may do with a fix, read off the
+/// served `acts` (ADR-0096 d5).
+fn may_settle(acts: &[String]) -> &'static str {
+    match settle_label(acts) {
+        "Confirm or revert" => "This account may confirm or revert it.",
+        "Confirm" => "This account may confirm it; an erasure is not reverted.",
+        "Revert" => "This account may revert it.",
+        _ => "",
+    }
 }
 
 /// What a fix's act does once settled, for its confirmation.
@@ -729,6 +760,7 @@ pub async fn fix_page(
             attr(&encode(&fix.fix_id))
         );
     } else {
+        let _ = write!(body, r#"<p class="desc">{}</p>"#, may_settle(&fix.acts));
         body.push_str("<p>");
         for act in &fix.acts {
             let _ = write!(
@@ -776,17 +808,18 @@ pub async fn fix_act(
         .settle_fix(&call(&credential, &ids), &key, fix, revert)
         .await
     {
-        Ok(_) => acts::see_other(
-            &format!(
-                "{TODO_PATH}?done={}",
-                if revert {
-                    "fix_reverted"
-                } else {
-                    "fix_confirmed"
-                }
-            ),
-            &[],
-        ),
+        Ok(settled) => {
+            // The server records whether the admin's own person settled
+            // it; the notice reads that, never a rule of its own.
+            let same_user = settled.get("same_user") == Some(&serde_json::Value::Bool(true));
+            let done = match (revert, same_user) {
+                (true, true) => "fix_reverted_same_user",
+                (true, false) => "fix_reverted",
+                (false, true) => "fix_confirmed_same_user",
+                (false, false) => "fix_confirmed",
+            };
+            acts::see_other(&format!("{TODO_PATH}?done={done}"), &[])
+        }
         Err(e) => outcome::page(&e, &calls, TODO_FIX_PATH),
     }
 }
@@ -1480,13 +1513,12 @@ pub async fn admin_page(
     );
     let row = |f: &oml_sdk::AdminFix| {
         format!(
-            r#"<li><span class="oml-decision">{}</span> {} · <span class="oml-chip is-adminfix">unconfirmed</span> · {}{} · fixed {} · waits for a person other than {} with reviewer on the workspace · <a href="{}?workspace={}&amp;view=fix">Open</a></li>"#,
+            r#"<li><span class="oml-decision">{}</span> {} · <span class="oml-chip is-adminfix">unconfirmed</span> · {}{} · fixed {} · waits for a person with reviewer on the workspace · <a href="{}?workspace={}&amp;view=fix">Open</a></li>"#,
             text(&f.act),
             code(&f.claim_key),
             text(&f.reason),
             if f.loosens_guardrail { " · alert" } else { "" },
             instant(&f.fixed_at),
-            code(f.admin_person.as_deref().unwrap_or("the admin's person")),
             crate::workspace::ADMIN_WORKSPACE_PATH,
             attr(&encode(&f.workspace_id))
         )
