@@ -7,7 +7,7 @@ answers: how Claude's hosted apps reach the agent plugin through a claude.ai cus
 
 # ADR-0031 — Claude's hosted apps reach the agent plugin over OAuth, through a connection that a one-time connect code binds to one agent key
 
-**Status:** accepted design · 2026-11-04 · amended by [ADR-0067](ADR-0067-a-directory-reviewer-reaches-a-demo-workspace-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command.md) (d8: a longer-lived code for a confined key), [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0079](ADR-0079-a-key-ends-on-a-date-and-is-held-to-a-request-rate-both-set-at-issuance-and-changed-only-by-an-admin-key-that-is-not-the-key-itself.md) (d11: a connection whose key expired works again if an admin moves the key's date before its refresh token lapses)
+**Status:** accepted design · 2026-11-04 · amended by [ADR-0067](ADR-0067-a-directory-reviewer-reaches-a-demo-workspace-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command.md) (d8: a longer-lived code for a confined key), [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0079](ADR-0079-a-key-ends-on-a-date-and-is-held-to-a-request-rate-both-set-at-issuance-and-changed-only-by-an-admin-key-that-is-not-the-key-itself.md) (d11: a connection whose key expired works again if an admin moves the key's date before its refresh token lapses) · amended by [ADR-0097](ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) (d7, d8, 2026-11-25, decided by the operator)
 
 **Release:** introduced in v0.4.0 ([releases](../changelog.md))
 
@@ -930,3 +930,13 @@ The [security page](../architecture/security.md) keeps a short table of the OAut
 | Registration and request flooding | Unused registrations lapse after 24 hours and are capped at 10,000. Past the cap, registration answers `429 limit.rate`. An authorization request writes no row until a connect code verifies. | A flood stalls new dynamic registrations. Slow document hosts can hold every fetch slot for a while. Open connections keep working. |
 | Guessing a connect code | 60 bits per code. One message covers every invalid case. | With L live codes and G wrong entries, the chance of a hit is at most L·G / 2⁶⁰. That is a bound, not a measurement. No limit keys on a source address. |
 
+## Amendment of 2026-11-25: an admin's connect code waits on a second admin (amends d7, d8; ADR-0097)
+
+Decided by the operator on 2026-11-25 (the break-glass and key-access questions); recorded in [ADR-0097](ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md).
+
+An admin's connect code for a connector key, one in a person's own root included, is widening: it
+is shown once at the mint, redeems nothing and voids none of the person's codes until a second
+admin person confirms it, except in a `sole_admin` tenant (ADR-0097 d5, d6). The person's consent
+is not asked; under `sole_admin` the code takes effect at once and the person is notified
+in-product. d8's ten-minute life runs from the confirmation, a reading ADR-0097 d6 flags for the
+operator. A person's own codes in their own root are unchanged.

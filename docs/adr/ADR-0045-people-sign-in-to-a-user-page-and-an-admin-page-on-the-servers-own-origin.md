@@ -7,7 +7,7 @@ answers: why OML now serves a web console after ADR-0015 declined one, and how e
 
 # ADR-0045 — People sign in with Google or GitHub to a user page and an admin page that the lead serves on its own origin, and every act there is a session key's
 
-**Status:** accepted design · 2026-11-04 · revised the same day with the maintainer's answers to its open choices (d20) · amended by [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · amended 2026-11-06 with the Memories list, the Atlas view, the workspace dropdowns and the pages' copy (d22–d32) · amended 2026-11-13 by [the review amendment](ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md#the-amendment-of-2026-11-13-the-persons-review-page-lists-what-waits-and-judges-one-item-from-the-list) (d9 and d11: the person's Review lists what waits and judges one item from the list) and by [the header amendment](#the-amendment-of-2026-11-13-the-two-sides-are-told-apart-by-their-header-and-each-has-its-own-nav) (d27 and d32: the two sides, their navs and the Atlas), which the operator accepted the same day · amended by [ADR-0082](ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) (d9, d12, 2026-11-14), [ADR-0083](ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) (d9, d10, d11, 2026-11-14) · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d21, 2026-11-14) · amended 2026-11-19 by the operator after the third review of #498 (d2, d5, d18: a sign-in email an admin adds for a person who signs in already waits on that person's acceptance; [the decision at the end](#operator-decision-of-2026-11-19-an-admin-no-longer-quietly-becomes-an-existing-person))
+**Status:** accepted design · 2026-11-04 · revised the same day with the maintainer's answers to its open choices (d20) · amended by [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · amended 2026-11-06 with the Memories list, the Atlas view, the workspace dropdowns and the pages' copy (d22–d32) · amended 2026-11-13 by [the review amendment](ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md#the-amendment-of-2026-11-13-the-persons-review-page-lists-what-waits-and-judges-one-item-from-the-list) (d9 and d11: the person's Review lists what waits and judges one item from the list) and by [the header amendment](#the-amendment-of-2026-11-13-the-two-sides-are-told-apart-by-their-header-and-each-has-its-own-nav) (d27 and d32: the two sides, their navs and the Atlas), which the operator accepted the same day · amended by [ADR-0082](ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) (d9, d12, 2026-11-14), [ADR-0083](ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) (d9, d10, d11, 2026-11-14) · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d21, 2026-11-14) · amended 2026-11-19 by the operator after the third review of #498 (d2, d5, d18: a sign-in email an admin adds for a person who signs in already waits on that person's acceptance; [the decision at the end](#operator-decision-of-2026-11-19-an-admin-no-longer-quietly-becomes-an-existing-person)) · amended by [ADR-0097](ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) (d6, d10, and the decisions of 2026-11-19 and 2026-11-20, 2026-11-25, decided by the operator)
 
 **Release:** introduced in v0.5.0 — sign-in, sessions, the email allowlist, the user page with review of the person's own agents' work, and on the admin page review, curation, supersession and the admin read of every memory's text and attribution; demotion is not built, since it rests on a verb not built ([releases](../changelog.md))
 
@@ -1208,3 +1208,24 @@ The fourth review of #498 found three gaps in the note above. The operator decid
 Each row on the right needs the serving role's credentials or an admin key, which this deployment
 already trusts with the tenant's rows. Closing them takes a guard per column, or a separate role
 for sign-in rows, and no decision asks for either yet.
+
+## Amendment of 2026-11-25: session issuer, last admin, capacities and the bootstrap (amends d6, d10, and the decisions of 2026-11-19 and 2026-11-20; ADR-0097)
+
+Decided by the operator on 2026-11-25 (the break-glass and key-access questions); recorded in [ADR-0097](ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md).
+
+- **d6.** Session keys are issued by a reserved per-tenant server issuer with no credential, in the
+  four session-key shapes only, never by the admin key that added the entry; revoking an admin key
+  breaks no sign-in (ADR-0097 d18). This reverses d6's issuer (2026-11-04).
+- **d10.** Removing or un-flagging the last live admin person is refused on every surface, the CLI
+  included (ADR-0097 d25; unconditional over admin entries from v0.8.5). `grant_review` and
+  `grant_curation` are widening, which a second admin person confirms, on a person's root as
+  anywhere (ADR-0097 d5, d6). Un-flagging, removing, disabling or changing another admin's entry
+  is an act against an admin: at once, contestable, and suspending that person's admin keys until
+  settled (ADR-0097 d8).
+- **The third decision of 2026-11-19** stands: an address for an existing person waits on that
+  person (ADR-0097 d7). An admin flag for an existing person now waits on a second admin person
+  first, then on the person.
+- **The decisions of 2026-11-20.** The bootstrap claim requires `person` and `email`; a claim
+  without them is refused and leaves no tenant (ADR-0097 d21). The limits table's invented person
+  is bounded: an invented admin person confirms nothing for seven days, and a reviewer grant that
+  would let an invented person settle a production fix is widening (ADR-0097 d11).

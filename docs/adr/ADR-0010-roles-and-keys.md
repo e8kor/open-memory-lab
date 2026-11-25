@@ -7,7 +7,7 @@ answers: why exactly five roles exist; how API keys are issued, scoped and banne
 
 # ADR-0010 — Roles and keys: reader, writer, reviewer, admin, operator
 
-**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md), [ADR-0031](ADR-0031-oauth-connections-by-connect-code.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d6, 2026-11-14) · amended by [ADR-0091](ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md) (d1, d5, 2026-11-14)
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md), [ADR-0031](ADR-0031-oauth-connections-by-connect-code.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d6, 2026-11-14) · amended by [ADR-0091](ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md) (d1, d5, 2026-11-14) · amended by [ADR-0097](ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) (d1, d3, 2026-11-25, decided by the operator)
 
 **Release:** partly in v0.1.0 and v0.3.0; the rest not built ([releases](../changelog.md))
 
@@ -138,3 +138,17 @@ The user-facing page [roles and keys](../architecture/roles-and-keys.md) keeps w
 - **Session keys.** `<user>-review` has its own principal, so the review check lets it approve the person's agents' writes and never a version it proposed itself. A user's separate reviewer key can review their own agents' writes; the journal shows both keys name the same user.
 - **Costs.** A person who administers and reviews carries two keys. Writes wait for a reviewer, an admin included. Lineage exclusion knows only what writers declare, and nothing stops two distinct principals approving each other's work; how often that happens has not been measured.
 
+## Amendment of 2026-11-25: the maintenance role, and every admin key belongs to a person (amends d1, d3; ADR-0097)
+
+Decided by the operator on 2026-11-25 (the break-glass and key-access questions); recorded in [ADR-0097](ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md).
+
+- **d1.** A key role `maintenance` joins the roles: the counts-only reads `oml doctor` makes and a
+  rescan trigger, never claim text, key values, emails or key lists, never `/v1` or `/mcp`
+  (ADR-0097 d18). A reserved per-tenant server issuer with no credential issues the four
+  session-key shapes and nothing else.
+- **d3.** An admin key is issued only with a person, `used_by: person`, linked to that person
+  pending their acceptance; its issuance is widening, which a second admin person confirms except
+  in a `sole_admin` tenant (ADR-0097 d5, d21). An admin key `used_by: service` is refused; services
+  hold `maintenance` keys. The tenant's first admin key names a person at the bootstrap. This
+  reverses d3's issuance of any role, admin included, by any admin key (2026-10-29). d3's
+  "revocation" is built as one plain verb for any key (ADR-0097 d14).
