@@ -1,7 +1,7 @@
 ---
 status: Stable
 verified: 2026-11-20
-answers: "how to upgrade an OML server: how migrations run, the upgrade steps in order, what rollback does and does not mean, the upgrade from a pre-0.3.1 install, the v0.5.4 fix, how to move from v0.3, the v0.8.4 role rename that clients take before the server, what v0.8.4's migrations 0063, 0064 and 0066 cost, the admin key links, links and sign-in emails that wait on their person, and the reset of a database that ran a draft of 0063 or 0064, the v0.8.3 rename that clients take before the server, what the v0.8.3 migrations cost and what waits during them, and the storage.url to set before v0.8.3's uploads"
+answers: "how to upgrade an OML server: how migrations run, the upgrade steps in order, what rollback does and does not mean, the upgrade from a pre-0.3.1 install, the v0.5.4 fix, how to move from v0.3, the v0.8.4 role rename that clients take in the server's window, with no key issued or listed until both run v0.8.4, what v0.8.4's migrations 0063, 0064 and 0066 cost, the admin key links, links and sign-in emails that wait on their person, and the reset of a database that ran a draft of 0063 or 0064, the v0.8.3 rename that clients take before the server, what the v0.8.3 migrations cost and what waits during them, and the storage.url to set before v0.8.3's uploads"
 ---
 
 # Upgrade OML
@@ -88,7 +88,7 @@ Update the plugin with `claude plugin update oml@open-memory-lab`. Then set its 
 v0.8.4 runs three migrations, renames the writer role, folds `oml_withdraw` into `oml_write`, and
 makes links and sign-in emails wait on their person.
 
-### Contributor and submitter replace writer: clients upgrade before the server
+### Contributor and submitter replace writer: clients upgrade in the server's window
 
 v0.8.4 renames the writer role on every surface in one cut, with no alias
 ([ADR-0093](../adr/ADR-0093-contributor-and-submitter-replace-writer.md)). A key that recalls and
@@ -97,14 +97,20 @@ that confers writing is `submitter`. A v0.8.4 server reads `writer` as unknown i
 HTTP, MCP, the SDKs or the CLI it is `request.validation`, with no `details.renamed_to`, because it
 has two successors. `oml keys issue-agent --write-only` is retired; `--role submitter` replaces it.
 
-**Clients upgrade before the server.** A v0.8.3 CLI, plugin or SDK that sends `writer`, or that
-sent `--write-only`, is refused and issues nothing. The notice to send before the date:
+**Clients upgrade in the same window as the server, and no key is issued or listed until both
+run v0.8.4** (ADR-0093 d7 and d8, the operator's decision of 2026-11-24). Recall and write work
+across the two versions. Key issuance and key listings do not: a v0.8.4 server refuses a v0.8.3
+CLI, plugin or SDK that sends `writer` or `--write-only`, and a v0.8.3 server refuses a v0.8.4
+client that sends `contributor` or `submitter`; each issues nothing. The notice to send before
+the date:
 
 > OML v0.8.4 renames the writer role. A key that recalls and writes is a **contributor**. A key
 > that writes without recall is a **submitter**. The grant that confers writing is `submitter`.
-> Upgrade the CLI, plugins and SDKs before the server is upgraded. A v0.8.3 client that names
-> `writer` is refused and issues nothing. Existing writer keys become contributor keys. One issued
-> with `--write-only` keeps working, and `oml doctor` names it a contributor without recall. Issue a
+> The server and the CLI, plugins and SDKs upgrade in one window. Recall and write keep working
+> while one side runs v0.8.3 and the other v0.8.4. No key is issued or listed until both run
+> v0.8.4: a v0.8.4 server refuses a v0.8.3 client's `writer`, and a v0.8.3 server refuses a v0.8.4
+> client's `contributor`. Existing writer keys become contributor keys. One issued with
+> `--write-only` keeps working, and `oml doctor` names it a contributor without recall. Issue a
 > submitter key with `--role submitter` and cut the old one off. Memories, key values, grants and
 > names are otherwise unchanged.
 
@@ -134,7 +140,8 @@ The steps follow ADR-0093 d8 and ADR-0091 d12's runbook:
    ('api_keys_role_check', 'grants_role_check');` lists the two checks, and neither names `writer`.
    Signed events keep `writer` and are read through the former-name map's rule 7; a `writer` the
    map does not cover fails `journal_unmapped_former_name`.
-5. Upgrade the operator's own clients, and reissue any key `oml doctor` names under
+5. In the same window, upgrade the operator's own clients. Only once the server and the
+   clients run v0.8.4, issue or list keys, and reissue any key `oml doctor` names under
    `key_contributor_without_recall`: issue a submitter key with
    `oml keys issue-agent <name> --role submitter` and cut the old one off.
 
@@ -149,7 +156,8 @@ unknown tool (JSON-RPC -32602), with no alias. The HTTP route
 `POST /v1/memories/{artifact_id}/withdraw`, `oml withdraw` and the console's **Withdraw** are
 unchanged. A client that lists tools at each session start, as the plugin and the claude.ai
 connector do, finds the new mode without a change to its tool list; a script or an agent prompt
-that names `oml_withdraw` changes before the upgrade, and so do the client's permission rules. A
+that names `oml_withdraw` changes in the server's window, since a v0.8.3 server refuses the
+`withdraw` field, and so do the client's permission rules. A
 permission rule that names the old tool, such as a deny or ask rule on
 `mcp__plugin_oml_oml__oml_withdraw`, protects nothing after the upgrade: no tool has that name. A
 rule that allows `mcp__plugin_oml_oml__oml_write` without a prompt, or `mcp__plugin_oml_oml` for

@@ -4190,7 +4190,7 @@ dependencies = [
 
 [[package]]
 name = "oml-app"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "bech32",
  "chacha20poly1305",
@@ -4208,7 +4208,7 @@ dependencies = [
 
 [[package]]
 name = "oml-bundle"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "age",
  "bech32",
@@ -4225,7 +4225,7 @@ dependencies = [
 
 [[package]]
 name = "oml-cli"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "axum",
  "bech32",
@@ -4263,7 +4263,7 @@ dependencies = [
 
 [[package]]
 name = "oml-delta-log"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "bytes",
  "parquet",
@@ -4273,7 +4273,7 @@ dependencies = [
 
 [[package]]
 name = "oml-domain"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -4292,7 +4292,7 @@ dependencies = [
 
 [[package]]
 name = "oml-fetch"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "oml-app",
  "serde_json",
@@ -4302,7 +4302,7 @@ dependencies = [
 
 [[package]]
 name = "oml-format"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "oml-app",
  "proptest",
@@ -4314,14 +4314,14 @@ dependencies = [
 
 [[package]]
 name = "oml-former-names"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "oml-guardrail"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "hex",
  "proptest",
@@ -4333,7 +4333,7 @@ dependencies = [
 
 [[package]]
 name = "oml-lake"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "deltalake",
  "getrandom 0.2.17",
@@ -4349,7 +4349,7 @@ dependencies = [
 
 [[package]]
 name = "oml-lakewriter"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "clap",
  "deltalake",
@@ -4373,7 +4373,7 @@ dependencies = [
 
 [[package]]
 name = "oml-page"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "proptest",
  "serde",
@@ -4383,14 +4383,14 @@ dependencies = [
 
 [[package]]
 name = "oml-passage"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "oml-pg"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "hex",
  "oml-app",
@@ -4405,7 +4405,7 @@ dependencies = [
 
 [[package]]
 name = "oml-port-contracts"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "chacha20poly1305",
  "ed25519-dalek",
@@ -4420,7 +4420,7 @@ dependencies = [
 
 [[package]]
 name = "oml-rerank"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "candle-core",
  "candle-nn",
@@ -4439,7 +4439,7 @@ dependencies = [
 
 [[package]]
 name = "oml-scan"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "regex",
  "serde_json",
@@ -4448,7 +4448,7 @@ dependencies = [
 
 [[package]]
 name = "oml-sdk"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "axum",
  "http",
@@ -4461,7 +4461,7 @@ dependencies = [
 
 [[package]]
 name = "oml-server-lead"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "axum",
  "bech32",
@@ -4503,14 +4503,14 @@ dependencies = [
 
 [[package]]
 name = "oml-test-pg"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "sqlx",
 ]
 
 [[package]]
 name = "oml-transport-http"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "axum",
  "getrandom 0.2.17",
@@ -4532,7 +4532,7 @@ dependencies = [
 
 [[package]]
 name = "oml-web"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "axum",
  "getrandom 0.2.17",
@@ -4555,7 +4555,7 @@ dependencies = [
 
 [[package]]
 name = "oml-web-credential"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "hex",
  "rustix",
