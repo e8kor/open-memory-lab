@@ -407,6 +407,28 @@ Decided; built in v0.8.5, with the frames the build notes list left out.
 | **A zone select, or a hashed script that reads the browser's zone, for the expiry** | Each asks the person something or adds a CSP change (ADR-0069 d3) for at most a day's difference (D4, D13). |
 | **Build the import-review group now** | Its attestation is a verdict change no decision of this round made; without it the group would show a check the server does not record (d11). |
 
+## Operator decision of 2026-11-25: Grant read
+
+Decided by the operator on 2026-11-25 and built in v0.8.5. It extends d4's admin capacities and
+amends [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d10's capacity list, which named review and curation.
+
+- **Grant read.** Administration, People, Review and curation gains a third form, **Grant read**
+  (user, workspace). It rides `POST /v2/web/users/{user}/capacities` with `capacity: read`, and
+  gives the person's `<user>-web` session key a `reader` grant, covering the subtree, on the
+  workspace. Each grant is one `grant.issued` by `<user>-admin`, a grant already held is not
+  added again, and the grant reaches the session that opens after it, as Grant review does.
+  It confers no verb beyond reading: no verdict, no ratification, no write.
+- **What the person sees.** The Personal Memories (Approved) and Catalog pages read as
+  `<user>-web`, so they list the workspace's approved memories and documents with no page change.
+  The workspace picker's hints list the person's root; a granted shared workspace is opened by
+  its id, from the admin page's link below or from Browse.
+- **Browse as the admin's person.** The admin workspace page shows **Browse as <user>** beside
+  the investigation line where the admin's own `<user>-web` reads the workspace, leading to the
+  Personal Memories view filtered to it, read without an investigation since it is the person's
+  own read. Otherwise the page is as before. The check is one workspace read as `<user>-web`.
+- **Under ADR-0097.** In v0.8.6 this grant becomes widening under ADR-0097's model; this note
+  records the v0.8.5 shape only.
+
 ## Build notes (v0.8.5, 2026-11-25)
 
 Built: d1 to d4, d6 to d10 on the server; on the console the key builder, the Keys list's coverage

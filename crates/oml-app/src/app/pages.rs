@@ -770,6 +770,35 @@ where
         })
     }
 
+    /// `POST /v2/web/users/{user}/capacities` with `capacity: read` (ADR-0096,
+    /// the operator's decision of 2026-11-25): the user's `<user>-web` gains
+    /// reader, covering the subtree, on `workspace`, journalled as
+    /// `grant.issued` by `<user>-admin`, so the person's Memories and
+    /// Catalog list what is approved there. No verb beyond reading.
+    pub async fn grant_read_capacity(
+        &self,
+        admin: &Caller,
+        user: &Name,
+        workspace: Reference,
+    ) -> Result<CapacityGranted, AppError> {
+        require_role(&admin.key, Role::Admin, "grant_read")?;
+        let web = self
+            .session_key_of(admin.key.tenant_id, user, Capacity::Web)
+            .await?
+            .ok_or(AppError::WebKeyMissing { capacity: "web" })?;
+        let reader = GrantRequest {
+            node: workspace,
+            role: Role::Reader,
+            deny: Vec::new(),
+            covers: Covers::Subtree,
+        };
+        let added = self.add_grants(&admin.key, &web, &[reader]).await?;
+        Ok(CapacityGranted {
+            key: web,
+            grants_added: added,
+        })
+    }
+
     /// `POST /v2/web/users/{user}/capacities` with `capacity: curate` (ADR-0070
     /// d5 #3; ADR-0045 d10, ADR-0044 d7): the user's `<user>-curate`, a tenant
     /// contributor key with submitter on the `universe` node alone and reader on

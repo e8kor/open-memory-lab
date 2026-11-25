@@ -44,6 +44,7 @@ pub const PEOPLE_ACTIONS: &[&str] = &[
     "set_admin",
     "grant_review",
     "grant_curation",
+    "grant_read",
 ];
 
 /// The users page's acts (ADR-0068 d5, d6, d8).
@@ -206,7 +207,7 @@ pub async fn people_page(
         "Add",
         true,
     ));
-    body.push_str("<h2>Review and curation</h2><details class=\"help\"><summary>?</summary>Each person reviews their own workspace from their first sign-in. Grant review elsewhere, or make someone a curator of the shared area. A curator designation takes effect at the person's next sign-in.</details>");
+    body.push_str("<h2>Review and curation</h2><details class=\"help\"><summary>?</summary>Each person reviews their own workspace from their first sign-in. Grant review elsewhere, grant read so a person's Memories and Catalog list a shared workspace, or make someone a curator of the shared area. A curator designation takes effect at the person's next sign-in.</details>");
     for (action, label, button) in [
         ("grant_review", "workspace", "Grant review"),
         (
@@ -214,6 +215,7 @@ pub async fn people_page(
             "reads from workspace",
             "Designate curator",
         ),
+        ("grant_read", "workspace", "Grant read"),
     ] {
         body.push_str(&form(
             PEOPLE_PATH,
@@ -407,10 +409,10 @@ pub async fn people_act(
                 .map(|_| "removed")
         }
         _ => {
-            let capacity = if action == "grant_review" {
-                "review"
-            } else {
-                "curate"
+            let capacity = match action {
+                "grant_review" => "review",
+                "grant_read" => "read",
+                _ => "curate",
             };
             web.api
                 .grant_web_capacity(

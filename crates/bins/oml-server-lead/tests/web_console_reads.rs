@@ -1401,3 +1401,23 @@ async fn the_v085_finished_frames_reads_cost_their_measured_store_calls() {
     assert_eq!(fixes.store_calls(), 2, "{}", fixes.line);
     assert_eq!(investigations.store_calls(), 2, "{}", investigations.line);
 }
+
+/// The People page's read, `GET /v2/web/emails` as `<user>-admin`, one page
+/// of the allowlist, costs what it cost before the Grant read form joined
+/// the page: the form adds no read (ADR-0096, the operator's decision of
+/// 2026-11-25).
+#[tokio::test]
+async fn the_people_pages_read_costs_its_measured_store_calls() {
+    let rig = rig().await;
+    let people = get(
+        &rig.router,
+        "/v2/web/emails?limit=200",
+        &web(&rig.alice, "admin"),
+        true,
+    )
+    .await;
+    assert_eq!(people.status, StatusCode::OK, "{}", people.body);
+    println!("store calls: people {}", people.store_calls());
+    // Measured 2026-11-25: the gate's call and the one allowlist page.
+    assert_eq!(people.store_calls(), 2, "{}", people.line);
+}

@@ -3899,3 +3899,116 @@ async fn a_persons_review_session_proposes_a_shared_workspaces_status_and_a_seco
     assert!(pending["proposed_at"].is_string(), "{view}");
     assert_eq!(pending["proposed_by"]["name"], "alice-review", "{view}");
 }
+
+// ---------------------------------------------------------------------------
+// v0.8.5: Grant read (ADR-0096, the operator's decision of 2026-11-25)
+// ---------------------------------------------------------------------------
+
+/// The shared workspace `team` holding one approved memory, written by a
+/// tenant contributor and approved by a tenant reviewer: the memory's id.
+async fn team_with_an_approved_memory(rig: &Rig) -> (uuid::Uuid, String) {
+    let (status, team) = as_admin(
+        rig,
+        "/v2/workspaces",
+        "team",
+        json!({"name": "team", "parent": "universe"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{team}");
+    let mut values = Vec::new();
+    for (name, role, grants) in [
+        ("team-writer", "submitter", json!([{"workspace": "team", "role": "submitter"}])),
+        ("team-reviewer", "reviewer", json!([{"workspace": "team", "role": "reviewer"}, {"workspace": "team", "role": "reader"}])),
+    ] {
+        let (status, key) = as_admin(
+            rig,
+            "/v2/keys",
+            &format!("issue-{name}"),
+            json!({"name": name, "role": role, "principal": name, "used_by": "agent", "grants": grants}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{key}");
+        values.push(key["value"].as_str().expect("a value").to_owned());
+    }
+    let id = agent_writes_in(rig, &values[0], Some("team"), "the team deploys on Tuesdays").await;
+    rig.app
+        .post_verdict(
+            values[1].as_str(),
+            id,
+            oml_app::types::Verdict::Approve,
+            None,
+        )
+        .await
+        .expect("the team reviewer approves");
+    let team = team["id"]
+        .as_str()
+        .or_else(|| team["workspace_id"].as_str())
+        .expect("the workspace's id")
+        .to_owned();
+    (id, team)
+}
+
+/// Grants `read` on `team` to alice's web session key, as the People
+/// page's Grant read does.
+async fn grant_read_on_team(rig: &Rig) {
+    let (status, granted) = as_admin(
+        rig,
+        "/v2/web/users/alice/capacities",
+        "read-alice-team",
+        json!({"capacity": "read", "workspaces": ["team"]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{granted}");
+    assert_eq!(granted["key"]["name"], "alice-web", "{granted}");
+    assert_eq!(granted["grants_added"][0]["role"], "reader", "{granted}");
+}
+
+/// The read grant lets the web key list the approved items of that
+/// workspace, which it did not list before.
+#[tokio::test]
+async fn the_read_grant_lets_the_web_key_list_the_approved_items_of_that_workspace() {
+    let rig = rig().await;
+    let (id, team) = team_with_an_approved_memory(&rig).await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    // A person's key names a shared workspace by its id: a bare name is
+    // read inside the person's root.
+    let listing = format!("/v1/memories?workspace={team}");
+    let (_, before) = get_as_web(&rig, &cookie, &listing).await;
+    assert!(!before.to_string().contains(&id.to_string()), "{before}");
+    grant_read_on_team(&rig).await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (status, after) = get_as_web(&rig, &cookie, &listing).await;
+    assert_eq!(status, StatusCode::OK, "{after}");
+    assert!(after.to_string().contains(&id.to_string()), "{after}");
+}
+
+/// The read grant gives no reviewer verb: on the workspace the web key
+/// holds only reading verbs, and a verdict from it is refused.
+#[tokio::test]
+async fn the_read_grant_gives_the_web_key_no_reviewer_verb() {
+    let rig = rig().await;
+    let (id, team) = team_with_an_approved_memory(&rig).await;
+    let _first = signed_in(&rig, "sub-1", EMAIL).await;
+    grant_read_on_team(&rig).await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (status, view) = get_as_web(&rig, &cookie, &format!("/v2/workspaces/{team}")).await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    for verb in view["my_effective_verbs"].as_array().expect("verbs") {
+        assert!(
+            matches!(
+                verb.as_str(),
+                Some("recall" | "read" | "graph_read" | "events_tail")
+            ),
+            "{view}"
+        );
+    }
+    let (status, answer) = as_web(
+        &rig,
+        &cookie,
+        "web",
+        "/v2/review/verdicts/bulk",
+        json!({"verdict": "reject", "artifact_ids": [id.to_string()]}),
+    )
+    .await;
+    assert_ne!(answer["items"][0]["outcome"], "rejected", "{status} {answer}");
+}

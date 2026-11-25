@@ -11892,3 +11892,50 @@ async fn the_admin_to_do_lists_the_admin_keys_open_investigations() {
     assert!(todo.contains("Open investigations · 1"), "{todo}");
     assert!(todo.contains("the console tests"), "{todo}");
 }
+
+/// The admin workspace page shows "Browse as <user>" only when the admin's
+/// own person holds read there: absent on a shared workspace before the
+/// People page's Grant read, present after it at the admin's next sign-in,
+/// and it opens the Personal Memories view of that workspace, which lists
+/// its approved memory (ADR-0096, the operator's decision of 2026-11-25).
+#[tokio::test]
+async fn the_admin_workspace_page_shows_the_browse_link_only_when_read_is_held() {
+    let rig = rig().await;
+    let team = shared_team(&rig).await;
+    let bot = team_key(&rig, "team-bot", Role::Submitter, UsedBy::Agent, &[Role::Submitter]).await;
+    let memory = agent_writes_in(&rig, &bot.value, "The team ships on Fridays.", "team").await;
+    let checker = team_key(&rig, "team-check", Role::Reviewer, UsedBy::Agent, &[Role::Reviewer, Role::Reader]).await;
+    rig.app
+        .post_verdict(checker.value.as_str(), memory, oml_app::types::Verdict::Approve, None)
+        .await
+        .expect("the team's reviewer approves");
+    rig.allow("boss@example.com", "boss", true).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let admin_page = format!("/web/admin/workspace?workspace={team}");
+    let (status, _, before) = send(&rig.router, get(&admin_page, Some(&boss))).await;
+    assert_eq!(status, StatusCode::OK, "{before}");
+    assert!(!before.contains("Browse as boss"), "{before}");
+    let (status, _, people) = send(&rig.router, get("/web/admin/people", Some(&boss))).await;
+    assert_eq!(status, StatusCode::OK, "{people}");
+    assert!(people.contains(r#"value="grant_read""#) && people.contains("Grant read"), "{people}");
+    let team_id = team.to_string();
+    let (status, _, granted) = act(
+        &rig,
+        &boss,
+        "/web/admin/people",
+        &[("action", "grant_read"), ("user", "boss"), ("workspace", team_id.as_str())],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{granted}");
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (_, _, after) = send(&rig.router, get(&admin_page, Some(&boss))).await;
+    let link = format!(r#"<a class="button" href="/web/memories?workspace={team}">Browse as boss</a>"#);
+    assert!(after.contains(&link), "{after}");
+    let (status, _, browsed) = send(
+        &rig.router,
+        get(&format!("/web/memories?workspace={team}"), Some(&boss)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{browsed}");
+    assert!(browsed.contains("The team ships on Fridays."), "{browsed}");
+}

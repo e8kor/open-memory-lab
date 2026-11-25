@@ -987,8 +987,9 @@ where
 
     /// `POST /v2/web/users/{user}/capacities`, admin by key role: the
     /// person's `<user>-review` gains reviewer and reader on each workspace,
-    /// or `<user>-curate`, created at the first designation, gains reader on
-    /// each; every grant a `grant.issued` (ADR-0045 d10; ADR-0044 d7).
+    /// `<user>-curate`, created at the first designation, gains reader on
+    /// each, or for `read` `<user>-web` gains reader on each; every grant a
+    /// `grant.issued` (ADR-0045 d10; ADR-0044 d7; ADR-0096, 2026-11-25).
     async fn grant_capacities_inner(
         st: &Self,
         user: &str,
@@ -1005,11 +1006,14 @@ where
         };
         let user = user_param(user)?;
         let req: CapacitiesBody = parse_json(headers, body)?;
-        let curate = match req.capacity.as_str() {
-            "review" => false,
-            "curate" => true,
+        // `read` gives `<user>-web` reader on each workspace (ADR-0096, the
+        // operator's decision of 2026-11-25).
+        let capacity = match req.capacity.as_str() {
+            "review" => "review",
+            "curate" => "curate",
+            "read" => "read",
             _ => {
-                return Err(ApiError::validation("capacity is review or curate")
+                return Err(ApiError::validation("capacity is review, curate or read")
                     .with_details(json!({ "field": "/capacity" })));
             }
         };
@@ -1031,19 +1035,26 @@ where
                 let mut key = None;
                 let mut added = Vec::new();
                 for workspace in workspaces {
-                    let granted = if curate {
-                        retry_chain(|| {
-                            st.app
-                                .grant_curation_capacity(&caller, &user, workspace.clone())
-                        })
-                        .await
-                    } else {
-                        retry_chain(|| {
-                            st.app
-                                .grant_review_capacity(&caller, &user, workspace.clone())
-                        })
-                        .await
-                    }
+                    let granted = retry_chain(|| async {
+                        match capacity {
+                            "curate" => {
+                                st.app
+                                    .grant_curation_capacity(&caller, &user, workspace.clone())
+                                    .await
+                            }
+                            "read" => {
+                                st.app
+                                    .grant_read_capacity(&caller, &user, workspace.clone())
+                                    .await
+                            }
+                            _ => {
+                                st.app
+                                    .grant_review_capacity(&caller, &user, workspace.clone())
+                                    .await
+                            }
+                        }
+                    })
+                    .await
                     .map_err(|e| {
                         let e = map_app_error(e, ErrorContext::Write);
                         // A grant refused after an earlier one committed

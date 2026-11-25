@@ -1137,6 +1137,26 @@ pub async fn admin_page(
         r#"<p class="desc">Read as <code>{}-admin</code>, journalled. An admin key writes no claim: nothing here proposes, edits or retires.</p>"#,
         text(user)
     );
+    // Browse as the admin's own person, where `<user>-web` holds read here
+    // (ADR-0096, the operator's decision of 2026-11-25): the Personal
+    // Memories view on this workspace, read without an investigation.
+    if !user.is_empty() {
+        let personal = session.credential(Capacity::Web);
+        let ids = calls.next_ids();
+        if web
+            .api
+            .workspace(&call(&personal, &ids), &place.view.id)
+            .await
+            .is_ok()
+        {
+            let _ = write!(
+                body,
+                r#"<p><a class="button" href="{USER_MEMORIES_PATH}?workspace={}">Browse as {}</a></p>"#,
+                attr(&encode(&place.view.id)),
+                text(user)
+            );
+        }
+    }
     if claims.is_empty() {
         let _ = write!(
             body,
