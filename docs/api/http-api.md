@@ -957,7 +957,7 @@ Requires: admin key role, in the key's own tenant, a person's <user>-admin sessi
 
 Give a bearer key a new value; the previous one stops at once or after a grace of at most 24 hours.
 
-Requires: an admin key role in the key's tenant, a person's <user>-admin session key included, for any key; a person's <user>-web session key for a key naming that person; or the key itself, so an agent rolls its own secret.
+Requires: the key itself, so an agent rolls its own secret; an admin key role in the key's tenant, a person's <user>-admin session key included, for its own admin key and for a tenant key that is not an admin key and names no person, neither as a user key nor by a link; or a person's <user>-web session key for that person's own contributor, reader and submitter keys.
 
 | Parameter | In | Type | Required | Meaning |
 |---|---|---|---|---|
