@@ -19984,3 +19984,37 @@ async fn a_pending_brief_edge_names_its_proposer_to_a_key_of_the_same_person() {
     let ratified = listed(&r.alice_b).await;
     assert_eq!((ratified.proposed_at, ratified.proposed_by), (None, None));
 }
+
+/// ADR-0097 d27 item 2: a denial's reason is scanned and journalled in
+/// `key.denied`'s payload as `reason` when sent, in `bulk085/mcp`'s field
+/// shape, and a denial sent without one journals none.
+#[tokio::test]
+async fn a_denials_reason_is_journalled_in_key_denied_when_sent_and_absent_when_not() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let quarantine = workspace(&app, admin, "quarantine", crew).await;
+    let reader = issue(&app, admin, Role::Reader, "rhea", crew).await;
+    let other = issue(&app, admin, Role::Reader, "otto", crew).await;
+    app.deny_key_with_reason(
+        admin,
+        reader.key_id.into(),
+        quarantine.into(),
+        Some("leaked to a public gist"),
+    )
+    .await
+    .expect("deny with a reason");
+    app.deny_key(admin, other.key_id.into(), quarantine.into())
+        .await
+        .expect("deny without one");
+    let denied: Vec<_> = journal(&store, boot.tenant_id)
+        .await
+        .into_iter()
+        .filter(|e| e.envelope.event_type == "key.denied")
+        .map(|e| e.envelope.payload)
+        .collect();
+    assert_eq!(denied.len(), 2, "{denied:?}");
+    assert_eq!(denied[0]["reason"], "leaked to a public gist", "{denied:?}");
+    assert!(denied[1].get("reason").is_none(), "{denied:?}");
+}

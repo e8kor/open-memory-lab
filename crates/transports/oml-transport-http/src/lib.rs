@@ -2205,12 +2205,17 @@ where
         let node = reference("/workspace", &req.workspace)?;
         // A session key cuts off one key on universe, as the pages do
         // (ADR-0070 d5; ADR-0045 d9, d13).
+        let reason = req.reason.as_deref();
         if let Some(caller) = session::session_caller() {
-            return Self::cut_off_as_session(st, caller, &key, &node, &idem, key_id, body).await;
+            return Self::cut_off_as_session(st, caller, &key, &node, &idem, key_id, body, reason)
+                .await;
         }
-        let denial = retry_chain(|| st.app.deny_key(acting.bearer(), key.clone(), node.clone()))
-            .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        let denial = retry_chain(|| {
+            st.app
+                .deny_key_with_reason(acting.bearer(), key.clone(), node.clone(), reason)
+        })
+        .await
+        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(StatusCode::CREATED, &denial_json(&denial)))
     }
 
@@ -4323,11 +4328,9 @@ fn expiry_instant(sent: &str) -> Result<EventTime, ApiError> {
 #[serde(deny_unknown_fields)]
 struct DenialBody {
     workspace: String,
+    /// Scanned and journalled in `key.denied` when sent (ADR-0097 d27
+    /// item 2).
     #[serde(default)]
-    #[allow(
-        dead_code,
-        reason = "key.denied journals no reason (event-catalog.md); the text is accepted, not stored"
-    )]
     reason: Option<String>,
 }
 

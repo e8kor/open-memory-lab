@@ -3968,9 +3968,26 @@ where
         key: Reference,
         node: Reference,
     ) -> Result<DenialRecord, AppError> {
+        self.deny_key_with_reason(bearer, key, node, None).await
+    }
+
+    /// [`App::deny_key`] with the admin's reason, scanned and journalled in
+    /// `key.denied` when sent, in the field shape of ADR-0095 d1's
+    /// structure acts (ADR-0097 d27 item 2, completing ADR-0096 d4).
+    ///
+    /// # Errors
+    /// As [`App::deny_key`], and a reason the scan vetoes.
+    pub async fn deny_key_with_reason(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        key: Reference,
+        node: Reference,
+        reason: Option<&str>,
+    ) -> Result<DenialRecord, AppError> {
         let admin = self.authenticate_bearer(bearer.into()).await?.key;
         require_role(&admin, Role::Admin, "deny")?;
-        self.deny_key_by(&admin, key, node, Head::AtSeal).await
+        self.deny_key_by(&admin, key, node, Head::AtSeal, reason)
+            .await
     }
 
     /// [`App::deny_key`] once the issuer is known: an admin key, or a
@@ -3982,6 +3999,7 @@ where
         key: Reference,
         node: Reference,
         head: Head<'_>,
+        reason: Option<&str>,
     ) -> Result<DenialRecord, AppError> {
         let admin = admin.clone();
         let tenant_id = admin.tenant_id;
@@ -4000,20 +4018,24 @@ where
             denial_id: self.ids.new_id(),
             node,
         };
+        let mut payload = json!({
+            "denial_id": denial.denial_id.to_string(),
+            "key_id": key_id.to_string(),
+            "workspace_node_id": node.to_string(),
+        });
+        with_reason(self, tenant_id, &mut payload, reason)?;
         let prev = self.head_at(tenant_id, head).await?;
         let epoch = prev.as_ref().map_or(1, |p| p.envelope.seq + 1);
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("epoch".to_owned(), json!(epoch));
+        }
         let event = self.seal(
             prev.as_ref(),
             tenant_id,
             event_types::KEY_DENIED,
             &admin.principal,
             Some(admin.key_id),
-            json!({
-                "denial_id": denial.denial_id.to_string(),
-                "key_id": key_id.to_string(),
-                "workspace_node_id": node.to_string(),
-                "epoch": epoch,
-            }),
+            payload,
         )?;
         let receipt = self
             .commit(

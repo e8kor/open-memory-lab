@@ -619,7 +619,7 @@ where
     /// `<user>-web` keeps `universe` alone, which the transport checks.
     pub async fn cut_off_key(&self, acting: &Caller, key: &Name) -> Result<DenialRecord, AppError> {
         let universe = Reference::Name(Name::parse(UNIVERSE).expect("universe is a name"));
-        self.deny_key_on(acting, key, universe).await
+        self.deny_key_on(acting, key, universe, None).await
     }
 
     /// [`App::cut_off_key`] on `node`: a session key's denial of one key
@@ -629,6 +629,7 @@ where
         acting: &Caller,
         key: &Name,
         node: Reference,
+        reason: Option<&str>,
     ) -> Result<DenialRecord, AppError> {
         let (acting, head) = &self.undenied(acting, "deny_key").await?;
         let target = match acting.key.role {
@@ -649,6 +650,7 @@ where
             Reference::Id(target.key_id),
             node,
             Head::BeforeAccess(head),
+            reason,
         )
         .await
     }

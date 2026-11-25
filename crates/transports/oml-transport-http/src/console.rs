@@ -1617,8 +1617,10 @@ where
         idem: &str,
         key_id: &str,
         body: &Bytes,
+        reason: Option<&str>,
     ) -> Result<Response, ApiError> {
         let capacity_web = is_web_session_key(&caller);
+        let reason = reason.map(ToOwned::to_owned);
         if !capacity_web && !is_admin_session_key(&caller) {
             return Err(session_capacity(&caller, "deny_key"));
         }
@@ -1644,15 +1646,19 @@ where
         let st = st.clone();
         claim
             .run(async move {
-                let denial = retry_chain(|| st.app.deny_key_on(&caller, &key, node.clone()))
-                    .await
-                    .map_err(|e| {
-                        ActFailure::first(match e {
-                            AppError::WebField { field, message } => ApiError::validation(message)
-                                .with_details(json!({ "field": field })),
-                            e => map_app_error(e, ErrorContext::Write),
-                        })
-                    })?;
+                let denial = retry_chain(|| {
+                    st.app
+                        .deny_key_on(&caller, &key, node.clone(), reason.as_deref())
+                })
+                .await
+                .map_err(|e| {
+                    ActFailure::first(match e {
+                        AppError::WebField { field, message } => {
+                            ApiError::validation(message).with_details(json!({ "field": field }))
+                        }
+                        e => map_app_error(e, ErrorContext::Write),
+                    })
+                })?;
                 Ok(Acted::new(StatusCode::CREATED, denial_json(&denial)))
             })
             .await

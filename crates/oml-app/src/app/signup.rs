@@ -460,6 +460,7 @@ where
                         Reference::Id(key.key_id),
                         universe.clone(),
                         Head::AtSeal,
+                        None,
                     )
                 })
                 .await
