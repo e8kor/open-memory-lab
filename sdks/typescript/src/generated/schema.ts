@@ -800,6 +800,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/keys/{key}/rotate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Give a bearer key a new value; the previous one stops at once or after a grace of at most 24 hours.
+         * @description Requires: an admin key role in the key's tenant, a person's <user>-admin session key included, for any key; a person's <user>-web session key for a key naming that person; or the key itself, so an agent rolls its own secret. Any other caller is access.verb_ceiling, and a person's session naming another person's key is access.not_found. The key keeps its id, name, grants, denials, limits, links, crew and history; only its value changes. grace_seconds, 0 to 86400, keeps the previous value authenticating until previous_valid_until; omitted or 0, it stops at once, and a later rotation ends any earlier grace. A session key, a connector key (mint a new connect code instead), a revoked key, a cut-off key and an expired key are request.validation with details.field key and details.reason session_key, connector_key, revoked, cut_off or expired; a longer grace is details.field /grace_seconds, details.reason grace_too_long. The value is answered once: the Idempotency-Key is claimed for the caller before the rotation, so a resubmission under it answers the recorded response without value, with Idempotency-Replay: true, and rotates nothing again. Journalled as key.rotated with the key, the rotating key and previous_valid_until, never a value or a hash. While a grace is open, the key's whoami serves rotation_grace_until and oml doctor prints key.rotation_grace_open (ADR-0096 d13, the operator's decision of 2026-11-25). Since v0.8.5.
+         */
+        post: operations["rotateKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/keys/{key}/link": {
         parameters: {
             query?: never;
@@ -3840,6 +3860,11 @@ export interface components {
             person?: components["schemas"]["WhoamiPerson"] | null;
             /** @description Whether this key is a contributor without recall: a contributor key holding a submitter grant on a node that no reader grant of it reaches, before its deny masks, such as a v0.8.3 writer key issued write-only, user keys whose one reader grant is the universe node grant among them. It works as before; oml doctor names it key_contributor_without_recall. false for every other key, and for every session key the server holds for a person, <user>-curate included; optional here so a client reads an answer without it, from an older server, as false (ADR-0093 d3, as read on 2026-11-20). */
             without_recall?: boolean;
+            /**
+             * Format: date-time
+             * @description For a bearer key rotated with a grace still open: when its previous value stops authenticating; oml doctor prints key.rotation_grace_open. Absent otherwise (ADR-0096 d13). Since v0.8.5.
+             */
+            rotation_grace_until?: string;
             /** @description Whether the server's admins are not the caller's: true when the operator sets server.shared or opens sign-up. oml sync asks consent of a shared server; a server from this release always sends it; optional here so a client reads an answer without it, from an older server, as false (ADR-0076 d9). */
             shared?: boolean;
         };
@@ -7006,6 +7031,77 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             415: components["responses"]["UnsupportedMedia"];
+            default: components["responses"]["Error"];
+        };
+    };
+    rotateKey: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                key: components["parameters"]["KeyId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                /**
+                 * @example {
+                 *       "grace_seconds": 3600
+                 *     }
+                 */
+                "application/json": {
+                    /** @description How long the previous value keeps authenticating; omitted or 0, it stops at once. */
+                    grace_seconds?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description The key's new value, shown once, and when the previous one stops. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "key_id": "d405428e-4c99-426d-8826-76d28436e423",
+                     *       "name": "alice-laptop",
+                     *       "value": "oml_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG",
+                     *       "rotated_at": "2026-11-25T10:00:00.000000Z",
+                     *       "previous_valid_until": "2026-11-25T11:00:00.000000Z",
+                     *       "journal_seq": 412
+                     *     }
+                     */
+                    "application/json": {
+                        key_id: string;
+                        name: string | null;
+                        /** @description The new value, shown once; absent from a replayed answer. */
+                        value?: string;
+                        /** Format: date-time */
+                        rotated_at: string;
+                        /**
+                         * Format: date-time
+                         * @description When the previous value stops authenticating; null where it stopped at once.
+                         */
+                        previous_valid_until: string | null;
+                        journal_seq: number;
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             default: components["responses"]["Error"];
         };
     };

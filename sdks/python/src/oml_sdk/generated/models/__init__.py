@@ -310,6 +310,8 @@ from .review_queue_response_200 import ReviewQueueResponse200
 from .review_queue_response_200_items_item import ReviewQueueResponse200ItemsItem
 from .revoke_connection_body import RevokeConnectionBody
 from .role import Role
+from .rotate_key_body import RotateKeyBody
+from .rotate_key_response_200 import RotateKeyResponse200
 from .scan_finding import ScanFinding
 from .scan_finding_found_by import ScanFindingFoundBy
 from .scan_finding_verdict import ScanFindingVerdict
@@ -752,6 +754,8 @@ __all__ = (
     "ReviewQueueResponse200ItemsItem",
     "RevokeConnectionBody",
     "Role",
+    "RotateKeyBody",
+    "RotateKeyResponse200",
     "ScanFinding",
     "ScanFindingFoundBy",
     "ScanFindingVerdict",

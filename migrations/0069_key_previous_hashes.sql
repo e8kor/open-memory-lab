@@ -11,7 +11,10 @@
 -- oml.api_key_hash, SELECT only.
 --
 -- What it costs a live database: one new, empty table and its unique index
--- on the hash; nothing existing is read or locked beyond the catalog.
+-- on the hash. The foreign keys take a share lock on tenants and api_keys
+-- to validate an empty table, waited for at most five seconds.
+
+SET LOCAL lock_timeout = '5s';
 
 CREATE TABLE key_previous_hashes (
     tenant_id uuid NOT NULL REFERENCES tenants (id),

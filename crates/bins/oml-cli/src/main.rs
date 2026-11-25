@@ -1092,7 +1092,7 @@ struct WriteArgs {
     #[arg(long)]
     kind: Option<String>,
     /// Skill name, a lowercase label; required with --kind skill, and the
-    /// target's name with --replaces (ADR-0080 d1, d2).
+    /// target's name with --replaces.
     #[arg(
         long = "skill-name",
         required_if_eq("kind", "skill"),
