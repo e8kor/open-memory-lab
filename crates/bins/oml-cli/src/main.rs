@@ -1949,33 +1949,44 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 }
                 None => json!({}),
             };
-            if let Some(path) = out
-                && path.exists()
-            {
-                return Err(CliError::local(format!(
-                    "{} exists; --out writes a new file only",
-                    path.display()
-                )));
-            }
+            let path = format!("/v2/keys/{}/rotate", segment(key_ref)?);
             let client = resolve(cli, &stored)?;
-            let (_, response) = client.post_keyed(
-                &format!("/v2/keys/{}/rotate", segment(key_ref)?),
-                &body,
-                &new_idempotency_key(),
-            )?;
+            // The owner-only file is created and claimed before anything is
+            // sent, as `issue-agent --out` does: a path that cannot hold the
+            // value fails while the previous value still stands, and no new
+            // value is minted that nothing keeps (ADR-0096 d13; ADR-0028 d1).
+            let key_file = match out {
+                Some(out) => Some(KeyFile::create(out).map_err(CliError::Local)?),
+                None => None,
+            };
+            let response = match client.post_keyed(&path, &body, &new_idempotency_key()) {
+                Ok((_, response)) => response,
+                Err(failure) => {
+                    if let Some(Err(e)) = key_file.map(KeyFile::discard) {
+                        eprintln!("note: {e}");
+                    }
+                    return Err(failure);
+                }
+            };
             let value = response["value"].as_str().unwrap_or_default();
             let until = response["previous_valid_until"].as_str().map_or_else(
                 || "now: it no longer authenticates".to_owned(),
                 |t| t.to_owned(),
             );
-            match out {
-                Some(path) => {
-                    write_owner_only(path, &format!("{value}\n"))?;
+            match key_file {
+                Some(file) => {
+                    let shown = file.shown().to_owned();
+                    file.write_value(value).map_err(|e| {
+                        CliError::Unanswered(format!(
+                            "writing {shown} failed ({e}); key {} was rotated and its new value \
+                             is lost: rotate it again",
+                            field(&response, "name")
+                        ))
+                    })?;
                     println!(
-                        "rotated — key {}; the new value is in {} (owner-only); the previous \
+                        "rotated — key {}; the new value is in {shown} (owner-only); the previous \
                          value stops at {until}",
                         field(&response, "name"),
-                        path.display()
                     );
                 }
                 None if cli.json => print_json(&response),
@@ -3039,11 +3050,11 @@ impl<'a> Write<'a> {
     }
 }
 
-/// `--skill-*` beside a `--kind` other than skill: a usage error, as clap
-/// draws one, before anything is sent (ADR-0080 d1: the skill object is
-/// refused on every other kind).
+/// `--skill-*` beside a `--kind` other than skill, or with no `--kind`,
+/// which writes a memory: a usage error, as clap draws one, before anything
+/// is sent (ADR-0080 d1: the skill object is refused on every other kind).
 fn refuse_skill_fields_on_another_kind(args: &WriteArgs) {
-    if args.skill_name.is_some() && args.kind.as_deref().is_some_and(|k| k != "skill") {
+    if args.skill_name.is_some() && args.kind.as_deref() != Some("skill") {
         <Cli as clap::CommandFactory>::command()
             .error(
                 clap::error::ErrorKind::ArgumentConflict,
