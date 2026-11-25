@@ -1779,6 +1779,7 @@ async fn a_user_keys_claim_or_brief_edge_with_an_endpoint_in_universe_is_refused
             &oml_app::types::ProposeBriefEdge {
                 artifact_id: c.placed,
                 workspace: by_name("alice"),
+                reason: None,
             },
             None,
         )
@@ -1800,6 +1801,7 @@ async fn a_user_keys_claim_or_brief_edge_with_an_endpoint_in_universe_is_refused
         &oml_app::types::ProposeBriefEdge {
             artifact_id: c.source,
             workspace: by_name("alice"),
+            reason: None,
         },
         None,
     )

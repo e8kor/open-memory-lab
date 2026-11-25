@@ -1,6 +1,7 @@
 //! Guardrails on the wire (ADR-0037 d4, d5, d10, d14; build steps
 //! S1 and S2): kind `guardrail` with its `severity` and `rule` on
-//! `POST /v1/memories` and its supersede, refused on MCP's `oml_write`; the
+//! `POST /v1/memories` and its supersede, and on MCP's `oml_write` with its
+//! `guardrail` object (ADR-0095 d2); the
 //! key's `guardrail_scope` on `POST /v2/keys`, `GET /v2/keys/{key}` and
 //! `GET /v2/whoami`; and the set on `GET /v1/guardrails`. The lead's router
 //! over in-memory doubles, as `mcp_alias_log.rs` builds it.
@@ -448,22 +449,118 @@ async fn an_unknown_severity_is_refused_naming_severity() {
     assert_eq!(body["error"]["details"]["field"], "/severity", "{body}");
 }
 
+/// `oml_write` with kind `guardrail` and its `guardrail` object holds a
+/// guardrail: the name is its `claim_key`, it is held, and its serve
+/// carries the load warning every reader of a held rule is served
+/// (ADR-0095 d2; ADR-0037 d10).
 #[tokio::test]
-async fn oml_write_refuses_kind_guardrail_and_a_guardrail_target() {
+async fn oml_write_with_kind_guardrail_and_a_guardrail_object_holds_a_guardrail() {
     let router = doubles_router();
     let t = tenant(&router).await;
     let result = call_tool(
         &router,
         &t.writer,
         "oml_write",
-        json!({"text": "Never push to main.", "kind": "guardrail", "idempotency_key": "w-1"}),
+        json!({"text": "Never push to main.", "kind": "guardrail", "claim_key": "no-push-to-main",
+               "guardrail": {"severity": "never", "rule": deny_push()},
+               "workspace": t.crew, "idempotency_key": "w-g1"}),
+    )
+    .await;
+    assert_eq!(result["isError"], false, "{result}");
+    let out = &result["structuredContent"];
+    assert_eq!(
+        (&out["mode"], &out["state"], &out["claim_key"]),
+        (&json!("submit"), &json!("held"), &json!("no-push-to-main")),
+        "{out}"
+    );
+    let id = out["artifact_id"].as_str().expect("an artifact id");
+    let (status, memory) = send(
+        &router,
+        "GET",
+        &format!("/v1/memories/{id}"),
+        Some(&t.writer),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{memory}");
+    assert_eq!(memory["kind"], "guardrail", "{memory}");
+    assert_eq!(memory["severity"], "never", "{memory}");
+    assert_eq!(memory["rule"], deny_push(), "{memory}");
+    assert!(memory["load_warning"].is_string(), "{memory}");
+}
+
+/// The `guardrail` object is refused on every other kind, on a retirement
+/// and with a severity outside the three, each naming its field, and kind
+/// `guardrail` without it names `/guardrail` (ADR-0095 d2).
+#[tokio::test]
+async fn a_guardrail_object_is_refused_on_any_other_kind_and_on_a_retirement() {
+    let router = doubles_router();
+    let t = tenant(&router).await;
+    let object = json!({"severity": "must"});
+    for (n, (args, field)) in [
+        (
+            json!({"text": "A fact.", "kind": "memory", "guardrail": object}),
+            "/guardrail",
+        ),
+        (
+            json!({"text": "A fact.", "guardrail": object}),
+            "/guardrail",
+        ),
+        (
+            json!({"text": "Never push.", "kind": "guardrail"}),
+            "/guardrail",
+        ),
+        (
+            json!({"text": "Never push.", "kind": "guardrail", "guardrail": {"severity": "may"}}),
+            "/guardrail/severity",
+        ),
+        (
+            json!({"text": "Never push.", "kind": "guardrail",
+                   "guardrail": {"severity": "must", "effect": "deny"}}),
+            "/guardrail",
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut args = args;
+        args["idempotency_key"] = json!(format!("w-o{n}"));
+        let result = call_tool(&router, &t.writer, "oml_write", args).await;
+        assert_eq!(
+            tool_refusal_field(&result),
+            ("request.validation".to_owned(), field.to_owned()),
+            "case {n}"
+        );
+    }
+    let target = submit_guardrail(
+        &router,
+        &t,
+        "g-r",
+        json!({"kind": "guardrail", "severity": "must", "body": "Run the tests.", "workspace": t.crew}),
+    )
+    .await;
+    approve_next(&router, &t, 1).await;
+    let result = call_tool(
+        &router,
+        &t.writer,
+        "oml_write",
+        json!({"expected_version": 1, "text": "No longer needed.", "replaces": target, "retirement": true,
+               "kind": "guardrail", "guardrail": {"severity": "must"}, "idempotency_key": "w-ret"}),
     )
     .await;
     assert_eq!(
         tool_refusal_field(&result),
-        ("request.validation".to_owned(), "/kind".to_owned())
+        ("request.validation".to_owned(), "/guardrail".to_owned())
     );
+}
 
+/// `replaces` naming a guardrail is admitted with kind `guardrail` and its
+/// object, and refused into any other kind (ADR-0095 d2; ADR-0025 d11).
+#[tokio::test]
+async fn oml_write_replaces_a_guardrail_only_with_kind_guardrail_and_its_object() {
+    let router = doubles_router();
+    let t = tenant(&router).await;
     let target = submit_guardrail(
         &router,
         &t,
@@ -476,13 +573,88 @@ async fn oml_write_refuses_kind_guardrail_and_a_guardrail_target() {
         &router,
         &t.writer,
         "oml_write",
-        json!({ "expected_version": 1,"text": "Run the tests twice.", "replaces": target, "idempotency_key": "w-2"}),
+        json!({"expected_version": 1, "text": "Run the tests twice.", "replaces": target,
+               "kind": "memory", "idempotency_key": "w-m"}),
+    )
+    .await;
+    assert_eq!(result["isError"], true, "{result}");
+    let result = call_tool(
+        &router,
+        &t.writer,
+        "oml_write",
+        json!({"expected_version": 1, "text": "Run the tests twice.", "replaces": target,
+               "kind": "guardrail", "guardrail": {"severity": "never"}, "idempotency_key": "w-g"}),
+    )
+    .await;
+    assert_eq!(result["isError"], false, "{result}");
+    let out = &result["structuredContent"];
+    assert_eq!(
+        (&out["mode"], &out["state"], &out["replaces"]),
+        (&json!("supersede"), &json!("held"), &json!(target)),
+        "{out}"
+    );
+    let id = out["artifact_id"].as_str().expect("an artifact id");
+    let (_, memory) = send(
+        &router,
+        "GET",
+        &format!("/v1/memories/{id}"),
+        Some(&t.writer),
+        None,
+        None,
     )
     .await;
     assert_eq!(
-        tool_refusal_field(&result),
-        ("request.validation".to_owned(), "/replaces".to_owned())
+        (&memory["kind"], &memory["severity"]),
+        (&json!("guardrail"), &json!("never"))
     );
+}
+
+/// A guardrail written over `oml_write` promotes on a person's verdict and
+/// on no agent's: an agent reviewer's approval is `review.person_required`
+/// and the version stays held (ADR-0095 d2; ADR-0080 d16).
+#[tokio::test]
+async fn a_guardrail_written_over_mcp_promotes_only_on_a_persons_verdict() {
+    let router = doubles_router();
+    let t = tenant(&router).await;
+    let agent = issue(
+        &router,
+        &t.admin,
+        json!({"role": "reviewer", "name": "crew-reviewer", "principal": "crew/agent-reviewer", "used_by": "agent",
+               "grants": [{"workspace": t.crew, "role": "reviewer"}, {"workspace": t.crew, "role": "reader"}]}),
+    )
+    .await["value"]
+        .as_str()
+        .expect("agent reviewer value")
+        .to_owned();
+    let result = call_tool(
+        &router,
+        &t.writer,
+        "oml_write",
+        json!({"text": "Never push to main.", "kind": "guardrail",
+               "guardrail": {"severity": "never"}, "workspace": t.crew, "idempotency_key": "w-p"}),
+    )
+    .await;
+    let rule = result["structuredContent"]["artifact_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a held guardrail: {result}"))
+        .to_owned();
+    let serve_id = format!(
+        "srv_{}",
+        uuid::Uuid::parse_str(&rule).expect("an id").simple()
+    );
+    let (status, refused) = send(
+        &router,
+        "POST",
+        "/v2/review/verdicts",
+        Some(&agent),
+        Some("v-agent"),
+        Some(&json!({"serve_id": serve_id, "verdict": "approve"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+    assert_eq!(refused["error"]["code"], "review.person_required");
+    let served = approve_next(&router, &t, 1).await;
+    assert_eq!(served["item"]["artifact_id"], json!(rule), "{served}");
 }
 
 /// `oml_write` refuses the test kind naming `kind`, a document with no
