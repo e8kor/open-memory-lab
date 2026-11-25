@@ -207,8 +207,9 @@ brief: a second is `proposal.pending`, naming the live one.
 
 A guardrail, a standing rule for every key below its workspace, is written with `kind:
 guardrail` and a `guardrail` object, `{"severity": "never" | "must" | "should", "rule"?: ...}`,
-its name as `claim_key`. A person approves every guardrail version, so until then it reaches
-your key alone, as a marked line that asks and never denies.
+its name as `claim_key`. A person approves every guardrail version. Until then it reaches
+your key and, in a workspace a person put in progress, the other keys working in that subtree,
+each as a marked line that asks and never denies.
 
 ## What the tools cannot do
 

@@ -9400,11 +9400,6 @@ mod tests {
         assert!(key_doctor(None).is_empty());
     }
 
-    /// The doctor names the key as the server serves it, by `whoami`'s
-    /// `without_recall`: a migrated v0.8.3 write-only user key holds a
-    /// reader grant, the `universe` node grant, and is named all the same,
-    /// since that grant reaches none of the nodes it writes (ADR-0093 d3, as
-    /// read on 2026-11-20).
     /// While a rotation's grace is open the doctor says until when the
     /// previous value works, as information (ADR-0096 d13).
     #[test]
@@ -9421,6 +9416,11 @@ mod tests {
         );
     }
 
+    /// The doctor names the key as the server serves it, by `whoami`'s
+    /// `without_recall`: a migrated v0.8.3 write-only user key holds a
+    /// reader grant, the `universe` node grant, and is named all the same,
+    /// since that grant reaches none of the nodes it writes (ADR-0093 d3, as
+    /// read on 2026-11-20).
     #[test]
     fn doctor_names_a_migrated_write_only_user_key_as_key_contributor_without_recall() {
         let migrated = serde_json::json!({
