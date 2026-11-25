@@ -69,6 +69,9 @@ def generate_python(out: Path) -> str:
             "--path", str(SPEC),
             "--meta", "none",
             "--config", str(PYTHON / "openapi-python-client.yaml"),
+            # The enum template keeps a value the spec does not list as its
+            # string, so an older client reads a newer server (ADR-0096).
+            "--custom-template-path", str(PYTHON / "templates"),
             "--output-path", str(out),
         ],
         capture_output=True,

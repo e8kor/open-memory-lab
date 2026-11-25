@@ -116,6 +116,11 @@ workspace read raises `ValueError` on a v0.8.5 server wherever a key holds eithe
 SDK upgrades with the server; the TypeScript SDK reads them as strings. The SDKs also gain a
 `ProposalError` class for the new `proposal` error family.
 
+From v0.8.5 on, both SDKs tolerate values a later server adds: the Python SDK keeps an enum value
+its spec does not list, such as a new verb or state, as its string instead of raising, and an
+error code it has never seen lands in its family's class, as the TypeScript SDK already did. So
+this is the last upgrade in which an SDK must move in the server's window for new values alone.
+
 The notice to send to client owners:
 
 > From v0.8.5 `oml_write` also writes guardrails (kind `guardrail` with a `guardrail` object),
@@ -140,6 +145,20 @@ other limit is set ([configuration](configuration.md)); the public server sets 1
 an unmeasured value recalibrated with the other limits under
 [#164](https://github.com/e8kor/open-memory-lab/issues/164) ([ADR-0095](../adr/ADR-0095-an-agent-creates-its-own-child-workspaces-writes-guardrails-and-proposes-status-and-brief-changes-through-oml-write-and-every-verdict-and-setting-stays-with-people.md) d11 Q4). Past the limit a create
 is `429 limit.quota` and journals nothing.
+
+### Grant read, the fix page, the brief and the CLI's skills
+
+Administration, People gains **Grant read** (user, workspace): `POST
+/v2/web/users/{user}/capacities` takes `capacity: read`, which gives `<user>-web` a `reader` grant
+on the workspace, reached at the person's next sign-in, so their Memories and Catalog list it. The
+admin workspace page links **Browse as <user>** where the admin's own person holds that read
+([ADR-0096](../adr/ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md),
+operator decision of 2026-11-25). The console serves one more path, `/web/todo/fix`, where a person
+confirms or reverts an admin fix, and `POST /web/workspace`, the workspace page's status proposal
+and brief ratification, on a path a proxy already routes; a proxy that routes `oml-web`'s paths by
+name adds `/web/todo/fix`, as the reference files do. `POST /v2/edges` with `kind: brief` and
+`GET /v2/edges?kind=brief` accept a person's session. `oml write --kind skill --skill-name <name>
+--skill-description <line>` writes a skill, and `oml write --help` lists `skill` and `document`.
 
 ### Migration 0068 and the console round's paths
 

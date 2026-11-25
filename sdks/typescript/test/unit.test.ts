@@ -550,3 +550,13 @@ test("fenceFor names the Markdown fence of each media type", () => {
   assert.equal(fenceFor(undefined), "");
   assert.equal(fenceFor("application/x-unknown"), "");
 });
+
+test("a kind and a state a newer server adds are read as their strings", async () => {
+  // An SDK from v0.8.5 on validates no enum, so a value the spec it was
+  // generated from does not list reaches the caller unchanged (ADR-0096).
+  const row = { ...ACCEPTED, kind: "playbook", state: "quarantined" };
+  const { fetcher } = recorder(200, { items: [row], next_cursor: null });
+  const page: MemoryPage = await client(fetcher).read({ limit: 1 });
+  assert.equal(page.items[0]?.kind, "playbook");
+  assert.equal(page.items[0]?.state, "quarantined");
+});
