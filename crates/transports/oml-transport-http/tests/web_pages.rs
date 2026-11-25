@@ -3778,3 +3778,123 @@ async fn whoami_serves_the_persons_profile_month_and_recalls() {
     assert_eq!(&period[4..5], "-", "{me}");
     assert!(me["person"].get("profile").is_some(), "{me}");
 }
+
+// ---------------------------------------------------------------------------
+// v0.8.5: the console proposes as a person's session (ADR-0095 d5, d6;
+// ADR-0096 P8, P9)
+// ---------------------------------------------------------------------------
+
+/// alice signed in, her agent's row approved by `alice-review`, so it is a
+/// promoted memory of her root that can join a brief: her cookie and the
+/// row's id.
+async fn alice_with_a_promoted_memory(rig: &Rig) -> (String, uuid::Uuid) {
+    let (cookie, value) = person_with_agent(rig, "sub-1", EMAIL).await;
+    let id = agent_writes(rig, &value, "the deploy runs from main").await;
+    let (status, verdict) = as_web(
+        rig,
+        &cookie,
+        "review",
+        "/v2/review/verdicts/bulk",
+        json!({"verdict": "approve", "artifact_ids": [id.to_string()]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{verdict}");
+    assert_eq!(verdict["items"][0]["outcome"], "approved", "{verdict}");
+    (cookie, id)
+}
+
+/// P8: `<user>-web`, a contributor key with submitter on the root, proposes
+/// a promoted memory for the root's brief as the console's Propose for
+/// brief does, and a second proposal of the same memory is `409
+/// proposal.pending` naming the live edge, whose listing serves when and by
+/// which of the person's keys it was proposed (ADR-0095 d6 and its
+/// amendment of 2026-11-24).
+#[tokio::test]
+async fn a_persons_web_session_proposes_a_memory_for_the_brief_and_a_second_proposal_is_proposal_pending()
+ {
+    let rig = rig().await;
+    let (cookie, id) = alice_with_a_promoted_memory(&rig).await;
+    let proposal = json!({"kind": "brief", "from_artifact_id": id, "to_workspace_id": "alice"});
+    let (status, edge) = as_web(&rig, &cookie, "web", "/v2/edges", proposal.clone()).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{edge}");
+    assert_eq!(edge["state"], "pending", "{edge}");
+    let edge_id = edge["edge_id"].as_str().expect("an edge id").to_owned();
+    // The same proposal under another key (another form's nonce).
+    let mut again = proposal;
+    again["reason"] = json!("again");
+    let (status, answer) = as_web(&rig, &cookie, "web", "/v2/edges", again).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{answer}");
+    assert_eq!(answer["error"]["code"], "proposal.pending", "{answer}");
+    assert_eq!(answer["error"]["details"]["edge_id"], edge_id, "{answer}");
+    let root = get_as_web(&rig, &cookie, "/v2/workspaces/alice").await.1["id"]
+        .as_str()
+        .expect("the root's id")
+        .to_owned();
+    let (status, page) = get_as_web(
+        &rig,
+        &cookie,
+        &format!("/v2/edges?kind=brief&workspace_id={root}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let listed = &page["items"][0];
+    assert_eq!(listed["edge_id"], edge_id, "{page}");
+    assert!(listed["proposed_at"].is_string(), "{page}");
+    assert_eq!(listed["proposed_by"]["name"], "alice-web", "{page}");
+}
+
+/// P9: `<user>-review`, granted reviewer on a shared workspace, proposes
+/// its status move as the workspace page does, and a second proposal to
+/// the same status is `409 proposal.pending` naming the live transition,
+/// which the workspace read serves with its instant and, to the same
+/// person, its proposer (ADR-0095 d5 and its amendment of 2026-11-24).
+#[tokio::test]
+async fn a_persons_review_session_proposes_a_shared_workspaces_status_and_a_second_proposal_is_proposal_pending()
+ {
+    let rig = rig().await;
+    let _first = signed_in(&rig, "sub-1", EMAIL).await;
+    let (status, platform) = as_admin(
+        &rig,
+        "/v2/workspaces",
+        "platform",
+        json!({"name": "platform", "parent": "universe"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{platform}");
+    let (status, granted) = as_admin(
+        &rig,
+        "/v2/web/users/alice/capacities",
+        "review-alice",
+        json!({"capacity": "review", "workspaces": ["platform"]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{granted}");
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let path = "/v2/workspaces/platform/transitions";
+    let (status, proposed) = as_web(&rig, &cookie, "review", path, json!({"to": "protected"})).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{proposed}");
+    let transition = proposed["transition_id"]
+        .as_str()
+        .expect("a transition id")
+        .to_owned();
+    let (status, answer) = as_web(
+        &rig,
+        &cookie,
+        "review",
+        path,
+        json!({"to": "protected", "reason": "again"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{answer}");
+    assert_eq!(answer["error"]["code"], "proposal.pending", "{answer}");
+    assert_eq!(
+        answer["error"]["details"]["transition_id"], transition,
+        "{answer}"
+    );
+    let (status, view) = get_as(&rig, &cookie, "review", "/v2/workspaces/platform").await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    let pending = &view["pending_transitions"][0];
+    assert_eq!(pending["transition_id"], transition, "{view}");
+    assert!(pending["proposed_at"].is_string(), "{view}");
+    assert_eq!(pending["proposed_by"]["name"], "alice-review", "{view}");
+}
