@@ -160,6 +160,29 @@ name adds `/web/todo/fix`, as the reference files do. `POST /v2/edges` with `kin
 `GET /v2/edges?kind=brief` accept a person's session. `oml write --kind skill --skill-name <name>
 --skill-description <line>` writes a skill, and `oml write --help` lists `skill` and `document`.
 
+### The last admin entry, the deny's reason, and the counts before v0.8.6
+
+The last live admin entry of a tenant is now kept on every surface: `oml web allow` un-flagging it
+and `oml web remove` removing it under a bearer admin key are refused, `request.validation` naming
+`admin`, as the console already was, and `keep_an_admin` is read and changes nothing
+([ADR-0097](https://github.com/e8kor/open-memory-lab/pull/517) d25, d27). A denial's `reason`
+is scanned and journalled in `key.denied` when sent.
+
+Before the v0.8.6 upgrade the operator takes the read-only counts ADR-0097 sizes it by, on the
+database host:
+
+```sh
+OML_COUNTS_DATABASE_URL=postgres://<owner role>@<host>/<database> \
+  scripts/ops/read_only_counts.sh > counts.csv
+```
+
+The URL names the database owner role, since the serving role reads one tenant at a time. The
+script runs one `READ ONLY` transaction in a read-only session and ends in `ROLLBACK`, so it
+changes nothing. It prints `count,tenant,value` for unlinked admin keys, service admin keys,
+grants in another person's root, admin-issued user keys and connect codes, open investigations,
+and `admin_persons_ever`, 2 or more where a tenant ever had two admin persons. The HTTP API serves
+no tenant-wide key or grant listing, so the counts read the database.
+
 ### Migration 0068 and the console round's paths
 
 Migration 0068 adds one index on the imports table (`imports_importer_created`);
