@@ -4915,6 +4915,46 @@ async fn a_key_value_is_shown_once_on_the_redirect_target_and_never_in_a_url_or_
     assert!(!lines.contains(&sealed), "no line holds the seal: {lines}");
 }
 
+/// Issue key refused by an answer only the server decides, here
+/// `name.taken`, goes back to the review step with its notice and code, the
+/// draft kept, and Issue key offered again (ADR-0096 d1, D12).
+#[tokio::test]
+async fn a_name_the_server_finds_taken_goes_back_to_the_review_step_with_the_draft() {
+    tokio::time::timeout(Duration::from_secs(120), async {
+        let rig = rig().await;
+        let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+        let draft = "/web/keys/new?kind=agent&name=ci&role=reader&n=1&g0w=alice&g0r=reader&g0c=node&dw=&gs=ancestors&exp=&rpm=60&step=review";
+        let mut answers = Vec::new();
+        for _ in 0..2 {
+            let (_, _, review) = send(&rig.router, get(draft, Some(&cookie))).await;
+            let fields = hidden_fields(&review, "build_key");
+            let fields: Vec<(&str, &str)> = fields
+                .iter()
+                .map(|(n, v)| (n.as_str(), v.as_str()))
+                .collect();
+            answers.push(send(&rig.router, post("/web/keys", &fields, Some(&cookie))).await);
+        }
+        let (status, headers, body) = &answers[1];
+        assert_eq!(*status, StatusCode::SEE_OTHER, "{body}");
+        let back = location(headers);
+        assert!(back.starts_with("/web/keys/new?"), "{back}");
+        assert!(back.contains("step=review"), "{back}");
+        assert!(back.contains("refused=name.taken"), "{back}");
+        let (status, _, page) = send(&rig.router, get(&back, Some(&cookie))).await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        assert!(page.contains("<h1>Review key</h1>"), "{page}");
+        assert!(page.contains("<code>name.taken</code>"), "{page}");
+        assert!(page.contains(r#"role="alert""#), "{page}");
+        assert!(
+            page.contains(r#"<input type="hidden" name="name" value="ci">"#),
+            "{page}"
+        );
+        assert!(page.contains(r#"value="build_key""#), "{page}");
+    })
+    .await
+    .expect("the builder answers within two minutes");
+}
+
 #[tokio::test]
 async fn an_issue_sent_twice_at_once_issues_one_key_and_the_surviving_cookie_opens_to_its_value() {
     // A double click sends the same form twice before either answers: the
@@ -11410,6 +11450,27 @@ async fn the_admin_one_key_page_sets_limits_and_denies_on_a_workspace() {
         page.contains("read as <code>boss-admin</code>.</p>"),
         "{page}"
     );
+    // Set limits is the page's primary act, the record names its label,
+    // and a grant's role is one cell that does not wrap.
+    assert!(
+        page.contains(r#"<a class="button primary" href="/web/admin/keys?key=alice-laptop&amp;op=limits">Set limits</a>"#),
+        "{page}"
+    );
+    assert!(page.contains(r#"<th scope="row">Label</th>"#), "{page}");
+    assert!(page.contains(r#"<td class="c-grant">"#), "{page}");
+    // A session key and an admin key take neither limits nor a denial.
+    for other in ["alice-web", "root-admin"] {
+        let (status, _, page) = send(
+            &rig.router,
+            get(&format!("/web/admin/keys?key={other}"), Some(&boss)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{other}: {page}");
+        assert!(
+            !page.contains("Set limits") && !page.contains("Deny on a workspace"),
+            "{other}: {page}"
+        );
+    }
     let (_, _, form) = send(
         &rig.router,
         get("/web/admin/keys?key=alice-laptop&op=limits", Some(&boss)),
