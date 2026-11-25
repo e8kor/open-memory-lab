@@ -159,10 +159,12 @@ pub const ADMIN_TABS: [(&str, &str); 7] = [
 
 /// The pages below a tab, each with the tab it sits under: a refusal on
 /// one leads back to that tab.
-const BELOW: [(&str, &str); 3] = [
+const BELOW: [(&str, &str); 4] = [
     (USER_MEMORY_PATH, USER_MEMORIES_PATH),
     (ADMIN_MEMORY_PATH, ADMIN_MEMORIES_PATH),
     ("/web/setup", START_PATH),
+    // The import hand-off and lists, reached from Workspaces (ADR-0096 d6).
+    ("/web/workspaces/import", USER_WORKSPACES_PATH),
 ];
 
 /// Which side of the console a page is on (the design system's
@@ -1081,6 +1083,18 @@ mod tests {
         assert!(page.contains(r#"<header class="top personal">"#), "{page}");
         assert!(
             page.contains(r#"<p><a href="/web/start">Back to Start</a></p>"#),
+            "{page}"
+        );
+        // The import pages sit under Workspaces, where the hand-off starts.
+        let page = refusal_page(
+            "access.not_found",
+            "no such import here",
+            None,
+            Some(&personal),
+            "/web/workspaces/import",
+        );
+        assert!(
+            page.contains(r#"<p><a href="/web/workspaces">Back to Workspaces</a></p>"#),
             "{page}"
         );
         let page = refusal_page(

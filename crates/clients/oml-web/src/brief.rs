@@ -257,11 +257,14 @@ pub(crate) async fn status_section(
             made(t.proposed_at.as_deref(), t.proposed_by.as_ref())
         );
     }
+    // A status with a live proposal is offered no second one: the server
+    // would answer `proposal.pending` (ADR-0095 d6).
     let proposable: Vec<&str> = offers
         .transitions
         .iter()
         .filter(|t| t.op == "propose")
         .map(|t| t.to.as_str())
+        .filter(|to| !place.view.pending_transitions.iter().any(|p| p.to == *to))
         .collect();
     match fields.given("propose") {
         Some(to) if proposable.contains(&to) => {

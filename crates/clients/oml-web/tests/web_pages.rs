@@ -11933,6 +11933,8 @@ async fn a_shared_workspace_proposes_its_status_after_asking_and_names_the_live_
         "{after}"
     );
     assert!(after.contains("by <code>alice-review</code>"), "{after}");
+    // While the proposal is live no second one is offered.
+    assert!(!after.contains("propose=protected"), "{after}");
     let (status, headers, _) = act(&rig, &cookie, "/web/workspace", &fields).await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     let back = location(&headers);
