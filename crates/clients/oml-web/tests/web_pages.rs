@@ -12091,6 +12091,47 @@ async fn an_admin_fix_in_the_admins_own_root_is_confirmed_by_that_person_marked_
     .expect("the pages answer within two minutes");
 }
 
+/// To do's workspace filter keeps the admin fixes of the workspace it
+/// names by name as by id: a fix in alice's root is listed under `alice`
+/// and not under `alice.proj` (ADR-0096 d5; ADR-0083 d16).
+#[tokio::test]
+async fn the_todo_filter_by_a_workspace_name_keeps_only_that_workspaces_admin_fixes() {
+    tokio::time::timeout(Duration::from_secs(120), async {
+        let rig = rig().await;
+        rig.allow("boss@example.com", "boss", true).await;
+        let (cookie, id) = alice_with_an_approved_memory(&rig).await;
+        let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+        let (status, _, fixed) = act(
+            &rig,
+            &boss,
+            "/web/admin/fixes",
+            &[
+                ("action", "fix"),
+                ("workspace", "alice"),
+                ("act", "demote"),
+                ("target", id.as_str()),
+                ("reason", "names the wrong branch"),
+            ],
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{fixed}");
+        alice_proj(&rig, &cookie).await;
+        let (status, _, here) =
+            send(&rig.router, get("/web/todo?workspace=alice", Some(&cookie))).await;
+        assert_eq!(status, StatusCode::OK, "{here}");
+        assert!(here.contains("Admin fixes to confirm · 1"), "{here}");
+        let (status, _, elsewhere) = send(
+            &rig.router,
+            get("/web/todo?workspace=alice.proj", Some(&cookie)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{elsewhere}");
+        assert!(!elsewhere.contains("Admin fixes to confirm"), "{elsewhere}");
+    })
+    .await
+    .expect("To do answers within two minutes");
+}
+
 /// The admin To do lists the admin key's open investigations, each with
 /// its reason and the reads journalled under it (AdminTodo, group 2).
 #[tokio::test]
