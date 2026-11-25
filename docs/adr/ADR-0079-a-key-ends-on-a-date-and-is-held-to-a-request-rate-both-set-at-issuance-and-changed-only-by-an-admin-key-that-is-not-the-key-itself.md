@@ -7,7 +7,7 @@ answers: how a key is given an end date and a request rate; what a request under
 
 # ADR-0079 — A key ends on a date and is held to a request rate, both set at issuance and changed only by an admin key that is not the key itself
 
-**Status:** accepted design · 2026-11-12, by the operator, as built, with its five open questions decided at their recommendations (1: a connection has no date apart from its key's; 2: a rate every server process shares is decided with ADR-0073's nodes; 3: a person sets a date on their own keys from the web console when the keys page is next changed, and changing it afterwards stays with the admin key role, built in v0.7.3 (#352); 4: an expired key stays on its account's `keys` meter; 5: when the operator path is built, a date and a rate are refused on every role that can issue an admin key, before the first such key is issued) · proposed the same day with #323
+**Status:** accepted design · 2026-11-12, by the operator, as built, with its five open questions decided at their recommendations (1: a connection has no date apart from its key's; 2: a rate every server process shares is decided with ADR-0073's nodes; 3: a person sets a date on their own keys from the web console when the keys page is next changed, and changing it afterwards stays with the admin key role, built in v0.7.3 (#352); 4: an expired key stays on its account's `keys` meter; 5: when the operator path is built, a date and a rate are refused on every role that can issue an admin key, before the first such key is issued) · proposed the same day with #323 · amended by [ADR-0096](ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md) (d1 and the operator's answer 3, 2026-11-24, decided by the operator)
 
 **Release:** v0.7.3 (#323)
 
@@ -229,3 +229,19 @@ questions at the recommendation it carried.
 | **Keep limits on admin keys and document both scenarios** | Declined by the same decision of 2026-11-12. This record's reasons: a limit its holder lifts in two calls limits nothing, and writing down that one admin key can end another would make a new power a rule without deciding it. Refusing both limits on an admin key is the smallest change that closes both. |
 | **Let a key shorten its own date or lower its own rate** | Harmless in itself, but the rule "a key never sets its own limits" is one sentence with no direction to get wrong, and an admin who wants less holds another admin key or fences the key. |
 | **Sweep expired keys into `key.revoked`** | A background writer that signs events no actor asked for, and a revocation that could not be undone when the date was a mistake. Each lookup reads the date, so nothing needs sweeping. |
+
+## Amendment of 2026-11-24: a person's own rate, and the expiry the console sends (ADR-0096)
+
+Decided by the operator on 2026-11-24 (D2, D4 of the v0.8.5 console round); recorded in [ADR-0096](ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md).
+Decided, not built.
+
+- **The rate half of the operator's answer 3 is reversed.** `POST /v2/keys` as `<user>-web` takes
+  `requests_per_minute` under d4's range, 1 to 1,000,000 (ADR-0096 d2). The bound is that range
+  alone, with no ceiling at the account's own rate, decided by the operator on 2026-11-24: the lower of the key's and the account's rate refuses first, as d4 says. d5 is
+  unchanged: after issuance the rate and the date move only by an admin key that is not the key
+  itself, and `<user>-web` stays `access.verb_ceiling` on `POST /v2/keys/{key}/limits`.
+- **The console sends a chosen date as the end of the next UTC day** (`YYYY-MM-DD` plus one day,
+  `T23:59:59Z`), where answer 3 sent the chosen day's own `23:59:59Z`, so the key works through
+  that date in every time zone (ADR-0096 d10). The key lists show the stored instant in UTC. The
+  admin console's limits form, which `<user>-admin` now posts (ADR-0096 d4), enters a date the
+  same way.

@@ -7,7 +7,7 @@ answers: why the web pages stop calling oml-app's use cases and call the public 
 
 # ADR-0070 — The web console is a client of the public HTTP API, in a crate that cannot reach the application core
 
-**Status:** accepted design · 2026-11-07, amended 2026-11-10, 2026-11-11, 2026-11-12 and 2026-11-13 (the person's Review lists what waits and judges one item, d7 (b) and d4; the picker's budget, d8: see [the console redesign](#the-console-redesign-of-2026-11-13-the-person-judges-from-a-list-and-the-picker-reads-names-only), accepted by the operator the same day); two rows await the operator's acceptance: the in-flight cap and the rate share (the measurement of 2026-11-11); the two rows on the session gate, the two on a denied session key's acts (#325), the one that keeps its export and deletion request open (#335), the three on sign-out (#327) and the two on a denied session key's pages that state the absent forms and the `whoami` boolean (#343) were accepted on 2026-11-12, the build's wording and the third row's store-call counts not having been put to the operator; one amendment of 2026-11-14 is proposed and awaits the operator's acceptance: the landing, the legal pages and the Connectors Directory pack leave this repository, and its releases ship no site archive (d12 and d4 revised: see [The landing leaves this repository](#the-landing-leaves-this-repository-2026-11-14-194)) · amended by [ADR-0082](ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) (d5, d7, 2026-11-14), [ADR-0083](ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) (d5, d7, 2026-11-14)
+**Status:** accepted design · 2026-11-07, amended 2026-11-10, 2026-11-11, 2026-11-12 and 2026-11-13 (the person's Review lists what waits and judges one item, d7 (b) and d4; the picker's budget, d8: see [the console redesign](#the-console-redesign-of-2026-11-13-the-person-judges-from-a-list-and-the-picker-reads-names-only), accepted by the operator the same day); two rows await the operator's acceptance: the in-flight cap and the rate share (the measurement of 2026-11-11); the two rows on the session gate, the two on a denied session key's acts (#325), the one that keeps its export and deletion request open (#335), the three on sign-out (#327) and the two on a denied session key's pages that state the absent forms and the `whoami` boolean (#343) were accepted on 2026-11-12, the build's wording and the third row's store-call counts not having been put to the operator; one amendment of 2026-11-14 is proposed and awaits the operator's acceptance: the landing, the legal pages and the Connectors Directory pack leave this repository, and its releases ship no site archive (d12 and d4 revised: see [The landing leaves this repository](#the-landing-leaves-this-repository-2026-11-14-194)) · amended by [ADR-0082](ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) (d5, d7, 2026-11-14), [ADR-0083](ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) (d5, d7, 2026-11-14) · amended by [ADR-0096](ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md) (d2, d5, d8, 2026-11-24, decided by the operator)
 
 **Amends:** ADR-0045 (d1: the page routes move to `oml-web` and the sign-in routes to the auth
 context; d6: a session key gains a per-session credential; d7: that credential, never the
@@ -1126,6 +1126,33 @@ Rejected alternatives:
   operator's choice of a private repository: it holds the legal drafts before they are published
   (#183) and the Connectors Directory submission with its reviewer answers, and the pages it
   serves are public once deployed whichever repository builds them.
+
+## Amendment of 2026-11-24: the key builder and the admin key acts (ADR-0096)
+
+Decided by the operator on 2026-11-24 in the v0.8.5 console round; recorded in [ADR-0096](ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md), whose
+details the coordinator drafted were decided by the operator on 2026-11-24 as written. Decided, not built.
+
+- **d2, d5: `POST /v2/keys` as `<user>-web`** takes, beside `name`, `role`, `connect_code` and
+  `expiry`, the role `submitter`, `grants[]` inside the person's root (`{workspace, role: reader |
+  submitter, covers, deny[]}`), `default_workspace`, `guardrail_scope` and `requests_per_minute`
+  (ADR-0096 d1 to d3). Without `grants` it issues today's shapes. `user`, `used_by`, `crew`,
+  `label`, `principal`, `profile` and `tenant` stay refused by name; at most 16 grants and 16
+  denials per grant (`too_many`). The server still adds the `universe`
+  reader node grant to contributor and reader keys and never to a submitter key.
+- **d2, d5: `<user>-admin`** reads one key (`GET /v2/keys/{key}`, which today reads the raw bearer value and answers the
+  session `auth.invalid`, so the route changes to resolve the session caller), sets its limits
+  (`POST /v2/keys/{key}/limits`, claiming and replaying the `Idempotency-Key` as the session's
+  other key acts do) and denies a key on any workspace
+  of the tenant (`POST /v2/keys/{key}/denials`), where "on `universe` alone" held for both session capacities;
+  `<user>-web` keeps `universe` alone. d2's "the admin capacity issues no plain key" stands
+  (ADR-0096 d4).
+- **d5, new and changed operations:** `GET /v2/imports` and `<user>-web` on `GET
+  /v2/imports/{import_id}` (ADR-0096 d6); `GET /v2/review/briefs` and `briefs` on `GET
+  /v2/todo/counts` (d7); `covers` on `GET /v2/keys` grants (d8); `profile`, `period`,
+  `usage.recalls` and the `workspaces` meter on `whoami.person` and `GET /v2/web/users` rows (d9).
+- **d8:** the builder's `GET`s make `whoami`, then one tree page, two rounds; every new `GET`
+  names its primary call and records its store calls in `web_console_reads.rs`; the Keys page's
+  five calls keep their counts.
 
 ## Consequences
 

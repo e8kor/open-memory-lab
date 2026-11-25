@@ -16,7 +16,7 @@ naming to represent writer role correctly"), who chose a full rename over consol
 **contributor** recalls and writes, a **submitter** writes without recall, a **reader** is
 unchanged; and decided the release, v0.8.4 with #498 (d8) · upgrade order decided by the
 operator on 2026-11-24: server and clients in one window, no key issued or listed until both run
-v0.8.4 (d7, d8).
+v0.8.4 (d7, d8). · amended by [ADR-0096](ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md) (d6, 2026-11-24, decided by the operator)
 
 **Amends:**
 - ADR-0010 (d1): the roles are `reader`, `contributor`, `submitter`, `reviewer`, `admin` and
@@ -306,3 +306,14 @@ person can make. The coordinator decided this reading; the operator confirms or 
   grants follow ADR-0044 d7 by design. The exemption sits in the one place the answer is computed,
   so `whoami`, each key of `GET /v2/keys`, the doctor line and the console's mark agree. Every other
   key keeps the per-node definition above.
+
+
+## Amendment of 2026-11-24: submitter keys in the console (amends d6; ADR-0096)
+
+Decided by the operator on 2026-11-24 (D3 of the v0.8.5 console round), reversing the console
+half of d6's answer of 2026-11-19; recorded in [ADR-0096](ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md). Decided, not built.
+
+- The console's issue form offers `contributor` (the default), `reader` and `submitter`, and
+  `POST /v2/keys` as `<user>-web` admits role `submitter`, with submitter grants inside the
+  person's root and no `universe` grant (ADR-0096 d1, d3). The rest of d6 stands: imports and the
+  user-root create admit contributors alone.
