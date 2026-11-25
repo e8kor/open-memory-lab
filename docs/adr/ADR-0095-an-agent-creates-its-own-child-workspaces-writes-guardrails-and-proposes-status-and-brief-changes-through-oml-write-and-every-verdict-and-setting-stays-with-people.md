@@ -428,8 +428,9 @@ ADR-0095 build.
   today, to a key with reader effective access on the workspace. Each `Transition` gains
   `proposed_at`, the instant of its `workspace.status_proposed`, served to every such reader, and
   `proposed_by: {id, name} | null`, served when the proposing key is the calling key or another
-  key of the same person, null otherwise. `proposed_by_key_id` keeps its rule, the proposing key
-  only (ADR-0025 d15), so no key learns the name of another person's key from this read.
+  key of the same person, null to every other reader (decided by the operator, 2026-11-24: ADR-0025
+  d15 is not widened). `proposed_by_key_id` keeps its rule, the proposing key only (ADR-0025 d15),
+  so no key learns the name of another person's key from this read.
 - **d6, brief proposals.** The same rule on the brief's read: each pending `BriefEdge` that
   `GET /v2/edges?kind=brief&workspace_id=` serves gains `proposed_at`, the instant of its
   `brief_edge.proposed`, and `proposed_by: {id, name} | null` under the rule above, to a key with
