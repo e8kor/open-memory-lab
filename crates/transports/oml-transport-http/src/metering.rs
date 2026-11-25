@@ -52,7 +52,7 @@ pub fn usage_json(usage: &AccountUsage) -> Value {
 
 /// The ledger's CSV header, the columns in [`Meter::ALL`]'s order.
 const CSV_HEADER: &str =
-    "day,account,user,profile,memories,text_bytes,writes,recalls,keys,connections";
+    "day,account,user,profile,memories,text_bytes,writes,recalls,keys,connections,workspaces";
 
 impl<J, S, C, I, Sc> ApiState<J, S, C, I, Sc>
 where

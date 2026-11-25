@@ -619,12 +619,12 @@ async fn a_meter_warns_at_eighty_percent_and_the_write_past_its_limit_names_quot
     assert_eq!(
         person["usage"],
         json!({"memories": 5, "text_bytes": bytes + "Four.".len() + "Five.".len(),
-               "writes": 5, "keys": 1, "connections": 0})
+               "writes": 5, "keys": 1, "connections": 0, "workspaces": 0})
     );
     assert_eq!(
         person["quotas"],
         json!({"memories": 5, "text_bytes": null, "writes_per_month": null, "keys": 5,
-               "connections": 5, "requests_per_minute": 120})
+               "connections": 5, "requests_per_minute": 120, "workspaces": null})
     );
     drop_db(&rig.db).await;
 }
@@ -1066,10 +1066,13 @@ async fn the_rollup_appends_one_ledger_row_per_account_per_closed_day_once_and_e
     let mut lines = csv.lines();
     assert_eq!(
         lines.next(),
-        Some("day,account,user,profile,memories,text_bytes,writes,recalls,keys,connections")
+        Some(
+            "day,account,user,profile,memories,text_bytes,writes,recalls,keys,connections,workspaces"
+        )
     );
     assert!(
-        lines.any(|l| l.starts_with(&format!("{day},{account},")) && l.ends_with(",2,24,2,1,1,0")),
+        lines
+            .any(|l| l.starts_with(&format!("{day},{account},")) && l.ends_with(",2,24,2,1,1,0,0")),
         "{csv}"
     );
     // A malformed period is refused by name.

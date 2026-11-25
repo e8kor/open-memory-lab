@@ -132,26 +132,27 @@ use crate::types::{
 use crate::types::{
     AppError, Approval, AssignedNames, AuthorizationRecord, AuthorizeOutcome, AuthorizePage,
     AuthorizeParams, Bearer, BootstrapPerson, BootstrapRequest, BootstrapResult, Brief,
-    BriefEdgePage, BriefEdgeProposalOutcome, BriefEdgeRatification, BriefEdgeRecord, BriefEdgeView,
-    ClaimEdgeFilter, ClaimEdgePage, ClaimEdgePosition, ClaimEdgeProposal, ClaimEdgeProposalOutcome,
-    ClaimEdgeQuery, ClaimEdgeRatification, ClaimEdgeRecord, ClaimEdgeSelection,
-    ClientAuthentication, ClientDescription, ClientKind, CodeEntryOutcome, ConfirmAction,
-    ConfirmOutcome, ConfirmationGrant, ConfirmationView, ConnectCode, ConnectCodeIssued,
-    ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord, CreatedWorkspace,
-    Credential, CrewCreateRequest, CrewPage, CrewRecord, CrewUpdate, DEFAULT_HIT_KINDS,
-    DenialRecord, EdgeRatification, ExchangeForm, FormatFields, GrantRecord, GuardrailFields,
-    GuardrailRequest, GuardrailSet, GuardrailVerdict, HIT_KINDS, HitPassage, INSTRUCTION_HIT_KINDS,
-    IssueKeyRequest, IssuedKey, IssuedTokens, KeyAccess, KeyDetail, KeyRecord, KindFields,
-    ListRequest, ListingFilter, ListingPosition, ListingScope, LiveConnectCode, MemoryPage,
-    MemoryRecord, MintedToken, NamedRef, NamingRefusal, OAuthClientRecord, OnSimilar,
-    OwnHeldGuardrail, PROVIDER_TENANT, ProposeBriefEdge, ProposeClaimEdge, RecallHit,
-    RecallRequest, RecallResult, RefreshFacts, RefreshForm, RegisteredClient, RerankOutcome,
-    SIMILAR_KINDS, ServedGuardrail, ServedMemory, SimilarItem, SkillHit, SourceCheck,
-    SourceCheckReceipt, SourceCheckRequest, StateClause, SubmitOutcome, SubmitReceipt,
-    SubmitRequest, SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage,
-    TailedEvent, TenantRow, TokenPair, TransitionRecord, TransitionState, TransitionView, TreeNode,
-    TreePage, UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, WebEntry, Whoami,
-    WithdrawReceipt, WithdrawRequest, WorkspaceInfo, WorkspaceRecord, WorkspaceStatusView,
+    BriefEdgeListed, BriefEdgePage, BriefEdgeProposalOutcome, BriefEdgeRatification,
+    BriefEdgeRecord, BriefEdgeView, ClaimEdgeFilter, ClaimEdgePage, ClaimEdgePosition,
+    ClaimEdgeProposal, ClaimEdgeProposalOutcome, ClaimEdgeQuery, ClaimEdgeRatification,
+    ClaimEdgeRecord, ClaimEdgeSelection, ClientAuthentication, ClientDescription, ClientKind,
+    CodeEntryOutcome, ConfirmAction, ConfirmOutcome, ConfirmationGrant, ConfirmationView,
+    ConnectCode, ConnectCodeIssued, ConnectCodeRecord, ConnectGrant, ConnectOutcome,
+    ConnectionRecord, CreatedWorkspace, Credential, CrewCreateRequest, CrewPage, CrewRecord,
+    CrewUpdate, DEFAULT_HIT_KINDS, DenialRecord, EdgeRatification, ExchangeForm, FormatFields,
+    GrantRecord, GuardrailFields, GuardrailRequest, GuardrailSet, GuardrailVerdict, HIT_KINDS,
+    HitPassage, INSTRUCTION_HIT_KINDS, IssueKeyRequest, IssuedKey, IssuedTokens, KeyAccess,
+    KeyDetail, KeyRecord, KindFields, ListRequest, ListingFilter, ListingPosition, ListingScope,
+    LiveConnectCode, MemoryPage, MemoryRecord, MintedToken, NamedRef, NamingRefusal,
+    OAuthClientRecord, OnSimilar, OwnHeldGuardrail, PROVIDER_TENANT, ProposeBriefEdge,
+    ProposeClaimEdge, ProposedBy, RecallHit, RecallRequest, RecallResult, RefreshFacts,
+    RefreshForm, RegisteredClient, RerankOutcome, SIMILAR_KINDS, ServedGuardrail, ServedMemory,
+    SimilarItem, SkillHit, SourceCheck, SourceCheckReceipt, SourceCheckRequest, StateClause,
+    SubmitOutcome, SubmitReceipt, SubmitRequest, SubmitVerb, SupersedeOutcome, SupersedeReceipt,
+    SupersedeRequest, TailPage, TailedEvent, TenantRow, TokenPair, TransitionRecord,
+    TransitionState, TransitionView, TreeNode, TreePage, UnnamedRows, Verdict, VerdictOutcome,
+    VerdictRequest, VersionRef, WebEntry, Whoami, WithdrawReceipt, WithdrawRequest, WorkspaceInfo,
+    WorkspaceRecord, WorkspaceStatusView,
 };
 use crate::types::{CatalogMark, KindCount};
 use crate::types::{Preview, PreviewFacts, PreviewRequest, SkillShadow};
@@ -679,11 +680,18 @@ fn require_role(key: &KeyRecord, role: Role, verb: &'static str) -> Result<(), A
 /// roles, and `remember` for a person's session reviewer key where it
 /// holds reviewer and reader, the grants under which its submit is held,
 /// outside its person's own root (ADR-0082 d10, d11, and d10's note of
-/// 2026-11-19), so the verbs it lists are the verbs it may use.
+/// 2026-11-19), so the verbs it lists are the verbs it may use. Two of
+/// `oml_write`'s modes are listed where their checks admit the key
+/// (ADR-0095 d8): `create_workspace` for a contributor key naming a user,
+/// on a node inside that user's root where it holds submitter (d3), and
+/// `propose_brief` for a contributor key holding submitter or a reviewer
+/// key holding reviewer (d6). `in_key_root` is whether the node lies in the
+/// key's own user root.
 fn listed_verbs(
     key: &KeyRecord,
     effective: &BTreeSet<Role>,
     in_own_root: bool,
+    in_key_root: bool,
 ) -> Vec<&'static str> {
     let mut verbs = effective_verbs(effective, key.used_by);
     if session_reviewer_starts_claims(key)
@@ -693,6 +701,15 @@ fn listed_verbs(
         && !verbs.contains(&"remember")
     {
         verbs.push("remember");
+    }
+    let submitter = effective.contains(&Role::Submitter);
+    if key.role == Role::Contributor && key.user.is_some() && in_key_root && submitter {
+        verbs.push("create_workspace");
+    }
+    if (key.role == Role::Contributor && submitter)
+        || (key.role == Role::Reviewer && effective.contains(&Role::Reviewer))
+    {
+        verbs.push("propose_brief");
     }
     verbs
 }
@@ -1432,17 +1449,48 @@ fn claim_edge_request_digest(req: &ProposeClaimEdge) -> Result<String, AppError>
 /// The request digest of a brief-edge proposal: the `/v2/edges` family's,
 /// `kind: brief`, the workspace as sent (http-api.md idempotency).
 fn brief_edge_request_digest(req: &ProposeBriefEdge) -> Result<String, AppError> {
+    let mut body = json!({
+        "kind": "brief",
+        "from_artifact_id": req.artifact_id.to_string(),
+        "to_workspace_id": req.workspace.to_string(),
+    });
+    if let (Some(reason), Some(obj)) = (&req.reason, body.as_object_mut()) {
+        obj.insert("reason".to_owned(), json!(reason));
+    }
     let doc = json!({
         "method": "POST",
         "route": "/v2/edges",
         "path_params": {},
-        "body": {
-            "kind": "brief",
-            "from_artifact_id": req.artifact_id.to_string(),
-            "to_workspace_id": req.workspace.to_string(),
-        },
+        "body": body,
     });
     Ok(sha256_digest_string(&canonical_bytes(&doc)?))
+}
+
+/// A structure act's `reason` (ADR-0095 d1): scanned as a verdict's reason
+/// is, a veto refusing the act before anything is signed, then journalled
+/// in `payload` as `reason`. An act sent with none journals none, so the
+/// payloads of acts that never carried one are unchanged.
+fn with_reason<J, S, C, I, Sc>(
+    app: &App<J, S, C, I, Sc>,
+    tenant_id: Uuid,
+    payload: &mut Value,
+    reason: Option<&str>,
+) -> Result<(), AppError>
+where
+    J: JournalStore,
+    S: Signer,
+    C: Clock,
+    I: IdGen,
+    Sc: Scanner,
+{
+    let Some(reason) = reason else {
+        return Ok(());
+    };
+    app.scan_veto_only(tenant_id, "reason", reason)?;
+    if let Some(obj) = payload.as_object_mut() {
+        obj.insert("reason".to_owned(), json!(reason));
+    }
+    Ok(())
 }
 
 /// The idempotency record a commit writes beside its event, storing
@@ -4008,8 +4056,46 @@ where
         parent: Option<Reference>,
         crew: Option<Reference>,
     ) -> Result<CreatedWorkspace, AppError> {
+        self.create_workspace_with_reason(bearer, name, parent, crew, None)
+            .await
+    }
+
+    /// [`Self::create_workspace`] with the caller's `reason`, scanned as a
+    /// verdict's reason is and journalled with `workspace.create` (ADR-0095
+    /// d1).
+    pub async fn create_workspace_with_reason(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        name: &Name,
+        parent: Option<Reference>,
+        crew: Option<Reference>,
+        reason: Option<&str>,
+    ) -> Result<CreatedWorkspace, AppError> {
         let caller = self.authenticate_bearer(bearer.into()).await?;
-        self.create_workspace_as(&caller, name, parent, crew, false)
+        self.create_workspace_as(&caller, name, parent, crew, false, reason)
+            .await
+    }
+
+    /// `oml_write`'s `create_workspace` mode (ADR-0095 d3): the create HTTP
+    /// admits a contributor user key, and nothing else. Every other key, an
+    /// admin key, a tenant key that names no user, a submitter, reviewer or
+    /// reader key, is refused before any lookup as `access.verb_ceiling`,
+    /// `create_is_own_root_only`; the admitted key then creates exactly as
+    /// [`Self::create_workspace`] does, crew refused as there.
+    pub async fn create_own_workspace(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        name: &Name,
+        parent: Option<Reference>,
+        reason: Option<&str>,
+    ) -> Result<CreatedWorkspace, AppError> {
+        let caller = self.authenticate_bearer(bearer.into()).await?;
+        if caller.key.role != Role::Contributor || caller.key.user.is_none() {
+            return Err(AppError::CreateIsOwnRootOnly {
+                role: caller.key.role,
+            });
+        }
+        self.create_workspace_as(&caller, name, parent, None, false, reason)
             .await
     }
 
@@ -4025,6 +4111,7 @@ where
         parent: Option<Reference>,
         crew: Option<Reference>,
         in_progress: bool,
+        reason: Option<&str>,
     ) -> Result<CreatedWorkspace, AppError> {
         let key = &caller.key;
         // A user key with the contributor role creates inside its own root,
@@ -4124,13 +4211,20 @@ where
             user_root: false,
             namespace,
         };
+        // A node below a user root counts on that account's `workspaces`
+        // meter, whoever creates it, and the commit holds the account's
+        // ceiling: past its limit the create is `limit.quota` and nothing is
+        // journalled (ADR-0095 d4; ADR-0071 d3).
+        let ceiling = self.ceiling_for(key.tenant_id, namespace).await?;
+        let mut payload = Self::workspace_create_payload(&workspace);
+        with_reason(self, key.tenant_id, &mut payload, reason)?;
         let event = self.seal(
             prev.as_ref(),
             key.tenant_id,
             event_types::WORKSPACE_CREATE,
             &key.principal,
             Some(key.key_id),
-            Self::workspace_create_payload(&workspace),
+            payload,
         )?;
         let mut links = Vec::with_capacity(2);
         let mark = in_progress && in_progress_root_in(&ancestors).is_none();
@@ -4161,7 +4255,12 @@ where
                 },
             ));
         }
-        self.commit_chain(links).await?;
+        let mut requests: Vec<CommitRequest> = links
+            .into_iter()
+            .map(|(event, fold)| commit_request(event, fold, None))
+            .collect();
+        requests[0].ceiling = ceiling;
+        self.commit_requests(requests).await?;
         let mut workspace = workspace;
         workspace.in_progress = mark;
         let ancestry: Vec<WorkspaceRecord> = std::iter::once(workspace.clone())
@@ -4270,7 +4369,8 @@ where
             } else {
                 let in_own_root = session_reviewer_starts_claims(&caller.key)
                     && self.in_own_root(&caller.key, node).await?;
-                listed_verbs(&caller.key, &effective, in_own_root)
+                let in_key_root = caller.key.user.is_some_and(|root| ids.contains(&root));
+                listed_verbs(&caller.key, &effective, in_own_root, in_key_root)
             },
             permission_epoch: caller.permission_epoch,
         })
@@ -5226,26 +5326,61 @@ where
         key: &KeyRecord,
         node: &WorkspaceRecord,
     ) -> Result<Vec<TransitionView>, AppError> {
-        Ok(self
+        let mut live = Vec::new();
+        for t in self
             .journal
             .pending_transitions(key.tenant_id, node.workspace_id)
             .await?
             .into_iter()
             .filter(|t| t.from == node.status)
-            .map(|t| {
-                // The own key set is the calling key alone until rotation
-                // is built (roles-and-keys.md#own), as on the tail.
-                let own = t.proposer_key_id == key.key_id;
-                TransitionView {
-                    transition_id: t.transition_id,
-                    workspace_id: t.workspace_id,
-                    from: t.from,
-                    to: t.to,
-                    state: t.state,
-                    proposed_by_key_id: own.then_some(t.proposer_key_id),
-                }
-            })
-            .collect())
+        {
+            // The own key set is the calling key alone until rotation
+            // is built (roles-and-keys.md#own), as on the tail.
+            let own = t.proposer_key_id == key.key_id;
+            live.push(TransitionView {
+                transition_id: t.transition_id,
+                workspace_id: t.workspace_id,
+                from: t.from,
+                to: t.to,
+                state: t.state,
+                proposed_by_key_id: own.then_some(t.proposer_key_id),
+                proposed_by: self.proposed_by(key, t.proposer_key_id).await?,
+                proposed_at: t.proposed_at,
+            });
+        }
+        Ok(live)
+    }
+
+    /// The proposing key as a reader is told it (ADR-0095, amendment of
+    /// 2026-11-24): its id and name when it is the reader's own key or
+    /// another key of the reader's person, read as R2 reads one person
+    /// ([`Self::same_person`]); `None` to every other reader, an admin or a
+    /// tenant key that acts for no one included. ADR-0025 d15 is not
+    /// widened: `proposed_by_key_id` keeps its own-key rule.
+    async fn proposed_by(
+        &self,
+        reader: &KeyRecord,
+        proposer_key_id: Uuid,
+    ) -> Result<Option<ProposedBy>, AppError> {
+        if proposer_key_id == reader.key_id {
+            return Ok(Some(ProposedBy {
+                key_id: reader.key_id,
+                name: reader.name.clone(),
+            }));
+        }
+        let Some(person) = self.person_of(reader).await? else {
+            return Ok(None);
+        };
+        let Some(proposer) = self.journal.key(reader.tenant_id, proposer_key_id).await? else {
+            return Ok(None);
+        };
+        Ok(self
+            .acts_for(&proposer, &person)
+            .await?
+            .then(|| ProposedBy {
+                key_id: proposer.key_id,
+                name: proposer.name.clone(),
+            }))
     }
 
     /// The brief of `workspace` as `caller` reads it: its ratified brief
@@ -5368,6 +5503,20 @@ where
         workspace: Reference,
         to: WorkspaceStatus,
     ) -> Result<TransitionRecord, AppError> {
+        self.propose_transition_with_reason(bearer, workspace, to, None)
+            .await
+    }
+
+    /// [`Self::propose_transition`] with the proposer's `reason`, scanned
+    /// as a verdict's reason is and journalled with
+    /// `workspace.status_proposed` (ADR-0095 d1).
+    pub async fn propose_transition_with_reason(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        workspace: Reference,
+        to: WorkspaceStatus,
+        reason: Option<&str>,
+    ) -> Result<TransitionRecord, AppError> {
         const VERB: &str = "propose_transition";
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
@@ -5376,8 +5525,41 @@ where
         }
         let workspace_id = self.resolve(key, NamedKind::Workspace, &workspace).await?;
         let node = self.propose_admitted(&caller, workspace_id, to).await?;
+        // One live proposal per workspace and target status, whoever made
+        // it: a second is `proposal.pending` naming the live one. Read before
+        // the head, so a proposal committed in between moves the head and
+        // this commit conflicts and runs again (ADR-0095 d5; #515).
+        if let Some(live) = self
+            .journal
+            .pending_transitions(key.tenant_id, workspace_id)
+            .await?
+            .into_iter()
+            .find(|t| t.from == node.status && t.to == to)
+        {
+            return Err(AppError::TransitionPending {
+                transition_id: live.transition_id,
+            });
+        }
+        let transition_id = self.ids.new_id();
+        let prev = self.head_event(key.tenant_id).await?;
+        let mut payload = json!({
+            "workspace_id": workspace_id.to_string(),
+            "from": node.status.as_str(),
+            "to": to.as_str(),
+            "transition_id": transition_id.to_string(),
+            "proposed_by_key_id": key.key_id.to_string(),
+        });
+        with_reason(self, key.tenant_id, &mut payload, reason)?;
+        let event = self.seal(
+            prev.as_ref(),
+            key.tenant_id,
+            event_types::WORKSPACE_STATUS_PROPOSED,
+            &key.principal,
+            Some(key.key_id),
+            payload,
+        )?;
         let proposal = TransitionRecord {
-            transition_id: self.ids.new_id(),
+            transition_id,
             tenant_id: key.tenant_id,
             workspace_id,
             from: node.status,
@@ -5386,22 +5568,8 @@ where
             proposer_key_id: key.key_id,
             proposer_principal: key.principal.clone(),
             ratifier_key_id: None,
+            proposed_at: event.envelope.at.clone(),
         };
-        let prev = self.head_event(key.tenant_id).await?;
-        let event = self.seal(
-            prev.as_ref(),
-            key.tenant_id,
-            event_types::WORKSPACE_STATUS_PROPOSED,
-            &key.principal,
-            Some(key.key_id),
-            json!({
-                "workspace_id": workspace_id.to_string(),
-                "from": proposal.from.as_str(),
-                "to": proposal.to.as_str(),
-                "transition_id": proposal.transition_id.to_string(),
-                "proposed_by_key_id": key.key_id.to_string(),
-            }),
-        )?;
         self.commit(
             event,
             MetadataFold::TransitionProposed(proposal.clone()),
@@ -10451,11 +10619,9 @@ where
         {
             return Err(AppError::VocabularyTarget(target.kind));
         }
-        // A guardrail is superseded on the HTTP API only (proposed ADR-0037
-        // d10).
-        if req.refuse_vocabulary_target && target.kind == MemoryKind::Guardrail {
-            return Err(AppError::GuardrailTarget);
-        }
+        // A guardrail is superseded over `oml_write` too, with its
+        // `guardrail` object, and only into kind guardrail (ADR-0095 d2;
+        // `successor_kind`).
         // Nor a document or a test case, which are written on the HTTP API
         // with their objects until their serving lands (#405, #419): a
         // successor of one takes its kind. A skill is superseded over
@@ -10958,23 +11124,34 @@ where
 
     /// Propose that the promoted claim `artifact_id` join `workspace`'s
     /// brief: journalled `brief_edge.proposed` and stored pending (ADR-0046
-    /// d7, d8). The refusal order: the verb ceiling, the idempotency record,
-    /// the workspace resolved and reviewer effective access on it
-    /// (`access.not_found` outside read access, `access.grant_refused`
-    /// within it), the claim present and readable (`access.not_found`
-    /// otherwise), then the claim promoted and its claim's served tip
-    /// (`request.validation` naming `from_artifact_id`). A `used_by: service`
-    /// key may propose; only ratification is review-class.
+    /// d7, d8). The refusal order: the verb ceiling, a key of role
+    /// contributor or reviewer (ADR-0095 d6), the idempotency record, the
+    /// workspace resolved and submitter effective access on it for a
+    /// contributor key, reviewer for a reviewer key (`access.not_found`
+    /// outside read access, `access.grant_refused` within it), the claim
+    /// present and readable (`access.not_found` otherwise), the claim
+    /// promoted and its claim's served tip (`request.validation` naming
+    /// `from_artifact_id`), then the claim neither a live proposal nor a
+    /// ratified member of the same brief (`proposal.pending` naming the
+    /// edge; ADR-0095 d6, #515). A `used_by: service` key may propose; only
+    /// ratification is review-class.
     pub async fn propose_brief_edge(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         req: &ProposeBriefEdge,
         idempotency_key: Option<&str>,
     ) -> Result<BriefEdgeProposalOutcome, AppError> {
         const VERB: &str = "brief_edge.propose";
-        let caller = self.authenticate(api_key).await?;
+        let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
-        require_admissible(key, Role::Reviewer, VERB)?;
+        // The proposer floor is a contributor or a reviewer key: every
+        // member is already approved, and its place is approved again by a
+        // reviewer who did not propose it (ADR-0095 d6).
+        let needed = match key.role {
+            Role::Contributor => Role::Submitter,
+            Role::Reviewer => Role::Reviewer,
+            role => return Err(AppError::VerbCeiling { role, verb: VERB }),
+        };
         let request_digest = brief_edge_request_digest(req)?;
         let scope = idempotency_key.map(|idem_key| IdempotencyScope {
             tenant_id: key.tenant_id,
@@ -10994,7 +11171,7 @@ where
         let workspace_id = self
             .resolve(key, NamedKind::Workspace, &req.workspace)
             .await?;
-        self.require_access(&caller, workspace_id, Role::Reviewer, VERB)
+        self.require_access(&caller, workspace_id, needed, VERB)
             .await?;
         let memory = self
             .journal
@@ -11013,19 +11190,37 @@ where
                 artifact_id: memory.memory_id,
             });
         }
+        // One proposal per claim and brief: a claim already proposed, or
+        // already a member, is `proposal.pending` naming that edge. Read
+        // after the head, as every check above, so an edge committed in
+        // between moves the head and this commit conflicts and runs again
+        // (ADR-0095 d6; #515).
+        if let Some(existing) = self
+            .journal
+            .brief_edges(key.tenant_id, workspace_id)
+            .await?
+            .into_iter()
+            .find(|e| e.artifact_id == memory.memory_id)
+        {
+            return Err(AppError::BriefEdgePending {
+                edge_id: existing.edge_id,
+            });
+        }
         let edge_id = self.ids.new_id();
+        let mut payload = json!({
+            "edge_id": edge_id.to_string(),
+            "artifact_id": memory.memory_id.to_string(),
+            "workspace_id": workspace_id.to_string(),
+            "proposer_key_id": key.key_id.to_string(),
+        });
+        with_reason(self, key.tenant_id, &mut payload, req.reason.as_deref())?;
         let event = self.seal(
             prev.as_ref(),
             key.tenant_id,
             event_types::BRIEF_EDGE_PROPOSED,
             &key.principal,
             Some(key.key_id),
-            json!({
-                "edge_id": edge_id.to_string(),
-                "artifact_id": memory.memory_id.to_string(),
-                "workspace_id": workspace_id.to_string(),
-                "proposer_key_id": key.key_id.to_string(),
-            }),
+            payload,
         )?;
         let edge = BriefEdgeRecord {
             edge_id,
@@ -11219,13 +11414,13 @@ where
     /// claim-edge listing's, bound to the key and the workspace.
     pub async fn brief_edges(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         workspace: Reference,
         cursor: Option<&str>,
         limit: usize,
     ) -> Result<BriefEdgePage, AppError> {
         const VERB: &str = "brief_edge.list";
-        let caller = self.authenticate(api_key).await?;
+        let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         require_admissible(key, Role::Reader, VERB)?;
         let workspace_id = self.resolve(key, NamedKind::Workspace, &workspace).await?;
@@ -11284,10 +11479,23 @@ where
             }
             .encode()
         });
-        Ok(BriefEdgePage {
-            items: served.iter().map(BriefEdgeView::from).collect(),
-            next_cursor,
-        })
+        // A pending edge serves when it was proposed and, to a key of the
+        // proposer's person, which key proposed it (ADR-0095 d6 as amended
+        // 2026-11-24).
+        let mut items = Vec::with_capacity(served.len());
+        for edge in &served {
+            let pending = edge.state == EdgeState::Pending;
+            items.push(BriefEdgeListed {
+                edge: BriefEdgeView::from(edge),
+                proposed_at: pending.then(|| edge.created_at.clone()),
+                proposed_by: if pending {
+                    self.proposed_by(key, edge.proposer_key_id).await?
+                } else {
+                    None
+                },
+            });
+        }
+        Ok(BriefEdgePage { items, next_cursor })
     }
 
     /// Ratify the pending claim edge `edge_id`: journalled `review.ratify`

@@ -2561,6 +2561,7 @@ async fn workspace_info_names_the_verbs_this_keys_grants_confer() {
                 "learn",
                 "attach",
                 "supersede",
+                "propose_brief",
             ],
         ),
         (&reader, vec!["recall", "read", "graph_read", "events_tail"]),
@@ -2574,6 +2575,7 @@ async fn workspace_info_names_the_verbs_this_keys_grants_confer() {
                 "propose",
                 "review",
                 "supersede",
+                "propose_brief",
             ],
         ),
         // A service key is refused review whatever its grants (ADR-0025 d1).
@@ -2586,6 +2588,7 @@ async fn workspace_info_names_the_verbs_this_keys_grants_confer() {
                 "events_tail",
                 "propose",
                 "supersede",
+                "propose_brief",
             ],
         ),
     ] {
@@ -14777,14 +14780,14 @@ async fn a_page_of_brief_edges_lists_pending_and_ratified_newest_first_to_a_read
         .await
         .expect("a page");
     assert_eq!(page.items.len(), 1);
-    assert_eq!(page.items[0].edge_id, second);
+    assert_eq!(page.items[0].edge.edge_id, second);
     let next = r
         .app
         .brief_edges(&r.rita.value, r.crew.into(), page.next_cursor.as_deref(), 1)
         .await
         .expect("the next page");
-    assert_eq!(next.items[0].edge_id, first);
-    assert_eq!(next.items[0].state, "ratified");
+    assert_eq!(next.items[0].edge.edge_id, first);
+    assert_eq!(next.items[0].edge.state, "ratified");
     assert!(next.next_cursor.is_none());
 }
 

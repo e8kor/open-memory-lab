@@ -457,6 +457,8 @@ async fn a_ratification_by_a_persons_key_costs_one_request_of_its_rate() {
             proposer_key_id: w.admin_key_id,
             proposer_principal: "acme-admin".to_owned(),
             ratifier_key_id: None,
+            proposed_at: oml_app::domain::EventTime::parse("2026-11-01T00:00:00.000000Z")
+                .expect("a time"),
         })
         .expect("a pending proposal");
     let (status, _, ratified) = send(

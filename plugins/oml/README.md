@@ -133,7 +133,11 @@ On that one key the agent:
    and `state`, after which every key that reads the workspace recalls them;
 6. revises or retires a memory with `oml_write`, `replaces` and the `expected_version` it read,
    which is held and approved like any write while recall keeps serving the version it
-   replaces.
+   replaces;
+7. creates a child workspace inside the person's own root with `oml_write` and
+   `create_workspace`, writes a guardrail with `kind: guardrail` and its `guardrail` object,
+   which a person approves, and proposes a status move with `propose_status` or a brief
+   member with `propose_brief`, which a different identity ratifies.
 
 The arguments choose the mode, and an argument outside it is refused with
 `request.validation` naming it. Recall takes `max_tokens` to bound its answer: the steering
@@ -207,6 +211,7 @@ two read tools to `permissions.allow` in the settings:
 
 The broader rule, `mcp__plugin_oml_oml`, allows every tool of the plugin, the write too, and
 costs the user the sight of it: Claude then calls `oml_write`, which can propose retiring a claim,
+create a child workspace in the person's root or propose a status or brief change,
 without showing the call, so whatever the session
 chooses to record leaves for the server unseen. What it chooses is shaped by the stored text the
 hook adds at session start, which other writing keys in the workspace can influence. Every write is

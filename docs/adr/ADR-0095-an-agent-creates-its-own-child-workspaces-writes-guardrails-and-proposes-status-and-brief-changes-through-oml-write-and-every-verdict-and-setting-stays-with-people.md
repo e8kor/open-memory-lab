@@ -117,7 +117,7 @@ person-only mode); ADR-0082 (the console builder, and B2's guardrail name as cla
 ADR-0091 and ADR-0093 (workspace, reviewer, contributor and submitter); ADR-0083 d13 as amended
 2026-11-24 (withdraw as a mode, which set the pattern for this record).
 
-Decided, not built.
+Built in v0.8.5; the build notes at the end record the readings the build took.
 
 ## Decision
 
@@ -443,3 +443,37 @@ ADR-0095 build.
 - **Budget.** Both fields come from the row the read already returns; the build confirms that
   neither read gains a store call and records any change in `web_console_reads.rs`.
 
+## Build notes (2026-11-25)
+
+Readings the v0.8.5 build took where the record is silent, for the operator to confirm or amend:
+
+- **`reason` rides the HTTP bodies.** d1 journals and scans a mode's `reason`, and each mode rides
+  one HTTP operation, so `POST /v2/workspaces`, `POST /v2/workspaces/{w}/transitions` and
+  `POST /v2/edges` with `kind: brief` take an optional `reason`. It is scanned as a verdict's
+  reason is and journalled in the event's payload only when sent, so no earlier payload changes.
+  A `reason` on a claim edge is refused naming `/reason`.
+- **Which mode field is "the second".** Two mode fields are refused naming the later one in the
+  order `withdraw`, `create_workspace`, `propose_status`, `propose_brief`, `replaces`, which keeps
+  v0.8.4's refusal of `replaces` beside `withdraw`.
+- **A create's parent.** Omitted, the parent is the key's default workspace (d1); a key with no
+  default creates under its person's root, as the route does with no parent.
+- **Whose ceiling a create carries.** Every create below a user root carries that account's
+  ceiling, an admin's create there included, since the meter counts the rows whoever made them
+  (d4). A shared node charges no account.
+- **`create_workspace` in `my_effective_verbs`** is listed by the access d3 checks (a contributor
+  key naming a user, inside that root, with submitter), as `remember` is, and not withdrawn on a
+  frozen node, which refuses the create itself as `workspace.frozen`.
+- **One live proposal.** A status proposal counts the pending rows whose `from` is the node's
+  status now, so a proposal a ratification made stale blocks nothing. A brief proposal counts an
+  edge of the same version, pending or ratified; a later version of the claim is a different
+  member.
+- **Who is "the same person"** for `proposed_by` is the rule R2 and `same_user` read
+  (`same_person`): a key's user root, the person a tenant key is linked to, or its console
+  session. A live proposal by another key costs the read one key row and one root row; a read with
+  none costs nothing more. `proposed_at` and `proposed_by` are served on pending brief edges only.
+- **The meter's surfaces.** The ledger's JSON and CSV gain a `workspaces` column, whoami's and the
+  users listing's counts gain `workspaces`, and the console's usage card shows it when served; the
+  admin users table keeps its five columns.
+- **A guardrail successor without `kind`.** With `replaces` and no `kind` the successor takes its
+  target's kind, so `oml_write` forwards a `guardrail` object and the ring refuses it on any target
+  that is not a guardrail.

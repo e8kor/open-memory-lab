@@ -995,6 +995,9 @@ pub struct TransitionRecord {
     pub proposer_principal: String,
     /// `None` while pending; the ratifying key once ratified.
     pub ratifier_key_id: Option<Uuid>,
+    /// The instant of its `workspace.status_proposed` (ADR-0095, amendment
+    /// of 2026-11-24).
+    pub proposed_at: EventTime,
 }
 
 /// A workspace's status read (http-api.md workspaces, `GET
@@ -1028,6 +1031,21 @@ pub struct TransitionView {
     /// The proposing key when it is in the reader's own key set; `None`
     /// to every other reader, an admin key included.
     pub proposed_by_key_id: Option<Uuid>,
+    /// The instant of its `workspace.status_proposed`, to every reader
+    /// (ADR-0095 d5 as amended 2026-11-24).
+    pub proposed_at: EventTime,
+    /// The proposing key's id and name when it is the reader's key or
+    /// another key of the reader's person; `None` to every other reader
+    /// (ADR-0095 d5 as amended 2026-11-24).
+    pub proposed_by: Option<ProposedBy>,
+}
+
+/// Who made a live proposal, as a reader of the same person is told it
+/// (ADR-0095, amendment of 2026-11-24): the proposing key and its name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProposedBy {
+    pub key_id: Uuid,
+    pub name: Option<Name>,
 }
 
 /// A crew record: named, recorded and not operated — OML never contacts the
@@ -3230,6 +3248,8 @@ pub struct ProposeBriefEdge {
     pub artifact_id: Uuid,
     /// The workspace by id or name, as sent.
     pub workspace: Reference,
+    /// The proposer's reason, scanned and journalled (ADR-0095 d1).
+    pub reason: Option<String>,
 }
 
 /// A brief edge as openapi.yaml's `Edge` serves it with `kind: brief`, and
@@ -3285,8 +3305,19 @@ pub enum EdgeRatification {
 /// One page of a workspace's brief edges, pending and ratified, newest first.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BriefEdgePage {
-    pub items: Vec<BriefEdgeView>,
+    pub items: Vec<BriefEdgeListed>,
     pub next_cursor: Option<String>,
+}
+
+/// One brief edge as `GET /v2/edges?kind=brief` lists it: the edge, and for
+/// a pending one when it was proposed and, to a key of the proposer's
+/// person, by which key (ADR-0095 d6 as amended 2026-11-24).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BriefEdgeListed {
+    pub edge: BriefEdgeView,
+    /// The instant of its `brief_edge.proposed`; `None` once ratified.
+    pub proposed_at: Option<EventTime>,
+    pub proposed_by: Option<ProposedBy>,
 }
 
 /// A workspace's brief as the workspace read and the session-start hook
@@ -3433,8 +3464,8 @@ pub struct SignupPolicy {
     pub quotas: oml_domain::signup::Quotas,
 }
 
-/// One account's six meters (ADR-0071 d2): the four stocks now and the
-/// two flows of one UTC month.
+/// One account's seven meters (ADR-0071 d2; ADR-0095 d4): the five stocks
+/// now and the two flows of one UTC month.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct UserUsage {
     /// Live chains the account started.
@@ -3449,6 +3480,9 @@ pub struct UserUsage {
     pub keys: u64,
     /// Open connections of those keys.
     pub connections: u64,
+    /// Live workspaces under the account's root, the root excluded
+    /// (ADR-0095 d4).
+    pub workspaces: u64,
 }
 
 impl UserUsage {
@@ -3463,6 +3497,7 @@ impl UserUsage {
             Quota::Keys => self.keys,
             Quota::Connections => self.connections,
             Quota::RequestsPerMinute => 0,
+            Quota::Workspaces => self.workspaces,
         }
     }
 
@@ -3476,6 +3511,7 @@ impl UserUsage {
             Meter::Recalls => self.recalls,
             Meter::Keys => self.keys,
             Meter::Connections => self.connections,
+            Meter::Workspaces => self.workspaces,
         }
     }
 }
@@ -4123,6 +4159,19 @@ pub enum AppError {
     /// ADR-0084 d6).
     #[error("the import target is not an in-progress development workspace (ADR-0084 d6)")]
     ImportTargetNotInProgress { workspace_id: Uuid },
+    /// `oml_write`'s `create_workspace` from a key that is not a contributor
+    /// key naming a user: refused before any lookup (`access.verb_ceiling`,
+    /// `create_is_own_root_only`; ADR-0095 d3).
+    #[error("an agent creates a workspace only inside its own person's root (ADR-0095 d3)")]
+    CreateIsOwnRootOnly { role: Role },
+    /// A workspace already holds a live proposal to this status
+    /// (`proposal.pending`, `details.transition_id`; ADR-0095 d5, #515).
+    #[error("a live proposal to this status is pending (ADR-0095 d5)")]
+    TransitionPending { transition_id: Uuid },
+    /// The claim is already a live proposal or a ratified member of this
+    /// brief (`proposal.pending`, `details.edge_id`; ADR-0095 d6, #515).
+    #[error("the claim is already proposed for or a member of this brief (ADR-0095 d6)")]
+    BriefEdgePending { edge_id: Uuid },
     /// Only a contributor key used by a person imports (`access.verb_ceiling`,
     /// `import_person_only`; ADR-0084 d11).
     #[error("an import needs a contributor key used by a person (ADR-0084 d11)")]
@@ -4174,10 +4223,6 @@ pub enum AppError {
         field: &'static str,
         reason: &'static str,
     },
-    #[error(
-        "oml_write does not supersede a guardrail: a guardrail is written and superseded on the HTTP API only (proposed ADR-0037 d10, request.validation)"
-    )]
-    GuardrailTarget,
     #[error(
         "derives_from names {0}, which the key cannot read or no row is (fail closed, access.not_found)"
     )]

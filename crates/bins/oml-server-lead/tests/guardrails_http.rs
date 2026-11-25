@@ -589,7 +589,7 @@ async fn oml_write_replaces_a_guardrail_only_with_kind_guardrail_and_its_object(
     assert_eq!(result["isError"], false, "{result}");
     let out = &result["structuredContent"];
     assert_eq!(
-        (&out["mode"], &out["state"], &out["replaces"]),
+        (&out["mode"], &out["state"], &out["replaces"]["artifact_id"]),
         (&json!("supersede"), &json!("held"), &json!(target)),
         "{out}"
     );

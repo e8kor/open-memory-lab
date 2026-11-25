@@ -229,6 +229,7 @@ from .origin import Origin
 from .origin_kind import OriginKind
 from .postings_health import PostingsHealth
 from .preview_supersede_request import PreviewSupersedeRequest
+from .proposed_by_type_0 import ProposedByType0
 from .protected_resource_metadata import ProtectedResourceMetadata
 from .protected_resource_metadata_bearer_methods_supported_item import (
     ProtectedResourceMetadataBearerMethodsSupportedItem,
@@ -665,6 +666,7 @@ __all__ = (
     "OriginKind",
     "PostingsHealth",
     "PreviewSupersedeRequest",
+    "ProposedByType0",
     "ProtectedResourceMetadata",
     "ProtectedResourceMetadataBearerMethodsSupportedItem",
     "ProtectedResourceMetadataScopesSupportedItem",

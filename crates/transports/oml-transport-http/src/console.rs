@@ -178,7 +178,18 @@ where
 {
     /// The caller of this request's credential, whichever presented it.
     pub(crate) async fn console_caller(&self, headers: &HeaderMap) -> Result<Caller, ApiError> {
-        let acting = acting(headers, None)?;
+        self.acting_caller(headers, None).await
+    }
+
+    /// [`Self::console_caller`], or the caller of the MCP connection whose
+    /// access token presented the request (ADR-0031 d11), so an act `/mcp`
+    /// runs claims its `Idempotency-Key` as the ring route does.
+    pub(crate) async fn acting_caller(
+        &self,
+        headers: &HeaderMap,
+        connection: Option<&Caller>,
+    ) -> Result<Caller, ApiError> {
+        let acting = acting(headers, connection)?;
         self.app
             .caller(acting.bearer())
             .await

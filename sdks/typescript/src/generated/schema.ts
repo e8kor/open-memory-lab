@@ -219,7 +219,7 @@ export interface paths {
         put?: never;
         /**
          * Create a child workspace in development.
-         * @description Requires: admin key role. parent and crew each take an id or a name, and parent_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /parent (ADR-0039 d7); a crew that names no crew record of the tenant answers access.not_found, checked after the parent and before name.taken. name must be unique in the tenant (409 name.taken, checked after every other check; universe is always taken, by the root). Refused under a frozen parent (workspace.frozen); universe cannot be created or deleted. A resubmission under the same Idempotency-Key and body answers the recorded creation with Idempotency-Replay: true and creates nothing again; the same key with another body is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.7.0). A person's web session key (<user>-web, through its capacity credential) creates under its own root, as the web console's Workspaces view does (ADR-0070 d5).
+         * @description Requires: admin key role. parent and crew each take an id or a name, and parent_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /parent (ADR-0039 d7); a crew that names no crew record of the tenant answers access.not_found, checked after the parent and before name.taken. name must be unique in the tenant (409 name.taken, checked after every other check; universe is always taken, by the root). Refused under a frozen parent (workspace.frozen); universe cannot be created or deleted. A resubmission under the same Idempotency-Key and body answers the recorded creation with Idempotency-Replay: true and creates nothing again; the same key with another body is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.7.0). A person's web session key (<user>-web, through its capacity credential) creates under its own root, as the web console's Workspaces view does (ADR-0070 d5). A node below a user root counts on that account's workspaces meter, whoever creates it; past the account's limit the create is 429 limit.quota with details.quota workspaces, and nothing is journalled (ADR-0095 d4; since v0.8.5). MCP's oml_write create_workspace rides this operation for a contributor key that names a user alone; every other key is access.verb_ceiling with details.reason create_is_own_root_only there (ADR-0095 d3).
          */
         post: operations["createWorkspace"];
         delete?: never;
@@ -237,7 +237,7 @@ export interface paths {
         };
         /**
          * One node — id, parent, derived path, status, crew record — with the calling key's view of it.
-         * @description Requires: reader effective access (access.not_found otherwise), or the admin key role, which reads the structure of every workspace in its tenant without grants and never claim content — for an admin key every child and edge is present and my_effective_verbs is empty (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15). children, my_effective_verbs and permission_epoch are relative to the calling key: children (ordered by path_leaf, then id) and edges (ordered by edge_id) outside read access are absent; my_effective_verbs is the union over the grant roles effective on the node (the effective-verbs table in docs/architecture/roles-and-keys.md), with remember for a person's session reviewer key where it holds reviewer and reader outside its person's own root (ADR-0082 d11, d10); permission_epoch is the calling key's permission epoch as declared in docs/architecture/workspaces.md (ADR-0025 d14). One call carries all of it.
+         * @description Requires: reader effective access (access.not_found otherwise), or the admin key role, which reads the structure of every workspace in its tenant without grants and never claim content — for an admin key every child and edge is present and my_effective_verbs is empty (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15). children, my_effective_verbs and permission_epoch are relative to the calling key: children (ordered by path_leaf, then id) and edges (ordered by edge_id) outside read access are absent; my_effective_verbs is the union over the grant roles effective on the node (the effective-verbs table in docs/architecture/roles-and-keys.md), with remember for a person's session reviewer key where it holds reviewer and reader outside its person's own root (ADR-0082 d11, d10), create_workspace for a contributor key that names a user on a node inside that user's root where it holds submitter, and propose_brief for a contributor key holding submitter or a reviewer key holding reviewer (ADR-0095 d8; since v0.8.5); permission_epoch is the calling key's permission epoch as declared in docs/architecture/workspaces.md (ADR-0025 d14). One call carries all of it.
          */
         get: operations["getWorkspace"];
         put?: never;
@@ -443,7 +443,7 @@ export interface paths {
         put?: never;
         /**
          * Propose a forward status transition; pending until a second party ratifies.
-         * @description Requires: reviewer or admin. Forward only; frozen refused while any child is not frozen (workspace.transition_refused). A resubmission under the same Idempotency-Key and body answers the recorded proposal with Idempotency-Replay: true and proposes nothing again; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4).
+         * @description Requires: reviewer or admin. Forward only; frozen refused while any child is not frozen (workspace.transition_refused). A workspace holds one live proposal per target status: a second, by any key, is 409 proposal.pending with details.transition_id naming the live one (ADR-0095 d5; #515; since v0.8.5). A resubmission under the same Idempotency-Key and body answers the recorded proposal with Idempotency-Replay: true and proposes nothing again; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4).
          */
         post: operations["proposeTransition"];
         delete?: never;
@@ -487,7 +487,7 @@ export interface paths {
         put?: never;
         /**
          * Propose a claim-to-claim edge or a claim's place in a workspace's brief; pending until ratified.
-         * @description kind claim requires reviewer(propose); its label is open, with supports, contradicts, relates_to and continues recommended and oml: reserved (ADR-0046 d6). kind brief requires reviewer effective access on the workspace and a promoted served tip the key reads; its label is brief and is not sent (ADR-0046 d7, d8). kind workspace, designed and not served, requires reviewer(propose) effective access on at least one endpoint and reader on both (edge-authority rule, D7); an admin who must act here holds a separate reviewer key, since a key never combines admin with reviewer grants (access.role_exclusive). Each kind journals its own proposal event (ADR-0039 d9).
+         * @description kind claim requires reviewer(propose); its label is open, with supports, contradicts, relates_to and continues recommended and oml: reserved (ADR-0046 d6). kind brief requires a contributor key with submitter effective access on the workspace or a reviewer key with reviewer effective access there, and a promoted served tip the key reads; its label is brief and is not sent (ADR-0046 d7, d8; ADR-0095 d6, since v0.8.5). A claim already proposed for that brief, or already its member, is 409 proposal.pending with details.edge_id naming the edge (ADR-0095 d6; #515). kind workspace, designed and not served, requires reviewer(propose) effective access on at least one endpoint and reader on both (edge-authority rule, D7); an admin who must act here holds a separate reviewer key, since a key never combines admin with reviewer grants (access.role_exclusive). Each kind journals its own proposal event (ADR-0039 d9).
          */
         post: operations["proposeEdge"];
         delete?: never;
@@ -2024,6 +2024,8 @@ export interface components {
                 writes?: number;
                 keys?: number;
                 connections?: number;
+                /** @description Live workspaces under the account's root, the root excluded (ADR-0095 d4). Since v0.8.5. */
+                workspaces?: number;
             };
             quotas: {
                 memories?: number;
@@ -2034,6 +2036,8 @@ export interface components {
                 keys?: number;
                 connections?: number;
                 requests_per_minute?: number;
+                /** @description Null is unlimited, as in the default profile (ADR-0095 d4). Since v0.8.5. */
+                workspaces?: number | null;
             };
             /** @description Each live admin key whose row names the person's user root, by name: a row no verb makes, which refuses the person's disable with workspace.admin_key_under_root and which oml doctor warns about (ADR-0068 d8, d11). Since v0.7.1. */
             admin_keys?: string[];
@@ -2071,7 +2075,7 @@ export interface components {
          * @description The closed error vocabulary; identical to docs/api/errors.md by construction. The oauth codes other than oauth.connect_refused and oauth.attach_refused travel inside RFC error bodies on the OAuth endpoints, at the start of error_description, or on the authorization page; oauth.connect_refused answers on /v2 in this envelope, and oauth.attach_refused, an /mcp tool result, is answered by no served tool since oml_attach left the catalog (ADR-0031, ADR-0039 d2, d9).
          * @enum {string}
          */
-        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "admin.investigation_required" | "admin.fix_requires_person" | "admin.fix_target_not_promoted" | "admin.fix_held_by_scan" | "admin.fix_superseded" | "admin.fix_not_revertible" | "admin.fix_settled" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workspace_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.format_invalid" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.version_conflict" | "submission.claim_key_conflict" | "submission.similar_exists" | "submission.universe_refused" | "submission.user_root_refused" | "workspace.frozen" | "workspace.in_progress_refused" | "workspace.held_remaining" | "workspace.admin_key_under_root" | "workspace.transition_refused" | "review.author_in_lineage" | "review.person_required" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "upload.expired" | "upload.too_large" | "upload.part_size" | "upload.part_number" | "upload.incomplete" | "upload.session_limit" | "upload.tenant_limit" | "upload.storage_failed" | "bundle.format_unknown" | "bundle.layout" | "bundle.path_unsafe" | "bundle.too_large" | "bundle.line_too_long" | "bundle.depth" | "bundle.duplicate" | "bundle.unreferenced_body" | "bundle.malformed" | "bundle.digest_mismatch" | "bundle.signature_invalid" | "bundle.signature_unexpected" | "bundle.unencrypted" | "bundle.decrypt_failed" | "bundle.io" | "import.target_not_in_progress" | "import.over_quota" | "import.bundle_older" | "import.since_mismatch" | "import.source_key_changed" | "import.busy" | "export.disabled" | "export.not_readable" | "export.busy" | "export.too_large" | "memory.not_held" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
+        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "admin.investigation_required" | "admin.fix_requires_person" | "admin.fix_target_not_promoted" | "admin.fix_held_by_scan" | "admin.fix_superseded" | "admin.fix_not_revertible" | "admin.fix_settled" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workspace_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.format_invalid" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.version_conflict" | "submission.claim_key_conflict" | "submission.similar_exists" | "submission.universe_refused" | "submission.user_root_refused" | "workspace.frozen" | "workspace.in_progress_refused" | "workspace.held_remaining" | "workspace.admin_key_under_root" | "workspace.transition_refused" | "review.author_in_lineage" | "review.person_required" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "upload.expired" | "upload.too_large" | "upload.part_size" | "upload.part_number" | "upload.incomplete" | "upload.session_limit" | "upload.tenant_limit" | "upload.storage_failed" | "bundle.format_unknown" | "bundle.layout" | "bundle.path_unsafe" | "bundle.too_large" | "bundle.line_too_long" | "bundle.depth" | "bundle.duplicate" | "bundle.unreferenced_body" | "bundle.malformed" | "bundle.digest_mismatch" | "bundle.signature_invalid" | "bundle.signature_unexpected" | "bundle.unencrypted" | "bundle.decrypt_failed" | "bundle.io" | "import.target_not_in_progress" | "import.over_quota" | "import.bundle_older" | "import.since_mismatch" | "import.source_key_changed" | "import.busy" | "export.disabled" | "export.not_readable" | "export.busy" | "export.too_large" | "memory.not_held" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "proposal.pending" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
         ExportRequest: {
             /**
              * @description history is the default in a user root; release is refused until releases are built.
@@ -3071,6 +3075,8 @@ export interface components {
              * @enum {string}
              */
             to: "protected" | "frozen";
+            /** @description Why, scanned as a verdict's reason is and journalled with workspace.status_proposed (ADR-0095 d1). Since v0.8.5. */
+            reason?: string;
         };
         Transition: {
             transition_id: string;
@@ -3085,7 +3091,18 @@ export interface components {
             proposed_by_key_id: string | null;
             /** @description Null on this build's answers; the journal's workspace.status_transition names the ratifier. */
             ratified_by_key_id: string | null;
+            /**
+             * Format: date-time
+             * @description The instant of its workspace.status_proposed, to every reader (ADR-0095 d5 as amended 2026-11-24). Since v0.8.5.
+             */
+            proposed_at?: string;
+            proposed_by?: components["schemas"]["ProposedBy"];
         };
+        /** @description The key that made a live proposal, served when it is the calling key or another key of the same person, and null to every other reader (ADR-0095, amendment of 2026-11-24). Since v0.8.5. */
+        ProposedBy: {
+            id: string;
+            name: string | null;
+        } | null;
         /** @description The review policy in force, the one a transition's policy_snapshot records (ADR-0009 d3). */
         ReviewPolicy: {
             k?: number;
@@ -3107,6 +3124,7 @@ export interface components {
             /** @description Open; supports, contradicts, relates_to and continues are recommended, and oml: labels join terms only (ADR-0046 d6). */
             label: string;
         };
+        /** @description A brief member proposed by a contributor key holding submitter or a reviewer key holding reviewer on the workspace (ADR-0095 d6); a claim already proposed for this brief or already a member is 409 proposal.pending, naming the edge in details.edge_id. */
         BriefEdgeProposal: {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -3115,6 +3133,8 @@ export interface components {
             kind: "brief";
             from_artifact_id: string;
             to_workspace_id: components["schemas"]["WorkspaceRef"];
+            /** @description Why, scanned as a verdict's reason is and journalled with brief_edge.proposed (ADR-0095 d1). Since v0.8.5. */
+            reason?: string;
         };
         /** @description One proposal body for the served edge kinds, chosen by kind (ADR-0039 d9; ADR-0046 d7). */
         EdgeProposal: components["schemas"]["ClaimEdgeProposal"] | components["schemas"]["BriefEdgeProposal"];
@@ -3148,6 +3168,12 @@ export interface components {
             state: "pending" | "ratified";
             proposer_key_id: string;
             ratifier_key_id: string | null;
+            /**
+             * Format: date-time
+             * @description On a pending edge the brief's listing serves: the instant of its brief_edge.proposed (ADR-0095 d6 as amended 2026-11-24). Since v0.8.5.
+             */
+            proposed_at?: string;
+            proposed_by?: components["schemas"]["ProposedBy"];
         };
         /** @description An edge of a served kind, carrying its kind (ADR-0039 d9; ADR-0046 d7). */
         Edge: components["schemas"]["ClaimEdge"] | components["schemas"]["BriefEdge"];
@@ -3161,6 +3187,8 @@ export interface components {
             parent?: components["schemas"]["WorkspaceRef"];
             name: components["schemas"]["Name"];
             crew?: components["schemas"]["CrewRef"];
+            /** @description Why, scanned as a verdict's reason is and journalled with workspace.create (ADR-0095 d1). Since v0.8.5. */
+            reason?: string;
         };
         WorkspacePage: {
             items: components["schemas"]["Workspace"][];
@@ -3797,6 +3825,8 @@ export interface components {
                 writes?: number;
                 keys?: number;
                 connections?: number;
+                /** @description Live workspaces under the account's root, the root excluded (ADR-0095 d4). Since v0.8.5. */
+                workspaces?: number;
             } | null;
             quotas: {
                 memories?: number;
@@ -3807,6 +3837,8 @@ export interface components {
                 keys?: number;
                 connections?: number;
                 requests_per_minute?: number;
+                /** @description Null is unlimited, as in the default profile (ADR-0095 d4). Since v0.8.5. */
+                workspaces?: number | null;
             } | null;
             /**
              * Format: date-time
@@ -4079,7 +4111,7 @@ export interface components {
                 pii?: boolean;
             } | null;
         };
-        /** @description An account's six meters against its limits in one UTC month (ADR-0071 d2, d5, d6). Counts only. */
+        /** @description An account's seven meters against its limits in one UTC month (ADR-0071 d2, d5, d6; ADR-0095 d4). Counts only. */
         AccountUsage: {
             /** @description The id of the root workspace the account is. */
             account: string;
@@ -4092,7 +4124,7 @@ export interface components {
             period: string;
             meters: {
                 /** @enum {string} */
-                meter: "memories" | "text_bytes" | "writes" | "recalls" | "keys" | "connections";
+                meter: "memories" | "text_bytes" | "writes" | "recalls" | "keys" | "connections" | "workspaces";
                 used: number;
                 limit: number | null;
                 percent: number | null;
@@ -4102,7 +4134,7 @@ export interface components {
         };
         AccountProfileRequest: {
             profile: string;
-            /** @description A quota's limit for this account alone: memories, text_bytes, writes_per_month, keys, connections or requests_per_minute. */
+            /** @description A quota's limit for this account alone: memories, text_bytes, writes_per_month, keys, connections, requests_per_minute or workspaces. */
             overrides?: {
                 [key: string]: number;
             };
@@ -4122,6 +4154,8 @@ export interface components {
                 recalls: number;
                 keys: number;
                 connections: number;
+                /** @description Live workspaces under the account's root when the day closed (ADR-0095 d4). Since v0.8.5. */
+                workspaces?: number;
             }[];
         };
         UsageDrift: {
@@ -4129,7 +4163,7 @@ export interface components {
                 account: string;
                 user: string | null;
                 /** @enum {string} */
-                meter: "memories" | "text_bytes" | "writes" | "keys" | "connections";
+                meter: "memories" | "text_bytes" | "writes" | "keys" | "connections" | "workspaces";
                 counter: number;
                 rows: number;
             }[];
@@ -5066,6 +5100,13 @@ export interface operations {
                      *           "limit": 5,
                      *           "percent": 20,
                      *           "state": "ok"
+                     *         },
+                     *         {
+                     *           "meter": "workspaces",
+                     *           "used": 3,
+                     *           "limit": 100,
+                     *           "percent": 3,
+                     *           "state": "ok"
                      *         }
                      *       ]
                      *     }
@@ -5136,6 +5177,7 @@ export interface operations {
             };
             409: components["responses"]["Conflict"];
             415: components["responses"]["UnsupportedMedia"];
+            429: components["responses"]["RateLimited"];
             default: components["responses"]["Error"];
         };
     };
@@ -5794,7 +5836,8 @@ export interface operations {
                      *       "to": "protected",
                      *       "state": "pending",
                      *       "proposed_by_key_id": "d405428e-4c99-426d-8826-76d28436e423",
-                     *       "ratified_by_key_id": null
+                     *       "ratified_by_key_id": null,
+                     *       "proposed_at": "2026-11-25T10:00:00.000000Z"
                      *     }
                      */
                     "application/json": components["schemas"]["Transition"];
@@ -5933,6 +5976,7 @@ export interface operations {
                     "application/json": components["schemas"]["Edge"];
                 };
             };
+            409: components["responses"]["Conflict"];
             415: components["responses"]["UnsupportedMedia"];
             default: components["responses"]["Error"];
         };

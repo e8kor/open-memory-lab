@@ -178,8 +178,8 @@ async fn tenant(router: &Router) -> Tenant {
     .await;
     assert_eq!(status, StatusCode::CREATED, "{boot}");
     let admin = value(&boot);
-    let tenant_id = uuid::Uuid::parse_str(boot["tenant_id"].as_str().expect("a tenant id"))
-        .expect("a uuid");
+    let tenant_id =
+        uuid::Uuid::parse_str(boot["tenant_id"].as_str().expect("a tenant id")).expect("a uuid");
     let root = boot["root_workspace_id"].as_str().expect("root").to_owned();
     let (status, crew) = send(
         router,
@@ -308,8 +308,12 @@ async fn a_contributor_key_creates_a_child_inside_its_own_root_over_mcp() {
     let out = output(&result);
     assert_eq!(out["mode"], "create_workspace", "{out}");
     assert_eq!(out["name"], "notes");
-    assert_eq!(out["parent"], json!(t.ada_root), "the key's default, her root");
-    assert_eq!(out["path"], "ada/notes");
+    assert_eq!(
+        out["parent"],
+        json!(t.ada_root),
+        "the key's default, her root"
+    );
+    assert_eq!(out["path"], "universe.ada.notes");
     assert_eq!(out["status"], "development");
     assert_eq!(out["idempotent_replay"], false);
     let chain = events(&store, t.tenant_id).await;
@@ -324,7 +328,7 @@ async fn a_contributor_key_creates_a_child_inside_its_own_root_over_mcp() {
         json!({"create_workspace": "drafts", "workspace": "notes", "idempotency_key": "c-2"}),
     )
     .await;
-    assert_eq!(output(&result)["path"], "ada/notes/drafts");
+    assert_eq!(output(&result)["path"], "universe.ada.notes.drafts");
 }
 
 #[tokio::test]
@@ -390,7 +394,10 @@ async fn a_child_created_over_mcp_is_development_standard_and_carries_no_grant()
     );
     let (status, view) = workspace(&router, &t.ada_agent, &child).await;
     assert_eq!(status, StatusCode::OK, "{view}");
-    assert_eq!((&view["status"], &view["mode"]), (&json!("development"), &json!("standard")));
+    assert_eq!(
+        (&view["status"], &view["mode"]),
+        (&json!("development"), &json!("standard"))
+    );
     // The child admits exactly what its parent admits.
     let (_, parent) = workspace(&router, &t.ada_agent, &t.ada_root).await;
     assert_eq!(view["my_effective_verbs"], parent["my_effective_verbs"]);
@@ -457,7 +464,10 @@ async fn a_child_created_inside_an_in_progress_subtree_widens_no_audience() {
     let (status, view) = workspace(&router, &t.ada_agent, &child).await;
     assert_eq!(status, StatusCode::OK, "{view}");
     assert_eq!(view["in_progress_root"]["id"], json!(proj), "{view}");
-    assert_eq!(view["mode"], "standard", "the child is not a root of its own");
+    assert_eq!(
+        view["mode"], "standard",
+        "the child is not a root of its own"
+    );
     for node in [&proj, &child] {
         let (status, _) = workspace(&router, &helper, node).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{node}");
@@ -503,7 +513,9 @@ async fn create_workspace_replays_its_recorded_answer_under_the_same_idempotency
     let creates = events(&store, t.tenant_id)
         .await
         .into_iter()
-        .filter(|(event_type, payload)| event_type == "workspace.create" && payload["name"] == "notes")
+        .filter(|(event_type, payload)| {
+            event_type == "workspace.create" && payload["name"] == "notes"
+        })
         .count();
     assert_eq!(creates, 1);
 }
@@ -562,7 +574,11 @@ async fn propose_status_over_mcp_journals_workspace_status_proposed_and_ratifies
     let out = output(&result);
     assert_eq!(
         (&out["mode"], &out["to"], &out["state"]),
-        (&json!("propose_status"), &json!("protected"), &json!("pending")),
+        (
+            &json!("propose_status"),
+            &json!("protected"),
+            &json!("pending")
+        ),
         "{out}"
     );
     let chain = events(&store, t.tenant_id).await;
@@ -571,7 +587,10 @@ async fn propose_status_over_mcp_journals_workspace_status_proposed_and_ratifies
     assert_eq!(payload["reason"], "release candidate");
     assert_eq!(count(&chain, "workspace.status_transition"), 0);
     let (_, view) = workspace(&router, &t.person, &t.crew).await;
-    assert_eq!(view["status"], "development", "nothing moves until ratified");
+    assert_eq!(
+        view["status"], "development",
+        "nothing moves until ratified"
+    );
     let pending = &view["pending_transitions"][0];
     assert_eq!(pending["transition_id"], out["transition_id"]);
     assert!(pending["proposed_at"].is_string(), "{pending}");
@@ -603,7 +622,10 @@ async fn propose_status_refuses_a_contributor_key_with_access_verb_ceiling() {
     );
     assert_eq!(code, "access.verb_ceiling");
     assert_eq!(
-        count(&events(&store, t.tenant_id).await, "workspace.status_proposed"),
+        count(
+            &events(&store, t.tenant_id).await,
+            "workspace.status_proposed"
+        ),
         0
     );
 }
@@ -718,7 +740,12 @@ async fn tools_list_serves_three_tools_and_oml_workspace_stays_read_only() {
         json!({"readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false})
     );
     let properties = &write_tool["inputSchema"]["properties"];
-    for mode in ["create_workspace", "propose_status", "propose_brief", "guardrail"] {
+    for mode in [
+        "create_workspace",
+        "propose_status",
+        "propose_brief",
+        "guardrail",
+    ] {
         assert!(properties.get(mode).is_some(), "oml_write lacks {mode}");
     }
     assert!(
@@ -755,7 +782,8 @@ fn the_server_instructions_stay_under_4096_characters() {
         "the instructions describe the create"
     );
     assert!(
-        SERVER_INSTRUCTIONS.contains("A proposal changes nothing until a different identity ratifies it"),
+        SERVER_INSTRUCTIONS
+            .contains("A proposal changes nothing until a different identity ratifies it"),
         "the instructions say a proposal changes nothing alone"
     );
 }

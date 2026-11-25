@@ -7,6 +7,7 @@ class AccountUsageMetersItemMeter(StrEnum):
     MEMORIES = "memories"
     RECALLS = "recalls"
     TEXT_BYTES = "text_bytes"
+    WORKSPACES = "workspaces"
     WRITES = "writes"
 
     def __str__(self) -> str:

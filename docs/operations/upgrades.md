@@ -83,6 +83,56 @@ spellings that a new server refuses, and each refusal names the new spelling.
 Update the plugin with `claude plugin update oml@open-memory-lab`. Then set its `url` and `api_key` with
 `/plugin configure oml@open-memory-lab`. The plugin serves no tools until both are set.
 
+## Upgrading to v0.8.5
+
+### `oml_write` writes guardrails, creates a child workspace and proposes status and brief changes
+
+v0.8.5 adds three modes and one object to `oml_write`, and no tool ([ADR-0095](../adr/ADR-0095-an-agent-creates-its-own-child-workspaces-writes-guardrails-and-proposes-status-and-brief-changes-through-oml-write-and-every-verdict-and-setting-stays-with-people.md)). Kind `guardrail`
+takes a `guardrail` object, `{severity, rule?}`, and a person approves every version, as on the
+HTTP API. `create_workspace` creates a child inside the person's own root, from a contributor key
+that names that person and from no other key (`access.verb_ceiling`, `details.reason`
+`create_is_own_root_only`). `propose_status` proposes a status move from a reviewer key, and
+`propose_brief` proposes a brief member from a contributor or reviewer key; a different identity
+ratifies each, never over MCP. `oml_workspace` stays read-only, and `my_effective_verbs` gains
+`create_workspace` and `propose_brief` where a key may use them. Every annotation is unchanged, so
+a client permission rule that allows `mcp__plugin_oml_oml__oml_write` without a prompt, or
+`mcp__plugin_oml_oml` for all three tools, now admits a create and both proposals without one
+too. To keep a prompt before them, put `oml_write` under an ask rule.
+
+The HTTP API changes in four places. `POST /v2/edges` with `kind: brief` admits a contributor key
+holding submitter on the workspace. Both proposal routes answer `409 proposal.pending`, naming
+the live proposal in `details.transition_id` or `details.edge_id`, when one to the same status,
+or of the same claim for the same brief, is live: a script that proposed the same move twice now
+receives the 409. `limit.quota`'s `details.quota` gains `workspaces`, and the three create and
+proposal bodies take an optional `reason`. The pending transitions on `GET /v2/workspaces/{w}`
+and the pending brief edges on `GET /v2/edges?kind=brief` gain `proposed_at` and `proposed_by`,
+the latter `{id, name}` to a key of the proposer's person and null to every other.
+
+The notice to send to client owners:
+
+> From v0.8.5 `oml_write` also writes guardrails (kind `guardrail` with a `guardrail` object),
+> creates a child workspace inside the person's own root (`create_workspace`), and proposes a
+> status move or a brief member (`propose_status`, `propose_brief`). Each proposal is ratified by a
+> different identity. A client rule that allows `oml_write` without a prompt now admits these too.
+
+### Migration 0067 adds the `workspaces` meter
+
+Migration 0067 adds `account_meters.workspaces` and `usage_daily.workspaces`, admits
+`workspaces` in `user_quotas`, and fills every account's counter from its tree: the workspaces
+below its root, whoever created them. It replaces `oml_account_source` with the same definition
+plus that count, so `oml doctor`'s `warn usage: … drift` line covers the meter, and the existing
+`warn quota:` line warns at 80% of its limit. What it costs a live database: two columns with a
+constant default, added without rewriting a row; one check on `user_quotas` replaced and validated
+by a scan of that small table; and one aggregate of `workspaces` and one update of
+`account_meters` per tenant. A lock is waited for at most 5 s.
+
+The `default` profile leaves `workspaces` unlimited. A deployment sets a limit with
+`quota.workspaces` (`OML_QUOTA__WORKSPACES`) or `quota.profile.<name>.workspaces`, as every
+other limit is set ([configuration](configuration.md)); the public server sets 100 per account,
+an unmeasured value recalibrated with the other limits under
+[#164](https://github.com/e8kor/open-memory-lab/issues/164) ([ADR-0095](../adr/ADR-0095-an-agent-creates-its-own-child-workspaces-writes-guardrails-and-proposes-status-and-brief-changes-through-oml-write-and-every-verdict-and-setting-stays-with-people.md) d11 Q4). Past the limit a create
+is `429 limit.quota` and journals nothing.
+
 ## Upgrading to v0.8.4
 
 v0.8.4 runs three migrations, renames the writer role, folds `oml_withdraw` into `oml_write`, and

@@ -1,12 +1,12 @@
-//! Per-account usage metering's pure rules (ADR-0071): the six meters, the
+//! Per-account usage metering's pure rules (ADR-0071): the seven meters, the
 //! quota each is held to, a meter's state against its limit, and the UTC
 //! month a flow counts in. The counters and the ledger are the store's.
 
 use crate::envelope::EventTime;
 use crate::signup::{Quota, near_quota};
 
-/// One of the six meters (ADR-0071 d2), in the order the endpoints and the
-/// pages list them.
+/// One of the seven meters (ADR-0071 d2; ADR-0095 d4), in the order the
+/// endpoints and the pages list them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Meter {
     Memories,
@@ -15,16 +15,20 @@ pub enum Meter {
     Recalls,
     Keys,
     Connections,
+    /// A stock: the live workspaces under the account's root, the root
+    /// excluded, whoever created them (ADR-0095 d4).
+    Workspaces,
 }
 
 impl Meter {
-    pub const ALL: [Meter; 6] = [
+    pub const ALL: [Meter; 7] = [
         Meter::Memories,
         Meter::TextBytes,
         Meter::Writes,
         Meter::Recalls,
         Meter::Keys,
         Meter::Connections,
+        Meter::Workspaces,
     ];
 
     #[must_use]
@@ -36,6 +40,7 @@ impl Meter {
             Meter::Recalls => "recalls",
             Meter::Keys => "keys",
             Meter::Connections => "connections",
+            Meter::Workspaces => "workspaces",
         }
     }
 
@@ -50,6 +55,7 @@ impl Meter {
             Meter::Recalls => None,
             Meter::Keys => Some(Quota::Keys),
             Meter::Connections => Some(Quota::Connections),
+            Meter::Workspaces => Some(Quota::Workspaces),
         }
     }
 
@@ -183,7 +189,7 @@ mod tests {
     #[test]
     fn every_meter_but_recalls_has_a_quota() {
         let limited: Vec<_> = Meter::ALL.iter().filter(|m| m.quota().is_some()).collect();
-        assert_eq!(limited.len(), 5);
+        assert_eq!(limited.len(), 6);
         assert_eq!(Meter::Recalls.quota(), None);
         assert!(Meter::Writes.is_flow() && Meter::Recalls.is_flow());
         assert!(!Meter::Memories.is_flow());
