@@ -148,7 +148,7 @@ impl Draft {
             .min(GRANTS_MAX + 1);
         let mut grants = Vec::new();
         for i in 0..count {
-            if single.get(format!("x{i}").as_str()).is_some() {
+            if single.contains_key(format!("x{i}").as_str()) {
                 continue;
             }
             grants.push(GrantDraft {

@@ -1229,18 +1229,6 @@ fn state_name(v: &VersionLine) -> Value {
     serde_json::to_value(v.state).unwrap_or(Value::Null)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_conflict_whose_source_removed_the_key_writes_a_retirement() {
-        assert!(writes_retirement(Outcome::Conflict, None));
-        assert!(writes_retirement(Outcome::Removed, None));
-        assert!(!writes_retirement(Outcome::Changed, None));
-    }
-}
-
 impl<J, S, C, I, Sc> App<J, S, C, I, Sc>
 where
     J: crate::ports::WebStore,
@@ -1298,5 +1286,17 @@ where
                 .collect(),
             next,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_conflict_whose_source_removed_the_key_writes_a_retirement() {
+        assert!(writes_retirement(Outcome::Conflict, None));
+        assert!(writes_retirement(Outcome::Removed, None));
+        assert!(!writes_retirement(Outcome::Changed, None));
     }
 }
