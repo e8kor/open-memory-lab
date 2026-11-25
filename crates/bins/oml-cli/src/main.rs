@@ -1070,9 +1070,25 @@ struct WriteArgs {
     #[arg(long, conflicts_with = "replaces")]
     claim_key: Option<String>,
     /// memory | derived_fact | steering | term | term_mapping | vocab_release |
-    /// guardrail; defaults to memory, or the target's kind with --replaces.
+    /// guardrail | skill | document; defaults to memory, or the target's kind
+    /// with --replaces.
     #[arg(long)]
     kind: Option<String>,
+    /// Skill name, a lowercase label; required with --kind skill, and the
+    /// target's name with --replaces (ADR-0080 d1, d2).
+    #[arg(
+        long = "skill-name",
+        required_if_eq("kind", "skill"),
+        requires = "skill_description"
+    )]
+    skill_name: Option<String>,
+    /// Skill description, one line; required with --kind skill.
+    #[arg(
+        long = "skill-description",
+        required_if_eq("kind", "skill"),
+        requires = "skill_name"
+    )]
+    skill_description: Option<String>,
     /// Guardrail severity: never, must, or should; required for non-retirement guardrails.
     #[arg(long, value_parser = ["never", "must", "should"])]
     severity: Option<String>,
@@ -2264,7 +2280,10 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         Command::Usage { command } => run_usage(cli, &stored, command),
         Command::Admin { command } => run_admin(cli, &stored, command),
 
-        Command::Write(args) => run_write(cli, &stored, &Write::of(args)),
+        Command::Write(args) => {
+            refuse_skill_fields_on_another_kind(args);
+            run_write(cli, &stored, &Write::of(args))
+        }
         Command::Read(args) => run_read(cli, &stored, args),
         Command::Withdraw(args) => run_withdraw(cli, &stored, args),
         Command::Events(args) => run_events(cli, &stored, args),
@@ -2907,6 +2926,8 @@ struct Write<'a> {
     format: Option<&'a str>,
     title: Option<&'a str>,
     origin_kind: Option<&'a str>,
+    /// The skill object's name and description (ADR-0080 d1).
+    skill: Option<(&'a str, &'a str)>,
 }
 
 impl<'a> Write<'a> {
@@ -2928,7 +2949,25 @@ impl<'a> Write<'a> {
             format: args.format.as_deref(),
             title: args.title.as_deref(),
             origin_kind: args.origin_kind.as_deref(),
+            skill: args
+                .skill_name
+                .as_deref()
+                .zip(args.skill_description.as_deref()),
         }
+    }
+}
+
+/// `--skill-*` beside a `--kind` other than skill: a usage error, as clap
+/// draws one, before anything is sent (ADR-0080 d1: the skill object is
+/// refused on every other kind).
+fn refuse_skill_fields_on_another_kind(args: &WriteArgs) {
+    if args.skill_name.is_some() && args.kind.as_deref().is_some_and(|k| k != "skill") {
+        <Cli as clap::CommandFactory>::command()
+            .error(
+                clap::error::ErrorKind::ArgumentConflict,
+                "--skill-name and --skill-description go with --kind skill alone",
+            )
+            .exit();
     }
 }
 
@@ -2996,6 +3035,9 @@ fn run_write(cli: &Cli, stored: &Credentials, write: &Write<'_>) -> Result<ExitC
     }
     if let Some(rule) = write.rule {
         body["rule"] = rule.clone();
+    }
+    if let Some((name, description)) = write.skill {
+        body["skill"] = json!({ "name": name, "description": description });
     }
     if let Some(anchor) = write.anchor {
         body["anchor"] = anchor.clone();

@@ -3917,8 +3917,16 @@ async fn team_with_an_approved_memory(rig: &Rig) -> (uuid::Uuid, String) {
     assert_eq!(status, StatusCode::CREATED, "{team}");
     let mut values = Vec::new();
     for (name, role, grants) in [
-        ("team-writer", "submitter", json!([{"workspace": "team", "role": "submitter"}])),
-        ("team-reviewer", "reviewer", json!([{"workspace": "team", "role": "reviewer"}, {"workspace": "team", "role": "reader"}])),
+        (
+            "team-writer",
+            "submitter",
+            json!([{"workspace": "team", "role": "submitter"}]),
+        ),
+        (
+            "team-reviewer",
+            "reviewer",
+            json!([{"workspace": "team", "role": "reviewer"}, {"workspace": "team", "role": "reader"}]),
+        ),
     ] {
         let (status, key) = as_admin(
             rig,
@@ -3930,7 +3938,13 @@ async fn team_with_an_approved_memory(rig: &Rig) -> (uuid::Uuid, String) {
         assert_eq!(status, StatusCode::CREATED, "{key}");
         values.push(key["value"].as_str().expect("a value").to_owned());
     }
-    let id = agent_writes_in(rig, &values[0], Some("team"), "the team deploys on Tuesdays").await;
+    let id = agent_writes_in(
+        rig,
+        &values[0],
+        Some("team"),
+        "the team deploys on Tuesdays",
+    )
+    .await;
     rig.app
         .post_verdict(
             values[1].as_str(),
@@ -4010,5 +4024,8 @@ async fn the_read_grant_gives_the_web_key_no_reviewer_verb() {
         json!({"verdict": "reject", "artifact_ids": [id.to_string()]}),
     )
     .await;
-    assert_ne!(answer["items"][0]["outcome"], "rejected", "{status} {answer}");
+    assert_ne!(
+        answer["items"][0]["outcome"], "rejected",
+        "{status} {answer}"
+    );
 }

@@ -7460,3 +7460,128 @@ async fn oml_sync_loads_a_crates_docs_and_a_code_edit_writes_nothing() {
     }
     lab.stop().await;
 }
+
+/// A skill written from the CLI is held, and lists under `oml skills list`
+/// once approved: `oml write --kind skill --skill-name --skill-description`
+/// sends the skill object, and a person's reviewer key approves it
+/// (ADR-0080 d1; the operator's addition of 2026-11-25).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_skill_written_from_the_cli_is_held_and_lists_under_oml_skills_list_once_approved() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let wa = lab.workspace("tools");
+    let writer = lab.issue(
+        "tools-agent",
+        &[
+            "--role",
+            "contributor",
+            "--principal",
+            "crew/tools-agent",
+            "--grant",
+            &format!("{wa}:submitter"),
+        ],
+    )["value"]
+        .as_str()
+        .expect("writer value")
+        .to_owned();
+    let reviewer = lab.issue(
+        "tools-person",
+        &[
+            "--role",
+            "reviewer",
+            "--used-by",
+            "person",
+            "--principal",
+            "crew/tools-person",
+            "--grant",
+            &format!("{wa}:reviewer"),
+        ],
+    )["value"]
+        .as_str()
+        .expect("reviewer value")
+        .to_owned();
+    let (code, accepted, log) = lab.json(
+        Some(&writer),
+        &[
+            "write",
+            "1. Run the suite. 2. Tag the release.",
+            "--kind",
+            "skill",
+            "--skill-name",
+            "release-checklist",
+            "--skill-description",
+            "Steps before a release.",
+            "--workspace",
+            &wa,
+        ],
+    );
+    assert_eq!(code, 0, "write: {log}");
+    assert_eq!(accepted["state"], "held", "{log}");
+    let artifact = accepted["artifact_id"].as_str().expect("artifact id");
+    let (code, listed, log) = lab.json(Some(&writer), &["skills", "list", "--workspace", &wa]);
+    assert_eq!(code, 0, "skills list: {log}");
+    assert!(
+        !listed.to_string().contains("release-checklist"),
+        "{listed}"
+    );
+    let (code, serve, log) = lab.json(Some(&reviewer), &["review", "next"]);
+    assert_eq!(code, 0, "review next: {log}");
+    assert_eq!(
+        serve["item"]["artifact_id"].as_str(),
+        Some(artifact),
+        "{log}"
+    );
+    let (code, verdict, log) = lab.json(
+        Some(&reviewer),
+        &[
+            "review",
+            "approve",
+            serve["serve_id"].as_str().expect("serve id"),
+        ],
+    );
+    assert_eq!(code, 0, "verdict: {log}");
+    assert_eq!(verdict["state"], "promoted", "{log}");
+    let (code, listed, log) = lab.json(Some(&writer), &["skills", "list", "--workspace", &wa]);
+    assert_eq!(code, 0, "skills list: {log}");
+    assert!(listed.to_string().contains("release-checklist"), "{listed}");
+    lab.stop().await;
+}
+
+/// `--skill-*` on another kind, and a skill missing either flag, are usage
+/// errors before anything is sent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn skill_flags_on_another_kind_and_a_skill_missing_one_are_refused_before_anything_is_sent() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let _ = lab.take_requests();
+    for args in [
+        &[
+            "write",
+            "x",
+            "--kind",
+            "memory",
+            "--skill-name",
+            "a",
+            "--skill-description",
+            "b",
+        ][..],
+        &["write", "x", "--kind", "skill", "--skill-name", "a"][..],
+        &["write", "x", "--kind", "skill"][..],
+    ] {
+        let (code, _, log) = lab.text(args);
+        assert_eq!(code, 2, "{args:?}: {log}");
+    }
+    assert!(
+        !routes(&lab.take_requests())
+            .iter()
+            .any(|r| r.contains("/v1/memories")),
+        "nothing is written"
+    );
+    let (code, help, _) = lab.text(&["write", "--help"]);
+    assert_eq!(code, 0);
+    let words = help.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(words.contains("guardrail | skill | document"), "{help}");
+    lab.stop().await;
+}
