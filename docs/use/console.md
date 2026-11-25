@@ -81,7 +81,10 @@ one, made when and by which key. A user root takes no status move
 name, grants and limits. The confirmation offers how long the previous value keeps working: no
 time, one hour or 24 hours. The new value is shown once, with when the previous one stops. A
 connector key takes **New connect code** instead, and a cut-off or expired key takes no new value.
-An admin rotates any key from the admin Keys tab
+The previous value keeps running memory reads and writes, verdicts, proposals and ratifications of
+edges, fix settlements, withdrawals, uploads, imports into an existing workspace and exports until
+then, and no admin act or act that creates a credential or changes structure or authority. An
+admin rotates its own admin key and, from the admin one-key page, a tenant key that names no person
 ([ADR-0096](../adr/ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md) d13).
 
 ## Follow an import

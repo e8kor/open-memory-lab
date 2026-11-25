@@ -87,7 +87,7 @@ A key's role fixes its grants: `contributor` takes `reader` and `submitter`, at 
 
 ## Deny, cut off, replace, disconnect
 
-Grants cannot change after issue, and there is no revoke, rotate or list verb for keys: issue a new key under a new name. A live key can take a permanent **denial**, which wins over every grant on that subtree from the key's next request:
+Grants cannot change after issue, and there is no revoke or list verb for keys: issue a new key under a new name. A live key can take a permanent **denial**, which wins over every grant on that subtree from the key's next request:
 
 ```sh
 oml deny set <key> <workspace> [--reason <text>]
@@ -96,7 +96,7 @@ oml deny set <key> <workspace> [--reason <text>]
 It is journaled as `key.denied`; on an admin key it is refused.
 
 - **Cut off or end every connection:** `oml deny set <key> universe`.
-- **Rotate:** issue a successor under a new name, move the holder, deny the old key `universe`.
+- **Rotate:** `oml keys rotate <key> [--grace <dur>] [--out <file>]` gives the key a new value and keeps its name, grants, denials and limits; with a grace of up to 24 hours the previous value keeps working until then. An admin key rotates itself and a tenant key that names no person; another admin's key (`not_admins_key`) and a person's key (`in_persons_root`) are refused until v0.8.6. Inside its grace the previous value still runs memory reads and writes, verdicts, edge proposals and ratifications, settling a fix, withdraw, uploads, imports into an existing workspace and export; it is refused every admin act and every act that creates a credential or changes structure or authority (`access.verb_ceiling`, `details.reason: previous_value`).
 - **Read one key:** `oml keys show <key>` shows grants, denials, crew, epoch, expiry, rate and connections, never the value.
 - **Move or clear a key's expiry or rate:** `oml keys limit <key> --expires <instant>` or `--no-expiry`, `--requests-per-minute <n>` or `--no-rate-limit`, with an admin key other than the key itself. An admin key takes neither limit, so naming one is refused. An expired key whose date is moved later works again.
 - **End one connection:** `oml keys disconnect <key> <connection-id> [--reason <text>]`.
