@@ -32,7 +32,7 @@ where
     /// the tenant, by a person's `<user>-web` session for that person's own
     /// keys, or by the key itself. A session key, a connector key, a revoked
     /// key, a cut-off key and an expired key are refused by name, and so is
-    /// a grace above [`ROTATION_GRACE_MAX_SECS`]. Any other caller is
+    /// a grace above `ROTATION_GRACE_MAX_SECS`, 24 hours. Any other caller is
     /// `access.verb_ceiling`; a person's session naming another's key finds
     /// none.
     ///

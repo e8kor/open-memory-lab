@@ -148,8 +148,12 @@ code="$(curl -s -o "$work/keys.html" -w '%{http_code}' -H "$jar" "$origin/web/ke
 [ "$code" = 200 ] || fail "GET /web/keys answered $code: $(head -c 400 "$work/keys.html")"
 grep -q '<h1>Keys</h1>' "$work/keys.html" || fail "GET /web/keys did not draw the Keys view"
 grep -q '<a href="/web/keys" class="on"' "$work/keys.html" || fail "the Keys tab is not the current one"
-nonce="$(field "$work/keys.html" nonce)"
-[ -n "$nonce" ] || fail "the Keys view's form carries no nonce"
+# Since v0.8.5 the Keys view issues through the key builder (ADR-0096 d1)
+# and draws no issue form; the issue act still takes a form's nonce, 32
+# lower-case hexadecimal characters, which a browser's form would carry.
+grep -q 'href="/web/keys/new"' "$work/keys.html" || fail "the Keys view does not link the key builder"
+nonce="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+[ "${#nonce}" = 32 ] || fail "no nonce for the issue act"
 code="$(curl -s -o "$work/issue.html" -D "$work/issue" -w '%{http_code}' -X POST -H "$jar" \
     -H "Origin: $issuer" -H 'Content-Type: application/x-www-form-urlencoded' \
     --data "action=issue_key&name=ci&role=reader&csrf_token=$csrf&nonce=$nonce" "$origin/web/keys")"

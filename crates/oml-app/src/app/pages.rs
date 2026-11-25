@@ -515,7 +515,7 @@ where
     /// node grant, which a submitter key never gets (ADR-0093 d2).
     ///
     /// This role check is the one guard that keeps a reviewer key out of
-    /// the console: the issuance runs under [`Issuance::PersonsOwn`], whose
+    /// the console: the issuance runs under `Issuance::PersonsOwn`, whose
     /// ceiling is the admin role (ADR-0096 d1; R1). Issuance never
     /// amplifies authority, so a `<user>-web` that carries a denial issues
     /// none (#325). The person may end the key on a date and set its rate

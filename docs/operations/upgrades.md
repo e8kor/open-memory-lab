@@ -141,8 +141,8 @@ by a scan of that small table; and one aggregate of `workspaces` and one update 
 
 The `default` profile leaves `workspaces` unlimited. A deployment sets a limit with
 `quota.workspaces` (`OML_QUOTA__WORKSPACES`) or `quota.profile.<name>.workspaces`, as every
-other limit is set ([configuration](configuration.md)); the public server sets 100 per account,
-an unmeasured value recalibrated with the other limits under
+other limit is set ([configuration](configuration.md)); 100 per account is the value ADR-0095
+records for an open sign-up deployment, an unmeasured value recalibrated with the other limits under
 [#164](https://github.com/e8kor/open-memory-lab/issues/164) ([ADR-0095](../adr/ADR-0095-an-agent-creates-its-own-child-workspaces-writes-guardrails-and-proposes-status-and-brief-changes-through-oml-write-and-every-verdict-and-setting-stays-with-people.md) d11 Q4). Past the limit a create
 is `429 limit.quota` and journals nothing.
 
