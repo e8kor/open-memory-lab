@@ -103,7 +103,7 @@ a client permission rule that allows `mcp__plugin_oml_oml__oml_write` without a 
 `mcp__plugin_oml_oml` for all three tools, now admits a create and both proposals without one
 too. To keep a prompt before them, put `oml_write` under an ask rule.
 
-The HTTP API changes in four places. `POST /v2/edges` with `kind: brief` admits a contributor key
+The HTTP API changes in five places. `POST /v2/edges` with `kind: brief` admits a contributor key
 holding submitter on the workspace. Both proposal routes answer `409 proposal.pending`, naming
 the live proposal in `details.transition_id` or `details.edge_id`, when one to the same status,
 or of the same claim for the same brief, is live: a script that proposed the same move twice now
@@ -127,6 +127,19 @@ The notice to send to client owners:
 > creates a child workspace inside the person's own root (`create_workspace`), and proposes a
 > status move or a brief member (`propose_status`, `propose_brief`). Each proposal is ratified by a
 > different identity. A client rule that allows `oml_write` without a prompt now admits these too.
+>
+> Upgrade the Python SDK with the server: the v0.8.4 Python SDK raises `ValueError` on the new
+> `my_effective_verbs` values a v0.8.5 server serves. From v0.8.5 on the SDKs keep a value they do
+> not know as its string.
+>
+> A key can now be rotated: `oml keys rotate <key> [--grace <dur>]`, `POST
+> /v2/keys/{key}/rotate`, or **Rotate** on the console's Keys tab gives a key a new value, shown
+> once, and keeps its name, grants and limits. With a grace of up to 24 hours the previous value
+> keeps working until then; it runs no key act meanwhile.
+>
+> The last admin of a tenant is kept on every surface: `oml web allow` un-flagging, and `oml web
+> remove` removing, the last admin entry are now refused (`request.validation` naming `admin`)
+> under a bearer admin key too, as the console already refused them.
 
 ### Migration 0067 adds the `workspaces` meter
 
@@ -146,18 +159,46 @@ records for an open sign-up deployment, an unmeasured value recalibrated with th
 [#164](https://github.com/e8kor/open-memory-lab/issues/164) ([ADR-0095](../adr/ADR-0095-an-agent-creates-its-own-child-workspaces-writes-guardrails-and-proposes-status-and-brief-changes-through-oml-write-and-every-verdict-and-setting-stays-with-people.md) d11 Q4). Past the limit a create
 is `429 limit.quota` and journals nothing.
 
-### Grant read, the fix page, the brief and the CLI's skills
+### Migration 0068 adds the imports index
+
+Migration 0068 adds one index on the imports table (`imports_importer_created`), which the new
+imports listing reads; a deployment with few imports builds it at once. Clients read the new
+answer fields as optional: `GET /v2/keys` serves each grant's `covers` and an older server's
+answer reads as `subtree`; `whoami`'s person block serves `profile`, `period` and
+`usage.recalls`. A person's own issuance now takes grants, a default workspace, a guardrail scope,
+a rate and the role `submitter` ([ADR-0096](../adr/ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md)).
+
+### Migration 0069 and key rotation
+
+`oml keys rotate <key> [--grace <dur>] [--out <file>]`, `POST /v2/keys/{key}/rotate` and **Rotate**
+give a bearer key a new value and keep everything else ([ADR-0096](../adr/ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md) d13). The key rotates
+itself; a person rotates their own contributor, reader and submitter keys from the Personal Keys
+tab; an admin rotates its own admin key and, from the admin one-key page, a tenant key that names
+no person. In v0.8.5 an admin is refused another admin's key (`not_admins_key`) and a key of a
+person (`in_persons_root`); v0.8.6 brings those under [ADR-0097](../adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md)'s confirmation. Migration
+0069 adds one empty table, `key_previous_hashes`, which holds a rotated key's previous hash while
+its grace lasts; it reads and locks nothing existing. A key value's `whoami` reads one row more,
+and serves `rotation_grace_until` while a grace is open, which `oml doctor` prints as `info
+key.rotation_grace_open`. The previous value reads and writes during the grace and runs no key
+act: it rotates, issues, mints, cuts off, denies, sets limits and links nothing
+(`access.verb_ceiling`, `previous_value`). To roll the operator's or a deployer's key, rotate it
+with a grace, move each client to the new value, and let the grace end.
+
+### The console's new paths, Grant read, the brief and the CLI's skills
+
+The console serves four new paths: `/web/keys/new` (the key builder), `/web/admin/fixes` (the
+Fix tab's act), `/web/workspaces/import` (the import hand-off and list) and `/web/todo/fix` (where
+a person confirms or reverts an admin fix). `POST /web/workspace`, the workspace page's status
+proposal and brief ratification, is on a path a proxy already routes. A proxy that routes
+`oml-web`'s paths by name adds the four, as `deploy/caddy/Caddyfile`, both compose files and the
+chart's `web.ingressPaths` do.
 
 Administration, People gains **Grant read** (user, workspace): `POST
 /v2/web/users/{user}/capacities` takes `capacity: read`, which gives `<user>-web` a `reader` grant
 on the workspace, reached at the person's next sign-in, so their Memories and Catalog list it. The
 admin workspace page links **Browse as <user>** where the admin's own person holds that read
-([ADR-0096](../adr/ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md),
-operator decision of 2026-11-25). The console serves one more path, `/web/todo/fix`, where a person
-confirms or reverts an admin fix, and `POST /web/workspace`, the workspace page's status proposal
-and brief ratification, on a path a proxy already routes; a proxy that routes `oml-web`'s paths by
-name adds `/web/todo/fix`, as the reference files do. `POST /v2/edges` with `kind: brief` and
-`GET /v2/edges?kind=brief` accept a person's session. `oml write --kind skill --skill-name <name>
+([ADR-0096](../adr/ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md), operator decision of 2026-11-25). `POST /v2/edges` with `kind: brief` and `GET
+/v2/edges?kind=brief` accept a person's session. `oml write --kind skill --skill-name <name>
 --skill-description <line>` writes a skill, and `oml write --help` lists `skill` and `document`.
 
 ### The last admin entry, the deny's reason, and the counts before v0.8.6
@@ -165,46 +206,28 @@ name adds `/web/todo/fix`, as the reference files do. `POST /v2/edges` with `kin
 The last live admin entry of a tenant is now kept on every surface: `oml web allow` un-flagging it
 and `oml web remove` removing it under a bearer admin key are refused, `request.validation` naming
 `admin`, as the console already was, and `keep_an_admin` is read and changes nothing
-([ADR-0097](https://github.com/e8kor/open-memory-lab/pull/517) d25, d27). A denial's `reason`
-is scanned and journalled in `key.denied` when sent.
+([ADR-0097](../adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) d25, d27). A denial's `reason` is scanned and journalled in `key.denied` when
+sent.
 
 Before the v0.8.6 upgrade the operator takes the read-only counts ADR-0097 sizes it by, on the
-database host:
+database host, with the owner role's password in `PGPASSFILE` or `~/.pgpass`:
 
 ```sh
+PGPASSFILE=~/.pgpass \
 OML_COUNTS_DATABASE_URL=postgres://<owner role>@<host>/<database> \
   scripts/ops/read_only_counts.sh > counts.csv
 ```
 
-The URL names the database owner role, since the serving role reads one tenant at a time. The
-script runs one `READ ONLY` transaction in a read-only session and ends in `ROLLBACK`, so it
-changes nothing. It prints `count,tenant,value` for unlinked admin keys, service admin keys,
-grants in another person's root, admin-issued user keys and connect codes, open investigations,
-and `admin_persons_ever`, 2 or more where a tenant ever had two admin persons. The HTTP API serves
-no tenant-wide key or grant listing, so the counts read the database.
-
-### Key rotation and migration 0069
-
-`oml keys rotate <key> [--grace <dur>] [--out <file>]`, `POST /v2/keys/{key}/rotate` and **Rotate**
-on the Keys tabs give a bearer key a new value and keep everything else
-([ADR-0096](../adr/ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md)
-d13). Migration 0069 adds one empty table, `key_previous_hashes`, which holds a rotated key's
-previous hash while its grace lasts; it reads and locks nothing existing. A key value's `whoami`
-reads one row more, and serves `rotation_grace_until` while a grace is open, which `oml doctor`
-prints as `info key.rotation_grace_open`. To roll the operator's or a deployer's key, rotate it
-with a grace, move each client to the new value, and let the grace end.
-
-### Migration 0068 and the console round's paths
-
-Migration 0068 adds one index on the imports table (`imports_importer_created`);
-a deployment with few imports builds it at once. The console serves three new paths,
-`/web/keys/new`, `/web/admin/fixes` and `/web/workspaces/import`: a proxy that routes `oml-web`'s
-paths by name must add them, as `deploy/caddy/Caddyfile`, both compose files and the chart's
-`web.ingressPaths` do. Clients read the new answer fields as optional: `GET /v2/keys` serves each
-grant's `covers` and an older server's answer reads as `subtree`; `whoami`'s person block serves
-`profile`, `period` and `usage.recalls`. A person's own issuance now takes grants, a default
-workspace, a guardrail scope, a rate and the role `submitter`
-([ADR-0096](../adr/ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md)).
+The URL names the database owner role and carries no password; the script refuses one that does,
+so no process listing shows it. The owner role is `NOSUPERUSER NOBYPASSRLS` and every table forces
+row-level security, so the script lists the tenants under `oml.startup_check`, which the tenants
+table's listing policy admits, and counts each tenant under its own `oml.tenant_id`. It runs one
+`READ ONLY` transaction in a read-only session and ends in `ROLLBACK`, so it changes nothing. It
+prints `count,tenant,value` for unlinked admin keys, service admin keys, grants in another
+person's root, admin-issued user keys and connect codes, open investigations, and
+`admin_persons_ever`, 2 or more where a tenant ever had two admin persons, and exits non-zero,
+printing no counts, when the role sees no tenant. The HTTP API serves no tenant-wide key or grant
+listing, so the counts read the database.
 
 ## Upgrading to v0.8.4
 
