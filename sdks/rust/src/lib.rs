@@ -1700,6 +1700,20 @@ pub struct BriefProposalPage {
     pub next_cursor: Option<String>,
 }
 
+/// `POST /v2/keys/{key}/rotate`'s answer (ADR-0096 d13): the value is
+/// `None` on a replay, which never shows it again.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct RotatedKey {
+    pub key_id: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub value: Option<String>,
+    pub rotated_at: String,
+    #[serde(default)]
+    pub previous_valid_until: Option<String>,
+}
+
 /// One admin fix as a person's review read serves it (openapi.yaml `Fix`;
 /// ADR-0089 d15): never the admin's key or person, and the acts the
 /// reading key may take.
@@ -2935,6 +2949,32 @@ impl<T: Transport> Client<T> {
     pub async fn admin_fixes(&self, call: &Call<'_>) -> Result<Vec<AdminFix>, Error> {
         let answer: Items<AdminFix> = self.get(Some(call), "/v2/admin/fixes".to_owned()).await?;
         Ok(answer.items)
+    }
+
+    /// `POST /v2/keys/{key}/rotate`: a new value for `key`, answered once;
+    /// `grace_seconds` keeps the previous value working until
+    /// `previous_valid_until` (ADR-0096 d13). A replay answers no value.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn rotate_key(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        key: &str,
+        grace_seconds: Option<u32>,
+    ) -> Result<RotatedKey, Error> {
+        let body = match grace_seconds {
+            Some(grace) => serde_json::json!({ "grace_seconds": grace }),
+            None => serde_json::json!({}),
+        };
+        self.post(
+            call,
+            format!("/v2/keys/{}/rotate", encode(key)),
+            idempotency_key,
+            &body,
+        )
+        .await
     }
 
     /// `GET /v2/review/fixes`: the unconfirmed admin fixes where a person's

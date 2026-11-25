@@ -1916,6 +1916,59 @@ paths:
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
+  /v2/keys/{key}/rotate:
+    post:
+      tags: [keys]
+      operationId: rotateKey
+      summary: Give a bearer key a new value; the previous one stops at once or after a grace of at most 24 hours.
+      description: 'Requires: an admin key role in the key''s tenant, a person''s <user>-admin session key included, for any key; a person''s <user>-web session key for a key naming that person; or the key itself, so an agent rolls its own secret. Any other caller is access.verb_ceiling, and a person''s session naming another person''s key is access.not_found. The key keeps its id, name, grants, denials, limits, links, crew and history; only its value changes. grace_seconds, 0 to 86400, keeps the previous value authenticating until previous_valid_until; omitted or 0, it stops at once, and a later rotation ends any earlier grace. A session key, a connector key (mint a new connect code instead), a revoked key, a cut-off key and an expired key are request.validation with details.field key and details.reason session_key, connector_key, revoked, cut_off or expired; a longer grace is details.field /grace_seconds, details.reason grace_too_long. The value is answered once: the Idempotency-Key is claimed for the caller before the rotation, so a resubmission under it answers the recorded response without value, with Idempotency-Replay: true, and rotates nothing again. Journalled as key.rotated with the key, the rotating key and previous_valid_until, never a value or a hash. While a grace is open, the key''s whoami serves rotation_grace_until and oml doctor prints key.rotation_grace_open (ADR-0096 d13, the operator''s decision of 2026-11-25). Since v0.8.5.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { $ref: '#/components/parameters/KeyId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            example:
+              grace_seconds: 3600
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                grace_seconds: { type: integer, minimum: 0, maximum: 86400, description: 'How long the previous value keeps authenticating; omitted or 0, it stops at once.' }
+      responses:
+        '200':
+          description: The key's new value, shown once, and when the previous one stops.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              example:
+                key_id: d405428e-4c99-426d-8826-76d28436e423
+                name: alice-laptop
+                value: oml_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG
+                rotated_at: '2026-11-25T10:00:00.000000Z'
+                previous_valid_until: '2026-11-25T11:00:00.000000Z'
+                journal_seq: 412
+              schema:
+                type: object
+                additionalProperties: false
+                required: [key_id, name, rotated_at, previous_valid_until, journal_seq]
+                properties:
+                  key_id: { type: string }
+                  name: { type: [string, 'null'] }
+                  value: { type: string, description: 'The new value, shown once; absent from a replayed answer.' }
+                  rotated_at: { type: string, format: date-time }
+                  previous_valid_until: { type: [string, 'null'], format: date-time, description: 'When the previous value stops authenticating; null where it stopped at once.' }
+                  journal_seq: { type: integer }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+
   /v2/keys/{key}/link:
     post:
       tags: [keys]
@@ -6470,6 +6523,7 @@ components:
             - { $ref: '#/components/schemas/WhoamiPerson' }
             - { type: 'null' }
         without_recall: { type: boolean, description: "Whether this key is a contributor without recall: a contributor key holding a submitter grant on a node that no reader grant of it reaches, before its deny masks, such as a v0.8.3 writer key issued write-only, user keys whose one reader grant is the universe node grant among them. It works as before; oml doctor names it key_contributor_without_recall. false for every other key, and for every session key the server holds for a person, <user>-curate included; optional here so a client reads an answer without it, from an older server, as false (ADR-0093 d3, as read on 2026-11-20)." }
+        rotation_grace_until: { type: string, format: date-time, description: "For a bearer key rotated with a grace still open: when its previous value stops authenticating; oml doctor prints key.rotation_grace_open. Absent otherwise (ADR-0096 d13). Since v0.8.5." }
         shared: { type: boolean, description: "Whether the server's admins are not the caller's: true when the operator sets server.shared or opens sign-up. oml sync asks consent of a shared server; a server from this release always sends it; optional here so a client reads an answer without it, from an older server, as false (ADR-0076 d9)." }
 
     WhoamiPerson:

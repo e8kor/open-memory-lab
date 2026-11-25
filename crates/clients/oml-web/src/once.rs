@@ -54,6 +54,15 @@ pub enum Secret {
         value: String,
         server: String,
     },
+    /// A rotated key's new value, with when its previous value stops,
+    /// `None` at once, and the page the card leads back to (ADR-0096 d13).
+    Rotated {
+        name: String,
+        value: String,
+        server: String,
+        previous_valid_until: Option<String>,
+        back: String,
+    },
     /// A connector key's connect code, with its connector URL and expiry.
     Code {
         name: String,
@@ -69,6 +78,7 @@ impl std::fmt::Debug for Secret {
         match self {
             Self::Key { name, .. } => f.debug_struct("Key").field("name", name).finish(),
             Self::Code { name, .. } => f.debug_struct("Code").field("name", name).finish(),
+            Self::Rotated { name, .. } => f.debug_struct("Rotated").field("name", name).finish(),
         }
     }
 }

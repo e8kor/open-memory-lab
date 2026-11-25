@@ -372,7 +372,9 @@ async fn whoami_names_a_denied_session_key_in_the_store_calls_it_already_makes()
 }
 
 /// A key value's `whoami` without the person block: the key's lookup, its
-/// access, and the record's references, one read each (#286).
+/// access, the record's references, one read each (#286), and since v0.8.5
+/// one read of a rotation's open grace, made for a bearer key alone
+/// (ADR-0096 d13).
 #[tokio::test]
 async fn whoami_of_a_key_value_without_the_person_block_reads_each_row_once() {
     let rig = rig().await;
@@ -380,7 +382,7 @@ async fn whoami_of_a_key_value_without_the_person_block_reads_each_row_once() {
     assert_eq!(me.status, StatusCode::OK, "{}", me.body);
     assert_eq!(me.body["name"], "root-admin", "{}", me.body);
     assert!(me.body.get("person").is_none(), "{}", me.body);
-    assert_eq!(me.store_calls(), 3, "{}", me.line);
+    assert_eq!(me.store_calls(), 4, "{}", me.line);
 }
 
 /// Without `person=false`, `whoami` serves the person block as it did, in
@@ -1420,4 +1422,29 @@ async fn the_people_pages_read_costs_its_measured_store_calls() {
     println!("store calls: people {}", people.store_calls());
     // Measured 2026-11-25: the gate's call and the one allowlist page.
     assert_eq!(people.store_calls(), 2, "{}", people.line);
+}
+
+/// Rotate's one act, `POST /v2/keys/{key}/rotate`, measured as the Keys
+/// tabs send it (ADR-0096 d13): the tab's list read is unchanged, since the
+/// button rides the rows it already lists, and the act costs the claim of
+/// its Idempotency-Key, the key read, the cut-off check and the commit.
+/// Here the tenant's admin key rotates itself with a grace.
+#[tokio::test]
+async fn the_rotate_act_costs_its_measured_store_calls() {
+    let rig = rig().await;
+    let rotated = send(
+        &rig.router,
+        Request::post("/v2/keys/root-admin/rotate").header("idempotency-key", "rotate-once"),
+        r#"{"grace_seconds": 3600}"#,
+        &rig.admin,
+        false,
+    )
+    .await;
+    assert_eq!(rotated.status, StatusCode::OK, "{}", rotated.body);
+    assert!(rotated.body["value"].is_string(), "{}", rotated.body);
+    println!("store calls: rotate {}", rotated.store_calls());
+    // Measured 2026-11-25: 12, the caller's resolution, the claim and its
+    // record, the name and key reads, the cut-off check, the head and the
+    // commit.
+    assert_eq!(rotated.store_calls(), 12, "{}", rotated.line);
 }

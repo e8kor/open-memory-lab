@@ -11966,3 +11966,88 @@ async fn the_admin_workspace_page_shows_the_browse_link_only_when_read_is_held()
     assert_eq!(status, StatusCode::OK, "{browsed}");
     assert!(browsed.contains("The team ships on Fridays."), "{browsed}");
 }
+
+/// Rotate on the Personal Keys tab (ADR-0096 d13): beside Cut off on a
+/// live bearer key; it asks first, offering no grace, one hour or 24
+/// hours; then shows the new value once with when the previous one stops,
+/// and the new value authenticates the same key while the old one, in its
+/// hour, still does.
+#[tokio::test]
+async fn the_keys_tab_rotates_a_key_after_asking_and_shows_the_new_value_once() {
+    let rig = rig().await;
+    let (cookie, old) = person_with_agent(&rig, "sub-1", EMAIL).await;
+    let (_, _, keys) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+    assert!(
+        keys.contains(r#"value="rotate_key""#) && keys.contains(">Rotate<"),
+        "{keys}"
+    );
+    let (status, _, ask) = act(
+        &rig,
+        &cookie,
+        "/web/keys",
+        &[("action", "rotate_key"), ("key", "alice-laptop")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{ask}");
+    assert!(ask.contains("Rotate alice-laptop?"), "{ask}");
+    assert!(ask.contains("1 hour") && ask.contains("24 hours"), "{ask}");
+    let (status, _, shown) = act_and_follow(
+        &rig,
+        &cookie,
+        "/web/keys",
+        &[
+            ("action", "rotate_key"),
+            ("key", "alice-laptop"),
+            ("grace", "3600"),
+            ("confirm", "yes"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{shown}");
+    assert!(shown.contains("Key rotated"), "{shown}");
+    assert!(shown.contains("The previous value works until"), "{shown}");
+    let new = value_of(&shown);
+    assert_ne!(new, old);
+    let me = rig.app.whoami(&new).await.expect("the new value");
+    assert_eq!(me.key.name.as_ref().map(Name::as_str), Some("alice-laptop"));
+    rig.app
+        .whoami(&old)
+        .await
+        .expect("the old value in its hour");
+    // Shown once: the page again draws the list.
+    let (_, _, again) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+    assert!(!again.contains(&new), "{again}");
+}
+
+/// The admin Keys tab rotates a person's key too, and shows the value on
+/// the admin page; without a grace the old value stops at once.
+#[tokio::test]
+async fn the_admin_keys_tab_rotates_a_persons_key_and_the_old_value_stops_at_once() {
+    let rig = rig().await;
+    let (_alice, old) = person_with_agent(&rig, "sub-1", EMAIL).await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (_, _, listed) = send(&rig.router, get("/web/admin/keys?user=alice", Some(&boss))).await;
+    assert!(listed.contains(">Rotate<"), "{listed}");
+    let (status, _, shown) = act_and_follow(
+        &rig,
+        &boss,
+        "/web/admin/keys",
+        &[
+            ("action", "rotate_key"),
+            ("key", "alice-laptop"),
+            ("user", "alice"),
+            ("grace", "0"),
+            ("confirm", "yes"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{shown}");
+    assert!(
+        shown.contains("The previous value stopped working now."),
+        "{shown}"
+    );
+    let new = value_of(&shown);
+    rig.app.whoami(&new).await.expect("the new value");
+    assert!(rig.app.whoami(&old).await.is_err(), "the old value stopped");
+}

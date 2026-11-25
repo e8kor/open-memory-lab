@@ -23,8 +23,8 @@ use axum::extract::{Form, State};
 use axum::response::Response;
 use http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use oml_page::web::{
-    ADMIN_KEYS_PATH, TODO_PATH, USER_KEYS_PATH, attr, form, hidden, input, shell, short, state_tag,
-    text,
+    ADMIN_KEYS_PATH, TODO_PATH, USER_KEYS_PATH, attr, form, hidden, input, select, shell, short,
+    state_tag, text,
 };
 use oml_sdk::{ListedKey, encode};
 
@@ -36,6 +36,7 @@ use crate::{Capacity, Web, acts, outcome, usage};
 /// The user page's acts, each the act of one documented operation.
 pub const USER_ACTIONS: &[&str] = &[
     "build_key",
+    "rotate_key",
     "issue_key",
     "connect_key",
     "connect_code",
@@ -47,7 +48,14 @@ pub const USER_ACTIONS: &[&str] = &[
 
 /// The admin page's acts: the cut-off, and a tenant key's link to the
 /// listed person and its end (ADR-0085 d16).
-pub const ADMIN_ACTIONS: &[&str] = &["cut_off", "link_key", "unlink_key", "set_limits", "deny_on"];
+pub const ADMIN_ACTIONS: &[&str] = &[
+    "cut_off",
+    "rotate_key",
+    "link_key",
+    "unlink_key",
+    "set_limits",
+    "deny_on",
+];
 
 /// The most keys one listing call reads, the API's maximum.
 const KEY_PAGE: u32 = 200;
@@ -349,6 +357,19 @@ fn row(key: &ListedKey, side: Side, csrf: &str, user: &str, denied: Option<&str>
         } else {
             String::new()
         };
+        // Rotate, beside Cut off, on a live bearer key that has not
+        // expired: a connector key takes a new connect code instead
+        // (ADR-0096 d13).
+        if key.credential == "bearer" && !key.expired {
+            acts.push_str(&form(
+                side.path(),
+                "rotate_key",
+                csrf,
+                &format!("{}{listed}", hidden("key", name)),
+                "Rotate",
+                false,
+            ));
+        }
         acts.push_str(&form(
             side.path(),
             "cut_off",
@@ -533,6 +554,42 @@ fn secret_card(secret: &Secret) -> (&'static str, String) {
                     r#"<h1>{}</h1><p class="desc">Shown once: copy it now. Then <a href="/web/setup">set up</a> the agent.</p>{note}<div class="card secret"><p class="label">For the agent</p><pre>{url}OML_API_KEY={}</pre></div><p><a href="{USER_KEYS_PATH}">Back to Keys</a></p>"#,
                     short(name),
                     attr(value)
+                ),
+            )
+        }
+        Secret::Rotated {
+            name,
+            value,
+            server,
+            previous_valid_until,
+            back,
+        } => {
+            let url = if server.is_empty() {
+                String::new()
+            } else {
+                format!("OML_URL={}\n", attr(server))
+            };
+            let previous = previous_valid_until.as_deref().map_or_else(
+                || "The previous value stopped working now.".to_owned(),
+                |at| {
+                    format!(
+                        "The previous value works until {} UTC, then stops.",
+                        text(
+                            &at.replacen('T', " ", 1)
+                                .chars()
+                                .take(16)
+                                .collect::<String>()
+                        )
+                    )
+                },
+            );
+            (
+                "Key rotated",
+                format!(
+                    r#"<p class="label">Key rotated</p><h1>{}</h1><p class="desc">Shown once: copy it now. {previous}</p><div class="card secret"><p class="label">For the agent</p><pre>{url}OML_API_KEY={}</pre></div><p><a href="{}">Back to Keys</a></p>"#,
+                    short(name),
+                    attr(value),
+                    attr(back)
                 ),
             )
         }
@@ -809,11 +866,34 @@ pub async fn admin_page(
     State(web): State<Web>,
     Extension(session): Extension<Session>,
     Extension(calls): Extension<Arc<PageCalls>>,
+    headers: HeaderMap,
     uri: Uri,
 ) -> Response {
     if let Some(refusal) = admin_only(&session, &calls) {
         return refusal;
     }
+    // A rotated key's value, shown here once and cleared in the same answer
+    // (ADR-0096 d13); a seal that does not open is cleared unshown.
+    if let Some(sealed) = cookie(&headers, ONCE_COOKIE) {
+        if let Some(secret) = once::open(session.token(), ADMIN_KEYS_PATH, &sealed) {
+            let (title, body) = secret_card(&secret);
+            return clearing(outcome::html(
+                StatusCode::OK,
+                shell(
+                    title,
+                    &session.administration(),
+                    ADMIN_KEYS_PATH,
+                    None,
+                    &body,
+                ),
+            ));
+        }
+        return clearing(admin_view(web, session, calls, uri).await);
+    }
+    admin_view(web, session, calls, uri).await
+}
+
+async fn admin_view(web: Web, session: Session, calls: Arc<PageCalls>, uri: Uri) -> Response {
     let fields = match Fields::of(&uri) {
         Ok(fields) => fields,
         Err(message) => return acts::invalid(&message, &calls),
@@ -1159,6 +1239,9 @@ fn defined(side: Side, action: &str, name: &str) -> bool {
         "issue_key" | "connect_key" => matches!(name, "name" | "role" | "expires"),
         "build_key" => crate::builder::defined(name),
         "cut_off" => matches!(name, "key" | "confirm") || (side == Side::Admin && name == "user"),
+        "rotate_key" => {
+            matches!(name, "key" | "confirm" | "grace") || (side == Side::Admin && name == "user")
+        }
         "link_key" | "unlink_key" => matches!(name, "key" | "user"),
         "set_limits" => matches!(name, "key" | "expires" | "no_expiry" | "rate" | "no_rate"),
         "deny_on" => matches!(name, "key" | "workspace" | "reason"),
@@ -1195,6 +1278,52 @@ fn cut_off_confirmation(session: &Session, side: Side, key: &str, user: Option<&
         true,
     ));
     let _ = write!(body, r#"<p><a href="{}">Keep it</a></p>"#, attr(&back));
+    let bar = match side {
+        Side::User => session.personal(),
+        Side::Admin => session.administration(),
+    };
+    outcome::html(StatusCode::OK, shell("Confirm", &bar, page, None, &body))
+}
+
+/// Rotate's confirmation, which records nothing: what a rotation does, the
+/// grace offered (none, one hour, 24 hours), and a form carrying
+/// `confirm=yes`, the listed `user` on the admin page, and a fresh nonce,
+/// so a resubmitted confirmation replays one rotation (ADR-0096 d13).
+fn rotate_confirmation(session: &Session, side: Side, key: &str, user: Option<&str>) -> Response {
+    let page = side.path();
+    let listed = user.map_or_else(String::new, |u| hidden("user", u));
+    let back = user.map_or_else(|| page.to_owned(), |u| format!("{page}?user={}", encode(u)));
+    let mut body = format!(
+        r#"<h1>Rotate {}?</h1><p class="oml-consequence">The key gets a new value, shown once. Its name, grants and limits stay. Every client that holds the previous value needs the new one.</p>"#,
+        short(key)
+    );
+    body.push_str(&form(
+        page,
+        "rotate_key",
+        &session.csrf(),
+        &format!(
+            "{}{listed}{}{}{}",
+            hidden("key", key),
+            select(
+                "grace",
+                "previous value works for",
+                &[
+                    ("0", "no time: it stops now"),
+                    ("3600", "1 hour"),
+                    ("86400", "24 hours")
+                ],
+            ),
+            hidden("confirm", "yes"),
+            acts::nonce_field()
+        ),
+        "Rotate it",
+        true,
+    ));
+    let _ = write!(
+        body,
+        r#"<p><a href="{}">Keep the value</a></p>"#,
+        attr(&back)
+    );
     let bar = match side {
         Side::User => session.personal(),
         Side::Admin => session.administration(),
@@ -1272,6 +1401,14 @@ async fn act(
     // confirmation's own field acts (#253).
     if action == "cut_off" && fields.given("confirm") != Some("yes") {
         return cut_off_confirmation(
+            &session,
+            side,
+            fields.given("key").unwrap_or_default(),
+            fields.given("user"),
+        );
+    }
+    if action == "rotate_key" && fields.given("confirm") != Some("yes") {
+        return rotate_confirmation(
             &session,
             side,
             fields.given("key").unwrap_or_default(),
@@ -1375,6 +1512,28 @@ async fn act(
                 Err(e) => return outcome::page(&e, &calls, page),
             }
         }
+        "rotate_key" => {
+            let name = fields.given("key").unwrap_or_default();
+            let grace = match fields.given("grace").unwrap_or("0") {
+                "0" => None,
+                g @ ("3600" | "86400") => g.parse().ok(),
+                _ => return acts::invalid("grace is 0, 3600 or 86400 seconds", &calls),
+            };
+            match web.api.rotate_key(&call, &key, name, grace).await {
+                Ok(rotated) => match rotated.value {
+                    Some(value) => Secret::Rotated {
+                        name: name.to_owned(),
+                        value,
+                        server: server(&web).await,
+                        previous_valid_until: rotated.previous_valid_until,
+                        back: page.to_owned(),
+                    },
+                    // A replay, which shows no value: as for an issue.
+                    None => return acts::see_other(page, &[]),
+                },
+                Err(e) => return outcome::page(&e, &calls, page),
+            }
+        }
         "accept_email" | "decline_email" => {
             let email = fields.given("email").unwrap_or_default();
             let (answer, done) = if action == "accept_email" {
@@ -1475,8 +1634,15 @@ async fn act(
             };
         }
     };
-    let sealed = once::seal(session.token(), USER_KEYS_PATH, &secret);
-    acts::see_other(USER_KEYS_PATH, &[once::set_cookie(&sealed)])
+    // The secret opens on the page that asked for it: a rotation from the
+    // admin Keys page shows on that page.
+    let shown_on = if matches!(secret, Secret::Rotated { .. }) {
+        page
+    } else {
+        USER_KEYS_PATH
+    };
+    let sealed = once::seal(session.token(), shown_on, &secret);
+    acts::see_other(shown_on, &[once::set_cookie(&sealed)])
 }
 
 /// `POST /web/keys`: an act of the user page's view.
