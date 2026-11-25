@@ -589,14 +589,30 @@ async fn todo_body(
 }
 
 /// The unconfirmed admin fixes `<user>-review` may settle, `GET
-/// /v2/review/fixes` (ADR-0089 d15), under the filter where it names a
-/// workspace id: `None` where the page judges as a linked key, or the read
-/// fails, which the group then leaves out.
+/// /v2/review/fixes` (ADR-0089 d15), under the filter: a fix serves its
+/// workspace's id alone, so a filter by name is read once as the
+/// workspace's id, `GET /v2/workspaces/{workspace}`. `None` where the page
+/// judges as a linked key, or a read fails, which the group then leaves
+/// out.
 async fn review_fixes(ctx: &Ctx<'_>, chosen: &Chosen) -> Option<Vec<oml_sdk::Fix>> {
     if ctx.acting.is_some() {
         return None;
     }
     let credential = ctx.session.credential(Capacity::Review);
+    let workspace = match chosen.value() {
+        None => None,
+        Some(w) if is_id(w) => Some(w.to_owned()),
+        Some(name) => {
+            let ids = ctx.calls.next_ids();
+            let view = ctx
+                .web
+                .api
+                .workspace(&call(&credential, &ids), name)
+                .await
+                .ok()?;
+            Some(view.id)
+        }
+    };
     let ids = ctx.calls.next_ids();
     let fixes = ctx
         .web
@@ -604,7 +620,7 @@ async fn review_fixes(ctx: &Ctx<'_>, chosen: &Chosen) -> Option<Vec<oml_sdk::Fix
         .review_fixes(&call(&credential, &ids))
         .await
         .ok()?;
-    Some(match chosen.value().filter(|w| is_id(w)) {
+    Some(match workspace {
         Some(w) => fixes.into_iter().filter(|f| f.workspace_id == w).collect(),
         None => fixes,
     })
