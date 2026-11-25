@@ -1,7 +1,7 @@
 ---
 status: Stable
-verified: 2026-11-20
-answers: "how to upgrade an OML server: how migrations run, the upgrade steps in order, what rollback does and does not mean, the upgrade from a pre-0.3.1 install, the v0.5.4 fix, how to move from v0.3, the v0.8.4 role rename that clients take in the server's window, with no key issued or listed until both run v0.8.4, what v0.8.4's migrations 0063, 0064 and 0066 cost, the admin key links, links and sign-in emails that wait on their person, and the reset of a database that ran a draft of 0063 or 0064, the v0.8.3 rename that clients take before the server, what the v0.8.3 migrations cost and what waits during them, and the storage.url to set before v0.8.3's uploads"
+verified: 2026-11-25
+answers: "how to upgrade an OML server: how migrations run, the upgrade steps in order, what rollback does and does not mean, the upgrade from a pre-0.3.1 install, the v0.5.4 fix, how to move from v0.3, v0.8.5's migrations 0067, 0068 and 0069, the workspaces quota, the oml_write modes and the Python SDK that upgrades with the server, key rotation and what a previous value runs in its grace, the last admin entry kept on every surface and the read-only counts before v0.8.6, the v0.8.4 role rename that clients take in the server's window, with no key issued or listed until both run v0.8.4, what v0.8.4's migrations 0063, 0064 and 0066 cost, the admin key links, links and sign-in emails that wait on their person, and the reset of a database that ran a draft of 0063 or 0064, the v0.8.3 rename that clients take before the server, what the v0.8.3 migrations cost and what waits during them, and the storage.url to set before v0.8.3's uploads"
 ---
 
 # Upgrade OML
@@ -135,7 +135,9 @@ The notice to send to client owners:
 > A key can now be rotated: `oml keys rotate <key> [--grace <dur>]`, `POST
 > /v2/keys/{key}/rotate`, or **Rotate** on the console's Keys tab gives a key a new value, shown
 > once, and keeps its name, grants and limits. With a grace of up to 24 hours the previous value
-> keeps working until then; it runs no key act meanwhile.
+> keeps working until then for memory reads and writes, verdicts, edge proposals and ratifications,
+> settling a fix, withdraw, uploads, imports into an existing workspace and export; it is refused
+> every admin act and every act that creates a credential or changes structure or authority.
 >
 > The last admin of a tenant is kept on every surface: `oml web allow` un-flagging, and `oml web
 > remove` removing, the last admin entry are now refused (`request.validation` naming `admin`)
@@ -179,9 +181,12 @@ person (`in_persons_root`); v0.8.6 brings those under [ADR-0097](../adr/ADR-0097
 0069 adds one empty table, `key_previous_hashes`, which holds a rotated key's previous hash while
 its grace lasts; it reads and locks nothing existing. A key value's `whoami` reads one row more,
 and serves `rotation_grace_until` while a grace is open, which `oml doctor` prints as `info
-key.rotation_grace_open`. The previous value reads and writes memories during the grace and
-runs nothing else: no key act, no admin verb, no workspace creation, mode, federation or status
-change (`access.verb_ceiling`, `previous_value`). To roll the operator's or a deployer's key, rotate it
+key.rotation_grace_open`. During the grace the previous value still runs memory reads and
+writes, verdicts, edge proposals and ratifications, settling a fix, withdraw, uploads, imports into
+an existing workspace and export. It is refused every admin act and every act that creates a
+credential or changes structure or authority: every key act and admin verb, creating a workspace,
+its mode and federation, status proposals and ratifications, accepting a key link and every session
+key act (`access.verb_ceiling`, `previous_value`). To roll the operator's or a deployer's key, rotate it
 with a grace, move each client to the new value, and let the grace end.
 
 ### The console's new paths, Grant read, the brief and the CLI's skills

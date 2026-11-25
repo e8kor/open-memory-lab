@@ -18,6 +18,11 @@ server refuses the former role from a v0.8.3 client and a v0.8.3 server refuses 
 `contributor`: upgrade the client in the server's window, and issue or list no key until both
 run v0.8.4.
 
+Upgrade this SDK with a v0.8.5 server: the v0.8.4 SDK raises `ValueError` on the
+`my_effective_verbs` values `create_workspace` and `propose_brief` that v0.8.5 serves (ADR-0095).
+From v0.8.5 the SDK keeps an enum value it does not know as its string, and an error code it has
+never seen lands in its family's class, so a later server's new values need no SDK upgrade.
+
 Python 3.11 or later. Each release attaches a wheel and an sdist to its GitHub release; install
 the wheel from the file, or install from a checkout of the repository:
 

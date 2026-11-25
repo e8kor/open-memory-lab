@@ -80,4 +80,4 @@ The Claude Code plugin, installed from the plugin marketplace with its URL and k
 
 ## Not available in this build
 
-macOS server builds, read followers and cluster mode, key revoke and rotate verbs, attachments and simulations. Install and platform support is on the [install page](../start/install.md).
+macOS server builds, read followers and cluster mode, a key revoke verb, attachments and simulations. Install and platform support is on the [install page](../start/install.md).

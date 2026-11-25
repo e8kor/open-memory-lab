@@ -15,7 +15,7 @@ those answers created, and three readings, the same day; each answer is recorded
 and marked **decided by the operator, 2026-11-25**. Readings this record takes beyond the answers
 are marked **reading, for the operator to confirm**.
 
-**Release:** v0.8.6, not built. Four pieces land in v0.8.5 (d27).
+**Release:** v0.8.6, not built. Four pieces are built in v0.8.5 (d27).
 
 **Amends:** [ADR-0001](ADR-0001-the-constitution.md) (d5, kept: exception 3 reads with two
 changes), [ADR-0009](ADR-0009-status-ladder.md) (d3),

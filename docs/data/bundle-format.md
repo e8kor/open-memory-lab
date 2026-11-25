@@ -18,7 +18,8 @@ with [age](https://age-encryption.org) to one or more named recipients.
 | `release` mode and `since` | designed, not built: refused `request.validation`, `details.reason` `releases_unbuilt`, until releases are built |
 | `oml workspaces export` | built |
 | `POST /v2/imports`, `GET /v2/imports/{id}`, `oml workspaces import` | built, into an in-progress workspace ([#426](https://github.com/e8kor/open-memory-lab/issues/426)) |
-| Export and Import on the console's personal side | designed, not built |
+| `GET /v2/imports` and the console's import hand-off and list, `/web/workspaces/import` | built in v0.8.5 ([ADR-0096](../adr/ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md)) |
+| Export on the console's personal side, and the review of an imported version there | designed, not built: the export page waits on the SDK's binary download ([#465](https://github.com/e8kor/open-memory-lab/issues/465)), the review on ADR-0096 d11 |
 
 ## Layout
 
