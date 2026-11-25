@@ -10,8 +10,10 @@ answers: how every break-glass and key-authority act of an admin is recorded and
 **Status:** accepted design · 2026-11-25, decided by the operator, who answered all seventeen
 questions of the break-glass and key-access brief on 2026-11-25. Q9, Q12 and Q17 differ from the
 brief's recommendations, and this record re-derives every rule that rested on those
-recommendations (marked **re-derived** where it appears). Readings this record takes beyond the
-answers are marked **reading, for the operator to confirm**.
+recommendations (marked **re-derived** where it appears). The operator answered the five tensions
+those answers created, and three readings, the same day; each answer is recorded where it applies
+and marked **decided by the operator, 2026-11-25**. Readings this record takes beyond the answers
+are marked **reading, for the operator to confirm**.
 
 **Release:** v0.8.6, not built. Four pieces land in v0.8.5 (d27).
 
@@ -173,6 +175,13 @@ Decided, not built.
   and ADR-0031 d7 and d8 only as far as adding the second admin's confirmation: an admin still
   issues a reviewer user key in another person's root once confirmed, and no consent class covers
   these acts. A person's own issuance and own codes in their own root never wait (ADR-0096 d1).
+  - **Under `sole_admin`** (decided by the operator, 2026-11-25): a reach into a person's root
+    takes effect at once, marked `sole_admin` (d10), and the root's person is notified in-product,
+    as a To do item, in the act's own commit (d20).
+  - **What a confirmed reach acts as** (decided by the operator, 2026-11-25, as is): keys a second
+    admin confirmed in a person's root act like that person's own keys. Their approvals keep the
+    own-root allowance, marked `same_user` (`app.rs:7453-7460`), and their reads are not counted
+    as admin reads (d16). The operator accepted this residual; the security analysis states it.
   *Rejected:* the brief's recommendation, the person's acceptance for every reach and no
   admin-issued reviewer key or admin connect code in another's root at all, which the operator did
   not take; consent for grants only; as today.
@@ -235,11 +244,12 @@ Decided, not built.
     migration. A bootstrap always names a person (d21), so the zero-person reading of the brief's
     recommendation does not exist: `sole_admin` means exactly one admin person ever.
   - **Effect.** Widening and the shred take effect at once, marked `sole_admin` on the act, the key
-    and every grant, with a doctor line naming the tenant. Fixes stay unconfirmed and excluded from
-    cuts, as today.
+    and every grant, with a doctor line naming the tenant; a reach into a person's root also
+    notifies that person (d6). A ladder ratification by the proposer's own person is admitted,
+    marked (d17). Fixes stay unconfirmed and excluded from cuts, as today.
   - **Sticky.** Once two live admin persons have existed, the tenant never returns to
-    `sole_admin`, except after a drop to one that the departing person confirmed, a drop settled
-    under d8, or a recovery (d19), which is a host-settled drop.
+    `sole_admin`, except after a drop to one that the departing person confirmed, or a drop settled
+    under d8. A recovery is not such a drop (d19).
   - **While any act against an admin is open**, widening is confirm-first even with one live admin
     person.
   - **When a second admin person arrives**, every marked act appears in their To do once their
@@ -257,7 +267,8 @@ Decided, not built.
   on 2026-11-19 and 2026-11-20. An invented admin person confirms nothing for seven days, and
   making one is itself widening. An invented non-admin person settles a production fix only
   through a reviewer grant on the fix's workspace, which is widening that a second admin person
-  confirms (d5). In a `sole_admin` tenant the founder can still invent a settler, marked. *Rejected:* anyone else (Q10(b)), which lets an invented person confirm; a
+  confirms (d5). In a `sole_admin` tenant the founder can still invent a settler, marked (accepted
+  by the operator, 2026-11-25). *Rejected:* anyone else (Q10(b)), which lets an invented person confirm; a
   lineage rule, which freezes the founding admin's widening for good.
 
 - **d12 — A counted person is required for instruction verdicts, fix settlements and ladder
@@ -286,15 +297,16 @@ Decided, not built.
   It journals `key.revoked {key_id, revoked_by_key_id, actor_person, reason, act_id, cause}`. No
   cascade: keys the revoked key issued keep working, and session keys come from the server issuer
   (d18), so revoking an admin key breaks no sign-in. The console offers one button on the admin
-  one-key page and nothing else. Who: an admin person (a linked admin key or `<user>-admin`) on any
-  key of the tenant; against another admin person's key it is d8's act, otherwise narrowing.
+  one-key page and on the person's Keys page, and nothing else. Who: an admin person (a linked
+  admin key or `<user>-admin`) on any key of the tenant, against another admin person's key d8's
+  act and otherwise narrowing; and a person's `<user>-web` on the person's own keys, those that
+  count as the person, as a person's own act and not an admin act (decided by the operator,
+  2026-11-25).
   Refused: a session key (`session_key`; a session ends with its entry), a reserved key (it
   resolves on no route), an already revoked key (`revoked`). The body admits only `reason`, and
   unknown fields are `request.validation`, so `cascade` and rotation can be added later as new
   members without changing the verb. This reverses ADR-0079 d5 and its answers of 2026-11-12 ("no
-  admin key ends another") and ADR-0096 d12's deferral of revocation (2026-11-24). A person
-  revoking their own keys from their web session is not decided here; it waits for its own
-  question. *Rejected:* admin keys only (Q6(b)); no revocation (Q6(c)), which leaves a leaked admin
+  admin key ends another") and ADR-0096 d12's deferral of revocation (2026-11-24). *Rejected:* admin keys only (Q6(b)); no revocation (Q6(c)), which leaves a leaked admin
   key permanent; a cascade, which the operator deferred.
 
 - **d15 — Raising a limit is widening; lowering it takes effect at once (Q7).** A raise, a cleared
@@ -309,6 +321,8 @@ Decided, not built.
   person, and is suspended in a freeze (Q11).** A person sees on their own page a count of admin
   reads of their root, by month. Doctor warns past N pages per investigation (a placeholder).
   The explicit close of 2026-11-17, with no idle expiry, is kept. A `maintenance` key never reads.
+  Reads through keys or connect codes a second admin confirmed in a person's root are that root's
+  own reads and are not counted here (d6, decided by the operator, 2026-11-25).
   This reverses ADR-0089 d14's "no `used_by: person` requirement" (2026-11-14). *Rejected:* as
   today, with or without the per-person count (Q11(b), (c)).
 
@@ -320,7 +334,10 @@ Decided, not built.
   differ from the `actor_person` of the admin act that issued the proposing key, so one admin
   cannot propose through an agent key they issued and ratify through their own session. A ladder
   move is not an admin act: it keeps its own two-person flow whoever takes it, and ADR-0089 d2's
-  "a ladder move is not a fix" stands. *Rejected:* the brief's recommendation, admins leave the
+  "a ladder move is not a fix" stands. **Under `sole_admin`** (decided by the operator,
+  2026-11-25), a ratification by the proposer's own person is admitted and marked `sole_admin` on
+  the transition, so a one-person tenant still moves the ladder; the ratifier still counts as a
+  person (d12). *Rejected:* the brief's recommendation, admins leave the
   ladder (Q12(a)), which the operator did not take; proposers limited to persons (Q12(b)); as
   today (Q12(c)), where two keys of one admin move it.
 
@@ -361,12 +378,22 @@ Decided, not built.
     placeholder). Every admin key belongs to a person (d21), so no bearer key outside a person can
     pin the tenant active. A 72-hour waiting period (a placeholder) follows, cancelled by any
     sign-in of an admin person of the tenant. It then revokes every admin key of the tenant,
-    **un-flags every dormant admin entry** (the entries, roots and content stay), creates the named
-    admin person, and journals `operator.recovery` with the window, the revoked keys and the
-    un-flagged entries. **Reading, for the operator to confirm:** the un-flag is what lets the new
-    admin act; without it the tenant has had two admin persons, leaves `sole_admin` (d10), and the
-    new admin's widening waits on a dormant confirmer for good. A recovery counts as a settled drop
-    under d10.
+    creates the named admin person, and journals `operator.recovery` with the window and the
+    revoked keys. **It keeps the dormant admin entries' flags** (decided by the operator,
+    2026-11-25). The consequence, stated: the recovered tenant has had two admin persons, so it
+    leaves `sole_admin` (d10), and the new admin's widening needs the confirmation of a dormant
+    admin who counts (d11). If the dormant admins never return, the new admin still narrows, takes
+    neutral acts, fixes and reads, but cannot widen alone.
+    - **The way out with one dormant admin.** The new admin un-flags the dormant admin, an act
+      against an admin (d8). With fewer than three admin persons it freezes, and after 24 hours the
+      operator confirms it with `oml operator settle`; the drop is then settled under d8, and the
+      tenant is `sole_admin` again for the new admin (d10). The dormant admin is notified, by email
+      at the settlement (d20), and may contest from the contest-only sign-in until then.
+    - **With two or more dormant admins, an accepted limit.** The tenant then has three or more
+      admin persons, so an un-flag is settled by a third admin who counts (d8), and no dormant one
+      will; no freeze opens, so `oml operator settle` does not apply, and a second recovery never
+      runs while the new admin signs in. The new admin's widening waits until a dormant admin
+      returns. The operator accepted this limit on 2026-11-25.
   - **`oml operator settle <tenant> <act> --confirm|--reverse`** runs only on a freeze open for at
     least 24 hours (a placeholder). No sign-in cancels it; both parties are notified. Its only
     effect is to confirm or reverse the contested act; it issues no key and reads no content. It
@@ -376,7 +403,8 @@ Decided, not built.
 
 - **d20 — Notices are in-product for everything, and email goes out only for recovery and
   settlement (Q15).** An act against an admin, offensive narrowing (d24), a recovery and a
-  settlement each write a To do item and a `critical` doctor line. A recovery or settlement notice
+  settlement each write a To do item and a `critical` doctor line. A reach into a person's root
+  under `sole_admin` writes a To do item for that person (d6). A recovery or settlement notice
   is also emailed to every admin person of the tenant, since a dormant admin sees nothing
   in-product. The server sends no mail today, so the build adds settings for one outbound mail
   relay and its sender, one egress host, and the doctor lines `notice.mail_unconfigured` and
@@ -395,8 +423,9 @@ Decided, not built.
     or asks for deletion and it is closed, their admin keys are revoked at once (`cause:
     deactivation`). When another admin disables, removes or un-flags them (d8), the keys are
     suspended at once and revoked when the act is settled confirmed; a reversed act lifts the
-    suspension. **Reading, for the operator to confirm:** un-flagging counts as removal of the admin
-    standing the keys depend on, so an admin key never outlives its person's admin flag. The
+    suspension. Un-flagging counts as removal of the admin standing the keys depend on, so an admin
+    key never outlives its person's admin flag (accepted by the operator, 2026-11-25); a person's
+    own un-flag revokes their admin keys at once. The
     person's non-admin keys keep today's `disable_user` behaviour.
   - **Bootstrap requires a person.** `POST /v2/bootstrap/claim` requires `person` and `email`, and
     `oml bootstrap claim` and `oml quickstart` require `--person` and `--email`; a claim without
@@ -414,8 +443,8 @@ Decided, not built.
   (Q17(a)); unlinked keys confirm-first like any admin's (Q17(b)), under which no person could ever
   confirm as their second.
 
-- **d22 — An admin key may be linked to its own holder's person by possession (reading, for the
-  operator to confirm; the precondition of d21).** ADR-0085 d16 refuses a self-link (`self_link`,
+- **d22 — An admin key may be linked to its own holder's person by possession, in v0.8.6 (decided
+  by the operator, 2026-11-25; the precondition of d21).** ADR-0085 d16 refuses a self-link (`self_link`,
   the operator, 2026-11-17) and admits links only from a console admin session. A one-admin tenant
   whose CLI key is not the ceremony's linked key then has no way to link it: the only admin is the
   one who would self-link. This record admits one case: `POST /v2/keys/self/link {person}`,
@@ -423,7 +452,9 @@ Decided, not built.
   takes effect only when that person accepts from their own console session (consent, d7). Both
   proofs together give no reach the holder lacks: the holder already holds the key, and another
   person's acceptance is still theirs to give. It journals `key.linked_person` with
-  `actor: self`. Every other link stays console-only with no self-link.
+  `actor: self`. Every other link stays console-only with no self-link. It ships in v0.8.6 only,
+  not in v0.8.5, so in a one-admin tenant the CLI key is linked in the upgrade window (Production
+  migration): a key suspended as unlinked at the upgrade still reaches this route.
 
 - **d23 — Pending widening is final when declined or expired.** A `pending_confirmation` key
   authenticates nothing on any path (bearer, OAuth token and refresh, connect-code redemption). A
@@ -499,22 +530,30 @@ Decided, not built.
   under `sole_admin`.
 - **Q9 with Q2:** in a `sole_admin` tenant, reach into a person's root takes effect at once,
   marked. In an open-sign-up tenant with one admin, ADR-0068 d3's "no second person can read" a
-  root holds only against non-admins (Tensions, 1).
+  root holds only against non-admins; the person is notified in-product (d6).
 - **Q12 with Q3:** the ladder ratifier is a counted person, so minted pairs cannot ratify; with
-  Q2, a one-person tenant cannot move the ladder at all (Tensions, 3).
+  Q2, a one-person tenant ratifies its own proposal, marked (d17).
 - **Q17 with Q13:** service admin keys become `maintenance` keys, so dormancy counts persons only.
-- **Q17 with ADR-0085 d16's "no self-link":** a one-admin tenant cannot link its CLI key without
-  d22 (Tensions, 4).
-- **Q14 with Q17 and Q2:** recovery revokes every admin key and un-flags the dormant entries, or
-  the recovered tenant is stuck outside `sole_admin` (d19).
+- **Q17 with ADR-0085 d16's "no self-link":** a one-admin tenant links its CLI key only by d22, in
+  the v0.8.6 upgrade window.
+- **Q14 with Q17 and Q2:** recovery keeps the dormant flags, so the recovered tenant leaves
+  `sole_admin`; with one dormant admin the way out is an un-flag that the operator settles, and
+  with two or more it is an accepted limit (d19).
 
 ### Security analysis
 
 - **Escalation.** Every widening path needs a second admin person who counts: minted key pairs,
   reach into a root, connect codes, new admins and limit raises. What remains: two colluding admin
   persons; a patient insider who waits out the seven days (bounded, not prevented); `used_by`
-  attested by two admins instead of one; and, under Q9, two admins who together act inside a
-  person's root as that person's own `same_user` work (Tensions, 2).
+  attested by two admins instead of one.
+- **Accepted residual: two admins can act as a person inside that person's root.** Once a second
+  admin confirms, keys an admin issued in alice's root, or a connect code for her connector key,
+  act like alice's own keys: a contributor and reviewer pair writes and approves there, marked
+  `same_user` as own-root work, and alice's agents are served it as her reviewed steering. Reads
+  through those keys or that code are not admin reads, so the count alice sees (d16) does not
+  include them. The operator accepted this on 2026-11-25 and left it as is (d6). What remains
+  visible is the confirmed `admin.act` naming both admin persons and the root; under `sole_admin`
+  one admin does it alone, and the person gets an in-product notice.
 - **A single admin's unilateral power.** Narrowing stays unilateral, since containment cannot
   wait, and d24 makes it loud. Erase alone destroys, and its shred now waits on a second admin
   person. Acts against an admin are contestable and freeze both sides below three admins.
@@ -525,6 +564,8 @@ Decided, not built.
   runbooks until repair verbs replace it.
 - **Lockout and recovery.** The last admin person cannot be removed (d25). Recovery needs 30 days
   of dormancy, a 72-hour wait that any admin sign-in cancels, and email notice (d19, d20). A
+  recovered tenant keeps the dormant admins' flags, so its new admin cannot widen alone until a
+  dormant admin returns or, with one dormant admin, the operator settles an un-flag (d19). A
   two-admin dispute freezes widening until the operator settles it.
 - **Liveness.** In a multi-admin tenant widening waits on a second admin, who counts only after
   seven days; for the first seven days after a second admin arrives, the founder's widening waits.
@@ -555,12 +596,10 @@ Decided, not built.
 
 **Pre-upgrade operator steps**, before the v0.8.6 server reaches production:
 
-1. **Link the CLI admin key** that the `oml-admin:issue-agent-key` skill uses to the operator
-   (Q17). If it is the bootstrap key, linked at the ceremony, nothing is needed. If a second admin
-   person exists, their console links it and the operator accepts. In a one-admin tenant neither
-   path exists today, since ADR-0085 d16 refuses a self-link; the key is then linked right after the
-   upgrade by d22, from the suspended state below, unless the operator pulls d22 into v0.8.5
-   (Tensions, 4).
+1. **Check how the CLI admin key will be linked** (measurement 2). If it is the bootstrap key,
+   linked at the ceremony, nothing is needed. If a second admin person exists, their console links
+   it before the upgrade and the operator accepts. In a one-admin tenant neither path exists before
+   v0.8.6, since ADR-0085 d16 refuses a self-link, so the key is linked in the upgrade window below.
 2. **Ship the deployer step first.** The B′ release carries a new marker, `<!-- oml-deployer:
    post-step maintenance-key -->`. `scripts/release_markers.py` gains it beside
    `admin-rescan-record-held`, appended when the server's key-role set (a constant the build adds
@@ -571,6 +610,23 @@ Decided, not built.
 3. **Configure the mail relay** for recovery and settlement notices (d20), or accept
    `notice.mail_unconfigured` as a known warning.
 
+**Upgrade-window step: link the CLI admin key** that the `oml-admin:issue-agent-key` skill uses
+(Q17, d22; decided by the operator, 2026-11-25). After v0.8.6 starts, the operator runs `oml keys
+link-self --person <operator>` under that key, which the upgrade suspended as unlinked and which
+still reaches `POST /v2/keys/self/link`, then signs in to the console and accepts the link. The
+step cannot lock the operator out of a one-admin tenant:
+
+- **The console is the way in.** The operator's console sign-in does not depend on any admin key:
+  the server issuer issues `<user>-admin` (d18), and an admin entry accepted before the upgrade
+  counts as a confirmed admin flag. Every admin act the console serves, the acceptance included,
+  works while the CLI key is suspended.
+- **The guard counts persons.** Suspending admin keys removes no admin person, so d25 is untouched.
+- **The suspended key keeps its one route** for 30 days (a placeholder), and doctor's
+  `admin.key_unlinked_suspended` names it with the days left. Until the link is accepted, the
+  issue-agent-key skill answers `auth.invalid` with `details.reason: suspended`, and keys are
+  issued from no CLI. A key revoked after the 30 days is replaced by a new admin key issued to the
+  operator's own person; that needs a linked admin key, so the 30 days are the window that matters.
+
 **Converted in place, each journalled** at the first start of v0.8.6 or by the deployer's step,
 never by a migration `UPDATE` that writes no event:
 
@@ -578,10 +634,11 @@ never by a migration `UPDATE` that writes no event:
 |---|---|---|---|
 | The key in `/etc/oml-deployer/admin.env`, and the key in `/etc/oml/admin.env` | `maintenance`, same hash, so both files keep working through the cut | `key.converted {from: admin, to: maintenance}` | the `maintenance-key` post-step, under each file's key (d18) |
 | Any other admin key `used_by: service`, `signup.issuer`'s included | `maintenance`, same hash | `key.converted`, `cause: upgrade` | the server's reserved key at first start |
-| An admin key with no accepted link, not converted above | suspended: it authenticates only `/v2/whoami` and `POST /v2/keys/self/link` (d22); revoked after 30 days (a placeholder) if still unlinked | `key.suspended {cause: unlinked}`, then `key.revoked {cause: upgrade}` | the server's reserved key |
+| An admin key with no accepted link, not converted above | suspended at first start: it authenticates only `/v2/whoami`, `POST /v2/keys/self/link` (d22) and `POST /v2/keys/self/convert` (d18, so the deployer's post-step still converts a file key the first start suspended); revoked after 30 days (a placeholder) if still unlinked | `key.suspended {cause: unlinked}`, then `key.revoked {cause: upgrade}` | the server's reserved key |
 | Admin-issued keys in another person's root, capacity grants there, and connections from admin-minted codes for keys there | in a `sole_admin` tenant: `confirmed`, marked `sole_admin`, no change in effect; otherwise `pending_confirmation`, on migration 0064's precedent, until a second admin person confirms (d6) | `admin.act {cause: upgrade}` | the server's reserved key |
 | Open investigations opened by a key d16 refuses | closed | `admin.investigation_closed {cause: upgrade}` | the server's reserved key |
 | Session keys issued under `entry.added_by` | unchanged until their session ends; the next sign-in issues under the server issuer | none | — |
+| Admin entries accepted before the upgrade | count as confirmed admin flags, so the server issuer issues their `<user>-admin` | none | — |
 | Live ladder proposals | kept; ratification applies d17 | none | — |
 | Earlier `key.denied` events | read with `reason: null` | none | — |
 
@@ -657,34 +714,36 @@ Each red first, named after the sentence it proves:
 `a_bootstrap_claim_without_a_person_is_refused_and_leaves_no_tenant`,
 `an_admin_key_links_to_its_holders_person_only_once_that_person_accepts`,
 `removing_the_last_live_admin_person_is_refused_on_every_surface`,
-`the_maintenance_key_marker_is_appended_when_the_key_role_set_changes`.
+`the_maintenance_key_marker_is_appended_when_the_key_role_set_changes`,
+`a_reach_into_a_persons_root_under_sole_admin_takes_effect_at_once_and_notifies_the_person`,
+`a_sole_admin_ratification_by_the_proposers_own_person_is_admitted_and_marked`,
+`a_persons_web_session_revokes_the_persons_own_keys`,
+`a_suspended_unlinked_admin_key_still_links_itself_and_converts_itself`,
+`an_admin_entry_accepted_before_the_upgrade_still_opens_the_admin_console`,
+`recovery_keeps_the_dormant_admins_flags`.
 
-### Tensions the answers create, for the operator
+### The operator's answers of 2026-11-25 to the tensions
 
-1. **Q9 with Q2: a `sole_admin` tenant reaches into a person's root at once.** The one admin of an
-   open-sign-up server issues a key in any signed-up person's root, grants into it, or mints a
-   code for that person's connector key, at once, marked `sole_admin`, with no notice to the
-   person. Before B′ this was also true, unmarked. Question: should reach into a root under
-   `sole_admin` (a) take effect at once, marked, as derived here; (b) notify the person in-product;
-   or (c) be refused until a second admin person exists?
-2. **Q9: admin-made work is still approved as the person's own.** Confirmed by a second admin, an
-   admin-issued contributor and reviewer pair in alice's root writes and approves, marked
-   `same_user` as own-root work (`app.rs:7453-7460`), and is served to alice's agents as her
-   reviewed steering; a connect code lets the admin's client recall her root with no
-   `memory.admin_read`, so d16's per-person count understates. Question: should approvals in a
-   root by keys that count as a person other than the root's be refused the own-root allowance,
-   and should reads through admin-made keys or codes in a root count as admin reads?
-3. **Q12 with Q2: a one-person tenant can no longer move the ladder.** The ratifier must be another
-   person, and `sole_admin` does not relax it, because a ladder move is not an admin act. Question:
-   should `sole_admin` admit a ladder ratification by the same person, marked, or should
-   `protected` and `frozen` wait for a second person?
-4. **Q17 with ADR-0085 d16's "no self-link": the pre-upgrade link is impossible in a one-admin
-   tenant** unless the CLI key is the ceremony's linked key; production's bootstrap predates
-   `--person`. This record takes d22 (self-link by possession plus the person's acceptance) for
-   v0.8.6, and the upgrade suspends unlinked admin keys so d22 can link them afterwards. Question:
-   confirm d22, and pull it into v0.8.5 so the pre-upgrade step holds as stated?
-5. **Q14 with Q2 and Q17: recovery un-flags dormant admins** (d19), the reading that keeps the
-   recovered tenant workable. Question: confirm it.
+The five tensions the first answers created, and three readings, were put to the operator, who
+answered each on 2026-11-25. Each answer is recorded where it applies.
+
+1. **Reach into a root under `sole_admin`:** at once, marked `sole_admin`, and the person is
+   notified in-product (d6, d10, d20).
+2. **Confirmed keys in a person's root:** left as is. They act like the person's own keys, their
+   approvals keep the own-root allowance, and their reads are not admin reads; the operator
+   accepted the residual (d6, d16, Security analysis).
+3. **The ladder under `sole_admin`:** a same-person ratification is admitted and marked (d17).
+4. **Self-link:** confirmed, in v0.8.6 only; the CLI key is linked in the upgrade window, and
+   Q16's list stays at four items (d22, d27, Production migration).
+5. **Recovery keeps the dormant admins' flags:** the recovered tenant leaves `sole_admin`; the way
+   out with one dormant admin is a settled un-flag, and with two or more it is an accepted limit
+   (d19).
+6. **Readings accepted:** un-flagging revokes or suspends that person's admin keys (d21); a person
+   revokes their own keys (d14); under `sole_admin` the founder can still invent a fix settler,
+   marked (d11).
+
+Two readings stay open for the operator: the connect code's life running from the confirmation
+(d6) and the ratifier differing from the admin who issued an agent proposer (d17).
 
 ### Pages, API and issues
 
@@ -694,7 +753,8 @@ Each red first, named after the sentence it proves:
   `auth.invalid` gains `details.reason: pending_confirmation` and `suspended`. The Rust and Python
   SDKs are regenerated.
 - **Pages:** To do's "Admin acts to confirm" with the confirm screen of d23; the one-key page's
-  revoke button; the contest-only sign-in page; the limits form's "waits on another admin"; the
+  revoke button and the person's Keys page's; the contest-only sign-in page; the person's To do
+  notice of a reach into their root under `sole_admin`; the limits form's "waits on another admin"; the
   person's count of admin reads of their root.
 - **Docs:** `docs/architecture/roles-and-keys.md` (the `maintenance` role, the server issuer, the
   classes), `docs/operations/runbooks.md` (the host verbs), `docs/operations/upgrades.md` (the
@@ -705,8 +765,8 @@ Each red first, named after the sentence it proves:
   `--email`.
 - **Issues:** the build is tracked in milestone v0.8.6; the v0.8.5 pieces in milestone v0.8.5.
 - **The cost:** a multi-admin tenant's widening waits on a second person, who counts only after
-  seven days; erase no longer destroys at once; a one-person tenant cannot move the ladder; every
-  deployer and bootstrap caller changes once.
+  seven days; erase no longer destroys at once; a recovered tenant whose dormant admins never
+  return cannot widen without the operator; every deployer and bootstrap caller changes once.
 
 ## Rejected alternatives
 

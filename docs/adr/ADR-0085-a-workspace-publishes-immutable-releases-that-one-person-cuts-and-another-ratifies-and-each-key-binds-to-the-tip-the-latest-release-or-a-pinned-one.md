@@ -697,6 +697,6 @@ Decided by the operator on 2026-11-25 (the break-glass and key-access questions)
 
 Links keep their consent: a link takes effect only when its person accepts from their own console
 session (ADR-0097 d7). Every admin key belongs to a person, and the bootstrap claim requires one
-(ADR-0097 d21). One self-link is admitted, a reading ADR-0097 d22 flags for the operator: called
+(ADR-0097 d21). One self-link is admitted in v0.8.6, decided by the operator on 2026-11-25 (ADR-0097 d22): called
 under the admin key itself, it names a person and waits on that person's acceptance, so a
 one-admin tenant can link its CLI key. Every other link stays console-only with no self-link.

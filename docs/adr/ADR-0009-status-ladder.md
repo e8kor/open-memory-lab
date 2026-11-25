@@ -131,5 +131,6 @@ Admins stay on the ladder. d3's two identities become two persons at ratificatio
 counts as a person (a session key, a key with an accepted link, or a user key by its issuer walk),
 and that person is not the proposer's. When the proposing key counts as no person, the ratifier
 also differs from the person whose admin act issued it, a reading ADR-0097 d17 flags for the
-operator. Proposers are unchanged (ADR-0095 d5), and frozen stays final. The cost: a tenant with one
-person can no longer move a workspace up the ladder.
+operator. Proposers are unchanged (ADR-0095 d5), and frozen stays final. In a `sole_admin`
+tenant a ratification by the proposer's own person is admitted and marked (decided by the
+operator, 2026-11-25), so a tenant with one person still moves a workspace up the ladder.

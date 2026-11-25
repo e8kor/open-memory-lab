@@ -937,5 +937,6 @@ Decided by the operator on 2026-11-25 (the break-glass and key-access questions)
 An admin's connect code for a connector key, one in a person's own root included, is widening: it
 is shown once at the mint, redeems nothing and voids none of the person's codes until a second
 admin person confirms it, except in a `sole_admin` tenant (ADR-0097 d5, d6). The person's consent
-is not asked. d8's ten-minute life runs from the confirmation, a reading ADR-0097 d6 flags for the
+is not asked; under `sole_admin` the code takes effect at once and the person is notified
+in-product. d8's ten-minute life runs from the confirmation, a reading ADR-0097 d6 flags for the
 operator. A person's own codes in their own root are unchanged.

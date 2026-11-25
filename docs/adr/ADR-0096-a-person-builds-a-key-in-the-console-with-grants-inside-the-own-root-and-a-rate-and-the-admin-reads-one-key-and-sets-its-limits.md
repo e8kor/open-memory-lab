@@ -393,8 +393,8 @@ Decided by the operator on 2026-11-25 (the break-glass and key-access questions)
   A raise, a cleared limit or a later expiry from the limits form waits on a second admin person
   and the form says so; a lower one takes effect at once (ADR-0097 d15). The one-key page gains one
   revoke button in v0.8.6.
-- **d12.** Revoking a key is built as one plain verb for any key (ADR-0097 d14). Rotation, a
-  cascade and a person's revocation of their own keys stay deferred.
+- **d12.** Revoking a key is built as one plain verb for any key (ADR-0097 d14). A person's web
+  session revokes the person's own keys with the same verb. Rotation and a cascade stay deferred.
 
 ## Rejected alternatives
 

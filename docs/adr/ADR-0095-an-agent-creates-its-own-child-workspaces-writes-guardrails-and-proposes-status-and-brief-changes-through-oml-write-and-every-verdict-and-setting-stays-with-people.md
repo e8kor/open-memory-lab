@@ -402,7 +402,8 @@ Decided by the operator on 2026-11-25 (the break-glass and key-access questions)
 
 Proposers stay as d5 has them. Ratification needs a key that counts as a person other than the
 proposer's; when an agent key proposes, the ratifier also differs from the person who issued it,
-a reading ADR-0097 d17 flags for the operator. Raising d4's `workspaces` quota is widening
+a reading ADR-0097 d17 flags for the operator. In a `sole_admin` tenant the proposer's own person
+may ratify, marked. Raising d4's `workspaces` quota is widening
 (ADR-0097 d15).
 
 ## Rejected alternatives
