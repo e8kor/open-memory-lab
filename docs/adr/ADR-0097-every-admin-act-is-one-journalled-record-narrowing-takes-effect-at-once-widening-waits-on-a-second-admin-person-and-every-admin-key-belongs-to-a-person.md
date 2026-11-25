@@ -577,8 +577,8 @@ Decided, not built.
     `details.reason: parent_frozen`; under a denied node it is refused as any act there is. An
     admin key never carries a grant and so never the flag; the admin keeps its own create (d29).
   - **The quota.** Each child counts against ADR-0095 d4's `workspaces` meter. A child inside a
-    person's root counts against that person's account, as today. **Reading, for the operator to
-    confirm:** a child in the shared tree counts against the account of the person the creating
+    person's root counts against that person's account, as today. **Decided by the operator,
+    2026-11-25:** a child in the shared tree counts against the account of the person the creating
     key counts as (d12), and, for a key that counts as no person (a tenant agent key belongs to no
     account, ADR-0071 d1), against the account of the admin person whose act granted the flag.
   - **Rate.** The key's `requests_per_minute` bounds how fast it creates, as for every create.

@@ -412,7 +412,7 @@ shared workspaces included, over HTTP, the CLI, the console and `oml_write {crea
 d3's own-root rule stands beside it; the flag is the only way a create reaches beyond the own
 root. Under a node grant the child gets the same grant; a `frozen` parent refuses the create.
 Granting the flag is widening; a child created under it is neutral. Each child counts against d4's
-`workspaces` meter (for a shared child, the account rule is ADR-0097 d31's reading). This reverses
+`workspaces` meter (a shared child counts against the account of the person the creating key counts as, or of the admin person who granted the flag, ADR-0097 d31). This reverses
 Q5, "no key creates a child in a shared workspace in v0.8.5", from v0.8.6.
 
 ## Rejected alternatives
