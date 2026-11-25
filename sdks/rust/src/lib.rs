@@ -1611,6 +1611,9 @@ pub struct KeyRecord {
     pub default_workspace_id: Option<String>,
     #[serde(default)]
     pub used_by: Option<String>,
+    /// The label sent at issuance; `None` where the read serves none.
+    #[serde(default)]
+    pub label: Option<String>,
     pub guardrail_scope: String,
     #[serde(default)]
     pub profile: Option<String>,

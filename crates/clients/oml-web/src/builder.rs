@@ -7,7 +7,9 @@
 //! Every step is a `GET` with no script. The review step checks every
 //! refusal it can decide from the role table and the tree it read (D12);
 //! `name.taken`, `limit.quota`, `access.not_found` and
-//! `oauth.connect_refused` stay the server's answers. Each `GET` makes
+//! `oauth.connect_refused` stay the server's answers, and **Issue key**
+//! refused `name.taken`, `limit.quota` or `oauth.connect_refused` comes
+//! back to the review step with its notice and the draft. Each `GET` makes
 //! `whoami` (the session check) and the tree of the person's root.
 
 use std::collections::BTreeMap;
@@ -86,7 +88,9 @@ pub(crate) struct Draft {
     pub rate: String,
 }
 
-/// One refusal the review step draws, with the control it names.
+/// One refusal the review step draws, with the control it names; `code`
+/// is the server's code for the same refusal, empty for a check that is
+/// the page's own and no server answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Check {
     pub code: &'static str,
@@ -415,9 +419,10 @@ impl Draft {
                     "ke",
                 ),
                 // Over in every time zone: a date before the date of now
-                // minus 12 hours.
+                // minus 12 hours. The page's own check: the server reads
+                // the instant it is sent, so no code of its names this.
                 Some(_) if self.expires.as_str() < &rfc3339(now - 43_200)[..10] => refuse(
-                    "request.validation",
+                    "",
                     format!("{} is over in every time zone.", self.expires),
                     "ke",
                 ),
@@ -539,7 +544,9 @@ impl Draft {
                 marks.push(mark);
             }
         }
-        if denied && marks.is_empty() {
+        // A grant's Except is drawn wherever it reaches, beside what
+        // another grant still gives the node.
+        if denied {
             marks.push("except");
         }
         if marks.is_empty() {
@@ -631,23 +638,33 @@ pub async fn page(
         }
     };
     let review = pairs.iter().any(|(n, v)| n == "step" && v == "review");
-    let quota: Option<u32> = None;
     if review {
         let checks = draft.checks(&user, &tree, unix_now());
         if checks.is_empty() {
+            let refused = pairs
+                .iter()
+                .find(|(n, _)| n == "refused")
+                .map(|(_, v)| v.as_str());
             return draw(
                 "Review key",
-                &review_body(&draft, &user, &tree, &session.csrf()),
+                &review_body(&draft, &user, &tree, &session.csrf(), refused),
             );
         }
         return draw(
             "New key",
-            &form_body(&draft, &user, &tree, &checks, quota, shape.is_some()),
+            &form_body(&draft, &user, &tree, &checks, shape.is_some(), false),
         );
     }
     draw(
         "New key",
-        &form_body(&draft, &user, &tree, &[], quota, shape == Some("root")),
+        &form_body(
+            &draft,
+            &user,
+            &tree,
+            &[],
+            shape == Some("root"),
+            shape == Some("root"),
+        ),
     )
 }
 
@@ -709,8 +726,8 @@ pub(crate) fn form_body(
     user: &str,
     tree: &[WorkspaceNode],
     checks: &[Check],
-    account_rate: Option<u32>,
     focus_name: bool,
+    fold_grants: bool,
 ) -> String {
     let mut out = String::from(
         r#"<div class="oml-col"><header class="oml-section-head"><div class="top"><h1>New key</h1></div></header><ol class="oml-steps"><li>Start from</li><li aria-current="step">Shape</li><li>Review</li></ol>"#,
@@ -720,10 +737,14 @@ pub(crate) fn form_body(
         for c in checks {
             let _ = write!(
                 out,
-                r##"<li><a href="#{}">{}</a> <code>{}</code></li>"##,
+                r##"<li><a href="#{}">{}</a>{}</li>"##,
                 attr(&c.control),
                 text(&c.message),
-                c.code
+                if c.code.is_empty() {
+                    String::new()
+                } else {
+                    format!(" <code>{}</code>", c.code)
+                }
             );
         }
         out.push_str("</ul></div>");
@@ -757,13 +778,23 @@ pub(crate) fn form_body(
         option("reader", "reader: recall only", &draft.role),
         option("submitter", "submitter: write without recall", &draft.role),
     );
-    if draft.role == "submitter" {
-        out.push_str(r#"<p class="desc">A submitter key imports nothing and creates no workspace. As a connector, the connection writes and recalls nothing.</p>"#);
+    // The Whole root template's grants are folded: the template is the
+    // key the console issued before v0.8.5, and its grants change only
+    // when asked (ADR-0096 d1).
+    if fold_grants {
+        let _ = write!(
+            out,
+            r#"<h2 id="gr-h" tabindex="-1">Grants</h2><ul class="desc">{}</ul><details class="oml-fold"><summary>Change grants</summary>"#,
+            draft
+                .words()
+                .iter()
+                .map(|w| format!("<li>{w}</li>"))
+                .collect::<String>()
+        );
+    } else {
+        out.push_str(r#"<h2 id="gr-h" tabindex="-1">Grants</h2>"#);
     }
-    let _ = write!(
-        out,
-        r#"<h2 id="gr-h" tabindex="-1">Grants</h2><p class="desc">For a contributor, a submitter grant comes with a reader grant on the same workspace, as the command line issues it; remove the reader to write without recall there.</p>"#
-    );
+    out.push_str(r#"<p class="desc">For a contributor, a submitter grant comes with a reader grant on the same workspace, as the command line issues it; remove the reader to write without recall there.</p>"#);
     for (i, g) in draft.grants.iter().enumerate() {
         let _ = write!(
             out,
@@ -790,6 +821,9 @@ pub(crate) fn form_body(
         r#"<input type="hidden" name="n" value="{}"><p><button type="submit" name="add" value="1">Add a grant</button></p>"#,
         draft.grants.len()
     );
+    if fold_grants {
+        out.push_str("</details>");
+    }
     let _ = write!(
         out,
         r#"<label>Default workspace<select class="oml-select" id="kd" name="dw"{}>{}</select></label>"#,
@@ -821,14 +855,7 @@ pub(crate) fn form_body(
             )
         },
     );
-    let account = account_rate.map_or_else(
-        || "Empty: no rate of its own. Under the account's quota, the lower of the two holds.".to_owned(),
-        |n| {
-            format!(
-                "Empty: no rate of its own. The account holds {n} a minute; the lower of the two holds."
-            )
-        },
-    );
+    let account = "Empty: no rate of its own. Under the account's quota, the lower of the two holds.";
     let _ = write!(
         out,
         r#"<div class="oml-filterrow top"><label>Expires<input class="oml-input" type="date" id="ke" name="exp" value="{}"{}><span class="desc">{}</span></label><label>Requests a minute<input class="oml-input" id="kr" name="rpm" inputmode="numeric" value="{}"{}><span class="desc">{}</span></label></div><p class="desc">The key works through this date in every time zone. Only an admin changes the date or the rate after issue.</p><p><button class="primary" type="submit" name="step" value="review">Review</button> <a href="{USER_KEYS_PATH}">Cancel</a></p></form></div>"#,
@@ -837,15 +864,21 @@ pub(crate) fn form_body(
         text(&sent),
         attr(&draft.rate),
         invalid("kr"),
-        text(&account),
+        text(account),
     );
     out
 }
 
 /// Step three: the review, read-only, with **Issue key** the one post.
-pub(crate) fn review_body(draft: &Draft, user: &str, tree: &[WorkspaceNode], csrf: &str) -> String {
+pub(crate) fn review_body(
+    draft: &Draft,
+    user: &str,
+    tree: &[WorkspaceNode],
+    csrf: &str,
+    refused: Option<&str>,
+) -> String {
     let mut out = format!(
-        r#"<div class="oml-col"><header class="oml-section-head"><div class="top"><h1>Review key</h1></div><p class="desc"><code>{}-{}</code>, a {} {}.</p></header><ol class="oml-steps"><li>Start from</li><li>Shape</li><li aria-current="step">Review</li></ol><section class="oml-panel"><h2 class="oml-h3">Effective access</h2><ul>"#,
+        r#"<div class="oml-col"><header class="oml-section-head"><div class="top"><h1>Review key</h1></div><p class="desc"><code>{}-{}</code>, a {} {}.</p></header><ol class="oml-steps"><li>Start from</li><li>Shape</li><li aria-current="step">Review</li></ol>"#,
         short(user),
         short(&draft.name),
         text(&draft.role),
@@ -855,6 +888,13 @@ pub(crate) fn review_body(draft: &Draft, user: &str, tree: &[WorkspaceNode], csr
             "agent key"
         }
     );
+    if let Some((code, sentence)) = refused.and_then(server_refusal) {
+        let _ = write!(
+            out,
+            r#"<div class="oml-notice err" role="alert" tabindex="-1" id="errors"><p>The key is not issued: {sentence}</p><p><code>{code}</code></p></div>"#
+        );
+    }
+    out.push_str(r#"<section class="oml-panel"><h2 class="oml-h3">Effective access</h2><ul>"#);
     for line in draft.words() {
         let _ = write!(out, "<li>{line}</li>");
     }
@@ -908,6 +948,9 @@ pub(crate) fn review_body(draft: &Draft, user: &str, tree: &[WorkspaceNode], csr
 {}</pre></details>"#,
         text(&serde_json::to_string_pretty(&body).unwrap_or_default())
     );
+    if draft.role == "submitter" {
+        out.push_str(r#"<p class="oml-consequence">A submitter key imports nothing and creates no workspace. As a connector, the connection writes and recalls nothing.</p>"#);
+    }
     for workspace in draft.without_recall(tree) {
         let _ = write!(
             out,
@@ -939,6 +982,27 @@ pub(crate) fn review_body(draft: &Draft, user: &str, tree: &[WorkspaceNode], csr
         attr(&back.join("&"))
     );
     out
+}
+
+/// The refusals only the server decides (D12), each with its sentence,
+/// that bring **Issue key** back to the review step with the draft kept:
+/// a closed set, so a crafted link cannot put text on the page.
+pub(crate) fn server_refusal(code: &str) -> Option<(&'static str, &'static str)> {
+    match code {
+        "name.taken" => Some((
+            "name.taken",
+            "the name is taken by another key. Change it and review again.",
+        )),
+        "limit.quota" => Some((
+            "limit.quota",
+            "the account holds as many keys as its quota admits. Cut off a key first, or ask an admin to raise the quota.",
+        )),
+        "oauth.connect_refused" => Some((
+            "oauth.connect_refused",
+            "the server issues no connector key of this shape here. Change the kind or the role and review again.",
+        )),
+        _ => None,
+    }
 }
 
 /// The draft a `build_key` post carries: each Except list one field, its
@@ -1085,7 +1149,7 @@ mod tests {
         draft.grants[0].workspace = "alice.notes".to_owned();
         draft.grants[1].workspace = "alice.proj".to_owned();
         assert_eq!(draft.without_recall(&tree()), ["alice.notes"]);
-        let page = review_body(&draft, "alice", &tree(), "csrf");
+        let page = review_body(&draft, "alice", &tree(), "csrf", None);
         assert!(page.contains("No recall"), "{page}");
         assert!(page.contains(r#"value="build_key""#), "{page}");
     }
@@ -1111,6 +1175,79 @@ mod tests {
         };
         assert!(draft("2026-11-10").checks("alice", &tree(), now).is_empty());
         assert_eq!(draft("2026-11-09").checks("alice", &tree(), now).len(), 1);
+    }
+
+    #[test]
+    fn a_date_over_in_every_time_zone_is_drawn_with_no_code() {
+        let now = 1_794_392_400; // 2026-11-11T10:20:00Z
+        let draft = Draft {
+            name: "x".to_owned(),
+            expires: "2026-11-09".to_owned(),
+            ..Draft::template("root", "alice")
+        };
+        let checks = draft.checks("alice", &tree(), now);
+        let page = form_body(&draft, "alice", &tree(), &checks, false, false);
+        assert!(page.contains("2026-11-09 is over in every time zone."), "{page}");
+        assert!(!page.contains("</a> <code>"), "{page}");
+    }
+
+    #[test]
+    fn the_whole_root_template_folds_its_grants_under_change_grants() {
+        let draft = Draft::template("root", "alice");
+        let folded = form_body(&draft, "alice", &tree(), &[], true, true);
+        assert!(
+            folded.contains(r#"<details class="oml-fold"><summary>Change grants</summary>"#),
+            "{folded}"
+        );
+        assert!(folded.contains("Grant 1"), "{folded}");
+        let open = form_body(&draft, "alice", &tree(), &[], false, false);
+        assert!(!open.contains("Change grants"), "{open}");
+        assert!(open.contains("Grant 1"), "{open}");
+    }
+
+    #[test]
+    fn the_submitter_warning_is_on_the_review_step() {
+        let draft = Draft {
+            name: "ingest".to_owned(),
+            ..Draft::template("write", "alice")
+        };
+        let warning = "A submitter key imports nothing and creates no workspace.";
+        let form = form_body(&draft, "alice", &tree(), &[], false, false);
+        assert!(!form.contains(warning), "{form}");
+        let review = review_body(&draft, "alice", &tree(), "csrf", None);
+        assert!(review.contains(warning), "{review}");
+    }
+
+    #[test]
+    fn a_node_one_grant_excepts_and_another_reaches_is_marked_except() {
+        let mut draft = Draft {
+            name: "x".to_owned(),
+            ..Draft::template("root", "alice")
+        };
+        draft.grants[0].deny = vec!["alice.proj".to_owned()];
+        let tree = tree();
+        assert_eq!(draft.marks(&tree[1], &tree), ["recall", "except"]);
+        let review = review_body(&draft, "alice", &tree, "csrf", None);
+        assert!(
+            review.contains(r#"<span class="oml-tag">recall</span><span class="oml-tag">except</span>"#),
+            "{review}"
+        );
+    }
+
+    #[test]
+    fn a_server_only_refusal_is_drawn_on_the_review_step_with_its_code() {
+        let draft = Draft {
+            name: "ci".to_owned(),
+            ..Draft::template("root", "alice")
+        };
+        for code in ["name.taken", "limit.quota", "oauth.connect_refused"] {
+            let review = review_body(&draft, "alice", &tree(), "csrf", Some(code));
+            assert!(review.contains(&format!("<code>{code}</code>")), "{review}");
+            assert!(review.contains(r#"role="alert""#), "{review}");
+            assert!(review.contains(r#"value="build_key""#), "{review}");
+        }
+        let crafted = review_body(&draft, "alice", &tree(), "csrf", Some("<b>x</b>"));
+        assert!(!crafted.contains(r#"role="alert""#), "{crafted}");
     }
 
     #[test]

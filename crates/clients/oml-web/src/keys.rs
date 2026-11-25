@@ -1010,6 +1010,10 @@ async fn one_key(
         ),
         ("Principal", format!("<code>{}</code>", short(&record.principal))),
         (
+            "Label",
+            record.label.as_deref().map_or_else(none, text),
+        ),
+        (
             "Profile",
             record.profile.as_deref().map_or_else(none, text),
         ),
@@ -1063,7 +1067,7 @@ async fn one_key(
     for g in &record.grants {
         let _ = write!(
             body,
-            r#"<tr><td class="mono">{}</td><td>{}</td><td>{}</td></tr>"#,
+            r#"<tr><td class="mono">{}</td><td class="c-grant">{}</td><td>{}</td></tr>"#,
             short(&g.workspace_node_id),
             text(&g.role),
             if g.covers == "node" {
@@ -1092,11 +1096,17 @@ async fn one_key(
             Some("limits") => body.push_str(&limits_form(&csrf, &name)),
             Some("deny") => body.push_str(&deny_form(&csrf, &name, fields)),
             _ => {
-                let _ = write!(
-                    body,
-                    r#"<p><a class="button" href="{ADMIN_KEYS_PATH}?key={enc}&amp;op=limits">Set limits</a> <a class="button" href="{ADMIN_KEYS_PATH}?key={enc}&amp;op=deny">Deny on a workspace</a></p>"#,
-                    enc = attr(&enc)
-                );
+                // A session key and an admin key take neither: the API
+                // refuses limits on them (`session_key`, `admin_key`) and a
+                // denial cuts off no session or admin key (ADR-0096 d4;
+                // ADR-0079 d5).
+                if record.credential != "session" && record.role != "admin" {
+                    let _ = write!(
+                        body,
+                        r#"<p><a class="button primary" href="{ADMIN_KEYS_PATH}?key={enc}&amp;op=limits">Set limits</a> <a class="button" href="{ADMIN_KEYS_PATH}?key={enc}&amp;op=deny">Deny on a workspace</a></p>"#,
+                        enc = attr(&enc)
+                    );
+                }
                 // Rotate where an admin may (ADR-0096 d13, the operator's
                 // decision of 2026-11-25): a live tenant bearer key that is
                 // not an admin key and names no person. The API refuses a
@@ -1469,6 +1479,23 @@ async fn act(
                     Some(secret) => secret,
                     None => return no_secret(&calls),
                 },
+                // A refusal only the server decides goes back to the
+                // review step with its notice, the draft kept (D12).
+                Err(oml_sdk::Error::Api(e))
+                    if crate::builder::server_refusal(&e.code).is_some() =>
+                {
+                    let mut back: Vec<String> = draft
+                        .fields()
+                        .into_iter()
+                        .map(|(n, v)| format!("{n}={}", encode(&v)))
+                        .collect();
+                    back.push("step=review".to_owned());
+                    back.push(format!("refused={}", encode(&e.code)));
+                    return acts::see_other(
+                        &format!("{}?{}", crate::keys::NEW_KEY_PATH, back.join("&")),
+                        &[],
+                    );
+                }
                 Err(e) => return outcome::page(&e, &calls, crate::keys::NEW_KEY_PATH),
             }
         }

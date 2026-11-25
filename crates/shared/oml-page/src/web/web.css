@@ -459,6 +459,8 @@ label .desc{font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-l
 .oml-tree .n.off .name{color:var(--ink-faint)}
 .oml-tree .n .oml-tag{font:var(--t-meta-weight) var(--t-meta-size)/var(--t-meta-line) var(--font-mono);color:var(--ink-dim);border:1px solid var(--rule);border-radius:var(--radius-pill);padding:0 var(--space-2)}
 .oml-table td.c-meta.prose .oml-mono{font-size:var(--t-meta-size)}
+/* A grant's role is one word: it never breaks, at 390px either (the one-key page, ADR-0096 d4). */
+.oml-table td.c-grant{white-space:nowrap}
 .oml-usage meter,section#usage meter{width:100%;min-width:var(--space-16)}
 button.danger{border:var(--stroke-strong) solid var(--error);color:var(--error)}
 @container (max-width:479px){.oml-table td.c-act{order:5;flex-basis:100%}}
