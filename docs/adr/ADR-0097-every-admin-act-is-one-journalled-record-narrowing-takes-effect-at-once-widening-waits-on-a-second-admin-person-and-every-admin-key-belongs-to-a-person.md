@@ -314,7 +314,13 @@ Decided, not built.
   {grace_seconds?}` ([ADR-0096](ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md) d13), not as a member of this verb. Under this record's model
   rotation is neutral (d9): it grants nothing new, a key keeping exactly the access it held, so it
   takes effect at once and waits on no second admin person. Its refusals stay as built: a session
-  key, a connector key, a revoked, cut-off or expired key.
+  key, a connector key, a revoked, cut-off or expired key. *Amended by the operator's decision
+  of 2026-11-25 (ADR-0096 d13, the review round):* in v0.8.5 an admin rotates only its own admin
+  key and tenant keys that name no person, and is refused another admin's key
+  (`not_admins_key`) and a key in a person's root (`in_persons_root`). In v0.8.6 an admin's
+  rotation of a key it would then hold the new value of, another admin person's key or a
+  person's, falls under d6 and d8: it waits on a second admin person, as revoking another admin
+  person's key does, since the rotating admin alone would then hold the key's only working value.
 
 - **d15 — Raising a limit is widening; lowering it takes effect at once (Q7).** A raise, a cleared
   limit, a later expiry (which can revive a cut-off key) or a looser quota profile waits on a
@@ -875,6 +881,26 @@ Two readings stay open for the operator: the connect code's life running from th
 - **The cost:** a multi-admin tenant's widening waits on a second person, who counts only after
   seven days; erase no longer destroys at once; a recovered tenant whose dormant admins never
   return cannot widen without the operator; every deployer and bootstrap caller changes once.
+
+### Build notes for v0.8.6, from the v0.8.5 review (2026-11-25)
+
+The three reviews of PR #518 found these, each left for the v0.8.6 build since each changes a
+rule this record makes:
+
+- **Disabled admin entries count toward the last-admin guard.** The v0.8.5 guard (d25, d27
+  item 4) counts every admin entry that is not pending, a disabled one included, so a tenant whose
+  other admin is disabled can still un-flag or remove its one working admin. v0.8.6 counts the
+  admin persons d25 names, which leaves a disabled entry out.
+- **`GET /v2/review/briefs` serves other persons' proposer key names.** Each proposal carries the
+  proposing key's name, which tells a reviewer which key of another person proposed it; ADR-0095's
+  `proposed_by` serves the key only to the same person. v0.8.6 aligns the two: the listing names
+  another person's key no more than `proposed_by` does.
+- **A same-person brief ratification outside a user root.** A person may ratify a brief proposal
+  their own other key made when the brief lies outside their root, since the ratify route checks
+  the key, not the person. d17's ladder makes the ratifier a person; v0.8.6 refuses the same
+  person outside the own root, as a verdict's `same_person` does, or marks it under `sole_admin`.
+- **Rotation by an admin of another admin's key or a person's** waits on d6 and d8, as d14's note
+  says; v0.8.5 refuses both by name.
 
 ## Rejected alternatives
 

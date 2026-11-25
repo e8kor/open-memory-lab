@@ -356,6 +356,11 @@ pub struct Caller {
     /// once taken, so a later resolution reads them now (ADR-0070 d8,
     /// #297).
     gate_read: std::sync::Mutex<Option<KeyAccess>>,
+    /// Whether the value that authenticated this caller is its key's
+    /// previous one, inside a rotation's grace: such a caller reads and
+    /// writes as the key does and runs none of the key acts (ADR-0096 d13,
+    /// the operator's decision of 2026-11-25).
+    previous_value: bool,
 }
 
 impl Caller {
@@ -372,6 +377,7 @@ impl Caller {
                 permission_epoch: 0,
                 own_keys: Vec::new(),
                 gate_read: std::sync::Mutex::new(None),
+                previous_value: false,
             };
         };
         Caller {
@@ -381,6 +387,7 @@ impl Caller {
             denials: access.denials.into_iter().map(|d| d.denial).collect(),
             own_keys: Vec::new(),
             gate_read: std::sync::Mutex::new(None),
+            previous_value: false,
         }
     }
 
@@ -394,6 +401,22 @@ impl Caller {
     #[must_use]
     pub fn key(&self) -> &KeyRecord {
         &self.key
+    }
+
+    /// Refuses a key act to a caller that authenticated with its key's
+    /// previous value: the grace keeps a deployed value working and lets
+    /// no one holding it rotate the key past the grace, or issue, mint,
+    /// cut off, deny, set limits or link ([`AppError::PreviousKeyValue`];
+    /// ADR-0096 d13).
+    ///
+    /// # Errors
+    /// [`AppError::PreviousKeyValue`] naming `verb`.
+    pub fn require_current_value(&self, verb: &'static str) -> Result<(), AppError> {
+        if self.previous_value {
+            Err(AppError::PreviousKeyValue { verb })
+        } else {
+            Ok(())
+        }
     }
 
     /// The key's grants as read on this request.
@@ -2086,11 +2109,25 @@ where
     /// access: one hash lookup and one access read per request (workspaces.md
     /// effective access; ADR-0025 d1).
     async fn authenticate(&self, api_key: &str) -> Result<Caller, AppError> {
-        let key = self.key_of_value(api_key).await?;
+        let (key, previous_value) = self.key_of_value_marked(api_key).await?;
         // A person of the sign-up tenant's key under its request rate
         // (ADR-0068 d5).
         self.admit_request(&key).await?;
-        self.caller_of(key).await
+        let mut caller = self.caller_of(key).await?;
+        caller.previous_value = previous_value;
+        Ok(caller)
+    }
+
+    /// The caller a key act runs as: [`Self::authenticate_bearer`], refused
+    /// where the value was the key's previous one (ADR-0096 d13).
+    async fn key_act_caller(
+        &self,
+        bearer: Bearer<'_>,
+        verb: &'static str,
+    ) -> Result<Caller, AppError> {
+        let caller = self.authenticate_bearer(bearer).await?;
+        caller.require_current_value(verb)?;
+        Ok(caller)
     }
 
     /// The caller a key value acts as, or the caller a connection's access
@@ -2101,7 +2138,9 @@ where
             Bearer::Key(value) => self.authenticate(value).await,
             Bearer::Connection(caller) => {
                 self.admit_request(&caller.key).await?;
-                self.caller_of(caller.key.clone()).await
+                let mut fresh = self.caller_of(caller.key.clone()).await?;
+                fresh.previous_value = caller.previous_value;
+                Ok(fresh)
             }
             Bearer::Session(caller) => {
                 // The gate read this key's access at the head of this
@@ -2112,6 +2151,7 @@ where
                     None => self.caller_of(caller.key.clone()).await?,
                 };
                 fresh.own_keys.clone_from(&caller.own_keys);
+                fresh.previous_value = caller.previous_value;
                 Ok(fresh)
             }
         }
@@ -2147,11 +2187,19 @@ where
     /// `Unauthorized`, and one that names a key past its expiry is told so
     /// (ADR-0079 d2).
     async fn key_of_value(&self, api_key: &str) -> Result<KeyRecord, AppError> {
+        Ok(self.key_of_value_marked(api_key).await?.0)
+    }
+
+    /// [`Self::key_of_value`], and whether the value is the key's previous
+    /// one, inside a rotation's grace (ADR-0096 d13).
+    async fn key_of_value_marked(&self, api_key: &str) -> Result<(KeyRecord, bool), AppError> {
         let hash = sha256_digest_string(api_key.as_bytes());
         let mut key = self.journal.key_by_hash(&hash).await;
+        let mut previous_value = false;
         // A rotated key's previous value, until its grace ends (ADR-0096
         // d13); past it, the value names no key.
         if matches!(key, Ok(None)) {
+            previous_value = true;
             let now = self.clock.now();
             key = self.journal.key_by_previous_hash(&hash).await.map(|found| {
                 found
@@ -2164,7 +2212,7 @@ where
         }
         let key = key?.ok_or(AppError::Unauthorized)?;
         self.require_unexpired(&key)?;
-        Ok(key)
+        Ok((key, previous_value))
     }
 
     /// `key`'s access as stored, `None` for a provider-level key.
@@ -2872,13 +2920,31 @@ where
         api_key_id: Option<Uuid>,
         payload: Value,
     ) -> Result<SignedEnvelope, AppError> {
+        let at = self.clock.now();
+        self.seal_at(prev, tenant_id, event_type, principal, api_key_id, payload, at)
+    }
+
+    /// [`Self::seal`] at `at`, read off the clock once by a caller whose
+    /// payload names an instant derived from the envelope's own, as a
+    /// rotation's grace end does (ADR-0096 d13).
+    #[allow(clippy::too_many_arguments)]
+    fn seal_at(
+        &self,
+        prev: Option<&SignedEnvelope>,
+        tenant_id: Uuid,
+        event_type: &str,
+        principal: &str,
+        api_key_id: Option<Uuid>,
+        payload: Value,
+        at: EventTime,
+    ) -> Result<SignedEnvelope, AppError> {
         let draft = EventDraft {
             tenant_id,
             event_id: self.ids.new_id(),
             event_type: event_type.to_owned(),
             principal: principal.to_owned(),
             api_key_id,
-            at: self.clock.now(),
+            at,
             payload,
         };
         let envelope = next_envelope(prev, draft)?;
@@ -3624,7 +3690,7 @@ where
         bearer: impl Into<Bearer<'_>>,
         req: &IssueKeyRequest,
     ) -> Result<IssuedKey, AppError> {
-        let issuer = self.authenticate_bearer(bearer.into()).await?.key;
+        let issuer = self.key_act_caller(bearer.into(), "issue_key").await?.key;
         if issuer.role != Role::Admin && issuer.role != Role::Operator {
             return Err(AppError::VerbCeiling {
                 role: issuer.role,
@@ -3995,7 +4061,7 @@ where
         node: Reference,
         reason: Option<&str>,
     ) -> Result<DenialRecord, AppError> {
-        let admin = self.authenticate_bearer(bearer.into()).await?.key;
+        let admin = self.key_act_caller(bearer.into(), "deny_key").await?.key;
         require_role(&admin, Role::Admin, "deny")?;
         self.deny_key_by(&admin, key, node, Head::AtSeal, reason)
             .await
@@ -12186,7 +12252,10 @@ where
     ) -> Result<ConnectCodeIssued, AppError> {
         // A caller the request already resolved is not charged again
         // against its rate (#253, #281).
-        let admin = self.authenticate_bearer(api_key.into()).await?.key;
+        let admin = self
+            .key_act_caller(api_key.into(), "mint_connect_code")
+            .await?
+            .key;
         require_role(&admin, Role::Admin, "mint_connect_code")?;
         self.mint_connect_code_by_with_ttl(&admin, key, ttl_secs, Head::AtSeal)
             .await

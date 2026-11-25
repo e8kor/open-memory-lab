@@ -345,8 +345,9 @@ Decided; built in v0.8.5, with the frames the build notes list left out.
 - **d12 — Deferred.** Recording a key's last use (#131), which waits for a measured per-request
   cost and its own record (D10); the admin key builder (D1); an issuance dry run, whose two
   server-only answers stay on the review step (D12); hashed inline scripts on console pages
-  (D13); the import-review items (d11). Adding or revoking a grant on an issued key, revoking and
-  rotating keys stay unbuilt, and no page draws them.
+  (D13); the import-review items (d11). Adding or revoking a grant on an issued key and revoking
+  keys stay unbuilt, and no page draws them. Rotating keys is built by d13 (the operator's
+  decision of 2026-11-25).
 
 ## Consequences
 
@@ -394,7 +395,8 @@ Decided by the operator on 2026-11-25 (the break-glass and key-access questions)
   and the form says so; a lower one takes effect at once (ADR-0097 d15). The one-key page gains one
   revoke button in v0.8.6.
 - **d12.** Revoking a key is built as one plain verb for any key (ADR-0097 d14). A person's web
-  session revokes the person's own keys with the same verb. Rotation and a cascade stay deferred.
+  session revokes the person's own keys with the same verb. A cascade stays deferred; rotation is
+  built in v0.8.5 as its own verb (d13).
   The admin key builder is no longer deferred: it ships in v0.8.6, reusing the personal builder's
   flow, and its keys wait on a second admin person (ADR-0097 d29, decided by the operator,
   2026-11-25).
@@ -471,6 +473,36 @@ Decided by the operator on 2026-11-25 and built in v0.8.5; [ADR-0097](ADR-0097-e
   value's `whoami` one read more (`web_console_reads.rs`). Under ADR-0097 (v0.8.6) rotation is
   neutral: it grants nothing new.
 
+### Operator decision of 2026-11-25, the review round: who rotates which key
+
+Decided by the operator on 2026-11-25 after the three reviews of PR #518; it narrows d13's **Who**
+above, which read "an admin key for any key", and is built in v0.8.5.
+
+- **An admin** (a bearer admin key or a `<user>-admin` session) rotates its own admin key, and a
+  tenant key that is not an admin key and names no person: no `user`, no accepted link and no link
+  pending. Another admin's key is refused `not_admins_key`, and a key in a person's root, or one
+  linked to a person, `in_persons_root`, each `request.validation`, `details.field: key`, until
+  v0.8.6 adds ADR-0097's confirmation for them (ADR-0097 d14's note). The admin Keys tab, which
+  lists one person's keys, offers no **Rotate**; the admin one-key page offers it on a live tenant
+  bearer key that is not an admin key and names no person, and the shown value goes back to that
+  key's page.
+- **A person** rotates their own keys from `<user>-web`: the contributor, reader and submitter
+  keys `issue_own_key` admits. A reviewer or curator key in the person's root is refused
+  `not_persons_role`; it rotates itself. A `<user>-web` session that carries a denial rotates
+  nothing, `access.verb_ceiling` with `session_key_denied`, as it runs none of its other key acts
+  (ADR-0070 d2; #325).
+- **A previous value runs no key act.** A caller that authenticated with a key's previous value,
+  inside its grace, rotates, issues, mints a connect code, cuts off, denies, sets limits and links
+  nothing: `access.verb_ceiling`, `details.reason: previous_value`, naming the verb. Without this,
+  whoever held a leaked value could rotate the key inside the grace and keep it past the grace's
+  end. The grace still serves reads and writes, which is what it is for.
+- **One instant.** `rotated_at` is the `key.rotated` envelope's `at`, and `previous_valid_until`
+  is that instant plus the grace, read off the clock once.
+- *Rejected:* an admin rotating any key at once as d13 first said, which lets an admin take a
+  person's key into its own hands without the second person ADR-0097 asks for widening acts;
+  refusing rotation to admins altogether, which leaves a leaked tenant service key with no fast
+  remedy.
+
 ## Build notes (v0.8.5, 2026-11-25)
 
 Built: d1 to d4, d6 to d10 on the server; on the console the key builder, the Keys list's coverage
@@ -490,12 +522,15 @@ Readings the build took, for the operator to confirm:
 - The admin one-key page shows the default workspace, the crew and each grant's and denial's
   workspace by id, not by name: naming them would add a tree read to the page.
 - The admin To do draws the unconfirmed fixes and the alerts, not open investigations: the SDK has
-  no investigations listing yet.
+  no investigations listing yet. *Superseded at integration (2026-11-25):* the Rust SDK gained
+  `investigations` and the admin To do draws an **Open investigations** group.
 
 Not built in this lane, each waiting on another change: the brief section of the workspace page,
 **Propose for brief** and the P9 status proposal on the workspace page (they call the proposal
 routes ADR-0095 changes, which the `bulk085/mcp` lane builds, and `POST /v2/edges` still reads the
 raw bearer, so a session cannot propose); the workspace export page (P10), which needs the SDK's
 binary download (#465); the personal fix confirmation page `/web/todo/fix` (P14) and the imported
-version's Judge (P15, deferred by d11).
+version's Judge (P15, deferred by d11). *Superseded at integration (2026-11-25):* the brief
+section, **Propose for brief**, the P9 status proposal and `/web/todo/fix` (P14) are built on the
+bulk branch, and `POST /v2/edges` resolves a session caller; P10 and P15 stay unbuilt.
 

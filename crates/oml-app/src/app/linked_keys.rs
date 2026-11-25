@@ -38,7 +38,7 @@ where
         key: Reference,
         user: &Name,
     ) -> Result<KeyRecord, AppError> {
-        let admin = self.authenticate_bearer(bearer.into()).await?.key;
+        let admin = self.key_act_caller(bearer.into(), "link_key").await?.key;
         require_role(&admin, Role::Admin, "link_key")?;
         let own_person = console_admin_person(&admin)?;
         let tenant_id = admin.tenant_id;
@@ -105,7 +105,7 @@ where
         bearer: impl Into<Bearer<'_>>,
         key: Reference,
     ) -> Result<KeyRecord, AppError> {
-        let admin = self.authenticate_bearer(bearer.into()).await?.key;
+        let admin = self.key_act_caller(bearer.into(), "unlink_key").await?.key;
         require_role(&admin, Role::Admin, "unlink_key")?;
         console_admin_person(&admin)?;
         let tenant_id = admin.tenant_id;

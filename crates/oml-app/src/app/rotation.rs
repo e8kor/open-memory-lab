@@ -27,14 +27,27 @@ where
     I: IdGen,
     Sc: Scanner,
 {
-    /// `POST /v2/keys/{key}/rotate` (ADR-0096 d13): a new value for `key`,
-    /// by an admin key (a `<user>-admin` session's included) for any key of
-    /// the tenant, by a person's `<user>-web` session for that person's own
-    /// keys, or by the key itself. A session key, a connector key, a revoked
+    /// `POST /v2/keys/{key}/rotate` (ADR-0096 d13): a new value for `key`.
+    /// Who rotates what (the operator's decision of 2026-11-25):
+    /// - the key itself, any role;
+    /// - an admin key (a `<user>-admin` session's included), its own admin
+    ///   key and a tenant key that is not an admin key and names no person,
+    ///   neither as a user key nor by a link, live or pending; another
+    ///   admin's key is `not_admins_key` and a key of a person is
+    ///   `in_persons_root`, until ADR-0097's confirmation lands in v0.8.6;
+    /// - a person's `<user>-web` session, that person's own contributor,
+    ///   reader and submitter keys, the roles `issue_own_key` admits; any
+    ///   other role of theirs is `not_persons_role`, and a session that
+    ///   carries a denial rotates nothing (`session_key_denied`).
+    ///
+    /// A caller that authenticated with a previous value, inside its grace,
+    /// rotates nothing (`previous_value`), so whoever holds an old value
+    /// cannot outlive its grace. A session key, a connector key, a revoked
     /// key, a cut-off key and an expired key are refused by name, and so is
-    /// a grace above `ROTATION_GRACE_MAX_SECS`, 24 hours. Any other caller is
-    /// `access.verb_ceiling`; a person's session naming another's key finds
-    /// none.
+    /// a grace above `ROTATION_GRACE_MAX_SECS`, 24 hours. Any other caller
+    /// is `access.verb_ceiling`; a person's session naming another's key
+    /// finds none. The rotation's instant is its `key.rotated` envelope's
+    /// `at`, and the grace ends that instant plus the grace.
     ///
     /// # Errors
     /// The refusals above, the caller's authentication, and the store's.
@@ -44,19 +57,29 @@ where
         key: Reference,
         grace_seconds: Option<u32>,
     ) -> Result<RotatedKey, AppError> {
-        let caller = self.authenticate_bearer(bearer.into()).await?.key;
+        let acting = self.key_act_caller(bearer.into(), "rotate_key").await?;
+        let caller = acting.key.clone();
         if grace_seconds.is_some_and(|s| s > ROTATION_GRACE_MAX_SECS) {
             return Err(AppError::KeyRotation(KeyRotationRefusal::GraceTooLong));
+        }
+        let own_session = caller.credential == Credential::Session
+            && caller.role == Role::Contributor
+            && caller.user.is_some();
+        // A person's session that carries a denial runs none of its key
+        // acts, as `undenied` refuses the others (ADR-0070 d2; #325).
+        if own_session && !acting.denials.is_empty() {
+            return Err(AppError::SessionKeyDenied {
+                role: caller.role,
+                verb: "rotate_key",
+            });
         }
         let tenant_id = caller.tenant_id;
         let key_id = self.resolve(&caller, NamedKind::Key, &key).await?;
         let Some(target) = self.journal.key(tenant_id, key_id).await? else {
             return Err(AppError::NotFound);
         };
-        let own_session = caller.credential == Credential::Session
-            && caller.role == Role::Contributor
-            && caller.user.is_some();
-        if caller.role != Role::Admin && target.key_id != caller.key_id {
+        let itself = target.key_id == caller.key_id;
+        if caller.role != Role::Admin && !itself {
             if !own_session {
                 return Err(AppError::VerbCeiling {
                     role: caller.role,
@@ -72,6 +95,32 @@ where
             }
         }
         self.require_rotatable(&target).await?;
+        if !itself {
+            let refusal = if caller.role == Role::Admin {
+                if target.role == Role::Admin {
+                    Some(KeyRotationRefusal::NotAdminsKey)
+                } else if target.user.is_some()
+                    || target.linked_user.is_some()
+                    || target.link_pending.is_some()
+                {
+                    Some(KeyRotationRefusal::InPersonsRoot)
+                } else {
+                    None
+                }
+            } else if matches!(
+                target.role,
+                Role::Contributor | Role::Reader | Role::Submitter
+            ) {
+                None
+            } else {
+                Some(KeyRotationRefusal::NotPersonsRole)
+            };
+            if let Some(refusal) = refusal {
+                return Err(AppError::KeyRotation(refusal));
+            }
+        }
+        // One instant, read once: the envelope's `at` and the grace's end
+        // derive from it alike.
         let now = self.clock.now();
         let secret = self.ids.new_secret();
         let value = format!("oml_{}", base62_43(&secret));
@@ -87,14 +136,16 @@ where
         };
         let previous_valid_until = previous.as_ref().map(|(_, until)| until.clone());
         let prev = self.head_event(tenant_id).await?;
-        let event = self.seal(
+        let event = self.seal_at(
             prev.as_ref(),
             tenant_id,
             event_types::KEY_ROTATED,
             &caller.principal,
             Some(caller.key_id),
             rotated_payload(key_id, caller.key_id, previous_valid_until.as_ref()),
+            now,
         )?;
+        let rotated_at = event.envelope.at.clone();
         let receipt = self
             .commit(
                 event,
@@ -111,7 +162,7 @@ where
         Ok(RotatedKey {
             key,
             value,
-            rotated_at: now,
+            rotated_at,
             previous_valid_until,
             journal_seq: receipt.seq,
         })
