@@ -13,8 +13,10 @@ work against a v0.8.3 server: upgrade the client before the server.
 
 From v0.8.4 the role `writer` is gone (ADR-0093): a key that recalls and writes is a
 `contributor`, one that writes without recall is a `submitter`, and the grant role that
-confers writing is `submitter`. A v0.8.3 client that sends the former role is refused and
-issues nothing: upgrade the client before the server.
+confers writing is `submitter`. Recall and write work across v0.8.3 and v0.8.4, but a v0.8.4
+server refuses the former role from a v0.8.3 client and a v0.8.3 server refuses this client's
+`contributor`: upgrade the client in the server's window, and issue or list no key until both
+run v0.8.4.
 
 Python 3.11 or later. Each release attaches a wheel and an sdist to its GitHub release; install
 the wheel from the file, or install from a checkout of the repository:

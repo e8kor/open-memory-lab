@@ -14,7 +14,9 @@ named by the doctor and reissued, with no act that changes a key's role (d3) · 
 day, requested by the operator ("Let's improve
 naming to represent writer role correctly"), who chose a full rename over console labels: a
 **contributor** recalls and writes, a **submitter** writes without recall, a **reader** is
-unchanged; and decided the release, v0.8.4 with #498 (d8). · amended by [ADR-0096](ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md) (d6, 2026-11-24, decided by the operator)
+unchanged; and decided the release, v0.8.4 with #498 (d8) · upgrade order decided by the
+operator on 2026-11-24: server and clients in one window, no key issued or listed until both run
+v0.8.4 (d7, d8). · amended by [ADR-0096](ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md) (d6, 2026-11-24, decided by the operator)
 
 **Amends:**
 - ADR-0010 (d1): the roles are `reader`, `contributor`, `submitter`, `reviewer`, `admin` and
@@ -56,7 +58,7 @@ console form, error details (`needed_role`), the docs and the plugins' key skill
 made the same kind of cut when it renamed the reviewer role (d13); this record follows its rules and states
 only where a split word differs from a renamed one.
 
-Built for v0.8.4; the implementation notes below record the readings the build took.
+Built in v0.8.4; the implementation notes below record the readings the build took.
 
 ## Decision
 
@@ -173,21 +175,27 @@ Built for v0.8.4; the implementation notes below record the readings the build t
   - rule 7 and its tests;
   - quoted text and earlier records' rejected alternatives.
 
-  The upgrade note in `docs/operations/upgrades.md` and the client notice are one text:
+  The upgrade note in `docs/operations/upgrades.md` and the client notice are one text, as
+  amended by the operator's decision of 2026-11-24 ("Same window, no key issuance"):
   "OML v0.8.4 renames the writer role. A key that recalls and writes is a **contributor**. A key
   that writes without recall is a **submitter**. The grant that confers writing is `submitter`.
-  Upgrade the CLI, plugins and SDKs before the server is upgraded. A v0.8.3 client that names
-  `writer` is refused and issues nothing. Existing writer keys become contributor keys. One
-  issued with `--write-only` keeps working, and `oml doctor` names it a contributor without
-  recall. Issue a submitter key with `--role submitter` and cut the old one off. Memories, key
-  values, grants and names are otherwise unchanged."
+  The server and the CLI, plugins and SDKs upgrade in one window. Recall and write keep working
+  while one side runs v0.8.3 and the other v0.8.4. No key is issued or listed until both run
+  v0.8.4: a v0.8.4 server refuses a v0.8.3 client's `writer`, and a v0.8.3 server refuses a v0.8.4
+  client's `contributor`. Existing writer keys become contributor keys. One issued with
+  `--write-only` keeps working, and `oml doctor` names it a contributor without recall. Issue a
+  submitter key with `--role submitter` and cut the old one off. Memories, key values, grants and
+  names are otherwise unchanged."
 
 - **d8 — v0.8.4 ships the cut, with #498 (decided by the operator, 2026-11-19).** The operator
   wants the roles right in the release that closes this phase. The upgrade is not rolling and
   follows ADR-0091 d12's runbook. First, announce with the notice of d7. Then back up and verify
   the restore. Stop `oml-web`, the lead and the lake writer, and start v0.8.4 from one tag.
-  Check `oml doctor`, `oml verify` and d5's law. Last, upgrade the operator's own clients and
-  reissue any contributor without recall.
+  Check `oml doctor`, `oml verify` and d5's law. In the same window, upgrade the operator's own
+  clients; only once the server and the clients run v0.8.4, issue or list keys and reissue any
+  contributor without recall. The order is the operator's decision of 2026-11-24 ("Same window,
+  no key issuance"), which replaces the earlier text's clients-before-the-server notice and its
+  clients-last step, since the two disagreed.
 
 ## Consequences
 
@@ -198,7 +206,8 @@ Built for v0.8.4; the implementation notes below record the readings the build t
   event catalog's former-name table, the plugins' skills, and the doctor.
 - The console-label lane (branch `web/key-role-labels`, uncommitted) is superseded: its question,
   whether a writer key reads, is answered by the word itself.
-- Every installed v0.8.3 client must be upgraded before the server, as in ADR-0091.
+- Every installed v0.8.3 client is upgraded in the server's window, and no key is issued or
+  listed until both run v0.8.4 (d7, d8, the operator's decision of 2026-11-24).
 - A contributor without recall keeps its name until its holder replaces it; the doctor line
   stays until none is left.
 - The build is tracked by an issue in the v0.8.4 milestone, opened with the build.
