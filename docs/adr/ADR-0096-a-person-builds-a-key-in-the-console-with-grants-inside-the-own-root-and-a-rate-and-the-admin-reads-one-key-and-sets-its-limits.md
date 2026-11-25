@@ -238,8 +238,10 @@ Decided; built in v0.8.5, with the frames the build notes list left out.
       for it (ADR-0089, the amendment of 2026-11-18, accepted 2026-11-19). Inside that person's own
       root in development they may settle it themselves, marked `same_user`. An author of the
       target's lineage outside the own root is refused `review.author_in_lineage`, `same_person`,
-      at the act. The confirmation step says "waits for a person other than <admin's person>"
-      where the rule applies; the console reads the served `acts` and never computes the rule.
+      at the act. The console reads the served `acts` and never computes the rule: the admin's
+      pages, whose routes serve no `acts`, say the fix waits for a person with reviewer on the
+      workspace and name no person it excludes; the person's fix page says what the account may
+      do from its `acts`, and a settlement the server records `same_user` reads "marked same user".
 
     Refusals shown by name: `admin.fix_held_by_scan`, `admin.fix_target_not_promoted`,
     `workspace.frozen`. A `<user>-admin` session's person is the session's user (ADR-0089, the
@@ -345,9 +347,11 @@ Decided; built in v0.8.5, with the frames the build notes list left out.
 - **d12 — Deferred.** Recording a key's last use (#131), which waits for a measured per-request
   cost and its own record (D10); the admin key builder (D1); an issuance dry run, whose two
   server-only answers stay on the review step (D12); hashed inline scripts on console pages
-  (D13); the import-review items (d11). Adding or revoking a grant on an issued key and revoking
-  keys stay unbuilt, and no page draws them. Rotating keys is built by d13 (the operator's
-  decision of 2026-11-25).
+  (D13); the import-review items (d11). Adding or revoking a grant on an issued key stays
+  unbuilt, and no page draws it; revoking keys and the admin key builder are built in v0.8.6
+  (ADR-0097 d14, d29). Rotating keys is built by d13 (the operator's decision of 2026-11-25), and
+  the builder's two server-only answers, with `oauth.connect_refused`, bring **Issue key** back to
+  the review step with the draft kept.
 
 ## Consequences
 
@@ -394,8 +398,8 @@ Decided by the operator on 2026-11-25 (the break-glass and key-access questions)
   A raise, a cleared limit or a later expiry from the limits form waits on a second admin person
   and the form says so; a lower one takes effect at once (ADR-0097 d15). The one-key page gains one
   revoke button in v0.8.6.
-- **d12.** Revoking a key is built as one plain verb for any key (ADR-0097 d14). A person's web
-  session revokes the person's own keys with the same verb. A cascade stays deferred; rotation is
+- **d12.** Revoking a key is built in v0.8.6 as one plain verb for any key (ADR-0097 d14); a
+  person's web session will revoke the person's own keys with the same verb. A cascade stays deferred; rotation is
   built in v0.8.5 as its own verb (d13).
   The admin key builder is no longer deferred: it ships in v0.8.6, reusing the personal builder's
   flow, and its keys wait on a second admin person (ADR-0097 d29, decided by the operator,
@@ -492,8 +496,8 @@ above, which read "an admin key for any key", and is built in v0.8.5.
   nothing, `access.verb_ceiling` with `session_key_denied`, as it runs none of its other key acts
   (ADR-0070 d2; #325).
 - **A previous value runs no key act.** A caller that authenticated with a key's previous value,
-  inside its grace, rotates, issues, mints a connect code, cuts off, denies, sets limits and links
-  nothing: `access.verb_ceiling`, `details.reason: previous_value`, naming the verb. Without this,
+  inside its grace, rotates, issues, mints a connect code, cuts off, denies, sets limits, links and
+  unlinks nothing: `access.verb_ceiling`, `details.reason: previous_value`, naming the verb. Without this,
   whoever held a leaked value could rotate the key inside the grace and keep it past the grace's
   end. The grace still serves reads and writes, which is what it is for.
 - **One instant.** `rotated_at` is the `key.rotated` envelope's `at`, and `previous_valid_until`
