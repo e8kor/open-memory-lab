@@ -359,8 +359,10 @@ fn row(key: &ListedKey, side: Side, csrf: &str, user: &str, denied: Option<&str>
         };
         // Rotate, beside Cut off, on a live bearer key that has not
         // expired: a connector key takes a new connect code instead
-        // (ADR-0096 d13).
-        if key.credential == "bearer" && !key.expired {
+        // (ADR-0096 d13). Never on the admin side, whose list is one
+        // person's keys, which their person rotates and an admin does not
+        // (the operator's decision of 2026-11-25).
+        if side == Side::User && key.credential == "bearer" && !key.expired {
             acts.push_str(&form(
                 side.path(),
                 "rotate_key",
@@ -1095,6 +1097,25 @@ async fn one_key(
                     r#"<p><a class="button" href="{ADMIN_KEYS_PATH}?key={enc}&amp;op=limits">Set limits</a> <a class="button" href="{ADMIN_KEYS_PATH}?key={enc}&amp;op=deny">Deny on a workspace</a></p>"#,
                     enc = attr(&enc)
                 );
+                // Rotate where an admin may (ADR-0096 d13, the operator's
+                // decision of 2026-11-25): a live tenant bearer key that is
+                // not an admin key and names no person. The API refuses a
+                // key linked to a person by name, which the read serves no
+                // field for.
+                if record.credential == "bearer"
+                    && record.role != "admin"
+                    && record.user.is_none()
+                    && !record.expired
+                {
+                    body.push_str(&form(
+                        ADMIN_KEYS_PATH,
+                        "rotate_key",
+                        &csrf,
+                        &hidden("key", &name),
+                        "Rotate",
+                        false,
+                    ));
+                }
                 if record.credential != "session" && record.role != "admin" {
                     body.push_str(&form(
                         ADMIN_KEYS_PATH,
@@ -1285,6 +1306,16 @@ fn cut_off_confirmation(session: &Session, side: Side, key: &str, user: Option<&
     outcome::html(StatusCode::OK, shell("Confirm", &bar, page, None, &body))
 }
 
+/// Where a rotation goes back to: the personal Keys page, or on the admin
+/// side the listed person's keys, else the one key's page.
+fn rotated_back(side: Side, key: &str, user: Option<&str>) -> String {
+    match (side, user) {
+        (Side::User, _) => side.path().to_owned(),
+        (Side::Admin, Some(u)) => format!("{ADMIN_KEYS_PATH}?user={}", encode(u)),
+        (Side::Admin, None) => format!("{ADMIN_KEYS_PATH}?key={}", encode(key)),
+    }
+}
+
 /// Rotate's confirmation, which records nothing: what a rotation does, the
 /// grace offered (none, one hour, 24 hours), and a form carrying
 /// `confirm=yes`, the listed `user` on the admin page, and a fresh nonce,
@@ -1292,7 +1323,7 @@ fn cut_off_confirmation(session: &Session, side: Side, key: &str, user: Option<&
 fn rotate_confirmation(session: &Session, side: Side, key: &str, user: Option<&str>) -> Response {
     let page = side.path();
     let listed = user.map_or_else(String::new, |u| hidden("user", u));
-    let back = user.map_or_else(|| page.to_owned(), |u| format!("{page}?user={}", encode(u)));
+    let back = rotated_back(side, key, user);
     let mut body = format!(
         r#"<h1>Rotate {}?</h1><p class="oml-consequence">The key gets a new value, shown once. Its name, grants and limits stay. Every client that holds the previous value needs the new one.</p>"#,
         short(key)
@@ -1526,7 +1557,7 @@ async fn act(
                         value,
                         server: server(&web).await,
                         previous_valid_until: rotated.previous_valid_until,
-                        back: page.to_owned(),
+                        back: rotated_back(side, name, fields.given("user")),
                     },
                     // A replay, which shows no value: as for an issue.
                     None => return acts::see_other(page, &[]),
