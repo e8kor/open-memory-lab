@@ -12019,17 +12019,23 @@ async fn the_keys_tab_rotates_a_key_after_asking_and_shows_the_new_value_once() 
     assert!(!again.contains(&new), "{again}");
 }
 
-/// The admin Keys tab rotates a person's key too, and shows the value on
-/// the admin page; without a grace the old value stops at once.
+/// The admin Keys tab offers no Rotate on a person's key, since an admin
+/// rotates no key in a person's root, and a rotation posted anyway is
+/// refused by name; the one-key page of a tenant key naming no one offers
+/// Rotate, shows the value once on the admin page with its way back to that
+/// key, and without a grace the old value stops at once (ADR-0096 d13, the
+/// operator's decision of 2026-11-25).
 #[tokio::test]
-async fn the_admin_keys_tab_rotates_a_persons_key_and_the_old_value_stops_at_once() {
+async fn the_admin_console_rotates_a_tenant_key_and_offers_no_rotate_on_a_persons_key() {
     let rig = rig().await;
-    let (_alice, old) = person_with_agent(&rig, "sub-1", EMAIL).await;
+    let (_alice, laptop) = person_with_agent(&rig, "sub-1", EMAIL).await;
     rig.allow("boss@example.com", "boss", true).await;
     let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
     let (_, _, listed) = send(&rig.router, get("/web/admin/keys?user=alice", Some(&boss))).await;
-    assert!(listed.contains(">Rotate<"), "{listed}");
-    let (status, _, shown) = act_and_follow(
+    assert!(!listed.contains(">Rotate<"), "{listed}");
+    let (_, _, one) = send(&rig.router, get("/web/admin/keys?key=alice-laptop", Some(&boss))).await;
+    assert!(!one.contains(">Rotate<"), "{one}");
+    let (_, _, refused) = act_and_follow(
         &rig,
         &boss,
         "/web/admin/keys",
@@ -12042,9 +12048,60 @@ async fn the_admin_keys_tab_rotates_a_persons_key_and_the_old_value_stops_at_onc
         ],
     )
     .await;
+    assert!(
+        refused.contains("rotated by that person, from their own session"),
+        "{refused}"
+    );
+    rig.app.whoami(&laptop).await.expect("the person's key keeps its value");
+    let old = rig
+        .app
+        .issue_key(
+            &rig.boot.admin_key.value,
+            &IssueKeyRequest {
+                profile: None,
+                role: Role::Reader,
+                name: Name::parse("team-reader").expect("a name"),
+                principal: "team-reader".to_owned(),
+                used_by: Some(UsedBy::Agent),
+                default_workspace: None,
+                crew: None,
+                grants: vec![GrantRequest {
+                    node: rig.boot.root_workspace_id.into(),
+                    role: Role::Reader,
+                    deny: Vec::new(),
+                    covers: oml_app::domain::access::Covers::Subtree,
+                }],
+                connect_code: false,
+                user: None,
+                guardrail_scope: None,
+                expiry: None,
+                requests_per_minute: None,
+            },
+        )
+        .await
+        .expect("a tenant key")
+        .value;
+    let (_, _, one) = send(&rig.router, get("/web/admin/keys?key=team-reader", Some(&boss))).await;
+    assert!(one.contains(">Rotate<"), "{one}");
+    let (status, _, shown) = act_and_follow(
+        &rig,
+        &boss,
+        "/web/admin/keys",
+        &[
+            ("action", "rotate_key"),
+            ("key", "team-reader"),
+            ("grace", "0"),
+            ("confirm", "yes"),
+        ],
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{shown}");
     assert!(
         shown.contains("The previous value stopped working now."),
+        "{shown}"
+    );
+    assert!(
+        shown.contains(r#"href="/web/admin/keys?key=team-reader">Back to Keys"#),
         "{shown}"
     );
     let new = value_of(&shown);
