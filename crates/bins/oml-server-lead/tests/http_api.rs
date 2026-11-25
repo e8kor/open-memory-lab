@@ -8148,8 +8148,8 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     );
     assert_eq!(
         declared.len(),
-        107,
-        "the source check (ADR-0057 d5), the workspace mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the four web routes the lead keeps (ADR-0045 d25; its two JSON routes are oml-web's, ADR-0070 d7 (b), and GET and POST /web/admin are deleted, ADR-0070 \"The old URLs deleted\"), open sign-up's one the lead keeps, POST /web/sign-up (ADR-0068 d10; the onboarding and users pages are oml-web's, ADR-0070 d7 (b)), the web console's ten (ADR-0070 d5), the sign-in page oml-web sends to (ADR-0070 d4) , federation's three (ADR-0072 d5), usage metering's six (ADR-0071 d5, d6), a key's limits (ADR-0079 d5), a key's link, unlink and acceptance (ADR-0085 d16), the withdrawal (ADR-0083 d13), the skill read (ADR-0080 d11), the five upload routes (ADR-0004 d3), the workspace export and the import and its status (ADR-0084 d15), the admin investigation's open, list and close (ADR-0089 d10, d15), the five fix routes, the admin's fix and list and a person's list, confirm and revert (ADR-0089 d15), and a pending sign-in email's acceptance and removal by its person (ADR-0045 d2, the operator's decision of 2026-11-19)"
+        109,
+        "the source check (ADR-0057 d5), the workspace mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the four web routes the lead keeps (ADR-0045 d25; its two JSON routes are oml-web's, ADR-0070 d7 (b), and GET and POST /web/admin are deleted, ADR-0070 \"The old URLs deleted\"), open sign-up's one the lead keeps, POST /web/sign-up (ADR-0068 d10; the onboarding and users pages are oml-web's, ADR-0070 d7 (b)), the web console's ten (ADR-0070 d5), the sign-in page oml-web sends to (ADR-0070 d4) , federation's three (ADR-0072 d5), usage metering's six (ADR-0071 d5, d6), a key's limits (ADR-0079 d5), a key's link, unlink and acceptance (ADR-0085 d16), the withdrawal (ADR-0083 d13), the skill read (ADR-0080 d11), the five upload routes (ADR-0004 d3), the workspace export and the import and its status (ADR-0084 d15), the admin investigation's open, list and close (ADR-0089 d10, d15), the five fix routes, the admin's fix and list and a person's list, confirm and revert (ADR-0089 d15), a pending sign-in email's acceptance and removal by its person (ADR-0045 d2, the operator's decision of 2026-11-19), and the imports listing and the brief proposals (ADR-0096 d6, d7)"
     );
     assert_eq!(oauth.len(), 6, "the six OAuth operations");
 
@@ -11659,8 +11659,11 @@ async fn a_web_session_key_issues_connects_and_cuts_off_its_own_keys() {
     assert!(issued["value"].is_string(), "{issued}");
     for (body, field) in [
         (json!({ "name": "phone", "role": "contributor" }), "/name"),
+        // Since v0.8.5 a session takes grants inside the root, at most 16
+        // (ADR-0096 d1): a grant outside it is access.issuer_ceiling, and
+        // more than 16 is refused naming /grants.
         (
-            json!({ "name": "alice-x", "role": "submitter", "grants": [{ "workspace": "universe", "role": "submitter" }] }),
+            json!({ "name": "alice-x", "role": "submitter", "grants": vec![json!({ "workspace": "alice", "role": "submitter" }); 17] }),
             "/grants",
         ),
         (
