@@ -20258,9 +20258,12 @@ async fn a_previous_value_in_its_grace_runs_no_key_act() {
     let old = admin;
     assert_eq!(
         verb_of(
-            app.issue_key(old, &issue_req(Role::Reader, "cyd", vec![grant(crew, Role::Reader)]))
-                .await
-                .unwrap_err()
+            app.issue_key(
+                old,
+                &issue_req(Role::Reader, "cyd", vec![grant(crew, Role::Reader)])
+            )
+            .await
+            .unwrap_err()
         ),
         "issue_key"
     );

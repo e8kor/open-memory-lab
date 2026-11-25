@@ -1176,11 +1176,19 @@ mod tests {
         for (selector, resets) in [
             (
                 "form.oml-form label.oml-check",
-                &["flex-direction:row", "text-transform:none", "letter-spacing:normal"][..],
+                &[
+                    "flex-direction:row",
+                    "text-transform:none",
+                    "letter-spacing:normal",
+                ][..],
             ),
             (
                 "label.oml-check",
-                &["flex-direction:row", "text-transform:none", "letter-spacing:normal"][..],
+                &[
+                    "flex-direction:row",
+                    "text-transform:none",
+                    "letter-spacing:normal",
+                ][..],
             ),
             (
                 "label .desc",

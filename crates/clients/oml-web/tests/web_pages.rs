@@ -12005,7 +12005,10 @@ async fn an_admin_fix_waits_in_to_do_and_its_page_confirms_it_after_asking() {
         "/web/admin/workspace?workspace=alice&view=fix".to_owned(),
     ] {
         let (_, _, drawn) = send(&rig.router, get(&admin_page, Some(&boss))).await;
-        assert!(!drawn.contains("a person other than"), "{admin_page}: {drawn}");
+        assert!(
+            !drawn.contains("a person other than"),
+            "{admin_page}: {drawn}"
+        );
         assert!(
             drawn.contains("waits for a person with reviewer on the workspace"),
             "{admin_page}: {drawn}"
@@ -12287,7 +12290,11 @@ async fn the_admin_console_rotates_a_tenant_key_and_offers_no_rotate_on_a_person
     let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
     let (_, _, listed) = send(&rig.router, get("/web/admin/keys?user=alice", Some(&boss))).await;
     assert!(!listed.contains(">Rotate<"), "{listed}");
-    let (_, _, one) = send(&rig.router, get("/web/admin/keys?key=alice-laptop", Some(&boss))).await;
+    let (_, _, one) = send(
+        &rig.router,
+        get("/web/admin/keys?key=alice-laptop", Some(&boss)),
+    )
+    .await;
     assert!(!one.contains(">Rotate<"), "{one}");
     let (_, _, refused) = act_and_follow(
         &rig,
@@ -12306,7 +12313,10 @@ async fn the_admin_console_rotates_a_tenant_key_and_offers_no_rotate_on_a_person
         refused.contains("rotated by that person, from their own session"),
         "{refused}"
     );
-    rig.app.whoami(&laptop).await.expect("the person's key keeps its value");
+    rig.app
+        .whoami(&laptop)
+        .await
+        .expect("the person's key keeps its value");
     let old = rig
         .app
         .issue_key(
@@ -12335,7 +12345,11 @@ async fn the_admin_console_rotates_a_tenant_key_and_offers_no_rotate_on_a_person
         .await
         .expect("a tenant key")
         .value;
-    let (_, _, one) = send(&rig.router, get("/web/admin/keys?key=team-reader", Some(&boss))).await;
+    let (_, _, one) = send(
+        &rig.router,
+        get("/web/admin/keys?key=team-reader", Some(&boss)),
+    )
+    .await;
     assert!(one.contains(">Rotate<"), "{one}");
     let (status, _, shown) = act_and_follow(
         &rig,

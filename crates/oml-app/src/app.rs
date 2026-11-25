@@ -2921,7 +2921,9 @@ where
         payload: Value,
     ) -> Result<SignedEnvelope, AppError> {
         let at = self.clock.now();
-        self.seal_at(prev, tenant_id, event_type, principal, api_key_id, payload, at)
+        self.seal_at(
+            prev, tenant_id, event_type, principal, api_key_id, payload, at,
+        )
     }
 
     /// [`Self::seal`] at `at`, read off the clock once by a caller whose

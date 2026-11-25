@@ -855,7 +855,8 @@ pub(crate) fn form_body(
             )
         },
     );
-    let account = "Empty: no rate of its own. Under the account's quota, the lower of the two holds.";
+    let account =
+        "Empty: no rate of its own. Under the account's quota, the lower of the two holds.";
     let _ = write!(
         out,
         r#"<div class="oml-filterrow top"><label>Expires<input class="oml-input" type="date" id="ke" name="exp" value="{}"{}><span class="desc">{}</span></label><label>Requests a minute<input class="oml-input" id="kr" name="rpm" inputmode="numeric" value="{}"{}><span class="desc">{}</span></label></div><p class="desc">The key works through this date in every time zone. Only an admin changes the date or the rate after issue.</p><p><button class="primary" type="submit" name="step" value="review">Review</button> <a href="{USER_KEYS_PATH}">Cancel</a></p></form></div>"#,
@@ -1187,7 +1188,10 @@ mod tests {
         };
         let checks = draft.checks("alice", &tree(), now);
         let page = form_body(&draft, "alice", &tree(), &checks, false, false);
-        assert!(page.contains("2026-11-09 is over in every time zone."), "{page}");
+        assert!(
+            page.contains("2026-11-09 is over in every time zone."),
+            "{page}"
+        );
         assert!(!page.contains("</a> <code>"), "{page}");
     }
 
@@ -1229,7 +1233,9 @@ mod tests {
         assert_eq!(draft.marks(&tree[1], &tree), ["recall", "except"]);
         let review = review_body(&draft, "alice", &tree, "csrf", None);
         assert!(
-            review.contains(r#"<span class="oml-tag">recall</span><span class="oml-tag">except</span>"#),
+            review.contains(
+                r#"<span class="oml-tag">recall</span><span class="oml-tag">except</span>"#
+            ),
             "{review}"
         );
     }
