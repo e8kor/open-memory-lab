@@ -11450,13 +11450,14 @@ async fn the_admin_one_key_page_sets_limits_and_denies_on_a_workspace() {
         page.contains("read as <code>boss-admin</code>.</p>"),
         "{page}"
     );
-    // Set limits is the page's primary act, the record names its label,
-    // and a grant's role is one cell that does not wrap.
+    // Set limits is the page's primary act, the record draws no label row
+    // (the server stores no label to serve), and a grant's role is one cell
+    // that does not wrap.
     assert!(
         page.contains(r#"<a class="button primary" href="/web/admin/keys?key=alice-laptop&amp;op=limits">Set limits</a>"#),
         "{page}"
     );
-    assert!(page.contains(r#"<th scope="row">Label</th>"#), "{page}");
+    assert!(!page.contains(r#"<th scope="row">Label</th>"#), "{page}");
     assert!(page.contains(r#"<td class="c-grant">"#), "{page}");
     // A session key and an admin key take neither limits nor a denial.
     for other in ["alice-web", "root-admin"] {

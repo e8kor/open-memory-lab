@@ -1010,10 +1010,6 @@ async fn one_key(
         ),
         ("Principal", format!("<code>{}</code>", short(&record.principal))),
         (
-            "Label",
-            record.label.as_deref().map_or_else(none, text),
-        ),
-        (
             "Profile",
             record.profile.as_deref().map_or_else(none, text),
         ),
