@@ -2213,6 +2213,9 @@ pub struct TodoCounts {
     /// The To review group: the held rows the person's reviewer key may
     /// judge.
     pub review: u64,
+    /// The Brief proposals group: the pending brief edges the person's
+    /// reviewer key may ratify (ADR-0096 d7).
+    pub briefs: u64,
     /// Whether a count passed [`TODO_COUNT_CAP`].
     pub truncated: bool,
 }
@@ -2222,8 +2225,33 @@ pub struct TodoCounts {
 /// until then it answers `truncated` alone.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct AdminTodoCounts {
+    /// The guardrail-loosening alerts: the tenant's unconfirmed fixes that
+    /// loosen a guardrail (ADR-0096 d7).
+    pub alerts: u64,
     /// Whether a count passed [`TODO_COUNT_CAP`].
     pub truncated: bool,
+}
+
+/// One pending brief edge a person's reviewer key may ratify, as the To do
+/// group lists it (ADR-0096 d7): the edge, the claim's key and title, the
+/// workspace's name, the proposing key's name, and whether the proposer
+/// acts for the reviewer's person (ADR-0046 d2).
+#[derive(Debug, Clone)]
+pub struct BriefProposal {
+    pub edge: BriefEdgeRecord,
+    pub claim_key: Option<String>,
+    pub title: Option<String>,
+    pub workspace: Option<Name>,
+    pub proposer: Option<Name>,
+    pub same_user: bool,
+}
+
+/// A page of [`BriefProposal`]s, oldest first, and the position after the
+/// last one where more remain.
+#[derive(Debug, Clone)]
+pub struct BriefProposalPage {
+    pub items: Vec<BriefProposal>,
+    pub next: Option<(EventTime, Uuid)>,
 }
 
 #[derive(Debug, Clone)]
@@ -4796,6 +4824,14 @@ pub struct ImportRecord {
     pub refusals: Vec<ImportRefusal>,
     pub created_at: EventTime,
     pub ended_at: Option<EventTime>,
+}
+
+/// A page of imports with each importing key's name, newest first, and the
+/// position after the last one where more remain (ADR-0096 d6).
+#[derive(Debug, Clone)]
+pub struct ImportListing {
+    pub items: Vec<(ImportRecord, Option<Name>)>,
+    pub next: Option<(EventTime, Uuid)>,
 }
 
 /// The target's tip of one claim key, held versions included, as the plan

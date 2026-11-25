@@ -122,6 +122,10 @@ pub enum PersonAsk {
 pub struct Person {
     pub user: Name,
     pub limits: Option<(UserUsage, Quotas)>,
+    /// The account's quota profile, `None` for none (ADR-0096 d9).
+    pub profile: Option<String>,
+    /// The UTC month the usage counts, `YYYY-MM` (ADR-0096 d9).
+    pub period: String,
     pub deletion_requested_at: Option<oml_domain::EventTime>,
     /// The onboarding status, read only when asked (ADR-0070 d5).
     pub start: Option<StartStatus>,
@@ -187,6 +191,10 @@ pub struct UserRow {
     pub under_quotas: bool,
     pub usage: UserUsage,
     pub quotas: Quotas,
+    /// The account's quota profile, `None` for none, and the UTC month the
+    /// usage counts, `YYYY-MM` (ADR-0096 d9).
+    pub profile: Option<String>,
+    pub period: String,
     /// Each live admin key whose row names the person's root, by name (by
     /// id for a key that predates names): a corrupt row no verb makes,
     /// which refuses the person's disable and which `oml doctor` warns
@@ -243,15 +251,26 @@ where
         let mut out = Vec::new();
         for (user, (signed_up, disabled)) in by_user {
             let root = self.signup_root(tenant_id, &user).await?;
-            let (usage, quotas, admin_keys) = match root {
-                Some(root) => (
-                    self.journal
+            let (usage, quotas, profile, admin_keys) = match root {
+                Some(root) => {
+                    let usage = self
+                        .journal
                         .user_usage(tenant_id, root, &self.clock.now())
-                        .await?,
-                    self.quotas_of(tenant_id, root).await?,
-                    self.admin_keys_under(tenant_id, root).await?,
+                        .await?;
+                    let (quotas, profile) = self.quotas_of(tenant_id, root).await?;
+                    (
+                        usage,
+                        quotas,
+                        profile,
+                        self.admin_keys_under(tenant_id, root).await?,
+                    )
+                }
+                None => (
+                    UserUsage::default(),
+                    self.default_quotas(),
+                    None,
+                    Vec::new(),
                 ),
-                None => (UserUsage::default(), self.default_quotas(), Vec::new()),
             };
             out.push(UserRow {
                 user,
@@ -261,6 +280,8 @@ where
                 under_quotas,
                 usage,
                 quotas,
+                profile,
+                period: self.usage_period(),
                 admin_keys,
             });
         }
@@ -588,20 +609,29 @@ where
     async fn whoami_limits(
         &self,
         key: &KeyRecord,
-    ) -> Result<Option<(UserUsage, Quotas)>, AppError> {
+    ) -> Result<(Option<(UserUsage, Quotas)>, Option<String>), AppError> {
         let Some(root) = self.quota_root(key) else {
-            return Ok(None);
+            return Ok((None, None));
         };
         let tenant_id = key.tenant_id;
-        let Some(quotas) = self.account_limits(tenant_id, root).await?.quotas else {
-            return Ok(None);
+        let limits = self.account_limits(tenant_id, root).await?;
+        let Some(quotas) = limits.quotas else {
+            return Ok((None, limits.profile));
         };
-        Ok(Some((
-            self.journal
-                .user_usage(tenant_id, root, &self.clock.now())
-                .await?,
-            quotas,
-        )))
+        Ok((
+            Some((
+                self.journal
+                    .user_usage(tenant_id, root, &self.clock.now())
+                    .await?,
+                quotas,
+            )),
+            limits.profile,
+        ))
+    }
+
+    /// The UTC month usage counts in, `YYYY-MM` (ADR-0096 d9).
+    fn usage_period(&self) -> String {
+        self.clock.now().as_str().chars().take(7).collect()
     }
 
     /// `GET /v2/whoami` for whichever credential presented the key: a key
@@ -683,7 +713,7 @@ where
         user: Name,
         start: bool,
     ) -> Result<Person, AppError> {
-        let limits = self.whoami_limits(key).await?;
+        let (limits, profile) = self.whoami_limits(key).await?;
         let deletion_requested_at = self
             .journal
             .web_deletion_requests(key.tenant_id)
@@ -739,6 +769,8 @@ where
         Ok(Person {
             user,
             limits,
+            profile,
+            period: self.usage_period(),
             deletion_requested_at,
             start,
             linked_keys,
@@ -876,13 +908,22 @@ where
     /// with their overrides; for an account under no limits, the sign-up
     /// profile's with their overrides, which hold nothing until a profile
     /// does, so a quota an admin sets reads back in the row either way
-    /// (ADR-0068 d5; ADR-0070 d5; ADR-0071 d5).
-    pub(crate) async fn quotas_of(&self, tenant_id: Uuid, root: Uuid) -> Result<Quotas, AppError> {
-        if let Some(quotas) = self.account_limits(tenant_id, root).await?.quotas {
-            return Ok(quotas);
+    /// (ADR-0068 d5; ADR-0070 d5; ADR-0071 d5); with the account's profile,
+    /// `None` for none (ADR-0096 d9).
+    pub(crate) async fn quotas_of(
+        &self,
+        tenant_id: Uuid,
+        root: Uuid,
+    ) -> Result<(Quotas, Option<String>), AppError> {
+        let limits = self.account_limits(tenant_id, root).await?;
+        if let Some(quotas) = limits.quotas {
+            return Ok((quotas, limits.profile));
         }
         let overrides = self.journal.user_quota_overrides(tenant_id, root).await?;
-        Ok(self.default_quotas().with_overrides(&overrides))
+        Ok((
+            self.default_quotas().with_overrides(&overrides),
+            limits.profile,
+        ))
     }
 
     /// One more of `quota` for `key`'s person, or `limit.quota` naming

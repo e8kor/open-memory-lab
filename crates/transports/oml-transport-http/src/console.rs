@@ -18,7 +18,7 @@ use axum::response::Response;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use oml_app::app::{ActClaim, ActTicket, Caller, Capacity, OwnKey, WorkspaceOffer};
+use oml_app::app::{ActClaim, ActTicket, Caller, Capacity, OwnKey, OwnKeyShape, WorkspaceOffer};
 use oml_app::domain::Role;
 use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::signup::Quota;
@@ -29,12 +29,27 @@ use crate::error::{ApiError, ErrorContext, map_app_error};
 use crate::traffic::Rid;
 use crate::{
     ApiState, KeyIssueBody, PAGE_LIMIT_DEFAULT, acting, connect_code_json, denial_json,
-    expiry_instant, finish, idempotency_key, json_response, key_issued_json, page_limit,
-    parse_json, parse_role, reference, retry_chain, session,
+    expiry_instant, finish, grant_requests, idempotency_key, json_response, key_issued_json,
+    optional_reference, page_limit, parse_guardrail_scope, parse_json, parse_role, position_cursor,
+    position_cursor_of, reference, retry_chain, session,
 };
 
 /// The most workspaces one capacities request names.
 const CAPACITY_WORKSPACES_MAX: usize = 50;
+
+/// The most grants a session issuance takes, and the most denials per
+/// grant: chosen, not measured (ADR-0096 d1, decided by the operator,
+/// 2026-11-24). A bearer admin key keeps no cap.
+pub(crate) const SESSION_GRANTS_MAX: usize = 16;
+
+/// `request.validation` naming `field`, `details.reason: too_many`
+/// (ADR-0096 d1).
+fn too_many(field: String) -> ApiError {
+    ApiError::validation(format!(
+        "a session issuance takes at most {SESSION_GRANTS_MAX} grants of at most {SESSION_GRANTS_MAX} denials each"
+    ))
+    .with_details(json!({ "field": field, "reason": "too_many" }))
+}
 
 /// A refusal of a person's own act to anything but their session key:
 /// `access.verb_ceiling`, `details.reason: session_key_only` (ADR-0070 d5;
@@ -93,6 +108,17 @@ fn is_admin_session_key(caller: &Caller) -> bool {
             .is_some_and(|(name, user)| {
                 name.as_str() == format!("{}-{}", user.as_str(), Capacity::Admin.suffix())
             })
+}
+
+/// A session key other than `<user>-admin` is refused `verb`:
+/// `access.verb_ceiling`, `details.reason: session_capacity` (ADR-0096
+/// d4).
+pub(crate) fn require_admin_session(caller: &Caller, verb: &'static str) -> Result<(), ApiError> {
+    if is_admin_session_key(caller) {
+        Ok(())
+    } else {
+        Err(session_capacity(caller, verb))
+    }
 }
 
 /// Whether `caller` is a person's `<user>-web` session key.
@@ -667,6 +693,8 @@ where
                     "role": g.grant.role.as_str(),
                     "workspace_id": g.grant.node,
                     "path": path,
+                    // Read off the grant row already read (ADR-0096 d8).
+                    "covers": g.grant.covers.as_str(),
                 }));
             }
             items.push(json!({
@@ -795,6 +823,7 @@ where
             StatusCode::OK,
             &json!({
                 "review": counts.review,
+                "briefs": counts.briefs,
                 "truncated": counts.truncated,
             }),
         ))
@@ -847,7 +876,86 @@ where
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(
             StatusCode::OK,
-            &json!({ "truncated": counts.truncated }),
+            &json!({ "alerts": counts.alerts, "truncated": counts.truncated }),
+        ))
+    }
+
+    // -- GET /v2/review/briefs ----------------------------------------------
+
+    pub(crate) async fn brief_proposals(
+        State(st): State<Self>,
+        rid: Rid,
+        query: Result<Query<Vec<(String, String)>>, QueryRejection>,
+        headers: HeaderMap,
+    ) -> Response {
+        let result = match query {
+            Ok(Query(params)) => Self::brief_proposals_inner(&st, &params, &headers).await,
+            Err(e) => Err(ApiError::validation(format!(
+                "the query string is not this operation's shape: {e}"
+            ))),
+        };
+        finish(&rid, result)
+    }
+
+    /// `GET /v2/review/briefs` under `<user>-review`: the pending brief
+    /// edges its reviewer access may ratify, oldest first, never one it or
+    /// its principal proposed; any other caller is `access.verb_ceiling`
+    /// (ADR-0096 d7).
+    async fn brief_proposals_inner(
+        st: &Self,
+        params: &[(String, String)],
+        headers: &HeaderMap,
+    ) -> Result<Response, ApiError> {
+        let caller = st.console_caller(headers).await?;
+        let (mut workspace, mut cursor) = (None, None);
+        let mut seen = std::collections::HashSet::new();
+        for (name, value) in params {
+            if !seen.insert(name.as_str()) {
+                return Err(ApiError::validation(format!(
+                    "the query parameter {name} is given more than once"
+                )));
+            }
+            match name.as_str() {
+                "workspace" => workspace = Some(reference("workspace", value)?),
+                "cursor" => cursor = Some(position_cursor(value)?),
+                other => {
+                    return Err(ApiError::validation(format!(
+                        "unknown query parameter {other:?}"
+                    )));
+                }
+            }
+        }
+        let page = st
+            .app
+            .brief_proposals(
+                Bearer::Session(&caller),
+                workspace.as_ref(),
+                cursor,
+                PAGE_LIMIT_DEFAULT,
+            )
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(
+            StatusCode::OK,
+            &json!({
+                "items": page.items.iter().map(|p| json!({
+                    "edge_id": p.edge.edge_id,
+                    "workspace": {
+                        "id": p.edge.workspace_id,
+                        "name": p.workspace.as_ref().map(Name::as_str),
+                    },
+                    "artifact_id": p.edge.artifact_id,
+                    "claim_key": p.claim_key,
+                    "title": p.title,
+                    "proposed_by": {
+                        "id": p.edge.proposer_key_id,
+                        "name": p.proposer.as_ref().map(Name::as_str),
+                    },
+                    "same_user": p.same_user,
+                    "proposed_at": p.edge.created_at.as_str(),
+                })).collect::<Vec<_>>(),
+                "next_cursor": page.next.as_ref().map(|(at, id)| position_cursor_of(at, *id)),
+            }),
         ))
     }
 
@@ -1360,13 +1468,16 @@ where
 
     // -- d5's unchanged key operations, as a session key -------------------
 
-    /// `POST /v2/keys` as `<user>-web`: the person's own issuance, a reader
-    /// or contributor key named `<user>-<suffix>` on their root, its grants the
-    /// use case's, never the body's. The person may set the key's `expiry`,
-    /// under the rule of every issuance (ADR-0079 d1, the operator's answer
-    /// 3); every other field, `requests_per_minute` included, is refused
-    /// naming it. Any other session capacity is `session_capacity`
-    /// (ADR-0070 d2, d5; ADR-0045 d9, d16).
+    /// `POST /v2/keys` as `<user>-web`: the person's own issuance, a
+    /// contributor, reader or submitter key named `<user>-<suffix>`, with
+    /// grants of the person's choosing inside their root, a default
+    /// workspace, a guardrail scope, an expiry and a rate (ADR-0096 d1 to
+    /// d3; ADR-0079 d1, d4). At most [`SESSION_GRANTS_MAX`] grants of at
+    /// most [`SESSION_GRANTS_MAX`] denials each, else `request.validation`,
+    /// `details.reason: too_many`. `user`, `used_by`, `crew`, `label`,
+    /// `principal`, `profile` and `tenant` are refused naming the field.
+    /// Any other session capacity is `session_capacity` (ADR-0070 d2, d5;
+    /// ADR-0045 d9, d16).
     ///
     /// A resubmission under the same `Idempotency-Key` and body replays the
     /// answer without the value or the connect code, which are shown once
@@ -1390,24 +1501,42 @@ where
             Claimed::Replayed(replayed) => return Ok(replayed),
             Claimed::Act(claim) => claim,
         };
-        let set: [(&str, bool); 10] = [
-            ("/grants", !req.grants.is_empty()),
+        let set: [(&str, bool); 6] = [
             ("/label", req.label.is_some()),
             ("/principal", req.principal.is_some()),
             ("/used_by", req.used_by.is_some()),
-            ("/default_workspace", req.default_workspace.is_some()),
             ("/crew", req.crew.is_some()),
             ("/user", req.user.is_some()),
-            ("/guardrail_scope", req.guardrail_scope.is_some()),
             ("/profile", req.profile.is_some() || req.tenant.is_some()),
-            ("/requests_per_minute", req.requests_per_minute.is_some()),
         ];
         if let Some((field, _)) = set.iter().find(|(_, set)| *set) {
             return Err(ApiError::validation(format!(
-                "{field} is the person's own issuance's to set: send name, role, connect_code and, to end the key on a date, expiry"
+                "{field} is not the person's own issuance's to set: the server names the key's person and principal"
             ))
             .with_details(json!({ "field": field })));
         }
+        // A session request journals a bounded number of grants
+        // (ADR-0096 d1, decided by the operator, 2026-11-24).
+        if req.grants.len() > SESSION_GRANTS_MAX {
+            return Err(too_many("/grants".to_owned()));
+        }
+        if let Some(i) = req
+            .grants
+            .iter()
+            .position(|g| g.deny.len() > SESSION_GRANTS_MAX)
+        {
+            return Err(too_many(format!("/grants/{i}/deny")));
+        }
+        let shape = OwnKeyShape {
+            grants: grant_requests(&req.grants)?,
+            default_workspace: optional_reference(
+                "/default_workspace",
+                req.default_workspace.as_deref(),
+            )?,
+            guardrail_scope: parse_guardrail_scope(req.guardrail_scope.as_deref())?,
+            expiry,
+            requests_per_minute: req.requests_per_minute,
+        };
         let user = caller
             .key()
             .session_user
@@ -1429,7 +1558,7 @@ where
             .run(async move {
                 let issued = retry_chain(|| {
                     st.app
-                        .issue_own_key(&caller, &suffix, role, connect_code, expiry.clone())
+                        .issue_own_key(&caller, &suffix, role, connect_code, &shape)
                 })
                 .await
                 .map_err(|e| {
@@ -1451,9 +1580,10 @@ where
     }
 
     /// `POST /v2/keys/{key}/denials` as a session key: `<user>-web` cuts
-    /// off one of the person's own keys, `<user>-admin` one of the
-    /// tenant's, each only on `universe` and never a session key, as the
-    /// pages' `cut_off` does (ADR-0070 d5; ADR-0045 d9, d13).
+    /// off one of the person's own keys on `universe` alone, `<user>-admin`
+    /// denies one of the tenant's on any workspace of the tenant, and
+    /// neither ever a session key or an admin key (ADR-0070 d5; ADR-0045
+    /// d9, d13; ADR-0096 d4).
     ///
     /// A resubmission under the same `Idempotency-Key` and body replays the
     /// answer and cuts nothing off again (ADR-0070 d3 layer 4, as built).
@@ -1467,7 +1597,7 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         let capacity_web = is_web_session_key(&caller);
-        if !capacity_web && caller.key().role != Role::Admin {
+        if !capacity_web && !is_admin_session_key(&caller) {
             return Err(session_capacity(&caller, "deny_key"));
         }
         let digest = act_digest(key_id, body);
@@ -1475,12 +1605,13 @@ where
             Claimed::Replayed(replayed) => return Ok(replayed),
             Claimed::Act(claim) => claim,
         };
-        if !matches!(node, Reference::Name(n) if n.as_str() == "universe") {
-            return Err(
-                ApiError::validation("a session key cuts a key off on universe only")
-                    .with_details(json!({ "field": "/workspace" })),
-            );
+        if capacity_web && !matches!(node, Reference::Name(n) if n.as_str() == "universe") {
+            return Err(ApiError::validation(
+                "a person's web session cuts a key off on universe only",
+            )
+            .with_details(json!({ "field": "/workspace" })));
         }
+        let node = node.clone();
         let Reference::Name(key) = key else {
             return Err(
                 ApiError::validation("a session key names the key by its name")
@@ -1491,7 +1622,7 @@ where
         let st = st.clone();
         claim
             .run(async move {
-                let denial = retry_chain(|| st.app.cut_off_key(&caller, &key))
+                let denial = retry_chain(|| st.app.deny_key_on(&caller, &key, node.clone()))
                     .await
                     .map_err(|e| {
                         ActFailure::first(match e {

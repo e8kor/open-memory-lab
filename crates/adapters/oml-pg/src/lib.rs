@@ -3328,6 +3328,47 @@ fn claim_edge_from_row(row: &PgRow) -> Result<ClaimEdgeRecord, StoreError> {
     })
 }
 
+/// The columns an import's record reads, its position counted from the
+/// versions recorded (ADR-0084 d15).
+const IMPORT_COLUMNS: &str = "i.tenant_id, i.id, i.target_workspace_id, i.importer_key_id, \
+     i.upload_id, i.source_server_id, i.source_tenant_id, i.manifest_digest, \
+     i.signer_fingerprint, i.authenticated, i.allow_older, i.state, i.counts, i.refusals, \
+     to_char(i.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+         AS created_at_signed, \
+     to_char(i.ended_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+         AS ended_at_signed, \
+     (SELECT count(*) FROM import_versions v \
+       WHERE v.tenant_id = i.tenant_id AND v.import_id = i.id) AS position";
+
+/// An import row as the port's record.
+fn import_from_row(row: &PgRow) -> Result<oml_app::types::ImportRecord, StoreError> {
+    let state: String = row.try_get("state").map_err(backend)?;
+    let counts: Value = row.try_get("counts").map_err(backend)?;
+    let refusals: Value = row.try_get("refusals").map_err(backend)?;
+    let position: i64 = row.try_get("position").map_err(backend)?;
+    Ok(oml_app::types::ImportRecord {
+        tenant_id: row.try_get("tenant_id").map_err(backend)?,
+        import_id: row.try_get("id").map_err(backend)?,
+        target_workspace_id: row.try_get("target_workspace_id").map_err(backend)?,
+        importer_key_id: row.try_get("importer_key_id").map_err(backend)?,
+        upload_id: row.try_get("upload_id").map_err(backend)?,
+        source_server_id: row.try_get("source_server_id").map_err(backend)?,
+        source_tenant_id: row.try_get("source_tenant_id").map_err(backend)?,
+        manifest_digest: row.try_get("manifest_digest").map_err(backend)?,
+        signer_fingerprint: row.try_get("signer_fingerprint").map_err(backend)?,
+        authenticated: row.try_get("authenticated").map_err(backend)?,
+        allow_older: row.try_get("allow_older").map_err(backend)?,
+        state: oml_app::domain::import::ImportState::parse(&state)
+            .ok_or_else(|| StoreError::Backend(format!("import state {state:?}")))?,
+        position: u64::try_from(position).map_err(backend)?,
+        counts: serde_json::from_value(counts).map_err(backend)?,
+        refusals: serde_json::from_value(refusals).map_err(backend)?,
+        created_at: event_time_column(row, "created_at_signed")?
+            .ok_or_else(|| StoreError::Backend("imports.created_at is null".to_owned()))?,
+        ended_at: event_time_column(row, "ended_at_signed")?,
+    })
+}
+
 const BRIEF_EDGE_COLUMNS: &str = "e.id, e.tenant_id, e.artifact_id, e.workspace_id, e.state, \
      e.proposer_key_id, k.principal AS proposer_principal, e.ratifier_key_id, e.ratified_seq, \
      to_char(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
@@ -9062,53 +9103,47 @@ impl JournalStore for PgStore {
     ) -> Result<Option<oml_app::types::ImportRecord>, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
-        let row = sqlx::query(
-            "SELECT i.tenant_id, i.id, i.target_workspace_id, i.importer_key_id, i.upload_id, \
-                    i.source_server_id, i.source_tenant_id, i.manifest_digest, \
-                    i.signer_fingerprint, i.authenticated, i.allow_older, i.state, i.counts, \
-                    i.refusals, \
-                    to_char(i.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
-                        AS created_at_signed, \
-                    to_char(i.ended_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
-                        AS ended_at_signed, \
-                    (SELECT count(*) FROM import_versions v \
-                      WHERE v.tenant_id = i.tenant_id AND v.import_id = i.id) AS position \
-               FROM imports i WHERE i.tenant_id = $1 AND i.id = $2",
-        )
+        let row = sqlx::query(&format!(
+            "SELECT {IMPORT_COLUMNS} FROM imports i WHERE i.tenant_id = $1 AND i.id = $2"
+        ))
         .bind(tenant_id)
         .bind(import_id)
         .fetch_optional(&mut *tx)
         .await
         .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
-        let Some(row) = row else {
-            return Ok(None);
-        };
-        let state: String = row.try_get("state").map_err(backend)?;
-        let counts: Value = row.try_get("counts").map_err(backend)?;
-        let refusals: Value = row.try_get("refusals").map_err(backend)?;
-        let position: i64 = row.try_get("position").map_err(backend)?;
-        Ok(Some(oml_app::types::ImportRecord {
-            tenant_id: row.try_get("tenant_id").map_err(backend)?,
-            import_id: row.try_get("id").map_err(backend)?,
-            target_workspace_id: row.try_get("target_workspace_id").map_err(backend)?,
-            importer_key_id: row.try_get("importer_key_id").map_err(backend)?,
-            upload_id: row.try_get("upload_id").map_err(backend)?,
-            source_server_id: row.try_get("source_server_id").map_err(backend)?,
-            source_tenant_id: row.try_get("source_tenant_id").map_err(backend)?,
-            manifest_digest: row.try_get("manifest_digest").map_err(backend)?,
-            signer_fingerprint: row.try_get("signer_fingerprint").map_err(backend)?,
-            authenticated: row.try_get("authenticated").map_err(backend)?,
-            allow_older: row.try_get("allow_older").map_err(backend)?,
-            state: oml_app::domain::import::ImportState::parse(&state)
-                .ok_or_else(|| StoreError::Backend(format!("import state {state:?}")))?,
-            position: u64::try_from(position).map_err(backend)?,
-            counts: serde_json::from_value(counts).map_err(backend)?,
-            refusals: serde_json::from_value(refusals).map_err(backend)?,
-            created_at: event_time_column(&row, "created_at_signed")?
-                .ok_or_else(|| StoreError::Backend("imports.created_at is null".to_owned()))?,
-            ended_at: event_time_column(&row, "ended_at_signed")?,
-        }))
+        row.as_ref().map(import_from_row).transpose()
+    }
+
+    async fn imports_of_keys(
+        &self,
+        tenant_id: Uuid,
+        key_ids: &[Uuid],
+        state: Option<oml_app::domain::import::ImportState>,
+        before: Option<(&EventTime, Uuid)>,
+        limit: usize,
+    ) -> Result<Vec<oml_app::types::ImportRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        // Served by imports_importer_created (0068; ADR-0096 d6).
+        let rows = sqlx::query(&format!(
+            "SELECT {IMPORT_COLUMNS} FROM imports i \
+              WHERE i.tenant_id = $1 AND i.importer_key_id = ANY($2) \
+                AND ($3::text IS NULL OR i.state = $3) \
+                AND ($4::text IS NULL OR (i.created_at, i.id) < (($4)::timestamptz, $5)) \
+              ORDER BY i.created_at DESC, i.id DESC LIMIT $6"
+        ))
+        .bind(tenant_id)
+        .bind(key_ids)
+        .bind(state.map(|s| s.as_str()))
+        .bind(before.map(|(at, _)| at.as_str().to_owned()))
+        .bind(before.map(|(_, id)| id))
+        .bind(i64::try_from(limit).map_err(backend)?)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter().map(import_from_row).collect()
     }
 
     async fn import_stats(
@@ -11554,6 +11589,38 @@ impl JournalStore for PgStore {
         ))
         .bind(tenant_id)
         .bind(workspace_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter().map(brief_edge_from_row).collect()
+    }
+
+    async fn pending_brief_edges(
+        &self,
+        tenant_id: Uuid,
+        workspace_ids: &[Uuid],
+        ratifier: (Uuid, &str),
+        after: Option<(&EventTime, Uuid)>,
+        limit: usize,
+    ) -> Result<Vec<BriefEdgeRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sqlx::query(&format!(
+            "SELECT {BRIEF_EDGE_COLUMNS} FROM brief_edges e \
+             JOIN api_keys k ON k.tenant_id = e.tenant_id AND k.id = e.proposer_key_id \
+             WHERE e.tenant_id = $1 AND e.workspace_id = ANY($2) AND e.state = 'pending' \
+               AND e.proposer_key_id <> $3 AND k.principal <> $4 \
+               AND ($5::text IS NULL OR (e.created_at, e.id) > (($5)::timestamptz, $6)) \
+             ORDER BY e.created_at, e.id LIMIT $7"
+        ))
+        .bind(tenant_id)
+        .bind(workspace_ids)
+        .bind(ratifier.0)
+        .bind(ratifier.1)
+        .bind(after.map(|(at, _)| at.as_str().to_owned()))
+        .bind(after.map(|(_, id)| id))
+        .bind(i64::try_from(limit).map_err(backend)?)
         .fetch_all(&mut *tx)
         .await
         .map_err(backend)?;

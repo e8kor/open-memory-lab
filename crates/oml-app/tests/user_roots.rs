@@ -6778,7 +6778,13 @@ async fn a_key_issued_in_the_authors_root_reverts_a_fix_of_the_authors_claim_as_
     let web = console_of(&r.app, &r.store, "dora").await;
     let own = r
         .app
-        .issue_own_key(&web, "laptop", Role::Contributor, false, None)
+        .issue_own_key(
+            &web,
+            "laptop",
+            Role::Contributor,
+            false,
+            &Default::default(),
+        )
         .await
         .expect("dora issues her own key");
     let claim = written(
@@ -6838,7 +6844,13 @@ async fn a_write_records_the_person_its_key_counts_as_not_the_root_it_was_issued
     let web = console_of(&r.app, &r.store, "dora").await;
     let own = r
         .app
-        .issue_own_key(&web, "laptop", Role::Contributor, false, None)
+        .issue_own_key(
+            &web,
+            "laptop",
+            Role::Contributor,
+            false,
+            &Default::default(),
+        )
         .await
         .expect("dora issues her own key");
     let mine = written(

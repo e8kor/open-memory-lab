@@ -63,6 +63,8 @@ pub(crate) fn counts_json(usage: &oml_app::types::UserUsage) -> Value {
         "memories": usage.memories,
         "text_bytes": usage.text_bytes,
         "writes": usage.writes,
+        // This month's recalls, a count with no limit (ADR-0096 d9).
+        "recalls": usage.recalls,
         "keys": usage.keys,
         "connections": usage.connections,
     })
@@ -94,6 +96,8 @@ pub(crate) fn user_row_json(u: &UserRow) -> Value {
         "under_quotas": u.under_quotas,
         "usage": counts_json(&u.usage),
         "quotas": limits_json(&u.quotas),
+        "profile": u.profile,
+        "period": u.period,
         "admin_keys": u.admin_keys,
     })
 }

@@ -97,6 +97,19 @@ pub struct OwnKey {
     pub without_recall: bool,
 }
 
+/// What a person's web session sends beside a key's name, role and kind
+/// (ADR-0096 d1, d2): the grants, taken as sent where any are; the default
+/// workspace; the guardrail scope, `ancestors` when omitted; the expiry and
+/// the key's own rate.
+#[derive(Debug, Clone, Default)]
+pub struct OwnKeyShape {
+    pub grants: Vec<GrantRequest>,
+    pub default_workspace: Option<Reference>,
+    pub guardrail_scope: Option<oml_domain::guardrail::GuardrailScope>,
+    pub expiry: Option<EventTime>,
+    pub requests_per_minute: Option<u32>,
+}
+
 /// One workspace's queue with its path (ADR-0045 d10).
 #[derive(Debug, Clone)]
 pub struct QueueRow {
@@ -488,24 +501,33 @@ where
         Ok(out)
     }
 
-    /// `POST /v2/keys` as `<user>-web` (ADR-0070 d5; ADR-0045 d9, d16), the
-    /// console's `issue_key` and `connect_key`: a contributor or reader key naming
-    /// the person's user, granted on their root and nothing else, named
-    /// `<user>-<name>` with the session suffixes reserved, issued by
-    /// `<user>-web`; with `connector`, a connector key and its connect code.
-    /// Issuance never amplifies authority: `<user>-web` holds submitter there, and
-    /// the key it issues holds no more, so a `<user>-web` that carries a
-    /// denial issues none (#325). The person may end the key on a date,
-    /// `expiry`, later than now as at every issuance; the key takes no rate
-    /// of its own here, and the date changes afterwards only by an admin key
-    /// (ADR-0079 d1, d5, the operator's answer 3).
+    /// `POST /v2/keys` as `<user>-web` (ADR-0070 d5; ADR-0045 d9, d16;
+    /// ADR-0096 d1 to d3), the console's key builder: a contributor, reader
+    /// or submitter key naming the person's user, named `<user>-<name>` with
+    /// exactly the four session suffixes reserved, issued by `<user>-web`;
+    /// with `connector`, a connector key and its connect code.
+    ///
+    /// Without `shape.grants` the key takes today's shape on the whole
+    /// root: a contributor submitter and reader, a reader reader, a
+    /// submitter submitter, each covering the subtree. With them the grants
+    /// are taken exactly as sent (ADR-0025 d2), each inside the person's
+    /// root (ADR-0044 d3), and the issuance adds only `universe`'s reader
+    /// node grant, which a submitter key never gets (ADR-0093 d2).
+    ///
+    /// This role check is the one guard that keeps a reviewer key out of
+    /// the console: the issuance runs under [`Issuance::PersonsOwn`], whose
+    /// ceiling is the admin role (ADR-0096 d1; R1). Issuance never
+    /// amplifies authority, so a `<user>-web` that carries a denial issues
+    /// none (#325). The person may end the key on a date and set its rate
+    /// here; both change afterwards only by an admin key (ADR-0079 d1, d5;
+    /// ADR-0096 d2).
     pub async fn issue_own_key(
         &self,
         web: &Caller,
         suffix: &str,
         role: Role,
         connector: bool,
-        expiry: Option<EventTime>,
+        shape: &OwnKeyShape,
     ) -> Result<IssuedKey, AppError> {
         let (web, head) = &self.undenied(web, "issue_key").await?;
         let user_name = self.web_user_of(web).await?;
@@ -532,27 +554,36 @@ where
             deny: Vec::new(),
             covers: Covers::Subtree,
         };
-        let grants = match role {
+        let whole_root = match role {
             Role::Contributor => vec![grant(Role::Submitter), grant(Role::Reader)],
             Role::Reader => vec![grant(Role::Reader)],
-            _ => return Err(field("role", "an issued key is a contributor or a reader")),
+            Role::Submitter => vec![grant(Role::Submitter)],
+            _ => {
+                return Err(field(
+                    "role",
+                    "an issued key is a contributor, a reader or a submitter",
+                ));
+            }
+        };
+        let grants = if shape.grants.is_empty() {
+            whole_root
+        } else {
+            shape.grants.clone()
         };
         let req = IssueKeyRequest {
             profile: None,
-            // The issuance default; a page offers no scope (ADR-0037
-            // d17, d18 Q5).
-            guardrail_scope: None,
+            guardrail_scope: shape.guardrail_scope,
             role,
             principal: name.as_str().to_owned(),
             name,
             used_by: Some(UsedBy::Agent),
-            default_workspace: None,
+            default_workspace: shape.default_workspace.clone(),
             crew: None,
             grants,
             connect_code: connector,
             user: Some(user_name),
-            expiry,
-            requests_per_minute: None,
+            expiry: shape.expiry.clone(),
+            requests_per_minute: shape.requests_per_minute,
         };
         self.issue_key_by(&web.key, &req, Issuance::PersonsOwn(head))
             .await
@@ -582,7 +613,23 @@ where
     /// or `<user>-admin` on the admin page; the only cut-off while revocation
     /// is not built. A session key is never cut off here, and one that
     /// carries a denial cuts nothing off (#325).
+    ///
+    /// `<user>-admin` may name any workspace of the tenant instead of
+    /// `universe` (ADR-0096 d4, decided by the operator, 2026-11-24);
+    /// `<user>-web` keeps `universe` alone, which the transport checks.
     pub async fn cut_off_key(&self, acting: &Caller, key: &Name) -> Result<DenialRecord, AppError> {
+        let universe = Reference::Name(Name::parse(UNIVERSE).expect("universe is a name"));
+        self.deny_key_on(acting, key, universe).await
+    }
+
+    /// [`App::cut_off_key`] on `node`: a session key's denial of one key
+    /// on one workspace, never of a session key or an admin key.
+    pub async fn deny_key_on(
+        &self,
+        acting: &Caller,
+        key: &Name,
+        node: Reference,
+    ) -> Result<DenialRecord, AppError> {
         let (acting, head) = &self.undenied(acting, "deny_key").await?;
         let target = match acting.key.role {
             Role::Admin => self.named_key(acting.key.tenant_id, key).await?,
@@ -597,11 +644,10 @@ where
         if target.role == Role::Admin {
             return Err(field("key", "an admin key carries no grant to cut off"));
         }
-        let universe = Reference::Name(Name::parse(UNIVERSE).expect("universe is a name"));
         self.deny_key_by(
             &acting.key,
             Reference::Id(target.key_id),
-            universe,
+            node,
             Head::BeforeAccess(head),
         )
         .await
