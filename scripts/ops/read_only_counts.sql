@@ -3,10 +3,25 @@
 -- per tenant and count; it changes nothing: the whole script runs in one
 -- READ ONLY transaction, which PostgreSQL refuses to write in, and ends in a
 -- ROLLBACK. Run it with scripts/ops/read_only_counts.sh, which says how.
+--
+-- It runs as the database owner role, which is NOSUPERUSER NOBYPASSRLS and
+-- under FORCE ROW LEVEL SECURITY reads one tenant at a time, as the serving
+-- role does (ADR-0034). So it first lists the tenants under
+-- oml.startup_check, the one setting the tenants table's
+-- lead_startup_enumeration policy admits a list under (migration 0003), and
+-- then, for each tenant, clears that setting, sets oml.tenant_id and runs
+-- the counts: psql's \gexec runs each column of each row the listing
+-- returns as its own statement, with no function and nothing created. SET
+-- LOCAL is set_config(name, value, true): it lasts to the transaction's end.
 BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
+SET LOCAL oml.startup_check = 'on';
 
 \echo 'count,tenant,value'
 
+SELECT format('SET LOCAL oml.startup_check = %L', ''),
+       format('SET LOCAL oml.tenant_id = %L', id),
+       $counts$
+-- The counts, for the tenant oml.tenant_id names.
 -- key_person: the person a key acts for, as the user root's id: a user
 -- key's root, an accepted link's root, or a session key's user's root.
 -- node_root: the user root a node lies in, the root itself included; none
@@ -93,6 +108,10 @@ LEFT JOIN journal j
  AND j.event_type IN ('web.email_allowed', 'web.email_changed', 'web.signed_up')
  AND (j.payload->>'admin')::boolean
 GROUP BY t.name
-ORDER BY 1, 2;
+ORDER BY 1, 2
+$counts$
+FROM tenants
+ORDER BY id
+\gexec
 
 ROLLBACK;
