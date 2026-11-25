@@ -2857,13 +2857,15 @@ where
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let token = bearer(headers)?;
+        // A person's `<user>-review` session ratifies as the To do group's
+        // act (ADR-0096 d7); its capacity credential resolves here.
+        let acting = acting(headers, None)?;
         let idem = idempotency_key(headers)?;
         let edge_id = Uuid::parse_str(edge_id).map_err(|_| {
             ApiError::validation(format!("edge_id {edge_id:?} is not an id"))
                 .with_details(json!({ "field": "edge_id" }))
         })?;
-        let ratified = retry_chain(|| st.app.ratify_edge(&token, edge_id, Some(&idem)))
+        let ratified = retry_chain(|| st.app.ratify_edge(acting.bearer(), edge_id, Some(&idem)))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Review))?;
         let body = match ratified {

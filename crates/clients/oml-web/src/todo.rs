@@ -58,7 +58,7 @@ pub const TODO_PAGE: u32 = 200;
 const OWN_KEYS_PAGE: u32 = 200;
 
 /// To do's one act, Next (ADR-0083 d11, d14).
-pub const TODO_ACTIONS: &[&str] = &["next"];
+pub const TODO_ACTIONS: &[&str] = &["next", "ratify"];
 
 /// Judge's one act, the verdict (ADR-0083 d2).
 pub const JUDGE_ACTIONS: &[&str] = &["judge"];
@@ -100,6 +100,7 @@ fn notice(fields: &Fields) -> Option<String> {
             ))
         }
         "empty" => Some("Nothing waits for this account.".to_owned()),
+        "ratified" => Some("Ratified: the memory joins the brief.".to_owned()),
         _ => None,
     }
 }
@@ -408,9 +409,10 @@ async fn todo_body(
     browse: Option<&Browse>,
 ) -> Result<String, Refusal> {
     let cursor = fields.given("cursor");
-    let (read, counted) = tokio::join!(
+    let (read, counted, briefs) = tokio::join!(
         listing(ctx, &chosen, TODO_PAGE, cursor),
-        group_count(ctx, &chosen)
+        group_count(ctx, &chosen),
+        brief_proposals(ctx, &chosen)
     );
     let read = read.map_err(|e| Box::new(outcome::page(&e, ctx.calls, TODO_PATH)))?;
     let roots = ctx
@@ -499,12 +501,23 @@ async fn todo_body(
         // The field's refusal stands in for the groups.
         return Ok(body);
     }
+    let briefs_section = briefs.as_ref().map(|b| brief_group(ctx, b));
     if page.items.is_empty() && cursor.is_none() {
-        let _ = write!(
-            body,
-            r#"<div class="oml-empty"><p>Nothing waits for this account.</p><p class="desc">Held writes of other keys that {} may judge appear here. This account's own writes and their state are under <a href="{USER_MEMORIES_PATH}?view=submitted">Memories, Submitted</a>.</p></div>"#,
-            code(&reviewer)
-        );
+        match briefs_section {
+            Some(Some(section)) => {
+                let _ = write!(
+                    body,
+                    r#"<p class="desc">Nothing waits in To review.</p>{section}"#
+                );
+            }
+            _ => {
+                let _ = write!(
+                    body,
+                    r#"<div class="oml-empty"><p>Nothing waits for this account.</p><p class="desc">Held writes of other keys that {} may judge, and brief proposals it may ratify, appear here. This account's own writes and their state are under <a href="{USER_MEMORIES_PATH}?view=submitted">Memories, Submitted</a>.</p></div>"#,
+                    code(&reviewer)
+                );
+            }
+        }
         return Ok(body);
     }
     let shown = shown_count(counted, &page).map_or_else(String::new, |n| format!(" · {n}"));
@@ -529,7 +542,79 @@ async fn todo_body(
         );
     }
     body.push_str("</section>");
+    match briefs_section {
+        Some(Some(section)) => body.push_str(&section),
+        Some(None) => {
+            body.push_str(r#"<p class="desc">Nothing waits in Brief proposals to ratify.</p>"#)
+        }
+        None => {}
+    }
     Ok(body)
+}
+
+/// The brief proposals `<user>-review` may ratify, under the filter
+/// (ADR-0096 d7): `None` where the page judges as a linked key, which this
+/// group does not serve, or where the read fails, which the group then
+/// leaves out.
+async fn brief_proposals(ctx: &Ctx<'_>, chosen: &Chosen) -> Option<oml_sdk::BriefProposalPage> {
+    if ctx.acting.is_some() {
+        return None;
+    }
+    let credential = ctx.session.credential(Capacity::Review);
+    let ids = ctx.calls.next_ids();
+    ctx.web
+        .api
+        .brief_proposals(&call(&credential, &ids), chosen.value())
+        .await
+        .ok()
+}
+
+/// The group "Brief proposals to ratify", after To review (ADR-0096 d7):
+/// each row's claim, workspace, proposer and `same user`, and **Ratify**,
+/// which asks for confirmation first. `None` when nothing waits.
+fn brief_group(ctx: &Ctx<'_>, page: &oml_sdk::BriefProposalPage) -> Option<String> {
+    if page.items.is_empty() {
+        return None;
+    }
+    let reviewer = ctx.reviewer();
+    let mut out = format!(
+        r#"<section class="oml-todo-g" aria-labelledby="todo-briefs"><h2 id="todo-briefs">Brief proposals to ratify · {}{}</h2><p class="desc">Memories other keys proposed for a workspace's brief, which {} may ratify, oldest first. A proposal by this key, or under its principal, is never listed.</p><ul class="oml-todo">"#,
+        page.items.len(),
+        if page.next_cursor.is_some() { "+" } else { "" },
+        code(&reviewer)
+    );
+    let csrf = ctx.session.csrf();
+    for p in &page.items {
+        let title = p
+            .title
+            .as_deref()
+            .or(p.claim_key.as_deref())
+            .unwrap_or(p.artifact_id.as_str());
+        let _ = write!(
+            out,
+            r#"<li><span class="oml-decision">Brief</span> {} · into {} · proposed by {}{} · {} {}</li>"#,
+            text(title),
+            code(p.workspace.name.as_deref().unwrap_or(&p.workspace.id)),
+            code(p.proposed_by.name.as_deref().unwrap_or(&p.proposed_by.id)),
+            if p.same_user { " · same user" } else { "" },
+            instant(&p.proposed_at),
+            form(
+                TODO_PATH,
+                "ratify",
+                &csrf,
+                &format!(
+                    "{}{}{}",
+                    hidden("edge_id", &p.edge_id),
+                    hidden("title", title),
+                    acts::nonce_field()
+                ),
+                "Ratify",
+                false
+            )
+        );
+    }
+    out.push_str("</ul></section>");
+    Some(out)
 }
 
 fn personal(session: &Session) -> Bar {
@@ -585,6 +670,7 @@ pub async fn user_page(
 fn defined(action: &str, name: &str) -> bool {
     match action {
         "next" => matches!(name, "workspace" | "as" | "after"),
+        "ratify" => matches!(name, "edge_id" | "title" | "confirm"),
         "judge" => matches!(name, "artifact_id" | "verdict" | "reason" | "as"),
         _ => false,
     }
@@ -610,10 +696,13 @@ pub async fn user_act(
     Extension(calls): Extension<Arc<PageCalls>>,
     form: Result<Form<Vec<(String, String)>>, FormRejection>,
 ) -> Response {
-    let (fields, _) = match acts::read(form, TODO_ACTIONS, defined, &calls) {
+    let (fields, action) = match acts::read(form, TODO_ACTIONS, defined, &calls) {
         Ok(read) => read,
         Err(refusal) => return *refusal,
     };
+    if action == "ratify" {
+        return ratify(&web, &session, &calls, &fields).await;
+    }
     let acting = match fields.given("as") {
         None => None,
         Some(id) if is_id(id) => Some(id),
@@ -697,6 +786,59 @@ pub async fn user_act(
                 &[],
             )
         }
+    }
+}
+
+/// **Ratify** (ADR-0096 d7): a confirmation first, then `POST
+/// /v2/edges/{id}/ratify` as `<user>-review`, and back to To do.
+async fn ratify(web: &Web, session: &Session, calls: &PageCalls, fields: &Fields) -> Response {
+    let Some(edge) = fields.given("edge_id").filter(|id| is_id(id)) else {
+        return acts::invalid("edge_id is a brief proposal's id", calls);
+    };
+    let title = fields.given("title").unwrap_or(edge);
+    if fields.given("confirm") != Some("yes") {
+        let reviewer = session.whoami.user.as_ref().map_or_else(
+            || "the reviewer key".to_owned(),
+            |u| format!("{}-review", u.name),
+        );
+        let body = format!(
+            r#"<h1>Ratify the brief proposal?</h1><p class="desc">{} joins the brief, ratified by {}. An agent is served the brief up to its budget.</p>{}<p><a href="{TODO_PATH}">Keep it waiting</a></p>"#,
+            text(title),
+            code(&reviewer),
+            form(
+                TODO_PATH,
+                "ratify",
+                &session.csrf(),
+                &format!(
+                    "{}{}{}{}",
+                    hidden("edge_id", edge),
+                    hidden("title", title),
+                    hidden("confirm", "yes"),
+                    acts::nonce_field()
+                ),
+                "Ratify",
+                true
+            )
+        );
+        return outcome::html(
+            StatusCode::OK,
+            shell("Confirm", &session.personal(), TODO_PATH, None, &body),
+        );
+    }
+    let key = match acts::key(session, fields, calls) {
+        Ok(key) => key,
+        Err(refusal) => return *refusal,
+    };
+    let _in_flight = acts::hold(&key).await;
+    let credential = session.credential(Capacity::Review);
+    let ids = calls.next_ids();
+    match web
+        .api
+        .ratify_edge(&call(&credential, &ids), &key, edge)
+        .await
+    {
+        Ok(_) => acts::see_other(&format!("{TODO_PATH}?done=ratified"), &[]),
+        Err(e) => outcome::page(&e, calls, TODO_PATH),
     }
 }
 
@@ -1053,11 +1195,13 @@ pub async fn judge_act(
 // Administration
 // ---------------------------------------------------------------------
 
-/// `GET /web/admin/todo`: the administration To do. Its groups (unconfirmed
-/// admin fixes, guardrail-loosening alerts, open investigations) join with
-/// ADR-0089's acts; until then it says nothing waits, and it never draws a
-/// verdict, a confirmation or a ratification (ADR-0083 d11, d14).
+/// `GET /web/admin/todo`: the administration To do (ADR-0083 d11; ADR-0096
+/// d5, d7): the tenant's fixes no person has confirmed or reverted, the
+/// guardrail-loosening alerts among them, and the open investigations,
+/// each row opening the admin page where it is handled. No row offers a
+/// verdict, a confirmation or a ratification: those are a person's acts.
 pub async fn admin_page(
+    State(web): State<Web>,
     Extension(session): Extension<Session>,
     Extension(calls): Extension<Arc<PageCalls>>,
 ) -> Response {
@@ -1073,10 +1217,68 @@ pub async fn admin_page(
         || "the admin key".to_owned(),
         |u| format!("{}-admin", u.name),
     );
-    let body = format!(
-        r#"<header class="oml-section-head"><div class="top"><h1>To do</h1></div><p class="desc">What waits for {}, oldest first in each group. Verdicts, confirmations and ratifications are a person's acts, on the Personal side.</p></header><div class="oml-empty"><p>Nothing waits for this account.</p></div>"#,
+    let credential = session.credential(Capacity::Admin);
+    let ids = calls.next_ids();
+    let fixes = match web.api.admin_fixes(&call(&credential, &ids)).await {
+        Ok(fixes) => fixes,
+        Err(e) => return outcome::page(&e, &calls, ADMIN_TODO_PATH),
+    };
+    let mut body = format!(
+        r#"<header class="oml-section-head"><div class="top"><h1>To do</h1></div><p class="desc">What waits for {}, oldest first in each group. Verdicts, confirmations and ratifications are a person's acts, on the Personal side.</p></header>"#,
         code(&admin)
     );
+    let row = |f: &oml_sdk::AdminFix| {
+        format!(
+            r#"<li><span class="oml-decision">{}</span> {} · <span class="oml-chip is-adminfix">unconfirmed</span> · {}{} · fixed {} · waits for a person other than {} with reviewer on the workspace · <a href="{}?workspace={}&amp;view=fix">Open</a></li>"#,
+            text(&f.act),
+            code(&f.claim_key),
+            text(&f.reason),
+            if f.loosens_guardrail { " · alert" } else { "" },
+            instant(&f.fixed_at),
+            code(f.admin_person.as_deref().unwrap_or("the admin's person")),
+            crate::workspace::ADMIN_WORKSPACE_PATH,
+            attr(&encode(&f.workspace_id))
+        )
+    };
+    let (alerts, plain): (Vec<_>, Vec<_>) = fixes.iter().partition(|f| f.loosens_guardrail);
+    let mut empty = Vec::new();
+    for (id, title, desc, rows) in [
+        (
+            "todo-fixes",
+            "Admin fixes, unconfirmed",
+            "Fixes in this tenant that no person has confirmed or reverted.",
+            &plain,
+        ),
+        (
+            "todo-alerts",
+            "Guardrail-loosening alerts",
+            "Unconfirmed fixes that loosen a guardrail: the doctor's alert stays open until a person confirms or reverts each.",
+            &alerts,
+        ),
+    ] {
+        if rows.is_empty() {
+            empty.push(title);
+            continue;
+        }
+        let _ = write!(
+            body,
+            r#"<section class="oml-todo-g" aria-labelledby="{id}"><h2 id="{id}">{title} · {}</h2><p class="desc">{desc}</p><ul class="oml-todo">"#,
+            rows.len()
+        );
+        for f in rows.iter() {
+            body.push_str(&row(f));
+        }
+        body.push_str("</ul></section>");
+    }
+    if empty.len() == 2 {
+        body.push_str(r#"<div class="oml-empty"><p>Nothing waits for this account.</p><p class="desc">Admin fixes no person has confirmed or reverted, and the alerts among them, appear here.</p></div>"#);
+    } else if !empty.is_empty() {
+        let _ = write!(
+            body,
+            r#"<p class="desc">Nothing waits in {}.</p>"#,
+            empty.join(" or ")
+        );
+    }
     outcome::html(
         StatusCode::OK,
         shell(

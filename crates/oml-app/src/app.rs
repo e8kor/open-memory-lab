@@ -11188,12 +11188,13 @@ where
     /// state (`review.serve_invalid`, `consumed`).
     pub async fn ratify_brief_edge(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         edge_id: Uuid,
         idempotency_key: Option<&str>,
     ) -> Result<BriefEdgeRatification, AppError> {
+        let bearer: Bearer<'_> = bearer.into();
         const VERB: &str = "brief_edge.ratify";
-        let caller = self.authenticate(api_key).await?;
+        let caller = self.authenticate_bearer(bearer).await?;
         let key = &caller.key;
         require_admissible(key, Role::Reviewer, VERB)?;
         refuse_service(key, VERB)?;
@@ -11304,11 +11305,12 @@ where
     /// which answers `access.not_found` when the tenant holds none.
     pub async fn ratify_edge(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         edge_id: Uuid,
         idempotency_key: Option<&str>,
     ) -> Result<EdgeRatification, AppError> {
-        let caller = self.authenticate(api_key).await?;
+        let bearer: Bearer<'_> = bearer.into();
+        let caller = self.authenticate_bearer(bearer).await?;
         let is_claim = self
             .journal
             .claim_edge(caller.key.tenant_id, edge_id)
@@ -11316,12 +11318,12 @@ where
             .is_some();
         if is_claim {
             Ok(EdgeRatification::Claim(
-                self.ratify_claim_edge(api_key, edge_id, idempotency_key)
+                self.ratify_claim_edge(bearer, edge_id, idempotency_key)
                     .await?,
             ))
         } else {
             Ok(EdgeRatification::Brief(
-                self.ratify_brief_edge(api_key, edge_id, idempotency_key)
+                self.ratify_brief_edge(bearer, edge_id, idempotency_key)
                     .await?,
             ))
         }
@@ -11426,12 +11428,13 @@ where
     // ADR-0021 d6's both-vocabularies rule for a term mapping.
     pub async fn ratify_claim_edge(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         edge_id: Uuid,
         idempotency_key: Option<&str>,
     ) -> Result<ClaimEdgeRatification, AppError> {
+        let bearer: Bearer<'_> = bearer.into();
         const VERB: &str = "claim_edge.ratify";
-        let caller = self.authenticate(api_key).await?;
+        let caller = self.authenticate_bearer(bearer).await?;
         let key = &caller.key;
         require_admissible(key, Role::Reviewer, VERB)?;
         refuse_service(key, VERB)?;
