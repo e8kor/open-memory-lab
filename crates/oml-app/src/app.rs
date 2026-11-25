@@ -403,11 +403,11 @@ impl Caller {
         &self.key
     }
 
-    /// Refuses a key act to a caller that authenticated with its key's
-    /// previous value: the grace keeps a deployed value working and lets
-    /// no one holding it rotate the key past the grace, or issue, mint,
-    /// cut off, deny, set limits or link ([`AppError::PreviousKeyValue`];
-    /// ADR-0096 d13).
+    /// Refuses an act that is not a memory read or write to a caller that
+    /// authenticated with its key's previous value: the grace keeps a
+    /// deployed value working and lets no one holding it rotate the key
+    /// past the grace, run an admin verb or change who holds what
+    /// ([`AppError::PreviousKeyValue`]; ADR-0096 d13).
     ///
     /// # Errors
     /// [`AppError::PreviousKeyValue`] naming `verb`.
@@ -686,16 +686,20 @@ struct UserRoot {
 }
 
 /// An admin verb: checked on the key's own role, never on grants
-/// (roles-and-keys.md permission matrix; http-api.md authorization).
-fn require_role(key: &KeyRecord, role: Role, verb: &'static str) -> Result<(), AppError> {
-    if key.role == role {
-        Ok(())
-    } else {
-        Err(AppError::VerbCeiling {
-            role: key.role,
+/// (roles-and-keys.md permission matrix; http-api.md authorization), and
+/// refused to a caller that authenticated with its key's previous value.
+/// This is the one place that rule lives for every admin verb: a previous
+/// value inside its grace reads and writes memories as the key does and
+/// runs no other act (ADR-0096 d13, its review round's amendment of
+/// 2026-11-25).
+fn require_role(caller: &Caller, role: Role, verb: &'static str) -> Result<(), AppError> {
+    if caller.key.role != role {
+        return Err(AppError::VerbCeiling {
+            role: caller.key.role,
             verb,
-        })
+        });
     }
+    caller.require_current_value(verb)
 }
 
 /// Step 1 of the refusal order: the key's role must admit the grant role the
@@ -2127,6 +2131,19 @@ where
     ) -> Result<Caller, AppError> {
         let caller = self.authenticate_bearer(bearer).await?;
         caller.require_current_value(verb)?;
+        Ok(caller)
+    }
+
+    /// The caller an admin verb runs as: [`Self::authenticate_bearer`],
+    /// refused by [`require_role`] unless the key is an admin key presented
+    /// by its current value (ADR-0096 d13).
+    async fn admin_caller(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        verb: &'static str,
+    ) -> Result<Caller, AppError> {
+        let caller = self.authenticate_bearer(bearer.into()).await?;
+        require_role(&caller, Role::Admin, verb)?;
         Ok(caller)
     }
 
@@ -4063,8 +4080,9 @@ where
         node: Reference,
         reason: Option<&str>,
     ) -> Result<DenialRecord, AppError> {
-        let admin = self.key_act_caller(bearer.into(), "deny_key").await?.key;
+        let admin = self.key_act_caller(bearer.into(), "deny_key").await?;
         require_role(&admin, Role::Admin, "deny")?;
+        let admin = admin.key;
         self.deny_key_by(&admin, key, node, Head::AtSeal, reason)
             .await
     }
@@ -4215,6 +4233,9 @@ where
         in_progress: bool,
         reason: Option<&str>,
     ) -> Result<CreatedWorkspace, AppError> {
+        // A new workspace is not a memory read or write, so a previous value
+        // creates none, an import's new target included (ADR-0096 d13).
+        caller.require_current_value("create_workspace")?;
         let key = &caller.key;
         // A user key with the contributor role creates inside its own root,
         // by its effective access on the parent, since it acts on a tree it
@@ -4238,7 +4259,7 @@ where
                 Some(parent_id)
             }
             _ => {
-                require_role(key, Role::Admin, "create_workspace")?;
+                require_role(caller, Role::Admin, "create_workspace")?;
                 self.resolve_opt(key, NamedKind::Workspace, parent.as_ref())
                     .await?
             }
@@ -4603,8 +4624,10 @@ where
         api_key: &str,
         req: &CrewCreateRequest,
     ) -> Result<CrewRecord, AppError> {
-        let key = self.authenticate(api_key).await?.key;
-        require_role(&key, Role::Admin, "create_crew")?;
+        let key = self
+            .admin_caller(Bearer::Key(api_key), "create_crew")
+            .await?
+            .key;
         let crew = CrewRecord {
             crew_id: self.ids.new_id(),
             tenant_id: key.tenant_id,
@@ -4635,8 +4658,7 @@ where
     /// One crew record, by id or name, admin by key role; one the tenant
     /// does not hold is absent (http-api.md crews; ADR-0026 d8).
     pub async fn crew(&self, api_key: &str, crew: Reference) -> Result<CrewRecord, AppError> {
-        let key = self.authenticate(api_key).await?.key;
-        require_role(&key, Role::Admin, "crew")?;
+        let key = self.admin_caller(Bearer::Key(api_key), "crew").await?.key;
         let crew_id = self.resolve(&key, NamedKind::Crew, &crew).await?;
         self.journal
             .crew(key.tenant_id, crew_id)
@@ -4656,8 +4678,7 @@ where
         cursor: Option<&str>,
         limit: usize,
     ) -> Result<CrewPage, AppError> {
-        let key = self.authenticate(api_key).await?.key;
-        require_role(&key, Role::Admin, "crews")?;
+        let key = self.admin_caller(Bearer::Key(api_key), "crews").await?.key;
         let now = self.clock.now();
         let after = cursor
             .map(|cursor| NameCursor::resume(cursor, key.key_id, &now))
@@ -4695,8 +4716,7 @@ where
         bearer: impl Into<Bearer<'_>>,
         key: Reference,
     ) -> Result<KeyDetail, AppError> {
-        let admin = self.authenticate_bearer(bearer.into()).await?.key;
-        require_role(&admin, Role::Admin, "key")?;
+        let admin = self.admin_caller(bearer.into(), "key").await?.key;
         let tenant_id = admin.tenant_id;
         let key_id = self.resolve(&admin, NamedKind::Key, &key).await?;
         let Some(record) = self.journal.key(tenant_id, key_id).await? else {
@@ -4766,8 +4786,10 @@ where
         api_key: &str,
         user: &Name,
     ) -> Result<Option<WorkspaceRecord>, AppError> {
-        let admin = self.authenticate(api_key).await?.key;
-        require_role(&admin, Role::Admin, "user_root")?;
+        let admin = self
+            .admin_caller(Bearer::Key(api_key), "user_root")
+            .await?
+            .key;
         let Some(id) = self
             .journal
             .resolve_name(admin.tenant_id, NamedKind::Workspace, user)
@@ -4885,8 +4907,10 @@ where
         crew: Reference,
         update: &CrewUpdate,
     ) -> Result<CrewRecord, AppError> {
-        let key = self.authenticate(api_key).await?.key;
-        require_role(&key, Role::Admin, "update_crew")?;
+        let key = self
+            .admin_caller(Bearer::Key(api_key), "update_crew")
+            .await?
+            .key;
         if update.charter_uri.is_none() && update.external_manager.is_none() {
             return Err(AppError::EmptyCrewUpdate);
         }
@@ -4935,7 +4959,9 @@ where
         workspace: Reference,
         mode: WorkspaceMode,
     ) -> Result<WorkspaceRecord, AppError> {
-        let caller = self.authenticate_bearer(bearer.into()).await?;
+        let caller = self
+            .key_act_caller(bearer.into(), "set_workspace_mode")
+            .await?;
         let key = &caller.key;
         if !may_set_mode(key.role, key.used_by, key.profile) {
             return Err(AppError::ModeHumanOnly {
@@ -5081,8 +5107,10 @@ where
         workspace: Reference,
         crew: Reference,
     ) -> Result<WorkspaceRecord, AppError> {
-        let key = self.authenticate(api_key).await?.key;
-        require_role(&key, Role::Admin, "set_workspace_crew")?;
+        let key = self
+            .admin_caller(Bearer::Key(api_key), "set_workspace_crew")
+            .await?
+            .key;
         let workspace_id = self.resolve(&key, NamedKind::Workspace, &workspace).await?;
         self.observer.workspace(workspace_id);
         let crew_id = self.resolve(&key, NamedKind::Crew, &crew).await?;
@@ -5629,7 +5657,7 @@ where
         reason: Option<&str>,
     ) -> Result<TransitionRecord, AppError> {
         const VERB: &str = "propose_transition";
-        let caller = self.authenticate_bearer(bearer.into()).await?;
+        let caller = self.key_act_caller(bearer.into(), VERB).await?;
         let key = &caller.key;
         if key.role != Role::Admin {
             require_admissible(key, Role::Reviewer, VERB)?;
@@ -5764,7 +5792,7 @@ where
         transition_id: Uuid,
     ) -> Result<WorkspaceRecord, AppError> {
         const VERB: &str = "ratify_transition";
-        let caller = self.authenticate_bearer(bearer.into()).await?;
+        let caller = self.key_act_caller(bearer.into(), VERB).await?;
         let key = &caller.key;
         if key.role != Role::Admin {
             require_admissible(key, Role::Reviewer, VERB)?;
@@ -12094,8 +12122,10 @@ where
     /// (chain-format.md steps 1–7 and 9). Admin ceiling (roles-and-keys.md:
     /// chain verification is an admin verb).
     pub async fn verify_chain(&self, api_key: &str) -> Result<ChainHead, AppError> {
-        let key = self.authenticate(api_key).await?.key;
-        require_role(&key, Role::Admin, "verify_chain")?;
+        let key = self
+            .admin_caller(Bearer::Key(api_key), "verify_chain")
+            .await?
+            .key;
         let events = self.whole_chain(key.tenant_id).await?;
         let stated_head = self.journal.chain_head(key.tenant_id).await?;
         let keys = KeySet::new(vec![self.signer.verifying_key()]);
@@ -12256,9 +12286,9 @@ where
         // against its rate (#253, #281).
         let admin = self
             .key_act_caller(api_key.into(), "mint_connect_code")
-            .await?
-            .key;
+            .await?;
         require_role(&admin, Role::Admin, "mint_connect_code")?;
+        let admin = admin.key;
         self.mint_connect_code_by_with_ttl(&admin, key, ttl_secs, Head::AtSeal)
             .await
     }
@@ -12379,8 +12409,10 @@ where
         bearer: impl Into<Bearer<'_>>,
         key: Reference,
     ) -> Result<Option<LiveConnectCode>, AppError> {
-        let admin = self.authenticate_bearer(bearer.into()).await?.key;
-        require_role(&admin, Role::Admin, "live_connect_code")?;
+        let admin = self
+            .admin_caller(bearer.into(), "live_connect_code")
+            .await?
+            .key;
         let key_id = self.resolve(&admin, NamedKind::Key, &key).await?;
         if self.journal.key(admin.tenant_id, key_id).await?.is_none() {
             return Err(AppError::NotFound);
@@ -12414,8 +12446,10 @@ where
         bearer: impl Into<Bearer<'_>>,
         key: Reference,
     ) -> Result<Vec<ConnectionRecord>, AppError> {
-        let admin = self.authenticate_bearer(bearer.into()).await?.key;
-        require_role(&admin, Role::Admin, "list_connections")?;
+        let admin = self
+            .admin_caller(bearer.into(), "list_connections")
+            .await?
+            .key;
         let key_id = self.resolve(&admin, NamedKind::Key, &key).await?;
         if self.journal.key(admin.tenant_id, key_id).await?.is_none() {
             return Err(AppError::NotFound);
@@ -12441,8 +12475,10 @@ where
         connection_id: Uuid,
         reason: Option<&str>,
     ) -> Result<ConnectionRecord, AppError> {
-        let admin = self.authenticate(api_key).await?.key;
-        require_role(&admin, Role::Admin, "revoke_connection")?;
+        let admin = self
+            .admin_caller(Bearer::Key(api_key), "revoke_connection")
+            .await?
+            .key;
         let tenant_id = admin.tenant_id;
         let key_id = self.resolve(&admin, NamedKind::Key, &key).await?;
         let connection = self

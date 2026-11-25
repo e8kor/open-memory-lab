@@ -20322,9 +20322,205 @@ async fn a_previous_value_in_its_grace_runs_no_key_act() {
         ),
         "unlink_key"
     );
+    // Every other act that is not a memory read or write is refused too:
+    // the people the tenant admits and what they hold, crews, workspaces
+    // and their mode and status, the tenant's settings, fixes and
+    // investigations (the authority re-review of PR #518, A1).
+    let thief = oml_app::types::WebEmailRequest {
+        email: oml_app::domain::web::Email::parse("thief@example.com").expect("an email"),
+        user: name("thief"),
+        admin: true,
+    };
+    assert_eq!(
+        verb_of(app.allow_web_email(old, &thief).await.unwrap_err()),
+        "web_emails"
+    );
+    assert_eq!(
+        verb_of(
+            app.allow_web_email_keeping(old, &thief, false)
+                .await
+                .unwrap_err()
+        ),
+        "web_emails"
+    );
+    assert_eq!(
+        verb_of(app.remove_web_email(old, &thief.email).await.unwrap_err()),
+        "web_emails"
+    );
+    assert_eq!(
+        verb_of(app.list_web_emails(old, None, 10).await.unwrap_err()),
+        "web_emails"
+    );
+    let old_caller = app
+        .caller(oml_app::types::Bearer::Key(old))
+        .await
+        .expect("the previous value authenticates");
+    let alice = name("alice");
+    assert_eq!(
+        verb_of(
+            app.grant_review_capacity(&old_caller, &alice, crew.into())
+                .await
+                .unwrap_err()
+        ),
+        "grant_review"
+    );
+    assert_eq!(
+        verb_of(
+            app.grant_read_capacity(&old_caller, &alice, crew.into())
+                .await
+                .unwrap_err()
+        ),
+        "grant_read"
+    );
+    assert_eq!(
+        verb_of(
+            app.grant_curation_capacity(&old_caller, &alice, crew.into())
+                .await
+                .unwrap_err()
+        ),
+        "grant_curation"
+    );
+    assert_eq!(
+        verb_of(app.disable_web_user(&old_caller, &alice).await.unwrap_err()),
+        "web_users"
+    );
+    assert_eq!(
+        verb_of(
+            app.close_web_deletion(&old_caller, &alice)
+                .await
+                .unwrap_err()
+        ),
+        "web_users"
+    );
+    assert_eq!(
+        verb_of(
+            app.set_web_user_quota(
+                &old_caller,
+                &alice,
+                oml_app::domain::signup::Quota::Keys,
+                Some(99)
+            )
+            .await
+            .unwrap_err()
+        ),
+        "web_users"
+    );
+    assert_eq!(
+        verb_of(
+            app.create_crew(
+                old,
+                &CrewCreateRequest {
+                    name: name("thief-crew"),
+                    charter_uri: None,
+                    external_manager: None,
+                },
+            )
+            .await
+            .unwrap_err()
+        ),
+        "create_crew"
+    );
+    assert_eq!(
+        verb_of(
+            app.update_crew(old, by_name("thief-crew"), &CrewUpdate::default())
+                .await
+                .unwrap_err()
+        ),
+        "update_crew"
+    );
+    assert_eq!(
+        verb_of(
+            app.set_workspace_crew(old, crew.into(), by_name("thief-crew"))
+                .await
+                .unwrap_err()
+        ),
+        "set_workspace_crew"
+    );
+    assert_eq!(
+        verb_of(
+            app.create_workspace(old, &name("thief-node"), Some(crew.into()), None)
+                .await
+                .unwrap_err()
+        ),
+        "create_workspace"
+    );
+    assert_eq!(
+        verb_of(
+            app.set_workspace_mode(
+                old,
+                crew.into(),
+                oml_app::domain::in_progress::WorkspaceMode::InProgress,
+            )
+            .await
+            .unwrap_err()
+        ),
+        "set_workspace_mode"
+    );
+    assert_eq!(
+        verb_of(
+            app.set_workspace_federation(old, crew.into(), true)
+                .await
+                .unwrap_err()
+        ),
+        "set_workspace_federation"
+    );
+    assert_eq!(
+        verb_of(
+            app.propose_transition(old, crew.into(), WorkspaceStatus::Protected)
+                .await
+                .unwrap_err()
+        ),
+        "propose_transition"
+    );
+    assert_eq!(
+        verb_of(
+            app.set_search_default(old, Some("keyword-all"))
+                .await
+                .unwrap_err()
+        ),
+        "search_default"
+    );
+    assert_eq!(
+        verb_of(app.set_usage_settings(old, true).await.unwrap_err()),
+        "usage_settings"
+    );
+    assert_eq!(
+        verb_of(
+            app.open_investigation(old, "a thief's case")
+                .await
+                .unwrap_err()
+        ),
+        "investigate"
+    );
+    assert_eq!(
+        verb_of(app.demote_version(old, Uuid::nil()).await.unwrap_err()),
+        "demote"
+    );
+    assert_eq!(
+        verb_of(app.erase_claim(old, Uuid::nil()).await.unwrap_err()),
+        "erase"
+    );
+    assert_eq!(
+        verb_of(app.verify_chain(old).await.unwrap_err()),
+        "verify_chain"
+    );
+    // The grace still serves what it is for: the agent's previous value
+    // writes and reads memories as the key does.
+    app.submit_memory(
+        ana.value.as_str(),
+        &submit_into("grace-write", "a write in the grace", crew),
+    )
+    .await
+    .expect("the previous value writes a memory in its grace");
+    app.recall(ana.value.as_str(), &recall_req("grace"))
+        .await
+        .expect("the previous value recalls in its grace");
     app.deny_key(renewed.value.as_str(), bea.key_id.into(), crew.into())
         .await
         .expect("the new value denies");
+    app.allow_web_email(renewed.value.as_str(), &thief)
+        .await
+        .expect("the new value admits an email");
 }
 
 /// An admin rotates its own admin key and a tenant key that names no user,

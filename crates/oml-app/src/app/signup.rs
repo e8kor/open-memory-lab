@@ -225,7 +225,7 @@ where
     /// signed up themselves, whether disabled, what they hold and their limits
     /// (ADR-0068 d5).
     pub async fn list_web_users(&self, admin: &Caller) -> Result<Vec<UserRow>, AppError> {
-        require_role(&admin.key, Role::Admin, "web_users")?;
+        require_role(admin, Role::Admin, "web_users")?;
         let tenant_id = admin.key.tenant_id;
         let mut by_user: BTreeMap<Name, (bool, bool)> = BTreeMap::new();
         let mut after = None;
@@ -315,7 +315,7 @@ where
         quota: Quota,
         limit: Option<u64>,
     ) -> Result<(), AppError> {
-        require_role(&admin.key, Role::Admin, "web_users")?;
+        require_role(admin, Role::Admin, "web_users")?;
         if limit.is_some_and(|l| l > quota.max_limit()) {
             return Err(AppError::WebField {
                 field: "limit",
@@ -373,7 +373,7 @@ where
         admin: &Caller,
         user: &Name,
     ) -> Result<UserDisabled, AppError> {
-        require_role(&admin.key, Role::Admin, "web_users")?;
+        require_role(admin, Role::Admin, "web_users")?;
         let tenant_id = admin.key.tenant_id;
         // Only a person the tenant holds, and never an admin: a name no
         // entry holds, or an admin's, journals nothing (ADR-0068 d8).
@@ -507,7 +507,7 @@ where
 
     /// The tenant's pending deletion requests, oldest first (ADR-0068 d6).
     async fn pending_deletions(&self, admin: &Caller) -> Result<Vec<DeletionRequest>, AppError> {
-        require_role(&admin.key, Role::Admin, "web_users")?;
+        require_role(admin, Role::Admin, "web_users")?;
         Ok(self
             .journal
             .web_deletion_requests(admin.key.tenant_id)
@@ -520,7 +520,7 @@ where
     /// retries alone on a chain-head conflict, as the disable's denials do
     /// (#266).
     pub async fn close_web_deletion(&self, admin: &Caller, user: &Name) -> Result<u64, AppError> {
-        require_role(&admin.key, Role::Admin, "web_users")?;
+        require_role(admin, Role::Admin, "web_users")?;
         let tenant_id = admin.key.tenant_id;
         if !self
             .journal

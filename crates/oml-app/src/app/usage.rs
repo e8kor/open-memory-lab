@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use oml_domain::{EventTime, Role, event_types};
 
-use super::{App, require_admissible, require_role};
+use super::{App, require_admissible};
 use crate::ports::{Clock, IdGen, JournalStore, MetadataFold, Scanner, Signer};
 use crate::search::{MatchMode, Pipeline};
 use crate::telemetry::{
@@ -153,8 +153,10 @@ where
         &self,
         bearer: impl Into<Bearer<'_>>,
     ) -> Result<UsageSettings, AppError> {
-        let admin = self.authenticate_bearer(bearer.into()).await?.key;
-        require_role(&admin, Role::Admin, "usage_settings")?;
+        let admin = self
+            .admin_caller(bearer.into(), "usage_settings")
+            .await?
+            .key;
         self.usage_settings_of(admin.tenant_id).await
     }
 
@@ -168,8 +170,10 @@ where
         bearer: impl Into<Bearer<'_>>,
         query_text: bool,
     ) -> Result<UsageSettings, AppError> {
-        let admin = self.authenticate_bearer(bearer.into()).await?.key;
-        require_role(&admin, Role::Admin, "usage_settings")?;
+        let admin = self
+            .admin_caller(bearer.into(), "usage_settings")
+            .await?
+            .key;
         let tenant_id = admin.tenant_id;
         let current = self.journal.tenant_query_text_since(tenant_id).await?;
         if current.is_some() == query_text {
@@ -216,8 +220,7 @@ where
         before: Option<(EventTime, Uuid)>,
         limit: u32,
     ) -> Result<Vec<StoredEvent>, AppError> {
-        let admin = self.authenticate_bearer(bearer.into()).await?.key;
-        require_role(&admin, Role::Admin, "usage_events")?;
+        let admin = self.admin_caller(bearer.into(), "usage_events").await?.key;
         let telemetry = self.telemetry.as_ref().ok_or(AppError::TelemetryOff)?;
         // What the queue holds is written first, so a listing shows every
         // recall answered before it.
@@ -259,8 +262,7 @@ where
         bearer: impl Into<Bearer<'_>>,
         pipelines: &[String],
     ) -> Result<ReplayReport, AppError> {
-        let admin = self.authenticate_bearer(bearer.into()).await?.key;
-        require_role(&admin, Role::Admin, "usage_eval")?;
+        let admin = self.admin_caller(bearer.into(), "usage_eval").await?.key;
         let telemetry = self.telemetry.as_ref().ok_or(AppError::TelemetryOff)?;
         let mut chosen = Vec::with_capacity(pipelines.len());
         for name in pipelines {

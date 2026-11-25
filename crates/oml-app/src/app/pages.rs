@@ -455,6 +455,7 @@ where
     ) -> Result<(Caller, Option<SignedEnvelope>), AppError> {
         let head = self.head_event(gate.key.tenant_id).await?;
         let now = self.authenticate_bearer(Bearer::Session(gate)).await?;
+        now.require_current_value(verb)?;
         if now.denials.is_empty() {
             Ok((now, head))
         } else {
@@ -714,7 +715,7 @@ where
         admin: &Caller,
         user: &Name,
     ) -> Result<Vec<OwnKey>, AppError> {
-        require_role(&admin.key, Role::Admin, "web_keys")?;
+        require_role(admin, Role::Admin, "web_keys")?;
         let tenant_id = admin.key.tenant_id;
         let Some(root) = self
             .journal
@@ -754,7 +755,7 @@ where
         user: &Name,
         workspace: Reference,
     ) -> Result<CapacityGranted, AppError> {
-        require_role(&admin.key, Role::Admin, "grant_review")?;
+        require_role(admin, Role::Admin, "grant_review")?;
         let review = self
             .session_key_of(admin.key.tenant_id, user, Capacity::Review)
             .await?
@@ -783,7 +784,7 @@ where
         user: &Name,
         workspace: Reference,
     ) -> Result<CapacityGranted, AppError> {
-        require_role(&admin.key, Role::Admin, "grant_read")?;
+        require_role(admin, Role::Admin, "grant_read")?;
         let web = self
             .session_key_of(admin.key.tenant_id, user, Capacity::Web)
             .await?
@@ -812,7 +813,7 @@ where
         user: &Name,
         workspace: Reference,
     ) -> Result<CapacityGranted, AppError> {
-        require_role(&admin.key, Role::Admin, "grant_curation")?;
+        require_role(admin, Role::Admin, "grant_curation")?;
         let tenant_id = admin.key.tenant_id;
         let reader = GrantRequest {
             node: workspace,
@@ -942,7 +943,7 @@ where
     /// and denials confer reviewer there, as `require_access` reads one key
     /// (ADR-0080 d16; #435). Counts only, never a key or a memory.
     pub async fn review_queue(&self, admin: &Caller) -> Result<Vec<QueueRow>, AppError> {
-        require_role(&admin.key, Role::Admin, "review_queue")?;
+        require_role(admin, Role::Admin, "review_queue")?;
         let tenant_id = admin.key.tenant_id;
         let depths = self.journal.web_queue(tenant_id).await?;
         let reviewers: Vec<_> = if depths.is_empty() {
@@ -1248,7 +1249,7 @@ where
         admin: &Caller,
         workspace: Option<Reference>,
     ) -> Result<Regions, AppError> {
-        require_role(&admin.key, Role::Admin, "admin_read")?;
+        require_role(admin, Role::Admin, "admin_read")?;
         let tenant_id = admin.key.tenant_id;
         let scope = workspace
             .unwrap_or_else(|| Reference::Name(Name::parse(UNIVERSE).expect("universe is a name")));
@@ -1559,7 +1560,7 @@ where
         req: &AdminSearchRequest<'_>,
     ) -> Result<AdminPage, AppError> {
         let caller = self.authenticate_bearer(bearer.into()).await?;
-        require_role(&caller.key, Role::Admin, "admin_read")?;
+        require_role(&caller, Role::Admin, "admin_read")?;
         let tenant_id = caller.key.tenant_id;
         let AdminSearchRequest {
             query,
@@ -1639,7 +1640,7 @@ where
         investigation: Option<Uuid>,
     ) -> Result<AdminMemory, AppError> {
         let caller = self.authenticate_bearer(bearer.into()).await?;
-        require_role(&caller.key, Role::Admin, "admin_read")?;
+        require_role(&caller, Role::Admin, "admin_read")?;
         let investigation = self
             .require_investigation(&caller.key, investigation, "investigation")
             .await?;

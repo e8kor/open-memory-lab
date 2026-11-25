@@ -19,7 +19,7 @@ use oml_domain::in_progress::may_set_mode;
 use oml_domain::name::{NamedKind, Reference};
 use oml_domain::{MemoryKind, Role, WorkspaceStatus, event_types};
 
-use super::{App, Caller, derived_path, require_role};
+use super::{App, Caller, derived_path};
 use crate::federation::{
     CountsScope, CutReport, DefaultSources, FederationPolicy, FederationPolicyChange,
     FederationRecord, FederationSettings, SearchedSource, SourceRefusal, Sources, SourcesReport,
@@ -78,8 +78,10 @@ where
         &self,
         bearer: impl Into<Bearer<'_>>,
     ) -> Result<(FederationSettings, Vec<WideKey>), AppError> {
-        let admin = self.authenticate_bearer(bearer.into()).await?.key;
-        require_role(&admin, Role::Admin, "federation_settings")?;
+        let admin = self
+            .admin_caller(bearer.into(), "federation_settings")
+            .await?
+            .key;
         let policy = self.journal.federation_policy(admin.tenant_id).await?;
         Ok((
             FederationSettings {
@@ -99,8 +101,10 @@ where
         bearer: impl Into<Bearer<'_>>,
         change: FederationPolicyChange,
     ) -> Result<(FederationSettings, Vec<WideKey>), AppError> {
-        let admin = self.authenticate_bearer(bearer.into()).await?.key;
-        require_role(&admin, Role::Admin, "federation_policy")?;
+        let admin = self
+            .admin_caller(bearer.into(), "federation_policy")
+            .await?
+            .key;
         if change.max_sources.is_some_and(|m| m > MAX_SOURCES_CEILING) {
             return Err(AppError::SourcesInvalid {
                 field: "/max_sources",
@@ -151,7 +155,9 @@ where
         workspace: Reference,
         accept_federated: bool,
     ) -> Result<WorkspaceFederation, AppError> {
-        let caller = self.authenticate_bearer(bearer.into()).await?;
+        let caller = self
+            .key_act_caller(bearer.into(), "set_workspace_federation")
+            .await?;
         let key = &caller.key;
         let admin = key.role == Role::Admin;
         if !admin && !may_set_mode(key.role, key.used_by, key.profile) {

@@ -528,6 +528,15 @@ Readings the build took, for the operator to confirm:
 - The admin To do draws the unconfirmed fixes and the alerts, not open investigations: the SDK has
   no investigations listing yet. *Superseded at integration (2026-11-25):* the Rust SDK gained
   `investigations` and the admin To do draws an **Open investigations** group.
+- *Fix round of PR #518 (2026-11-25):* "a previous value runs no key act" is read as "a previous
+  value reads and writes memories and runs no other act". Every admin verb refuses it in one place,
+  the role check every admin verb makes, so an old admin value adds no web email, grants no
+  capacity, disables no person and sets no tenant setting. The acts a non-admin key runs that are
+  not memory reads or writes refuse it too: creating a workspace (an import's new target
+  included), its mode, its federation, a status proposal and ratification, accepting a key link,
+  and every session key act. Each is `access.verb_ceiling`, `details.reason: previous_value`.
+  Memory writes, verdicts, edge proposals and ratifications, withdrawals, uploads, imports into an
+  existing workspace, exports and every read stay served, as d13 says the grace is for.
 
 Not built in this lane, each waiting on another change: the brief section of the workspace page,
 **Propose for brief** and the P9 status proposal on the workspace page (they call the proposal

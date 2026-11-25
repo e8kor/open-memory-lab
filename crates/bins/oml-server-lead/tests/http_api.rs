@@ -12976,3 +12976,55 @@ async fn a_previous_value_in_its_grace_rotates_nothing() {
     assert_eq!(whoami_status(&rig, &old).await, StatusCode::OK);
     drop_db(&rig.db_name).await;
 }
+
+/// An admin key's previous value inside its grace admits no one: adding
+/// an email with the admin flag is `access.verb_ceiling`, reason
+/// `previous_value`, no entry is added, and the new value adds it (ADR-0096
+/// d13; the authority re-review of PR #518, A1).
+#[tokio::test]
+async fn an_admin_keys_previous_value_in_its_grace_adds_no_web_email() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let old = rig.tenant_key("other-admin", "admin").await;
+    let (status, _, rotated) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/other-admin/rotate",
+        Call::auth(&old)
+            .idem("grace")
+            .body(json!({ "grace_seconds": 3600 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{rotated}");
+    let new = rotated["value"].as_str().expect("the value").to_owned();
+    let thief = json!({ "email": "thief@example.com", "user": "thief", "admin": true });
+    let (status, _, refused) = send(
+        &rig.router,
+        "POST",
+        "/v2/web/emails",
+        Call::auth(&old).idem("thief").body(thief.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+    assert_envelope(&refused, "access.verb_ceiling");
+    assert_eq!(
+        refused["error"]["details"]["reason"], "previous_value",
+        "{refused}"
+    );
+    let (_, _, list) = send(&rig.router, "GET", "/v2/web/emails", Call::auth(&new)).await;
+    assert!(
+        !list.to_string().contains("thief@example.com"),
+        "the previous value added no entry: {list}"
+    );
+    let (status, _, added) = send(
+        &rig.router,
+        "POST",
+        "/v2/web/emails",
+        Call::auth(&new).idem("owner").body(thief),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{added}");
+    assert_eq!(whoami_status(&rig, &old).await, StatusCode::OK);
+    drop_db(&rig.db_name).await;
+}

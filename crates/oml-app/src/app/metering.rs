@@ -320,7 +320,7 @@ where
         account: &str,
     ) -> Result<AccountUsage, AppError> {
         let caller = self.authenticate_bearer(bearer.into()).await?;
-        require_role(&caller.key, Role::Admin, "account_usage")?;
+        require_role(&caller, Role::Admin, "account_usage")?;
         let root = self.account_named(caller.key.tenant_id, account).await?;
         self.usage_of(caller.key.tenant_id, root).await
     }
@@ -333,7 +333,7 @@ where
         month: Month,
     ) -> Result<Vec<(LedgerRow, Option<Name>)>, AppError> {
         let caller = self.authenticate_bearer(bearer.into()).await?;
-        require_role(&caller.key, Role::Admin, "usage_ledger")?;
+        require_role(&caller, Role::Admin, "usage_ledger")?;
         let tenant_id = caller.key.tenant_id;
         let rows = self.journal.usage_ledger(tenant_id, month).await?;
         let mut names: std::collections::BTreeMap<Uuid, Option<Name>> = Default::default();
@@ -364,7 +364,7 @@ where
         bearer: impl Into<Bearer<'_>>,
     ) -> Result<UsageDriftReport, AppError> {
         let caller = self.authenticate_bearer(bearer.into()).await?;
-        require_role(&caller.key, Role::Admin, "usage_drift")?;
+        require_role(&caller, Role::Admin, "usage_drift")?;
         let tenant_id = caller.key.tenant_id;
         let month = Month::of(&self.clock.now());
         let name_of = |root: Uuid| async move {
@@ -399,7 +399,7 @@ where
         assignment: &ProfileAssignment,
     ) -> Result<AccountUsage, AppError> {
         let caller = self.authenticate_bearer(bearer.into()).await?;
-        require_role(&caller.key, Role::Admin, "account_profile")?;
+        require_role(&caller, Role::Admin, "account_profile")?;
         if self.profiles.get(&assignment.profile).is_none() {
             return Err(AppError::WebField {
                 field: "profile",
@@ -432,7 +432,7 @@ where
         account: &str,
     ) -> Result<AccountUsage, AppError> {
         let caller = self.authenticate_bearer(bearer.into()).await?;
-        require_role(&caller.key, Role::Admin, "account_profile")?;
+        require_role(&caller, Role::Admin, "account_profile")?;
         let root = self.account_named(caller.key.tenant_id, account).await?;
         self.journal_profile(&caller, root, None).await
     }

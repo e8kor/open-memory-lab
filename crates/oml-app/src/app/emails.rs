@@ -7,9 +7,9 @@ use uuid::Uuid;
 
 use oml_domain::name::{Name, NamedKind};
 use oml_domain::web::{Email, check_user, session_key_names};
-use oml_domain::{Role, Sha256Hash, event_types};
+use oml_domain::{Sha256Hash, event_types};
 
-use super::{App, require_role};
+use super::App;
 use crate::ports::{Clock, IdGen, MetadataFold, Scanner, Signer, WebStore};
 use crate::types::{AppError, WebEmailOutcome, WebEmailRequest, WebEntry};
 use crate::types::{Bearer, Credential, KeyRecord};
@@ -55,8 +55,7 @@ where
         req: &WebEmailRequest,
         keep_an_admin: bool,
     ) -> Result<(WebEntry, WebEmailOutcome), AppError> {
-        let admin = self.authenticate_bearer(bearer.into()).await?.key;
-        require_role(&admin, Role::Admin, "web_emails")?;
+        let admin = self.admin_caller(bearer.into(), "web_emails").await?.key;
         check_user(&req.user)?;
         let tenant_id = admin.tenant_id;
         let email_hash = req.email.digest();
@@ -154,8 +153,7 @@ where
         email: &Email,
         keep_an_admin: bool,
     ) -> Result<(WebEntry, u64, Uuid), AppError> {
-        let admin = self.authenticate_bearer(bearer.into()).await?.key;
-        require_role(&admin, Role::Admin, "web_emails")?;
+        let admin = self.admin_caller(bearer.into(), "web_emails").await?.key;
         let tenant_id = admin.tenant_id;
         let email_hash = email.digest();
         let entry = self
@@ -376,8 +374,7 @@ where
         after: Option<&Sha256Hash>,
         limit: usize,
     ) -> Result<Vec<WebEntry>, AppError> {
-        let admin = self.authenticate_bearer(bearer.into()).await?.key;
-        require_role(&admin, Role::Admin, "web_emails")?;
+        let admin = self.admin_caller(bearer.into(), "web_emails").await?.key;
         Ok(self
             .journal
             .web_entries(admin.tenant_id, after, limit)

@@ -3963,10 +3963,10 @@ pub enum AppError {
     )]
     SessionKeyDenied { role: Role, verb: &'static str },
     /// A caller that authenticated with a rotated key's previous value,
-    /// inside its grace, runs no key act: the grace keeps a deployed value
-    /// working, and never lets it rotate, issue, mint, cut off, deny, set
-    /// limits or link (ADR-0096 d13, the operator's decision of 2026-11-25;
-    /// access.verb_ceiling, reason previous_value).
+    /// inside its grace, reads and writes memories and runs no other act: no
+    /// key act, no admin verb, no workspace creation or governance change
+    /// (ADR-0096 d13, the operator's decision of 2026-11-25 and its fix
+    /// round; access.verb_ceiling, reason previous_value).
     #[error(
         "{verb} is refused: this value is the key's previous one, kept only for its grace (ADR-0096 d13, access.verb_ceiling)"
     )]

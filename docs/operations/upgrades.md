@@ -179,9 +179,9 @@ person (`in_persons_root`); v0.8.6 brings those under [ADR-0097](../adr/ADR-0097
 0069 adds one empty table, `key_previous_hashes`, which holds a rotated key's previous hash while
 its grace lasts; it reads and locks nothing existing. A key value's `whoami` reads one row more,
 and serves `rotation_grace_until` while a grace is open, which `oml doctor` prints as `info
-key.rotation_grace_open`. The previous value reads and writes during the grace and runs no key
-act: it rotates, issues, mints, cuts off, denies, sets limits and links nothing
-(`access.verb_ceiling`, `previous_value`). To roll the operator's or a deployer's key, rotate it
+key.rotation_grace_open`. The previous value reads and writes memories during the grace and
+runs nothing else: no key act, no admin verb, no workspace creation, mode, federation or status
+change (`access.verb_ceiling`, `previous_value`). To roll the operator's or a deployer's key, rotate it
 with a grace, move each client to the new value, and let the grace end.
 
 ### The console's new paths, Grant read, the brief and the CLI's skills
