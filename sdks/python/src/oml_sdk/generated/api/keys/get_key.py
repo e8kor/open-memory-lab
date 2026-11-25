@@ -77,7 +77,9 @@ def sync_detailed(
 ) -> Response[ErrorEnvelope | Key]:
     """One key — grants, denials, epoch, issuance and revocation events. Never the value.
 
-     Requires: admin key role.
+     Requires: admin key role, a person's <user>-admin session key through its capacity credential
+    included; any other session capacity is access.verb_ceiling with details.reason session_capacity
+    (ADR-0096 d4; since v0.8.5). Journals nothing.
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -118,7 +120,9 @@ def sync(
 ) -> ErrorEnvelope | Key | None:
     """One key — grants, denials, epoch, issuance and revocation events. Never the value.
 
-     Requires: admin key role.
+     Requires: admin key role, a person's <user>-admin session key through its capacity credential
+    included; any other session capacity is access.verb_ceiling with details.reason session_capacity
+    (ADR-0096 d4; since v0.8.5). Journals nothing.
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -154,7 +158,9 @@ async def asyncio_detailed(
 ) -> Response[ErrorEnvelope | Key]:
     """One key — grants, denials, epoch, issuance and revocation events. Never the value.
 
-     Requires: admin key role.
+     Requires: admin key role, a person's <user>-admin session key through its capacity credential
+    included; any other session capacity is access.verb_ceiling with details.reason session_capacity
+    (ADR-0096 d4; since v0.8.5). Journals nothing.
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -193,7 +199,9 @@ async def asyncio(
 ) -> ErrorEnvelope | Key | None:
     """One key — grants, denials, epoch, issuance and revocation events. Never the value.
 
-     Requires: admin key role.
+     Requires: admin key role, a person's <user>-admin session key through its capacity credential
+    included; any other session capacity is access.verb_ceiling with details.reason session_capacity
+    (ADR-0096 d4; since v0.8.5). Journals nothing.
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a

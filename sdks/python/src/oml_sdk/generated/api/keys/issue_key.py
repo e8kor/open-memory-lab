@@ -89,41 +89,49 @@ def sync_detailed(
     """Issue a key under the issuer ceiling; the value appears exactly once, here.
 
      A person's web session key (<user>-web, through its capacity credential) issues their own key: send
-    name (<user>-<name>), role (contributor or reader) and connect_code, and expiry to end the key on a
-    date, under the rule for expiry below; the key names their user and holds submitter and reader, or
-    reader, on their root alone, any other field, requests_per_minute included, is request.validation
-    naming it, the date is changed or cleared afterwards only by the admin key role (POST
-    /v2/keys/{key}/limits; ADR-0079 d1, d5; since v0.7.3), and any other capacity is access.verb_ceiling
-    with details.reason session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). The session key's access
-    is read when the issuance runs, and a session key that carries a denial, on any workspace, issues
-    nothing: access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070
-    d2; since v0.7.3). Otherwise requires: admin key role; operator key role only for an operator key,
-    sent without tenant, or a tenant's first admin key, sent with tenant (step 0 of the issuance order).
-    tenant is a designed field (openapi-designed.yaml x-oml-designed-fields), refused with
-    request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9).
-    expiry is the instant from which the key authenticates nothing, later than the server's clock, and
-    requests_per_minute the key's own rate, from 1 to 1000000; either outside that is request.validation
-    naming it in details.field, and nothing is journalled. An admin key carries neither: role admin with
-    expiry or requests_per_minute is request.validation naming the member in details.field, with
-    details.reason admin_key (ADR-0079 d1, d4; since v0.7.3). Journalled as issued-without-value (show-
-    once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md
-    (Grant admissibility and refusal order), which also fixes grant admissibility, the default
-    workspace, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every
-    workspace, crew and tenant reference takes an id or a name, and the response carries ids under their
-    v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant's workarea_node_id,
-    a deny entry's subtree_node_id) is refused with request.validation naming its successor in
-    details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked
-    after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the
-    grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal
-    seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201
-    carries connect_code, shown once, in the value's place; an admin or operator role, used_by service
-    and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason.
-    The Idempotency-Key is claimed for the calling key before the issuance: a resubmission under the
-    same key and body answers the first 201 with Idempotency-Replay: true and issues nothing again,
-    without value and without connect_code.code, which the first answer alone carries; the same key with
-    another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the
-    key waits up to 5 s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer
-    4, d5; since v0.7.0).
+    name (<user>-<name>, refused naming /name for exactly <user>-web, <user>-review, <user>-curate or
+    <user>-admin and no other name), role (contributor, reader or submitter; any other role is
+    request.validation naming /role) and connect_code, and optionally grants, default_workspace,
+    guardrail_scope, expiry and requests_per_minute (ADR-0096 d1 to d3; since v0.8.5). Without grants
+    the key holds submitter and reader (contributor), reader (reader) or submitter (submitter) on the
+    root and below; with grants it holds exactly those sent, each grant role reader or submitter, each
+    inside the root, else 403 access.issuer_ceiling naming details.user, or for a grant role the key
+    role does not admit details.role, admissible and grant_index; a submitter key gets no universe
+    grant, a contributor or reader key the universe reader node grant. At most 16 grants of at most 16
+    denials each: more is request.validation with details.field /grants or /grants/<i>/deny and
+    details.reason too_many. user, used_by, crew, label, principal, profile and tenant stay
+    request.validation naming the field. The date and the rate are changed or cleared afterwards only by
+    an admin key (POST /v2/keys/{key}/limits; ADR-0079 d1, d5; ADR-0096 d2), and any other capacity is
+    access.verb_ceiling with details.reason session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). The
+    session key's access is read when the issuance runs, and a session key that carries a denial, on any
+    workspace, issues nothing: access.verb_ceiling with details.reason session_key_denied, nothing
+    journalled (ADR-0070 d2; since v0.7.3). Otherwise requires: admin key role; operator key role only
+    for an operator key, sent without tenant, or a tenant's first admin key, sent with tenant (step 0 of
+    the issuance order). tenant is a designed field (openapi-designed.yaml x-oml-designed-fields),
+    refused with request.validation until it is built, so an operator key issues operator keys only
+    (ADR-0039 d9). expiry is the instant from which the key authenticates nothing, later than the
+    server's clock, and requests_per_minute the key's own rate, from 1 to 1000000; either outside that
+    is request.validation naming it in details.field, and nothing is journalled. An admin key carries
+    neither: role admin with expiry or requests_per_minute is request.validation naming the member in
+    details.field, with details.reason admin_key (ADR-0079 d1, d4; since v0.7.3). Journalled as issued-
+    without-value (show-once ceremony). Validated in the issuance order declared in
+    docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant
+    admissibility, the default workspace, when the value is disclosed and what a part-way failure leaves
+    (ADR-0025 d2). Every workspace, crew and tenant reference takes an id or a name, and the response
+    carries ids under their v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a
+    grant's workarea_node_id, a deny entry's subtree_node_id) is refused with request.validation naming
+    its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409
+    name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server
+    takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its
+    grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no value is
+    minted, and the 201 carries connect_code, shown once, in the value's place; an admin or operator
+    role, used_by service and a deployment without oauth.issuer are refused with 422
+    oauth.connect_refused and details.reason. The Idempotency-Key is claimed for the calling key before
+    the issuance: a resubmission under the same key and body answers the first 201 with Idempotency-
+    Replay: true and issues nothing again, without value and without connect_code.code, which the first
+    answer alone carries; the same key with another body is idempotency.digest_mismatch, and a
+    resubmission while the first attempt holds the key waits up to 5 s for its answer, then is
+    idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0).
 
     Args:
         x_request_id (str | Unset):
@@ -167,41 +175,49 @@ def sync(
     """Issue a key under the issuer ceiling; the value appears exactly once, here.
 
      A person's web session key (<user>-web, through its capacity credential) issues their own key: send
-    name (<user>-<name>), role (contributor or reader) and connect_code, and expiry to end the key on a
-    date, under the rule for expiry below; the key names their user and holds submitter and reader, or
-    reader, on their root alone, any other field, requests_per_minute included, is request.validation
-    naming it, the date is changed or cleared afterwards only by the admin key role (POST
-    /v2/keys/{key}/limits; ADR-0079 d1, d5; since v0.7.3), and any other capacity is access.verb_ceiling
-    with details.reason session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). The session key's access
-    is read when the issuance runs, and a session key that carries a denial, on any workspace, issues
-    nothing: access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070
-    d2; since v0.7.3). Otherwise requires: admin key role; operator key role only for an operator key,
-    sent without tenant, or a tenant's first admin key, sent with tenant (step 0 of the issuance order).
-    tenant is a designed field (openapi-designed.yaml x-oml-designed-fields), refused with
-    request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9).
-    expiry is the instant from which the key authenticates nothing, later than the server's clock, and
-    requests_per_minute the key's own rate, from 1 to 1000000; either outside that is request.validation
-    naming it in details.field, and nothing is journalled. An admin key carries neither: role admin with
-    expiry or requests_per_minute is request.validation naming the member in details.field, with
-    details.reason admin_key (ADR-0079 d1, d4; since v0.7.3). Journalled as issued-without-value (show-
-    once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md
-    (Grant admissibility and refusal order), which also fixes grant admissibility, the default
-    workspace, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every
-    workspace, crew and tenant reference takes an id or a name, and the response carries ids under their
-    v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant's workarea_node_id,
-    a deny entry's subtree_node_id) is refused with request.validation naming its successor in
-    details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked
-    after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the
-    grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal
-    seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201
-    carries connect_code, shown once, in the value's place; an admin or operator role, used_by service
-    and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason.
-    The Idempotency-Key is claimed for the calling key before the issuance: a resubmission under the
-    same key and body answers the first 201 with Idempotency-Replay: true and issues nothing again,
-    without value and without connect_code.code, which the first answer alone carries; the same key with
-    another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the
-    key waits up to 5 s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer
-    4, d5; since v0.7.0).
+    name (<user>-<name>, refused naming /name for exactly <user>-web, <user>-review, <user>-curate or
+    <user>-admin and no other name), role (contributor, reader or submitter; any other role is
+    request.validation naming /role) and connect_code, and optionally grants, default_workspace,
+    guardrail_scope, expiry and requests_per_minute (ADR-0096 d1 to d3; since v0.8.5). Without grants
+    the key holds submitter and reader (contributor), reader (reader) or submitter (submitter) on the
+    root and below; with grants it holds exactly those sent, each grant role reader or submitter, each
+    inside the root, else 403 access.issuer_ceiling naming details.user, or for a grant role the key
+    role does not admit details.role, admissible and grant_index; a submitter key gets no universe
+    grant, a contributor or reader key the universe reader node grant. At most 16 grants of at most 16
+    denials each: more is request.validation with details.field /grants or /grants/<i>/deny and
+    details.reason too_many. user, used_by, crew, label, principal, profile and tenant stay
+    request.validation naming the field. The date and the rate are changed or cleared afterwards only by
+    an admin key (POST /v2/keys/{key}/limits; ADR-0079 d1, d5; ADR-0096 d2), and any other capacity is
+    access.verb_ceiling with details.reason session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). The
+    session key's access is read when the issuance runs, and a session key that carries a denial, on any
+    workspace, issues nothing: access.verb_ceiling with details.reason session_key_denied, nothing
+    journalled (ADR-0070 d2; since v0.7.3). Otherwise requires: admin key role; operator key role only
+    for an operator key, sent without tenant, or a tenant's first admin key, sent with tenant (step 0 of
+    the issuance order). tenant is a designed field (openapi-designed.yaml x-oml-designed-fields),
+    refused with request.validation until it is built, so an operator key issues operator keys only
+    (ADR-0039 d9). expiry is the instant from which the key authenticates nothing, later than the
+    server's clock, and requests_per_minute the key's own rate, from 1 to 1000000; either outside that
+    is request.validation naming it in details.field, and nothing is journalled. An admin key carries
+    neither: role admin with expiry or requests_per_minute is request.validation naming the member in
+    details.field, with details.reason admin_key (ADR-0079 d1, d4; since v0.7.3). Journalled as issued-
+    without-value (show-once ceremony). Validated in the issuance order declared in
+    docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant
+    admissibility, the default workspace, when the value is disclosed and what a part-way failure leaves
+    (ADR-0025 d2). Every workspace, crew and tenant reference takes an id or a name, and the response
+    carries ids under their v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a
+    grant's workarea_node_id, a deny entry's subtree_node_id) is refused with request.validation naming
+    its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409
+    name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server
+    takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its
+    grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no value is
+    minted, and the 201 carries connect_code, shown once, in the value's place; an admin or operator
+    role, used_by service and a deployment without oauth.issuer are refused with 422
+    oauth.connect_refused and details.reason. The Idempotency-Key is claimed for the calling key before
+    the issuance: a resubmission under the same key and body answers the first 201 with Idempotency-
+    Replay: true and issues nothing again, without value and without connect_code.code, which the first
+    answer alone carries; the same key with another body is idempotency.digest_mismatch, and a
+    resubmission while the first attempt holds the key waits up to 5 s for its answer, then is
+    idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0).
 
     Args:
         x_request_id (str | Unset):
@@ -240,41 +256,49 @@ async def asyncio_detailed(
     """Issue a key under the issuer ceiling; the value appears exactly once, here.
 
      A person's web session key (<user>-web, through its capacity credential) issues their own key: send
-    name (<user>-<name>), role (contributor or reader) and connect_code, and expiry to end the key on a
-    date, under the rule for expiry below; the key names their user and holds submitter and reader, or
-    reader, on their root alone, any other field, requests_per_minute included, is request.validation
-    naming it, the date is changed or cleared afterwards only by the admin key role (POST
-    /v2/keys/{key}/limits; ADR-0079 d1, d5; since v0.7.3), and any other capacity is access.verb_ceiling
-    with details.reason session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). The session key's access
-    is read when the issuance runs, and a session key that carries a denial, on any workspace, issues
-    nothing: access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070
-    d2; since v0.7.3). Otherwise requires: admin key role; operator key role only for an operator key,
-    sent without tenant, or a tenant's first admin key, sent with tenant (step 0 of the issuance order).
-    tenant is a designed field (openapi-designed.yaml x-oml-designed-fields), refused with
-    request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9).
-    expiry is the instant from which the key authenticates nothing, later than the server's clock, and
-    requests_per_minute the key's own rate, from 1 to 1000000; either outside that is request.validation
-    naming it in details.field, and nothing is journalled. An admin key carries neither: role admin with
-    expiry or requests_per_minute is request.validation naming the member in details.field, with
-    details.reason admin_key (ADR-0079 d1, d4; since v0.7.3). Journalled as issued-without-value (show-
-    once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md
-    (Grant admissibility and refusal order), which also fixes grant admissibility, the default
-    workspace, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every
-    workspace, crew and tenant reference takes an id or a name, and the response carries ids under their
-    v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant's workarea_node_id,
-    a deny entry's subtree_node_id) is refused with request.validation naming its successor in
-    details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked
-    after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the
-    grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal
-    seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201
-    carries connect_code, shown once, in the value's place; an admin or operator role, used_by service
-    and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason.
-    The Idempotency-Key is claimed for the calling key before the issuance: a resubmission under the
-    same key and body answers the first 201 with Idempotency-Replay: true and issues nothing again,
-    without value and without connect_code.code, which the first answer alone carries; the same key with
-    another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the
-    key waits up to 5 s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer
-    4, d5; since v0.7.0).
+    name (<user>-<name>, refused naming /name for exactly <user>-web, <user>-review, <user>-curate or
+    <user>-admin and no other name), role (contributor, reader or submitter; any other role is
+    request.validation naming /role) and connect_code, and optionally grants, default_workspace,
+    guardrail_scope, expiry and requests_per_minute (ADR-0096 d1 to d3; since v0.8.5). Without grants
+    the key holds submitter and reader (contributor), reader (reader) or submitter (submitter) on the
+    root and below; with grants it holds exactly those sent, each grant role reader or submitter, each
+    inside the root, else 403 access.issuer_ceiling naming details.user, or for a grant role the key
+    role does not admit details.role, admissible and grant_index; a submitter key gets no universe
+    grant, a contributor or reader key the universe reader node grant. At most 16 grants of at most 16
+    denials each: more is request.validation with details.field /grants or /grants/<i>/deny and
+    details.reason too_many. user, used_by, crew, label, principal, profile and tenant stay
+    request.validation naming the field. The date and the rate are changed or cleared afterwards only by
+    an admin key (POST /v2/keys/{key}/limits; ADR-0079 d1, d5; ADR-0096 d2), and any other capacity is
+    access.verb_ceiling with details.reason session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). The
+    session key's access is read when the issuance runs, and a session key that carries a denial, on any
+    workspace, issues nothing: access.verb_ceiling with details.reason session_key_denied, nothing
+    journalled (ADR-0070 d2; since v0.7.3). Otherwise requires: admin key role; operator key role only
+    for an operator key, sent without tenant, or a tenant's first admin key, sent with tenant (step 0 of
+    the issuance order). tenant is a designed field (openapi-designed.yaml x-oml-designed-fields),
+    refused with request.validation until it is built, so an operator key issues operator keys only
+    (ADR-0039 d9). expiry is the instant from which the key authenticates nothing, later than the
+    server's clock, and requests_per_minute the key's own rate, from 1 to 1000000; either outside that
+    is request.validation naming it in details.field, and nothing is journalled. An admin key carries
+    neither: role admin with expiry or requests_per_minute is request.validation naming the member in
+    details.field, with details.reason admin_key (ADR-0079 d1, d4; since v0.7.3). Journalled as issued-
+    without-value (show-once ceremony). Validated in the issuance order declared in
+    docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant
+    admissibility, the default workspace, when the value is disclosed and what a part-way failure leaves
+    (ADR-0025 d2). Every workspace, crew and tenant reference takes an id or a name, and the response
+    carries ids under their v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a
+    grant's workarea_node_id, a deny entry's subtree_node_id) is refused with request.validation naming
+    its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409
+    name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server
+    takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its
+    grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no value is
+    minted, and the 201 carries connect_code, shown once, in the value's place; an admin or operator
+    role, used_by service and a deployment without oauth.issuer are refused with 422
+    oauth.connect_refused and details.reason. The Idempotency-Key is claimed for the calling key before
+    the issuance: a resubmission under the same key and body answers the first 201 with Idempotency-
+    Replay: true and issues nothing again, without value and without connect_code.code, which the first
+    answer alone carries; the same key with another body is idempotency.digest_mismatch, and a
+    resubmission while the first attempt holds the key waits up to 5 s for its answer, then is
+    idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0).
 
     Args:
         x_request_id (str | Unset):
@@ -316,41 +340,49 @@ async def asyncio(
     """Issue a key under the issuer ceiling; the value appears exactly once, here.
 
      A person's web session key (<user>-web, through its capacity credential) issues their own key: send
-    name (<user>-<name>), role (contributor or reader) and connect_code, and expiry to end the key on a
-    date, under the rule for expiry below; the key names their user and holds submitter and reader, or
-    reader, on their root alone, any other field, requests_per_minute included, is request.validation
-    naming it, the date is changed or cleared afterwards only by the admin key role (POST
-    /v2/keys/{key}/limits; ADR-0079 d1, d5; since v0.7.3), and any other capacity is access.verb_ceiling
-    with details.reason session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). The session key's access
-    is read when the issuance runs, and a session key that carries a denial, on any workspace, issues
-    nothing: access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070
-    d2; since v0.7.3). Otherwise requires: admin key role; operator key role only for an operator key,
-    sent without tenant, or a tenant's first admin key, sent with tenant (step 0 of the issuance order).
-    tenant is a designed field (openapi-designed.yaml x-oml-designed-fields), refused with
-    request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9).
-    expiry is the instant from which the key authenticates nothing, later than the server's clock, and
-    requests_per_minute the key's own rate, from 1 to 1000000; either outside that is request.validation
-    naming it in details.field, and nothing is journalled. An admin key carries neither: role admin with
-    expiry or requests_per_minute is request.validation naming the member in details.field, with
-    details.reason admin_key (ADR-0079 d1, d4; since v0.7.3). Journalled as issued-without-value (show-
-    once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md
-    (Grant admissibility and refusal order), which also fixes grant admissibility, the default
-    workspace, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every
-    workspace, crew and tenant reference takes an id or a name, and the response carries ids under their
-    v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant's workarea_node_id,
-    a deny entry's subtree_node_id) is refused with request.validation naming its successor in
-    details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked
-    after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the
-    grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal
-    seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201
-    carries connect_code, shown once, in the value's place; an admin or operator role, used_by service
-    and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason.
-    The Idempotency-Key is claimed for the calling key before the issuance: a resubmission under the
-    same key and body answers the first 201 with Idempotency-Replay: true and issues nothing again,
-    without value and without connect_code.code, which the first answer alone carries; the same key with
-    another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the
-    key waits up to 5 s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer
-    4, d5; since v0.7.0).
+    name (<user>-<name>, refused naming /name for exactly <user>-web, <user>-review, <user>-curate or
+    <user>-admin and no other name), role (contributor, reader or submitter; any other role is
+    request.validation naming /role) and connect_code, and optionally grants, default_workspace,
+    guardrail_scope, expiry and requests_per_minute (ADR-0096 d1 to d3; since v0.8.5). Without grants
+    the key holds submitter and reader (contributor), reader (reader) or submitter (submitter) on the
+    root and below; with grants it holds exactly those sent, each grant role reader or submitter, each
+    inside the root, else 403 access.issuer_ceiling naming details.user, or for a grant role the key
+    role does not admit details.role, admissible and grant_index; a submitter key gets no universe
+    grant, a contributor or reader key the universe reader node grant. At most 16 grants of at most 16
+    denials each: more is request.validation with details.field /grants or /grants/<i>/deny and
+    details.reason too_many. user, used_by, crew, label, principal, profile and tenant stay
+    request.validation naming the field. The date and the rate are changed or cleared afterwards only by
+    an admin key (POST /v2/keys/{key}/limits; ADR-0079 d1, d5; ADR-0096 d2), and any other capacity is
+    access.verb_ceiling with details.reason session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). The
+    session key's access is read when the issuance runs, and a session key that carries a denial, on any
+    workspace, issues nothing: access.verb_ceiling with details.reason session_key_denied, nothing
+    journalled (ADR-0070 d2; since v0.7.3). Otherwise requires: admin key role; operator key role only
+    for an operator key, sent without tenant, or a tenant's first admin key, sent with tenant (step 0 of
+    the issuance order). tenant is a designed field (openapi-designed.yaml x-oml-designed-fields),
+    refused with request.validation until it is built, so an operator key issues operator keys only
+    (ADR-0039 d9). expiry is the instant from which the key authenticates nothing, later than the
+    server's clock, and requests_per_minute the key's own rate, from 1 to 1000000; either outside that
+    is request.validation naming it in details.field, and nothing is journalled. An admin key carries
+    neither: role admin with expiry or requests_per_minute is request.validation naming the member in
+    details.field, with details.reason admin_key (ADR-0079 d1, d4; since v0.7.3). Journalled as issued-
+    without-value (show-once ceremony). Validated in the issuance order declared in
+    docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant
+    admissibility, the default workspace, when the value is disclosed and what a part-way failure leaves
+    (ADR-0025 d2). Every workspace, crew and tenant reference takes an id or a name, and the response
+    carries ids under their v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a
+    grant's workarea_node_id, a deny entry's subtree_node_id) is refused with request.validation naming
+    its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409
+    name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server
+    takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its
+    grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no value is
+    minted, and the 201 carries connect_code, shown once, in the value's place; an admin or operator
+    role, used_by service and a deployment without oauth.issuer are refused with 422
+    oauth.connect_refused and details.reason. The Idempotency-Key is claimed for the calling key before
+    the issuance: a resubmission under the same key and body answers the first 201 with Idempotency-
+    Replay: true and issues nothing again, without value and without connect_code.code, which the first
+    answer alone carries; the same key with another body is idempotency.digest_mismatch, and a
+    resubmission while the first attempt holds the key waits up to 5 s for its answer, then is
+    idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0).
 
     Args:
         x_request_id (str | Unset):

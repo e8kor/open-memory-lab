@@ -18,6 +18,7 @@ class WebUserUsage:
         memories (int | Unset):
         text_bytes (int | Unset): UTF-8 bytes of every version the account wrote (ADR-0071 d2). Since v0.7.3.
         writes (int | Unset): Versions submitted this UTC month (ADR-0071 d2). Since v0.7.3.
+        recalls (int | Unset): Recalls this UTC month, a count with no limit (ADR-0096 d9). Since v0.8.5.
         keys (int | Unset):
         connections (int | Unset):
         workspaces (int | Unset): Live workspaces under the account's root, the root excluded (ADR-0095 d4). Since
@@ -27,6 +28,7 @@ class WebUserUsage:
     memories: int | Unset = UNSET
     text_bytes: int | Unset = UNSET
     writes: int | Unset = UNSET
+    recalls: int | Unset = UNSET
     keys: int | Unset = UNSET
     connections: int | Unset = UNSET
     workspaces: int | Unset = UNSET
@@ -38,6 +40,8 @@ class WebUserUsage:
         text_bytes = self.text_bytes
 
         writes = self.writes
+
+        recalls = self.recalls
 
         keys = self.keys
 
@@ -54,6 +58,8 @@ class WebUserUsage:
             field_dict["text_bytes"] = text_bytes
         if writes is not UNSET:
             field_dict["writes"] = writes
+        if recalls is not UNSET:
+            field_dict["recalls"] = recalls
         if keys is not UNSET:
             field_dict["keys"] = keys
         if connections is not UNSET:
@@ -72,6 +78,8 @@ class WebUserUsage:
 
         writes = d.pop("writes", UNSET)
 
+        recalls = d.pop("recalls", UNSET)
+
         keys = d.pop("keys", UNSET)
 
         connections = d.pop("connections", UNSET)
@@ -82,6 +90,7 @@ class WebUserUsage:
             memories=memories,
             text_bytes=text_bytes,
             writes=writes,
+            recalls=recalls,
             keys=keys,
             connections=connections,
             workspaces=workspaces,

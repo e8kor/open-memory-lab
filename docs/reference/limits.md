@@ -34,6 +34,8 @@ Every number has a unit and a source. Where no figure exists, the page says so i
 | Workspaces below an account's root | unlimited in the `default` profile; 100 on the public server | `quota.workspaces`, or a profile's | `429 limit.quota`, `details.quota: workspaces` | An admin raises the limit; a workspace is never deleted ([ADR-0095](../adr/ADR-0095-an-agent-creates-its-own-child-workspaces-writes-guardrails-and-proposes-status-and-brief-changes-through-oml-write-and-every-verdict-and-setting-stays-with-people.md) d4) |
 | Live proposals | one per workspace and target status, one per claim and brief | build rule | `409 proposal.pending`, naming the live one | A different identity ratifies the live one ([ADR-0095](../adr/ADR-0095-an-agent-creates-its-own-child-workspaces-writes-guardrails-and-proposes-status-and-brief-changes-through-oml-write-and-every-verdict-and-setting-stays-with-people.md) d5, d6) |
 | Workspace import bundle size | `uploads.max_bytes`, 1 GiB by default | `uploads.max_bytes` | `413 upload.too_large` | Split the export, or raise the setting |
+| Grants a person's web session issues on one key | 16 grants, each with at most 16 denials; chosen, not measured; a bearer admin key keeps no cap | build constant | `request.validation`, `details.reason: too_many` | Issue the key from the command line with an admin key |
+| Imports one page of `GET /v2/imports` serves | 1 to 50; default 50 | build constant | `request.validation`, `details.field: limit` | Page with the cursor |
 
 Settings are on the [settings page](../operations/configuration.md). The request and error shapes are in the [HTTP API](../api/http-api.md) and [error codes](../api/errors.md).
 
@@ -52,6 +54,9 @@ From the maintainers' own runs on one 8-vCPU host with PostgreSQL:
 
 ## Not measured yet
 
+- A person's key issuance at 16 grants (ADR-0096 d1): the issuer ceiling, a node lookup and a deny-containment check per grant in one transaction, bounded by the cap and not timed.
+- The imports listing (`GET /v2/imports`, ADR-0096 d6): one range per key of the person on the index `imports_importer_created` (migration 0068), growing with the person's keys, not the tenant's imports.
+- The brief proposals read (`GET /v2/review/briefs` and the `briefs` count, ADR-0096 d7): one read of the pending brief edges on the reviewer key's nodes, then per listed edge its claim, its proposer, its workspace and the person check; the count's one read does not grow with the workspaces (measured: 10 store calls at 6 and at 48).
 - 1,000,000 memories.
 - Cold caches and an idle host.
 - Review throughput.

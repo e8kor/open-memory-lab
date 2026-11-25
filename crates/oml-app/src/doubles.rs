@@ -3879,6 +3879,43 @@ impl JournalStore for MemStore {
         }))
     }
 
+    async fn imports_of_keys(
+        &self,
+        tenant_id: Uuid,
+        key_ids: &[Uuid],
+        state_named: Option<oml_domain::import::ImportState>,
+        before: Option<(&EventTime, Uuid)>,
+        limit: usize,
+    ) -> Result<Vec<crate::types::ImportRecord>, StoreError> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = state.lock().expect("tenant lock");
+        let before = before.map(|(at, id)| (at.as_str().to_owned(), id));
+        let mut imports: Vec<crate::types::ImportRecord> = state
+            .imports
+            .values()
+            .filter(|i| {
+                key_ids.contains(&i.importer_key_id)
+                    && state_named.is_none_or(|s| i.state == s)
+                    && before
+                        .as_ref()
+                        .is_none_or(|b| (i.created_at.as_str().to_owned(), i.import_id) < *b)
+            })
+            .cloned()
+            .collect();
+        imports.sort_by_key(|i| std::cmp::Reverse((i.created_at.as_str().to_owned(), i.import_id)));
+        imports.truncate(limit);
+        for import in &mut imports {
+            import.position = state
+                .import_versions
+                .iter()
+                .filter(|(id, _)| *id == import.import_id)
+                .count() as u64;
+        }
+        Ok(imports)
+    }
+
     async fn import_stats(
         &self,
         tenant_id: Uuid,
@@ -5837,6 +5874,38 @@ impl JournalStore for MemStore {
             .cloned()
             .collect();
         edges.sort_by_key(|e| std::cmp::Reverse((e.created_at.as_str().to_owned(), e.edge_id)));
+        Ok(edges)
+    }
+
+    async fn pending_brief_edges(
+        &self,
+        tenant_id: Uuid,
+        workspace_ids: &[Uuid],
+        ratifier: (Uuid, &str),
+        after: Option<(&EventTime, Uuid)>,
+        limit: usize,
+    ) -> Result<Vec<BriefEdgeRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let after = after.map(|(at, id)| (at.as_str().to_owned(), id));
+        let mut edges: Vec<BriefEdgeRecord> = state
+            .brief_edges
+            .values()
+            .filter(|e| {
+                e.state == EdgeState::Pending
+                    && workspace_ids.contains(&e.workspace_id)
+                    && e.proposer_key_id != ratifier.0
+                    && e.proposer_principal != ratifier.1
+                    && after
+                        .as_ref()
+                        .is_none_or(|a| (e.created_at.as_str().to_owned(), e.edge_id) > *a)
+            })
+            .cloned()
+            .collect();
+        edges.sort_by_key(|e| (e.created_at.as_str().to_owned(), e.edge_id));
+        edges.truncate(limit);
         Ok(edges)
     }
 

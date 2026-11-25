@@ -267,12 +267,14 @@ impl Session {
     #[must_use]
     pub fn badge(&self, scope: Scope) -> Todo {
         match scope {
+            // To review and the brief proposals (ADR-0096 d7).
             Scope::Personal { .. } => self.todo.map_or(Todo::Unread, |t| Todo::Counted {
-                n: t.review,
+                n: t.review + t.briefs,
                 truncated: t.truncated,
             }),
+            // The guardrail-loosening alerts (ADR-0096 d7).
             Scope::Administration => self.admin_todo.map_or(Todo::Unread, |t| Todo::Counted {
-                n: 0,
+                n: t.alerts,
                 truncated: t.truncated,
             }),
         }

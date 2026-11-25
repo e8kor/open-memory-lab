@@ -186,3 +186,4 @@ branch that reserved later renumbers.
 | migration | 0065 | `main` |  | session key account | used |
 | migration | 0066 | `main` |  | contributor and submitter | used |
 | migration | 0067 | `bulk085/mcp` |  | workspaces meter (ADR-0095 d4) | reserved |
+| migration | 0068 | `bulk085/console` |  | imports listed by importing key, newest first | reserved |

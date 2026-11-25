@@ -363,6 +363,14 @@ fn kinds_nav(
             n(counts.map(|c| c.get(kind.as_str()).copied().unwrap_or(0)))
         );
     }
+    // The admin page's Fix tab while the Releases view is unbuilt
+    // (ADR-0096 d5).
+    if admin {
+        let _ = write!(
+            out,
+            r#"<a href="{page}?workspace={encoded}&amp;view=fix">Fix</a>"#
+        );
+    }
     out.push_str("</nav>");
     out.push_str(
         r#"<p class="desc">Counts are approved items, one per claim, on this workspace alone.</p>"#,
@@ -1013,6 +1021,10 @@ pub async fn admin_page(
         Ok(fields) => fields,
         Err(message) => return acts::invalid(&message, &calls),
     };
+    // The Fix tab while the Releases view is unbuilt (ADR-0096 d5).
+    if fields.given("view") == Some("fix") {
+        return crate::fix::tab(&web, &session, &calls, &fields).await;
+    }
     let next = uri
         .path_and_query()
         .map_or(ADMIN_WORKSPACE_PATH, |pq| pq.as_str());

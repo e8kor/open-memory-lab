@@ -1223,6 +1223,18 @@ pub trait JournalStore: Retriever + Send + Sync {
         import_id: Uuid,
     ) -> impl Future<Output = Result<Option<crate::types::ImportRecord>, StoreError>> + Send;
 
+    /// The imports `key_ids` ran, newest first by `created_at`, then by id,
+    /// strictly before `before`, in `state` where one is named, at most
+    /// `limit`, each with its position (ADR-0096 d6).
+    fn imports_of_keys(
+        &self,
+        tenant_id: Uuid,
+        key_ids: &[Uuid],
+        state: Option<oml_domain::import::ImportState>,
+        before: Option<(&EventTime, Uuid)>,
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<crate::types::ImportRecord>, StoreError>> + Send;
+
     /// The tenant's imports by state, how many used `allow_older`, how many
     /// are `running` since before `stopped_before`, and the versions with an
     /// import's idempotency key and no provenance (ADR-0084 d15, I11, I14).
@@ -2065,6 +2077,20 @@ pub trait JournalStore: Retriever + Send + Sync {
         &self,
         tenant_id: Uuid,
         workspace_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<BriefEdgeRecord>, StoreError>> + Send;
+
+    /// The tenant's pending brief edges into any of `workspace_ids` that
+    /// `ratifier` (a key id and its principal) did not propose, by key or
+    /// by principal, oldest first by `created_at`, then by edge id,
+    /// strictly after `after`, at most `limit` (ADR-0096 d7): one read for
+    /// the To do group and its count, whatever the number of workspaces.
+    fn pending_brief_edges(
+        &self,
+        tenant_id: Uuid,
+        workspace_ids: &[Uuid],
+        ratifier: (Uuid, &str),
+        after: Option<(&EventTime, Uuid)>,
+        limit: usize,
     ) -> impl Future<Output = Result<Vec<BriefEdgeRecord>, StoreError>> + Send;
 
     fn ratified_term_edges(

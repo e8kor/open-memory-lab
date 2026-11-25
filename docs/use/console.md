@@ -31,6 +31,35 @@ its own inverted bar.
 With nothing to judge, To do says "Nothing waits for this account." What to check before
 approving is in [review held memories](../guides/reviewing.md#check-the-memory).
 
+## Brief proposals to ratify
+
+A memory another key proposed for a workspace's brief waits in To do's **Brief proposals to
+ratify**, after To review, when `<user>-review` may ratify it. A proposal by the review key
+itself, or under its principal, never appears there. **Ratify** asks for confirmation first, then
+the memory joins the brief. A proposal by another key of the same person is marked **same user**
+([ADR-0096](../adr/ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md) d7).
+
+## Build a key
+
+1. **Open Keys, then New key.** The builder at `/web/keys/new` starts from a shape: the whole
+   root, one workspace, read only, write only, or a connector for Claude.
+2. **Shape it.** Name the key after the `<user>-` prefix and pick its role: contributor (recall
+   and write), reader (recall only) or submitter (write without recall). Each grant row names a
+   workspace in the root, reader or submitter, the workspace and below or the workspace only, and
+   the workspaces below it to leave out. **Add a grant** adds a row. A date works through that day
+   in every time zone, and a rate caps the key's requests a minute.
+3. **Review it.** The review restates the access in words, marks the root's tree and shows the
+   exact request. A refusal the page can decide, such as a session key's name or a grant outside
+   the root, is listed at the top with its code and a link to the field.
+4. **Issue key.** The value, or the connect code for a connector, is shown once. Only an admin
+   changes the key's date or rate afterwards.
+
+## Follow an import
+
+An import runs from the command line. `/web/workspaces/import` shows the `oml workspaces import`
+line for a target and a source key's fingerprint, and lists every import a key of the person ran,
+with its state, the versions recorded and its counts.
+
 ## Memories: Approved and Submitted
 
 The **Memories** page is one cockpit with two views, two links under its heading that keep the

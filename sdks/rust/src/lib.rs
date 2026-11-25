@@ -1072,6 +1072,10 @@ pub struct Usage {
     pub text_bytes: Option<u64>,
     #[serde(default)]
     pub writes: Option<u64>,
+    /// This month's recalls, a count with no limit; absent from an API
+    /// before v0.8.5 (ADR-0096 d9).
+    #[serde(default)]
+    pub recalls: Option<u64>,
     pub keys: u64,
     pub connections: u64,
     /// Absent from an API before the `workspaces` meter (ADR-0095 d4).
@@ -1112,6 +1116,14 @@ pub struct Person {
     pub under_quotas: bool,
     pub usage: Option<Usage>,
     pub quotas: Option<Limits>,
+    /// The account's quota profile, `None` for none or from an API before
+    /// v0.8.5 (ADR-0096 d9).
+    #[serde(default)]
+    pub profile: Option<String>,
+    /// The UTC month the usage counts, `YYYY-MM`; absent from an API
+    /// before v0.8.5 (ADR-0096 d9).
+    #[serde(default)]
+    pub period: Option<String>,
     pub deletion_requested_at: Option<String>,
     #[serde(default)]
     pub start: Option<StartStatus>,
@@ -1226,6 +1238,12 @@ pub struct WebUser {
     pub under_quotas: bool,
     pub usage: Usage,
     pub quotas: Limits,
+    /// The quota profile and the UTC month; absent from an API before
+    /// v0.8.5 (ADR-0096 d9).
+    #[serde(default)]
+    pub profile: Option<String>,
+    #[serde(default)]
+    pub period: Option<String>,
     /// Each live admin key whose row names the person's root, a row no verb
     /// makes, which refuses their disable (ADR-0068 d8, d11); empty from a
     /// server before v0.7.1.
@@ -1460,22 +1478,187 @@ pub struct TodoCounts {
     /// The To review group: the held rows the person's reviewer key may
     /// judge.
     pub review: u64,
+    /// The Brief proposals group; 0 from an API before v0.8.5 (ADR-0096
+    /// d7).
+    #[serde(default)]
+    pub briefs: u64,
     /// Whether a count passed 1,000.
     pub truncated: bool,
 }
 
-/// `GET /v2/admin/todo/counts`: no group is built yet (ADR-0083 d14).
+/// `GET /v2/admin/todo/counts`: the guardrail-loosening alerts, 0 from an
+/// API before v0.8.5 (ADR-0096 d7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub struct AdminTodoCounts {
+    #[serde(default)]
+    pub alerts: u64,
     pub truncated: bool,
 }
 
-/// A grant as a listed key carries it: the role and the workspace's path.
+/// A grant as a listed key carries it: the role, the workspace's path and
+/// its coverage, read as `subtree` from an API before v0.8.5 (ADR-0096 d8).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct ListedGrant {
     pub role: String,
     pub workspace_id: String,
     pub path: String,
+    #[serde(default = "subtree")]
+    pub covers: String,
+}
+
+fn subtree() -> String {
+    "subtree".to_owned()
+}
+
+/// One grant of a key's full record (openapi.yaml `Grant`).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct KeyGrant {
+    pub workspace_node_id: String,
+    pub role: String,
+    #[serde(default = "subtree")]
+    pub covers: String,
+}
+
+/// One denial in force on a key (openapi.yaml `Denial`).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct KeyDenial {
+    pub denial_id: String,
+    pub workspace_node_id: String,
+}
+
+/// One connection of a connector key, as the one-key read lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct KeyConnection {
+    pub state: String,
+    #[serde(default)]
+    pub client_name: Option<String>,
+}
+
+/// `GET /v2/keys/{key}`: one key's full record, never its value (ADR-0096
+/// d4).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct KeyRecord {
+    pub key_id: String,
+    pub credential: String,
+    pub name: Option<String>,
+    pub role: String,
+    pub principal: String,
+    #[serde(default)]
+    pub crew_id: Option<String>,
+    #[serde(default)]
+    pub user: Option<MaybeNamed>,
+    #[serde(default)]
+    pub default_workspace_id: Option<String>,
+    #[serde(default)]
+    pub used_by: Option<String>,
+    pub guardrail_scope: String,
+    #[serde(default)]
+    pub profile: Option<String>,
+    #[serde(default)]
+    pub expiry: Option<String>,
+    #[serde(default)]
+    pub expired: bool,
+    #[serde(default)]
+    pub requests_per_minute: Option<u32>,
+    #[serde(default)]
+    pub revoked_at: Option<String>,
+    pub grants: Vec<KeyGrant>,
+    #[serde(default)]
+    pub denials: Vec<KeyDenial>,
+    #[serde(default)]
+    pub connections: Vec<KeyConnection>,
+}
+
+/// `POST /v2/keys/{key}/limits`: the key's limits as they stand.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct KeyLimits {
+    pub key_id: String,
+    pub name: Option<String>,
+    pub expiry: Option<String>,
+    pub expired: bool,
+    pub requests_per_minute: Option<u32>,
+}
+
+/// An `{id, name}` reference whose name may be null: a key that predates
+/// names.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct MaybeNamed {
+    pub id: String,
+    pub name: Option<String>,
+}
+
+/// One import (openapi.yaml `Import`), with the importing key where a
+/// listing serves it (ADR-0096 d6).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Import {
+    pub import_id: String,
+    pub state: String,
+    pub target_workspace_id: String,
+    #[serde(default)]
+    pub position: u64,
+    #[serde(default)]
+    pub counts: std::collections::BTreeMap<String, u64>,
+    #[serde(default)]
+    pub refusals: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub ended_at: Option<String>,
+    #[serde(default)]
+    pub key: Option<MaybeNamed>,
+}
+
+#[derive(Deserialize)]
+struct ImportAnswer {
+    import: Import,
+}
+
+/// `GET /v2/imports`: a page of imports, newest first (ADR-0096 d6).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ImportPage {
+    pub items: Vec<Import>,
+    pub next_cursor: Option<String>,
+}
+
+/// One pending brief edge a person's reviewer key may ratify (ADR-0096 d7).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct BriefProposal {
+    pub edge_id: String,
+    pub workspace: MaybeNamed,
+    pub artifact_id: String,
+    pub claim_key: Option<String>,
+    pub title: Option<String>,
+    pub proposed_by: MaybeNamed,
+    pub same_user: bool,
+    pub proposed_at: String,
+}
+
+/// `GET /v2/review/briefs`: a page of brief proposals, oldest first.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct BriefProposalPage {
+    pub items: Vec<BriefProposal>,
+    pub next_cursor: Option<String>,
+}
+
+/// One admin fix as the admin's own listing serves it (ADR-0089 d15).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AdminFix {
+    pub fix_id: String,
+    pub act: String,
+    pub target_artifact_id: String,
+    pub workspace_id: String,
+    pub claim_key: String,
+    pub reason: String,
+    pub loosens_guardrail: bool,
+    pub state: String,
+    pub fixed_at: String,
+    #[serde(default)]
+    pub admin_person: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct Items<T> {
+    items: Vec<T>,
 }
 
 /// One key of `GET /v2/keys` (openapi.yaml `ListedKey`).
@@ -2480,6 +2663,205 @@ impl<T: Transport> Client<T> {
             .await?;
         issued.replayed = replayed;
         Ok(issued)
+    }
+
+    /// `POST /v2/keys` with a whole body, as the console's key builder
+    /// sends it: grants, default workspace, guardrail scope, expiry and
+    /// rate beside the name, role and kind (ADR-0096 d1).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn issue_key_with(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        body: &Value,
+    ) -> Result<KeyIssued, Error> {
+        let (mut issued, replayed): (KeyIssued, bool) = self
+            .exchange(
+                Method::POST,
+                Some(call),
+                "/v2/keys".to_owned(),
+                Some(idempotency_key),
+                Some(body),
+            )
+            .await?;
+        issued.replayed = replayed;
+        Ok(issued)
+    }
+
+    /// `GET /v2/keys/{key}`: one key's full record (ADR-0096 d4).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn get_key(&self, call: &Call<'_>, key: &str) -> Result<KeyRecord, Error> {
+        self.get(Some(call), format!("/v2/keys/{}", encode(key)))
+            .await
+    }
+
+    /// `POST /v2/keys/{key}/limits`: `body` sets or clears `expiry` and
+    /// `requests_per_minute` (ADR-0079 d5; ADR-0096 d4).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn set_key_limits(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        key: &str,
+        body: &Value,
+    ) -> Result<KeyLimits, Error> {
+        self.post(
+            call,
+            format!("/v2/keys/{}/limits", encode(key)),
+            idempotency_key,
+            body,
+        )
+        .await
+    }
+
+    /// `POST /v2/keys/{key}/denials` on `workspace` with a `reason`
+    /// (ADR-0096 d4).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn deny_key(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        key: &str,
+        workspace: &str,
+        reason: &str,
+    ) -> Result<Denial, Error> {
+        self.post(
+            call,
+            format!("/v2/keys/{}/denials", encode(key)),
+            idempotency_key,
+            &serde_json::json!({ "workspace": workspace, "reason": reason }),
+        )
+        .await
+    }
+
+    /// `GET /v2/imports`: a page of imports, newest first; as a person's
+    /// web session every key of the person's (ADR-0096 d6).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn list_imports(
+        &self,
+        call: &Call<'_>,
+        state: Option<&str>,
+        cursor: Option<&str>,
+    ) -> Result<ImportPage, Error> {
+        let mut query = Vec::new();
+        if let Some(state) = state {
+            query.push(format!("state={}", encode(state)));
+        }
+        if let Some(cursor) = cursor {
+            query.push(format!("cursor={}", encode(cursor)));
+        }
+        let path = if query.is_empty() {
+            "/v2/imports".to_owned()
+        } else {
+            format!("/v2/imports?{}", query.join("&"))
+        };
+        self.get(Some(call), path).await
+    }
+
+    /// `GET /v2/imports/{id}`.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn get_import(&self, call: &Call<'_>, id: &str) -> Result<Import, Error> {
+        let answer: ImportAnswer = self
+            .get(Some(call), format!("/v2/imports/{}", encode(id)))
+            .await?;
+        Ok(answer.import)
+    }
+
+    /// `GET /v2/review/briefs`: the pending brief edges a person's review
+    /// session key may ratify (ADR-0096 d7).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn brief_proposals(
+        &self,
+        call: &Call<'_>,
+        workspace: Option<&str>,
+    ) -> Result<BriefProposalPage, Error> {
+        let path = match workspace {
+            Some(w) => format!("/v2/review/briefs?workspace={}", encode(w)),
+            None => "/v2/review/briefs".to_owned(),
+        };
+        self.get(Some(call), path).await
+    }
+
+    /// `POST /v2/edges/{id}/ratify`.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn ratify_edge(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        edge_id: &str,
+    ) -> Result<Value, Error> {
+        self.post(
+            call,
+            format!("/v2/edges/{}/ratify", encode(edge_id)),
+            idempotency_key,
+            &serde_json::json!({}),
+        )
+        .await
+    }
+
+    /// `POST /v2/edges` with `kind: brief`: proposes `artifact_id` for the
+    /// brief of `workspace` (ADR-0046 d7; ADR-0095 d6).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn propose_brief(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        artifact_id: &str,
+        workspace: &str,
+    ) -> Result<Value, Error> {
+        self.post(
+            call,
+            "/v2/edges".to_owned(),
+            idempotency_key,
+            &serde_json::json!({
+                "kind": "brief",
+                "from_artifact_id": artifact_id,
+                "to_workspace_id": workspace,
+            }),
+        )
+        .await
+    }
+
+    /// `GET /v2/admin/fixes`: the tenant's unconfirmed fixes (ADR-0089 d15).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn admin_fixes(&self, call: &Call<'_>) -> Result<Vec<AdminFix>, Error> {
+        let answer: Items<AdminFix> = self.get(Some(call), "/v2/admin/fixes".to_owned()).await?;
+        Ok(answer.items)
+    }
+
+    /// `POST /v2/admin/fixes`: `body` is `{act, target, reason, body?}`
+    /// (ADR-0089 d15; ADR-0096 d5).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn admin_fix(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        body: &Value,
+    ) -> Result<Value, Error> {
+        self.post(call, "/v2/admin/fixes".to_owned(), idempotency_key, body)
+            .await
     }
 
     /// `POST /v2/keys/{key}/connect-codes`: a new code for a connector key,

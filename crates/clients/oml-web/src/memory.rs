@@ -438,7 +438,12 @@ pub async fn admin_page(
         .map_or("", |u| u.name.as_str())
         .to_owned();
     let mut body = format!(
-        r#"<p class="label">Memories</p><h1>One memory</h1><p><a href="{ADMIN_MEMORIES_PATH}">Back to the list</a></p>{}<h2>Replace it</h2><p class="desc">Proposed under <code>{}</code> and held until someone else reviews it: a reviewer key cannot judge its own version.</p>"#,
+        r#"<p class="label">Memories</p><h1>One memory</h1><p><a href="{ADMIN_MEMORIES_PATH}">Back to the list</a> · <a href="{}?workspace={}&amp;view=fix&amp;target={}">Fix this version</a></p>{}<h2>Replace it</h2><p class="desc">Proposed under <code>{}</code> and held until someone else reviews it: a reviewer key cannot judge its own version.</p>"#,
+        // The Fix tab takes its target from this read, made inside the
+        // open investigation (ADR-0096 d5).
+        crate::workspace::ADMIN_WORKSPACE_PATH,
+        attr(&encode(&roots.reference(&read.workspace_path))),
+        attr(&encode(&read.artifact_id)),
         attribution(
             &read,
             was_version,

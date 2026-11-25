@@ -10,11 +10,14 @@
 mod acts;
 pub mod admin;
 pub mod atlas;
+pub mod builder;
 mod card;
 pub mod catalog;
 pub mod config;
 mod diff;
 pub mod doctor;
+pub mod fix;
+pub mod imports;
 pub mod investigation;
 pub mod keys;
 pub mod memories;
@@ -75,8 +78,10 @@ pub const PAGES: &[(&str, &str)] = &[
     ("GET", workspace::RETIRE_PATH),
     ("POST", workspace::RETIRE_PATH),
     ("GET", workspace::ADMIN_WORKSPACE_PATH),
+    ("POST", fix::FIXES_PATH),
     ("GET", USER_WORKSPACES_PATH),
     ("POST", USER_WORKSPACES_PATH),
+    ("GET", imports::IMPORT_PATH),
     ("GET", ADMIN_WORKSPACES_PATH),
     ("POST", ADMIN_WORKSPACES_PATH),
     ("GET", USER_MEMORIES_PATH),
@@ -95,6 +100,7 @@ pub const PAGES: &[(&str, &str)] = &[
     ("GET", ADMIN_TODO_PATH),
     ("GET", USER_KEYS_PATH),
     ("POST", USER_KEYS_PATH),
+    ("GET", keys::NEW_KEY_PATH),
     ("GET", ADMIN_KEYS_PATH),
     ("POST", ADMIN_KEYS_PATH),
     ("GET", USER_MEMORY_PATH),
@@ -360,6 +366,7 @@ pub fn router(web: Web) -> Router {
             get(workspace::retire_page).post(workspace::retire_act),
         )
         .route(workspace::ADMIN_WORKSPACE_PATH, get(workspace::admin_page))
+        .route(fix::FIXES_PATH, axum::routing::post(fix::act))
         .route(
             USER_WORKSPACES_PATH,
             get(workspaces::user_page).post(workspaces::user_act),
@@ -370,6 +377,7 @@ pub fn router(web: Web) -> Router {
         )
         .route(USER_MEMORIES_PATH, get(memories::user_list))
         .route(USER_CATALOG_PATH, get(catalog::page))
+        .route(imports::IMPORT_PATH, get(imports::page))
         .route(ADMIN_MEMORIES_PATH, get(memories::admin_list))
         .route(USER_ATLAS_PATH, get(memories::user_atlas))
         .route(ADMIN_ATLAS_PATH, get(memories::admin_atlas))
@@ -377,6 +385,7 @@ pub fn router(web: Web) -> Router {
         .route(TODO_JUDGE_PATH, get(todo::judge_page).post(todo::judge_act))
         .route(ADMIN_TODO_PATH, get(todo::admin_page))
         .route(USER_KEYS_PATH, get(keys::user_page).post(keys::user_act))
+        .route(keys::NEW_KEY_PATH, get(builder::page))
         .route(ADMIN_KEYS_PATH, get(keys::admin_page).post(keys::admin_act))
         .route(
             USER_MEMORY_PATH,

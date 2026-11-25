@@ -1005,15 +1005,19 @@ async fn the_todo_counts_reads_cost_the_same_store_calls_at_6_and_48_workspaces(
         )
         .await;
         assert_eq!(admin.status, StatusCode::OK, "{}", admin.body);
-        assert_eq!(admin.body, serde_json::json!({"truncated": false}));
+        assert_eq!(
+            admin.body,
+            serde_json::json!({"alerts": 0, "truncated": false})
+        );
         // Measured 2026-11-19 over the in-memory store: the gate's call and
         // the use case's own resolution of the admin key, which reads its
         // access afresh as every later resolution in a request does
-        // (ADR-0070 d8, #297); no group of it reads anything (d14).
+        // (ADR-0070 d8, #297); and since v0.8.5 the fixes read the alerts
+        // are counted from (ADR-0096 d7), one call whatever their number.
         assert_eq!(
             admin.store_calls(),
-            2,
-            "the gate's call and the key's resolution: {}",
+            3,
+            "the gate's call, the key's resolution and the fixes read: {}",
             admin.line
         );
     }
@@ -1236,4 +1240,83 @@ async fn the_catalog_pages_read_costs_the_gate_the_listing_and_on_the_first_page
     // other listings here pay too.
     assert_eq!(first.store_calls(), 11, "{}", first.line);
     assert_eq!(after.store_calls(), 10, "{}", after.line);
+}
+
+/// The v0.8.5 console round's reads (ADR-0096 Consequences, "Budget"),
+/// each a primary call of a new or changed page, measured over the
+/// in-memory store and printed so the counts the report states are the
+/// ones measured: the key builder's tree page as `<user>-web` (its form
+/// and review `GET`s make `whoami` and this, two rounds); the admin
+/// one-key page's `GET /v2/keys/{key}` as `<user>-admin`, which runs three
+/// use cases (d4); the import list and one import as `<user>-web` (d6);
+/// the To do brief group's `GET /v2/review/briefs` as `<user>-review`
+/// (d7); and `whoami` with the person block, whose profile, month and
+/// recalls ride on reads it already made (d9). The counts read's store
+/// calls grow by the one brief read whatever the workspaces' number, which
+/// `the_todo_counts_reads_cost_the_same_store_calls_at_6_and_48_workspaces`
+/// holds.
+#[tokio::test]
+async fn the_v085_console_pages_reads_cost_their_measured_store_calls() {
+    let rig = rig().await;
+    let tree = get(
+        &rig.router,
+        "/v2/workspaces/alice/tree?limit=200",
+        &web(&rig.alice, "web"),
+        true,
+    )
+    .await;
+    assert_eq!(tree.status, StatusCode::OK, "{}", tree.body);
+    let one_key = get(
+        &rig.router,
+        "/v2/keys/bob-web",
+        &web(&rig.alice, "admin"),
+        true,
+    )
+    .await;
+    assert_eq!(one_key.status, StatusCode::OK, "{}", one_key.body);
+    let imports = get(&rig.router, "/v2/imports", &web(&rig.alice, "web"), true).await;
+    assert_eq!(imports.status, StatusCode::OK, "{}", imports.body);
+    let import = get(
+        &rig.router,
+        "/v2/imports/00000000-0000-4000-8000-000000000001",
+        &web(&rig.alice, "web"),
+        true,
+    )
+    .await;
+    assert_eq!(import.status, StatusCode::NOT_FOUND, "{}", import.body);
+    let briefs = get(
+        &rig.router,
+        "/v2/review/briefs",
+        &web(&rig.alice, "review"),
+        true,
+    )
+    .await;
+    assert_eq!(briefs.status, StatusCode::OK, "{}", briefs.body);
+    let person = get(&rig.router, "/v2/whoami", &web(&rig.alice, "web"), true).await;
+    assert_eq!(person.status, StatusCode::OK, "{}", person.body);
+    assert!(
+        person.body["person"]["period"].is_string(),
+        "{}",
+        person.body
+    );
+    // Measured 2026-11-25: the tree page 8, as ADR-0096 d1 budgets it; the
+    // one-key read 12, its three use cases' resolutions and reads (d4); the
+    // import list 3 and one import 2 (d6); the brief group 5, the gate's
+    // call, the key's resolution, its reviewer nodes and the one pending
+    // read (d7); whoami with the person block 6, as before the round (d9).
+    println!(
+        "store calls: builder tree {}, one key {}, imports {}, one import {}, briefs {}, whoami with person {}",
+        tree.store_calls(),
+        one_key.store_calls(),
+        imports.store_calls(),
+        import.store_calls(),
+        briefs.store_calls(),
+        person.store_calls()
+    );
+    assert_eq!(tree.store_calls(), 8, "{}", tree.line);
+    assert_eq!(one_key.store_calls(), 12, "{}", one_key.line);
+    assert_eq!(imports.store_calls(), 3, "{}", imports.line);
+    assert_eq!(import.store_calls(), 2, "{}", import.line);
+    assert_eq!(briefs.store_calls(), 5, "{}", briefs.line);
+    assert_eq!(person.store_calls(), 6, "{}", person.line);
 }

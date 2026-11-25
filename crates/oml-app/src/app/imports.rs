@@ -31,9 +31,9 @@ use super::busy::BusyGuard;
 use super::{App, BULK_CHAIN_RETRIES, Caller, in_progress_root_in};
 use crate::ports::{Clock, IdGen, JournalStore, MetadataFold, Scanner, Signer, StoreError};
 use crate::types::{
-    AppError, Bearer, ImportBegin, ImportEnded, ImportLedgerEntry, ImportRecord, ImportRefusal,
-    ImportTargetView, ImportedVersion, ImportedWrite, KindFields, OnSimilar, ProposeClaimEdge,
-    SubmitRequest, SubmitVerb, SupersedeRequest, UploadSession,
+    AppError, Bearer, ImportBegin, ImportEnded, ImportLedgerEntry, ImportListing, ImportRecord,
+    ImportRefusal, ImportTargetView, ImportedVersion, ImportedWrite, KindFields, OnSimilar,
+    ProposeClaimEdge, SubmitRequest, SubmitVerb, SupersedeRequest, UploadSession,
 };
 
 /// What `POST /v2/imports` asks (ADR-0084 d15, as the coordinator decided
@@ -380,19 +380,35 @@ where
         }
     }
 
-    /// `GET /v2/imports/{id}`: the import as its importing key sees it; any
-    /// other key is `access.not_found`.
+    /// `GET /v2/imports/{id}`: the import as its importing key sees it, and
+    /// as a person's `<user>-web` sees an import any key of the person ran,
+    /// a key whose user is the session's person (ADR-0084 d15; ADR-0096
+    /// d6). Any other caller and any other import is `access.not_found`.
     pub async fn import_status(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         import_id: Uuid,
     ) -> Result<ImportRecord, AppError> {
-        let key = self.authenticate(api_key).await?.key;
-        self.journal
+        let key = self.authenticate_bearer(bearer.into()).await?.key;
+        let import = self
+            .journal
             .import_record(key.tenant_id, import_id)
             .await?
-            .filter(|i| i.importer_key_id == key.key_id)
-            .ok_or(AppError::NotFound)
+            .ok_or(AppError::NotFound)?;
+        if import.importer_key_id == key.key_id {
+            return Ok(import);
+        }
+        if super::auth::is_web_session_key(&key)
+            && let Some(root) = key.user
+            && self
+                .journal
+                .key(key.tenant_id, import.importer_key_id)
+                .await?
+                .is_some_and(|importer| importer.user == Some(root))
+        {
+            return Ok(import);
+        }
+        Err(AppError::NotFound)
     }
 
     /// The tenant's imports by state, for the doctor's metrics.
@@ -1211,6 +1227,66 @@ fn provenance(
 
 fn state_name(v: &VersionLine) -> Value {
     serde_json::to_value(v.state).unwrap_or(Value::Null)
+}
+
+impl<J, S, C, I, Sc> App<J, S, C, I, Sc>
+where
+    J: crate::ports::WebStore,
+    S: Signer,
+    C: Clock,
+    I: IdGen,
+    Sc: Scanner,
+{
+    /// `GET /v2/imports` (ADR-0096 d6): as a person's `<user>-web`, the
+    /// imports of every key that names the person as its user; as any
+    /// other key, that key's own. Newest first, in `state` where one is
+    /// named, a page of at most `limit` strictly before `before`, each with
+    /// the importing key's id and name. A tenant key linked to the person
+    /// is not included (decided by the operator, 2026-11-24).
+    pub async fn list_imports(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        state: Option<ImportState>,
+        before: Option<(EventTime, Uuid)>,
+        limit: usize,
+    ) -> Result<ImportListing, AppError> {
+        let key = self.authenticate_bearer(bearer.into()).await?.key;
+        let tenant_id = key.tenant_id;
+        let keys = match key.user {
+            Some(root) if super::auth::is_web_session_key(&key) => {
+                self.journal.web_user_keys(tenant_id, root).await?
+            }
+            _ => vec![key.clone()],
+        };
+        let names: BTreeMap<Uuid, Option<oml_domain::name::Name>> =
+            keys.iter().map(|k| (k.key_id, k.name.clone())).collect();
+        let ids: Vec<Uuid> = names.keys().copied().collect();
+        let mut rows = self
+            .journal
+            .imports_of_keys(
+                tenant_id,
+                &ids,
+                state,
+                before.as_ref().map(|(at, id)| (at, *id)),
+                limit + 1,
+            )
+            .await?;
+        let more = rows.len() > limit;
+        rows.truncate(limit);
+        let next = more
+            .then(|| rows.last().map(|i| (i.created_at.clone(), i.import_id)))
+            .flatten();
+        Ok(ImportListing {
+            items: rows
+                .into_iter()
+                .map(|i| {
+                    let name = names.get(&i.importer_key_id).cloned().flatten();
+                    (i, name)
+                })
+                .collect(),
+            next,
+        })
+    }
 }
 
 #[cfg(test)]

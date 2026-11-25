@@ -85,6 +85,10 @@ Update the plugin with `claude plugin update oml@open-memory-lab`. Then set its 
 
 ## Upgrading to v0.8.5
 
+v0.8.5 runs two migrations, 0067 and 0068, lets `oml_write` create a child workspace, write
+guardrails and propose status and brief changes, and adds the console round's pages. The server,
+the SDKs and the CLI upgrade in one window.
+
 ### `oml_write` writes guardrails, creates a child workspace and proposes status and brief changes
 
 v0.8.5 adds three modes and one object to `oml_write`, and no tool ([ADR-0095](../adr/ADR-0095-an-agent-creates-its-own-child-workspaces-writes-guardrails-and-proposes-status-and-brief-changes-through-oml-write-and-every-verdict-and-setting-stays-with-people.md)). Kind `guardrail`
@@ -136,6 +140,18 @@ other limit is set ([configuration](configuration.md)); the public server sets 1
 an unmeasured value recalibrated with the other limits under
 [#164](https://github.com/e8kor/open-memory-lab/issues/164) ([ADR-0095](../adr/ADR-0095-an-agent-creates-its-own-child-workspaces-writes-guardrails-and-proposes-status-and-brief-changes-through-oml-write-and-every-verdict-and-setting-stays-with-people.md) d11 Q4). Past the limit a create
 is `429 limit.quota` and journals nothing.
+
+### Migration 0068 and the console round's paths
+
+Migration 0068 adds one index on the imports table (`imports_importer_created`);
+a deployment with few imports builds it at once. The console serves three new paths,
+`/web/keys/new`, `/web/admin/fixes` and `/web/workspaces/import`: a proxy that routes `oml-web`'s
+paths by name must add them, as `deploy/caddy/Caddyfile`, both compose files and the chart's
+`web.ingressPaths` do. Clients read the new answer fields as optional: `GET /v2/keys` serves each
+grant's `covers` and an older server's answer reads as `subtree`; `whoami`'s person block serves
+`profile`, `period` and `usage.recalls`. A person's own issuance now takes grants, a default
+workspace, a guardrail scope, a rate and the role `submitter`
+([ADR-0096](../adr/ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md)).
 
 ## Upgrading to v0.8.4
 

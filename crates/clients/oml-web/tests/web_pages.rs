@@ -625,15 +625,27 @@ async fn judge_next(
 async fn the_keys_page_issues_a_contributor_by_default_or_a_reader_and_nothing_else() {
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    // The Keys page's one way to a new key is the builder, whose role
+    // select offers contributor (the default), reader and submitter, and no
+    // writer (ADR-0096 d3).
     let (_, _, page) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
     assert!(
-        page.contains(
-            r#"<select name="role"><option value="contributor">contributor</option><option value="reader">reader</option></select>"#
-        ),
+        page.contains(r#"href="/web/keys/new">New key</a>"#),
         "{page}"
     );
-    assert!(!page.contains(r#"<option value="submitter">"#), "{page}");
-    assert!(!page.contains(r#"<option value="writer">"#), "{page}");
+    assert!(!page.contains(r#"value="issue_key""#), "{page}");
+    let (_, _, form) = send(&rig.router, get("/web/keys/new?shape=root", Some(&cookie))).await;
+    for role in ["contributor", "reader", "submitter"] {
+        assert!(
+            form.contains(&format!(r#"<option value="{role}""#)),
+            "{role}: {form}"
+        );
+    }
+    assert!(
+        form.contains(r#"<option value="contributor" selected>"#),
+        "{form}"
+    );
+    assert!(!form.contains(r#"<option value="writer""#), "{form}");
     for refused in ["writer", "submitter"] {
         let (_, _, answer) = act_and_follow(
             &rig,
@@ -1531,6 +1543,27 @@ async fn the_atlas_treemap_draws_and_zooms_with_no_script_in_chromium() {
     }
 }
 
+/// Every hidden field of the form on `page` that posts `action`, the
+/// action and the CSRF token among them.
+fn hidden_fields(page: &str, action: &str) -> Vec<(String, String)> {
+    let marker = format!(r#"name="action" value="{action}""#);
+    let at = page.find(&marker).expect("the form");
+    let start = page[..at].rfind("<form").expect("a form");
+    let end = at + page[at..].find("</form>").expect("its end");
+    page[start..end]
+        .split(r#"<input type="hidden" name=""#)
+        .skip(1)
+        .map(|part| {
+            let (name, rest) = part.split_once('"').expect("a name");
+            let value = rest.split_once(r#"value=""#).expect("a value").1;
+            (
+                name.to_owned(),
+                value[..value.find('"').expect("a quote")].replace("&amp;", "&"),
+            )
+        })
+        .collect()
+}
+
 /// The value of the hidden field `name` on a page.
 fn field_of(page: &str, name: &str) -> String {
     let marker = format!(r#"name="{name}" value=""#);
@@ -2187,7 +2220,7 @@ async fn every_signed_in_page_draws_the_sign_out_control_in_its_header() {
         );
         drawn += 1;
     }
-    assert_eq!(drawn, 24, "every page route of oml_web::PAGES was read");
+    assert_eq!(drawn, 26, "every page route of oml_web::PAGES was read");
     // A page an act answers is drawn by the same chrome.
     let (status, _, page) = act(
         &rig,
@@ -4880,15 +4913,23 @@ async fn an_issue_sent_twice_at_once_issues_one_key_and_the_surviving_cookie_ope
     // sets no cookie over the first's (ADR-0070 d3 layer 4).
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
-    let (_, _, page) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
-    let fields = [
-        ("action", "issue_key".to_owned()),
-        ("csrf_token", csrf_of(&page)),
-        ("name", "laptop".to_owned()),
-        ("role", "contributor".to_owned()),
-        ("nonce", field_of(&page, "nonce")),
-    ];
-    let fields: Vec<(&str, &str)> = fields.iter().map(|(n, v)| (*n, v.as_str())).collect();
+    // The builder's review step draws the one post, Issue key, with its
+    // nonce (ADR-0096 d1).
+    let (status, _, page) = send(
+        &rig.router,
+        get(
+            "/web/keys/new?kind=agent&name=laptop&role=contributor&n=2&g0w=alice&g0r=submitter&g0c=subtree&g1w=alice&g1r=reader&g1c=subtree&dw=&gs=ancestors&exp=&rpm=&step=review",
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("<h1>Review key</h1>"), "{page}");
+    let fields = hidden_fields(&page, "build_key");
+    let fields: Vec<(&str, &str)> = fields
+        .iter()
+        .map(|(n, v)| (n.as_str(), v.as_str()))
+        .collect();
     let (a, b) = tokio::join!(
         send(&rig.router, post("/web/keys", &fields, Some(&cookie))),
         send(&rig.router, post("/web/keys", &fields, Some(&cookie))),
@@ -6125,9 +6166,8 @@ const DENIED_STILL_WORKS: &str =
 
 /// The forms the Keys page and the Start page draw for the three acts a
 /// denied session key is refused.
-const KEY_FORMS: [&str; 7] = [
-    r#"value="issue_key""#,
-    r#"value="connect_key""#,
+const KEY_FORMS: [&str; 6] = [
+    r#"href="/web/keys/new""#,
     r#"value="connect_code""#,
     r#"value="cut_off""#,
     r#"value="issue_claude_ai""#,
@@ -6146,17 +6186,17 @@ const KEY_FORMS: [&str; 7] = [
 async fn a_person_issues_a_key_with_an_expiry_date_from_the_keys_page() {
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
-    let (status, _, page) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+    // The builder's form has the one optional date input, with the line
+    // that says how it is sent (ADR-0096 d10).
+    let (status, _, page) = send(&rig.router, get("/web/keys/new?shape=root", Some(&cookie))).await;
     assert_eq!(status, StatusCode::OK, "{page}");
     assert_eq!(
-        page.matches(r#"<input type="date" name="expires">"#)
-            .count(),
-        2,
-        "one optional date input on each issue form: {page}"
+        page.matches(r#"type="date" id="ke" name="exp""#).count(),
+        1,
+        "{page}"
     );
-    assert_eq!(
-        page.matches("only an admin can change it later").count(),
-        2,
+    assert!(
+        page.contains("The key works through this date in every time zone."),
         "{page}"
     );
     let start = start_pages(&rig, &cookie).await;
@@ -6164,7 +6204,26 @@ async fn a_person_issues_a_key_with_an_expiry_date_from_the_keys_page() {
 
     // Refused as the API refuses the instant the page sends.
     let head = rig.head().await;
-    for (day, name) in [("2026-10-28", "past"), ("tomorrow", "nodate")] {
+    // A date is sent as the next UTC day's end, so a day before the
+    // clock's yesterday is past; a value that is no date is the page's own
+    // refusal.
+    for action in ["issue_key", "connect_key"] {
+        let (status, _, page) = act(
+            &rig,
+            &cookie,
+            "/web/keys",
+            &[
+                ("action", action),
+                ("name", "nodate"),
+                ("role", "contributor"),
+                ("expires", "tomorrow"),
+            ],
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{action}: {page}");
+        assert!(page.contains("<code>request.validation</code>"), "{page}");
+    }
+    for (day, sent, name) in [("2026-10-27", "2026-10-28", "past")] {
         let (api_status, refusal) = api_as_web(
             &rig,
             &cookie,
@@ -6173,7 +6232,7 @@ async fn a_person_issues_a_key_with_an_expiry_date_from_the_keys_page() {
                 "name": format!("alice-{name}"),
                 "role": "contributor",
                 "connect_code": false,
-                "expiry": format!("{day}T23:59:59Z"),
+                "expiry": format!("{sent}T23:59:59Z"),
             }),
         )
         .await;
@@ -6232,8 +6291,8 @@ async fn a_person_issues_a_key_with_an_expiry_date_from_the_keys_page() {
             .unwrap_or_else(|| panic!("no key {name}: {items:?}"))["expiry"]
             .clone()
     };
-    assert_eq!(expiry_of("alice-laptop"), "2026-10-29T23:59:59.000000Z");
-    assert_eq!(expiry_of("alice-phone"), "2999-01-01T23:59:59.000000Z");
+    assert_eq!(expiry_of("alice-laptop"), "2026-10-30T23:59:59.000000Z");
+    assert_eq!(expiry_of("alice-phone"), "2999-01-02T23:59:59.000000Z");
     assert_eq!(expiry_of("alice-tablet"), Value::Null);
     let (status, _, page) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
     assert_eq!(status, StatusCode::OK, "{page}");
@@ -11233,5 +11292,300 @@ async fn the_next_page_follows_the_cursor_without_page_numbers_and_counts_ride_t
     assert!(
         second.contains(r#"<a href="/web/catalog?kinds=memory">Memories</a>"#),
         "{second}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0096: the v0.8.5 console round's pages
+// ---------------------------------------------------------------------------
+
+/// The builder's three steps, with no script: the templates, the form a
+/// template opens, the review that restates the access and posts once,
+/// and the error summary for a refusal the page decides (ADR-0096 d1, D5,
+/// D12). Issue key shows the value once and the row lists the key with
+/// its grants' coverage and its rate (d2, d8).
+#[tokio::test]
+async fn the_key_builder_reviews_a_key_before_it_issues_it_and_shows_the_value_once() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (status, _, start) = send(&rig.router, get("/web/keys/new", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{start}");
+    for shape in ["root", "one", "read", "write", "connector"] {
+        assert!(
+            start.contains(&format!(r#"href="/web/keys/new?shape={shape}""#)),
+            "{shape}: {start}"
+        );
+    }
+    assert!(!start.contains("<script"), "{start}");
+    let (_, _, form) = send(&rig.router, get("/web/keys/new?shape=root", Some(&cookie))).await;
+    assert!(form.contains(r#"<span class="p">alice-</span>"#), "{form}");
+    assert!(form.contains(" autofocus"), "{form}");
+    assert!(form.contains("Add a grant"), "{form}");
+    // A reserved name is the page's own refusal, in the summary, linked to
+    // the control, which names its error state.
+    let reserved = "/web/keys/new?kind=agent&name=review&role=contributor&n=2&g0w=alice&g0r=submitter&g0c=subtree&g1w=alice&g1r=reader&g1c=subtree&dw=&gs=ancestors&exp=&rpm=&step=review";
+    let (status, _, page) = send(&rig.router, get(reserved, Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(page.matches(r#"role="alert""#).count(), 1, "{page}");
+    assert!(page.contains(r##"<a href="#kn">"##), "{page}");
+    assert!(
+        page.contains(r#"id="kn" name="name" value="review" required aria-invalid="true""#),
+        "{page}"
+    );
+    assert!(page.contains("<code>request.validation</code>"), "{page}");
+    // A clean draft reviews, then issues once.
+    let draft = "/web/keys/new?kind=agent&name=ci&role=reader&n=1&g0w=alice&g0r=reader&g0c=node&dw=&gs=ancestors&exp=&rpm=60&step=review";
+    let (_, _, review) = send(&rig.router, get(draft, Some(&cookie))).await;
+    assert!(review.contains("<h1>Review key</h1>"), "{review}");
+    assert!(review.contains("Effective access"), "{review}");
+    assert!(review.contains("The exact request"), "{review}");
+    assert!(
+        review.contains("&quot;requests_per_minute&quot;: 60"),
+        "{review}"
+    );
+    let fields = hidden_fields(&review, "build_key");
+    let fields: Vec<(&str, &str)> = fields
+        .iter()
+        .map(|(n, v)| (n.as_str(), v.as_str()))
+        .collect();
+    let (status, headers, body) =
+        send(&rig.router, post("/web/keys", &fields, Some(&cookie))).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let (sealed, _) = set_cookie(&headers, ONCE_COOKIE).expect("the shown-once cookie");
+    let (_, _, shown) = send(
+        &rig.router,
+        get(
+            "/web/keys",
+            Some(&format!("{cookie}; {ONCE_COOKIE}={sealed}")),
+        ),
+    )
+    .await;
+    assert!(shown.contains("OML_API_KEY="), "{shown}");
+    let key = key_named(&rig, "alice-ci").await;
+    assert_eq!(key.requests_per_minute, Some(60));
+    let (_, _, list) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+    assert!(list.contains("(this workspace only)"), "{list}");
+    assert!(list.contains("60 requests a minute"), "{list}");
+}
+
+/// The admin's one-key page reads the key through `GET /v2/keys/{key}` as
+/// `<user>-admin` and offers Set limits and Deny on a workspace; the limits
+/// form sends the date as the next UTC day's end, and the denial is
+/// confirmed before it posts (ADR-0096 d4, d10).
+#[tokio::test]
+async fn the_admin_one_key_page_sets_limits_and_denies_on_a_workspace() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    laptop_key(&rig, &cookie).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (_, _, list) = send(&rig.router, get("/web/admin/keys?user=alice", Some(&boss))).await;
+    assert!(
+        list.contains(r#"href="/web/admin/keys?key=alice-laptop">Open</a>"#),
+        "{list}"
+    );
+    let (status, _, page) = send(
+        &rig.router,
+        get("/web/admin/keys?key=alice-laptop", Some(&boss)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("read as <code>boss-admin</code>"), "{page}");
+    assert!(
+        page.contains("Set limits") && page.contains("Deny on a workspace"),
+        "{page}"
+    );
+    // The read journals nothing, and its line says nothing of an audit trail.
+    assert!(
+        page.contains("read as <code>boss-admin</code>.</p>"),
+        "{page}"
+    );
+    let (_, _, form) = send(
+        &rig.router,
+        get("/web/admin/keys?key=alice-laptop&op=limits", Some(&boss)),
+    )
+    .await;
+    let csrf = csrf_of(&form);
+    let (status, headers, body) = send(
+        &rig.router,
+        post(
+            "/web/admin/keys",
+            &[
+                ("csrf_token", &csrf),
+                ("action", "set_limits"),
+                ("key", "alice-laptop"),
+                ("expires", "2999-01-01"),
+                ("rate", "30"),
+            ],
+            Some(&boss),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    assert_eq!(
+        headers[header::LOCATION],
+        "/web/admin/keys?key=alice-laptop&done=limits"
+    );
+    let key = key_named(&rig, "alice-laptop").await;
+    assert_eq!(
+        (
+            key.expiry.as_ref().map(|e| e.as_str().to_owned()),
+            key.requests_per_minute
+        ),
+        (Some("2999-01-02T23:59:59.000000Z".to_owned()), Some(30))
+    );
+    let (_, _, page) = send(
+        &rig.router,
+        get("/web/admin/keys?key=alice-laptop", Some(&boss)),
+    )
+    .await;
+    assert!(
+        page.contains("works through 2999-01-01, every time zone"),
+        "{page}"
+    );
+    let (_, _, review) = send(
+        &rig.router,
+        get(
+            "/web/admin/keys?key=alice-laptop&op=deny&workspace=alice&reason=leaked&step=review",
+            Some(&boss),
+        ),
+    )
+    .await;
+    assert!(review.contains("Deny alice-laptop on alice?"), "{review}");
+    let fields = hidden_fields(&review, "deny_on");
+    let fields: Vec<(&str, &str)> = fields
+        .iter()
+        .map(|(n, v)| (n.as_str(), v.as_str()))
+        .collect();
+    let (status, _, body) = send(&rig.router, post("/web/admin/keys", &fields, Some(&boss))).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let (_, _, page) = send(
+        &rig.router,
+        get("/web/admin/keys?key=alice-laptop", Some(&boss)),
+    )
+    .await;
+    assert!(page.contains("denied on <code>"), "{page}");
+}
+
+/// The administration To do lists admin work only: with no fix waiting it
+/// says nothing waits, and it offers no verdict, confirmation or
+/// ratification (ADR-0096 d7; ADR-0083 d11).
+#[tokio::test]
+async fn the_admin_todo_offers_no_verdict_and_says_when_nothing_waits() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (status, _, page) = send(&rig.router, get("/web/admin/todo", Some(&boss))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("Nothing waits for this account."), "{page}");
+    for act in ["Approve", "Confirm", "Ratify", "Revert"] {
+        assert!(!page.contains(&format!(">{act}<")), "{act}: {page}");
+    }
+}
+
+/// The Fix tab names no target until an investigation's memory page links
+/// one, and offers demote and erase alone on a frozen workspace (ADR-0096
+/// d5).
+#[tokio::test]
+async fn the_fix_tab_takes_its_target_from_an_investigation() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (status, _, page) = send(
+        &rig.router,
+        get(
+            "/web/admin/workspace?workspace=universe&view=fix",
+            Some(&boss),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("Unconfirmed here"), "{page}");
+    assert!(page.contains("an investigation opens first"), "{page}");
+    let target = "00000000-0000-4000-8000-000000000001";
+    let (_, _, page) = send(
+        &rig.router,
+        get(
+            &format!("/web/admin/workspace?workspace=universe&view=fix&target={target}"),
+            Some(&boss),
+        ),
+    )
+    .await;
+    for act in ["demote", "edit", "retire", "erase"] {
+        assert!(page.contains(&format!(r#"value="{act}""#)), "{act}: {page}");
+    }
+    let (_, _, review) = send(
+        &rig.router,
+        get(
+            &format!("/web/admin/workspace?workspace=universe&view=fix&target={target}&act=erase&reason=leak&step=review"),
+            Some(&boss),
+        ),
+    )
+    .await;
+    assert!(
+        review.contains(r#"class="danger">Erase</button>"#),
+        "{review}"
+    );
+    assert!(review.contains("crypto-shredded"), "{review}");
+}
+
+/// The import pages: the hand-off states the built rule, and the list of
+/// the person's imports reads through `GET /v2/imports` as `<user>-web`
+/// (ADR-0096 d6).
+#[tokio::test]
+async fn the_import_pages_hand_off_to_the_command_line_and_list_the_persons_imports() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (status, _, page) = send(&rig.router, get("/web/workspaces/import", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("import.target_not_in_progress"), "{page}");
+    let (_, _, page) = send(
+        &rig.router,
+        get("/web/workspaces/import?into=docs", Some(&cookie)),
+    )
+    .await;
+    assert!(
+        page.contains("oml workspaces import --into alice.docs"),
+        "{page}"
+    );
+    let (status, _, list) = send(
+        &rig.router,
+        get("/web/workspaces/import?list=1", Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    assert!(list.contains("No import yet."), "{list}");
+}
+
+/// To do's brief group follows To review: empty, it is one line, and the
+/// Ratify act asks for confirmation before it posts (ADR-0096 d7).
+#[tokio::test]
+async fn todo_folds_an_empty_brief_group_and_ratify_is_confirmed_first() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (status, _, page) = send(&rig.router, get("/web/todo", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("Nothing waits for this account."), "{page}");
+    let csrf = csrf_of(&page);
+    let edge = "00000000-0000-4000-8000-000000000009";
+    let (status, _, confirm) = send(
+        &rig.router,
+        post(
+            "/web/todo",
+            &[
+                ("csrf_token", &csrf),
+                ("action", "ratify"),
+                ("edge_id", edge),
+                ("title", "deploys"),
+            ],
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{confirm}");
+    assert!(confirm.contains("Ratify the brief proposal?"), "{confirm}");
+    assert!(
+        confirm.contains(r#"name="confirm" value="yes""#),
+        "{confirm}"
     );
 }

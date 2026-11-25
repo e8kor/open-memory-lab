@@ -121,6 +121,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/review/verdicts/bulk"),
     ("GET", "/v2/review/queue"),
     ("GET", "/v2/todo/counts"),
+    ("GET", "/v2/review/briefs"),
     ("GET", "/v2/admin/todo/counts"),
     ("GET", "/v2/keys"),
     ("POST", "/v2/keys"),
@@ -189,6 +190,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/uploads/{upload_id}/complete"),
     ("DELETE", "/v2/uploads/{upload_id}"),
     ("POST", "/v2/imports"),
+    ("GET", "/v2/imports"),
     ("GET", "/v2/imports/{import_id}"),
     ("GET", "/v2/admin/usage"),
     ("GET", "/v2/admin/usage/drift"),
@@ -391,6 +393,7 @@ where
             ("POST", "/v2/review/verdicts/bulk") => post(Self::review_bulk),
             ("GET", "/v2/review/queue") => get(Self::review_queue),
             ("GET", "/v2/todo/counts") => get(Self::todo_counts),
+            ("GET", "/v2/review/briefs") => get(Self::brief_proposals),
             ("GET", "/v2/admin/todo/counts") => get(Self::admin_todo_counts),
             ("GET", "/v2/keys") => get(Self::list_keys),
             ("POST", "/v2/keys") => post(Self::issue_key),
@@ -472,6 +475,7 @@ where
             ("POST", "/v2/uploads/{upload_id}/complete") => post(Self::complete_upload_route),
             ("DELETE", "/v2/uploads/{upload_id}") => delete(Self::abandon_upload_route),
             ("POST", "/v2/imports") => post(Self::import_route),
+            ("GET", "/v2/imports") => get(Self::list_imports_route),
             ("GET", "/v2/imports/{import_id}") => get(Self::import_status_route),
             ("GET", "/v2/admin/usage") => get(Self::admin_usage_route),
             ("GET", "/v2/admin/usage/drift") => get(Self::admin_usage_drift_route),
@@ -2105,26 +2109,7 @@ where
         };
         // Every workspace and crew reference is an id or a name, each
         // refusal naming its JSON Pointer (errors.md; ADR-0026 d3).
-        let grants = req
-            .grants
-            .iter()
-            .enumerate()
-            .map(|(i, g)| {
-                Ok(GrantRequest {
-                    node: reference(&format!("/grants/{i}/workspace"), &g.workspace)?,
-                    role: parse_grant_role(&g.role)?,
-                    covers: parse_covers(i, g.covers.as_deref())?,
-                    deny: g
-                        .deny
-                        .iter()
-                        .enumerate()
-                        .map(|(j, d)| {
-                            reference(&format!("/grants/{i}/deny/{j}/workspace"), &d.workspace)
-                        })
-                        .collect::<Result<_, _>>()?,
-                })
-            })
-            .collect::<Result<Vec<_>, ApiError>>()?;
+        let grants = grant_requests(&req.grants)?;
         let default_workspace =
             optional_reference("/default_workspace", req.default_workspace.as_deref())?;
         let crew = optional_reference("/crew", req.crew.as_deref())?;
@@ -2254,7 +2239,7 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let acting = acting(headers, None)?;
-        idempotency_key(headers)?;
+        let idem = idempotency_key(headers)?;
         let key = reference("key", key_id)?;
         let req: KeyLimitsBody = parse_json(headers, body)?;
         let change = KeyLimitsChange {
@@ -2264,22 +2249,48 @@ where
                 .transpose()?,
             requests_per_minute: req.requests_per_minute,
         };
+        let limits_json = |st: &Self, set: &KeyRecord| {
+            json!({
+                "key_id": set.key_id,
+                "name": set.name.as_ref().map(Name::as_str),
+                "expiry": set.expiry.as_ref().map(|at| at.as_str()),
+                "expired": st.app.key_expired(set),
+                "requests_per_minute": set.requests_per_minute,
+            })
+        };
+        // A person's `<user>-admin` session claims the `Idempotency-Key`
+        // and replays the recorded answer, so the form's nonce journals one
+        // `key.limits_set`; a bearer admin key keeps the unreplayed
+        // behaviour (ADR-0096 d4, decided by the operator, 2026-11-24).
+        if let Some(caller) = session::session_caller() {
+            console::require_admin_session(&caller, "set_key_limits")?;
+            let digest = console::act_digest(key_id, body);
+            let claim = match st.claim(&caller, "keys.limits", &idem, &digest).await? {
+                console::Claimed::Replayed(replayed) => return Ok(replayed),
+                console::Claimed::Act(claim) => claim,
+            };
+            let st = st.clone();
+            return claim
+                .run(async move {
+                    let set = retry_chain(|| {
+                        st.app
+                            .set_key_limits(Bearer::Session(&caller), key.clone(), change.clone())
+                    })
+                    .await
+                    .map_err(|e| {
+                        console::ActFailure::first(map_app_error(e, ErrorContext::Write))
+                    })?;
+                    Ok(console::Acted::new(StatusCode::OK, limits_json(&st, &set)))
+                })
+                .await;
+        }
         let set = retry_chain(|| {
             st.app
                 .set_key_limits(acting.bearer(), key.clone(), change.clone())
         })
         .await
         .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        Ok(json_response(
-            StatusCode::OK,
-            &json!({
-                "key_id": set.key_id,
-                "name": set.name.as_ref().map(Name::as_str),
-                "expiry": set.expiry.as_ref().map(|at| at.as_str()),
-                "expired": st.app.key_expired(&set),
-                "requests_per_minute": set.requests_per_minute,
-            }),
-        ))
+        Ok(json_response(StatusCode::OK, &limits_json(st, &set)))
     }
 
     async fn link_key(
@@ -2897,13 +2908,15 @@ where
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let token = bearer(headers)?;
+        // A person's `<user>-review` session ratifies as the To do group's
+        // act (ADR-0096 d7); its capacity credential resolves here.
+        let acting = acting(headers, None)?;
         let idem = idempotency_key(headers)?;
         let edge_id = Uuid::parse_str(edge_id).map_err(|_| {
             ApiError::validation(format!("edge_id {edge_id:?} is not an id"))
                 .with_details(json!({ "field": "edge_id" }))
         })?;
-        let ratified = retry_chain(|| st.app.ratify_edge(&token, edge_id, Some(&idem)))
+        let ratified = retry_chain(|| st.app.ratify_edge(acting.bearer(), edge_id, Some(&idem)))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Review))?;
         let body = match ratified {
@@ -3246,29 +3259,36 @@ where
     /// `GET /v2/keys/{key}`: one key, by id or name, admin by key role,
     /// a revoked key's included; never its value (http-api.md keys, grants,
     /// denials; ADR-0026 d4, d9, d10).
+    ///
+    /// The caller resolves as `/limits` and `/denials` resolve it, so a
+    /// person's `<user>-admin` session reads one key; any other session
+    /// capacity is `session_capacity` (ADR-0096 d4).
     async fn get_key_inner(
         st: &Self,
         key_id: &str,
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
-        let token = bearer(headers)?;
+        let acting = acting(headers, None)?;
+        if let Some(caller) = session::session_caller() {
+            console::require_admin_session(&caller, "get_key")?;
+        }
         let key = reference("key", key_id)?;
         let detail = st
             .app
-            .key(&token, key)
+            .key(acting.bearer(), key)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         // A connector key's open and revoked connections; a bearer key has
         // none (ADR-0031 d11).
         let connections = st
             .app
-            .list_connections(&token, Reference::Id(detail.key.key_id))
+            .list_connections(acting.bearer(), Reference::Id(detail.key.key_id))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         // The key's live connect code, named but never shown (ADR-0067 d3).
         let live_code = st
             .app
-            .live_connect_code(&token, Reference::Id(detail.key.key_id))
+            .live_connect_code(acting.bearer(), Reference::Id(detail.key.key_id))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         let mut view = key_json(&detail, &connections, st.app.key_expired(&detail.key));
@@ -4581,6 +4601,33 @@ fn acting<'a>(headers: &HeaderMap, connection: Option<&'a Caller>) -> Result<Act
     }
 }
 
+/// A listing's position, `created_at` and an id, as the opaque cursor a
+/// page names (ADR-0096 d6, d7).
+pub(crate) fn position_cursor_of(at: &oml_app::domain::EventTime, id: uuid::Uuid) -> String {
+    hex::encode(format!("{}|{id}", at.as_str()))
+}
+
+/// The position a cursor [`position_cursor_of`] served names, else
+/// `request.validation` naming `cursor`.
+pub(crate) fn position_cursor(
+    value: &str,
+) -> Result<(oml_app::domain::EventTime, uuid::Uuid), ApiError> {
+    hex::decode(value)
+        .ok()
+        .and_then(|b| String::from_utf8(b).ok())
+        .and_then(|text| {
+            let (at, id) = text.split_once('|')?;
+            Some((
+                oml_app::domain::EventTime::parse(at).ok()?,
+                uuid::Uuid::parse_str(id).ok()?,
+            ))
+        })
+        .ok_or_else(|| {
+            ApiError::validation("cursor is not a cursor this listing served")
+                .with_details(json!({ "field": "cursor" }))
+        })
+}
+
 fn idempotency_key(headers: &HeaderMap) -> Result<String, ApiError> {
     let value = headers
         .get("idempotency-key")
@@ -4714,6 +4761,31 @@ fn not_the_shape(e: serde_json::Error) -> ApiError {
 
 /// A grant's `covers`, `subtree` when omitted; any other value is
 /// `request.validation` naming `/grants/<i>/covers` (ADR-0044 d4).
+/// An issuance body's grants as the use case takes them, every workspace
+/// and deny reference an id or a name, each refusal naming its JSON Pointer
+/// (errors.md; ADR-0026 d3).
+fn grant_requests(grants: &[GrantBody]) -> Result<Vec<GrantRequest>, ApiError> {
+    grants
+        .iter()
+        .enumerate()
+        .map(|(i, g)| {
+            Ok(GrantRequest {
+                node: reference(&format!("/grants/{i}/workspace"), &g.workspace)?,
+                role: parse_grant_role(&g.role)?,
+                covers: parse_covers(i, g.covers.as_deref())?,
+                deny: g
+                    .deny
+                    .iter()
+                    .enumerate()
+                    .map(|(j, d)| {
+                        reference(&format!("/grants/{i}/deny/{j}/workspace"), &d.workspace)
+                    })
+                    .collect::<Result<_, _>>()?,
+            })
+        })
+        .collect()
+}
+
 fn parse_covers(index: usize, covers: Option<&str>) -> Result<Covers, ApiError> {
     match covers {
         None => Ok(Covers::Subtree),
@@ -4981,6 +5053,9 @@ fn person_json(person: &oml_app::app::Person) -> Value {
         "under_quotas": person.limits.is_some(),
         "usage": usage,
         "quotas": quotas,
+        // The quota profile's name and the UTC month (ADR-0096 d9).
+        "profile": person.profile,
+        "period": person.period,
         "deletion_requested_at": person.deletion_requested_at.as_ref().map(|t| t.as_str()),
         "linked_keys": person
             .linked_keys

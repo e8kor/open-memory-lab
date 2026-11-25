@@ -14,16 +14,22 @@ class TodoCountsResponse200:
     """
     Attributes:
         review (int): The To review group's length: the held rows the person's reviewer key may judge.
+        briefs (int): The Brief proposals group's length: the pending brief edges GET /v2/review/briefs would list the
+            person's reviewer key, at workspace and below or everywhere, never one it or its principal proposed; counted up
+            to 1,000 and sharing truncated (ADR-0096 d7). Since v0.8.5.
         truncated (bool): Whether a count passed 1,000 and answers 1,000, or stopped after reading 2,000 held rows and
             answers what it counted.
     """
 
     review: int
+    briefs: int
     truncated: bool
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         review = self.review
+
+        briefs = self.briefs
 
         truncated = self.truncated
 
@@ -32,6 +38,7 @@ class TodoCountsResponse200:
         field_dict.update(
             {
                 "review": review,
+                "briefs": briefs,
                 "truncated": truncated,
             }
         )
@@ -43,10 +50,13 @@ class TodoCountsResponse200:
         d = dict(src_dict)
         review = d.pop("review")
 
+        briefs = d.pop("briefs")
+
         truncated = d.pop("truncated")
 
         todo_counts_response_200 = cls(
             review=review,
+            briefs=briefs,
             truncated=truncated,
         )
 

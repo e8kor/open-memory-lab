@@ -27,6 +27,8 @@ class WebUser:
         under_quotas (bool):
         usage (WebUserUsage):
         quotas (WebUserQuotas):
+        profile (None | str | Unset): The account's quota profile, null for none (ADR-0096 d9). Since v0.8.5.
+        period (str | Unset): The UTC month the usage counts, YYYY-MM (ADR-0096 d9). Since v0.8.5.
         admin_keys (list[str] | Unset): Each live admin key whose row names the person's user root, by name: a row no
             verb makes, which refuses the person's disable with workspace.admin_key_under_root and which oml doctor warns
             about (ADR-0068 d8, d11). Since v0.7.1.
@@ -38,6 +40,8 @@ class WebUser:
     under_quotas: bool
     usage: WebUserUsage
     quotas: WebUserQuotas
+    profile: None | str | Unset = UNSET
+    period: str | Unset = UNSET
     admin_keys: list[str] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -53,6 +57,14 @@ class WebUser:
         usage = self.usage.to_dict()
 
         quotas = self.quotas.to_dict()
+
+        profile: None | str | Unset
+        if isinstance(self.profile, Unset):
+            profile = UNSET
+        else:
+            profile = self.profile
+
+        period = self.period
 
         admin_keys: list[str] | Unset = UNSET
         if not isinstance(self.admin_keys, Unset):
@@ -70,6 +82,10 @@ class WebUser:
                 "quotas": quotas,
             }
         )
+        if profile is not UNSET:
+            field_dict["profile"] = profile
+        if period is not UNSET:
+            field_dict["period"] = period
         if admin_keys is not UNSET:
             field_dict["admin_keys"] = admin_keys
 
@@ -93,6 +109,17 @@ class WebUser:
 
         quotas = WebUserQuotas.from_dict(d.pop("quotas"))
 
+        def _parse_profile(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        profile = _parse_profile(d.pop("profile", UNSET))
+
+        period = d.pop("period", UNSET)
+
         admin_keys = cast(list[str], d.pop("admin_keys", UNSET))
 
         web_user = cls(
@@ -102,6 +129,8 @@ class WebUser:
             under_quotas=under_quotas,
             usage=usage,
             quotas=quotas,
+            profile=profile,
+            period=period,
             admin_keys=admin_keys,
         )
 

@@ -38,7 +38,7 @@ pub use investigations::{INVESTIGATION_OPEN_LONG_SECONDS, INVESTIGATION_REASON_M
 pub use metering::{AccountLimits, UsageDriftReport};
 pub use pages::{
     ActClaim, ActTicket, AdminMemory, AdminPage, AdminSearchRequest, Capacity, CapacityGranted,
-    OwnKey, QueueRow, REGION_COUNT_MAX, Region, Regions, VerdictTrail, WebListRequest,
+    OwnKey, OwnKeyShape, QueueRow, REGION_COUNT_MAX, Region, Regions, VerdictTrail, WebListRequest,
     WorkspaceOffer, WorkspaceOffers,
 };
 pub use rescan::{RESCAN_MAX_EVENTS, RescanHit, RescanReport};
@@ -125,9 +125,10 @@ use crate::ports::{
 };
 use crate::telemetry::{HITS_STORED, Label, RecallEvent, Remembered, Telemetry, TelemetryItem};
 use crate::types::{
-    AdminTodoCounts, BULK_VERDICT_MAX, BulkItem, BulkVerdictRequest, FindingVerdict, FoundBy,
-    HELD_PAGE_MAX, HeldFilter, HeldItem, HeldListingRequest, HeldPage, ReviewLane, TODO_COUNT_CAP,
-    TODO_SCAN_ROWS_MAX, TodoCounts, VersionFinding,
+    AdminTodoCounts, BULK_VERDICT_MAX, BriefProposal, BriefProposalPage, BulkItem,
+    BulkVerdictRequest, FindingVerdict, FoundBy, HELD_PAGE_MAX, HeldFilter, HeldItem,
+    HeldListingRequest, HeldPage, ReviewLane, TODO_COUNT_CAP, TODO_SCAN_ROWS_MAX, TodoCounts,
+    VersionFinding,
 };
 use crate::types::{
     AppError, Approval, AssignedNames, AuthorizationRecord, AuthorizeOutcome, AuthorizePage,
@@ -7279,6 +7280,20 @@ where
         if nodes.is_empty() {
             return Ok(none);
         }
+        // The brief group's count, under the same reviewer nodes and in one
+        // read whatever their number (ADR-0096 d7).
+        let pending = self
+            .journal
+            .pending_brief_edges(
+                tenant_id,
+                &nodes,
+                (key.key_id, key.principal.as_str()),
+                None,
+                usize::try_from(TODO_COUNT_CAP).unwrap_or(usize::MAX) + 1,
+            )
+            .await?;
+        let briefs_truncated = pending.len() as u64 > TODO_COUNT_CAP;
+        let briefs = (pending.len() as u64).min(TODO_COUNT_CAP);
         let filter = HeldFilter {
             nodes,
             author_key_id: None,
@@ -7309,6 +7324,7 @@ where
                 if scanned == TODO_SCAN_ROWS_MAX {
                     return Ok(TodoCounts {
                         review,
+                        briefs,
                         truncated: true,
                     });
                 }
@@ -7329,6 +7345,7 @@ where
                     if review > TODO_COUNT_CAP {
                         return Ok(TodoCounts {
                             review: TODO_COUNT_CAP,
+                            briefs,
                             truncated: true,
                         });
                     }
@@ -7346,7 +7363,8 @@ where
         }
         Ok(TodoCounts {
             review,
-            truncated: false,
+            briefs,
+            truncated: briefs_truncated,
         })
     }
 
@@ -7367,7 +7385,104 @@ where
                 verb: "admin_todo_counts",
             });
         }
-        Ok(AdminTodoCounts::default())
+        // The alerts group: the tenant's unconfirmed fixes that loosen a
+        // guardrail, from the rows `GET /v2/admin/fixes` serves (ADR-0096
+        // d7).
+        let alerts = self
+            .journal
+            .fixes(caller.key.tenant_id, true)
+            .await?
+            .iter()
+            .filter(|f| f.loosens_guardrail)
+            .count() as u64;
+        Ok(AdminTodoCounts {
+            alerts: alerts.min(TODO_COUNT_CAP),
+            truncated: alerts > TODO_COUNT_CAP,
+        })
+    }
+
+    /// `GET /v2/review/briefs` (ADR-0096 d7): the pending brief edges on
+    /// workspaces where a person's `<user>-review` holds reviewer effective
+    /// access, at `workspace` and below where one is named, oldest first,
+    /// a page of at most `limit` strictly after `after`. An edge the key
+    /// proposed, or one proposed under its principal, is not listed, since
+    /// ratification refuses those (R2). Any other caller is
+    /// `access.verb_ceiling`. It journals nothing.
+    pub async fn brief_proposals(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        workspace: Option<&Reference>,
+        after: Option<(EventTime, Uuid)>,
+        limit: usize,
+    ) -> Result<BriefProposalPage, AppError> {
+        let caller = self.authenticate_bearer(bearer.into()).await?;
+        if !auth::is_review_session_key(&caller.key) {
+            return Err(AppError::VerbCeiling {
+                role: caller.key.role,
+                verb: "list_brief_proposals",
+            });
+        }
+        let key = &caller.key;
+        let tenant_id = key.tenant_id;
+        let (mut nodes, _) = self.reviewer_nodes_walked(&caller).await?;
+        if let Some(workspace) = workspace {
+            let root = self.resolve(key, NamedKind::Workspace, workspace).await?;
+            let subtree: BTreeSet<Uuid> = self
+                .journal
+                .workspace_subtree(tenant_id, root)
+                .await?
+                .into_iter()
+                .map(|w| w.workspace_id)
+                .collect();
+            nodes.retain(|n| subtree.contains(n));
+        }
+        if nodes.is_empty() {
+            return Ok(BriefProposalPage {
+                items: Vec::new(),
+                next: None,
+            });
+        }
+        let mut edges = self
+            .journal
+            .pending_brief_edges(
+                tenant_id,
+                &nodes,
+                (key.key_id, key.principal.as_str()),
+                after.as_ref().map(|(at, id)| (at, *id)),
+                limit + 1,
+            )
+            .await?;
+        let more = edges.len() > limit;
+        edges.truncate(limit);
+        let next = more
+            .then(|| edges.last().map(|e| (e.created_at.clone(), e.edge_id)))
+            .flatten();
+        let mut items = Vec::with_capacity(edges.len());
+        for edge in edges {
+            let claim = self.journal.memory(tenant_id, edge.artifact_id).await?;
+            let proposer = self
+                .journal
+                .key(tenant_id, edge.proposer_key_id)
+                .await?
+                .and_then(|k| k.name);
+            let workspace = self
+                .journal
+                .workspace(tenant_id, edge.workspace_id)
+                .await?
+                .map(|w| w.name);
+            let same_user = self
+                .same_person(tenant_id, edge.proposer_key_id, key)
+                .await?;
+            items.push(BriefProposal {
+                claim_key: claim.as_ref().map(|m| m.claim_key.clone()),
+                title: claim.and_then(|m| m.format.title.clone()),
+                workspace,
+                proposer,
+                same_user,
+                edge,
+            });
+        }
+        Ok(BriefProposalPage { items, next })
     }
 
     /// The named held rows as the listing would show them to this key, for
@@ -11268,12 +11383,13 @@ where
     /// state (`review.serve_invalid`, `consumed`).
     pub async fn ratify_brief_edge(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         edge_id: Uuid,
         idempotency_key: Option<&str>,
     ) -> Result<BriefEdgeRatification, AppError> {
+        let bearer: Bearer<'_> = bearer.into();
         const VERB: &str = "brief_edge.ratify";
-        let caller = self.authenticate(api_key).await?;
+        let caller = self.authenticate_bearer(bearer).await?;
         let key = &caller.key;
         require_admissible(key, Role::Reviewer, VERB)?;
         refuse_service(key, VERB)?;
@@ -11384,11 +11500,12 @@ where
     /// which answers `access.not_found` when the tenant holds none.
     pub async fn ratify_edge(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         edge_id: Uuid,
         idempotency_key: Option<&str>,
     ) -> Result<EdgeRatification, AppError> {
-        let caller = self.authenticate(api_key).await?;
+        let bearer: Bearer<'_> = bearer.into();
+        let caller = self.authenticate_bearer(bearer).await?;
         let is_claim = self
             .journal
             .claim_edge(caller.key.tenant_id, edge_id)
@@ -11396,12 +11513,12 @@ where
             .is_some();
         if is_claim {
             Ok(EdgeRatification::Claim(
-                self.ratify_claim_edge(api_key, edge_id, idempotency_key)
+                self.ratify_claim_edge(bearer, edge_id, idempotency_key)
                     .await?,
             ))
         } else {
             Ok(EdgeRatification::Brief(
-                self.ratify_brief_edge(api_key, edge_id, idempotency_key)
+                self.ratify_brief_edge(bearer, edge_id, idempotency_key)
                     .await?,
             ))
         }
@@ -11519,12 +11636,13 @@ where
     // ADR-0021 d6's both-vocabularies rule for a term mapping.
     pub async fn ratify_claim_edge(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         edge_id: Uuid,
         idempotency_key: Option<&str>,
     ) -> Result<ClaimEdgeRatification, AppError> {
+        let bearer: Bearer<'_> = bearer.into();
         const VERB: &str = "claim_edge.ratify";
-        let caller = self.authenticate(api_key).await?;
+        let caller = self.authenticate_bearer(bearer).await?;
         let key = &caller.key;
         require_admissible(key, Role::Reviewer, VERB)?;
         refuse_service(key, VERB)?;
@@ -12145,10 +12263,10 @@ where
     /// itself is never returned; none is stored.
     pub async fn live_connect_code(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         key: Reference,
     ) -> Result<Option<LiveConnectCode>, AppError> {
-        let admin = self.authenticate(api_key).await?.key;
+        let admin = self.authenticate_bearer(bearer.into()).await?.key;
         require_role(&admin, Role::Admin, "live_connect_code")?;
         let key_id = self.resolve(&admin, NamedKind::Key, &key).await?;
         if self.journal.key(admin.tenant_id, key_id).await?.is_none() {
@@ -12180,10 +12298,10 @@ where
     /// (http-api.md, cli/reference.md `oml keys show`; ADR-0031 d1, d11).
     pub async fn list_connections(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         key: Reference,
     ) -> Result<Vec<ConnectionRecord>, AppError> {
-        let admin = self.authenticate(api_key).await?.key;
+        let admin = self.authenticate_bearer(bearer.into()).await?.key;
         require_role(&admin, Role::Admin, "list_connections")?;
         let key_id = self.resolve(&admin, NamedKind::Key, &key).await?;
         if self.journal.key(admin.tenant_id, key_id).await?.is_none() {

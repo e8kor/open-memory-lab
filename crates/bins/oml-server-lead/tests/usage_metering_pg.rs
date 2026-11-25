@@ -619,7 +619,7 @@ async fn a_meter_warns_at_eighty_percent_and_the_write_past_its_limit_names_quot
     assert_eq!(
         person["usage"],
         json!({"memories": 5, "text_bytes": bytes + "Four.".len() + "Five.".len(),
-               "writes": 5, "keys": 1, "connections": 0, "workspaces": 0})
+               "writes": 5, "recalls": 1, "keys": 1, "connections": 0, "workspaces": 0})
     );
     assert_eq!(
         person["quotas"],
