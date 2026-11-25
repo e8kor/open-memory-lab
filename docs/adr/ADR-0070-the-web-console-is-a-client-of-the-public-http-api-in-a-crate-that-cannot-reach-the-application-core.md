@@ -1130,19 +1130,19 @@ Rejected alternatives:
 ## Amendment of 2026-11-24: the key builder and the admin key acts (ADR-0096)
 
 Decided by the operator on 2026-11-24 in the v0.8.5 console round; recorded in [ADR-0096](ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md), whose
-coordinator's readings wait for the operator's confirmation. Decided, not built.
+details the coordinator drafted were decided by the operator on 2026-11-24 as written. Decided, not built.
 
 - **d2, d5: `POST /v2/keys` as `<user>-web`** takes, beside `name`, `role`, `connect_code` and
   `expiry`, the role `submitter`, `grants[]` inside the person's root (`{workspace, role: reader |
   submitter, covers, deny[]}`), `default_workspace`, `guardrail_scope` and `requests_per_minute`
   (ADR-0096 d1 to d3). Without `grants` it issues today's shapes. `user`, `used_by`, `crew`,
   `label`, `principal`, `profile` and `tenant` stay refused by name; at most 16 grants and 16
-  denials per grant (`too_many`, a coordinator's reading). The server still adds the `universe`
+  denials per grant (`too_many`). The server still adds the `universe`
   reader node grant to contributor and reader keys and never to a submitter key.
 - **d2, d5: `<user>-admin`** reads one key (`GET /v2/keys/{key}`, which today reads the raw bearer value and answers the
   session `auth.invalid`, so the route changes to resolve the session caller), sets its limits
   (`POST /v2/keys/{key}/limits`, claiming and replaying the `Idempotency-Key` as the session's
-  other key acts do) and, as the coordinator's reading for the operator to confirm, denies a key on any workspace
+  other key acts do) and denies a key on any workspace
   of the tenant (`POST /v2/keys/{key}/denials`), where "on `universe` alone" held for both session capacities;
   `<user>-web` keeps `universe` alone. d2's "the admin capacity issues no plain key" stands
   (ADR-0096 d4).

@@ -9,8 +9,9 @@ answers: what a person's web session may send when it issues a key from v0.8.5, 
 
 **Status:** accepted design · 2026-11-24, decided by the operator in the v0.8.5 console round
 (D1 to D13 of the round's decisions, each recorded below with its handle); the details the
-operator did not decide are marked **coordinator's reading** and wait for the operator's
-confirmation
+coordinator drafted beyond those answers, and the admin's deny on any workspace, were decided by
+the operator on 2026-11-24 as written, each marked **decided by the operator, 2026-11-24**; the
+mockups are approved for the build
 
 **Release:** v0.8.5, not built
 
@@ -29,6 +30,9 @@ confirmation
   To do group for brief proposals, and `briefs` in the counts read).
 - [ADR-0084](ADR-0084-a-workspace-moves-between-servers-as-a-signed-bundle-that-lands-held-or-in-progress-and-is-reviewed-again-unless-its-source-server-is-pinned.md)
   (d15: a person's web session reads and lists the imports any key of the person ran).
+- [ADR-0095](ADR-0095-an-agent-creates-its-own-child-workspaces-writes-guardrails-and-proposes-status-and-brief-changes-through-oml-write-and-every-verdict-and-setting-stays-with-people.md)
+  (d5, d6: a live proposal's `proposed_at` and `proposed_by`, so the console's `409 proposal.pending`
+  names who proposed and when; recorded in ADR-0095's amendment of 2026-11-24).
 
 **Depends on:** [ADR-0001](ADR-0001-the-constitution.md) (R1, R2),
 [ADR-0025](ADR-0025-the-agent-only-memory-surface.md) (d2: the server takes exactly the grants it
@@ -107,7 +111,7 @@ Decided, not built.
     account's keys quota (`429 limit.quota`, ADR-0068 d5); a taken name (`409 name.taken`, checked
     last). Any session capacity but `web` stays `access.verb_ceiling`, `session_capacity`.
 
-    **Coordinator's reading:** a session issuance takes at most 16 grants and 16 denials per
+    **Decided by the operator, 2026-11-24:** a session issuance takes at most 16 grants and 16 denials per
     grant; more is `request.validation`, `details.field: /grants` or `/grants/<i>/deny`,
     `details.reason: too_many`. The numbers are chosen, not measured: a root a person browses in a
     no-script form has few nodes worth a grant row each, and the cap keeps one session request
@@ -144,7 +148,7 @@ Decided, not built.
   `POST /v2/keys/{key}/limits` by an admin key (ADR-0079 d5, unchanged); `<user>-web` stays
   `access.verb_ceiling` there, so a person cannot raise a rate they set.
 
-    **Coordinator's reading, the bound:** no ceiling beyond ADR-0079 d4's range. A key of an
+    **The bound, decided by the operator, 2026-11-24:** no ceiling beyond ADR-0079 d4's range. A key of an
     account under a quota is held to both its own rate and the account's, and the lower refuses
     first (ADR-0079 d4), so a key rate above the account's limits nothing and harms nothing.
     Refusing it would tie issuance to the account's profile, and a profile an admin later lowers
@@ -165,7 +169,7 @@ Decided, not built.
   issues imports nothing and creates no workspace, over HTTP or over MCP (ADR-0095 d3's
   `create_is_own_root_only`); the builder's review step says so.
 
-    **Coordinator's reading:** a submitter connector key is admitted, as the API admits it; the
+    **Decided by the operator, 2026-11-24:** a submitter connector key is admitted, as the API admits it; the
     form says that such a connection writes and recalls nothing.
 
     *Doctor:* none; `without_recall` is false for a submitter, whose role already says it.
@@ -188,12 +192,10 @@ Decided, not built.
       tenant `access.not_found`. Called with an `omls_` credential, the route claims the
       `Idempotency-Key` and replays the recorded answer, as the session's other key acts do
       (ADR-0070 d3 layer 4), so the form's nonce journals one `key.limits_set`; a bearer admin key
-      keeps the unreplayed behaviour. The form enters an expiry as d10 says and clears either
+      keeps the unreplayed behaviour (the replay decided by the operator, 2026-11-24). The form enters an expiry as d10 says and clears either
       limit with its own checkbox.
-    - **Deny on a workspace (coordinator's reading, for the operator to confirm).** The operator's
-      D1 gives the admin the one-key read and the limits; a denial on one workspace was in the
-      round's brief and is not in D1's words, so this item waits for the operator's answer and is
-      not built without it. As read: `POST /v2/keys/{key}/denials` from `<user>-admin` admits any
+    - **Deny on a workspace (decided by the operator, 2026-11-24, beyond D1's words, which named the one-key read
+      and the limits).** `POST /v2/keys/{key}/denials` from `<user>-admin` admits any
       workspace of the tenant, with the request's `reason`, where today a session key denies on
       `universe` alone. `<user>-web` keeps `universe` alone, cutting off one of the person's own
       keys. The refusals stand: never a session key, never an admin key (`request.validation`,
@@ -223,7 +225,7 @@ Decided, not built.
       `demote`, `edit`, `retire` and `erase`. In a `frozen` workspace it offers `demote` and
       `erase` alone (ADR-0089 d12); an edit or a retirement posted there anyway, from a stale form,
       answers `workspace.frozen`, and the page says to demote or erase instead.
-    - **The target is read through an investigation.** `target` is a version id, and an admin
+    - **The target is read through an investigation (decided by the operator, 2026-11-24, amending ADR-0083 d9).** `target` is a version id, and an admin
       reads a claim only inside an investigation, each read journalled (ADR-0089 d10). The tab
       takes its target from an open investigation: a link on the investigation's memory page
       (`/web/admin/investigation`), which carries no act itself, opens the tab with that version as its target, and an edit's
@@ -266,7 +268,7 @@ Decided, not built.
     fingerprint of 64 hex digits (`request.validation`, `details.field: /expect_key`,
     `details.reason: first_import`), and pins it.
 
-    **Coordinator's reading:** "any key of the person" is every key that names the person as its
+    **Decided by the operator, 2026-11-24:** "any key of the person" is every key that names the person as its
     user; a tenant key linked to the person (ADR-0085 d16) is not included, since the link lets
     the person act through the key, not read what an admin ran with it.
 
@@ -327,7 +329,7 @@ Decided, not built.
   a day longer than meant east of UTC. This amends ADR-0079's answer 3, which sent the chosen
   day's own `23:59:59Z`. The form's line reads "The key works through this date in every time
   zone." The key lists show the stored instant as it is, "ends 2026-12-02 23:59 UTC", never a
-  date the server did not store. A date whose sent instant is not later than the page's clock is
+  date the server did not store (decided by the operator, 2026-11-24). A date whose sent instant is not later than the page's clock is
   refused on the page, as the API would refuse it; a day its month does not hold rolls over as
   ADR-0079's answer 3 says. The admin limits form (d4) uses the same rule. No script, no CSP
   change (D13).
@@ -335,8 +337,8 @@ Decided, not built.
 - **d11 — The import-review items wait.** ADR-0083 d11's "Imported versions to review" needs
   `import_provenance` on `GET /v2/review/held` rows, an `imports` member in `/v2/todo/counts`,
   and the `attests_not_source_author` attestation on the verdict (ADR-0084 d4), none of which the
-  API serves. **Coordinator's reading:** the audit lists them as gaps and the operator's
-  decisions name none of them, so the round does not build the group or the Judge page with the
+  API serves. **Decided by the operator, 2026-11-24:** the audit lists them as gaps and the round's
+  questions named none of them, so the round does not build the group or the Judge page with the
   attestation; an imported version stays in To review as the held row it is today. They wait
   for a record of their own, with the attestation.
 
@@ -350,7 +352,7 @@ Decided, not built.
 
 - **OpenAPI** (`docs/api/openapi.yaml`): `issueKey`'s session paragraph lists the fields of d1
   and `too_many`; `getKey` resolves the session caller and admits `<user>-admin` (d4); `setKeyLimits` says what
-  `<user>-admin` may do, and `addDenial` too if the operator confirms d4's reading;
+  `<user>-admin` may do, and `addDenial` admits `<user>-admin` on any workspace (d4);
   `adminTodoCounts` gains `alerts` (d7);
   `getImport` admits `<user>-web` (d6); `listImports` (`GET /v2/imports`), `listBriefProposals`
   (`GET /v2/review/briefs`) are new; `todoCounts` gains `briefs`; `ListedKey.grants[]` gains
@@ -369,7 +371,7 @@ Decided, not built.
   `a_web_session_issuance_past_sixteen_grants_is_refused_too_many`,
   `a_rate_set_at_a_persons_issuance_changes_only_by_an_admin_key`,
   `the_admin_session_reads_one_key_and_sets_its_limits_once_per_nonce`,
-  `the_admin_session_denies_a_key_on_a_workspace_and_the_web_session_on_universe_only` (if d4's reading is confirmed),
+  `the_admin_session_denies_a_key_on_a_workspace_and_the_web_session_on_universe_only`,
   `the_admin_session_still_issues_no_key`,
   `a_persons_web_session_reads_and_lists_the_imports_of_every_key_of_the_person`,
   `the_brief_group_lists_what_the_review_key_may_ratify_and_never_its_own_proposal`,

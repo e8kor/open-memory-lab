@@ -693,6 +693,6 @@ Decided, not built.
   `access.not_found`.
 - `GET /v2/imports?state=&limit=&cursor=` is new: newest first, as `<user>-web` the imports of
   every key of the person, as any other key its own, each item with the importing `key`.
-- A tenant key linked to the person is not among "the person's keys", a coordinator's reading
-  for the operator to confirm. d4's `import_provenance` on held rows and the
+- A tenant key linked to the person is not among "the person's keys", decided by the operator
+  on 2026-11-24. d4's `import_provenance` on held rows and the
   `attests_not_source_author` attestation stay unbuilt (ADR-0096 d11).

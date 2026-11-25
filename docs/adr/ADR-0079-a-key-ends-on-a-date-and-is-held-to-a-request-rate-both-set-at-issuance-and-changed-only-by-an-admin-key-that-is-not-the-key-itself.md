@@ -237,8 +237,7 @@ Decided, not built.
 
 - **The rate half of the operator's answer 3 is reversed.** `POST /v2/keys` as `<user>-web` takes
   `requests_per_minute` under d4's range, 1 to 1,000,000 (ADR-0096 d2). The bound is that range
-  alone, with no ceiling at the account's own rate, a coordinator's reading for the operator to
-  confirm: the lower of the key's and the account's rate refuses first, as d4 says. d5 is
+  alone, with no ceiling at the account's own rate, decided by the operator on 2026-11-24: the lower of the key's and the account's rate refuses first, as d4 says. d5 is
   unchanged: after issuance the rate and the date move only by an admin key that is not the key
   itself, and `<user>-web` stays `access.verb_ceiling` on `POST /v2/keys/{key}/limits`.
 - **The console sends a chosen date as the end of the next UTC day** (`YYYY-MM-DD` plus one day,

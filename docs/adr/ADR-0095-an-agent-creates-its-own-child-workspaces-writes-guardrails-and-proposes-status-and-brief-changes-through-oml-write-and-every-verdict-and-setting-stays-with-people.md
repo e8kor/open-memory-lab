@@ -13,7 +13,7 @@ workspace tool to allow creating and manipulating workspace itself, guardrails, 
 not yet covered"), with the scope the operator chose, "Proposals + own children": an agent's MCP
 key may create child workspaces where its key allows, write guardrails, skills, documents and
 steering, each held for review, and propose status changes and brief edits; mode, crew, grants and
-export stay with people.
+export stay with people. · amended 2026-11-24 by the operator (d5, d6: the pending proposal's time and proposer are served; see [the amendment](#amendment-of-2026-11-24-who-proposed-the-live-proposal-and-when))
 
 **Release:** v0.8.5 ([releases](../changelog.md))
 
@@ -415,3 +415,30 @@ Decided, not built.
 | **d6 — Keep the brief proposer at reviewer** | A contributor agent could then never propose its child's brief, which the operator's scope names. The member is already approved, and its place is approved again by a different reviewer. |
 | **d7 — Mode over MCP for the agent's own children** | An agent would choose who reads unreviewed work, and committing releases it. ADR-0030 d1 made the mode a person's act for that reason. |
 | **d8 — Grow ADR-0094's LangChain tools** | ADR-0094 rejected creating workspaces from inside an agent loop. Its store and tools stay inside one workspace. |
+
+## Amendment of 2026-11-24: who proposed the live proposal, and when
+
+Decided by the operator on 2026-11-24, with the v0.8.5 console round ([ADR-0096](ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md)): the
+console's `409 proposal.pending` refusal shows who made the live proposal and when. The 409's
+`details.transition_id` (d5) and `details.edge_id` (d6) name the live row; the reads below serve
+the rest. Additive: no field changes meaning, no route is added, and nothing is built before the
+ADR-0095 build.
+
+- **d5, status proposals.** `GET /v2/workspaces/{workspace}` serves `pending_transitions` as
+  today, to a key with reader effective access on the workspace. Each `Transition` gains
+  `proposed_at`, the instant of its `workspace.status_proposed`, served to every such reader, and
+  `proposed_by: {id, name} | null`, served when the proposing key is the calling key or another
+  key of the same person, null otherwise. `proposed_by_key_id` keeps its rule, the proposing key
+  only (ADR-0025 d15), so no key learns the name of another person's key from this read.
+- **d6, brief proposals.** The same rule on the brief's read: each pending `BriefEdge` that
+  `GET /v2/edges?kind=brief&workspace_id=` serves gains `proposed_at`, the instant of its
+  `brief_edge.proposed`, and `proposed_by: {id, name} | null` under the rule above, to a key with
+  reader effective access on the workspace, as the listing already requires. `proposer_key_id`
+  is unchanged.
+- **What the console shows.** "A proposal to <status> is already live, made <date> by <key>" where
+  `proposed_by` is served, else "by another key"; for a brief, "already proposed for this brief
+  <date>", with the key named under the same rule. It reads the row by the id the 409 names and
+  computes nothing else.
+- **Budget.** Both fields come from the row the read already returns; the build confirms that
+  neither read gains a store call and records any change in `web_console_reads.rs`.
+
