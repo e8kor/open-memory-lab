@@ -7569,8 +7569,8 @@ async fn a_skill_written_from_the_cli_is_held_and_lists_under_oml_skills_list_on
     lab.stop().await;
 }
 
-/// `--skill-*` on another kind, and a skill missing either flag, are usage
-/// errors before anything is sent.
+/// `--skill-*` on another kind or with no `--kind` at all, and a skill
+/// missing either flag, are usage errors before anything is sent.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn skill_flags_on_another_kind_and_a_skill_missing_one_are_refused_before_anything_is_sent() {
     let Some(lab) = Lab::start().await else {
@@ -7590,6 +7590,14 @@ async fn skill_flags_on_another_kind_and_a_skill_missing_one_are_refused_before_
         ][..],
         &["write", "x", "--kind", "skill", "--skill-name", "a"][..],
         &["write", "x", "--kind", "skill"][..],
+        &[
+            "write",
+            "x",
+            "--skill-name",
+            "a",
+            "--skill-description",
+            "b",
+        ][..],
     ] {
         let (code, _, log) = lab.text(args);
         assert_eq!(code, 2, "{args:?}: {log}");
@@ -7657,5 +7665,42 @@ async fn keys_rotate_out_writes_the_new_value_to_a_0600_file_and_prints_no_value
     }
     let (code, _, stderr) = lab.text(&["keys", "rotate", "rot-agent", "--out", shown]);
     assert_ne!(code, 0, "an existing file is refused: {stderr}");
+    lab.stop().await;
+}
+
+/// `oml keys rotate --out` creates and claims its owner-only file before it
+/// sends anything, as `issue-agent --out` does: a path that cannot hold the
+/// value is refused and the server is never called, so no value is minted
+/// that nothing keeps (ADR-0096 d13; ADR-0028 d1).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn keys_rotate_out_with_a_path_that_cannot_be_created_calls_no_server() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let wa = lab.workspace("rotating");
+    let _ = lab.issue(
+        "rot-agent",
+        &[
+            "--role",
+            "contributor",
+            "--principal",
+            "crew/rot",
+            "--grant",
+            &format!("{wa}:submitter"),
+        ],
+    );
+    let path = lab.dir.join("no-such-dir").join("rot-agent.key");
+    lab.take_requests();
+    let (code, stdout, stderr) = lab.text(&[
+        "keys",
+        "rotate",
+        "rot-agent",
+        "--out",
+        path.to_str().expect("a UTF-8 path"),
+    ]);
+    assert_eq!(code, 2, "a local refusal: {stdout}{stderr}");
+    assert!(stderr.contains("nothing was sent"), "{stderr}");
+    assert!(lab.take_requests().is_empty(), "the server is not called");
+    assert!(!path.exists());
     lab.stop().await;
 }
