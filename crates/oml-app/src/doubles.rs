@@ -2103,9 +2103,11 @@ fn apply_fold(
             key_hash,
             previous,
         } => {
-            let Some(key) = state.keys.get_mut(&key_id).filter(|k| {
-                k.revoked_at.is_none() && k.credential == Credential::Bearer
-            }) else {
+            let Some(key) = state
+                .keys
+                .get_mut(&key_id)
+                .filter(|k| k.revoked_at.is_none() && k.credential == Credential::Bearer)
+            else {
                 return Err(StoreError::Backend(format!(
                     "key {key_id} is not a live bearer key of this tenant"
                 )));
@@ -5491,7 +5493,10 @@ impl JournalStore for MemStore {
             return Ok(None);
         };
         let state = state.lock().expect("tenant lock");
-        Ok(state.previous_hashes.get(&key_id).map(|(_, until)| until.clone()))
+        Ok(state
+            .previous_hashes
+            .get(&key_id)
+            .map(|(_, until)| until.clone()))
     }
 
     async fn key_access(

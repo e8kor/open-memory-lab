@@ -7585,3 +7585,56 @@ async fn skill_flags_on_another_kind_and_a_skill_missing_one_are_refused_before_
     assert!(words.contains("guardrail | skill | document"), "{help}");
     lab.stop().await;
 }
+
+/// `oml keys rotate <key> --grace 1h --out <file>` writes the new value to
+/// a new 0600 file and prints no value; both values work during the grace,
+/// and the key keeps its grants (ADR-0096 d13).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn keys_rotate_out_writes_the_new_value_to_a_0600_file_and_prints_no_value() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let wa = lab.workspace("rotating");
+    let old = lab.issue(
+        "rot-agent",
+        &[
+            "--role",
+            "contributor",
+            "--principal",
+            "crew/rot",
+            "--grant",
+            &format!("{wa}:submitter"),
+        ],
+    )["value"]
+        .as_str()
+        .expect("value")
+        .to_owned();
+    let path = lab.dir.join("rot-agent.key");
+    let shown = path.to_str().expect("a UTF-8 path");
+    let (code, stdout, stderr) = lab.text(&[
+        "keys",
+        "rotate",
+        "rot-agent",
+        "--grace",
+        "1h",
+        "--out",
+        shown,
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(mode_of(&path), 0o600);
+    let written = std::fs::read_to_string(&path).expect("the key file");
+    let new = written.strip_suffix('\n').expect("one line").to_owned();
+    assert!(new.starts_with("oml_") && new != old, "{written}");
+    assert!(!stdout.contains(&new) && !stderr.contains(&new), "{stdout}");
+    for (value, text) in [
+        (&old, "written with the old value"),
+        (&new, "written with the new value"),
+    ] {
+        let (code, accepted, log) = lab.json(Some(value), &["write", text, "--workspace", &wa]);
+        assert_eq!(code, 0, "{log}");
+        assert_eq!(accepted["state"], "held", "{accepted}");
+    }
+    let (code, _, stderr) = lab.text(&["keys", "rotate", "rot-agent", "--out", shown]);
+    assert_ne!(code, 0, "an existing file is refused: {stderr}");
+    lab.stop().await;
+}

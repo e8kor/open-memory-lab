@@ -3190,6 +3190,11 @@ pub struct Whoami {
     /// Whether the key is a contributor without recall (ADR-0093 d3, as
     /// read on 2026-11-20): `oml doctor`'s `key_contributor_without_recall`.
     pub without_recall: bool,
+    /// For a bearer key, the end of its previous value's grace while that
+    /// value still authenticates after a rotation: `oml doctor`'s
+    /// `key.rotation_grace_open` (ADR-0096 d13). `None` otherwise, and for a
+    /// session key, whose whoami reads nothing more.
+    pub rotation_grace_until: Option<EventTime>,
 }
 
 /// `POST /v1/memories/{artifact_id}/supersede` (http-api.md supersede;

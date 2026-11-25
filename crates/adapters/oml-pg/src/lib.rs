@@ -5515,8 +5515,9 @@ async fn apply_fold(
             // the commit for anything else. The previous hash, with its
             // grace's end, replaces the key's earlier one, or a rotation
             // without grace deletes it (ADR-0096 d13; 0069).
-            let hash = key_hash_bytes(&key_hash)
-                .ok_or_else(|| StoreError::Backend("a rotated key's hash is not sha256".to_owned()))?;
+            let hash = key_hash_bytes(&key_hash).ok_or_else(|| {
+                StoreError::Backend("a rotated key's hash is not sha256".to_owned())
+            })?;
             let set = sqlx::query(
                 "UPDATE api_keys SET hash = $3 \
                  WHERE tenant_id = $1 AND id = $2 AND revoked_at IS NULL \

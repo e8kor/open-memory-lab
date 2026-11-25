@@ -420,6 +420,23 @@ enum KeysCommand {
         #[arg(long)]
         no_rate_limit: bool,
     },
+    /// Give a key a new value and print it once, or with --out write it to a
+    /// new owner-only file and print none. The key keeps its name, grants,
+    /// denials and limits; journals key.rotated. An admin key rotates any
+    /// key, a key rotates itself.
+    Rotate {
+        /// Key id or name.
+        #[arg(value_name = "KEY")]
+        key_ref: String,
+        /// How long the previous value keeps working, such as 1h or 24h, at
+        /// most 24h; omitted, it stops at once.
+        #[arg(long, value_name = "DURATION")]
+        grace: Option<String>,
+        /// Write the new value to this new file, owner-only (0600), and print
+        /// no value.
+        #[arg(long, value_name = "FILE")]
+        out: Option<std::path::PathBuf>,
+    },
     /// Revoke one connector-key connection and journal connection.revoked.
     Disconnect {
         /// Connector key id or name.
@@ -1909,6 +1926,71 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 eprintln!("{line}");
             }
             Ok(ExitCode::from(printed.exit))
+        }
+
+        Command::Keys {
+            command:
+                KeysCommand::Rotate {
+                    key_ref,
+                    grace,
+                    out,
+                },
+        } => {
+            if cli.json && out.is_some() {
+                return Err(CliError::local(
+                    "--out writes the value to a file and prints none; drop --json",
+                ));
+            }
+            let body = match grace {
+                Some(grace) => {
+                    let secs = parse_ttl(grace)
+                        .map_err(|e| CliError::Local(e.replacen("--ttl", "--grace", 1)))?;
+                    json!({ "grace_seconds": secs })
+                }
+                None => json!({}),
+            };
+            if let Some(path) = out
+                && path.exists()
+            {
+                return Err(CliError::local(format!(
+                    "{} exists; --out writes a new file only",
+                    path.display()
+                )));
+            }
+            let client = resolve(cli, &stored)?;
+            let (_, response) = client.post_keyed(
+                &format!("/v2/keys/{}/rotate", segment(key_ref)?),
+                &body,
+                &new_idempotency_key(),
+            )?;
+            let value = response["value"].as_str().unwrap_or_default();
+            let until = response["previous_valid_until"].as_str().map_or_else(
+                || "now: it no longer authenticates".to_owned(),
+                |t| t.to_owned(),
+            );
+            match out {
+                Some(path) => {
+                    write_owner_only(path, &format!("{value}\n"))?;
+                    println!(
+                        "rotated — key {}; the new value is in {} (owner-only); the previous \
+                         value stops at {until}",
+                        field(&response, "name"),
+                        path.display()
+                    );
+                }
+                None if cli.json => print_json(&response),
+                None => {
+                    println!(
+                        "rotated — key {} ({})",
+                        field(&response, "name"),
+                        field(&response, "key_id")
+                    );
+                    println!("  value    : {value}");
+                    println!("  shown once: store it now; OML keeps only its hash");
+                    println!("  previous : stops at {until}");
+                }
+            }
+            Ok(ExitCode::SUCCESS)
         }
 
         Command::Keys {
@@ -6071,6 +6153,15 @@ fn key_doctor(me: Option<&Result<Value, CliError>>) -> Vec<String> {
                      server process alone"
                 ));
             }
+            // A rotated key's previous value still works until its grace
+            // ends (ADR-0096 d13): information, not a fault.
+            if let Some(until) = me["rotation_grace_until"].as_str() {
+                lines.push(format!(
+                    "info key.rotation_grace_open: this key's previous value still \
+                     authenticates until {until}; move every client to the new value before \
+                     then"
+                ));
+            }
             // The server decides it: `whoami`'s grants carry no ancestry.
             if me["without_recall"] == true {
                 lines.push(format!(
@@ -9303,6 +9394,22 @@ mod tests {
     /// reader grant, the `universe` node grant, and is named all the same,
     /// since that grant reaches none of the nodes it writes (ADR-0093 d3, as
     /// read on 2026-11-20).
+    /// While a rotation's grace is open the doctor says until when the
+    /// previous value works, as information (ADR-0096 d13).
+    #[test]
+    fn doctor_says_when_a_rotated_keys_previous_value_stops_while_its_grace_is_open() {
+        let rotated = serde_json::json!({
+            "name": "ada",
+            "rotation_grace_until": "2026-11-26T10:00:00.000000Z",
+        });
+        assert_eq!(
+            key_doctor(Some(&Ok(rotated))),
+            vec![
+                "info key.rotation_grace_open: this key's previous value still authenticates until 2026-11-26T10:00:00.000000Z; move every client to the new value before then",
+            ]
+        );
+    }
+
     #[test]
     fn doctor_names_a_migrated_write_only_user_key_as_key_contributor_without_recall() {
         let migrated = serde_json::json!({

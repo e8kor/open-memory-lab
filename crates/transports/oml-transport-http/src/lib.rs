@@ -5115,6 +5115,11 @@ fn whoami_json(whoami: &Whoami) -> Value {
     if let (Some(denied), Some(obj)) = (whoami.denied, out.as_object_mut()) {
         obj.insert("denied".to_owned(), Value::Bool(denied));
     }
+    // While a rotated key's previous value still works, when it stops
+    // (ADR-0096 d13); absent otherwise.
+    if let (Some(until), Some(obj)) = (&whoami.rotation_grace_until, out.as_object_mut()) {
+        obj.insert("rotation_grace_until".to_owned(), json!(until.as_str()));
+    }
     out
 }
 

@@ -12704,3 +12704,117 @@ async fn an_unlinked_admin_keys_fix_answers_fix_requires_person_unlinked() {
     assert_eq!(fix["error"]["details"]["reason"], "unlinked", "{fix}");
     drop_db(&rig.db_name).await;
 }
+
+// -- key rotation (ADR-0096 d13) --------------------------------------------
+
+/// `GET /v2/whoami?person=false` under `value`: its status.
+async fn whoami_status(rig: &WebRig, value: &str) -> StatusCode {
+    send(
+        &rig.router,
+        "GET",
+        "/v2/whoami?person=false",
+        Call::auth(value),
+    )
+    .await
+    .0
+}
+
+/// Rotation answers the new value once: with a grace both values work, a
+/// resubmission under the same Idempotency-Key replays the answer without
+/// the value and rotates nothing, and a later rotation without grace stops
+/// every earlier value at once, on Postgres (ADR-0096 d13; migration 0069).
+#[tokio::test]
+async fn a_rotation_answers_its_value_once_and_a_replay_hides_it_and_rotates_nothing() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let _alice = rig.signed_in("alice@example.com", "alice", false).await;
+    let first = rig.agent_key("alice", "alice-laptop").await;
+    let rotate = |idem: &'static str, body: Value| Call::auth(&rig.admin).idem(idem).body(body);
+    let (status, headers, rotated) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/alice-laptop/rotate",
+        rotate("rot-1", json!({ "grace_seconds": 3600 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{rotated}");
+    assert!(headers.get("idempotency-replay").is_none());
+    let second = rotated["value"]
+        .as_str()
+        .expect("the value, once")
+        .to_owned();
+    assert!(rotated["previous_valid_until"].is_string(), "{rotated}");
+    assert!(rotated["rotated_at"].is_string(), "{rotated}");
+    assert_eq!(whoami_status(&rig, &first).await, StatusCode::OK);
+    assert_eq!(whoami_status(&rig, &second).await, StatusCode::OK);
+    let (status, headers, replayed) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/alice-laptop/rotate",
+        rotate("rot-1", json!({ "grace_seconds": 3600 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{replayed}");
+    assert!(headers.get("idempotency-replay").is_some());
+    assert!(replayed.get("value").is_none(), "{replayed}");
+    assert_eq!(whoami_status(&rig, &second).await, StatusCode::OK);
+    let (status, _, again) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/alice-laptop/rotate",
+        rotate("rot-2", json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert!(again["previous_valid_until"].is_null(), "{again}");
+    let third = again["value"].as_str().expect("the value").to_owned();
+    assert_eq!(whoami_status(&rig, &first).await, StatusCode::UNAUTHORIZED);
+    assert_eq!(whoami_status(&rig, &second).await, StatusCode::UNAUTHORIZED);
+    assert_eq!(whoami_status(&rig, &third).await, StatusCode::OK);
+    drop_db(&rig.db_name).await;
+}
+
+/// A person's web session rotates the person's own key, and is refused a
+/// session key by name and another person's key as absent.
+#[tokio::test]
+async fn a_persons_web_session_rotates_its_own_key_and_never_a_session_key() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let token = rig.signed_in("alice@example.com", "alice", false).await;
+    let web = credential(&token, "web");
+    let _bob = rig.signed_in("bob@example.com", "bob", false).await;
+    let _laptop = rig.agent_key("alice", "alice-laptop").await;
+    let _bobs = rig.agent_key("bob", "bob-laptop").await;
+    let (status, _, rotated) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/alice-laptop/rotate",
+        web_call(&web).idem("own").body(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{rotated}");
+    assert!(rotated["value"].is_string(), "{rotated}");
+    let (status, _, refused) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/alice-review/rotate",
+        web_call(&web).idem("session").body(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    assert_eq!(
+        refused["error"]["details"]["reason"], "session_key",
+        "{refused}"
+    );
+    let (status, _, absent) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/bob-laptop/rotate",
+        web_call(&web).idem("other").body(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{absent}");
+    drop_db(&rig.db_name).await;
+}

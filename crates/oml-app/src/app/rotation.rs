@@ -63,8 +63,11 @@ where
                     verb: "rotate_key",
                 });
             }
-            // A person's web session rotates that person's keys alone.
-            if target.user != caller.user {
+            // A person's web session reaches that person's keys alone, its
+            // session keys among them, which are then refused by name.
+            let own = target.user == caller.user
+                || (target.session_user.is_some() && target.session_user == caller.session_user);
+            if !own {
                 return Err(AppError::NotFound);
             }
         }

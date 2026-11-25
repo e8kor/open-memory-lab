@@ -2153,15 +2153,11 @@ where
         // d13); past it, the value names no key.
         if matches!(key, Ok(None)) {
             let now = self.clock.now();
-            key = self
-                .journal
-                .key_by_previous_hash(&hash)
-                .await
-                .map(|found| {
-                    found
-                        .filter(|(_, until)| until.unix_micros() > now.unix_micros())
-                        .map(|(key, _)| key)
-                });
+            key = self.journal.key_by_previous_hash(&hash).await.map(|found| {
+                found
+                    .filter(|(_, until)| until.unix_micros() > now.unix_micros())
+                    .map(|(key, _)| key)
+            });
         }
         if let Ok(found) = &key {
             self.observer.credential(found.as_ref(), None);
@@ -4746,6 +4742,7 @@ where
                 grants: Vec::new(),
                 denied: None,
                 without_recall: false,
+                rotation_grace_until: None,
             });
         };
         // The person's `<user>-web` alone is told, and only whether: the
@@ -4760,6 +4757,13 @@ where
             .await?
             .ok_or(AppError::Unauthorized)?;
         let without_recall = self.without_recall(&key, Some(&access)).await?;
+        // Only a bearer key has a value to rotate, so only its whoami reads
+        // the grace (ADR-0096 d13).
+        let rotation_grace_until = if key.credential == Credential::Bearer {
+            self.rotation_grace(&key).await?
+        } else {
+            None
+        };
         Ok(Whoami {
             key,
             tenant: Some(references.tenant),
@@ -4769,6 +4773,7 @@ where
             grants: access.grants,
             denied,
             without_recall,
+            rotation_grace_until,
         })
     }
 

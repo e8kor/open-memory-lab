@@ -20071,7 +20071,9 @@ async fn with_grace_both_values_work_until_its_end_and_then_only_the_new_one() {
         .expect("rotate");
     assert!(rotated.previous_valid_until.is_some());
     clock.advance(3599);
-    app.whoami(&agent.value).await.expect("the old value in its grace");
+    app.whoami(&agent.value)
+        .await
+        .expect("the old value in its grace");
     app.whoami(&rotated.value).await.expect("the new value");
     clock.advance(1);
     assert!(matches!(
@@ -20113,12 +20115,18 @@ async fn a_rotation_keeps_grants_and_history_and_journals_no_value() {
         .expect("held");
     assert_eq!(before.grants, after.grants);
     let events = journal(&store, boot.tenant_id).await;
-    assert_eq!(hashes(&events[..events_before.len()]), hashes(&events_before));
+    assert_eq!(
+        hashes(&events[..events_before.len()]),
+        hashes(&events_before)
+    );
     let last = &events.last().expect("an event").envelope;
     assert_eq!(last.event_type, "key.rotated");
     assert_eq!(last.payload["key_id"], agent.key_id.to_string());
     let text = last.payload.to_string();
-    assert!(!text.contains(&rotated.value) && !text.contains("sha256"), "{text}");
+    assert!(
+        !text.contains(&rotated.value) && !text.contains("sha256"),
+        "{text}"
+    );
     let key = store
         .key(boot.tenant_id, agent.key_id)
         .await
@@ -20158,7 +20166,10 @@ async fn rotation_refuses_each_key_that_takes_no_new_value_by_name() {
         other => panic!("{other:?}"),
     };
     assert_eq!(
-        refused(app.rotate_key(ana.value.as_str(), bea.key_id.into(), None).await),
+        refused(
+            app.rotate_key(ana.value.as_str(), bea.key_id.into(), None)
+                .await
+        ),
         "verb_ceiling"
     );
     assert_eq!(
