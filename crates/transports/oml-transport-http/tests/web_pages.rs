@@ -1377,6 +1377,9 @@ async fn the_allowlist_routes_take_an_admin_key_and_the_email_only_in_a_body() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    // bob's is the last admin entry, kept on every surface (ADR-0097 d25,
+    // d27 item 4), so another admin is added before it is removed.
+    rig.allow(EMAIL, "alice", true).await;
     let (status, _, body) = send(
         &rig.router,
         json_post(
@@ -1394,6 +1397,8 @@ async fn the_allowlist_routes_take_an_admin_key_and_the_email_only_in_a_body() {
 async fn the_journal_holds_an_email_digest_and_never_the_address() {
     let rig = rig().await;
     rig.allow(EMAIL, "alice", true).await;
+    // The last admin entry is kept (ADR-0097 d25), so a second admin first.
+    rig.allow("ops@example.com", "ops", true).await;
     rig.app
         .remove_web_email(&rig.boot.admin_key.value, &Email::parse(EMAIL).unwrap())
         .await
@@ -1404,9 +1409,13 @@ async fn the_journal_holds_an_email_digest_and_never_the_address() {
         .await
         .expect("the chain");
     let digest = Email::parse(EMAIL).unwrap().digest().to_prefixed();
+    // alice's address's events; the second admin's entry has its own.
     let web: Vec<_> = events
         .iter()
-        .filter(|e| e.envelope.event_type.starts_with("web."))
+        .filter(|e| {
+            e.envelope.event_type.starts_with("web.")
+                && e.envelope.payload["email_digest"] == digest.as_str()
+        })
         .collect();
     let types: Vec<&str> = web.iter().map(|e| e.envelope.event_type.as_str()).collect();
     assert_eq!(
@@ -3676,23 +3685,27 @@ async fn the_brief_group_lists_what_the_review_key_may_ratify_and_never_its_own_
     let rig = rig().await;
     let (cookie, value) = person_with_agent(&rig, "sub-1", EMAIL).await;
     let id = agent_writes(&rig, &value, "the deploy runs from main").await;
-    // alice's review key approves the agent's row, so it can join a brief.
+    // A claim takes one live proposal per brief (ADR-0095 d6), so each key
+    // proposes a row of its own.
+    let other = agent_writes(&rig, &value, "the deploy runs on Fridays").await;
+    // alice's review key approves the agent's rows, so they can join a brief.
     let (status, verdict) = as_web(
         &rig,
         &cookie,
         "review",
         "/v2/review/verdicts/bulk",
-        json!({"verdict": "approve", "artifact_ids": [id.to_string()]}),
+        json!({"verdict": "approve", "artifact_ids": [id.to_string(), other.to_string()]}),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{verdict}");
     assert_eq!(verdict["items"][0]["outcome"], "approved", "{verdict}");
+    assert_eq!(verdict["items"][1]["outcome"], "approved", "{verdict}");
     // Two bearer reviewer keys of alice's, issued by the tenant admin: one
     // under its own principal, one under `alice-review`'s, each proposing
     // the row for alice's brief.
-    for (name, principal) in [
-        ("alice-rev-a", "alice-rev-a"),
-        ("alice-rev-b", "alice-review"),
+    for (name, principal, proposed) in [
+        ("alice-rev-a", "alice-rev-a", id),
+        ("alice-rev-b", "alice-review", other),
     ] {
         let (status, key) = as_admin(
             &rig,
@@ -3719,7 +3732,7 @@ async fn the_brief_group_lists_what_the_review_key_may_ratify_and_never_its_own_
             .header(header::CONTENT_TYPE, "application/json")
             .header("idempotency-key", format!("edge-{name}"))
             .body(Body::from(
-                json!({"kind": "brief", "from_artifact_id": id, "to_workspace_id": "alice"})
+                json!({"kind": "brief", "from_artifact_id": proposed, "to_workspace_id": "alice"})
                     .to_string(),
             ))
             .expect("a request");

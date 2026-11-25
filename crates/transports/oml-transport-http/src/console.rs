@@ -1609,6 +1609,10 @@ where
     ///
     /// A resubmission under the same `Idempotency-Key` and body replays the
     /// answer and cuts nothing off again (ADR-0070 d3 layer 4, as built).
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one denial request's parts, its reason among them"
+    )]
     pub(crate) async fn cut_off_as_session(
         st: &Self,
         caller: Arc<Caller>,
