@@ -2702,7 +2702,9 @@ where
         params: &[(String, String)],
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
-        let token = bearer(headers)?;
+        // A person's session reads a brief's edges as the workspace page's
+        // Brief kind does (ADR-0096); claim edges keep the key value.
+        let acting = acting(headers, None)?;
         let mut seen = HashSet::new();
         let (mut kind, mut workspace, mut artifact, mut cursor) = (None, None, None, None);
         let mut limit = PAGE_LIMIT_DEFAULT;
@@ -2732,6 +2734,7 @@ where
         }
         let body = match kind {
             Some("claim") => {
+                let token = bearer(headers)?;
                 let page = st
                     .app
                     .claim_edges(
@@ -2763,7 +2766,7 @@ where
                 })?;
                 let page = st
                     .app
-                    .brief_edges(token.as_str(), workspace, cursor, limit)
+                    .brief_edges(acting.bearer(), workspace, cursor, limit)
                     .await
                     .map_err(|e| map_app_error(e, ErrorContext::Write))?;
                 json!({
@@ -2798,12 +2801,11 @@ where
         connection: Option<&Caller>,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        // The key value, or the MCP connection's caller, which rides in its
-        // access token's place (ADR-0031 d11).
-        let acting = match connection {
-            Some(caller) => Acting::Connection(caller),
-            None => Acting::Value(bearer(headers)?),
-        };
+        // The key value, the MCP connection's caller, which rides in its
+        // access token's place (ADR-0031 d11), or a person's session, as
+        // ratify resolves it: `<user>-web` proposes for a brief from the
+        // memory page (ADR-0095 d6; ADR-0096).
+        let acting = acting(headers, connection)?;
         let idem = idempotency_key(headers)?;
         // The kind first, so a designed kind's members are refused as that
         // kind rather than as unknown fields.

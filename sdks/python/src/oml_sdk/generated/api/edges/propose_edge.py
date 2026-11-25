@@ -103,7 +103,9 @@ def sync_detailed(
     and not served, requires reviewer(propose) effective access on at least one endpoint and reader on
     both (edge-authority rule, D7); an admin who must act here holds a separate reviewer key, since a
     key never combines admin with reviewer grants (access.role_exclusive). Each kind journals its own
-    proposal event (ADR-0039 d9).
+    proposal event (ADR-0039 d9). A person's web session key (<user>-web, through its capacity
+    credential) proposes and reads kind brief as the console does; kind claim takes a key value alone
+    (ADR-0096; since v0.8.5).
 
     Args:
         idempotency_key (str):
@@ -147,7 +149,9 @@ def sync(
     and not served, requires reviewer(propose) effective access on at least one endpoint and reader on
     both (edge-authority rule, D7); an admin who must act here holds a separate reviewer key, since a
     key never combines admin with reviewer grants (access.role_exclusive). Each kind journals its own
-    proposal event (ADR-0039 d9).
+    proposal event (ADR-0039 d9). A person's web session key (<user>-web, through its capacity
+    credential) proposes and reads kind brief as the console does; kind claim takes a key value alone
+    (ADR-0096; since v0.8.5).
 
     Args:
         idempotency_key (str):
@@ -186,7 +190,9 @@ async def asyncio_detailed(
     and not served, requires reviewer(propose) effective access on at least one endpoint and reader on
     both (edge-authority rule, D7); an admin who must act here holds a separate reviewer key, since a
     key never combines admin with reviewer grants (access.role_exclusive). Each kind journals its own
-    proposal event (ADR-0039 d9).
+    proposal event (ADR-0039 d9). A person's web session key (<user>-web, through its capacity
+    credential) proposes and reads kind brief as the console does; kind claim takes a key value alone
+    (ADR-0096; since v0.8.5).
 
     Args:
         idempotency_key (str):
@@ -228,7 +234,9 @@ async def asyncio(
     and not served, requires reviewer(propose) effective access on at least one endpoint and reader on
     both (edge-authority rule, D7); an admin who must act here holds a separate reviewer key, since a
     key never combines admin with reviewer grants (access.role_exclusive). Each kind journals its own
-    proposal event (ADR-0039 d9).
+    proposal event (ADR-0039 d9). A person's web session key (<user>-web, through its capacity
+    credential) proposes and reads kind brief as the console does; kind claim takes a key value alone
+    (ADR-0096; since v0.8.5).
 
     Args:
         idempotency_key (str):

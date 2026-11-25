@@ -92,7 +92,8 @@ def sync_detailed(
     tenant without grants and never claim content (docs/architecture/roles-and-keys.md, permission
     matrix footnote 6; ADR-0026 d15); artifact_id is refused with request.validation. Edges confer zero
     access. One family for both kinds, each keeping its authority, refusal codes and journal events
-    (ADR-0039 d9).
+    (ADR-0039 d9). A person's web session key (<user>-web, through its capacity credential) proposes and
+    reads kind brief as the console does; kind claim takes a key value alone (ADR-0096; since v0.8.5).
 
     Args:
         kind (ListEdgesKind):
@@ -149,7 +150,8 @@ def sync(
     tenant without grants and never claim content (docs/architecture/roles-and-keys.md, permission
     matrix footnote 6; ADR-0026 d15); artifact_id is refused with request.validation. Edges confer zero
     access. One family for both kinds, each keeping its authority, refusal codes and journal events
-    (ADR-0039 d9).
+    (ADR-0039 d9). A person's web session key (<user>-web, through its capacity credential) proposes and
+    reads kind brief as the console does; kind claim takes a key value alone (ADR-0096; since v0.8.5).
 
     Args:
         kind (ListEdgesKind):
@@ -201,7 +203,8 @@ async def asyncio_detailed(
     tenant without grants and never claim content (docs/architecture/roles-and-keys.md, permission
     matrix footnote 6; ADR-0026 d15); artifact_id is refused with request.validation. Edges confer zero
     access. One family for both kinds, each keeping its authority, refusal codes and journal events
-    (ADR-0039 d9).
+    (ADR-0039 d9). A person's web session key (<user>-web, through its capacity credential) proposes and
+    reads kind brief as the console does; kind claim takes a key value alone (ADR-0096; since v0.8.5).
 
     Args:
         kind (ListEdgesKind):
@@ -256,7 +259,8 @@ async def asyncio(
     tenant without grants and never claim content (docs/architecture/roles-and-keys.md, permission
     matrix footnote 6; ADR-0026 d15); artifact_id is refused with request.validation. Edges confer zero
     access. One family for both kinds, each keeping its authority, refusal codes and journal events
-    (ADR-0039 d9).
+    (ADR-0039 d9). A person's web session key (<user>-web, through its capacity credential) proposes and
+    reads kind brief as the console does; kind claim takes a key value alone (ADR-0096; since v0.8.5).
 
     Args:
         kind (ListEdgesKind):
