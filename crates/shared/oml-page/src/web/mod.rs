@@ -1134,6 +1134,52 @@ mod tests {
         );
     }
 
+    /// A check box's or radio's label, and a `.desc` line inside any
+    /// label, read as a sentence beside its control, not as a field's
+    /// upper-case caption: the rule that draws them resets the global
+    /// `label` rules, a form's column layout among them, so the box sits on
+    /// the line it ticks (ADR-0096 review, S4).
+    #[test]
+    fn a_check_label_and_a_desc_in_a_label_reset_the_caption_rules() {
+        // The sheet without its comments, rule by rule.
+        let mut sheet = String::new();
+        for (i, part) in include_str!("web.css").split("/*").enumerate() {
+            sheet.push_str(if i == 0 {
+                part
+            } else {
+                part.split_once("*/").map_or("", |(_, rest)| rest)
+            });
+        }
+        let declarations = |wanted: &str| {
+            sheet
+                .split('}')
+                .filter_map(|rule| rule.rsplit_once('{'))
+                .filter(|(selector, _)| selector.split(',').any(|s| s.trim() == wanted))
+                .map(|(_, d)| d.to_owned())
+                .collect::<Vec<_>>()
+                .join(";")
+        };
+        for (selector, resets) in [
+            (
+                "form.oml-form label.oml-check",
+                &["flex-direction:row", "text-transform:none", "letter-spacing:normal"][..],
+            ),
+            (
+                "label.oml-check",
+                &["flex-direction:row", "text-transform:none", "letter-spacing:normal"][..],
+            ),
+            (
+                "label .desc",
+                &["text-transform:none", "letter-spacing:normal"][..],
+            ),
+        ] {
+            let found = declarations(selector);
+            for reset in resets {
+                assert!(found.contains(reset), "{selector}: {reset} in {found:?}");
+            }
+        }
+    }
+
     /// A page drawn for no one, the sign-in page among them, speaks of no
     /// account in its footer: nobody is signed in (bulk D fixes).
     #[test]
