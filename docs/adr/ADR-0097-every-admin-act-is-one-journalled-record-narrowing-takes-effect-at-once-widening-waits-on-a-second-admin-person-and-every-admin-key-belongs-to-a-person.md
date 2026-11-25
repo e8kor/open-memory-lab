@@ -310,6 +310,11 @@ Decided, not built.
   members without changing the verb. This reverses ADR-0079 d5 and its answers of 2026-11-12 ("no
   admin key ends another") and ADR-0096 d12's deferral of revocation (2026-11-24). *Rejected:* admin keys only (Q6(b)); no revocation (Q6(c)), which leaves a leaked admin
   key permanent; a cascade, which the operator deferred.
+  *Note of 2026-11-25:* rotation is built in v0.8.5 as its own verb, `POST /v2/keys/{key}/rotate
+  {grace_seconds?}` ([ADR-0096](ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md) d13), not as a member of this verb. Under this record's model
+  rotation is neutral (d9): it grants nothing new, a key keeping exactly the access it held, so it
+  takes effect at once and waits on no second admin person. Its refusals stay as built: a session
+  key, a connector key, a revoked, cut-off or expired key.
 
 - **d15 — Raising a limit is widening; lowering it takes effect at once (Q7).** A raise, a cleared
   limit, a later expiry (which can revive a cut-off key) or a looser quota profile waits on a

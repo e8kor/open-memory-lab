@@ -81,7 +81,7 @@ After the request's names resolve and its limits are checked, checks run in this
 
 `oml keys issue` and `oml keys issue-agent` print the key value once. OML stores a SHA-256 hash only, so there is no "show me the key again". `oml keys show` displays grants, denials, crew and connections, never the value.
 
-Not available: revoking or rotating a key. A connection is revoked (see [Connections](#connections)), but the key behind it stays. To cut a key off today, add a global denial with `oml deny set`.
+A bearer key is rotated with `oml keys rotate <key>` (`POST /v2/keys/{key}/rotate`), or **Rotate** on the console's Keys tabs: it gets a new value, shown once, and keeps its id, name, grants, denials and limits. The previous value stops at once, or with `--grace` (at most 24 hours) keeps working until then. An admin key rotates any key, a person's console session the person's own keys, and a key itself; a session key, a connector key (it takes a new connect code), a revoked, cut-off or expired key is refused by name ([ADR-0096](../adr/ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md) d13). Not available: revoking a key. A connection is revoked (see [Connections](#connections)), but the key behind it stays. To cut a key off today, add a global denial with `oml deny set`.
 
 ### Expiry and rate
 

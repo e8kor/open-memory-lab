@@ -85,9 +85,9 @@ Update the plugin with `claude plugin update oml@open-memory-lab`. Then set its 
 
 ## Upgrading to v0.8.5
 
-v0.8.5 runs two migrations, 0067 and 0068, lets `oml_write` create a child workspace, write
-guardrails and propose status and brief changes, and adds the console round's pages. The server,
-the SDKs and the CLI upgrade in one window.
+v0.8.5 runs three migrations, 0067 to 0069, lets `oml_write` create a child workspace, write
+guardrails and propose status and brief changes, adds the console round's pages and key rotation.
+The server, the SDKs and the CLI upgrade in one window.
 
 ### `oml_write` writes guardrails, creates a child workspace and proposes status and brief changes
 
@@ -182,6 +182,17 @@ changes nothing. It prints `count,tenant,value` for unlinked admin keys, service
 grants in another person's root, admin-issued user keys and connect codes, open investigations,
 and `admin_persons_ever`, 2 or more where a tenant ever had two admin persons. The HTTP API serves
 no tenant-wide key or grant listing, so the counts read the database.
+
+### Key rotation and migration 0069
+
+`oml keys rotate <key> [--grace <dur>] [--out <file>]`, `POST /v2/keys/{key}/rotate` and **Rotate**
+on the Keys tabs give a bearer key a new value and keep everything else
+([ADR-0096](../adr/ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md)
+d13). Migration 0069 adds one empty table, `key_previous_hashes`, which holds a rotated key's
+previous hash while its grace lasts; it reads and locks nothing existing. A key value's `whoami`
+reads one row more, and serves `rotation_grace_until` while a grace is open, which `oml doctor`
+prints as `info key.rotation_grace_open`. To roll the operator's or a deployer's key, rotate it
+with a grace, move each client to the new value, and let the grace end.
 
 ### Migration 0068 and the console round's paths
 

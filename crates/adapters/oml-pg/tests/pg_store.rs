@@ -6470,8 +6470,8 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 68,
-        "every migration through 0068_imports_by_importer"
+        applied, 69,
+        "every migration through 0069_key_previous_hashes"
     );
     drop(conn);
     drop_dbs(&created).await;
@@ -7932,8 +7932,8 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 68,
-        "every migration through 0068_imports_by_importer"
+        applied, 69,
+        "every migration through 0069_key_previous_hashes"
     );
     drop(conn);
 
@@ -8939,8 +8939,8 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 68,
-        "every migration through 0068_imports_by_importer"
+        applied, 69,
+        "every migration through 0069_key_previous_hashes"
     );
     drop(conn);
 
@@ -13642,8 +13642,8 @@ async fn migrations_0059_and_0060_apply_over_0058_with_a_document_row_and_count_
             .await
             .expect("versions");
     assert_eq!(
-        applied, 68,
-        "every migration through 0068_imports_by_importer"
+        applied, 69,
+        "every migration through 0069_key_previous_hashes"
     );
     let (partitions, attached, valid, carries, validated): (i64, i64, bool, bool, bool) =
         sqlx::query_as(

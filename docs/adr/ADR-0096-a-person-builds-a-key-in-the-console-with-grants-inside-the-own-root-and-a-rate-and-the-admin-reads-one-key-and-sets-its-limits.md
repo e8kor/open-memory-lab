@@ -443,6 +443,34 @@ amends [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-th
 - **Under ADR-0097.** In v0.8.6 this grant becomes widening under ADR-0097's model; this note
   records the v0.8.5 shape only.
 
+## Operator decision of 2026-11-25: d13, key rotation
+
+Decided by the operator on 2026-11-25 and built in v0.8.5; [ADR-0097](ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) d14 notes it.
+
+- **d13 — A key is rotated: a new value, everything else kept.** `POST /v2/keys/{key}/rotate
+  {grace_seconds?}` gives a bearer key a new value, answered once as `value` with `rotated_at` and
+  `previous_valid_until`. The key keeps its id, name, grants, denials, limits, links, crew and
+  history. The value is never journalled: `key.rotated` names the key, the rotating key and
+  `previous_valid_until`, and the new hash rides the commit as an issuance's does. **Grace** is
+  optional and none by default: with `grace_seconds` up to 86,400 the previous value keeps
+  authenticating until then, held in `key_previous_hashes` (migration 0069) with its end, and
+  without it the previous value stops at once. A later rotation of the key replaces or deletes the
+  row; a row past its end resolves nothing. **Who:** an admin key, a `<user>-admin` session's
+  included, for any key; a person's `<user>-web` session for that person's own keys; and the key
+  itself, so an agent rolls its own secret; anyone else is `access.verb_ceiling`, and a person's
+  session naming another person's key finds none. **Refused by name** (`request.validation`,
+  `details.field: key`): `session_key`, `connector_key` (it takes a new connect code instead),
+  `revoked`, `cut_off`, `expired`; a longer grace is `grace_too_long` on `/grace_seconds`. The
+  `Idempotency-Key` is claimed before the act, so a replay answers without the value and rotates
+  nothing again. **Surfaces:** `oml keys rotate <key> [--grace <dur>] [--out <file>]`, `--out`
+  writing a new 0600 file and printing no value; **Rotate** beside **Cut off** on the Personal and
+  admin Keys tabs, asked first with a grace of none, one hour or 24 hours, the result shown once
+  with when the previous value stops; the Rust SDK's `rotate_key` and the generated layers.
+  **Doctor:** `whoami` serves `rotation_grace_until` for a bearer key while its grace is open, and
+  `oml doctor` prints `info key.rotation_grace_open`. **Cost:** the act 12 store calls, and a key
+  value's `whoami` one read more (`web_console_reads.rs`). Under ADR-0097 (v0.8.6) rotation is
+  neutral: it grants nothing new.
+
 ## Build notes (v0.8.5, 2026-11-25)
 
 Built: d1 to d4, d6 to d10 on the server; on the console the key builder, the Keys list's coverage
