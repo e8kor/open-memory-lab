@@ -645,9 +645,29 @@ export interface paths {
         };
         /**
          * The administration To do page's counts; no content.
-         * @description Requires: a person's admin session key, <user>-admin, through its capacity credential; any other key, <user>-curate and a tenant admin key included, answers access.verb_ceiling with details.reason session_key_only (ADR-0083 d11). Its groups (unconfirmed admin fixes, guardrail-loosening alerts, open investigations) join with ADR-0089's acts; until then it answers truncated alone, false (ADR-0083 d14). Takes no query parameter. Journals nothing. Since v0.8.3.
+         * @description Requires: a person's admin session key, <user>-admin, through its capacity credential; any other key, <user>-curate and a tenant admin key included, answers access.verb_ceiling with details.reason session_key_only (ADR-0083 d11). alerts counts the tenant's unconfirmed fixes that loosen a guardrail, from the rows GET /v2/admin/fixes serves, up to 1,000 with truncated past it (ADR-0096 d7; since v0.8.5). Takes no query parameter. Journals nothing. Since v0.8.3.
          */
         get: operations["adminTodoCounts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/review/briefs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The pending brief edges a person's reviewer key may ratify, oldest first.
+         * @description Requires: a person's review session key, <user>-review, through its capacity credential; any other caller is access.verb_ceiling (ADR-0096 d7). The pending brief edges on workspaces where the key holds reviewer effective access, at workspace and below where one is named, oldest first, a page of 50; an edge proposed by the key itself or under its principal is not listed, since ratification refuses it (review.ratifier_is_proposer). same_user is true where the proposer acts for the reviewer's person (ADR-0046 d2). One read of the pending edges whatever the number of workspaces. Journals nothing. Since v0.8.5.
+         */
+        get: operations["listBriefProposals"];
         put?: never;
         post?: never;
         delete?: never;
@@ -691,7 +711,7 @@ export interface paths {
         put?: never;
         /**
          * Issue a key under the issuer ceiling; the value appears exactly once, here.
-         * @description A person's web session key (<user>-web, through its capacity credential) issues their own key: send name (<user>-<name>), role (contributor or reader) and connect_code, and expiry to end the key on a date, under the rule for expiry below; the key names their user and holds submitter and reader, or reader, on their root alone, any other field, requests_per_minute included, is request.validation naming it, the date is changed or cleared afterwards only by the admin key role (POST /v2/keys/{key}/limits; ADR-0079 d1, d5; since v0.7.3), and any other capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). The session key's access is read when the issuance runs, and a session key that carries a denial, on any workspace, issues nothing: access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070 d2; since v0.7.3). Otherwise requires: admin key role; operator key role only for an operator key, sent without tenant, or a tenant's first admin key, sent with tenant (step 0 of the issuance order). tenant is a designed field (openapi-designed.yaml x-oml-designed-fields), refused with request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9). expiry is the instant from which the key authenticates nothing, later than the server's clock, and requests_per_minute the key's own rate, from 1 to 1000000; either outside that is request.validation naming it in details.field, and nothing is journalled. An admin key carries neither: role admin with expiry or requests_per_minute is request.validation naming the member in details.field, with details.reason admin_key (ADR-0079 d1, d4; since v0.7.3). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workspace, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workspace, crew and tenant reference takes an id or a name, and the response carries ids under their v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant's workarea_node_id, a deny entry's subtree_node_id) is refused with request.validation naming its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201 carries connect_code, shown once, in the value's place; an admin or operator role, used_by service and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason. The Idempotency-Key is claimed for the calling key before the issuance: a resubmission under the same key and body answers the first 201 with Idempotency-Replay: true and issues nothing again, without value and without connect_code.code, which the first answer alone carries; the same key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0).
+         * @description A person's web session key (<user>-web, through its capacity credential) issues their own key: send name (<user>-<name>, refused naming /name for exactly <user>-web, <user>-review, <user>-curate or <user>-admin and no other name), role (contributor, reader or submitter; any other role is request.validation naming /role) and connect_code, and optionally grants, default_workspace, guardrail_scope, expiry and requests_per_minute (ADR-0096 d1 to d3; since v0.8.5). Without grants the key holds submitter and reader (contributor), reader (reader) or submitter (submitter) on the root and below; with grants it holds exactly those sent, each grant role reader or submitter, each inside the root, else 403 access.issuer_ceiling naming details.user, or for a grant role the key role does not admit details.role, admissible and grant_index; a submitter key gets no universe grant, a contributor or reader key the universe reader node grant. At most 16 grants of at most 16 denials each: more is request.validation with details.field /grants or /grants/<i>/deny and details.reason too_many. user, used_by, crew, label, principal, profile and tenant stay request.validation naming the field. The date and the rate are changed or cleared afterwards only by an admin key (POST /v2/keys/{key}/limits; ADR-0079 d1, d5; ADR-0096 d2), and any other capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). The session key's access is read when the issuance runs, and a session key that carries a denial, on any workspace, issues nothing: access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070 d2; since v0.7.3). Otherwise requires: admin key role; operator key role only for an operator key, sent without tenant, or a tenant's first admin key, sent with tenant (step 0 of the issuance order). tenant is a designed field (openapi-designed.yaml x-oml-designed-fields), refused with request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9). expiry is the instant from which the key authenticates nothing, later than the server's clock, and requests_per_minute the key's own rate, from 1 to 1000000; either outside that is request.validation naming it in details.field, and nothing is journalled. An admin key carries neither: role admin with expiry or requests_per_minute is request.validation naming the member in details.field, with details.reason admin_key (ADR-0079 d1, d4; since v0.7.3). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workspace, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workspace, crew and tenant reference takes an id or a name, and the response carries ids under their v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant's workarea_node_id, a deny entry's subtree_node_id) is refused with request.validation naming its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201 carries connect_code, shown once, in the value's place; an admin or operator role, used_by service and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason. The Idempotency-Key is claimed for the calling key before the issuance: a resubmission under the same key and body answers the first 201 with Idempotency-Replay: true and issues nothing again, without value and without connect_code.code, which the first answer alone carries; the same key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0).
          */
         post: operations["issueKey"];
         delete?: never;
@@ -729,7 +749,7 @@ export interface paths {
         };
         /**
          * One key — grants, denials, epoch, issuance and revocation events. Never the value.
-         * @description Requires: admin key role.
+         * @description Requires: admin key role, a person's <user>-admin session key through its capacity credential included; any other session capacity is access.verb_ceiling with details.reason session_capacity (ADR-0096 d4; since v0.8.5). Journals nothing.
          */
         get: operations["getKey"];
         put?: never;
@@ -751,7 +771,7 @@ export interface paths {
         put?: never;
         /**
          * Create or extend the key's global deny object — deny-wins across all its grants.
-         * @description A person's session key cuts a key off on universe alone, workspace universe, the key by name: <user>-web one of their own keys, <user>-admin any key of the tenant, never a session key; another capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9, d13). The session key's access is read when the cut-off runs, and a session key that itself carries a denial, on any workspace, cuts nothing off: access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070 d2; since v0.7.3). As a session key, a resubmission under the same Idempotency-Key and body answers the recorded denial with Idempotency-Replay: true and cuts nothing off again; the same key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5 s, then is idempotency.in_progress (ADR-0070 d3 layer 4; since v0.6.4). Otherwise requires: admin key role, and the Idempotency-Key is required but no outcome is recorded under it: only a session key claims it, so a resubmission by any other key denies again. Distinct from a per-grant deny mask. Journalled as key.denied; the denial's epoch is that event's journal seq. workspace takes an id or a name, and workarea_node_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /workspace (ADR-0039 d7). A denial on an admin key is refused with request.validation, details.field key: denials attenuate grants, and an admin key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
+         * @description Since v0.8.5 a person's <user>-admin session key denies any key of the tenant on any workspace of the tenant, with the request's reason, accepted and not stored (ADR-0096 d4). A person's web session key cuts a key off on universe alone, workspace universe, the key by name: <user>-web one of their own keys, <user>-admin any key of the tenant, never a session key; another capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9, d13). The session key's access is read when the cut-off runs, and a session key that itself carries a denial, on any workspace, cuts nothing off: access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070 d2; since v0.7.3). As a session key, a resubmission under the same Idempotency-Key and body answers the recorded denial with Idempotency-Replay: true and cuts nothing off again; the same key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5 s, then is idempotency.in_progress (ADR-0070 d3 layer 4; since v0.6.4). Otherwise requires: admin key role, and the Idempotency-Key is required but no outcome is recorded under it: only a session key claims it, so a resubmission by any other key denies again. Distinct from a per-grant deny mask. Journalled as key.denied; the denial's epoch is that event's journal seq. workspace takes an id or a name, and workarea_node_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /workspace (ADR-0039 d7). A denial on an admin key is refused with request.validation, details.field key: denials attenuate grants, and an admin key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
          */
         post: operations["addDenial"];
         delete?: never;
@@ -771,7 +791,7 @@ export interface paths {
         put?: never;
         /**
          * Set or clear a key's expiry and its requests per minute.
-         * @description Requires: admin key role, in the key's own tenant; any other role is access.verb_ceiling, and no MCP tool reaches the route. A member sent replaces the value, null clears it, and a member not sent keeps it; a body that names neither is request.validation. expiry is later than the server's clock (details.field /expiry) and requests_per_minute from 1 to 1000000 (details.field /requests_per_minute). The key is never the calling key, a session key, a revoked key or an admin key: request.validation with details.field key and details.reason own_key, session_key, revoked or admin_key. No key that can change limits carries one, so none moves its own date or raises its own rate, and no admin key ends another by a date. Journalled as key.limits_set with both values as they stand after the change; the Idempotency-Key is required and not replayed, so a request sent twice journals two events that leave the same limits. Moving an expired key's expiry later makes it authenticate again; the rate holds from the key's next request (ADR-0079 d5; since v0.7.3).
+         * @description Requires: admin key role, in the key's own tenant, a person's <user>-admin session key included, which claims the Idempotency-Key and answers a resubmission with the recorded answer and Idempotency-Replay: true, journalling one key.limits_set (ADR-0096 d4; since v0.8.5); any other role is access.verb_ceiling, and no MCP tool reaches the route. A member sent replaces the value, null clears it, and a member not sent keeps it; a body that names neither is request.validation. expiry is later than the server's clock (details.field /expiry) and requests_per_minute from 1 to 1000000 (details.field /requests_per_minute). The key is never the calling key, a session key, a revoked key or an admin key: request.validation with details.field key and details.reason own_key, session_key, revoked or admin_key. No key that can change limits carries one, so none moves its own date or raises its own rate, and no admin key ends another by a date. Journalled as key.limits_set with both values as they stand after the change; the Idempotency-Key is required and not replayed, so a request sent twice journals two events that leave the same limits. Moving an expired key's expiry later makes it authenticate again; the rate holds from the key's next request (ADR-0079 d5; since v0.7.3).
          */
         post: operations["setKeyLimits"];
         delete?: never;
@@ -1825,7 +1845,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * The imports a key ran, or as a person's web session every key of the person's, newest first.
+         * @description As a person's web session key, <user>-web, the imports of every key that names the person as its user, a tenant key linked to the person not included; as any other key, that key's own (ADR-0096 d6). Newest first, at most 50 a page (limit from 1 to 50). state is running, done or failed; another value is request.validation with details.field state. Each item is the Import GET /v2/imports/{id} serves, with key, the importing key's id and name. Journals nothing. Since v0.8.5.
+         */
+        get: operations["listImports"];
         put?: never;
         /**
          * Plan or run an import of a completed upload into an in-progress workspace; every version lands held.
@@ -1847,7 +1871,7 @@ export interface paths {
         };
         /**
          * An import's state, position, counts and refusals.
-         * @description Requires: the key that ran the import; any other key, and an id no import has, answers access.not_found (ADR-0084 d15). state is running, done or failed; a running import outlives no request, so one read running stopped when the server did, and position is the versions it recorded. Since v0.8.3.
+         * @description Requires: the key that ran the import, or a person's web session key, <user>-web, for an import any key of the person ran (ADR-0096 d6; since v0.8.5); any other key, and an id no import has, answers access.not_found (ADR-0084 d15). state is running, done or failed; a running import outlives no request, so one read running stopped when the server did, and position is the versions it recorded. Since v0.8.3.
          */
         get: operations["getImport"];
         put?: never;
@@ -2013,6 +2037,10 @@ export interface components {
         /** @description One person of the tenant as GET /v2/web/users lists them and the quota update answers (ADR-0068 d5). */
         WebUser: {
             user: string;
+            /** @description The account's quota profile, null for none (ADR-0096 d9). Since v0.8.5. */
+            profile?: string | null;
+            /** @description The UTC month the usage counts, YYYY-MM (ADR-0096 d9). Since v0.8.5. */
+            period?: string;
             signed_up: boolean;
             disabled: boolean;
             under_quotas: boolean;
@@ -2022,8 +2050,12 @@ export interface components {
                 text_bytes?: number;
                 /** @description Versions submitted this UTC month (ADR-0071 d2). Since v0.7.3. */
                 writes?: number;
+                /** @description Recalls this UTC month, a count with no limit (ADR-0096 d9). Since v0.8.5. */
+                recalls?: number;
                 keys?: number;
                 connections?: number;
+                /** @description Workspaces the account created, served with ADR-0095 d4's meter; a client reads an answer without it as no such meter (ADR-0096 d9). Since v0.8.5. */
+                workspaces?: number;
             };
             quotas: {
                 memories?: number;
@@ -2031,6 +2063,8 @@ export interface components {
                 text_bytes?: number | null;
                 /** @description Null is unlimited (ADR-0071 d5). Since v0.7.3. */
                 writes_per_month?: number | null;
+                /** @description Null is unlimited; absent without ADR-0095 d4's meter (ADR-0096 d9). Since v0.8.5. */
+                workspaces?: number | null;
                 keys?: number;
                 connections?: number;
                 requests_per_minute?: number;
@@ -3787,6 +3821,10 @@ export interface components {
         };
         WhoamiPerson: {
             user: string;
+            /** @description The account's quota profile, null for none (ADR-0096 d9). Since v0.8.5. */
+            profile?: string | null;
+            /** @description The UTC month the usage counts, YYYY-MM (ADR-0096 d9). Since v0.8.5. */
+            period?: string;
             /** @description Whether the person is under the sign-up tenant's quotas; usage and quotas are null when not (ADR-0068 d5). */
             under_quotas: boolean;
             usage: {
@@ -3795,8 +3833,12 @@ export interface components {
                 text_bytes?: number;
                 /** @description Versions submitted this UTC month (ADR-0071 d2). Since v0.7.3. */
                 writes?: number;
+                /** @description Recalls this UTC month, a count with no limit (ADR-0096 d9). Since v0.8.5. */
+                recalls?: number;
                 keys?: number;
                 connections?: number;
+                /** @description Workspaces the account created, served with ADR-0095 d4's meter; a client reads an answer without it as no such meter (ADR-0096 d9). Since v0.8.5. */
+                workspaces?: number;
             } | null;
             quotas: {
                 memories?: number;
@@ -3804,6 +3846,8 @@ export interface components {
                 text_bytes?: number | null;
                 /** @description Null is unlimited (ADR-0071 d5). Since v0.7.3. */
                 writes_per_month?: number | null;
+                /** @description Null is unlimited; absent without ADR-0095 d4's meter (ADR-0096 d9). Since v0.8.5. */
+                workspaces?: number | null;
                 keys?: number;
                 connections?: number;
                 requests_per_minute?: number;
@@ -3833,6 +3877,28 @@ export interface components {
                 /** @enum {string|null} */
                 first_memory?: "held" | "promoted" | null;
             } | null;
+        };
+        /** @description One pending brief edge a person's reviewer key may ratify (ADR-0096 d7). */
+        BriefProposal: {
+            /** Format: uuid */
+            edge_id: string;
+            workspace: {
+                /** Format: uuid */
+                id: string;
+                name: string | null;
+            };
+            /** Format: uuid */
+            artifact_id: string;
+            claim_key: string | null;
+            title: string | null;
+            proposed_by: {
+                /** Format: uuid */
+                id: string;
+                name: string | null;
+            };
+            same_user: boolean;
+            /** Format: date-time */
+            proposed_at: string;
         };
         ListedKey: {
             /** Format: uuid */
@@ -3864,6 +3930,11 @@ export interface components {
                 /** Format: uuid */
                 workspace_id: string;
                 path: string;
+                /**
+                 * @description The grant's coverage; a client reads an answer without it, from a server before v0.8.5, as subtree (ADR-0096 d8).
+                 * @enum {string}
+                 */
+                covers: "subtree" | "node";
             }[];
         };
         /** @description GET /v2/review/held with ids (ADR-0055 d10; ADR-0070 d5). */
@@ -6323,12 +6394,15 @@ export interface operations {
                     /**
                      * @example {
                      *       "review": 3,
+                     *       "briefs": 1,
                      *       "truncated": false
                      *     }
                      */
                     "application/json": {
                         /** @description The To review group's length: the held rows the person's reviewer key may judge. */
                         review: number;
+                        /** @description The Brief proposals group's length: the pending brief edges GET /v2/review/briefs would list the person's reviewer key, at workspace and below or everywhere, never one it or its principal proposed; counted up to 1,000 and sharing truncated (ADR-0096 d7). Since v0.8.5. */
+                        briefs: number;
                         /** @description Whether a count passed 1,000 and answers 1,000, or stopped after reading 2,000 held rows and answers what it counted. */
                         truncated: boolean;
                     };
@@ -6364,15 +6438,58 @@ export interface operations {
                 content: {
                     /**
                      * @example {
+                     *       "alerts": 0,
                      *       "truncated": false
                      *     }
                      */
                     "application/json": {
+                        /** @description The guardrail-loosening alerts: unconfirmed fixes that loosen a guardrail (ADR-0096 d7). Since v0.8.5. */
+                        alerts: number;
                         truncated: boolean;
                     };
                 };
             };
             403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    listBriefProposals: {
+        parameters: {
+            query?: {
+                /** @description The workspace, by id or name, whose subtree is listed; every workspace when absent. */
+                workspace?: string;
+                /** @description The next_cursor a page served. */
+                cursor?: string;
+            };
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of brief proposals. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["BriefProposal"][];
+                        next_cursor: string | null;
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             default: components["responses"]["Error"];
         };
     };
@@ -9692,6 +9809,51 @@ export interface operations {
             410: components["responses"]["Gone"];
             422: components["responses"]["Unprocessable"];
             503: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    listImports: {
+        parameters: {
+            query?: {
+                state?: "running" | "done" | "failed";
+                limit?: number;
+                /** @description The next_cursor a page served. */
+                cursor?: string;
+            };
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of imports. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: (components["schemas"]["Import"] & {
+                            key: {
+                                /** Format: uuid */
+                                id: string;
+                                name: string | null;
+                            };
+                        })[];
+                        next_cursor: string | null;
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
             default: components["responses"]["Error"];
         };
     };

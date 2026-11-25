@@ -61,6 +61,9 @@ from .brief import Brief
 from .brief_edge import BriefEdge
 from .brief_edge_proposal import BriefEdgeProposal
 from .brief_edge_state import BriefEdgeState
+from .brief_proposal import BriefProposal
+from .brief_proposal_proposed_by import BriefProposalProposedBy
+from .brief_proposal_workspace import BriefProposalWorkspace
 from .build import Build
 from .build_profile import BuildProfile
 from .bulk_verdict_request import BulkVerdictRequest
@@ -193,7 +196,12 @@ from .key_profile_type_3_type_1 import KeyProfileType3Type1
 from .key_used_by_type_1 import KeyUsedByType1
 from .key_used_by_type_2_type_1 import KeyUsedByType2Type1
 from .key_used_by_type_3_type_1 import KeyUsedByType3Type1
+from .list_brief_proposals_response_200 import ListBriefProposalsResponse200
 from .list_edges_kind import ListEdgesKind
+from .list_imports_response_200 import ListImportsResponse200
+from .list_imports_response_200_items_item import ListImportsResponse200ItemsItem
+from .list_imports_response_200_items_item_key import ListImportsResponse200ItemsItemKey
+from .list_imports_state import ListImportsState
 from .list_keys_response_200 import ListKeysResponse200
 from .list_web_emails_response_200 import ListWebEmailsResponse200
 from .list_web_users_response_200 import ListWebUsersResponse200
@@ -204,6 +212,7 @@ from .list_web_users_response_200_mode import ListWebUsersResponse200Mode
 from .listed_key import ListedKey
 from .listed_key_credential import ListedKeyCredential
 from .listed_key_grants_item import ListedKeyGrantsItem
+from .listed_key_grants_item_covers import ListedKeyGrantsItemCovers
 from .listed_key_used_by import ListedKeyUsedBy
 from .memory import Memory
 from .memory_page import MemoryPage
@@ -509,6 +518,9 @@ __all__ = (
     "BriefEdge",
     "BriefEdgeProposal",
     "BriefEdgeState",
+    "BriefProposal",
+    "BriefProposalProposedBy",
+    "BriefProposalWorkspace",
     "Build",
     "BuildProfile",
     "BulkVerdictRequest",
@@ -631,7 +643,12 @@ __all__ = (
     "KeyUsedByType1",
     "KeyUsedByType2Type1",
     "KeyUsedByType3Type1",
+    "ListBriefProposalsResponse200",
     "ListEdgesKind",
+    "ListImportsResponse200",
+    "ListImportsResponse200ItemsItem",
+    "ListImportsResponse200ItemsItemKey",
+    "ListImportsState",
     "ListKeysResponse200",
     "ListWebEmailsResponse200",
     "ListWebUsersResponse200",
@@ -640,6 +657,7 @@ __all__ = (
     "ListedKey",
     "ListedKeyCredential",
     "ListedKeyGrantsItem",
+    "ListedKeyGrantsItemCovers",
     "ListedKeyUsedBy",
     "Memory",
     "MemoryPage",

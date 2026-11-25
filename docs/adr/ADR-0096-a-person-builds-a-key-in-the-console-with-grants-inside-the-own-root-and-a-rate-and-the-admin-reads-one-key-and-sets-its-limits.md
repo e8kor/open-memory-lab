@@ -13,7 +13,7 @@ coordinator drafted beyond those answers, and the admin's deny on any workspace,
 the operator on 2026-11-24 as written, each marked **decided by the operator, 2026-11-24**; the
 mockups are approved for the build
 
-**Release:** v0.8.5, not built
+**Release:** v0.8.5, built on branch `bulk085/console` except as its build notes below say
 
 **Amends:**
 - [ADR-0070](ADR-0070-the-web-console-is-a-client-of-the-public-http-api-in-a-crate-that-cannot-reach-the-application-core.md)
@@ -67,7 +67,7 @@ It is held against R1: no key raises its own limits or widens its own access, an
 agent calls gains an act. Every widening below is an act of a person's own web session, inside
 the person's own root, or of a person's admin session in its own tenant.
 
-Decided, not built.
+Decided; built in v0.8.5, with the frames the build notes list left out.
 
 ## Decision
 
@@ -406,3 +406,32 @@ Decided, not built.
 | **Denials on the key list too** | The listing is the Keys page's costliest call (12 store calls); the one-key read already serves them (D9). |
 | **A zone select, or a hashed script that reads the browser's zone, for the expiry** | Each asks the person something or adds a CSP change (ADR-0069 d3) for at most a day's difference (D4, D13). |
 | **Build the import-review group now** | Its attestation is a verdict change no decision of this round made; without it the group would show a check the server does not record (d11). |
+
+## Build notes (v0.8.5, 2026-11-25)
+
+Built: d1 to d4, d6 to d10 on the server; on the console the key builder, the Keys list's coverage
+mark and expiry line, the usage card's profile, month, recalls and `workspaces` meter (drawn only
+where the API serves it), the admin one-key page with its limits and deny forms, the Fix tab (d5)
+with its target from an investigation's memory page, the import hand-off, list and one import, the
+To do brief group with **Ratify**, and the admin To do's fixes and alerts groups.
+`POST /v2/edges/{id}/ratify` resolves a session caller, so `<user>-review` ratifies from To do.
+
+Readings the build took, for the operator to confirm:
+
+- The builder's rate field does not show the account's own rate beside it: the form's `GET` reads
+  no person block, to stay at d1's budget (`whoami`, then one tree page). The hint says that
+  under the account's quota the lower of the two holds.
+- The Fix tab's edit form does not show the version's current text: that text is one more admin
+  read, journalled, on the investigation's memory page, which the tab links back to.
+- The admin one-key page shows the default workspace, the crew and each grant's and denial's
+  workspace by id, not by name: naming them would add a tree read to the page.
+- The admin To do draws the unconfirmed fixes and the alerts, not open investigations: the SDK has
+  no investigations listing yet.
+
+Not built in this lane, each waiting on another change: the brief section of the workspace page,
+**Propose for brief** and the P9 status proposal on the workspace page (they call the proposal
+routes ADR-0095 changes, which the `bulk085/mcp` lane builds, and `POST /v2/edges` still reads the
+raw bearer, so a session cannot propose); the workspace export page (P10), which needs the SDK's
+binary download (#465); the personal fix confirmation page `/web/todo/fix` (P14) and the imported
+version's Judge (P15, deferred by d11).
+

@@ -77,7 +77,8 @@ def sync_detailed(
 ) -> Response[ErrorEnvelope | ImportStatus]:
     """An import's state, position, counts and refusals.
 
-     Requires: the key that ran the import; any other key, and an id no import has, answers
+     Requires: the key that ran the import, or a person's web session key, <user>-web, for an import any
+    key of the person ran (ADR-0096 d6; since v0.8.5); any other key, and an id no import has, answers
     access.not_found (ADR-0084 d15). state is running, done or failed; a running import outlives no
     request, so one read running stopped when the server did, and position is the versions it recorded.
     Since v0.8.3.
@@ -120,7 +121,8 @@ def sync(
 ) -> ErrorEnvelope | ImportStatus | None:
     """An import's state, position, counts and refusals.
 
-     Requires: the key that ran the import; any other key, and an id no import has, answers
+     Requires: the key that ran the import, or a person's web session key, <user>-web, for an import any
+    key of the person ran (ADR-0096 d6; since v0.8.5); any other key, and an id no import has, answers
     access.not_found (ADR-0084 d15). state is running, done or failed; a running import outlives no
     request, so one read running stopped when the server did, and position is the versions it recorded.
     Since v0.8.3.
@@ -158,7 +160,8 @@ async def asyncio_detailed(
 ) -> Response[ErrorEnvelope | ImportStatus]:
     """An import's state, position, counts and refusals.
 
-     Requires: the key that ran the import; any other key, and an id no import has, answers
+     Requires: the key that ran the import, or a person's web session key, <user>-web, for an import any
+    key of the person ran (ADR-0096 d6; since v0.8.5); any other key, and an id no import has, answers
     access.not_found (ADR-0084 d15). state is running, done or failed; a running import outlives no
     request, so one read running stopped when the server did, and position is the versions it recorded.
     Since v0.8.3.
@@ -199,7 +202,8 @@ async def asyncio(
 ) -> ErrorEnvelope | ImportStatus | None:
     """An import's state, position, counts and refusals.
 
-     Requires: the key that ran the import; any other key, and an id no import has, answers
+     Requires: the key that ran the import, or a person's web session key, <user>-web, for an import any
+    key of the person ran (ADR-0096 d6; since v0.8.5); any other key, and an id no import has, answers
     access.not_found (ADR-0084 d15). state is running, done or failed; a running import outlives no
     request, so one read running stopped when the server did, and position is the versions it recorded.
     Since v0.8.3.

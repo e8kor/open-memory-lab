@@ -30,6 +30,8 @@ class WhoamiPerson:
         quotas (None | WhoamiPersonQuotasType0):
         deletion_requested_at (datetime.datetime | None): When the person asked for deletion, while the request is
             pending (ADR-0068 d6).
+        profile (None | str | Unset): The account's quota profile, null for none (ADR-0096 d9). Since v0.8.5.
+        period (str | Unset): The UTC month the usage counts, YYYY-MM (ADR-0096 d9). Since v0.8.5.
         linked_keys (list[WhoamiRef] | Unset): The live tenant keys an admin linked to the person (not revoked, not past
             their expiry, used_by person), by id and name, in name order: the keys oml-web may name in OML-Acting-Key for
             this person (ADR-0085 d16). Since v0.8.3.
@@ -51,6 +53,8 @@ class WhoamiPerson:
     usage: None | WhoamiPersonUsageType0
     quotas: None | WhoamiPersonQuotasType0
     deletion_requested_at: datetime.datetime | None
+    profile: None | str | Unset = UNSET
+    period: str | Unset = UNSET
     linked_keys: list[WhoamiRef] | Unset = UNSET
     pending_links: list[WhoamiRef] | Unset = UNSET
     pending_emails: list[WhoamiPersonPendingEmailsItem] | Unset = UNSET
@@ -82,6 +86,14 @@ class WhoamiPerson:
             deletion_requested_at = self.deletion_requested_at.isoformat()
         else:
             deletion_requested_at = self.deletion_requested_at
+
+        profile: None | str | Unset
+        if isinstance(self.profile, Unset):
+            profile = UNSET
+        else:
+            profile = self.profile
+
+        period = self.period
 
         linked_keys: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.linked_keys, Unset):
@@ -123,6 +135,10 @@ class WhoamiPerson:
                 "deletion_requested_at": deletion_requested_at,
             }
         )
+        if profile is not UNSET:
+            field_dict["profile"] = profile
+        if period is not UNSET:
+            field_dict["period"] = period
         if linked_keys is not UNSET:
             field_dict["linked_keys"] = linked_keys
         if pending_links is not UNSET:
@@ -196,6 +212,17 @@ class WhoamiPerson:
             d.pop("deletion_requested_at")
         )
 
+        def _parse_profile(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        profile = _parse_profile(d.pop("profile", UNSET))
+
+        period = d.pop("period", UNSET)
+
         _linked_keys = d.pop("linked_keys", UNSET)
         linked_keys: list[WhoamiRef] | Unset = UNSET
         if _linked_keys is not UNSET:
@@ -248,6 +275,8 @@ class WhoamiPerson:
             usage=usage,
             quotas=quotas,
             deletion_requested_at=deletion_requested_at,
+            profile=profile,
+            period=period,
             linked_keys=linked_keys,
             pending_links=pending_links,
             pending_emails=pending_emails,

@@ -83,6 +83,18 @@ spellings that a new server refuses, and each refusal names the new spelling.
 Update the plugin with `claude plugin update oml@open-memory-lab`. Then set its `url` and `api_key` with
 `/plugin configure oml@open-memory-lab`. The plugin serves no tools until both are set.
 
+## Upgrading to v0.8.5
+
+v0.8.5 runs migration 0068, which adds one index on the imports table (`imports_importer_created`);
+a deployment with few imports builds it at once. The console serves three new paths,
+`/web/keys/new`, `/web/admin/fixes` and `/web/workspaces/import`: a proxy that routes `oml-web`'s
+paths by name must add them, as `deploy/caddy/Caddyfile`, both compose files and the chart's
+`web.ingressPaths` do. Clients read the new answer fields as optional: `GET /v2/keys` serves each
+grant's `covers` and an older server's answer reads as `subtree`; `whoami`'s person block serves
+`profile`, `period` and `usage.recalls`. A person's own issuance now takes grants, a default
+workspace, a guardrail scope, a rate and the role `submitter`
+([ADR-0096](../adr/ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md)).
+
 ## Upgrading to v0.8.4
 
 v0.8.4 runs three migrations, renames the writer role, folds `oml_withdraw` into `oml_write`, and

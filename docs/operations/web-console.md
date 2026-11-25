@@ -38,8 +38,8 @@ old Review paths answer `308` for this release: `/web/review` to `/web/todo` and
 `/web/admin/review` to the admin Memories page's Held view, each keeping the workspace. The reviewer is never the
 author, and a verdict the API refuses is shown with its code. On the Keys view a key's value or a
 connect code is shown once, on the page the act lands on: it travels there sealed in a cookie that
-page clears, never in an address or a log line, and `oml-web` keeps no copy. The admin's Keys view
-lists one person's keys, named by `user`, with a cut-off beside each. A signed-in `GET /web` goes
+page clears, never in an address or a log line, and `oml-web` keeps no copy. Since v0.8.5 a new key is built at `/web/keys/new`: a starting shape, a form with grant rows inside the person's root, and a review that restates the access before **Issue key** posts once ([ADR-0096](../adr/ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md) d1). The admin's Keys view
+lists one person's keys, named by `user`, with a cut-off beside each; `?key=<key>` opens one key's full record, with **Set limits** and **Deny on a workspace**, and the admin console still issues no key (d4). The admin workspace page's **Fix** tab, `?view=fix`, posts to `/web/admin/fixes` (d5). The import hand-off, the person's imports and one import are at `/web/workspaces/import` (d6). Route `/web/keys/new`, `/web/admin/fixes` and `/web/workspaces/import` to `oml-web` with the rest. A signed-in `GET /web` goes
 on to the Keys view. One memory opened by its id is at
 `/web/memory?id=<id>`, and on the admin page, with its attribution and the form that proposes its
 next version, at `/web/admin/memory?id=<id>`; the admin page's Curate view is at

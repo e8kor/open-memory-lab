@@ -18,6 +18,8 @@ class WebUserQuotas:
         memories (int | Unset):
         text_bytes (int | None | Unset): Null is unlimited (ADR-0071 d5). Since v0.7.3.
         writes_per_month (int | None | Unset): Null is unlimited (ADR-0071 d5). Since v0.7.3.
+        workspaces (int | None | Unset): Null is unlimited; absent without ADR-0095 d4's meter (ADR-0096 d9). Since
+            v0.8.5.
         keys (int | Unset):
         connections (int | Unset):
         requests_per_minute (int | Unset):
@@ -26,6 +28,7 @@ class WebUserQuotas:
     memories: int | Unset = UNSET
     text_bytes: int | None | Unset = UNSET
     writes_per_month: int | None | Unset = UNSET
+    workspaces: int | None | Unset = UNSET
     keys: int | Unset = UNSET
     connections: int | Unset = UNSET
     requests_per_minute: int | Unset = UNSET
@@ -46,6 +49,12 @@ class WebUserQuotas:
         else:
             writes_per_month = self.writes_per_month
 
+        workspaces: int | None | Unset
+        if isinstance(self.workspaces, Unset):
+            workspaces = UNSET
+        else:
+            workspaces = self.workspaces
+
         keys = self.keys
 
         connections = self.connections
@@ -61,6 +70,8 @@ class WebUserQuotas:
             field_dict["text_bytes"] = text_bytes
         if writes_per_month is not UNSET:
             field_dict["writes_per_month"] = writes_per_month
+        if workspaces is not UNSET:
+            field_dict["workspaces"] = workspaces
         if keys is not UNSET:
             field_dict["keys"] = keys
         if connections is not UNSET:
@@ -93,6 +104,15 @@ class WebUserQuotas:
 
         writes_per_month = _parse_writes_per_month(d.pop("writes_per_month", UNSET))
 
+        def _parse_workspaces(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        workspaces = _parse_workspaces(d.pop("workspaces", UNSET))
+
         keys = d.pop("keys", UNSET)
 
         connections = d.pop("connections", UNSET)
@@ -103,6 +123,7 @@ class WebUserQuotas:
             memories=memories,
             text_bytes=text_bytes,
             writes_per_month=writes_per_month,
+            workspaces=workspaces,
             keys=keys,
             connections=connections,
             requests_per_minute=requests_per_minute,
