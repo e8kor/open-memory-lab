@@ -39,7 +39,9 @@ WITH key_person AS (
   FROM workspaces w
   JOIN workspaces r ON r.tenant_id = w.tenant_id AND r.user_root AND w.path <@ r.path
 ), tenant AS (
+  -- The tenant this pass reads, so a superuser or BYPASSRLS role prints each tenant once.
   SELECT id, COALESCE(name::text, id::text) AS name FROM tenants
+  WHERE id = current_setting('oml.tenant_id')::uuid
 )
 -- 1. Live admin keys linked to no person, session keys aside.
 SELECT 'unlinked_admin_keys' AS count, t.name AS tenant, count(kp.key_id) AS value
