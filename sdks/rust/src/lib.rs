@@ -337,7 +337,12 @@ pub struct BriefEdge {
     pub proposed_by: Option<ProposedBy>,
 }
 
-/// `GET /v2/edges?kind=brief`: one page of a workspace's brief edges.
+/// The most pages of brief edges [`Client::brief_edges`] reads in one call:
+/// 2,000 edges, past any brief's budget.
+pub const BRIEF_EDGE_PAGES: usize = 10;
+
+/// `GET /v2/edges?kind=brief`: a workspace's brief edges, as one page or as
+/// [`Client::brief_edges`] gathers them.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct BriefEdgePage {
     pub items: Vec<BriefEdge>,
@@ -3028,24 +3033,34 @@ impl<T: Transport> Client<T> {
         Ok(answer.items)
     }
 
-    /// `GET /v2/edges?kind=brief&workspace_id=`: the first page of a
-    /// workspace's brief edges, pending and ratified (ADR-0046 d7).
+    /// `GET /v2/edges?kind=brief&workspace_id=`: a workspace's brief
+    /// edges, pending and ratified (ADR-0046 d7), each page's
+    /// `next_cursor` followed, at most [`BRIEF_EDGE_PAGES`] pages of 200;
+    /// past that the answer's `next_cursor` names the page not read.
     ///
     /// # Errors
-    /// The API's refusal, or no usable answer.
+    /// The API's refusal, or no usable answer, on any page.
     pub async fn brief_edges(
         &self,
         call: &Call<'_>,
         workspace: &str,
     ) -> Result<BriefEdgePage, Error> {
-        self.get(
-            Some(call),
-            format!(
-                "/v2/edges?kind=brief&limit=200&workspace_id={}",
-                encode(workspace)
-            ),
-        )
-        .await
+        let first = format!(
+            "/v2/edges?kind=brief&limit=200&workspace_id={}",
+            encode(workspace)
+        );
+        let mut all: BriefEdgePage = self.get(Some(call), first.clone()).await?;
+        for _ in 1..BRIEF_EDGE_PAGES {
+            let Some(cursor) = all.next_cursor.take() else {
+                break;
+            };
+            let page: BriefEdgePage = self
+                .get(Some(call), format!("{first}&cursor={}", encode(&cursor)))
+                .await?;
+            all.items.extend(page.items);
+            all.next_cursor = page.next_cursor;
+        }
+        Ok(all)
     }
 
     /// `POST /v2/admin/fixes`: `body` is `{act, target, reason, body?}`
@@ -4170,6 +4185,49 @@ mod tests {
         assert_eq!(
             hit.uri.as_deref(),
             Some("oml://workspace/universe.alice/doc/runbook?passage=restart")
+        );
+    }
+
+    /// Answers each request with the next of `bodies`, `200`.
+    struct Paging {
+        seen: Seen,
+        bodies: Vec<&'static str>,
+    }
+
+    impl Transport for Paging {
+        fn send(&self, request: Request<Vec<u8>>) -> Sending<'_> {
+            let mut seen = self.seen.lock().unwrap();
+            let body = self.bodies[seen.len().min(self.bodies.len() - 1)];
+            seen.push(request);
+            let response = Response::builder()
+                .status(200)
+                .body(body.as_bytes().to_vec())
+                .unwrap();
+            Box::pin(async move { Ok(response) })
+        }
+    }
+
+    /// `brief_edges` follows `next_cursor` to the last page, so an edge on
+    /// a later page is found too (ADR-0046 d7).
+    #[tokio::test]
+    async fn brief_edges_follows_next_cursor_to_the_last_page() {
+        const FIRST: &str = r#"{"items":[{"edge_id":"e1","from_artifact_id":"a1","to_workspace_id":"w","state":"pending","proposer_key_id":"k"}],"next_cursor":"c2"}"#;
+        const LAST: &str = r#"{"items":[{"edge_id":"e2","from_artifact_id":"a2","to_workspace_id":"w","state":"ratified","proposer_key_id":"k"}],"next_cursor":null}"#;
+        let seen: Seen = Arc::new(Mutex::new(Vec::new()));
+        let client = Client::new(Paging {
+            seen: seen.clone(),
+            bodies: vec![FIRST, LAST],
+        });
+        let page = client.brief_edges(&CALL, "w").await.unwrap();
+        let ids: Vec<&str> = page.items.iter().map(|e| e.edge_id.as_str()).collect();
+        assert_eq!(ids, ["e1", "e2"]);
+        assert_eq!(page.next_cursor, None);
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert!(
+            seen[1].uri().to_string().ends_with("&cursor=c2"),
+            "{}",
+            seen[1].uri()
         );
     }
 
