@@ -16,7 +16,7 @@ naming to represent writer role correctly"), who chose a full rename over consol
 **contributor** recalls and writes, a **submitter** writes without recall, a **reader** is
 unchanged; and decided the release, v0.8.4 with #498 (d8) · upgrade order decided by the
 operator on 2026-11-24: server and clients in one window, no key issued or listed until both run
-v0.8.4 (d7, d8). · amended by [ADR-0096](ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md) (d6, 2026-11-24, decided by the operator)
+v0.8.4 (d7, d8). · amended by [ADR-0096](ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md) (d6, 2026-11-24, decided by the operator) · amended by [ADR-0097](ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) (the key-role set, 2026-11-25, decided by the operator)
 
 **Amends:**
 - ADR-0010 (d1): the roles are `reader`, `contributor`, `submitter`, `reviewer`, `admin` and
@@ -317,3 +317,11 @@ half of d6's answer of 2026-11-19; recorded in [ADR-0096](ADR-0096-a-person-buil
   `POST /v2/keys` as `<user>-web` admits role `submitter`, with submitter grants inside the
   person's root and no `universe` grant (ADR-0096 d1, d3). The rest of d6 stands: imports and the
   user-root create admit contributors alone.
+
+## Amendment of 2026-11-25: the maintenance role (amends the key-role set; ADR-0097)
+
+Decided by the operator on 2026-11-25 (the break-glass and key-access questions); recorded in [ADR-0097](ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md).
+
+The key-role set gains `maintenance`, the counts-only role services hold in place of admin keys
+(ADR-0097 d18). A person's own issuance gets its own admissible set, `reader`, `contributor` and
+`submitter`, instead of borrowing the admin ceiling.

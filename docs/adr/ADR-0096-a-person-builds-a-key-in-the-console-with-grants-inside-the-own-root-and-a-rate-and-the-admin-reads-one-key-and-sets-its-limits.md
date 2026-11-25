@@ -385,6 +385,17 @@ Decided, not built.
   quota, the root boundary and the review step bound it, and an admin still reads, limits and
   cuts off every such key.
 
+## Amendment of 2026-11-25: the limits form waits on a raise, and keys are revoked (amends d4, d12; ADR-0097)
+
+Decided by the operator on 2026-11-25 (the break-glass and key-access questions); recorded in [ADR-0097](ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md).
+
+- **d4.** The deny takes effect at once and journals its reason (ADR-0097 d27, item 2, in v0.8.5).
+  A raise, a cleared limit or a later expiry from the limits form waits on a second admin person
+  and the form says so; a lower one takes effect at once (ADR-0097 d15). The one-key page gains one
+  revoke button in v0.8.6.
+- **d12.** Revoking a key is built as one plain verb for any key (ADR-0097 d14). Rotation, a
+  cascade and a person's revocation of their own keys stay deferred.
+
 ## Rejected alternatives
 
 | Alternative | Why not |

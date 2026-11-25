@@ -7,7 +7,7 @@ answers: what the four constitutional rules R1–R4 commit, and what each of the
 
 # ADR-0001 — The constitution: four rules, three bounded exceptions
 
-**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md), [ADR-0030](ADR-0030-an-in-progress-workspace-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) (d5, same-person approval named, 2026-11-14), [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) (d5, the in-progress exception widened, 2026-11-14), [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d5, 2026-11-14) · amendment of d5 of 2026-11-18 (the place carries the rules, the operator's answer D1 to the lifecycle review, with exception 3 narrowed in the operator's batch; #429), accepted 2026-11-19 by the operator
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md), [ADR-0030](ADR-0030-an-in-progress-workspace-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) (d5, same-person approval named, 2026-11-14), [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) (d5, the in-progress exception widened, 2026-11-14), [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d5, 2026-11-14) · amendment of d5 of 2026-11-18 (the place carries the rules, the operator's answer D1 to the lifecycle review, with exception 3 narrowed in the operator's batch; #429), accepted 2026-11-19 by the operator · amended by [ADR-0097](ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) (d5, 2026-11-25, decided by the operator)
 
 **Release:** partly in v0.1.0 and v0.6.0; the rest not built ([releases](../changelog.md))
 
@@ -146,3 +146,21 @@ rest is not built; [releases](../changelog.md) says which part each release buil
 - d6 is a standing documentation obligation: a page claiming lineage-based guarantees without
   the undeclared-derivation caveat is a defect under
   [ADR-0018](ADR-0018-the-documentation-set.md).
+
+## Amendment of 2026-11-25: d5 kept; exception 3 reads with two changes (amends d5; ADR-0097)
+
+Decided by the operator on 2026-11-25 (the break-glass and key-access questions); recorded in [ADR-0097](ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md).
+
+d5 stands as written, and no exception is added. ADR-0097's admin acts govern who may act, not R2
+or R3 on content, and its `sole_admin` state relaxes only those acts. Exception 3 reads with two
+changes:
+
+- **The admin read** is admitted only to an admin key linked to its person or a console admin
+  session, never to a service, and each person sees a count of admin reads of their root (ADR-0097
+  d16, reversing ADR-0089 d14's "no `used_by: person` requirement").
+- **An erasure** demotes at once and shreds only after a second admin person confirms, except in a
+  `sole_admin` tenant (ADR-0097 d4).
+
+The production rule's "different person" for instruction verdicts and fix confirmations fails
+closed: a key that counts as no person gives neither (ADR-0097 d12). A status ratification needs a
+person other than the proposer's (ADR-0097 d17).

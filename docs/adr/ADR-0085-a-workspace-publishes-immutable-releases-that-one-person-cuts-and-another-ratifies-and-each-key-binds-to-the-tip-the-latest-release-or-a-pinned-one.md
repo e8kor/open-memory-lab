@@ -8,7 +8,7 @@ answers: what a workspace release is, when its manifest is fixed and what it may
 # ADR-0085 — A workspace publishes immutable releases that one person cuts and another ratifies, and each key binds to the tip, the latest release or a pinned one
 
 **Status:** accepted design · 2026-11-14, by the operator, before it is built, with its three questions decided at their
-recommendations and every other default as drafted · proposed the same day · amended 2026-11-17 (d16: how the console acts with a linked key, accepted the same day by the operator, "Session + named key") · amended 2026-11-18 (d16: a version records its author's person at its write, the follow-up d16 left open, built by #448) · amendments of 2026-11-18 (d2, d6, d10: the operator's answers D1 to D3 to the lifecycle review; d1 and the stage tabs from the operator's batch; #429), accepted 2026-11-19 by the operator · amended 2026-11-19 by the operator's decisions on the release plan (D2's reach, federated sources at their latest release, a reviewed retirement at the next cut, the release notes' document, a pin moved by a person's reviewer key; the decisions of 2026-11-19 at the end of this record) · amended 2026-11-19 by the operator (d16: an admin key is linkable to its person, and the bootstrap claim links its first admin key; ADR-0089's decision of that day) · amended 2026-11-19 by the operator after the second review of #498 (d16: a console admin's link of a key takes effect only once the named person accepts it from their own console session; the bootstrap's link is accepted at its creation)
+recommendations and every other default as drafted · proposed the same day · amended 2026-11-17 (d16: how the console acts with a linked key, accepted the same day by the operator, "Session + named key") · amended 2026-11-18 (d16: a version records its author's person at its write, the follow-up d16 left open, built by #448) · amendments of 2026-11-18 (d2, d6, d10: the operator's answers D1 to D3 to the lifecycle review; d1 and the stage tabs from the operator's batch; #429), accepted 2026-11-19 by the operator · amended 2026-11-19 by the operator's decisions on the release plan (D2's reach, federated sources at their latest release, a reviewed retirement at the next cut, the release notes' document, a pin moved by a person's reviewer key; the decisions of 2026-11-19 at the end of this record) · amended 2026-11-19 by the operator (d16: an admin key is linkable to its person, and the bootstrap claim links its first admin key; ADR-0089's decision of that day) · amended 2026-11-19 by the operator after the second review of #498 (d16: a console admin's link of a key takes effect only once the named person accepts it from their own console session; the bootstrap's link is accepted at its creation) · amended by [ADR-0097](ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) (d16, 2026-11-25, decided by the operator)
 
 **Release:** not scheduled; the first record of the workspace lifecycle
 ([review](https://github.com/e8kor/open-memory-lab/blob/main/design/workspace-lifecycle.md)), before
@@ -690,3 +690,13 @@ beside a decision, for the operator to confirm or reverse.
   key's `hash` and `web_emails.pending_since`, is listed in
   [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)'s
   limits table of 2026-11-20.
+
+## Amendment of 2026-11-25: the bootstrap links, and a self-link by possession (amends d16; ADR-0097)
+
+Decided by the operator on 2026-11-25 (the break-glass and key-access questions); recorded in [ADR-0097](ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md).
+
+Links keep their consent: a link takes effect only when its person accepts from their own console
+session (ADR-0097 d7). Every admin key belongs to a person, and the bootstrap claim requires one
+(ADR-0097 d21). One self-link is admitted, a reading ADR-0097 d22 flags for the operator: called
+under the admin key itself, it names a person and waits on that person's acceptance, so a
+one-admin tenant can link its CLI key. Every other link stays console-only with no self-link.
