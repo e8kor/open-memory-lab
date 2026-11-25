@@ -20,6 +20,8 @@ class WhoamiPersonUsageType0:
         writes (int | Unset): Versions submitted this UTC month (ADR-0071 d2). Since v0.7.3.
         keys (int | Unset):
         connections (int | Unset):
+        workspaces (int | Unset): Live workspaces under the account's root, the root excluded (ADR-0095 d4). Since
+            v0.8.5.
     """
 
     memories: int | Unset = UNSET
@@ -27,6 +29,7 @@ class WhoamiPersonUsageType0:
     writes: int | Unset = UNSET
     keys: int | Unset = UNSET
     connections: int | Unset = UNSET
+    workspaces: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -39,6 +42,8 @@ class WhoamiPersonUsageType0:
         keys = self.keys
 
         connections = self.connections
+
+        workspaces = self.workspaces
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -53,6 +58,8 @@ class WhoamiPersonUsageType0:
             field_dict["keys"] = keys
         if connections is not UNSET:
             field_dict["connections"] = connections
+        if workspaces is not UNSET:
+            field_dict["workspaces"] = workspaces
 
         return field_dict
 
@@ -69,12 +76,15 @@ class WhoamiPersonUsageType0:
 
         connections = d.pop("connections", UNSET)
 
+        workspaces = d.pop("workspaces", UNSET)
+
         whoami_person_usage_type_0 = cls(
             memories=memories,
             text_bytes=text_bytes,
             writes=writes,
             keys=keys,
             connections=connections,
+            workspaces=workspaces,
         )
 
         whoami_person_usage_type_0.additional_properties = d

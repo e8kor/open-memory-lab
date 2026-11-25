@@ -11,8 +11,8 @@ T = TypeVar("T", bound="AccountProfileRequestOverrides")
 
 @_attrs_define
 class AccountProfileRequestOverrides:
-    """A quota's limit for this account alone: memories, text_bytes, writes_per_month, keys, connections or
-    requests_per_minute.
+    """A quota's limit for this account alone: memories, text_bytes, writes_per_month, keys, connections,
+    requests_per_minute or workspaces.
 
     """
 

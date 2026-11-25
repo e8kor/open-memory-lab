@@ -47,6 +47,8 @@ A tenant's tree never spans tenants. Nothing on this page reaches across a tenan
 
 When a person's first key is issued, OML creates a workspace of their own under `universe`, named for them. Their keys write, read and create workspaces there. With alice's key, `oml workspaces create alice project` creates `universe.alice.project`. Two people can each have a `project`.
 
+An agent creates one over MCP too: `oml_write` with `create_workspace` from a contributor key that names alice creates a child inside her root, immediately, in `development` and standard mode, with no grant of its own, so every key reads and writes it as it does the parent. No other key creates over MCP. Each workspace below a root counts on that account's `workspaces` quota, whoever created it; the default profile leaves it unlimited, and past a limit the create is `limit.quota`. A workspace is never deleted, so a child stays in the tree for good ([ADR-0095](../adr/ADR-0095-an-agent-creates-its-own-child-workspaces-writes-guardrails-and-proposes-status-and-brief-changes-through-oml-write-and-every-verdict-and-setting-stays-with-people.md) d3, d4).
+
 ```mermaid
 flowchart TD
     U["universe<br/>(curated memories only)"]
@@ -142,7 +144,7 @@ oml workspaces status propose project --to protected
 oml workspaces status ratify project <transition-id>
 ```
 
-`oml workspaces status pending` lists the live proposals. A step to `frozen` needs every child already `frozen`. A ratification checks the workspace as it is at that moment. A stale proposal is refused with `workspace.transition_refused`, with a reason such as `stale` or `children_not_frozen`.
+`oml workspaces status pending` lists the live proposals, each with when it was proposed and, to a key of the same person, which key proposed it. A workspace holds one live proposal per target status: a second, by any key and on any transport, `oml_write`'s `propose_status` included, is `proposal.pending` naming the live one ([ADR-0095](../adr/ADR-0095-an-agent-creates-its-own-child-workspaces-writes-guardrails-and-proposes-status-and-brief-changes-through-oml-write-and-every-verdict-and-setting-stays-with-people.md) d5). A step to `frozen` needs every child already `frozen`. A ratification checks the workspace as it is at that moment. A stale proposal is refused with `workspace.transition_refused`, with a reason such as `stale` or `children_not_frozen`.
 
 ### What each status refuses
 

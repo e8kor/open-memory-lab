@@ -3049,6 +3049,13 @@ fn account_usage(
         .values()
         .filter(|c| c.state == ConnectionState::Open && keys.contains(&c.key_id))
         .count() as u64;
+    // Every node whose name lies in the root's namespace: every node below
+    // it, never the root itself (ADR-0095 d4).
+    let workspaces = state
+        .workspaces
+        .values()
+        .filter(|w| w.namespace == Some(root))
+        .count() as u64;
     crate::types::UserUsage {
         memories,
         text_bytes,
@@ -3056,6 +3063,7 @@ fn account_usage(
         recalls,
         keys: keys.len() as u64,
         connections,
+        workspaces,
     }
 }
 

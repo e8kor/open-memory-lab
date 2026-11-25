@@ -60,6 +60,11 @@ def _parse_response(
 
         return response_202
 
+    if response.status_code == 409:
+        response_409 = ErrorEnvelope.from_dict(response.json())
+
+        return response_409
+
     if response.status_code == 415:
         response_415 = ErrorEnvelope.from_dict(response.json())
 
@@ -90,12 +95,15 @@ def sync_detailed(
     """Propose a claim-to-claim edge or a claim's place in a workspace's brief; pending until ratified.
 
      kind claim requires reviewer(propose); its label is open, with supports, contradicts, relates_to and
-    continues recommended and oml: reserved (ADR-0046 d6). kind brief requires reviewer effective access
-    on the workspace and a promoted served tip the key reads; its label is brief and is not sent
-    (ADR-0046 d7, d8). kind workspace, designed and not served, requires reviewer(propose) effective
-    access on at least one endpoint and reader on both (edge-authority rule, D7); an admin who must act
-    here holds a separate reviewer key, since a key never combines admin with reviewer grants
-    (access.role_exclusive). Each kind journals its own proposal event (ADR-0039 d9).
+    continues recommended and oml: reserved (ADR-0046 d6). kind brief requires a contributor key with
+    submitter effective access on the workspace or a reviewer key with reviewer effective access there,
+    and a promoted served tip the key reads; its label is brief and is not sent (ADR-0046 d7, d8;
+    ADR-0095 d6, since v0.8.5). A claim already proposed for that brief, or already its member, is 409
+    proposal.pending with details.edge_id naming the edge (ADR-0095 d6; #515). kind workspace, designed
+    and not served, requires reviewer(propose) effective access on at least one endpoint and reader on
+    both (edge-authority rule, D7); an admin who must act here holds a separate reviewer key, since a
+    key never combines admin with reviewer grants (access.role_exclusive). Each kind journals its own
+    proposal event (ADR-0039 d9).
 
     Args:
         idempotency_key (str):
@@ -131,12 +139,15 @@ def sync(
     """Propose a claim-to-claim edge or a claim's place in a workspace's brief; pending until ratified.
 
      kind claim requires reviewer(propose); its label is open, with supports, contradicts, relates_to and
-    continues recommended and oml: reserved (ADR-0046 d6). kind brief requires reviewer effective access
-    on the workspace and a promoted served tip the key reads; its label is brief and is not sent
-    (ADR-0046 d7, d8). kind workspace, designed and not served, requires reviewer(propose) effective
-    access on at least one endpoint and reader on both (edge-authority rule, D7); an admin who must act
-    here holds a separate reviewer key, since a key never combines admin with reviewer grants
-    (access.role_exclusive). Each kind journals its own proposal event (ADR-0039 d9).
+    continues recommended and oml: reserved (ADR-0046 d6). kind brief requires a contributor key with
+    submitter effective access on the workspace or a reviewer key with reviewer effective access there,
+    and a promoted served tip the key reads; its label is brief and is not sent (ADR-0046 d7, d8;
+    ADR-0095 d6, since v0.8.5). A claim already proposed for that brief, or already its member, is 409
+    proposal.pending with details.edge_id naming the edge (ADR-0095 d6; #515). kind workspace, designed
+    and not served, requires reviewer(propose) effective access on at least one endpoint and reader on
+    both (edge-authority rule, D7); an admin who must act here holds a separate reviewer key, since a
+    key never combines admin with reviewer grants (access.role_exclusive). Each kind journals its own
+    proposal event (ADR-0039 d9).
 
     Args:
         idempotency_key (str):
@@ -167,12 +178,15 @@ async def asyncio_detailed(
     """Propose a claim-to-claim edge or a claim's place in a workspace's brief; pending until ratified.
 
      kind claim requires reviewer(propose); its label is open, with supports, contradicts, relates_to and
-    continues recommended and oml: reserved (ADR-0046 d6). kind brief requires reviewer effective access
-    on the workspace and a promoted served tip the key reads; its label is brief and is not sent
-    (ADR-0046 d7, d8). kind workspace, designed and not served, requires reviewer(propose) effective
-    access on at least one endpoint and reader on both (edge-authority rule, D7); an admin who must act
-    here holds a separate reviewer key, since a key never combines admin with reviewer grants
-    (access.role_exclusive). Each kind journals its own proposal event (ADR-0039 d9).
+    continues recommended and oml: reserved (ADR-0046 d6). kind brief requires a contributor key with
+    submitter effective access on the workspace or a reviewer key with reviewer effective access there,
+    and a promoted served tip the key reads; its label is brief and is not sent (ADR-0046 d7, d8;
+    ADR-0095 d6, since v0.8.5). A claim already proposed for that brief, or already its member, is 409
+    proposal.pending with details.edge_id naming the edge (ADR-0095 d6; #515). kind workspace, designed
+    and not served, requires reviewer(propose) effective access on at least one endpoint and reader on
+    both (edge-authority rule, D7); an admin who must act here holds a separate reviewer key, since a
+    key never combines admin with reviewer grants (access.role_exclusive). Each kind journals its own
+    proposal event (ADR-0039 d9).
 
     Args:
         idempotency_key (str):
@@ -206,12 +220,15 @@ async def asyncio(
     """Propose a claim-to-claim edge or a claim's place in a workspace's brief; pending until ratified.
 
      kind claim requires reviewer(propose); its label is open, with supports, contradicts, relates_to and
-    continues recommended and oml: reserved (ADR-0046 d6). kind brief requires reviewer effective access
-    on the workspace and a promoted served tip the key reads; its label is brief and is not sent
-    (ADR-0046 d7, d8). kind workspace, designed and not served, requires reviewer(propose) effective
-    access on at least one endpoint and reader on both (edge-authority rule, D7); an admin who must act
-    here holds a separate reviewer key, since a key never combines admin with reviewer grants
-    (access.role_exclusive). Each kind journals its own proposal event (ADR-0039 d9).
+    continues recommended and oml: reserved (ADR-0046 d6). kind brief requires a contributor key with
+    submitter effective access on the workspace or a reviewer key with reviewer effective access there,
+    and a promoted served tip the key reads; its label is brief and is not sent (ADR-0046 d7, d8;
+    ADR-0095 d6, since v0.8.5). A claim already proposed for that brief, or already its member, is 409
+    proposal.pending with details.edge_id naming the edge (ADR-0095 d6; #515). kind workspace, designed
+    and not served, requires reviewer(propose) effective access on at least one endpoint and reader on
+    both (edge-authority rule, D7); an admin who must act here holds a separate reviewer key, since a
+    key never combines admin with reviewer grants (access.role_exclusive). Each kind journals its own
+    proposal event (ADR-0039 d9).
 
     Args:
         idempotency_key (str):

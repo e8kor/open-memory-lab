@@ -56,8 +56,8 @@ fn entry_json(entry: &WebEntry) -> Value {
 }
 
 /// A person's counts as the users listing and whoami's `person` serve them
-/// (ADR-0068 d5; ADR-0071 d2): the stocks, and the versions submitted this
-/// UTC month.
+/// (ADR-0068 d5; ADR-0071 d2; ADR-0095 d4): the stocks, and the versions
+/// submitted this UTC month.
 pub(crate) fn counts_json(usage: &oml_app::types::UserUsage) -> Value {
     json!({
         "memories": usage.memories,
@@ -65,6 +65,7 @@ pub(crate) fn counts_json(usage: &oml_app::types::UserUsage) -> Value {
         "writes": usage.writes,
         "keys": usage.keys,
         "connections": usage.connections,
+        "workspaces": usage.workspaces,
     })
 }
 

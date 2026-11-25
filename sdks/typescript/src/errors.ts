@@ -97,6 +97,10 @@ export class NamingError extends ApiError {
 export class WorkspaceError extends ApiError {
   override name = "WorkspaceError";
 }
+/** `proposal`: a status move or a brief member already proposed (ADR-0095). */
+export class ProposalError extends ApiError {
+  override name = "ProposalError";
+}
 /** `review`: independence and the serve binding. */
 export class ReviewError extends ApiError {
   override name = "ReviewError";
@@ -159,6 +163,7 @@ export const FAMILIES: Readonly<Record<string, typeof ApiError>> = Object.freeze
   submission: SubmissionError,
   name: NamingError,
   workspace: WorkspaceError,
+  proposal: ProposalError,
   review: ReviewError,
   simulation: SimulationError,
   vocab: VocabError,

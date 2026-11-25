@@ -119,8 +119,9 @@ fn halves(n: u64) -> String {
 }
 
 /// The meters `usage` and `limits` carry, in the order the API lists them:
-/// memories, text stored, writes this month, keys, connections. A count an
-/// API before the meters does not serve is left out, never shown as zero.
+/// memories, text stored, writes this month, keys, connections, workspaces.
+/// A count an API before the meters does not serve is left out, never shown
+/// as zero.
 /// `recalls`, which has no limit, is not on these fields.
 pub(crate) fn readings(usage: &Usage, limits: &Limits) -> Vec<Reading> {
     let mut out = vec![Reading {
@@ -157,6 +158,16 @@ pub(crate) fn readings(usage: &Usage, limits: &Limits) -> Vec<Reading> {
         limit: limits.connections,
         bytes: false,
     });
+    // The workspaces below the person's root, the root excluded (ADR-0095
+    // d4).
+    if let Some(used) = usage.workspaces {
+        out.push(Reading {
+            name: "Workspaces",
+            used,
+            limit: limits.workspaces,
+            bytes: false,
+        });
+    }
     out
 }
 

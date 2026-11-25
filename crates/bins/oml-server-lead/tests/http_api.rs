@@ -6167,7 +6167,7 @@ async fn crew_given_at_create_is_persisted_and_returned() {
             "edges": [],
             "my_effective_verbs": [
                 "recall", "read", "graph_read", "events_tail",
-                "remember", "learn", "attach", "supersede",
+                "remember", "learn", "attach", "supersede", "propose_brief",
             ],
             "permission_epoch": view["permission_epoch"],
             "stale_versions": 0,

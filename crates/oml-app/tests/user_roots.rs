@@ -1609,6 +1609,8 @@ async fn a_pending_protected_proposal_in_a_user_root_is_refused_at_ratification(
             proposer_key_id: first.key_id,
             proposer_principal: "alice/first".to_owned(),
             ratifier_key_id: None,
+            proposed_at: oml_app::domain::EventTime::parse("2026-11-01T00:00:00.000000Z")
+                .expect("a time"),
         })
         .expect("a pending proposal");
     let before = store
@@ -1779,6 +1781,7 @@ async fn a_user_keys_claim_or_brief_edge_with_an_endpoint_in_universe_is_refused
             &oml_app::types::ProposeBriefEdge {
                 artifact_id: c.placed,
                 workspace: by_name("alice"),
+                reason: None,
             },
             None,
         )
@@ -1800,6 +1803,7 @@ async fn a_user_keys_claim_or_brief_edge_with_an_endpoint_in_universe_is_refused
         &oml_app::types::ProposeBriefEdge {
             artifact_id: c.source,
             workspace: by_name("alice"),
+            reason: None,
         },
         None,
     )

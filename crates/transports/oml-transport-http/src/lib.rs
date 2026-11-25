@@ -2401,17 +2401,23 @@ where
     ) -> Response {
         finish(
             &rid,
-            Self::create_workspace_inner(&st, &headers, &body).await,
+            Self::create_workspace_inner(&st, &headers, &body, None, false).await,
         )
     }
 
-    async fn create_workspace_inner(
+    /// `POST /v2/workspaces`, and `oml_write`'s `create_workspace` mode with
+    /// `own_root_only`: the app's agent create, which admits a contributor
+    /// user key alone (ADR-0095 d3). `connection` is the MCP connection
+    /// whose access token presented the request.
+    pub(crate) async fn create_workspace_inner(
         st: &Self,
         headers: &HeaderMap,
         body: &Bytes,
+        connection: Option<&Caller>,
+        own_root_only: bool,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        acting(headers, None)?;
+        acting(headers, connection)?;
         let idem = idempotency_key(headers)?;
         let req: WorkspaceCreateBody = parse_json_renamed(headers, body, |body| {
             refuse_renamed(body, "", &[("parent_id", "parent")])
@@ -2420,7 +2426,7 @@ where
         // and creates nothing again (ADR-0070 d3 layer 4).
         // The act runs as the caller this request just resolved, so the
         // request costs one of its key's rate, not two (#253).
-        let caller = Arc::new(st.console_caller(headers).await?);
+        let caller = Arc::new(st.acting_caller(headers, connection).await?);
         let acting: Acting<'static> = Acting::Session(caller.clone());
         let digest = console::act_digest("", body);
         let claim = match st
@@ -2442,9 +2448,23 @@ where
         let st = st.clone();
         claim
             .run(async move {
-                let created = retry_chain(|| {
-                    st.app
-                        .create_workspace(acting.bearer(), &name, parent.clone(), crew.clone())
+                let reason = req.reason.as_deref();
+                let created = retry_chain(|| async {
+                    if own_root_only {
+                        st.app
+                            .create_own_workspace(acting.bearer(), &name, parent.clone(), reason)
+                            .await
+                    } else {
+                        st.app
+                            .create_workspace_with_reason(
+                                acting.bearer(),
+                                &name,
+                                parent.clone(),
+                                crew.clone(),
+                                reason,
+                            )
+                            .await
+                    }
                 })
                 .await
                 .map_err(|e| console::ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
@@ -2505,7 +2525,7 @@ where
     ) -> Response {
         finish(
             &rid,
-            Self::propose_transition_inner(&st, &workspace, &headers, &body).await,
+            Self::propose_transition_inner(&st, &workspace, &headers, &body, None).await,
         )
     }
 
@@ -2513,14 +2533,15 @@ where
     /// `202` and pending until a second identity ratifies it; `to` is
     /// `protected` or `frozen`, anything else `request.validation`
     /// naming `/to` (http-api.md workspaces; ADR-0009 d3; ADR-0046 d3).
-    async fn propose_transition_inner(
+    pub(crate) async fn propose_transition_inner(
         st: &Self,
         workspace: &str,
         headers: &HeaderMap,
         body: &Bytes,
+        connection: Option<&Caller>,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        acting(headers, None)?;
+        acting(headers, connection)?;
         let idem = idempotency_key(headers)?;
         let node = reference("workspace", workspace)?;
         let req: TransitionBody = parse_json(headers, body)?;
@@ -2528,7 +2549,7 @@ where
         // and proposes nothing again (ADR-0070 d3 layer 4).
         // The act runs as the caller this request just resolved, so the
         // request costs one of its key's rate, not two (#253).
-        let caller = Arc::new(st.console_caller(headers).await?);
+        let caller = Arc::new(st.acting_caller(headers, connection).await?);
         let acting: Acting<'static> = Acting::Session(caller.clone());
         let digest = console::act_digest(workspace, body);
         let claim = match st
@@ -2551,12 +2572,13 @@ where
         let st = st.clone();
         claim
             .run(async move {
-                let proposal =
-                    retry_chain(|| st.app.propose_transition(acting.bearer(), node.clone(), to))
-                        .await
-                        .map_err(|e| {
-                            console::ActFailure::first(map_app_error(e, ErrorContext::Write))
-                        })?;
+                let reason = req.reason.as_deref();
+                let proposal = retry_chain(|| {
+                    st.app
+                        .propose_transition_with_reason(acting.bearer(), node.clone(), to, reason)
+                })
+                .await
+                .map_err(|e| console::ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
                 Ok(console::Acted::new(
                     StatusCode::ACCEPTED,
                     json!({
@@ -2567,6 +2589,7 @@ where
                         "state": proposal.state.as_str(),
                         "proposed_by_key_id": proposal.proposer_key_id,
                         "ratified_by_key_id": Value::Null,
+                        "proposed_at": proposal.proposed_at.as_str(),
                     }),
                 ))
             })
@@ -2729,11 +2752,11 @@ where
                 })?;
                 let page = st
                     .app
-                    .brief_edges(&token, workspace, cursor, limit)
+                    .brief_edges(token.as_str(), workspace, cursor, limit)
                     .await
                     .map_err(|e| map_app_error(e, ErrorContext::Write))?;
                 json!({
-                    "items": page.items.iter().map(brief_edge_json).collect::<Vec<_>>(),
+                    "items": page.items.iter().map(listed_brief_edge_json).collect::<Vec<_>>(),
                     "next_cursor": page.next_cursor,
                 })
             }
@@ -2748,19 +2771,28 @@ where
         headers: HeaderMap,
         body: Bytes,
     ) -> Response {
-        finish(&rid, Self::propose_edge_inner(&st, &headers, &body).await)
+        finish(
+            &rid,
+            Self::propose_edge_inner(&st, &headers, &body, None).await,
+        )
     }
 
     /// `POST /v2/edges`: `kind: claim` `{from_artifact_id, to_artifact_id,
     /// label}` or `kind: brief` `{from_artifact_id, to_workspace_id}`, each
     /// `202` and pending (http-api.md edges; ADR-0046 d4, d7).
-    async fn propose_edge_inner(
+    pub(crate) async fn propose_edge_inner(
         st: &Self,
         headers: &HeaderMap,
         body: &Bytes,
+        connection: Option<&Caller>,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let token = bearer(headers)?;
+        // The key value, or the MCP connection's caller, which rides in its
+        // access token's place (ADR-0031 d11).
+        let acting = match connection {
+            Some(caller) => Acting::Connection(caller),
+            None => Acting::Value(bearer(headers)?),
+        };
         let idem = idempotency_key(headers)?;
         // The kind first, so a designed kind's members are refused as that
         // kind rather than as unknown fields.
@@ -2790,11 +2822,17 @@ where
                             .with_details(json!({ "field": "/to_workspace_id" })),
                     );
                 }
+                if req.reason.is_some() {
+                    return Err(ApiError::validation("reason belongs to kind brief")
+                        .with_details(json!({ "field": "/reason" })));
+                }
                 let request = ProposeClaimEdge {
                     from_artifact_id: from,
                     to_artifact_id: to,
                     label,
                 };
+                // A claim edge is never proposed over MCP (ADR-0095 d7).
+                let token = bearer(headers)?;
                 let outcome =
                     retry_chain(|| st.app.propose_claim_edge(&token, &request, Some(&idem)))
                         .await
@@ -2817,11 +2855,24 @@ where
                 let request = ProposeBriefEdge {
                     artifact_id: from,
                     workspace: reference("/to_workspace_id", workspace)?,
+                    reason: req.reason.clone(),
                 };
-                let outcome =
-                    retry_chain(|| st.app.propose_brief_edge(&token, &request, Some(&idem)))
-                        .await
-                        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+                let outcome = retry_chain(|| {
+                    st.app
+                        .propose_brief_edge(acting.bearer(), &request, Some(&idem))
+                })
+                .await
+                .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+                // A replay under the same key answers its record, as every
+                // write does, and says so (http-api.md idempotency).
+                if outcome.replayed {
+                    let mut response =
+                        json_response(StatusCode::ACCEPTED, &brief_edge_json(&outcome.proposal));
+                    response
+                        .headers_mut()
+                        .insert("idempotency-replay", HeaderValue::from_static("true"));
+                    return Ok(response);
+                }
                 (StatusCode::ACCEPTED, brief_edge_json(&outcome.proposal))
             }
             other => return Err(edge_kind_refused(Some(other))),
@@ -3996,6 +4047,9 @@ fn parse_needs(needs: Option<&str>, field: &str) -> Result<Option<ReviewLane>, A
 #[serde(deny_unknown_fields)]
 struct TransitionBody {
     to: String,
+    /// Why, scanned and journalled with the proposal (ADR-0095 d1).
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 /// `POST /v2/edges`'s body; which members a kind takes is checked after
@@ -4008,6 +4062,8 @@ struct EdgeBody {
     to_artifact_id: Option<String>,
     to_workspace_id: Option<String>,
     label: Option<String>,
+    /// A brief proposal's reason, scanned and journalled (ADR-0095 d1).
+    reason: Option<String>,
 }
 
 /// `POST /v2/review/verdicts/bulk`'s body (ADR-0055 d3): the ids as
@@ -4267,6 +4323,9 @@ struct WorkspaceCreateBody {
     crew: Option<String>,
     #[serde(default)]
     prefix: Option<String>,
+    /// Why, scanned and journalled with `workspace.create` (ADR-0095 d1).
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 /// openapi.yaml `WorkspaceCrewUpdate`, closed.
@@ -6220,7 +6279,33 @@ pub fn transition_json(t: &oml_app::types::TransitionView) -> Value {
         "state": t.state.as_str(),
         "proposed_by_key_id": t.proposed_by_key_id,
         "ratified_by_key_id": Value::Null,
+        "proposed_at": t.proposed_at.as_str(),
+        "proposed_by": proposed_by_json(t.proposed_by.as_ref()),
     })
+}
+
+/// `proposed_by` as the reads serve it: `{id, name}` to a key of the
+/// proposer's person, else null (ADR-0095, amendment of 2026-11-24).
+fn proposed_by_json(by: Option<&oml_app::types::ProposedBy>) -> Value {
+    by.map_or(
+        Value::Null,
+        |by| json!({ "id": by.key_id, "name": by.name.as_ref().map(|n| n.as_str()) }),
+    )
+}
+
+/// A brief edge as `GET /v2/edges?kind=brief` lists it: the edge, and for a
+/// pending one `proposed_at` and `proposed_by` (ADR-0095 d6 as amended
+/// 2026-11-24).
+fn listed_brief_edge_json(listed: &oml_app::types::BriefEdgeListed) -> Value {
+    let mut value = brief_edge_json(&listed.edge);
+    if let (Some(at), Some(obj)) = (&listed.proposed_at, value.as_object_mut()) {
+        obj.insert("proposed_at".to_owned(), json!(at.as_str()));
+        obj.insert(
+            "proposed_by".to_owned(),
+            proposed_by_json(listed.proposed_by.as_ref()),
+        );
+    }
+    value
 }
 
 /// The event-catalog envelope as the tail serves it (digest-only payloads by

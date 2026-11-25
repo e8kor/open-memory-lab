@@ -324,15 +324,16 @@ Requires: admin key role. parent and crew each take an id or a name, and parent_
 | `parent` | WorkspaceRef | no | The parent. |
 | `name` | string | yes | A new name, in a creation body: the creation grammar. |
 | `crew` | CrewRef | no | A crew record, by its id or its name, resolved server-side like every reference. |
+| `reason` | string | no | Why, scanned as a verdict's reason is and journalled with workspace.create. |
 
-**Responses.** `201` The new node.; `409` A 409-class conflict (idempotency.*, submission.tip_conflict, workspace.frozen, review.serve_invalid, …).; `415` 415 request.unsupported_media — the request body's media type is not the application/json the operation declares; not retryable as sent.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
+**Responses.** `201` The new node.; `409` A 409-class conflict (idempotency.*, submission.tip_conflict, workspace.frozen, review.serve_invalid, …).; `415` 415 request.unsupported_media — the request body's media type is not the application/json the operation declares; not retryable as sent.; `429` 429 limit.rate or limit.quota — retryable; Retry-After says when.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
 
 
 ### `GET /v2/workspaces/{workspace}`
 
 One node — id, parent, derived path, status, crew record — with the calling key's view of it.
 
-Requires: reader effective access (access.not_found otherwise), or the admin key role, which reads the structure of every workspace in its tenant without grants and never claim content — for an admin key every child and edge is present and my_effective_verbs is empty. children, my_effective_verbs and permission_epoch are relative to the calling key: children (ordered by path_leaf, then id) and edges (ordered by edge_id) outside read access are absent; my_effective_verbs is the union over the grant roles effective on the node (the effective-verbs table in docs/architecture/roles-and-keys.md), with remember for a person's session reviewer key where it holds reviewer and reader outside its person's own root; permission_epoch is the calling key's permission epoch as declared in docs/architecture/workspaces.md.
+Requires: reader effective access (access.not_found otherwise), or the admin key role, which reads the structure of every workspace in its tenant without grants and never claim content — for an admin key every child and edge is present and my_effective_verbs is empty. children, my_effective_verbs and permission_epoch are relative to the calling key: children (ordered by path_leaf, then id) and edges (ordered by edge_id) outside read access are absent; my_effective_verbs is the union over the grant roles effective on the node (the effective-verbs table in docs/architecture/roles-and-keys.md), with remember for a person's session reviewer key where it holds reviewer and reader outside its person's own root, create_workspace for a contributor key that names a user on a node inside that user's root where it holds submitter, and propose_brief for a contributor key holding submitter or a reviewer key holding reviewer (since v0.8.5); permission_epoch is the calling key's permission epoch as declared in docs/architecture/workspaces.md.
 
 | Parameter | In | Type | Required | Meaning |
 |---|---|---|---|---|
@@ -469,6 +470,7 @@ Requires: reviewer or admin.
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `to` | `protected` \| `frozen` | yes | Forward only; backward transitions do not exist, and a user root and every workspace under it stay development, so a proposal there is refused workspace.transition_refused, reason user_root. |
+| `reason` | string | no | Why, scanned as a verdict's reason is and journalled with workspace.status_proposed. |
 
 **Responses.** `202` Pending transition.; `409` A 409-class conflict (idempotency.*, submission.tip_conflict, workspace.frozen, review.serve_invalid, …).; `415` 415 request.unsupported_media — the request body's media type is not the application/json the operation declares; not retryable as sent.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
 
@@ -603,7 +605,7 @@ Propose a claim-to-claim edge or a claim's place in a workspace's brief; pending
 
 **Request body** (`application/json`): EdgeProposal
 
-**Responses.** `202` Pending edge.; `415` 415 request.unsupported_media — the request body's media type is not the application/json the operation declares; not retryable as sent.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
+**Responses.** `202` Pending edge.; `409` A 409-class conflict (idempotency.*, submission.tip_conflict, workspace.frozen, review.serve_invalid, …).; `415` 415 request.unsupported_media — the request body's media type is not the application/json the operation declares; not retryable as sent.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
 
 
 ### `POST /v2/edges/{edge_id}/ratify`
@@ -1630,7 +1632,7 @@ Requires: admin key role. profile names a profile the configuration declares, or
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `profile` | string | yes |  |
-| `overrides` | object | no | A quota's limit for this account alone: memories, text_bytes, writes_per_month, keys, connections or requests_per_minute. |
+| `overrides` | object | no | A quota's limit for this account alone: memories, text_bytes, writes_per_month, keys, connections, requests_per_minute or workspaces. |
 
 **Responses.** `200` The account's usage under its new limits.; `400` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).; `403` A 403-class refusal naming its rule (access.*, review.*, simulation.audience_refused).; `404` access.not_found — absent or outside read scope, indistinguishable by design.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
 

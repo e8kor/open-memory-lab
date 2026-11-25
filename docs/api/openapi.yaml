@@ -641,6 +641,7 @@ paths:
                 - { meter: recalls, used: 431, limit: null, percent: null, state: ok }
                 - { meter: keys, used: 2, limit: 5, percent: 40, state: ok }
                 - { meter: connections, used: 1, limit: 5, percent: 20, state: ok }
+                - { meter: workspaces, used: 3, limit: 100, percent: 3, state: ok }
               schema: { $ref: '#/components/schemas/AccountUsage' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -651,7 +652,7 @@ paths:
       tags: [workspaces]
       operationId: createWorkspace
       summary: Create a child workspace in development.
-      description: 'Requires: admin key role. parent and crew each take an id or a name, and parent_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /parent (ADR-0039 d7); a crew that names no crew record of the tenant answers access.not_found, checked after the parent and before name.taken. name must be unique in the tenant (409 name.taken, checked after every other check; universe is always taken, by the root). Refused under a frozen parent (workspace.frozen); universe cannot be created or deleted. A resubmission under the same Idempotency-Key and body answers the recorded creation with Idempotency-Replay: true and creates nothing again; the same key with another body is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.7.0). A person''s web session key (<user>-web, through its capacity credential) creates under its own root, as the web console''s Workspaces view does (ADR-0070 d5).'
+      description: 'Requires: admin key role. parent and crew each take an id or a name, and parent_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /parent (ADR-0039 d7); a crew that names no crew record of the tenant answers access.not_found, checked after the parent and before name.taken. name must be unique in the tenant (409 name.taken, checked after every other check; universe is always taken, by the root). Refused under a frozen parent (workspace.frozen); universe cannot be created or deleted. A resubmission under the same Idempotency-Key and body answers the recorded creation with Idempotency-Replay: true and creates nothing again; the same key with another body is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.7.0). A person''s web session key (<user>-web, through its capacity credential) creates under its own root, as the web console''s Workspaces view does (ADR-0070 d5). A node below a user root counts on that account''s workspaces meter, whoever creates it; past the account''s limit the create is 429 limit.quota with details.quota workspaces, and nothing is journalled (ADR-0095 d4; since v0.8.5). MCP''s oml_write create_workspace rides this operation for a contributor key that names a user alone; every other key is access.verb_ceiling with details.reason create_is_own_root_only there (ADR-0095 d3).'
       parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }, { $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
@@ -685,6 +686,7 @@ paths:
               schema: { $ref: '#/components/schemas/Workspace' }
         '409': { $ref: '#/components/responses/Conflict' }
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '429': { $ref: '#/components/responses/RateLimited' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/workspaces/{workspace}:
@@ -692,7 +694,7 @@ paths:
       tags: [workspaces]
       operationId: getWorkspace
       summary: One node — id, parent, derived path, status, crew record — with the calling key's view of it.
-      description: 'Requires: reader effective access (access.not_found otherwise), or the admin key role, which reads the structure of every workspace in its tenant without grants and never claim content — for an admin key every child and edge is present and my_effective_verbs is empty (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15). children, my_effective_verbs and permission_epoch are relative to the calling key: children (ordered by path_leaf, then id) and edges (ordered by edge_id) outside read access are absent; my_effective_verbs is the union over the grant roles effective on the node (the effective-verbs table in docs/architecture/roles-and-keys.md), with remember for a person''s session reviewer key where it holds reviewer and reader outside its person''s own root (ADR-0082 d11, d10); permission_epoch is the calling key''s permission epoch as declared in docs/architecture/workspaces.md (ADR-0025 d14). One call carries all of it.'
+      description: 'Requires: reader effective access (access.not_found otherwise), or the admin key role, which reads the structure of every workspace in its tenant without grants and never claim content — for an admin key every child and edge is present and my_effective_verbs is empty (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15). children, my_effective_verbs and permission_epoch are relative to the calling key: children (ordered by path_leaf, then id) and edges (ordered by edge_id) outside read access are absent; my_effective_verbs is the union over the grant roles effective on the node (the effective-verbs table in docs/architecture/roles-and-keys.md), with remember for a person''s session reviewer key where it holds reviewer and reader outside its person''s own root (ADR-0082 d11, d10), create_workspace for a contributor key that names a user on a node inside that user''s root where it holds submitter, and propose_brief for a contributor key holding submitter or a reviewer key holding reviewer (ADR-0095 d8; since v0.8.5); permission_epoch is the calling key''s permission epoch as declared in docs/architecture/workspaces.md (ADR-0025 d14). One call carries all of it.'
       parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }, { $ref: '#/components/parameters/WorkspaceId' }]
       responses:
         '200':
@@ -724,7 +726,7 @@ paths:
                   to: 7724e9d7-ddd6-4b94-8855-aad97c28224c
                   label: continues
                   state: ratified
-                my_effective_verbs: [recall, read, graph_read, events_tail, remember, learn, attach, supersede]
+                my_effective_verbs: [recall, read, graph_read, events_tail, remember, learn, attach, supersede, propose_brief]
                 permission_epoch: 815
               schema: { $ref: '#/components/schemas/WorkspaceView' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -1099,7 +1101,7 @@ paths:
       tags: [workspaces]
       operationId: proposeTransition
       summary: Propose a forward status transition; pending until a second party ratifies.
-      description: 'Requires: reviewer or admin. Forward only; frozen refused while any child is not frozen (workspace.transition_refused). A resubmission under the same Idempotency-Key and body answers the recorded proposal with Idempotency-Replay: true and proposes nothing again; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4).'
+      description: 'Requires: reviewer or admin. Forward only; frozen refused while any child is not frozen (workspace.transition_refused). A workspace holds one live proposal per target status: a second, by any key, is 409 proposal.pending with details.transition_id naming the live one (ADR-0095 d5; #515; since v0.8.5). A resubmission under the same Idempotency-Key and body answers the recorded proposal with Idempotency-Replay: true and proposes nothing again; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4).'
       parameters:
         - { $ref: '#/components/parameters/WorkspaceId' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
@@ -1125,6 +1127,7 @@ paths:
                 state: pending
                 proposed_by_key_id: d405428e-4c99-426d-8826-76d28436e423
                 ratified_by_key_id: null
+                proposed_at: '2026-11-25T10:00:00.000000Z'
               schema: { $ref: '#/components/schemas/Transition' }
         '409': { $ref: '#/components/responses/Conflict' }
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
@@ -1195,7 +1198,7 @@ paths:
       tags: [edges]
       operationId: proposeEdge
       summary: Propose a claim-to-claim edge or a claim's place in a workspace's brief; pending until ratified.
-      description: 'kind claim requires reviewer(propose); its label is open, with supports, contradicts, relates_to and continues recommended and oml: reserved (ADR-0046 d6). kind brief requires reviewer effective access on the workspace and a promoted served tip the key reads; its label is brief and is not sent (ADR-0046 d7, d8). kind workspace, designed and not served, requires reviewer(propose) effective access on at least one endpoint and reader on both (edge-authority rule, D7); an admin who must act here holds a separate reviewer key, since a key never combines admin with reviewer grants (access.role_exclusive). Each kind journals its own proposal event (ADR-0039 d9).'
+      description: 'kind claim requires reviewer(propose); its label is open, with supports, contradicts, relates_to and continues recommended and oml: reserved (ADR-0046 d6). kind brief requires a contributor key with submitter effective access on the workspace or a reviewer key with reviewer effective access there, and a promoted served tip the key reads; its label is brief and is not sent (ADR-0046 d7, d8; ADR-0095 d6, since v0.8.5). A claim already proposed for that brief, or already its member, is 409 proposal.pending with details.edge_id naming the edge (ADR-0095 d6; #515). kind workspace, designed and not served, requires reviewer(propose) effective access on at least one endpoint and reader on both (edge-authority rule, D7); an admin who must act here holds a separate reviewer key, since a key never combines admin with reviewer grants (access.role_exclusive). Each kind journals its own proposal event (ADR-0039 d9).'
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
@@ -1231,6 +1234,7 @@ paths:
                 proposer_key_id: d405428e-4c99-426d-8826-76d28436e423
                 ratifier_key_id: null
               schema: { $ref: '#/components/schemas/Edge' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
@@ -4295,6 +4299,7 @@ components:
             writes: { type: integer, description: 'Versions submitted this UTC month (ADR-0071 d2). Since v0.7.3.' }
             keys: { type: integer }
             connections: { type: integer }
+            workspaces: { type: integer, description: 'Live workspaces under the account''s root, the root excluded (ADR-0095 d4). Since v0.8.5.' }
         quotas:
           type: object
           properties:
@@ -4304,6 +4309,7 @@ components:
             keys: { type: integer }
             connections: { type: integer }
             requests_per_minute: { type: integer }
+            workspaces: { type: [integer, 'null'], description: 'Null is unlimited, as in the default profile (ADR-0095 d4). Since v0.8.5.' }
         admin_keys:
           type: array
           items: { type: string }
@@ -4512,6 +4518,7 @@ components:
         - name.taken
         - limit.rate
         - limit.quota
+        - proposal.pending
         - export.not_ready
         - settings.retired_key
         - settings.invalid
@@ -5582,7 +5589,7 @@ components:
             my_effective_verbs:
               type: array
               description: The effective-verbs table of docs/architecture/roles-and-keys.md, unioned over the grant roles effective on the node and listed in table order (the reader, submitter and reviewer rows, each left to right) without duplicates; the access conferred, not what this server build serves.
-              items: { type: string, enum: [recall, read, graph_read, events_tail, remember, learn, attach, supersede, propose, review] }
+              items: { type: string, enum: [recall, read, graph_read, events_tail, remember, learn, attach, supersede, propose, review, create_workspace, propose_brief] }
             permission_epoch: { type: integer, description: 'The calling key''s permission epoch as declared in docs/architecture/workspaces.md (ADR-0025 d14).' }
             policy: { $ref: '#/components/schemas/ReviewPolicy' }
             federation:
@@ -5604,6 +5611,7 @@ components:
       required: [to]
       properties:
         to: { type: string, enum: [protected, frozen], description: 'Forward only; backward transitions do not exist, and a user root and every workspace under it stay development, so a proposal there is refused workspace.transition_refused, reason user_root (ADR-0085 d17).' }
+        reason: { type: string, description: 'Why, scanned as a verdict''s reason is and journalled with workspace.status_proposed (ADR-0095 d1). Since v0.8.5.' }
 
     Transition:
       type: object
@@ -5616,6 +5624,16 @@ components:
         state: { type: string, enum: [pending, ratified] }
         proposed_by_key_id: { type: [string, 'null'], description: 'The proposing key, served only to that key; null to every other reader, an admin key included (ADR-0025 d15).' }
         ratified_by_key_id: { type: [string, 'null'], description: 'Null on this build''s answers; the journal''s workspace.status_transition names the ratifier.' }
+        proposed_at: { type: string, format: date-time, description: 'The instant of its workspace.status_proposed, to every reader (ADR-0095 d5 as amended 2026-11-24). Since v0.8.5.' }
+        proposed_by: { $ref: '#/components/schemas/ProposedBy' }
+
+    ProposedBy:
+      type: [object, 'null']
+      description: 'The key that made a live proposal, served when it is the calling key or another key of the same person, and null to every other reader (ADR-0095, amendment of 2026-11-24). Since v0.8.5.'
+      required: [id, name]
+      properties:
+        id: { type: string }
+        name: { type: [string, 'null'] }
 
     ReviewPolicy:
       type: object
@@ -5647,10 +5665,12 @@ components:
       type: object
       additionalProperties: false
       required: [kind, from_artifact_id, to_workspace_id]
+      description: 'A brief member proposed by a contributor key holding submitter or a reviewer key holding reviewer on the workspace (ADR-0095 d6); a claim already proposed for this brief or already a member is 409 proposal.pending, naming the edge in details.edge_id.'
       properties:
         kind: { type: string, const: brief }
         from_artifact_id: { type: string }
         to_workspace_id: { $ref: '#/components/schemas/WorkspaceRef' }
+        reason: { type: string, description: 'Why, scanned as a verdict''s reason is and journalled with brief_edge.proposed (ADR-0095 d1). Since v0.8.5.' }
 
     EdgeProposal:
       description: One proposal body for the served edge kinds, chosen by kind (ADR-0039 d9; ADR-0046 d7).
@@ -5688,6 +5708,8 @@ components:
         state: { type: string, enum: [pending, ratified] }
         proposer_key_id: { type: string }
         ratifier_key_id: { type: [string, 'null'] }
+        proposed_at: { type: string, format: date-time, description: 'On a pending edge the brief''s listing serves: the instant of its brief_edge.proposed (ADR-0095 d6 as amended 2026-11-24). Since v0.8.5.' }
+        proposed_by: { $ref: '#/components/schemas/ProposedBy' }
 
     Edge:
       description: An edge of a served kind, carrying its kind (ADR-0039 d9; ADR-0046 d7).
@@ -5715,6 +5737,7 @@ components:
         parent: { $ref: '#/components/schemas/WorkspaceRef', description: "The parent. Omitted, a user key's own root; every other key sends it (request.workspace_unresolved otherwise). A contributor user key creates under a parent inside its root where its effective access confers submitter; a submitter user key is access.verb_ceiling (ADR-0044 d6; ADR-0093 d6)." }
         name: { $ref: '#/components/schemas/Name' }
         crew: { $ref: '#/components/schemas/CrewRef' }
+        reason: { type: string, description: 'Why, scanned as a verdict''s reason is and journalled with workspace.create (ADR-0095 d1). Since v0.8.5.' }
 
     WorkspacePage:
       type: object
@@ -6386,6 +6409,7 @@ components:
             writes: { type: integer, description: 'Versions submitted this UTC month (ADR-0071 d2). Since v0.7.3.' }
             keys: { type: integer }
             connections: { type: integer }
+            workspaces: { type: integer, description: 'Live workspaces under the account''s root, the root excluded (ADR-0095 d4). Since v0.8.5.' }
         quotas:
           type: [object, 'null']
           properties:
@@ -6395,6 +6419,7 @@ components:
             keys: { type: integer }
             connections: { type: integer }
             requests_per_minute: { type: integer }
+            workspaces: { type: [integer, 'null'], description: 'Null is unlimited, as in the default profile (ADR-0095 d4). Since v0.8.5.' }
         deletion_requested_at: { type: [string, 'null'], format: date-time, description: "When the person asked for deletion, while the request is pending (ADR-0068 d6)." }
         linked_keys:
           description: "The live tenant keys an admin linked to the person (not revoked, not past their expiry, used_by person), by id and name, in name order: the keys oml-web may name in OML-Acting-Key for this person (ADR-0085 d16). Since v0.8.3."
@@ -6695,7 +6720,7 @@ components:
 
     AccountUsage:
       type: object
-      description: An account's six meters against its limits in one UTC month (ADR-0071 d2, d5, d6). Counts only.
+      description: An account's seven meters against its limits in one UTC month (ADR-0071 d2, d5, d6; ADR-0095 d4). Counts only.
       required: [account, user, profile, profile_declared, period, meters]
       additionalProperties: false
       properties:
@@ -6711,7 +6736,7 @@ components:
             required: [meter, used, limit, percent, state]
             additionalProperties: false
             properties:
-              meter: { type: string, enum: [memories, text_bytes, writes, recalls, keys, connections] }
+              meter: { type: string, enum: [memories, text_bytes, writes, recalls, keys, connections, workspaces] }
               used: { type: integer, minimum: 0 }
               limit: { type: [integer, 'null'], minimum: 0 }
               percent: { type: [integer, 'null'], minimum: 0 }
@@ -6724,7 +6749,7 @@ components:
         profile: { type: string }
         overrides:
           type: object
-          description: 'A quota''s limit for this account alone: memories, text_bytes, writes_per_month, keys, connections or requests_per_minute.'
+          description: 'A quota''s limit for this account alone: memories, text_bytes, writes_per_month, keys, connections, requests_per_minute or workspaces.'
           additionalProperties: { type: integer, minimum: 0 }
     UsageLedger:
       type: object
@@ -6749,6 +6774,7 @@ components:
               recalls: { type: integer }
               keys: { type: integer }
               connections: { type: integer }
+              workspaces: { type: integer, description: 'Live workspaces under the account''s root when the day closed (ADR-0095 d4). Since v0.8.5.' }
     UsageDrift:
       type: object
       required: [drift, undeclared_profiles]
@@ -6763,7 +6789,7 @@ components:
             properties:
               account: { type: string }
               user: { type: [string, 'null'] }
-              meter: { type: string, enum: [memories, text_bytes, writes, keys, connections] }
+              meter: { type: string, enum: [memories, text_bytes, writes, keys, connections, workspaces] }
               counter: { type: integer }
               rows: { type: integer }
         undeclared_profiles:

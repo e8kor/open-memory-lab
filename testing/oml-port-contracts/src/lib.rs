@@ -272,11 +272,15 @@ impl ChainRig {
 
     /// Commit one `workspace.status_proposed` folding `proposal`, its
     /// payload the event catalog's.
+    /// The proposal's `proposed_at` is set to its event's instant, as the
+    /// store serves it back (ADR-0095, amendment of 2026-11-24).
     pub async fn propose_transition<S: JournalStore>(
         &mut self,
         store: &S,
-        proposal: TransitionRecord,
+        proposal: &mut TransitionRecord,
     ) -> Result<CommitReceipt, StoreError> {
+        proposal.proposed_at = Self::at(self.n + 1);
+        let proposal = proposal.clone();
         self.commit(
             store,
             event_types::WORKSPACE_STATUS_PROPOSED,
@@ -4593,6 +4597,8 @@ pub fn pending_transition(
         proposer_key_id,
         proposer_principal: format!("fixture/{proposer_key_id}"),
         ratifier_key_id: None,
+        // Set to the proposal's event instant by `ChainRig::propose_transition`.
+        proposed_at: ChainRig::at(0),
     }
 }
 
@@ -4644,29 +4650,29 @@ pub async fn a_proposed_transition_is_pending_and_listed_by_its_workspace_in_pro
     .await;
 
     // The later proposal on `node` carries the smaller id.
-    let first = pending_transition(
+    let mut first = pending_transition(
         t,
         Uuid::from_u128(0xE492),
         node,
         WorkspaceStatus::Development,
         proposer,
     );
-    let elsewhere = pending_transition(
+    let mut elsewhere = pending_transition(
         t,
         Uuid::from_u128(0xE493),
         other,
         WorkspaceStatus::Development,
         ratifier,
     );
-    let second = pending_transition(
+    let mut second = pending_transition(
         t,
         Uuid::from_u128(0xE491),
         node,
         WorkspaceStatus::Development,
         ratifier,
     );
-    for proposal in [&first, &elsewhere, &second] {
-        rig.propose_transition(store, proposal.clone())
+    for proposal in [&mut first, &mut elsewhere, &mut second] {
+        rig.propose_transition(store, proposal)
             .await
             .expect("a pending proposal one rung forward commits");
     }
@@ -4739,24 +4745,22 @@ pub async fn ratifying_a_transition_moves_the_workspaces_status_in_the_same_comm
     let (proposer, ratifier) = (Uuid::from_u128(0xD500), Uuid::from_u128(0xD501));
     let mut rig = transition_ground(store, 50, node, (proposer, ratifier)).await;
     let t = rig.tenant_id;
-    let proposal = pending_transition(
+    let mut proposal = pending_transition(
         t,
         Uuid::from_u128(0xE500),
         node,
         WorkspaceStatus::Development,
         proposer,
     );
-    let overtaken = pending_transition(
+    let mut overtaken = pending_transition(
         t,
         Uuid::from_u128(0xE501),
         node,
         WorkspaceStatus::Development,
         proposer,
     );
-    for p in [&proposal, &overtaken] {
-        rig.propose_transition(store, p.clone())
-            .await
-            .expect("proposal");
+    for p in [&mut proposal, &mut overtaken] {
+        rig.propose_transition(store, p).await.expect("proposal");
     }
 
     // The ratification and a link the store refuses, as one chain.
@@ -4876,31 +4880,29 @@ pub async fn a_ratification_fold_whose_status_guard_fails_journals_nothing_and_m
         workspace_record(t, sibling, Some(Uuid::from_u128(0xB610)), "area-51-sibling"),
     )
     .await;
-    let ratified = pending_transition(
+    let mut ratified = pending_transition(
         t,
         Uuid::from_u128(0xE510),
         node,
         WorkspaceStatus::Development,
         proposer,
     );
-    let stale = pending_transition(
+    let mut stale = pending_transition(
         t,
         Uuid::from_u128(0xE511),
         node,
         WorkspaceStatus::Development,
         proposer,
     );
-    let live = pending_transition(
+    let mut live = pending_transition(
         t,
         Uuid::from_u128(0xE512),
         sibling,
         WorkspaceStatus::Development,
         proposer,
     );
-    for p in [&ratified, &stale, &live] {
-        rig.propose_transition(store, p.clone())
-            .await
-            .expect("proposal");
+    for p in [&mut ratified, &mut stale, &mut live] {
+        rig.propose_transition(store, p).await.expect("proposal");
     }
     rig.ratify_transition(
         store,
@@ -5042,9 +5044,9 @@ async fn step_once<S: JournalStore>(
     from: WorkspaceStatus,
     (proposer, ratifier): (Uuid, Uuid),
 ) {
-    let proposal = pending_transition(rig.tenant_id, transition_id, node, from, proposer);
+    let mut proposal = pending_transition(rig.tenant_id, transition_id, node, from, proposer);
     let to = proposal.to;
-    rig.propose_transition(store, proposal)
+    rig.propose_transition(store, &mut proposal)
         .await
         .expect("proposal");
     rig.ratify_transition(store, transition_id, node, to, ratifier)
@@ -5077,14 +5079,14 @@ pub async fn a_child_created_between_proposal_and_ratification_refuses_the_step_
         keys,
     )
     .await;
-    let proposal = pending_transition(
+    let mut proposal = pending_transition(
         t,
         Uuid::from_u128(0xE531),
         node,
         WorkspaceStatus::Protected,
         keys.0,
     );
-    rig.propose_transition(store, proposal.clone())
+    rig.propose_transition(store, &mut proposal)
         .await
         .expect("a step to frozen with no child is proposed");
 
@@ -5194,14 +5196,14 @@ pub async fn a_ratification_by_another_key_of_the_proposers_principal_is_refused
         },
     )
     .await;
-    let proposal = pending_transition(
+    let mut proposal = pending_transition(
         t,
         Uuid::from_u128(0xE540),
         node,
         WorkspaceStatus::Development,
         proposer,
     );
-    rig.propose_transition(store, proposal.clone())
+    rig.propose_transition(store, &mut proposal)
         .await
         .expect("proposal");
     let head = store.chain_head(t).await.expect("head");
@@ -5268,7 +5270,7 @@ pub async fn a_proposal_whose_principal_is_not_its_proposing_keys_is_refused<S: 
         )
     };
     let head = store.chain_head(t).await.expect("head");
-    let refused = rig.propose_transition(store, proposal.clone()).await;
+    let refused = rig.propose_transition(store, &mut proposal.clone()).await;
     assert!(
         matches!(refused, Err(StoreError::Backend(_))),
         "a principal the proposing key does not hold is refused, got {refused:?}"

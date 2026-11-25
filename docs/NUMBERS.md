@@ -116,8 +116,8 @@ branch that reserved later renumbers.
 | adr | 0092 | `main` |  | search filters by every claim kind and ranks skills and guardrails as  | used |
 | adr | 0093 | `main` |  | contributor and submitter replace writer | used |
 | adr | 0094 | `main` |  | a langchain integration rides the python sdk and its store writes only | used |
-| adr | 0095 | `docs/adr-mcp-workspace` |  | agents manage workspaces over MCP by proposal | reserved |
-| adr | 0096 | `docs/adr-console-keys` |  | a person builds a key in the console with grants inside the own root and a rate, and the admin reads one key and sets its limits | reserved |
+| adr | 0095 | `main` |  | an agent creates its own child workspaces writes guardrails and propos | used |
+| adr | 0096 | `main` |  | a person builds a key in the console with grants inside the own root a | used |
 | migration | 0001 | `main` |  | init | used |
 | migration | 0002 | `main` |  | poc adapter | used |
 | migration | 0003 | `main` |  | lead startup | used |
@@ -185,3 +185,4 @@ branch that reserved later renumbers.
 | migration | 0064 | `main` |  | admin fixes | used |
 | migration | 0065 | `main` |  | session key account | used |
 | migration | 0066 | `main` |  | contributor and submitter | used |
+| migration | 0067 | `bulk085/mcp` |  | workspaces meter (ADR-0095 d4) | reserved |

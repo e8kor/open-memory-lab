@@ -62,6 +62,7 @@ class ErrorCode(StrEnum):
     OAUTH_REDIRECT_REFUSED = "oauth.redirect_refused"
     OAUTH_REFRESH_INVALID = "oauth.refresh_invalid"
     OAUTH_RESOURCE_MISMATCH = "oauth.resource_mismatch"
+    PROPOSAL_PENDING = "proposal.pending"
     REQUEST_IDEMPOTENCY_KEY_REQUIRED = "request.idempotency_key_required"
     REQUEST_PAYLOAD_TOO_LARGE = "request.payload_too_large"
     REQUEST_UNSUPPORTED_MEDIA = "request.unsupported_media"

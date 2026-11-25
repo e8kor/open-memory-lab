@@ -6,6 +6,7 @@ class UsageDriftDriftItemMeter(StrEnum):
     KEYS = "keys"
     MEMORIES = "memories"
     TEXT_BYTES = "text_bytes"
+    WORKSPACES = "workspaces"
     WRITES = "writes"
 
     def __str__(self) -> str:

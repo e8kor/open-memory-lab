@@ -2361,9 +2361,16 @@ impl PgStore {
 // Small conversions between the port's types and the schema's columns
 // ---------------------------------------------------------------------------
 
-/// The `workspace_transitions` columns a transition read selects.
+/// The `workspace_transitions` columns a transition read selects, and the
+/// instant of its `workspace.status_proposed`, read off the journal row its
+/// `proposed_seq` names in the same statement (ADR-0095, amendment of
+/// 2026-11-24).
 const TRANSITION_COLUMNS: &str = "id, tenant_id, workspace_id, from_status, to_status, state, \
-     proposer_key_id, proposer_principal, ratifier_key_id";
+     proposer_key_id, proposer_principal, ratifier_key_id, \
+     (SELECT to_char(j.at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+        FROM journal j \
+       WHERE j.tenant_id = workspace_transitions.tenant_id \
+         AND j.seq = workspace_transitions.proposed_seq) AS proposed_at";
 
 /// A `workspace_transitions` row as the port's record; a status or state
 /// word the record does not spell fails closed.
@@ -2388,6 +2395,10 @@ fn transition_from_row(row: &PgRow) -> Result<TransitionRecord, StoreError> {
         proposer_key_id: row.try_get("proposer_key_id").map_err(backend)?,
         proposer_principal: row.try_get("proposer_principal").map_err(backend)?,
         ratifier_key_id: row.try_get("ratifier_key_id").map_err(backend)?,
+        proposed_at: {
+            let at: String = row.try_get("proposed_at").map_err(backend)?;
+            EventTime::parse(&at).map_err(backend)?
+        },
     })
 }
 
@@ -6130,17 +6141,44 @@ async fn fold_connection_revoked(
 // ---------------------------------------------------------------------------
 
 /// An account's counters as `usage_accounts` reads them: root, profile and
-/// six counts.
-type CounterRow = (Uuid, Option<String>, i64, i64, i64, i64, i64, i64);
-/// A ledger row as read: root, day, profile and six counts.
-type LedgerTuple = (Uuid, String, Option<String>, i64, i64, i64, i64, i64, i64);
+/// seven counts.
+type CounterRow = (Uuid, Option<String>, i64, i64, i64, i64, i64, i64, i64);
+/// A ledger row as read: root, day, profile and seven counts.
+type LedgerTuple = (
+    Uuid,
+    String,
+    Option<String>,
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+);
 /// A drift row: root, then each compared meter's counter and source value.
-type DriftRow = (Uuid, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64);
+type DriftRow = (
+    Uuid,
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+);
+/// Seven counts in [`Meter::ALL`]'s order.
+type Counts = (i64, i64, i64, i64, i64, i64, i64);
 
-/// Six counts in [`Meter::ALL`]'s order as a usage; a negative count,
+/// Seven counts in [`Meter::ALL`]'s order as a usage; a negative count,
 /// which only a drifted counter holds, reads as zero.
 fn usage_of(
-    (memories, text_bytes, writes, recalls, keys, connections): (i64, i64, i64, i64, i64, i64),
+    (memories, text_bytes, writes, recalls, keys, connections, workspaces): Counts,
 ) -> oml_app::types::UserUsage {
     let n = |v: i64| u64::try_from(v).unwrap_or(0);
     oml_app::types::UserUsage {
@@ -6150,6 +6188,7 @@ fn usage_of(
         recalls: n(recalls),
         keys: n(keys),
         connections: n(connections),
+        workspaces: n(workspaces),
     }
 }
 
@@ -6425,11 +6464,18 @@ async fn meter_plan(
                 plan.charges.push((root, Meter::Connections, -1));
             }
         }
+        // A node below a user root counts on that root's `workspaces`
+        // meter, whoever created it; the root itself names no namespace,
+        // so it counts on none (ADR-0095 d4).
+        MetadataFold::WorkspaceCreated(w) => {
+            if let Some(root) = w.namespace {
+                plan.charges.push((root, Meter::Workspaces, 1));
+            }
+        }
         // No meter counts these. The match names each, so a fold added
         // later, a demotion or an erasure among them, does not compile
         // until it says what it moves (ADR-0071 d2).
         MetadataFold::TenantGenesis { .. }
-        | MetadataFold::WorkspaceCreated(_)
         | MetadataFold::CrewCreated(_)
         | MetadataFold::CrewUpdated(_)
         | MetadataFold::WorkspaceCrewUpdated { .. }
@@ -6483,8 +6529,8 @@ async fn meter_plan(
 }
 
 /// One account's deltas, in the order the ceiling is held:
-/// memories, text bytes, writes, keys, connections.
-type Deltas = [i64; 5];
+/// memories, text bytes, writes, keys, connections, workspaces.
+type Deltas = [i64; 6];
 
 /// After the fold: the tracked chain's liveness again, then each charged
 /// account's stocks in one statement and its day's writes in another, and
@@ -6527,25 +6573,29 @@ async fn apply_meters(
             Meter::Writes => 2,
             Meter::Keys => 3,
             Meter::Connections => 4,
+            Meter::Workspaces => 5,
             Meter::Recalls => unreachable!("no fold counts a recall"),
         };
         accounts.entry(root).or_default()[slot] += delta;
     }
     for (root, deltas) in accounts {
-        let [memories, text_bytes, writes, keys, connections] = deltas;
-        let mut used: Deltas = [0; 5];
-        if [memories, text_bytes, keys, connections] != [0; 4] {
-            let (m, b, k, c): (i64, i64, i64, i64) = sqlx::query_as(
+        let [memories, text_bytes, writes, keys, connections, workspaces] = deltas;
+        let mut used: Deltas = [0; 6];
+        if [memories, text_bytes, keys, connections, workspaces] != [0; 5] {
+            let (m, b, k, c, w): (i64, i64, i64, i64, i64) = sqlx::query_as(
                 "INSERT INTO account_meters \
-                        (tenant_id, user_root, memories, text_bytes, keys, connections) \
+                        (tenant_id, user_root, memories, text_bytes, keys, connections, \
+                         workspaces) \
                  VALUES ($1, $2, greatest($3::bigint, 0), greatest($4::bigint, 0), \
-                         greatest($5::bigint, 0), greatest($6::bigint, 0)) \
+                         greatest($5::bigint, 0), greatest($6::bigint, 0), \
+                         greatest($7::bigint, 0)) \
                  ON CONFLICT (tenant_id, user_root) DO UPDATE SET \
                      memories = greatest(account_meters.memories + $3::bigint, 0), \
                      text_bytes = greatest(account_meters.text_bytes + $4::bigint, 0), \
                      keys = greatest(account_meters.keys + $5::bigint, 0), \
-                     connections = greatest(account_meters.connections + $6::bigint, 0) \
-                 RETURNING memories, text_bytes, keys, connections",
+                     connections = greatest(account_meters.connections + $6::bigint, 0), \
+                     workspaces = greatest(account_meters.workspaces + $7::bigint, 0) \
+                 RETURNING memories, text_bytes, keys, connections, workspaces",
             )
             .bind(tenant_id)
             .bind(root)
@@ -6553,10 +6603,11 @@ async fn apply_meters(
             .bind(text_bytes)
             .bind(keys)
             .bind(connections)
+            .bind(workspaces)
             .fetch_one(&mut **tx)
             .await
             .map_err(backend)?;
-            (used[0], used[1], used[3], used[4]) = (m, b, k, c);
+            (used[0], used[1], used[3], used[4], used[5]) = (m, b, k, c, w);
         }
         if writes != 0 {
             let at = plan
@@ -6596,6 +6647,7 @@ async fn apply_meters(
                 (Quota::WritesPerMonth, writes, used[2]),
                 (Quota::Keys, keys, used[3]),
                 (Quota::Connections, connections, used[4]),
+                (Quota::Workspaces, workspaces, used[5]),
             ] {
                 let limit = ceiling.quotas.get(quota);
                 let used = u64::try_from(used).unwrap_or(0);
@@ -6774,11 +6826,12 @@ impl PgStore {
         set_tenant(&mut tx, tenant_id).await?;
         let appended = sqlx::query(
             "INSERT INTO usage_daily (tenant_id, user_root, day, profile, memories, text_bytes, \
-                                      writes, recalls, keys, connections, exports, recorded_at) \
+                                      writes, recalls, keys, connections, exports, workspaces, \
+                                      recorded_at) \
              SELECT m.tenant_id, m.user_root, d.day::date, coalesce(p.profile, $5), \
                     m.memories, m.text_bytes, \
                     coalesce(a.writes, 0), coalesce(a.recalls, 0), m.keys, m.connections, \
-                    coalesce(a.exports, 0), ($3)::timestamptz \
+                    coalesce(a.exports, 0), m.workspaces, ($3)::timestamptz \
                FROM account_meters m \
                CROSS JOIN LATERAL generate_series( \
                    greatest(coalesce((SELECT max(u.day) + 1 FROM usage_daily u \
@@ -9308,10 +9361,11 @@ impl JournalStore for PgStore {
         let month = Month::of(at);
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
-        let row: (i64, i64, i64, i64, i64, i64) = sqlx::query_as(
+        let row: Counts = sqlx::query_as(
             "SELECT coalesce(m.memories, 0), coalesce(m.text_bytes, 0), \
                     coalesce(a.writes, 0), coalesce(a.recalls, 0), \
-                    coalesce(m.keys, 0), coalesce(m.connections, 0) \
+                    coalesce(m.keys, 0), coalesce(m.connections, 0), \
+                    coalesce(m.workspaces, 0) \
                FROM (SELECT 1) one \
                LEFT JOIN account_meters m ON m.tenant_id = $1 AND m.user_root = $2 \
                LEFT JOIN (SELECT sum(writes)::bigint AS writes, sum(recalls)::bigint AS recalls \
@@ -9393,7 +9447,8 @@ impl JournalStore for PgStore {
         set_tenant(&mut tx, tenant_id).await?;
         let rows: Vec<CounterRow> = sqlx::query_as(
             "SELECT m.user_root, p.profile, m.memories, m.text_bytes, \
-                    coalesce(a.writes, 0), coalesce(a.recalls, 0), m.keys, m.connections \
+                    coalesce(a.writes, 0), coalesce(a.recalls, 0), m.keys, m.connections, \
+                    m.workspaces \
                FROM account_meters m \
                LEFT JOIN account_profiles p \
                  ON p.tenant_id = m.tenant_id AND p.user_root = m.user_root \
@@ -9414,10 +9469,10 @@ impl JournalStore for PgStore {
         Ok(rows
             .into_iter()
             .map(
-                |(user_root, profile, a, b, c, d, e, f)| oml_app::types::AccountCounters {
+                |(user_root, profile, a, b, c, d, e, f, g)| oml_app::types::AccountCounters {
                     user_root,
                     profile,
-                    usage: usage_of((a, b, c, d, e, f)),
+                    usage: usage_of((a, b, c, d, e, f, g)),
                 },
             )
             .collect())
@@ -9432,7 +9487,7 @@ impl JournalStore for PgStore {
         set_tenant(&mut tx, tenant_id).await?;
         let rows: Vec<LedgerTuple> = sqlx::query_as(
             "SELECT user_root, day::text, profile, memories, text_bytes, writes, recalls, \
-                        keys, connections \
+                        keys, connections, workspaces \
                    FROM usage_daily \
                   WHERE tenant_id = $1 AND day >= ($2)::date AND day < ($3)::date \
                   ORDER BY day, user_root",
@@ -9447,11 +9502,11 @@ impl JournalStore for PgStore {
         Ok(rows
             .into_iter()
             .map(
-                |(user_root, day, profile, a, b, c, d, e, f)| oml_app::types::LedgerRow {
+                |(user_root, day, profile, a, b, c, d, e, f, g)| oml_app::types::LedgerRow {
                     user_root,
                     day,
                     profile,
-                    usage: usage_of((a, b, c, d, e, f)),
+                    usage: usage_of((a, b, c, d, e, f, g)),
                 },
             )
             .collect())
@@ -9490,7 +9545,8 @@ impl JournalStore for PgStore {
                     coalesce(c.text_bytes, 0), coalesce(src.text_bytes, 0), \
                     coalesce(act.writes, 0), coalesce(held.writes, 0), \
                     coalesce(c.keys, 0), coalesce(src.keys, 0), \
-                    coalesce(c.connections, 0), coalesce(src.connections, 0) \
+                    coalesce(c.connections, 0), coalesce(src.connections, 0), \
+                    coalesce(c.workspaces, 0), coalesce(src.workspaces, 0) \
                FROM roots r \
                LEFT JOIN account_meters c ON c.tenant_id = $1 AND c.user_root = r.user_root \
                LEFT JOIN src ON src.user_root = r.user_root \
@@ -9506,13 +9562,14 @@ impl JournalStore for PgStore {
         .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
         let mut drift = Vec::new();
-        for (root, cm, sm, cb, sb, cw, sw, ck, sk, cc, sc) in rows {
+        for (root, cm, sm, cb, sb, cw, sw, ck, sk, cc, sc, cs, ss) in rows {
             for (meter, counter, source) in [
                 (Meter::Memories, cm, sm),
                 (Meter::TextBytes, cb, sb),
                 (Meter::Writes, cw, sw),
                 (Meter::Keys, ck, sk),
                 (Meter::Connections, cc, sc),
+                (Meter::Workspaces, cs, ss),
             ] {
                 if counter != source {
                     drift.push(oml_app::types::MeterDrift {

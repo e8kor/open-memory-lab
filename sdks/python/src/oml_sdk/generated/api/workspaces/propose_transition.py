@@ -79,9 +79,11 @@ def sync_detailed(
     """Propose a forward status transition; pending until a second party ratifies.
 
      Requires: reviewer or admin. Forward only; frozen refused while any child is not frozen
-    (workspace.transition_refused). A resubmission under the same Idempotency-Key and body answers the
-    recorded proposal with Idempotency-Replay: true and proposes nothing again; the same key on another
-    request is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4).
+    (workspace.transition_refused). A workspace holds one live proposal per target status: a second, by
+    any key, is 409 proposal.pending with details.transition_id naming the live one (ADR-0095 d5; #515;
+    since v0.8.5). A resubmission under the same Idempotency-Key and body answers the recorded proposal
+    with Idempotency-Replay: true and proposes nothing again; the same key on another request is
+    idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4).
 
     Args:
         workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
@@ -124,9 +126,11 @@ def sync(
     """Propose a forward status transition; pending until a second party ratifies.
 
      Requires: reviewer or admin. Forward only; frozen refused while any child is not frozen
-    (workspace.transition_refused). A resubmission under the same Idempotency-Key and body answers the
-    recorded proposal with Idempotency-Replay: true and proposes nothing again; the same key on another
-    request is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4).
+    (workspace.transition_refused). A workspace holds one live proposal per target status: a second, by
+    any key, is 409 proposal.pending with details.transition_id naming the live one (ADR-0095 d5; #515;
+    since v0.8.5). A resubmission under the same Idempotency-Key and body answers the recorded proposal
+    with Idempotency-Replay: true and proposes nothing again; the same key on another request is
+    idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4).
 
     Args:
         workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
@@ -164,9 +168,11 @@ async def asyncio_detailed(
     """Propose a forward status transition; pending until a second party ratifies.
 
      Requires: reviewer or admin. Forward only; frozen refused while any child is not frozen
-    (workspace.transition_refused). A resubmission under the same Idempotency-Key and body answers the
-    recorded proposal with Idempotency-Replay: true and proposes nothing again; the same key on another
-    request is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4).
+    (workspace.transition_refused). A workspace holds one live proposal per target status: a second, by
+    any key, is 409 proposal.pending with details.transition_id naming the live one (ADR-0095 d5; #515;
+    since v0.8.5). A resubmission under the same Idempotency-Key and body answers the recorded proposal
+    with Idempotency-Replay: true and proposes nothing again; the same key on another request is
+    idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4).
 
     Args:
         workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
@@ -207,9 +213,11 @@ async def asyncio(
     """Propose a forward status transition; pending until a second party ratifies.
 
      Requires: reviewer or admin. Forward only; frozen refused while any child is not frozen
-    (workspace.transition_refused). A resubmission under the same Idempotency-Key and body answers the
-    recorded proposal with Idempotency-Replay: true and proposes nothing again; the same key on another
-    request is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4).
+    (workspace.transition_refused). A workspace holds one live proposal per target status: a second, by
+    any key, is 409 proposal.pending with details.transition_id naming the live one (ADR-0095 d5; #515;
+    since v0.8.5). A resubmission under the same Idempotency-Key and body answers the recorded proposal
+    with Idempotency-Replay: true and proposes nothing again; the same key on another request is
+    idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4).
 
     Args:
         workspace (str): A workspace, by its node id, its name or its qualified name. Resolved

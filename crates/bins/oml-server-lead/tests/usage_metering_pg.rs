@@ -619,12 +619,12 @@ async fn a_meter_warns_at_eighty_percent_and_the_write_past_its_limit_names_quot
     assert_eq!(
         person["usage"],
         json!({"memories": 5, "text_bytes": bytes + "Four.".len() + "Five.".len(),
-               "writes": 5, "keys": 1, "connections": 0})
+               "writes": 5, "keys": 1, "connections": 0, "workspaces": 0})
     );
     assert_eq!(
         person["quotas"],
         json!({"memories": 5, "text_bytes": null, "writes_per_month": null, "keys": 5,
-               "connections": 5, "requests_per_minute": 120})
+               "connections": 5, "requests_per_minute": 120, "workspaces": null})
     );
     drop_db(&rig.db).await;
 }
@@ -1066,10 +1066,13 @@ async fn the_rollup_appends_one_ledger_row_per_account_per_closed_day_once_and_e
     let mut lines = csv.lines();
     assert_eq!(
         lines.next(),
-        Some("day,account,user,profile,memories,text_bytes,writes,recalls,keys,connections")
+        Some(
+            "day,account,user,profile,memories,text_bytes,writes,recalls,keys,connections,workspaces"
+        )
     );
     assert!(
-        lines.any(|l| l.starts_with(&format!("{day},{account},")) && l.ends_with(",2,24,2,1,1,0")),
+        lines
+            .any(|l| l.starts_with(&format!("{day},{account},")) && l.ends_with(",2,24,2,1,1,0,0")),
         "{csv}"
     );
     // A malformed period is refused by name.
@@ -1711,5 +1714,103 @@ async fn an_admin_unassigns_an_accounts_profile_and_it_is_on_the_deployments_def
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    drop_db(&rig.db).await;
+}
+
+/// One `oml_write {create_workspace}` over `/mcp` as `key`: the tool result.
+async fn create_over_mcp(rig: &Rig, key: &str, name: &str) -> Value {
+    let (status, _, body) = json(
+        rig,
+        api(
+            "POST",
+            "/mcp",
+            key,
+            Some(json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                        "params": {"name": "oml_write",
+                                   "arguments": {"create_workspace": name,
+                                                 "idempotency_key": format!("c-{name}")}}})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body["result"].clone()
+}
+
+/// A create moves the account's `workspaces` counter in its own commit, so
+/// the counter equals the tree after every create and the drift report is
+/// empty; past the limit the create is `limit.quota` naming the meter, and
+/// neither the counter nor the journal moves (ADR-0095 d4; ADR-0071 d3).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_workspaces_counter_folds_with_the_create_in_one_transaction() {
+    let Some(rig) = rig().await else { return };
+    let ada = sign_up(&rig, 21, "ada@example.com").await;
+    let key = agent_key(&rig, &ada).await;
+    let account = own_usage(&rig, &key).await["account"]
+        .as_str()
+        .expect("an account")
+        .to_owned();
+    assert_eq!(meter(&own_usage(&rig, &key).await, "workspaces")["used"], 0);
+    set_profile(
+        &rig,
+        &account,
+        json!({"profile": "free", "overrides": {"workspaces": 2}}),
+    )
+    .await;
+    for name in ["notes", "drafts"] {
+        let result = create_over_mcp(&rig, &key, name).await;
+        assert_eq!(result["isError"], false, "{result}");
+    }
+    let usage = own_usage(&rig, &key).await;
+    assert_eq!(meter(&usage, "workspaces")["used"], 2);
+    assert_eq!(meter(&usage, "workspaces")["limit"], 2);
+    assert_eq!(meter(&usage, "workspaces")["state"], "reached");
+    assert_eq!(drift(&rig).await["drift"], json!([]));
+    let journalled = events(&rig).await.len();
+    let result = create_over_mcp(&rig, &key, "third").await;
+    assert_eq!(result["isError"], true, "{result}");
+    let error = &result["structuredContent"]["error"];
+    assert_eq!(error["code"], "limit.quota", "{error}");
+    assert_eq!(
+        error["details"],
+        json!({"quota": "workspaces", "limit": 2, "used": 2})
+    );
+    assert_eq!(events(&rig).await.len(), journalled, "nothing journalled");
+    assert_eq!(
+        meter(&own_usage(&rig, &key).await, "workspaces")["used"],
+        2,
+        "the refused create moved no counter"
+    );
+    assert_eq!(drift(&rig).await["drift"], json!([]));
+    drop_db(&rig.db).await;
+}
+
+/// The drift report `oml doctor` reads names an account whose `workspaces`
+/// counter differs from its tree, as it names every meter's (ADR-0095 d4,
+/// d10; ADR-0071 d3).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn doctor_reports_workspaces_counter_drift() {
+    let Some(rig) = rig().await else { return };
+    let ada = sign_up(&rig, 22, "ada@example.com").await;
+    let key = agent_key(&rig, &ada).await;
+    let result = create_over_mcp(&rig, &key, "notes").await;
+    assert_eq!(result["isError"], false, "{result}");
+    assert_eq!(drift(&rig).await["drift"], json!([]));
+    let usage = own_usage(&rig, &key).await;
+    let account = usage["account"].as_str().expect("an account").to_owned();
+    let mut su = PgConnection::connect(&superuser_url(&rig.db))
+        .await
+        .expect("superuser connect");
+    su.execute(
+        format!(
+            "UPDATE account_meters SET workspaces = workspaces + 3 WHERE user_root = '{account}'"
+        )
+        .as_str(),
+    )
+    .await
+    .expect("the hand edit");
+    assert_eq!(
+        drift(&rig).await["drift"],
+        json!([{"account": account, "user": usage["user"], "meter": "workspaces", "counter": 4, "rows": 1}])
+    );
     drop_db(&rig.db).await;
 }

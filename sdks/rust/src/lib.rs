@@ -1074,11 +1074,15 @@ pub struct Usage {
     pub writes: Option<u64>,
     pub keys: u64,
     pub connections: u64,
+    /// Absent from an API before the `workspaces` meter (ADR-0095 d4).
+    #[serde(default)]
+    pub workspaces: Option<u64>,
 }
 
 /// A person's limits, each `None` where the quota is unlimited (the API
 /// serves an unlimited quota as null, ADR-0071 d5); `text_bytes` and
-/// `writes_per_month` are also `None` from an API before the usage meters.
+/// `writes_per_month` are also `None` from an API before the usage meters,
+/// and `workspaces` from one before its meter (ADR-0095 d4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub struct Limits {
     pub memories: Option<u64>,
@@ -1089,6 +1093,8 @@ pub struct Limits {
     pub text_bytes: Option<u64>,
     #[serde(default)]
     pub writes_per_month: Option<u64>,
+    #[serde(default)]
+    pub workspaces: Option<u64>,
 }
 
 /// What the onboarding page waits for (ADR-0068 d10): whether an agent

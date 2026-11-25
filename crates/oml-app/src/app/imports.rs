@@ -273,7 +273,7 @@ where
             Target::Existing(id) => id,
             Target::New(name) => {
                 // I16: created and marked in progress in one commit.
-                self.create_workspace_as(&caller, &name, None, None, true)
+                self.create_workspace_as(&caller, &name, None, None, true, None)
                     .await?
                     .workspace
                     .workspace_id
