@@ -1158,7 +1158,7 @@ The sign-in, user and admin pages, and the email allowlist.
 | `POST /v2/web/emails/accept` | Accept a sign-in email an admin added for the signed-in person, so it signs in as them. |
 | `POST /v2/web/emails/decline` | Remove a sign-in email an admin added for the signed-in person that waits on them. |
 | `GET /v2/web/users` | The people of the tenant with their quota use and limits, and the pending deletion requests. |
-| `POST /v2/web/users/{user}/capacities` | Give a person's session key a capacity on workspaces, review or curation. |
+| `POST /v2/web/users/{user}/capacities` | Give a person's session key a capacity on workspaces, review, curation or read. |
 | `POST /v2/web/users/{user}/quota` | Set a person's quotas, or return one to the default with null. |
 | `POST /v2/web/users/{user}/disable` | Disable a person, ending their sessions and cutting off their agent keys. |
 | `POST /v2/web/users/{user}/deletion/close` | Close a person's pending deletion request, disabling them first. |
@@ -1203,7 +1203,7 @@ Requires: admin key role.
 | `email` | string | yes |  |
 | `user` | string | yes | A name under the creation grammar, at most 56 characters. |
 | `admin` | boolean | yes |  |
-| `keep_an_admin` | boolean | no | true: un-flagging the tenant's last admin entry is refused, request.validation with details.field admin, and nothing changes; the store reads the admin entries under lock in the commit's own transaction. |
+| `keep_an_admin` | boolean | no | Read and ignored since v0.8.5, when the guard holds whatever is sent: un-flagging the tenant's last admin entry is refused, request.validation with details.field admin, and nothing changes; the store reads the admin entries under lock in the commit's own transaction. |
 
 **Responses.** `200` The entry as stored.; `403` A 403-class refusal naming its rule (access.*, review.*, simulation.audience_refused).; `409` A 409-class conflict (idempotency.*, submission.tip_conflict, workspace.frozen, review.serve_invalid, …).; `415` 415 request.unsupported_media — the request body's media type is not the application/json the operation declares; not retryable as sent.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
 
@@ -1223,7 +1223,7 @@ Requires: admin key role.
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `email` | string | yes |  |
-| `keep_an_admin` | boolean | no | true: removing the tenant's last admin entry is refused, request.validation with details.field admin, and nothing changes; the store reads the admin entries under lock in the commit's own transaction. |
+| `keep_an_admin` | boolean | no | Read and ignored since v0.8.5, when the guard holds whatever is sent: removing the tenant's last admin entry is refused, request.validation with details.field admin, and nothing changes; the store reads the admin entries under lock in the commit's own transaction. |
 
 **Responses.** `200` Removed.; `403` A 403-class refusal naming its rule (access.*, review.*, simulation.audience_refused).; `404` access.not_found — absent or outside read scope, indistinguishable by design.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
 
@@ -1278,9 +1278,9 @@ Requires: admin key role. mode is signup.mode; address_limit_shared is true when
 
 ### `POST /v2/web/users/{user}/capacities`
 
-Give a person's session key a capacity on workspaces, review or curation.
+Give a person's session key a capacity on workspaces, review, curation or read.
 
-Requires: admin key role. review: <user>-review gains reviewer and reader on each workspace; curate: <user>-curate, a tenant contributor key with submitter on the universe node alone, is created at the first designation, and gains reader on each workspace.
+Requires: admin key role. review: <user>-review gains reviewer and reader on each workspace; curate: <user>-curate, a tenant contributor key with submitter on the universe node alone, is created at the first designation, and gains reader on each workspace; read: <user>-web gains reader, covering the subtree, on each workspace, so the person's Memories and Catalog list what is approved there, with no other verb (the operator's decision of 2026-11-25; since v0.8.5).
 
 | Parameter | In | Type | Required | Meaning |
 |---|---|---|---|---|
@@ -1291,7 +1291,7 @@ Requires: admin key role. review: <user>-review gains reviewer and reader on eac
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `capacity` | `review` \| `curate` | yes |  |
+| `capacity` | `review` \| `curate` \| `read` | yes |  |
 | `workspaces` | array of string | yes | Each by id or name. |
 
 **Responses.** `200` The key that holds the capacity and the grants it gained.; `403` A 403-class refusal naming its rule (access.*, review.*, simulation.audience_refused).; `404` access.not_found — absent or outside read scope, indistinguishable by design.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).

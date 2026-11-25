@@ -343,6 +343,9 @@ Decided; introduced in v0.5.0 demotion (d12) followed in v0.6.0 with its verb.
       page is refused, `request.validation` with `details.field: admin`, since the page cannot
       then be reopened; the CLI under an admin key can still do it. The removal confirmation
       lists the user's keys (d13).
+      *Superseded (2026-11-25, ADR-0097 d25 and d27 item 4, built in v0.8.5):* the guard holds on
+      every surface, so the CLI under an admin key is refused as the page is, and
+      `keep_an_admin` is read and changes nothing.
     - **People's capacities**, through `<user>-admin`: `grant_review` (`{user, workspace}`)
       extends that user's `<user>-review`, which the user's first sign-in created, with reviewer
       and reader on the workspace;

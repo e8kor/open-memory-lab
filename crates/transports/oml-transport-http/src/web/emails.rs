@@ -259,7 +259,10 @@ where
             ApiError::validation("admin is required").with_details(json!({ "field": "/admin" }))
         })?;
         let request = WebEmailRequest { email, user, admin };
-        let keep = req.keep_an_admin == Some(true);
+        // The last live admin entry is kept whatever the caller sends;
+        // `keep_an_admin` is still read, and changes nothing (ADR-0097 d25,
+        // d27 item 4).
+        let keep = true;
         let st = st.clone();
         claim
             .run(async move {
@@ -319,7 +322,10 @@ where
                 .with_details(json!({ "field": "/admin" })));
         }
         let email = email_field(req.email.as_deref())?;
-        let keep = req.keep_an_admin == Some(true);
+        // The last live admin entry is kept whatever the caller sends;
+        // `keep_an_admin` is still read, and changes nothing (ADR-0097 d25,
+        // d27 item 4).
+        let keep = true;
         let st = st.clone();
         claim
             .run(async move {

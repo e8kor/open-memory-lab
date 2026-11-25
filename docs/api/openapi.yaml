@@ -2499,7 +2499,7 @@ paths:
                 email: { type: string, maxLength: 254 }
                 user: { type: string, pattern: '^[a-z]([a-z0-9-]{0,54}[a-z0-9])?$', description: 'A name under the creation grammar, at most 56 characters.' }
                 admin: { type: boolean }
-                keep_an_admin: { type: boolean, description: "true: un-flagging the tenant's last admin entry is refused, request.validation with details.field admin, and nothing changes; the store reads the admin entries under lock in the commit's own transaction (ADR-0045 d10; ADR-0070 d5). Since v0.6.4." }
+                keep_an_admin: { type: boolean, description: "Read and ignored since v0.8.5, when the guard holds whatever is sent (ADR-0097 d25, d27): un-flagging the tenant's last admin entry is refused, request.validation with details.field admin, and nothing changes; the store reads the admin entries under lock in the commit's own transaction (ADR-0045 d10; ADR-0070 d5). Since v0.6.4." }
       responses:
         '200':
           description: The entry as stored.
@@ -2537,7 +2537,7 @@ paths:
               required: [email]
               properties:
                 email: { type: string, maxLength: 254 }
-                keep_an_admin: { type: boolean, description: "true: removing the tenant's last admin entry is refused, request.validation with details.field admin, and nothing changes; the store reads the admin entries under lock in the commit's own transaction (ADR-0045 d10; ADR-0070 d5). Since v0.6.4." }
+                keep_an_admin: { type: boolean, description: "Read and ignored since v0.8.5, when the guard holds whatever is sent (ADR-0097 d25, d27): removing the tenant's last admin entry is refused, request.validation with details.field admin, and nothing changes; the store reads the admin entries under lock in the commit's own transaction (ADR-0045 d10; ADR-0070 d5). Since v0.6.4." }
       responses:
         '200':
           description: Removed.

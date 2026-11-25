@@ -40,7 +40,10 @@ where
         bearer: impl Into<Bearer<'_>>,
         req: &WebEmailRequest,
     ) -> Result<(WebEntry, WebEmailOutcome), AppError> {
-        self.allow_web_email_keeping(bearer, req, false).await
+        // The last live admin entry is kept on every surface, a bearer admin
+        // key's included (ADR-0097 d25, d27 item 4, reversing ADR-0045 d10's
+        // CLI allowance).
+        self.allow_web_email_keeping(bearer, req, true).await
     }
 
     /// [`Self::allow_web_email`], refusing with `keep_an_admin` to un-flag
@@ -137,7 +140,9 @@ where
         bearer: impl Into<Bearer<'_>>,
         email: &Email,
     ) -> Result<(WebEntry, u64, Uuid), AppError> {
-        self.remove_web_email_keeping(bearer, email, false).await
+        // As in [`Self::allow_web_email`]: never the last live admin entry
+        // (ADR-0097 d25, d27 item 4).
+        self.remove_web_email_keeping(bearer, email, true).await
     }
 
     /// [`Self::remove_web_email`], refusing with `keep_an_admin` to remove
