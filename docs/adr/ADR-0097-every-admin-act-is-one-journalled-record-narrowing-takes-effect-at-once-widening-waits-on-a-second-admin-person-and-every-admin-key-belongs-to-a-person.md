@@ -25,6 +25,7 @@ changes), [ADR-0009](ADR-0009-status-ladder.md) (d3),
 (d3, d7),
 [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)
 (d6, d10, and the decisions of 2026-11-19 and 2026-11-20),
+[ADR-0070](ADR-0070-the-web-console-is-a-client-of-the-public-http-api-in-a-crate-that-cannot-reach-the-application-core.md) (d2: the admin console creates workspaces and issues keys, d29),
 [ADR-0079](ADR-0079-a-key-ends-on-a-date-and-is-held-to-a-request-rate-both-set-at-issuance-and-changed-only-by-an-admin-key-that-is-not-the-key-itself.md)
 (d5),
 [ADR-0085](ADR-0085-a-workspace-publishes-immutable-releases-that-one-person-cuts-and-another-ratifies-and-each-key-binds-to-the-tip-the-latest-release-or-a-pinned-one.md)
@@ -35,7 +36,8 @@ changes), [ADR-0009](ADR-0009-status-ladder.md) (d3),
 [ADR-0095](ADR-0095-an-agent-creates-its-own-child-workspaces-writes-guardrails-and-proposes-status-and-brief-changes-through-oml-write-and-every-verdict-and-setting-stays-with-people.md)
 (d5) and
 [ADR-0096](ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md)
-(d4, d12). Each carries an amendment note dated 2026-11-25. It supersedes nothing whole.
+(d4, d12; d12's deferral of the admin builder, d29). Each carries an amendment note dated
+2026-11-25. It supersedes nothing whole.
 
 **Depends on:** ADR-0001 (R1 to R4), ADR-0068 (open sign-up, proposed, built), ADR-0083 d8 (the
 To do flow), ADR-0090 d18 (the lake's twin tables).
@@ -512,6 +514,26 @@ Decided, not built.
   borrows today (`app.rs:3624-3626`); ADR-0095 d3, d5, d6 and d7; ADR-0001 d5 as a whole, its
   exception 3 reading with d4's split shred and d16's person gate.
 
+- **d29 — The admin console reaches parity with the CLI for creating workspaces and issuing keys
+  in v0.8.6 (decided by the operator, 2026-11-25).** `<user>-admin` may:
+  - **create a workspace anywhere in the tenant**, under `universe` included, which the admin
+    Workspaces page refuses today. Creating a workspace is neutral (d9): at once, journalled as an
+    `admin.act`, nothing to settle.
+  - **issue keys with an admin key builder** that mirrors `oml keys issue`: role, grants
+    (workspace, role, node or subtree, deny), default workspace, crew, principal, `used_by`, expiry
+    and rate. An admin role takes the person d21 requires. Issuing any key or grant that can read,
+    write, approve or ratify is widening (d5): it waits on a second admin person's confirmation,
+    takes effect at once marked under `sole_admin` (d10), and a pending key answers `auth.invalid`
+    with `details.reason: pending_confirmation` until confirmed (d23). The value is shown once on
+    the review step's result, as the personal builder shows it.
+
+  The builder reuses the approved personal KeyBuilder flow (template, form, review), adds the
+  admin-only fields and a confirm-pending state; its mockups and design are part of the v0.8.6
+  build. The CLI does not change: it already covers both. This reverses ADR-0070 d2's "the admin
+  capacity mints no plain key" and ADR-0096 d12's deferral of the admin builder. *Rejected:* keep
+  the console issuing nothing and send admins to the CLI, which the operator reversed; an admin
+  builder that issues at once, which would bypass d5.
+
 ## Consequences
 
 ### Answers that go together
@@ -720,7 +742,9 @@ Each red first, named after the sentence it proves:
 `a_persons_web_session_revokes_the_persons_own_keys`,
 `a_suspended_unlinked_admin_key_still_links_itself_and_converts_itself`,
 `an_admin_entry_accepted_before_the_upgrade_still_opens_the_admin_console`,
-`recovery_keeps_the_dormant_admins_flags`.
+`recovery_keeps_the_dormant_admins_flags`,
+`the_admin_session_creates_a_workspace_under_universe_as_a_neutral_act`,
+`a_key_from_the_admin_builder_answers_pending_confirmation_until_a_second_admin_confirms`.
 
 ### The operator's answers of 2026-11-25 to the tensions
 
@@ -747,12 +771,13 @@ Two readings stay open for the operator: the connect code's life running from th
 
 ### Pages, API and issues
 
-- **OpenAPI:** `revokeKey` (d14), `convertSelf` and `linkSelf` (d18, d22), `confirmAdminAct` and
+- **OpenAPI:** `issueKey` and `createWorkspace` admit `<user>-admin` (d29); `revokeKey` (d14), `convertSelf` and `linkSelf` (d18, d22), `confirmAdminAct` and
   `declineAdminAct`, `listAdminActs`, `contest` (d8); `issueKey` requires `person` for an admin key
   and answers `pending_confirmation`; `claimBootstrap` requires `person` and `email`;
   `auth.invalid` gains `details.reason: pending_confirmation` and `suspended`. The Rust and Python
   SDKs are regenerated.
-- **Pages:** To do's "Admin acts to confirm" with the confirm screen of d23; the one-key page's
+- **Pages:** the admin key builder and the admin Workspaces page's create form (d29); To do's
+  "Admin acts to confirm" with the confirm screen of d23; the one-key page's
   revoke button and the person's Keys page's; the contest-only sign-in page; the person's To do
   notice of a reach into their root under `sole_admin`; the limits form's "waits on another admin"; the
   person's count of admin reads of their root.

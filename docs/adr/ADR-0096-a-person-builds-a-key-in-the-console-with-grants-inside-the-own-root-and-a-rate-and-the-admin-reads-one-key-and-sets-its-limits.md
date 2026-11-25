@@ -395,6 +395,9 @@ Decided by the operator on 2026-11-25 (the break-glass and key-access questions)
   revoke button in v0.8.6.
 - **d12.** Revoking a key is built as one plain verb for any key (ADR-0097 d14). A person's web
   session revokes the person's own keys with the same verb. Rotation and a cascade stay deferred.
+  The admin key builder is no longer deferred: it ships in v0.8.6, reusing the personal builder's
+  flow, and its keys wait on a second admin person (ADR-0097 d29, decided by the operator,
+  2026-11-25).
 
 ## Rejected alternatives
 
