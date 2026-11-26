@@ -7392,9 +7392,24 @@ impl Clock for FixedClock {
 }
 
 /// Deterministic id generator: counting UUIDs and counting 256-bit secrets.
-#[derive(Debug, Default)]
+/// Each generator after a process's first salts its ids' high 64 bits and
+/// its secrets with its own number, so two apps a test builds over one
+/// store never mint one id or one key value twice, however their counts
+/// line up; within one generator the ids count up from 1.
+#[derive(Debug)]
 pub struct SeqIdGen {
     next: AtomicU64,
+    salt: u64,
+}
+
+impl Default for SeqIdGen {
+    fn default() -> Self {
+        static GENERATORS: AtomicU64 = AtomicU64::new(0);
+        Self {
+            next: AtomicU64::new(0),
+            salt: GENERATORS.fetch_add(1, Ordering::SeqCst),
+        }
+    }
 }
 
 impl SeqIdGen {
@@ -7406,12 +7421,16 @@ impl SeqIdGen {
 
 impl IdGen for SeqIdGen {
     fn new_id(&self) -> Uuid {
-        Uuid::from_u128(u128::from(self.next.fetch_add(1, Ordering::SeqCst)) + 1)
+        Uuid::from_u128(
+            (u128::from(self.salt) << 64)
+                | (u128::from(self.next.fetch_add(1, Ordering::SeqCst)) + 1),
+        )
     }
 
     fn new_secret(&self) -> [u8; 32] {
         let n = self.next.fetch_add(1, Ordering::SeqCst) + 1;
         let mut secret = [0_u8; 32];
+        secret[..8].copy_from_slice(&self.salt.to_be_bytes());
         secret[24..].copy_from_slice(&n.to_be_bytes());
         secret
     }

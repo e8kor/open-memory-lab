@@ -3344,7 +3344,11 @@ async fn a_key_issued_with_an_expiry_is_refused_as_expired_from_that_instant_unt
     assert_eq!(set["expiry"], "2999-01-01T00:00:00.000000Z");
     assert_eq!(set["expired"], false);
     assert_eq!(set["requests_per_minute"], Value::Null);
-    assert_eq!(head_seq(&rig, tenant).await, head + 1, "one key.limits_set");
+    assert_eq!(
+        head_seq(&rig, tenant).await,
+        head + 2,
+        "one key.limits_set, behind its admin act"
+    );
     let (status, _, me) = send(router, "GET", "/v2/whoami", Call::auth(&key)).await;
     assert_eq!(status, StatusCode::OK, "{me}");
     assert_eq!(me["requests_per_minute"], Value::Null);
@@ -3962,8 +3966,8 @@ async fn a_filtered_page_advances_next_after_seq() {
     };
     let router = &t.rig.router;
     let start = head_seq(&t.rig, t.tenant).await;
-    // Six events no tail shows: three keys, a key.issued and a
-    // grant.issued apiece.
+    // Nine events no tail shows: three keys, an admin.act, a key.issued
+    // and a grant.issued apiece (ADR-0097 d2).
     for n in 0..3 {
         tail_key(
             router,
@@ -3976,7 +3980,7 @@ async fn a_filtered_page_advances_next_after_seq() {
         .await;
     }
     let head = head_seq(&t.rig, t.tenant).await;
-    assert_eq!(head, start + 6);
+    assert_eq!(head, start + 9);
     let page = async |after_seq: u64| {
         send(
             router,
@@ -3996,7 +4000,15 @@ async fn a_filtered_page_advances_next_after_seq() {
     let (status, _, second) = page(start + 4).await;
     assert_eq!(status, StatusCode::OK, "{second}");
     assert_eq!(second["items"], json!([]), "{second}");
-    assert_eq!(second["next_after_seq"].as_u64(), Some(head), "{second}");
+    assert_eq!(
+        second["next_after_seq"].as_u64(),
+        Some(start + 8),
+        "{second}"
+    );
+    let (status, _, third) = page(start + 8).await;
+    assert_eq!(status, StatusCode::OK, "{third}");
+    assert_eq!(third["items"], json!([]), "{third}");
+    assert_eq!(third["next_after_seq"].as_u64(), Some(head), "{third}");
     // No raw event follows the head: the resume point stays where it is.
     let (status, _, idle) = page(head).await;
     assert_eq!(status, StatusCode::OK, "{idle}");

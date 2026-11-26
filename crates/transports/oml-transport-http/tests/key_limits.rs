@@ -564,6 +564,9 @@ async fn an_admin_key_sets_and_clears_another_keys_limits_and_each_change_is_one
             "expiry": "2026-10-29T12:40:00.000000Z",
             "expired": false,
             "requests_per_minute": 60,
+            // A later expiry is widening, at once in a tenant of one admin
+            // person (ADR-0097 d10, d15).
+            "admin_act": { "act_id": set["admin_act"]["act_id"], "state": "effective" },
         })
     );
     let (status, _, me) = w.get("/v2/whoami", key).await;
@@ -580,12 +583,17 @@ async fn an_admin_key_sets_and_clears_another_keys_limits_and_each_change_is_one
     assert_eq!(cleared["expiry"], "2026-10-29T12:40:00.000000Z", "kept");
     assert_eq!(cleared["requests_per_minute"], Value::Null, "cleared");
 
-    assert_eq!(w.head_seq().await, head + 2);
-    let events = w
+    // Each change is its admin act and its key.limits_set (ADR-0097 d2).
+    assert_eq!(w.head_seq().await, head + 4);
+    let events: Vec<_> = w
         .store
-        .events_range(w.tenant, head + 1, 2)
+        .events_range(w.tenant, head + 1, 4)
         .await
-        .expect("events");
+        .expect("events")
+        .into_iter()
+        .filter(|e| e.envelope.event_type != event_types::ADMIN_ACT)
+        .collect();
+    assert_eq!(events.len(), 2);
     for event in &events {
         assert_eq!(event.envelope.event_type, event_types::KEY_LIMITS_SET);
         assert_eq!(event.envelope.payload["key_id"], issued["key_id"]);

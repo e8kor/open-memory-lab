@@ -2741,8 +2741,8 @@ async fn a_denial_committed_before_a_session_keys_act_reads_the_chain_head_refus
         assert_session_key_denied(status, &answer, verb);
         assert_eq!(
             journalled_after(&rig, head).await,
-            ["key.denied"],
-            "{verb}: the denial alone, and nothing by the denied key after it"
+            ["admin.act", "key.denied"],
+            "{verb}: the denial and its admin act alone, and nothing by the denied key after it"
         );
     }
 }

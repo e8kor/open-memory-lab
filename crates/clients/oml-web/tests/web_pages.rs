@@ -131,7 +131,9 @@ fn front(lead: SocketAddr, web: SocketAddr) -> Router {
 /// the lead with both providers on and the web client's secret set, and
 /// `oml-web` reaching it over loopback.
 async fn rig() -> Rig {
-    let store = MemStore::new();
+    // The console suite adds several admin entries to reach its persons;
+    // the admin act's confirm-first rule has its own suite (ADR-0097 d10).
+    let store = MemStore::new().keeping_sole_admin();
     let providers = MemSignIn::new();
     let boot = test_app(&store)
         .bootstrap_tenant(&BootstrapRequest {
