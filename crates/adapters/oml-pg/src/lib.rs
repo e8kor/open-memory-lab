@@ -3297,7 +3297,7 @@ fn workspace_from_row(row: &PgRow) -> Result<WorkspaceRecord, StoreError> {
 /// as a memory's `promoted_at` does, so `EventTime` round-trips exactly.
 const KEY_COLUMNS: &str = "id, tenant_id, role, principal, used_by, default_workspace_id, \
      issued_by, hash, credential, name, crew_id, user_root_id, session_for, guardrail_scope, \
-     profile, requests_per_minute, linked_user_id, link_pending_user_id, \
+     profile, requests_per_minute, linked_user_id, link_pending_user_id, pending_act_id, \
      to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS revoked_at_signed, \
      to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
@@ -3469,6 +3469,7 @@ fn key_from_row(row: &PgRow) -> Result<KeyRecord, StoreError> {
         requests_per_minute: rate.map(u32::try_from).transpose().map_err(backend)?,
         linked_user: row.try_get("linked_user_id").map_err(backend)?,
         link_pending: row.try_get("link_pending_user_id").map_err(backend)?,
+        pending_act: row.try_get("pending_act_id").map_err(backend)?,
     })
 }
 
@@ -4643,6 +4644,9 @@ async fn apply_fold(
                 return Err(StoreError::InvestigationNotOpen { investigation_id });
             }
         }
+        MetadataFold::AdminAct(act) => {
+            fold_admin_act(tx, tenant_id, &act, seq, at).await?;
+        }
         MetadataFold::AdminFixRecorded(fix) => {
             // The fix's row, unconfirmed, and its mark on the version it
             // made the served tip: used by a person, unconfirmed, never
@@ -5016,9 +5020,10 @@ async fn apply_fold(
             // (ADR-0045 d2's note of 2026-11-19).
             sqlx::query(
                 "INSERT INTO web_emails (tenant_id, email_hash, email, user_name, admin, \
-                 created_at, added_by, terms_version, pending_since) \
+                 created_at, added_by, terms_version, pending_since, admin_since) \
                  VALUES ($1, $2, $3, $4, $5, ($6)::timestamptz, $7, $8, \
-                         CASE WHEN $9 THEN ($6)::timestamptz END)",
+                         CASE WHEN $9 THEN ($6)::timestamptz END, \
+                         CASE WHEN $5 AND NOT $9 THEN ($6)::timestamptz END)",
             )
             .bind(tenant_id)
             .bind(entry.email.digest().0.to_vec())
@@ -5043,6 +5048,7 @@ async fn apply_fold(
                 }
                 _ => backend(e),
             })?;
+            fold_sole_admin(tx, tenant_id).await?;
         }
         MetadataFold::WebEmailChanged {
             entry,
@@ -5063,7 +5069,11 @@ async fn apply_fold(
             // to wait; one that makes it pending starts it now.
             let changed = sqlx::query(
                 "UPDATE web_emails SET user_name = $3, admin = $4, added_by = $7, \
-                 pending_since = CASE WHEN $5 THEN coalesce(pending_since, ($6)::timestamptz) END \
+                 pending_since = CASE WHEN $5 THEN coalesce(pending_since, ($6)::timestamptz) END, \
+                 admin_since = CASE WHEN $4 AND NOT $5 THEN \
+                     CASE WHEN admin AND pending_since IS NULL AND user_name = $3 \
+                          THEN coalesce(admin_since, ($6)::timestamptz) \
+                          ELSE ($6)::timestamptz END END \
                  WHERE tenant_id = $1 AND email_hash = $2",
             )
             .bind(tenant_id)
@@ -5081,6 +5091,7 @@ async fn apply_fold(
                     "web.email_changed names an entry the tenant does not hold".to_owned(),
                 ));
             }
+            fold_sole_admin(tx, tenant_id).await?;
         }
         MetadataFold::WebEmailAccepted {
             email_hash,
@@ -5092,7 +5103,8 @@ async fn apply_fold(
             // a flag flipped since included, aborts it (ADR-0045 d2's note,
             // the operator's decisions of 2026-11-19 and 2026-11-20).
             let accepted = sqlx::query(
-                "UPDATE web_emails SET pending_since = NULL \
+                "UPDATE web_emails SET pending_since = NULL, \
+                 admin_since = CASE WHEN admin THEN ($5)::timestamptz END \
                  WHERE tenant_id = $1 AND email_hash = $2 AND user_name = $3 \
                  AND admin = $4 AND pending_since IS NOT NULL",
             )
@@ -5100,6 +5112,7 @@ async fn apply_fold(
             .bind(email_hash.0.to_vec())
             .bind(user.as_str())
             .bind(admin)
+            .bind(at.as_str())
             .execute(&mut **tx)
             .await
             .map_err(backend)?;
@@ -5109,6 +5122,7 @@ async fn apply_fold(
                         .to_owned(),
                 ));
             }
+            fold_sole_admin(tx, tenant_id).await?;
         }
         MetadataFold::WebEmailRemoved {
             email_hash,
@@ -5204,6 +5218,19 @@ async fn apply_fold(
             }
         }
         MetadataFold::UserDisabled { user } => {
+            // The last live admin person is never disabled, on any surface
+            // (ADR-0097 d25): the tenant's live admin entries, locked.
+            let live: Vec<String> = sqlx::query_scalar(
+                "SELECT user_name::text FROM web_emails WHERE tenant_id = $1 AND admin \
+                 AND pending_since IS NULL AND disabled_at IS NULL ORDER BY email_hash FOR UPDATE",
+            )
+            .bind(tenant_id)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if live.iter().any(|u| u == user.as_str()) && live.iter().all(|u| u == user.as_str()) {
+                return Err(StoreError::LastAdminEntry);
+            }
             sqlx::query("DELETE FROM web_sessions WHERE tenant_id = $1 AND user_name = $2")
                 .bind(tenant_id)
                 .bind(user.as_str())
@@ -5406,6 +5433,21 @@ async fn apply_fold(
                 }
                 None => backend(e),
             })?;
+            // A key that waits on a widening act names it, so it
+            // authenticates nothing until a second admin person confirms
+            // it (ADR-0097 d23; 0070). Its own statement, so a schema
+            // before 0070 still takes every other key.
+            if let Some(act_id) = k.pending_act {
+                sqlx::query(
+                    "UPDATE api_keys SET pending_act_id = $3 WHERE tenant_id = $1 AND id = $2",
+                )
+                .bind(k.tenant_id)
+                .bind(k.key_id)
+                .bind(act_id)
+                .execute(&mut **tx)
+                .await
+                .map_err(backend)?;
+            }
         }
         // The schema's role CHECK and its foreign keys refuse a grant or
         // denial on a key or node the tenant does not hold; the error aborts
@@ -6596,6 +6638,7 @@ async fn meter_plan(
         | MetadataFold::InvestigationClosed { .. }
         | MetadataFold::AdminFixRecorded(_)
         | MetadataFold::AdminFixSettled { .. }
+        | MetadataFold::AdminAct(_)
         // An import's end moves no meter: each version it wrote was
         // metered by its own commit (ADR-0084 d15).
         | MetadataFold::WorkspaceImported(_)
@@ -10787,6 +10830,69 @@ impl JournalStore for PgStore {
         self.read_fixes(tenant_id, None, unconfirmed_only).await
     }
 
+    async fn admin_act(
+        &self,
+        tenant_id: Uuid,
+        act_id: Uuid,
+    ) -> Result<Option<oml_app::types::AdminActRecord>, StoreError> {
+        Ok(self
+            .read_admin_acts(tenant_id, Some(act_id), None)
+            .await?
+            .pop())
+    }
+
+    async fn admin_acts(
+        &self,
+        tenant_id: Uuid,
+        state: Option<oml_app::domain::admin_act::AdminActState>,
+    ) -> Result<Vec<oml_app::types::AdminActRecord>, StoreError> {
+        self.read_admin_acts(tenant_id, None, state).await
+    }
+
+    async fn admin_standing(
+        &self,
+        tenant_id: Uuid,
+    ) -> Result<oml_app::types::AdminStanding, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let sole_admin: Option<bool> =
+            sqlx::query_scalar("SELECT sole_admin FROM tenants WHERE id = $1")
+                .bind(tenant_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(backend)?;
+        let rows = sqlx::query(
+            "SELECT user_name::text AS user_name, disabled_at IS NOT NULL AS disabled, \
+                    to_char(admin_since AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+                    AS admin_since_s \
+               FROM web_emails \
+              WHERE tenant_id = $1 AND admin AND pending_since IS NULL \
+                AND admin_since IS NOT NULL \
+              ORDER BY user_name",
+        )
+        .bind(tenant_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        let persons = rows
+            .iter()
+            .map(|row| {
+                let user: String = row.try_get("user_name").map_err(backend)?;
+                let since: String = row.try_get("admin_since_s").map_err(backend)?;
+                Ok(oml_app::types::AdminPerson {
+                    user: Name::parse_reference(&user).map_err(backend)?,
+                    admin_since: EventTime::parse(&since).map_err(backend)?,
+                    disabled: row.try_get("disabled").map_err(backend)?,
+                })
+            })
+            .collect::<Result<Vec<_>, StoreError>>()?;
+        Ok(oml_app::types::AdminStanding {
+            sole_admin: sole_admin.unwrap_or(true),
+            persons,
+        })
+    }
+
     /// No release table exists until R3 (ADR-0085), so no version is a
     /// member; R3 reads its membership here.
     async fn member_of_no_release(
@@ -12240,6 +12346,111 @@ async fn set_lookup_digest(
 /// with every admin entry locked in this transaction, so two commits that
 /// would each leave the other the last admin are serialized and the second
 /// sees the first's change (ADR-0045 d10; ADR-0070 d5).
+/// Takes the tenant out of `sole_admin` for good once it holds two live
+/// admin persons, after a fold on its allowlist (ADR-0097 d10; 0070).
+async fn fold_sole_admin(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+) -> Result<(), StoreError> {
+    sqlx::query(
+        "UPDATE tenants SET sole_admin = false WHERE id = $1 AND sole_admin \
+         AND (SELECT count(DISTINCT user_name) FROM web_emails \
+               WHERE tenant_id = $1 AND admin AND pending_since IS NULL \
+                 AND disabled_at IS NULL) >= 2",
+    )
+    .bind(tenant_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    Ok(())
+}
+
+/// `admin.act`'s fold (ADR-0097 d2; 0070): the first envelope inserts the
+/// act's row, effective or pending; a later one moves it only from a state
+/// that admits the move, a lost race aborting the commit. A confirmation
+/// clears the `pending_act_id` of the key the act issued (d23).
+async fn fold_admin_act(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    act: &oml_app::types::AdminActRecord,
+    seq: i64,
+    at: &EventTime,
+) -> Result<(), StoreError> {
+    use oml_app::domain::admin_act::AdminActState as St;
+    let from: &[&str] = match act.state {
+        St::Effective | St::PendingConfirmation => {
+            sqlx::query(
+                "INSERT INTO admin_acts (tenant_id, id, act, class, target, reason, \
+                        actor_key_id, actor_person, state, sole_admin, cause, created_at, \
+                        effect, seq) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, ($12)::timestamptz, \
+                        $13, $14)",
+            )
+            .bind(tenant_id)
+            .bind(act.act_id)
+            .bind(act.act.as_str())
+            .bind(act.class().as_str())
+            .bind(&act.target)
+            .bind(act.reason.as_deref())
+            .bind(act.actor_key_id)
+            .bind(act.actor_person.as_ref().map(Name::as_str))
+            .bind(act.state.as_str())
+            .bind(act.sole_admin)
+            .bind(
+                act.cause
+                    .map(oml_app::domain::admin_act::AdminActCause::as_str),
+            )
+            .bind(at.as_str())
+            .bind(&act.effect)
+            .bind(seq)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            return Ok(());
+        }
+        St::Confirmed | St::Expired => &["pending_confirmation"],
+        St::Declined => &["pending_confirmation", "effective"],
+        St::Contested => &["effective"],
+        St::Settled => &["effective", "contested"],
+    };
+    let from: Vec<String> = from.iter().map(|s| (*s).to_owned()).collect();
+    let moved = sqlx::query(
+        "UPDATE admin_acts SET state = $3, confirmed_by_person = $4, settled_by_key_id = $5, \
+                settled_at = ($6)::timestamptz \
+          WHERE tenant_id = $1 AND id = $2 AND state = ANY($7) \
+            AND ($3 <> 'declined' OR state = 'pending_confirmation' OR sole_admin)",
+    )
+    .bind(tenant_id)
+    .bind(act.act_id)
+    .bind(act.state.as_str())
+    .bind(act.confirmed_by_person.as_ref().map(Name::as_str))
+    .bind(act.settled_by_key_id)
+    .bind(at.as_str())
+    .bind(&from)
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    if moved.rows_affected() != 1 {
+        return Err(StoreError::Backend(format!(
+            "admin act {} does not move to {} from the state it holds",
+            act.act_id,
+            act.state.as_str()
+        )));
+    }
+    if act.state == St::Confirmed {
+        sqlx::query(
+            "UPDATE api_keys SET pending_act_id = NULL \
+              WHERE tenant_id = $1 AND pending_act_id = $2",
+        )
+        .bind(tenant_id)
+        .bind(act.act_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+    }
+    Ok(())
+}
+
 async fn last_admin_entry(
     tx: &mut Transaction<'_, Postgres>,
     tenant_id: Uuid,
@@ -12247,7 +12458,7 @@ async fn last_admin_entry(
 ) -> Result<bool, StoreError> {
     let admins: Vec<Vec<u8>> = sqlx::query_scalar(
         "SELECT email_hash FROM web_emails WHERE tenant_id = $1 AND admin \
-         AND pending_since IS NULL ORDER BY email_hash FOR UPDATE",
+         AND pending_since IS NULL AND disabled_at IS NULL ORDER BY email_hash FOR UPDATE",
     )
     .bind(tenant_id)
     .fetch_all(&mut **tx)
@@ -12351,6 +12562,84 @@ impl PgStore {
 impl PgStore {
     /// The tenant's admin fixes, oldest first: one by id or every one, the
     /// unconfirmed ones alone when `unconfirmed_only` (ADR-0089 d15; 0064).
+    async fn read_admin_acts(
+        &self,
+        tenant_id: Uuid,
+        act_id: Option<Uuid>,
+        state: Option<oml_app::domain::admin_act::AdminActState>,
+    ) -> Result<Vec<oml_app::types::AdminActRecord>, StoreError> {
+        use oml_app::domain::admin_act::{AdminActCause, AdminActKind, AdminActState};
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sqlx::query(
+            "SELECT id, act, target, reason, actor_key_id, actor_person::text AS actor_person, \
+                    state, confirmed_by_person::text AS confirmed_by_person, settled_by_key_id, \
+                    sole_admin, cause, effect, \
+                    to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+                    AS created_at_s, \
+                    to_char(settled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+                    AS settled_at_s \
+               FROM admin_acts \
+              WHERE tenant_id = $1 AND ($2::uuid IS NULL OR id = $2) \
+                AND ($3::text IS NULL OR state = $3) \
+              ORDER BY created_at, id",
+        )
+        .bind(tenant_id)
+        .bind(act_id)
+        .bind(state.map(AdminActState::as_str))
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        let name = |v: Option<String>| -> Result<Option<Name>, StoreError> {
+            v.as_deref()
+                .map(Name::parse_reference)
+                .transpose()
+                .map_err(backend)
+        };
+        rows.iter()
+            .map(|row| {
+                let act: String = row.try_get("act").map_err(backend)?;
+                let st: String = row.try_get("state").map_err(backend)?;
+                let cause: Option<String> = row.try_get("cause").map_err(backend)?;
+                let created: String = row.try_get("created_at_s").map_err(backend)?;
+                let settled: Option<String> = row.try_get("settled_at_s").map_err(backend)?;
+                Ok(oml_app::types::AdminActRecord {
+                    act_id: row.try_get("id").map_err(backend)?,
+                    act: AdminActKind::parse(&act)
+                        .ok_or_else(|| StoreError::Backend(format!("unknown admin act {act:?}")))?,
+                    target: row.try_get("target").map_err(backend)?,
+                    reason: row.try_get("reason").map_err(backend)?,
+                    actor_key_id: row.try_get("actor_key_id").map_err(backend)?,
+                    actor_person: name(row.try_get("actor_person").map_err(backend)?)?,
+                    state: AdminActState::parse(&st).ok_or_else(|| {
+                        StoreError::Backend(format!("unknown admin act state {st:?}"))
+                    })?,
+                    confirmed_by_person: name(
+                        row.try_get("confirmed_by_person").map_err(backend)?,
+                    )?,
+                    settled_by_key_id: row.try_get("settled_by_key_id").map_err(backend)?,
+                    sole_admin: row.try_get("sole_admin").map_err(backend)?,
+                    cause: cause
+                        .as_deref()
+                        .map(|c| {
+                            AdminActCause::parse(c).ok_or_else(|| {
+                                StoreError::Backend(format!("unknown admin act cause {c:?}"))
+                            })
+                        })
+                        .transpose()?,
+                    at: EventTime::parse(&created).map_err(backend)?,
+                    settled_at: settled
+                        .as_deref()
+                        .map(EventTime::parse)
+                        .transpose()
+                        .map_err(backend)?,
+                    effect: row.try_get("effect").map_err(backend)?,
+                })
+            })
+            .collect()
+    }
+
     async fn read_fixes(
         &self,
         tenant_id: Uuid,

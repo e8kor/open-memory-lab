@@ -168,6 +168,11 @@ pub mod event_types {
     /// An admin's fix: its act, targets, reason and `loosens_guardrail`,
     /// and the ids of the lifecycle events it caused (ADR-0089 d3, d16).
     pub const ADMIN_FIX: &str = "admin.fix";
+    /// One admin act's envelope (ADR-0097 d2): `act_id`, `act`, `class`,
+    /// `target`, `reason`, `actor_person`, `state`, `confirmed_by_person`,
+    /// `sole_admin` and `cause`, journalled in the commit of its effect and
+    /// again, with the same `act_id`, at each change of its state.
+    pub const ADMIN_ACT: &str = "admin.act";
     /// A person confirmed an admin's fix (ADR-0089 d8).
     pub const ADMIN_FIX_CONFIRMED: &str = "admin.fix_confirmed";
     /// A person reverted an admin's fix (ADR-0089 d8).

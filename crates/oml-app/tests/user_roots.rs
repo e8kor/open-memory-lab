@@ -31,7 +31,9 @@ type TestApp = App<MemStore, MemSigner, FixedClock, SeqIdGen, MarkerScanner>;
 
 /// The app over a store the test also reads directly.
 fn rig() -> (TestApp, MemStore) {
-    let store = MemStore::new();
+    // These suites add several admin entries to reach their persons; the
+    // admin act's confirm-first rule has its own suite (ADR-0097 d10).
+    let store = MemStore::new().keeping_sole_admin();
     (app_over(store.clone()), store)
 }
 
@@ -2294,9 +2296,9 @@ async fn linking_an_agent_held_key_is_refused() {
         .expect("journal")
         .len();
     assert_eq!(
-        head + 1,
+        head + 2,
         after,
-        "only the person key's issuance; no refusal journals"
+        "only the person key's issuance, its admin act and key.issued; no refusal journals"
     );
 }
 
@@ -2477,7 +2479,8 @@ async fn a_link_is_refused_for_a_disabled_person_a_session_key_a_service_key_a_l
         )
         .await
         .expect("a service key");
-    let head = head + 1;
+    // Its issuance, an admin act and its key.issued (ADR-0097 d2).
+    let head = head + 2;
     let err = app
         .link_key_to_person(Bearer::Session(&ops), service.key_id.into(), &name("bob"))
         .await

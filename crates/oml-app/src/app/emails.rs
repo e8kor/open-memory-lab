@@ -5,6 +5,7 @@
 use serde_json::json;
 use uuid::Uuid;
 
+use oml_domain::admin_act::AdminActKind;
 use oml_domain::name::{Name, NamedKind};
 use oml_domain::web::{Email, check_user, session_key_names};
 use oml_domain::{Sha256Hash, event_types};
@@ -55,7 +56,98 @@ where
         req: &WebEmailRequest,
         keep_an_admin: bool,
     ) -> Result<(WebEntry, WebEmailOutcome), AppError> {
+        self.allow_web_email_with_reason(bearer, req, keep_an_admin, None)
+            .await
+    }
+
+    /// [`Self::allow_web_email_keeping`] with the admin's reason, which an
+    /// admin flag that waits on a second admin person requires (ADR-0097
+    /// d26).
+    ///
+    /// # Errors
+    /// As [`Self::allow_web_email`], and a pending flag sent no reason.
+    pub async fn allow_web_email_with_reason(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        req: &WebEmailRequest,
+        keep_an_admin: bool,
+        reason: Option<&str>,
+    ) -> Result<(WebEntry, WebEmailOutcome), AppError> {
         let admin = self.admin_caller(bearer.into(), "web_emails").await?.key;
+        let Some((entry, outcome, event_type, fold, payload)) =
+            self.entry_change(&admin, req, keep_an_admin).await?
+        else {
+            let held = self
+                .journal
+                .web_entry_by_email(&req.email.digest())
+                .await?
+                .ok_or(AppError::NotFound)?;
+            return Ok((held, WebEmailOutcome::Unchanged));
+        };
+        let tenant_id = admin.tenant_id;
+        let existing = self.journal.web_entry_by_email(&req.email.digest()).await?;
+        // A new admin person, or the admin flag on an existing one, is
+        // widening: outside `sole_admin` it waits on a second admin person
+        // and nothing changes until then (ADR-0097 d5). An entry for a new
+        // person with no flag is neutral (d9).
+        let flagged = req.admin && !existing.as_ref().is_some_and(|e| e.admin);
+        let kind = if flagged {
+            AdminActKind::AllowAdmin
+        } else if outcome == WebEmailOutcome::Allowed {
+            AdminActKind::AllowPerson
+        } else {
+            AdminActKind::ChangePerson
+        };
+        let prev = self.head_event(tenant_id).await?;
+        let act = self
+            .begin_admin_act(
+                &admin,
+                kind,
+                json!({ "user": req.user.as_str(), "admin": req.admin,
+                        "email_digest": req.email.digest().to_prefixed() }),
+                reason,
+                json!({ "email": req.email.as_str(), "user": req.user.as_str(), "admin": req.admin }),
+                prev.as_ref(),
+            )
+            .await?;
+        if act.pending() {
+            self.commit_with_act(Some(act), Vec::new()).await?;
+            return Ok((
+                existing.unwrap_or(entry),
+                WebEmailOutcome::PendingConfirmation,
+            ));
+        }
+        let event = self.seal(
+            Some(&act.event),
+            tenant_id,
+            event_type,
+            &admin.principal,
+            Some(admin.key_id),
+            super::admin_acts::with_act_id(payload, act.act_id()),
+        )?;
+        self.commit_with_act(Some(act), vec![(event, fold)]).await?;
+        Ok((entry, outcome))
+    }
+
+    /// The change `req` makes to the allowlist under `admin`: the entry as
+    /// it will stand, the outcome, and the event and fold that journal it,
+    /// or `None` for a request that changes nothing. Shared by the act and
+    /// by a confirmation of a pending admin flag (ADR-0097 d5).
+    pub(crate) async fn entry_change(
+        &self,
+        admin: &KeyRecord,
+        req: &WebEmailRequest,
+        keep_an_admin: bool,
+    ) -> Result<
+        Option<(
+            WebEntry,
+            WebEmailOutcome,
+            &'static str,
+            MetadataFold,
+            serde_json::Value,
+        )>,
+        AppError,
+    > {
         check_user(&req.user)?;
         let tenant_id = admin.tenant_id;
         let email_hash = req.email.digest();
@@ -63,7 +155,7 @@ where
         let outcome = match &existing {
             Some(entry) if entry.tenant_id != tenant_id => return Err(AppError::WebEmailTaken),
             Some(entry) if entry.user == req.user && entry.admin == req.admin => {
-                return Ok((entry.clone(), WebEmailOutcome::Unchanged));
+                return Ok(None);
             }
             Some(_) => WebEmailOutcome::Changed,
             None => WebEmailOutcome::Allowed,
@@ -111,23 +203,14 @@ where
                 MetadataFold::WebEmailAllowed(entry.clone()),
             ),
         };
-        let prev = self.head_event(tenant_id).await?;
-        let event = self.seal(
-            prev.as_ref(),
-            tenant_id,
-            event_type,
-            &admin.principal,
-            Some(admin.key_id),
-            json!({
-                "email_digest": email_hash.to_prefixed(),
-                "user": entry.user.as_str(),
-                "admin": entry.admin,
-                "by_key_id": admin.key_id.to_string(),
-                "pending": entry.pending,
-            }),
-        )?;
-        self.commit(event, fold, None).await?;
-        Ok((entry, outcome))
+        let payload = json!({
+            "email_digest": email_hash.to_prefixed(),
+            "user": entry.user.as_str(),
+            "admin": entry.admin,
+            "by_key_id": admin.key_id.to_string(),
+            "pending": entry.pending,
+        });
+        Ok(Some((entry, outcome, event_type, fold, payload)))
     }
 
     /// `POST /v2/web/emails/remove`, admin by key role (ADR-0045 d2, d13):

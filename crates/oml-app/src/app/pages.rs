@@ -925,14 +925,67 @@ where
         // Step 3 applies to added grants; a contributor's shape was checked
         // when it was issued, and adding a grant cannot undo it (ADR-0093 d2).
         check_issuance(Role::Admin, key.role, &resolved).map_err(issuance_refusal)?;
+        if resolved.is_empty() {
+            return Ok(Vec::new());
+        }
+        // A pending key takes no added grant (ADR-0097 d23).
+        if key.pending_act.is_some() {
+            return Err(AppError::AdminAct(
+                crate::types::AdminActRefusal::KeyPending,
+            ));
+        }
+        // Adding a grant or a capacity is widening, a person's root
+        // included (ADR-0097 d5, d6): pending, the grants wait in the act.
+        let prev = self.head_event(tenant_id).await?;
+        let act = self
+            .begin_admin_act(
+                admin,
+                oml_domain::admin_act::AdminActKind::AddGrant,
+                serde_json::json!({
+                    "key_id": key.key_id.to_string(),
+                    "name": key.name.as_ref().map(Name::as_str),
+                    "role": key.role.as_str(),
+                    "principal": key.principal,
+                }),
+                None,
+                serde_json::json!({
+                    "key_id": key.key_id.to_string(),
+                    "grants": resolved.iter().map(super::admin_acts::grant_json).collect::<Vec<_>>(),
+                }),
+                prev.as_ref(),
+            )
+            .await?;
+        if act.pending() {
+            self.commit_with_act(Some(act), Vec::new()).await?;
+            return Ok(Vec::new());
+        }
+        let mut last = act.event.clone();
+        let mut links = Vec::with_capacity(resolved.len());
         let mut added = Vec::with_capacity(resolved.len());
         for grant in resolved {
-            let prev = self
-                .head_event(tenant_id)
-                .await?
-                .ok_or(AppError::NotFound)?;
-            added.push(self.commit_grant(&prev, admin, key.key_id, grant).await?.1);
+            let event = self.grant_event(&last, admin, key.key_id, &grant)?;
+            let event = self.seal(
+                Some(&last),
+                tenant_id,
+                &event.envelope.event_type,
+                &event.envelope.principal,
+                event.envelope.api_key_id,
+                super::admin_acts::with_act_id(event.envelope.payload, act.act_id()),
+            )?;
+            added.push(GrantRecord {
+                grant: grant.clone(),
+                epoch: event.envelope.seq,
+            });
+            last = event.clone();
+            links.push((
+                event,
+                MetadataFold::GrantIssued {
+                    key_id: key.key_id,
+                    grant,
+                },
+            ));
         }
+        self.commit_with_act(Some(act), links).await?;
         Ok(added)
     }
 

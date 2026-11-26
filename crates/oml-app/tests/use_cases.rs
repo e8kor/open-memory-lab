@@ -444,10 +444,11 @@ async fn happy_path_end_to_end() {
     assert_eq!(successor.memory.replaces, Some(memory_id));
 
     // The whole chain verifies: genesis, root, admin key, crew, three keys
-    // of one grant each (a key.issued and a grant.issued apiece), submit,
-    // approve, promote, the successor's submission = 14 events.
+    // of one grant each (an admin.act, a key.issued and a grant.issued
+    // apiece; ADR-0097 d2), the crew's create with its admin act, submit,
+    // approve, promote, the successor's submission = 18 events.
     let head = app.verify_chain(admin).await.expect("verify chain");
-    assert_eq!(head.seq, 14);
+    assert_eq!(head.seq, 18);
     assert_eq!(head.tenant_id, boot.tenant_id);
 
     // The reader's tail serves only what it may see, ascending, with
@@ -470,7 +471,7 @@ async fn happy_path_end_to_end() {
             event_types::LIFECYCLE_PROMOTE
         ]
     );
-    assert_eq!((tail.head_seq, tail.next_after_seq), (14, 14));
+    assert_eq!((tail.head_seq, tail.next_after_seq), (18, 18));
     let promote = &tail.events[1];
     assert!(!promote.names_actor, "the tail names no reviewer");
     assert!(
@@ -699,8 +700,8 @@ async fn idempotent_submit_replays_the_first_result() {
         .await
         .expect("verify");
     assert_eq!(
-        head.seq, 7,
-        "replay journalled nothing: genesis, root, admin key, crew, the writer's key and grant, 1 submit"
+        head.seq, 9,
+        "replay journalled nothing: genesis, root, admin key, crew and its admin act, the writer's admin act, key and grant, 1 submit"
     );
 
     // Same key, different request: refused, never silently honored.
@@ -2372,9 +2373,15 @@ async fn issuance_journals_the_key_then_each_grant_with_its_own_seq_as_its_epoch
     let at = |seq: u64| &tail[usize::try_from(seq - 1).expect("seq")].envelope;
     let key_issued = at(issued.access.issued_seq);
     assert_eq!(key_issued.event_type, event_types::KEY_ISSUED);
+    // The admin act the issuance is journals first, and every effect names
+    // it (ADR-0097 d2).
+    let act = at(issued.access.issued_seq - 1);
+    assert_eq!(act.event_type, event_types::ADMIN_ACT);
+    let act_id = act.payload["act_id"].clone();
     assert_eq!(
         key_issued.payload,
         serde_json::json!({
+            "act_id": act_id,
             "key_id": issued.key_id.to_string(),
             "role": "contributor",
             "principal": "crew/agent-7",
@@ -2412,6 +2419,7 @@ async fn issuance_journals_the_key_then_each_grant_with_its_own_seq_as_its_epoch
                     .collect::<Vec<_>>(),
                 "covers": "subtree",
                 "epoch": record.epoch,
+                "act_id": act_id,
             })
         );
     }
@@ -2444,46 +2452,25 @@ async fn a_failed_grant_commit_discloses_no_key_value() {
         .unwrap_err();
     assert!(matches!(err, AppError::Store(_)), "{err:?}");
 
-    // The key.issued that committed is followed by its revocation over the
-    // fixed reason, and by no grant.
+    // An admin's issuance is one act: its admin.act, key.issued and grants
+    // commit as one chain, so a refused grant journals none of them
+    // (ADR-0097 d2, d30).
     let tail = journal(&store, boot.tenant_id).await;
-    let types: Vec<&str> = tail
-        .iter()
-        .skip(4)
-        .map(|e| e.envelope.event_type.as_str())
-        .collect();
     assert_eq!(
-        types,
-        vec![event_types::KEY_ISSUED, event_types::KEY_REVOKED],
-        "genesis, root, admin key and crew, then the failed issuance"
+        tail.len(),
+        5,
+        "genesis, root, admin key, the crew and its admin act, and nothing of the failed issuance"
     );
-    let failed_key = tail[4].envelope.payload["key_id"].clone();
-    assert_eq!(
-        tail[5].envelope.payload,
-        serde_json::json!({
-            "key_id": failed_key,
-            "revoked_by_key_id": boot.admin_key.key_id.to_string(),
-            "reason_digest": sha256_digest_string(b"issuance_incomplete"),
-        })
-    );
-    let key_id = Uuid::parse_str(failed_key.as_str().expect("key id")).expect("uuid");
-    let access = store
-        .key_access(boot.tenant_id, key_id)
-        .await
-        .expect("read")
-        .expect("the revoked key stays as history");
-    assert!(access.grants.is_empty(), "no grant was stored");
 
     // The refusal was one-shot: the next issuance completes.
     issue(&app, admin, Role::Reader, "rhea", crew).await;
 }
 
-/// A key whose issuance failed after its `key.issued` keeps its name, so the
-/// key read answers it by that name as history, with the `at` of the
-/// `key.revoked` that followed as its revocation time (roles-and-keys.md
-/// issuance order; ADR-0026 d10).
+/// An admin's issuance whose grant is refused leaves no key behind: the
+/// one chain of its act journals nothing, and its name resolves to nothing
+/// (ADR-0097 d2, d30; ADR-0026 d10).
 #[tokio::test]
-async fn a_key_whose_issuance_failed_part_way_reads_back_by_name_revoked_at_its_key_revoked() {
+async fn an_admin_issuance_whose_grant_is_refused_leaves_no_key() {
     let store = MemStore::new().refusing_next_commit_of(event_types::GRANT_ISSUED);
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
@@ -2496,21 +2483,12 @@ async fn a_key_whose_issuance_failed_part_way_reads_back_by_name_revoked_at_its_
     app.issue_key(admin, &req)
         .await
         .expect_err("the grant's commit is refused");
-    let tail = journal(&store, boot.tenant_id).await;
-    let revocation = tail.last().expect("a chain");
-    assert_eq!(revocation.envelope.event_type, event_types::KEY_REVOKED);
-
-    let detail = app
+    let err = app
         .key(admin, Reference::Name(req.name.clone()))
         .await
-        .expect("a revoked key's name still resolves");
-    assert_eq!(detail.key.name, Some(req.name.clone()));
-    assert_eq!(
-        detail.key.revoked_at,
-        Some(revocation.envelope.at.clone()),
-        "the key.revoked's at, not the key.issued's"
-    );
-    assert_ne!(revocation.envelope.at, tail[tail.len() - 2].envelope.at);
+        .unwrap_err();
+    assert!(matches!(err, AppError::NotFound), "{err:?}");
+    let _ = crew;
 }
 
 // ---------------------------------------------------------------------------
@@ -6471,6 +6449,7 @@ async fn operator_key(store: &MemStore, tenant: Uuid) -> String {
         requests_per_minute: None,
         linked_user: None,
         link_pending: None,
+        pending_act: None,
     };
     seal_onto(
         store,
@@ -6608,21 +6587,23 @@ async fn a_connector_key_is_issued_with_a_connect_code_and_no_value() {
     assert_eq!(
         types,
         [
+            event_types::ADMIN_ACT,
             event_types::KEY_ISSUED,
             event_types::GRANT_ISSUED,
             event_types::GRANT_ISSUED,
             event_types::CONNECTION_CODE_ISSUED,
         ]
     );
-    let key_issued = &events[head].envelope;
+    let act_id = events[head].envelope.payload["act_id"].clone();
+    let key_issued = &events[head + 1].envelope;
     assert_eq!(key_issued.payload["credential"], "connection");
     assert_eq!(issued.access.issued_seq, key_issued.seq);
     let grant_seqs: Vec<u64> = issued.access.grants.iter().map(|g| g.epoch).collect();
     assert_eq!(
         grant_seqs,
-        [events[head + 1].envelope.seq, events[head + 2].envelope.seq]
+        [events[head + 2].envelope.seq, events[head + 3].envelope.seq]
     );
-    let code_issued = &events[head + 3].envelope;
+    let code_issued = &events[head + 4].envelope;
     assert_eq!(
         code_issued.payload,
         json!({
@@ -6631,6 +6612,7 @@ async fn a_connector_key_is_issued_with_a_connect_code_and_no_value() {
             "issued_by_key_id": admin.key_id.to_string(),
             "expires_at": code.expires_at.as_str(),
             "voids_code_id": Value::Null,
+            "act_id": act_id,
         })
     );
     let ttl = code.expires_at.unix_micros() - code_issued.at.unix_micros();
@@ -9533,6 +9515,7 @@ async fn an_admin_key_moves_an_expired_keys_date_later_and_the_key_authenticates
     assert_eq!(
         set.payload,
         json!({
+            "act_id": set.payload["act_id"].clone(),
             "key_id": key.key_id.to_string(),
             "set_by_key_id": boot.admin_key.key_id.to_string(),
             "expiry": KEY_EXPIRY_LATER,

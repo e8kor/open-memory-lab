@@ -3037,12 +3037,13 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // null for every tenant they find
             // (ADR-0049 d4); 0040 the federation policy, off with its
             // defaults (ADR-0072 d5); 0054 the export policy, own_root on
-            // every existing row (ADR-0084 d10).
+            // every existing row (ADR-0084 d10); 0070 sole_admin, true for a
+            // tenant whose journal never flagged two admins (ADR-0097 d10).
             (true, "tenants") => {
                 "(to_jsonb(t) - 'name' - 'prior_name' - 'crew_id' - 'path' - 'search_default' \
                   - 'telemetry_query_text_since' - 'federation_enabled' \
                   - 'federation_default_sources' - 'federation_max_sources' \
-                  - 'export_policy') \
+                  - 'export_policy' - 'sole_admin') \
                  || jsonb_build_object('name', t.prior_name)"
             }
             // Before 0017 a workspace's status is the one every build served,
@@ -3076,7 +3077,7 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             (true, "api_keys") => {
                 "to_jsonb(t) - 'name' - 'crew_id' - 'credential' - 'user_root_id' \
                  - 'session_for' - 'guardrail_scope' - 'profile' - 'expires_at' \
-                 - 'requests_per_minute' - 'linked_user_id' - 'link_pending_user_id'"
+                 - 'requests_per_minute' - 'linked_user_id' - 'link_pending_user_id' - 'pending_act_id'"
             }
             // 0014 adds covers, subtree for every grant it finds (ADR-0044
             // d12).
@@ -6470,7 +6471,7 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 69,
+        applied, 70,
         "every migration through 0069_key_previous_hashes"
     );
     drop(conn);
@@ -7932,7 +7933,7 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 69,
+        applied, 70,
         "every migration through 0069_key_previous_hashes"
     );
     drop(conn);
@@ -8939,7 +8940,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 69,
+        applied, 70,
         "every migration through 0069_key_previous_hashes"
     );
     drop(conn);
@@ -13642,7 +13643,7 @@ async fn migrations_0059_and_0060_apply_over_0058_with_a_document_row_and_count_
             .await
             .expect("versions");
     assert_eq!(
-        applied, 69,
+        applied, 70,
         "every migration through 0069_key_previous_hashes"
     );
     let (partitions, attached, valid, carries, validated): (i64, i64, bool, bool, bool) =

@@ -438,6 +438,25 @@ enum KeysCommand {
         #[arg(long, value_name = "FILE")]
         out: Option<std::path::PathBuf>,
     },
+    /// Revoke one key: it authenticates nothing afterwards on any path, and
+    /// the keys it issued keep working. Journals key.revoked. An admin key
+    /// revokes any key of the tenant except a session key.
+    Revoke {
+        /// Key id or name.
+        #[arg(value_name = "KEY")]
+        key_ref: String,
+        /// Why the key is revoked; scanned and journalled.
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// Link the calling admin key to a person, pending until that person
+    /// accepts the link on the console's Keys page; journals
+    /// key.linked_person. The one link a key makes to its own holder.
+    LinkSelf {
+        /// The person's user name.
+        #[arg(long)]
+        person: String,
+    },
     /// Revoke one connector-key connection and journal connection.revoked.
     Disconnect {
         /// Connector key id or name.
@@ -491,6 +510,11 @@ struct KeysIssueArgs {
     /// in-progress workspace and never promotes.
     #[arg(long, value_parser = ["curator"])]
     profile: Option<String>,
+    /// Why the key is issued; scanned and journalled with the issuance. An
+    /// admin key's issuance waits on a second admin person and requires it,
+    /// except in a tenant that has only ever had one admin person.
+    #[arg(long)]
+    reason: Option<String>,
     #[command(flatten)]
     limits: KeyLimitArgs,
 }
@@ -839,6 +863,30 @@ enum AdminCommand {
         /// An edit's new title, where its format takes one.
         #[arg(long)]
         title: Option<String>,
+    },
+    /// List the tenant's admin acts that wait on a second admin person, or
+    /// with --state another state, or all.
+    Acts {
+        /// all, effective, pending_confirmation, confirmed, declined, expired,
+        /// contested or settled; defaults to pending_confirmation.
+        #[arg(long)]
+        state: Option<String>,
+    },
+    /// Confirm another admin person's pending act as the second admin
+    /// person; it takes effect now. Journals admin.act.
+    Confirm {
+        /// The act's id, listed by `oml admin acts`.
+        act: String,
+    },
+    /// Decline a pending admin act, which then never takes effect, or revoke
+    /// a key issued at once in a tenant with one admin person. Journals
+    /// admin.act.
+    Decline {
+        /// The act's id, listed by `oml admin acts`.
+        act: String,
+        /// Why; scanned and journalled.
+        #[arg(long)]
+        reason: Option<String>,
     },
     /// List the tenant's admin fixes no person has confirmed or reverted,
     /// or with --all every fix.
@@ -1786,6 +1834,9 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             if let Some(scope) = &args.guardrail_scope {
                 body["guardrail_scope"] = json!(scope);
             }
+            if let Some(reason) = &args.reason {
+                body["reason"] = json!(reason);
+            }
             args.limits.add_to(&mut body);
             let (_, response) = client.post("/v2/keys", &body, &write_opts())?;
             if cli.json {
@@ -1816,6 +1867,57 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 }
                 println!();
                 println!("store this value now; the server keeps only its hash.");
+                // A widening admin act waits on a second admin person
+                // (ADR-0097 d5, d23).
+                if response["admin_act"]["state"] == "pending_confirmation" {
+                    println!(
+                        "waits on another admin: the key authenticates nothing until a second \
+                         admin person runs `oml admin confirm {}`",
+                        field(&response["admin_act"], "act_id")
+                    );
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Keys {
+            command: KeysCommand::LinkSelf { person },
+        } => {
+            let client = resolve(cli, &stored)?;
+            let (_, response) = client.post(
+                "/v2/keys/self/link",
+                &json!({ "user": person }),
+                &write_opts(),
+            )?;
+            if cli.json {
+                print_json(&response);
+            } else {
+                println!(
+                    "key {} linked to {person}, pending: {person} accepts it on the console's Keys page",
+                    field(&response, "name")
+                );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Keys {
+            command: KeysCommand::Revoke { key_ref, reason },
+        } => {
+            let client = resolve(cli, &stored)?;
+            let path = format!("/v2/keys/{}/revoke", segment(key_ref)?);
+            let body = match reason {
+                Some(reason) => json!({ "reason": reason }),
+                None => json!({}),
+            };
+            let (_, response) = client.post(&path, &body, &write_opts())?;
+            if cli.json {
+                print_json(&response);
+            } else {
+                println!(
+                    "key {} revoked at {}",
+                    field(&response, "name"),
+                    field(&response, "revoked_at")
+                );
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -4699,6 +4801,25 @@ fn rates_lines(report: &Value) -> Vec<String> {
 /// `close`, or lists the key's open ones (ADR-0089 d10, d15).
 /// One line per fix: its id, act, state, the version it serves, whether it
 /// loosens a guardrail, its age, the acts this key may take, and its reason.
+/// One admin act as `oml admin acts` prints it (ADR-0097 d2): its id,
+/// act, class, state, the acting person and its reason.
+fn admin_act_line(a: &Value) -> String {
+    format!(
+        "{}  {}  {}  {}{}  by {}  {}",
+        field(a, "act_id"),
+        field(a, "act"),
+        field(a, "class"),
+        field(a, "state"),
+        if a["sole_admin"] == true {
+            " (sole_admin)"
+        } else {
+            ""
+        },
+        field(a, "actor_person"),
+        field(a, "reason"),
+    )
+}
+
 fn print_fixes(cli: &Cli, answer: &Value) -> Result<ExitCode, CliError> {
     if cli.json {
         print_json(answer);
@@ -4867,6 +4988,49 @@ fn run_admin(
             };
             let fix = client.post("/v2/admin/fixes", &sent, &write)?.1;
             return print_fixes(cli, &fix);
+        }
+        AdminCommand::Acts { state } => {
+            let path = match state {
+                Some(state) => format!("/v2/admin/acts?state={}", segment(state)?),
+                None => "/v2/admin/acts".to_owned(),
+            };
+            let acts = client.get(&path)?.1;
+            if cli.json {
+                print_json(&acts);
+            } else {
+                for a in acts["items"]
+                    .as_array()
+                    .map(Vec::as_slice)
+                    .unwrap_or_default()
+                {
+                    println!("{}", admin_act_line(a));
+                }
+            }
+            return Ok(ExitCode::SUCCESS);
+        }
+        AdminCommand::Confirm { act } => {
+            let path = format!("/v2/admin/acts/{}/confirm", segment(act)?);
+            let settled = client.post(&path, &json!({}), &write_opts())?.1;
+            if cli.json {
+                print_json(&settled);
+            } else {
+                println!("{}", admin_act_line(&settled));
+            }
+            return Ok(ExitCode::SUCCESS);
+        }
+        AdminCommand::Decline { act, reason } => {
+            let path = format!("/v2/admin/acts/{}/decline", segment(act)?);
+            let body = match reason {
+                Some(reason) => json!({ "reason": reason }),
+                None => json!({}),
+            };
+            let settled = client.post(&path, &body, &write_opts())?.1;
+            if cli.json {
+                print_json(&settled);
+            } else {
+                println!("{}", admin_act_line(&settled));
+            }
+            return Ok(ExitCode::SUCCESS);
         }
         AdminCommand::Fixes { all } => {
             let state = if *all { "all" } else { "unconfirmed" };
@@ -6501,6 +6665,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let withdrawals_warn = withdrawals.iter().any(|line| line.starts_with("warn"));
     let lifecycle = lifecycle_doctor(rescan_read.as_ref());
     let lifecycle_warn = lifecycle.iter().any(|line| line.starts_with("warn"));
+    let lifecycle_fail = lifecycle.iter().any(|line| line.starts_with("fail"));
     let telemetry_warn = telemetry.iter().any(|line| line.starts_with("warn"));
     let usage = usage_doctor(usage_drift.as_ref());
     let usage_warn = usage.iter().any(|line| line.starts_with("warn"));
@@ -6557,7 +6722,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let probes_ok = matches!((&health, &ready), (Some((200, _)), Some((200, _))));
     let whoami_ok = !matches!(me, Some(Err(_)));
     let review_warn = review.as_ref().is_some_and(|line| line.starts_with("warn"));
-    let outcome = if !probes_ok || !whoami_ok || !oauth_ok || withdrawals_fail {
+    let outcome = if !probes_ok || !whoami_ok || !oauth_ok || withdrawals_fail || lifecycle_fail {
         "fail"
     } else if me.is_none()
         || server_origin.is_some()
@@ -7530,7 +7695,7 @@ fn withdrawn_queue_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
 /// out. A server before a count does not report it, and its line is then
 /// absent; a count that is no unsigned integer is named, never read as zero.
 fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
-    const LINES: [(&str, &str, &str); 10] = [
+    const LINES: [(&str, &str, &str); 16] = [
         (
             "held_successors_stranded",
             "memory.held_successor_stranded",
@@ -7581,6 +7746,36 @@ fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
             "web.email_pending",
             "sign-in email(s) wait on their person's acceptance; each signs in to nothing until that person accepts it on the console's Keys page, or the person or an admin removes it",
         ),
+        (
+            "admin_acts_pending",
+            "admin.act_pending_confirmation",
+            "admin act(s) wait on a second admin person; each takes effect only once confirmed with oml admin confirm <act>, and expires as declined after 7 days",
+        ),
+        (
+            "admin_acts_sole_admin",
+            "admin.act_sole_admin",
+            "admin act(s) took effect at once because the tenant has only ever had one admin person; a second admin person reviews them with oml admin acts --state effective",
+        ),
+        (
+            "admin_acts_without_reason",
+            "admin.act_without_reason",
+            "admin act(s) carry no reason; send --reason with each admin act",
+        ),
+        (
+            "admin_acts_expired",
+            "admin.act_expired",
+            "admin act(s) expired unconfirmed in the last 7 days and never took effect; take the act again if it is still wanted",
+        ),
+        (
+            "admin_narrowing_burst",
+            "admin.narrowing_burst",
+            "narrowing acts by one admin person in the last 24 hours, past the 20 doctor flags; read them with oml admin acts --state effective",
+        ),
+        (
+            "admin_acts_offensive",
+            "admin.offensive_narrowing",
+            "offensive narrowing act(s) in the last 24 hours: a person's key revoked or a reviewer person's key denied; read each with oml admin acts --state effective",
+        ),
     ];
     let report = match read {
         None => {
@@ -7604,6 +7799,20 @@ fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
             Some(match count.as_u64() {
                 None => format!("warn {line}: the server's {field} is {count}, not a count"),
                 Some(0) => format!("{line}: 0"),
+                // At most 20 narrowing acts by one person in a day are
+                // ordinary: a placeholder (ADR-0097 d24).
+                Some(n) if *field == "admin_narrowing_burst" && n <= 20 => format!("{line}: {n}"),
+                // Critical: offensive narrowing is loud (ADR-0097 d24).
+                Some(n) if *field == "admin_acts_offensive" => {
+                    format!("fail {line}: {n} {what}")
+                }
+                Some(n) if *field == "admin_acts_pending" => {
+                    let oldest = report
+                        .get("admin_act_oldest_pending_seconds")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    format!("warn {line}: {n} {what}; the oldest is {oldest} s old")
+                }
                 Some(n) if *field == "fixes_unconfirmed" => {
                     let oldest = report
                         .get("fix_oldest_unconfirmed_seconds")
@@ -8880,7 +9089,13 @@ mod tests {
                 "admin.fix_admin_person_only: not read; an admin key reads it".to_owned(),
                 "admin.fix_reverted: not read; an admin key reads it".to_owned(),
                 "key.link_pending: not read; an admin key reads it".to_owned(),
-                "web.email_pending: not read; an admin key reads it".to_owned()
+                "web.email_pending: not read; an admin key reads it".to_owned(),
+                "admin.act_pending_confirmation: not read; an admin key reads it".to_owned(),
+                "admin.act_sole_admin: not read; an admin key reads it".to_owned(),
+                "admin.act_without_reason: not read; an admin key reads it".to_owned(),
+                "admin.act_expired: not read; an admin key reads it".to_owned(),
+                "admin.narrowing_burst: not read; an admin key reads it".to_owned(),
+                "admin.offensive_narrowing: not read; an admin key reads it".to_owned()
             ]
         );
         assert_eq!(
@@ -8935,6 +9150,26 @@ mod tests {
         assert_eq!(
             lifecycle_doctor(Some(&Ok(json!({ "web_emails_pending": 0 })))),
             vec!["web.email_pending: 0".to_owned()]
+        );
+    }
+
+    #[test]
+    fn the_lifecycle_doctor_warns_of_admin_acts_waiting_on_a_second_admin_person() {
+        let report = json!({
+            "admin_acts_pending": 2,
+            "admin_act_oldest_pending_seconds": 3600,
+            "admin_acts_sole_admin": 0,
+            "admin_acts_without_reason": 1,
+            "admin_acts_expired": 0,
+        });
+        assert_eq!(
+            lifecycle_doctor(Some(&Ok(report))),
+            vec![
+                "warn admin.act_pending_confirmation: 2 admin act(s) wait on a second admin person; each takes effect only once confirmed with oml admin confirm <act>, and expires as declined after 7 days; the oldest is 3600 s old".to_owned(),
+                "admin.act_sole_admin: 0".to_owned(),
+                "warn admin.act_without_reason: 1 admin act(s) carry no reason; send --reason with each admin act".to_owned(),
+                "admin.act_expired: 0".to_owned(),
+            ]
         );
     }
 

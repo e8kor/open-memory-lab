@@ -817,6 +817,7 @@ pub fn key_record(tenant_id: Uuid, key_id: Uuid, role: Role, issued_by: Option<U
         requests_per_minute: None,
         linked_user: None,
         link_pending: None,
+        pending_act: None,
     }
 }
 
@@ -3121,6 +3122,7 @@ pub async fn journal_key_lookup_by_hash<S: JournalStore>(store: &S) {
         requests_per_minute: None,
         linked_user: None,
         link_pending: None,
+        pending_act: None,
     };
     rig.commit(
         store,
@@ -3225,6 +3227,7 @@ pub async fn a_keys_limits_fold_with_its_issuance_and_are_replaced_by_key_limits
         requests_per_minute: Some(30),
         linked_user: None,
         link_pending: None,
+        pending_act: None,
         ..key_record(rig.tenant_id, Uuid::from_u128(0xE0), Role::Reader, None)
     };
     rig.issue_key(store, key.clone()).await;
@@ -10846,6 +10849,148 @@ pub async fn a_console_link_waits_on_its_persons_acceptance<S: JournalStore>(sto
     );
 }
 
+/// `admin.act`'s fold (ADR-0097 d2, d10, d23): the first envelope inserts
+/// the act, a confirmation moves it once and clears the `pending_act` of
+/// the key it issued, and a second move from a settled state commits
+/// nothing. Two live admin entries take the tenant out of `sole_admin` for
+/// good, and each admin person reads back with the acceptance of the flag.
+pub async fn an_admin_act_moves_once_and_its_confirmation_lets_the_pending_key_in<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    use oml_app::domain::admin_act::{AdminActKind, AdminActState};
+    use oml_app::types::{AdminActRecord, WebEntry};
+    let mut rig = ChainRig::new(501);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    assert!(store.admin_standing(t).await.expect("standing").sole_admin);
+    for (n, user) in [(0x4B01_u128, "alice"), (0x4B02, "bob")] {
+        let entry = WebEntry {
+            tenant_id: t,
+            email: oml_app::domain::web::Email::parse(&format!("{user}@example.com"))
+                .expect("an email"),
+            user: Name::parse(user).expect("a name"),
+            admin: true,
+            google_subject: None,
+            github_subject: None,
+            added_by: Uuid::from_u128(n),
+            terms_version: None,
+            disabled_at: None,
+            pending: false,
+        };
+        rig.commit(
+            store,
+            event_types::WEB_EMAIL_ALLOWED,
+            json!({ "user": user, "admin": true }),
+            MetadataFold::WebEmailAllowed(entry),
+            None,
+        )
+        .await
+        .expect("an admin entry");
+    }
+    let standing = store.admin_standing(t).await.expect("standing");
+    assert!(!standing.sole_admin, "two live admin persons");
+    assert_eq!(
+        standing
+            .persons
+            .iter()
+            .map(|p| p.user.as_str())
+            .collect::<Vec<_>>(),
+        ["alice", "bob"]
+    );
+    let act_id = Uuid::from_u128(0x4B10);
+    let key = KeyRecord {
+        pending_act: Some(act_id),
+        ..key_record(t, Uuid::from_u128(0x4B11), Role::Reader, None)
+    };
+    let act = AdminActRecord {
+        act_id,
+        act: AdminActKind::IssueKey,
+        target: json!({ "key_id": key.key_id.to_string() }),
+        reason: Some("an agent".to_owned()),
+        actor_key_id: Some(Uuid::from_u128(0x4B12)),
+        actor_person: Some(Name::parse("alice").expect("a name")),
+        state: AdminActState::PendingConfirmation,
+        confirmed_by_person: None,
+        settled_by_key_id: None,
+        sole_admin: false,
+        cause: None,
+        at: ChainRig::at(1),
+        settled_at: None,
+        effect: json!({ "key_id": key.key_id.to_string(), "grants": [] }),
+    };
+    rig.commit(
+        store,
+        event_types::ADMIN_ACT,
+        json!({ "act_id": act_id.to_string() }),
+        MetadataFold::AdminAct(Box::new(act.clone())),
+        None,
+    )
+    .await
+    .expect("the act");
+    rig.issue_key(store, key.clone()).await;
+    let held = store.key(t, key.key_id).await.expect("read").expect("key");
+    assert_eq!(held.pending_act, Some(act_id));
+    let stored = store
+        .admin_act(t, act_id)
+        .await
+        .expect("read")
+        .expect("act");
+    assert_eq!(stored.state, AdminActState::PendingConfirmation);
+    assert_eq!(stored.effect, act.effect);
+    assert_eq!(
+        store
+            .admin_acts(t, Some(AdminActState::PendingConfirmation))
+            .await
+            .expect("list")
+            .len(),
+        1
+    );
+    let confirmed = AdminActRecord {
+        state: AdminActState::Confirmed,
+        confirmed_by_person: Some(Name::parse("bob").expect("a name")),
+        settled_by_key_id: Some(Uuid::from_u128(0x4B13)),
+        ..act.clone()
+    };
+    rig.commit(
+        store,
+        event_types::ADMIN_ACT,
+        json!({ "act_id": act_id.to_string() }),
+        MetadataFold::AdminAct(Box::new(confirmed.clone())),
+        None,
+    )
+    .await
+    .expect("the confirmation");
+    let held = store.key(t, key.key_id).await.expect("read").expect("key");
+    assert_eq!(held.pending_act, None, "the confirmed key authenticates");
+    let stored = store
+        .admin_act(t, act_id)
+        .await
+        .expect("read")
+        .expect("act");
+    assert_eq!(stored.state, AdminActState::Confirmed);
+    assert_eq!(stored.confirmed_by_person, confirmed.confirmed_by_person);
+    let head = store.chain_head(t).await.expect("head");
+    let declined = AdminActRecord {
+        state: AdminActState::Declined,
+        ..act
+    };
+    assert!(
+        rig.commit(
+            store,
+            event_types::ADMIN_ACT,
+            json!({ "act_id": act_id.to_string() }),
+            MetadataFold::AdminAct(Box::new(declined)),
+            None,
+        )
+        .await
+        .is_err(),
+        "a confirmed act is declined by no later envelope"
+    );
+    assert_eq!(store.chain_head(t).await.expect("head"), head);
+}
+
 pub async fn run_journal_store_suite<S, F, Fut>(new_store: F)
 where
     S: JournalStore,
@@ -10875,6 +11020,10 @@ where
     Box::pin(a_console_link_waits_on_its_persons_acceptance(
         &new_store().await,
     ))
+    .await;
+    Box::pin(
+        an_admin_act_moves_once_and_its_confirmation_lets_the_pending_key_in(&new_store().await),
+    )
     .await;
     Box::pin(no_version_is_a_release_member_until_releases_exist(
         &new_store().await,

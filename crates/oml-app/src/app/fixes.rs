@@ -371,7 +371,7 @@ fn instruction(m: &MemoryRecord) -> bool {
 
 /// The reserved server key's id in `tenant_id`: one per tenant, derived
 /// from the tenant's id so every replica finds the same one.
-fn server_key_id(tenant_id: Uuid) -> Uuid {
+pub(super) fn server_key_id(tenant_id: Uuid) -> Uuid {
     use sha2::{Digest, Sha256};
     let digest = Sha256::new()
         .chain_update(b"oml:server-key\0")
@@ -1325,6 +1325,7 @@ where
             requests_per_minute: None,
             linked_user: None,
             link_pending: None,
+            pending_act: None,
         }
     }
 
@@ -1598,6 +1599,27 @@ pub struct FixStats {
     /// Allowlist entries that wait on their person's acceptance; each
     /// signs in to nothing until then (ADR-0045 d2's note of 2026-11-19).
     pub emails_pending: u64,
+    /// Admin acts that wait on a second admin person, and the oldest's age
+    /// in seconds (ADR-0097 doctor `admin.act_pending_confirmation`).
+    pub acts_pending: u64,
+    pub act_oldest_pending_seconds: u64,
+    /// Acts taken at once under `sole_admin` (`admin.act_sole_admin`).
+    pub acts_sole_admin: u64,
+    /// Whether the tenant has never had two live admin persons.
+    pub sole_admin: bool,
+    /// Acts journalled with no reason (`admin.act_without_reason`).
+    pub acts_without_reason: u64,
+    /// Pending acts that expired as declined in the last seven days
+    /// (`admin.act_expired`).
+    pub acts_expired: u64,
+    /// Offensive narrowing in the last 24 hours: revoking a person's key,
+    /// denying a reviewer person's key (`admin.offensive_narrowing`,
+    /// critical; ADR-0097 d24).
+    pub acts_offensive: u64,
+    /// The most narrowing acts one actor person took in the last 24 hours
+    /// (`admin.narrowing_burst`, flagged past 20, a placeholder; ADR-0097
+    /// d24).
+    pub narrowing_burst: u64,
 }
 
 impl<J, S, C, I, Sc> App<J, S, C, I, Sc>
@@ -1626,6 +1648,44 @@ where
             .filter(|k| !k.expired_at(&now))
             .count() as u64;
         stats.emails_pending = self.journal.web_pending_emails(tenant_id).await?.len() as u64;
+        // The admin acts (ADR-0097, its doctor lines): read whole, one
+        // indexed read of the tenant's acts.
+        stats.sole_admin = self.journal.admin_standing(tenant_id).await?.sole_admin;
+        let mut burst: std::collections::BTreeMap<Option<String>, u64> =
+            std::collections::BTreeMap::new();
+        for act in self.journal.admin_acts(tenant_id, None).await? {
+            let age = u64::try_from((now.unix_micros() - act.at.unix_micros()).max(0) / 1_000_000)
+                .unwrap_or(0);
+            match act.state_at(&now) {
+                oml_domain::admin_act::AdminActState::PendingConfirmation => {
+                    stats.acts_pending += 1;
+                    stats.act_oldest_pending_seconds = stats.act_oldest_pending_seconds.max(age);
+                }
+                oml_domain::admin_act::AdminActState::Expired => {
+                    let since = age.saturating_sub(
+                        u64::try_from(oml_domain::admin_act::PENDING_LIFE_SECS).unwrap_or(0),
+                    );
+                    if since < 7 * 86_400 {
+                        stats.acts_expired += 1;
+                    }
+                }
+                _ => {}
+            }
+            if age < 86_400 && act.class() == oml_domain::admin_act::AdminActClass::Narrowing {
+                if act.target.get("offensive") == Some(&serde_json::Value::Bool(true)) {
+                    stats.acts_offensive += 1;
+                }
+                let by = act.actor_person.as_ref().map(|p| p.as_str().to_owned());
+                *burst.entry(by).or_insert(0_u64) += 1;
+            }
+            if act.sole_admin {
+                stats.acts_sole_admin += 1;
+            }
+            if act.reason.is_none() {
+                stats.acts_without_reason += 1;
+            }
+        }
+        stats.narrowing_burst = burst.into_values().max().unwrap_or(0);
         if all.is_empty() {
             return Ok(stats);
         }

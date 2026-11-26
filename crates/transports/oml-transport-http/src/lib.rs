@@ -18,6 +18,7 @@
 
 #![forbid(unsafe_code)]
 
+mod admin_acts;
 mod console;
 pub mod error;
 mod exports;
@@ -129,6 +130,8 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/keys/{key}/denials"),
     ("POST", "/v2/keys/{key}/limits"),
     ("POST", "/v2/keys/{key}/rotate"),
+    ("POST", "/v2/keys/{key}/revoke"),
+    ("POST", "/v2/keys/self/link"),
     ("POST", "/v2/keys/{key}/link"),
     ("POST", "/v2/keys/{key}/unlink"),
     ("POST", "/v2/keys/{key}/accept_link"),
@@ -177,6 +180,9 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/admin/investigations/{investigation_id}/close"),
     ("POST", "/v2/admin/fixes"),
     ("GET", "/v2/admin/fixes"),
+    ("GET", "/v2/admin/acts"),
+    ("POST", "/v2/admin/acts/{act}/confirm"),
+    ("POST", "/v2/admin/acts/{act}/decline"),
     ("GET", "/v2/review/fixes"),
     ("POST", "/v2/review/fixes/{fix_id}/confirm"),
     ("POST", "/v2/review/fixes/{fix_id}/revert"),
@@ -402,6 +408,8 @@ where
             ("POST", "/v2/keys/{key}/denials") => post(Self::deny_key),
             ("POST", "/v2/keys/{key}/limits") => post(Self::set_key_limits),
             ("POST", "/v2/keys/{key}/rotate") => post(Self::rotate_key),
+            ("POST", "/v2/keys/{key}/revoke") => post(Self::revoke_key_route),
+            ("POST", "/v2/keys/self/link") => post(Self::link_self_route),
             ("POST", "/v2/keys/{key}/link") => post(Self::link_key),
             ("POST", "/v2/keys/{key}/unlink") => post(Self::unlink_key),
             ("POST", "/v2/keys/{key}/accept_link") => post(Self::accept_key_link),
@@ -455,6 +463,9 @@ where
             }
             ("POST", "/v2/admin/fixes") => post(Self::fix_route),
             ("GET", "/v2/admin/fixes") => get(Self::admin_fixes_route),
+            ("GET", "/v2/admin/acts") => get(Self::admin_acts_route),
+            ("POST", "/v2/admin/acts/{act}/confirm") => post(Self::admin_act_confirm_route),
+            ("POST", "/v2/admin/acts/{act}/decline") => post(Self::admin_act_decline_route),
             ("GET", "/v2/review/fixes") => get(Self::review_fixes_route),
             ("POST", "/v2/review/fixes/{fix_id}/confirm") => post(Self::fix_confirm_route),
             ("POST", "/v2/review/fixes/{fix_id}/revert") => post(Self::fix_revert_route),
@@ -2156,14 +2167,16 @@ where
             console::Claimed::Act(claim) => claim,
         };
         let label = req.label.clone();
+        let reason = req.reason.clone();
         let st = st.clone();
         claim
             .run(async move {
-                let issued = retry_chain(|| st.app.issue_key(acting.bearer(), &issue))
-                    .await
-                    .map_err(|e| {
-                        console::ActFailure::first(map_app_error(e, ErrorContext::Write))
-                    })?;
+                let issued = retry_chain(|| {
+                    st.app
+                        .issue_key_with_reason(acting.bearer(), &issue, reason.as_deref())
+                })
+                .await
+                .map_err(|e| console::ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
                 let answer = key_issued_json(&issued, label.as_deref());
                 let kept = console::without_secrets(&answer);
                 Ok(console::Acted {
@@ -2322,13 +2335,17 @@ where
                 .transpose()?,
             requests_per_minute: req.requests_per_minute,
         };
-        let limits_json = |st: &Self, set: &KeyRecord| {
+        let reason = req.reason.clone();
+        // A raise that waits on a second admin person answers the key as it
+        // stands and the act (ADR-0097 d15).
+        let limits_json = |st: &Self, (set, act): &(KeyRecord, oml_app::types::AdminActRecord)| {
             json!({
                 "key_id": set.key_id,
                 "name": set.name.as_ref().map(Name::as_str),
                 "expiry": set.expiry.as_ref().map(|at| at.as_str()),
                 "expired": st.app.key_expired(set),
                 "requests_per_minute": set.requests_per_minute,
+                "admin_act": { "act_id": act.act_id, "state": act.state.as_str() },
             })
         };
         // A person's `<user>-admin` session claims the `Idempotency-Key`
@@ -2346,8 +2363,12 @@ where
             return claim
                 .run(async move {
                     let set = retry_chain(|| {
-                        st.app
-                            .set_key_limits(Bearer::Session(&caller), key.clone(), change.clone())
+                        st.app.set_key_limits_with_reason(
+                            Bearer::Session(&caller),
+                            key.clone(),
+                            change.clone(),
+                            reason.as_deref(),
+                        )
                     })
                     .await
                     .map_err(|e| {
@@ -2358,8 +2379,12 @@ where
                 .await;
         }
         let set = retry_chain(|| {
-            st.app
-                .set_key_limits(acting.bearer(), key.clone(), change.clone())
+            st.app.set_key_limits_with_reason(
+                acting.bearer(),
+                key.clone(),
+                change.clone(),
+                reason.as_deref(),
+            )
         })
         .await
         .map_err(|e| map_app_error(e, ErrorContext::Write))?;
@@ -3439,14 +3464,16 @@ where
             console::Claimed::Act(claim) => claim,
         };
         let ttl_seconds = req.ttl_seconds;
+        let reason = req.reason.clone();
         let st = st.clone();
         claim
             .run(async move {
                 let code = retry_chain(|| {
-                    st.app.mint_connect_code_with_ttl(
+                    st.app.mint_connect_code_with_reason(
                         Bearer::Session(&caller),
                         key.clone(),
                         ttl_seconds,
+                        reason.as_deref(),
                     )
                 })
                 .await
@@ -4348,6 +4375,11 @@ struct KeyIssueBody {
     /// `curator`, or omitted for a key with no profile (ADR-0030 d8).
     #[serde(default)]
     profile: Option<String>,
+    /// The admin's reason, scanned and journalled in the issuance's
+    /// `admin.act`; required when the issuance waits on a second admin
+    /// person (ADR-0097 d26).
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 /// The body of `POST /v2/keys/{key}/connect-codes`, closed; absent, the code
@@ -4357,6 +4389,10 @@ struct KeyIssueBody {
 struct ConnectCodeBody {
     #[serde(default)]
     ttl_seconds: Option<i64>,
+    /// The admin's reason; a mint that waits on a second admin person
+    /// requires it (ADR-0097 d6, d26).
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 /// The revoke body of `POST /v2/keys/{key}/connections/{connection_id}/revoke`,
@@ -4376,6 +4412,10 @@ struct KeyLimitsBody {
     expiry: Option<Option<String>>,
     #[serde(default, deserialize_with = "sent")]
     requests_per_minute: Option<Option<u32>>,
+    /// The admin's reason; a raise waits on a second admin person and
+    /// requires it (ADR-0097 d15, d26).
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 /// A member sent as `null` is `Some(None)`; one not sent is `None`.
@@ -4931,6 +4971,15 @@ fn key_issued_json(issued: &IssuedKey, label: Option<&str>) -> Value {
         "denials": [],
         "epoch": issued.access.permission_epoch(),
     });
+    // An admin's issuance is a widening admin act: `pending_confirmation`
+    // until a second admin person confirms it, `effective` where it took
+    // effect at once (ADR-0097 d5, d10, d23).
+    if let Some(act_id) = issued.act_id {
+        body["admin_act"] = json!({
+            "act_id": act_id,
+            "state": if issued.pending_act.is_some() { "pending_confirmation" } else { "effective" },
+        });
+    }
     match &issued.connect_code {
         // A connector key has no value; its code stands in the value's
         // place, shown once (ADR-0031 d7).

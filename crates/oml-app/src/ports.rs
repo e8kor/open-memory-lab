@@ -276,6 +276,15 @@ pub enum MetadataFold {
         key_id: Uuid,
         denial_id: Uuid,
     },
+    /// `admin.act` (ADR-0097 d2): the act's row, inserted by its first
+    /// envelope and moved by each later one with the same `act_id`. The
+    /// store refuses a first envelope whose act it already holds, and a
+    /// move from a state that does not admit it: `confirmed` and `declined`
+    /// only from `pending_confirmation`, `declined` from `effective` too
+    /// for a `sole_admin` act. A move to `confirmed` clears the
+    /// `pending_act` of the key the act issued, which authenticates from
+    /// this commit on (d23).
+    AdminAct(Box<crate::types::AdminActRecord>),
     /// `key.revoked`: the key resolves by its hash no more; its row, grants
     /// and denials stay as history. The store refuses a revocation of a key
     /// it does not hold (roles-and-keys.md key lifecycle; ADR-0025 d2). It
@@ -1695,6 +1704,30 @@ pub trait JournalStore: Retriever + Send + Sync {
         own_key_ids: &[Uuid],
         reads_promoted: bool,
     ) -> impl Future<Output = Result<Option<u32>, StoreError>> + Send;
+
+    /// One admin act of the tenant (ADR-0097 d2).
+    fn admin_act(
+        &self,
+        tenant_id: Uuid,
+        act_id: Uuid,
+    ) -> impl Future<Output = Result<Option<crate::types::AdminActRecord>, StoreError>> + Send;
+
+    /// The tenant's admin acts in `state`, or every one when `None`, oldest
+    /// first; one indexed read by `(tenant, state)` (ADR-0097, the
+    /// bottleneck register's "Admin acts to confirm" row).
+    fn admin_acts(
+        &self,
+        tenant_id: Uuid,
+        state: Option<oml_domain::admin_act::AdminActState>,
+    ) -> impl Future<Output = Result<Vec<crate::types::AdminActRecord>, StoreError>> + Send;
+
+    /// Whether the tenant never had two live admin persons, and its admin
+    /// persons with the acceptance of each flag, in one read (ADR-0097 d10,
+    /// d11).
+    fn admin_standing(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<crate::types::AdminStanding, StoreError>> + Send;
 
     /// One admin fix of the tenant (ADR-0089 d15).
     fn fix(

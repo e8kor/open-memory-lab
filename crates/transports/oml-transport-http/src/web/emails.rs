@@ -31,6 +31,10 @@ struct AllowBody {
     email: Option<String>,
     user: Option<String>,
     admin: Option<bool>,
+    /// The admin's reason; an admin flag that waits on a second admin
+    /// person requires it (ADR-0097 d5, d26).
+    #[serde(default)]
+    reason: Option<String>,
     /// Accepted and changes nothing: the last admin entry is kept on every
     /// surface (ADR-0097 d25, d27 item 4).
     #[allow(
@@ -268,12 +272,17 @@ where
         // `keep_an_admin` is still read, and changes nothing (ADR-0097 d25,
         // d27 item 4).
         let keep = true;
+        let reason = req.reason.clone();
         let st = st.clone();
         claim
             .run(async move {
                 let (entry, _) = retry_chain(|| {
-                    st.app
-                        .allow_web_email_keeping(acting.bearer(), &request, keep)
+                    st.app.allow_web_email_with_reason(
+                        acting.bearer(),
+                        &request,
+                        keep,
+                        reason.as_deref(),
+                    )
                 })
                 .await
                 .map_err(|e| {

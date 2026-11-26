@@ -460,6 +460,14 @@ struct TenantState {
     investigations: BTreeMap<Uuid, crate::types::Investigation>,
     /// The admin fixes, by id (ADR-0089 d3; 0064).
     fixes: BTreeMap<Uuid, crate::types::FixRecord>,
+    /// The admin acts, by id (ADR-0097 d2; 0070).
+    admin_acts: BTreeMap<Uuid, crate::types::AdminActRecord>,
+    /// When each live admin entry's flag was accepted, by email digest
+    /// (ADR-0097 d11; 0070 `web_emails.admin_since`).
+    admin_since: BTreeMap<[u8; 32], EventTime>,
+    /// Whether the tenant ever had two live admin persons: it is then no
+    /// longer `sole_admin` (ADR-0097 d10; 0070 `tenants.sole_admin`).
+    had_two_admins: bool,
 }
 
 /// BTreeMap journal-and-metadata store with a real lock per tenant: chain
@@ -470,6 +478,9 @@ struct TenantState {
 #[derive(Debug, Default, Clone)]
 pub struct MemStore {
     tenants: Arc<Mutex<BTreeMap<Uuid, Arc<Mutex<TenantState>>>>>,
+    /// Whether every tenant reads `sole_admin` whatever its admin entries:
+    /// see [`MemStore::keeping_sole_admin`].
+    keep_sole_admin: Arc<AtomicBool>,
     /// The deployment's tenant namespace: each tenant's name, as `tenants`
     /// holds it (postgres-schema.md names and tenants). Locked after a
     /// tenant's own lock, never before it.
@@ -700,6 +711,16 @@ impl MemStore {
             bm25_as_any_word: true,
             ..self
         }
+    }
+
+    /// Every tenant of this store reads `sole_admin` (ADR-0097 d10)
+    /// whatever its admin entries, so an admin key's widening acts take
+    /// effect at once, marked: for suites about something else that add
+    /// several admin entries. The admin act suite runs without it.
+    #[must_use]
+    pub fn keeping_sole_admin(self) -> Self {
+        self.keep_sole_admin.store(true, Ordering::SeqCst);
+        self
     }
 
     /// Refuses the next commit of an `event_type` event with
@@ -1152,6 +1173,7 @@ fn fold_poc_event(
                     requests_per_minute: None,
                     linked_user: None,
                     link_pending: None,
+                    pending_act: None,
                 },
             );
         }
@@ -1194,6 +1216,33 @@ fn fold_poc_event(
         _ => {}
     }
     Ok(())
+}
+
+/// After a fold on the entry `hash`: its admin flag's acceptance, kept
+/// while the entry stays an unpending admin entry of the same person and
+/// started at `at` when it becomes one (`moved`, or no acceptance held), and
+/// the sticky mark of a tenant that had two live admin persons, as 0070's
+/// folds keep `web_emails.admin_since` and `tenants.sole_admin` (ADR-0097
+/// d10, d11).
+fn fold_admin_standing(state: &mut TenantState, hash: [u8; 32], at: &EventTime, moved: bool) {
+    let live = state
+        .web_entries
+        .get(&hash)
+        .is_some_and(|e| e.admin && !e.pending);
+    if !live {
+        state.admin_since.remove(&hash);
+    } else if moved || !state.admin_since.contains_key(&hash) {
+        state.admin_since.insert(hash, at.clone());
+    }
+    let persons: BTreeSet<&str> = state
+        .web_entries
+        .values()
+        .filter(|e| e.admin && !e.pending && e.disabled_at.is_none())
+        .map(|e| e.user.as_str())
+        .collect();
+    if persons.len() >= 2 {
+        state.had_two_admins = true;
+    }
 }
 
 /// The rows a grant or denial names must be held by its own tenant, as the
@@ -1608,6 +1657,55 @@ fn apply_fold(
                 None => return Err(StoreError::InvestigationNotOpen { investigation_id }),
             }
         }
+        MetadataFold::AdminAct(act) => {
+            use oml_domain::admin_act::AdminActState as St;
+            match state.admin_acts.get_mut(&act.act_id) {
+                None => {
+                    if !matches!(act.state, St::Effective | St::PendingConfirmation) {
+                        return Err(StoreError::Backend(format!(
+                            "admin act {} starts {}, not effective or pending",
+                            act.act_id,
+                            act.state.as_str()
+                        )));
+                    }
+                    state.admin_acts.insert(act.act_id, *act);
+                }
+                Some(held) => {
+                    let admitted = match act.state {
+                        St::Confirmed | St::Expired => held.state == St::PendingConfirmation,
+                        St::Declined => {
+                            held.state == St::PendingConfirmation
+                                || (held.state == St::Effective && held.sole_admin)
+                        }
+                        St::Contested => held.state == St::Effective,
+                        St::Settled => matches!(held.state, St::Effective | St::Contested),
+                        St::Effective | St::PendingConfirmation => false,
+                    };
+                    if !admitted {
+                        return Err(StoreError::Backend(format!(
+                            "admin act {} moves from {} to {}",
+                            act.act_id,
+                            held.state.as_str(),
+                            act.state.as_str()
+                        )));
+                    }
+                    held.state = act.state;
+                    held.confirmed_by_person = act.confirmed_by_person;
+                    held.settled_by_key_id = act.settled_by_key_id;
+                    held.settled_at = Some(at.clone());
+                    if act.state == St::Confirmed {
+                        let act_id = act.act_id;
+                        for key in state
+                            .keys
+                            .values_mut()
+                            .filter(|k| k.pending_act == Some(act_id))
+                        {
+                            key.pending_act = None;
+                        }
+                    }
+                }
+            }
+        }
         MetadataFold::AdminFixRecorded(fix) => {
             // The served version reads `act: admin_fix`, unconfirmed, used
             // by a person, never naming which admin (ADR-0089 d7).
@@ -1829,6 +1927,7 @@ fn apply_fold(
                 return Err(StoreError::EmailTaken);
             }
             state.web_entries.insert(hash, entry);
+            fold_admin_standing(state, hash, at, false);
         }
         MetadataFold::WebEmailChanged {
             entry,
@@ -1849,26 +1948,31 @@ fn apply_fold(
                     "web.email_changed names an entry the tenant does not hold".to_owned(),
                 ));
             };
+            let moved = held.user != entry.user || !held.admin || held.pending;
             held.user = entry.user;
             held.admin = entry.admin;
             held.pending = entry.pending;
             held.added_by = entry.added_by;
             state.web_sessions.retain(|_, s| s.email_hash != hash);
+            fold_admin_standing(state, hash.0, at, moved);
         }
         MetadataFold::WebEmailAccepted {
             email_hash,
             user,
             admin,
-        } => match state.web_entries.get_mut(&email_hash.0) {
-            Some(held) if held.pending && held.user == user && held.admin == admin => {
-                held.pending = false;
+        } => {
+            match state.web_entries.get_mut(&email_hash.0) {
+                Some(held) if held.pending && held.user == user && held.admin == admin => {
+                    held.pending = false;
+                }
+                _ => {
+                    return Err(StoreError::Backend(
+                        "web.email_accepted names no pending entry of this user".to_owned(),
+                    ));
+                }
             }
-            _ => {
-                return Err(StoreError::Backend(
-                    "web.email_accepted names no pending entry of this user".to_owned(),
-                ));
-            }
-        },
+            fold_admin_standing(state, email_hash.0, at, true);
+        }
         MetadataFold::WebEmailRemoved {
             email_hash,
             keep_an_admin,
@@ -1881,6 +1985,7 @@ fn apply_fold(
                     "web.email_removed names an entry the tenant does not hold".to_owned(),
                 ));
             }
+            state.admin_since.remove(&email_hash.0);
             state.web_sessions.retain(|_, s| s.email_hash != email_hash);
         }
         MetadataFold::QuotaSet {
@@ -1916,6 +2021,11 @@ fn apply_fold(
                 .insert(user_root, overrides.into_iter().collect());
         }
         MetadataFold::UserDisabled { user } => {
+            // The last live admin person is never disabled, on any surface
+            // (ADR-0097 d25).
+            if last_admin_person(&state.web_entries, &user) {
+                return Err(StoreError::LastAdminEntry);
+            }
             let mut ended = Vec::new();
             for entry in state.web_entries.values_mut().filter(|e| e.user == user) {
                 entry.disabled_at = Some(at.clone());
@@ -5073,6 +5183,67 @@ impl JournalStore for MemStore {
         Ok(all)
     }
 
+    async fn admin_act(
+        &self,
+        tenant_id: Uuid,
+        act_id: Uuid,
+    ) -> Result<Option<crate::types::AdminActRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(None);
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(state.admin_acts.get(&act_id).cloned())
+    }
+
+    async fn admin_acts(
+        &self,
+        tenant_id: Uuid,
+        filter: Option<oml_domain::admin_act::AdminActState>,
+    ) -> Result<Vec<crate::types::AdminActRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let mut all: Vec<crate::types::AdminActRecord> = state
+            .admin_acts
+            .values()
+            .filter(|a| filter.is_none_or(|f| a.state == f))
+            .cloned()
+            .collect();
+        all.sort_by(|a, b| (a.at.as_str(), a.act_id).cmp(&(b.at.as_str(), b.act_id)));
+        Ok(all)
+    }
+
+    async fn admin_standing(
+        &self,
+        tenant_id: Uuid,
+    ) -> Result<crate::types::AdminStanding, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(crate::types::AdminStanding {
+                sole_admin: true,
+                persons: Vec::new(),
+            });
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let mut persons: Vec<crate::types::AdminPerson> = state
+            .web_entries
+            .iter()
+            .filter(|(_, e)| e.admin && !e.pending)
+            .filter_map(|(hash, e)| {
+                Some(crate::types::AdminPerson {
+                    user: e.user.clone(),
+                    admin_since: state.admin_since.get(hash)?.clone(),
+                    disabled: e.disabled_at.is_some(),
+                })
+            })
+            .collect();
+        persons.sort_by(|a, b| a.user.as_str().cmp(b.user.as_str()));
+        Ok(crate::types::AdminStanding {
+            sole_admin: !state.had_two_admins || self.keep_sole_admin.load(Ordering::SeqCst),
+            persons,
+        })
+    }
+
     /// No release exists until R3 (ADR-0085), so no version is a member.
     async fn member_of_no_release(
         &self,
@@ -7201,8 +7372,7 @@ impl FixedClock {
     }
 
     /// Moves the clock `secs` seconds forward, on every handle: an expiry
-    /// reached without waiting for it. The clock reads within the fixed
-    /// day, so it stops short of its midnight.
+    /// reached without waiting for it.
     pub fn advance(&self, secs: u64) {
         self.ticks.fetch_add(secs * 1_000_000, Ordering::SeqCst);
     }
@@ -7211,15 +7381,13 @@ impl FixedClock {
 impl Clock for FixedClock {
     fn now(&self) -> EventTime {
         let n = self.ticks.fetch_add(1, Ordering::SeqCst);
-        let micros = n % 1_000_000;
-        let secs_total = n / 1_000_000;
-        let secs = secs_total % 60;
-        let mins = (secs_total / 60) % 60;
-        let hours = 12 + secs_total / 3_600;
-        EventTime::parse(&format!(
-            "2026-10-29T{hours:02}:{mins:02}:{secs:02}.{micros:06}Z"
-        ))
-        .expect("the fixed clock emits the fixed-width form within its day")
+        // Past its first day the clock reads on into the next ones, so a
+        // test can wait out a seven-day rule (ADR-0097 d11, d23).
+        let noon = EventTime::parse("2026-10-29T12:00:00.000000Z")
+            .expect("the fixed clock's start")
+            .unix_micros();
+        EventTime::from_unix_micros(noon + i64::try_from(n).expect("a test's ticks"))
+            .expect("the fixed clock reads a time the fixed-width form writes")
     }
 }
 
@@ -7550,10 +7718,18 @@ impl crate::ports::SparseEncoder for FakeSparseEncoder {
 /// Whether the entry `hash` names is an admin's and no other entry of the
 /// tenant is (ADR-0045 d10).
 fn last_admin(entries: &BTreeMap<[u8; 32], WebEntry>, hash: &Sha256Hash) -> bool {
-    entries.get(&hash.0).is_some_and(|e| e.admin)
-        && !entries
-            .iter()
-            .any(|(h, e)| e.admin && !e.pending && h != &hash.0)
+    // Live admin persons: an unpending, undisabled entry with the flag; a
+    // disabled entry counts for no one (ADR-0097 d25, the build notes).
+    let live = |e: &WebEntry| e.admin && !e.pending && e.disabled_at.is_none();
+    entries.get(&hash.0).is_some_and(live) && !entries.iter().any(|(h, e)| live(e) && h != &hash.0)
+}
+
+/// Whether disabling `user` leaves the tenant no live admin person
+/// (ADR-0097 d25).
+fn last_admin_person(entries: &BTreeMap<[u8; 32], WebEntry>, user: &Name) -> bool {
+    let live = |e: &WebEntry| e.admin && !e.pending && e.disabled_at.is_none();
+    entries.values().any(|e| live(e) && &e.user == user)
+        && !entries.values().any(|e| live(e) && &e.user != user)
 }
 
 /// An object store in memory (ADR-0004 d3, as amended 2026-11-17): what an

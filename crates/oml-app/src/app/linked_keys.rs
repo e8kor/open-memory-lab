@@ -97,6 +97,82 @@ where
         Ok(target)
     }
 
+    /// `POST /v2/keys/self/link {user}` (ADR-0097 d22, decided by the
+    /// operator, 2026-11-25): an admin key, presented by its own value,
+    /// links itself to `user`, pending until that person accepts it from
+    /// their own console session, as every link waits (d7). Possession and
+    /// the person's consent together give no reach the holder lacks. The
+    /// one self-link the server admits: a session key is
+    /// `session_admin_only`'s mirror, `bearer_only`, and every other refusal
+    /// is [`Self::link_key_to_person`]'s, `self_link` aside. Journalled as
+    /// `key.linked_person` with `actor: self`.
+    ///
+    /// # Errors
+    /// The refusals above, the caller's authentication, and the store's.
+    pub async fn link_self(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        user: &Name,
+    ) -> Result<KeyRecord, AppError> {
+        let caller = self.key_act_caller(bearer.into(), "link_self").await?;
+        require_role(&caller, Role::Admin, "link_self")?;
+        let caller = caller.key;
+        if caller.credential != Credential::Bearer {
+            return Err(AppError::KeyLinkRefused {
+                reason: "bearer_only",
+            });
+        }
+        let tenant_id = caller.tenant_id;
+        let mut target = self
+            .linkable_key(&caller, &Reference::Id(caller.key_id))
+            .await?;
+        let root = self
+            .journal
+            .resolve_name(tenant_id, NamedKind::Workspace, user)
+            .await?;
+        let root = match root {
+            Some(id) => self.journal.workspace(tenant_id, id).await?,
+            None => None,
+        }
+        .filter(|w| w.user_root)
+        .ok_or(AppError::KeyLinkRefused {
+            reason: "user_unknown",
+        })?;
+        if !self.person_signs_in(tenant_id, user).await? {
+            return Err(AppError::KeyLinkRefused {
+                reason: "user_disabled",
+            });
+        }
+        target.link_pending = Some(root.workspace_id);
+        let prev = self.head_event(tenant_id).await?;
+        let event = self.seal(
+            prev.as_ref(),
+            tenant_id,
+            event_types::KEY_LINKED_PERSON,
+            &caller.principal,
+            Some(caller.key_id),
+            json!({
+                "key_id": target.key_id.to_string(),
+                "user": user.as_str(),
+                "user_root_id": root.workspace_id.to_string(),
+                "linked_by_key_id": caller.key_id.to_string(),
+                "accepted": false,
+                "actor": "self",
+            }),
+        )?;
+        self.commit(
+            event,
+            MetadataFold::KeyLinked {
+                key_id: target.key_id,
+                user_root: Some(root.workspace_id),
+                accepted: false,
+            },
+            None,
+        )
+        .await?;
+        Ok(target)
+    }
+
     /// `POST /v2/keys/{key}/unlink` (ADR-0085 d16): the tenant key acts for
     /// no one from this commit on, journalled as `key.unlinked_person`; a
     /// link still pending is withdrawn the same way. Admin key role only; a

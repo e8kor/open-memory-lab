@@ -284,6 +284,11 @@ pub enum ErrorContext {
     Write,
 }
 
+/// The refusal of an act that would leave no live admin person, as
+/// `oml-app` words it (ADR-0097 d25).
+const LAST_ADMIN_MESSAGE: &str =
+    "this is the organisation's last admin address; add another admin first";
+
 /// The one place `oml-app`'s typed refusals become errors.md codes
 /// (errors.md "Implementation mapping": the attachment happens once, at the
 /// transport edge).
@@ -300,6 +305,15 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             format!("this key expired at {}", expiry.as_str()),
         )
         .with_details(json!({ "reason": "expired", "expiry": expiry.as_str() })),
+        AppError::KeyRevocation(refusal) => ApiError::validation(refusal.message())
+            .with_details(json!({ "field": "key", "reason": refusal.reason() })),
+        AppError::AdminAct(refusal) => ApiError::validation(refusal.message())
+            .with_details(json!({ "field": refusal.field(), "reason": refusal.reason() })),
+        AppError::KeyPendingConfirmation => ApiError::auth_invalid("pending_confirmation"),
+        AppError::AdminActReasonRequired => ApiError::validation(
+            "this admin act waits on a second admin person, and requires a reason",
+        )
+        .with_details(json!({ "field": "/reason", "reason": "required" })),
         AppError::KeyRotation(refusal) => ApiError::validation(refusal.message()).with_details(
             json!({ "field": refusal.field(), "reason": refusal.reason() }),
         ),
@@ -1267,14 +1281,19 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             format!("this session holds no {capacity} key on this organisation"),
         )
         .with_details(json!({ "capacity": capacity })),
+        // The last live admin person, refused on every surface with its
+        // reason (ADR-0097 d25).
+        AppError::WebField {
+            field: "admin",
+            message,
+        } if message == LAST_ADMIN_MESSAGE => ApiError::validation(message)
+            .with_details(json!({ "field": "admin", "reason": "last_admin" })),
         AppError::WebField { field, message } => {
             ApiError::validation(message).with_details(json!({ "field": field }))
         }
         // Converted to `WebField` by `From<StoreError>`; never built raw.
-        AppError::Store(StoreError::LastAdminEntry) => ApiError::validation(
-            "this is the organisation's last admin address; add another admin first",
-        )
-        .with_details(json!({ "field": "admin" })),
+        AppError::Store(StoreError::LastAdminEntry) => ApiError::validation(LAST_ADMIN_MESSAGE)
+            .with_details(json!({ "field": "admin", "reason": "last_admin" })),
         // A read's feedback member is refused by the field it names, and
         // the read is not run (ADR-0054 d6).
         AppError::Feedback { field, message } => {

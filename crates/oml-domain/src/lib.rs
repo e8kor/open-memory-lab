@@ -38,6 +38,7 @@
 #![forbid(unsafe_code)]
 
 pub mod access;
+pub mod admin_act;
 /// The former-name map of ADR-0091 d4, shared with the CLI as a leaf crate.
 pub use oml_former_names as former_names;
 pub mod anchor;

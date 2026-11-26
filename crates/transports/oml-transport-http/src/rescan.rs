@@ -58,6 +58,14 @@ fn report_json(r: &RescanReport, fixes: &oml_app::app::FixStats) -> Value {
         "fixes_reverted": fixes.reverted,
         "key_links_pending": fixes.links_pending,
         "web_emails_pending": fixes.emails_pending,
+        "admin_acts_pending": fixes.acts_pending,
+        "admin_act_oldest_pending_seconds": fixes.act_oldest_pending_seconds,
+        "admin_acts_sole_admin": fixes.acts_sole_admin,
+        "sole_admin": fixes.sole_admin,
+        "admin_acts_without_reason": fixes.acts_without_reason,
+        "admin_acts_expired": fixes.acts_expired,
+        "admin_acts_offensive": fixes.acts_offensive,
+        "admin_narrowing_burst": fixes.narrowing_burst,
     })
 }
 

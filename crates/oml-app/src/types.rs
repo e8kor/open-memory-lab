@@ -145,6 +145,11 @@ pub struct KeyRecord {
     /// acts for no one (ADR-0085 d16, the operator's decision of
     /// 2026-11-19). `None` for every other key.
     pub link_pending: Option<Uuid>,
+    /// The widening `admin.act` this key waits on, from its `key.issued`
+    /// until a second admin person confirms it: a pending key authenticates
+    /// nothing on any path, and takes no added grant, limit change or
+    /// connect code (ADR-0097 d5, d23). `None` for every other key.
+    pub pending_act: Option<Uuid>,
 }
 
 impl KeyRecord {
@@ -167,6 +172,163 @@ impl KeyRecord {
             KeyState::Expired
         } else {
             KeyState::Active
+        }
+    }
+}
+
+/// One admin act as its record holds it (ADR-0097 d2): one row per act,
+/// folded from the act's `admin.act` envelopes, the first journalled in the
+/// commit of its effect and each later one, with the same `act_id`, at a
+/// change of its state. `effect` is what a confirmation applies for an act
+/// still `pending_confirmation`, a pending key's grants among it, so no
+/// grant is in force, or read by any recall, review or count query, before
+/// a second admin person confirms (d23).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AdminActRecord {
+    pub act_id: Uuid,
+    pub act: oml_domain::admin_act::AdminActKind,
+    /// What the act names: a key, a workspace, a person, an entry.
+    pub target: Value,
+    pub reason: Option<String>,
+    /// The admin key that took the act; `None` for an act with a `cause`.
+    pub actor_key_id: Option<Uuid>,
+    /// The person the acting key counts as, recorded at the act; `None`
+    /// for a key that counts as no person, until ADR-0097 d21 leaves none.
+    pub actor_person: Option<Name>,
+    pub state: oml_domain::admin_act::AdminActState,
+    pub confirmed_by_person: Option<Name>,
+    /// The admin key that confirmed or declined the act.
+    pub settled_by_key_id: Option<Uuid>,
+    /// Taken at once in a tenant that never had two live admin persons
+    /// (ADR-0097 d10).
+    pub sole_admin: bool,
+    pub cause: Option<oml_domain::admin_act::AdminActCause>,
+    pub at: EventTime,
+    pub settled_at: Option<EventTime>,
+    pub effect: Value,
+}
+
+impl AdminActRecord {
+    /// The act's class, fixed by its act (ADR-0097 d2).
+    #[must_use]
+    pub fn class(&self) -> oml_domain::admin_act::AdminActClass {
+        self.act.class()
+    }
+
+    /// The state at `now`: a pending act past its life reads `expired`,
+    /// terminal, whatever the row holds (ADR-0097 d23).
+    #[must_use]
+    pub fn state_at(&self, now: &EventTime) -> oml_domain::admin_act::AdminActState {
+        use oml_domain::admin_act::{AdminActState, PENDING_LIFE_SECS};
+        if self.state == AdminActState::PendingConfirmation
+            && now.unix_micros() - self.at.unix_micros() >= PENDING_LIFE_SECS * 1_000_000
+        {
+            AdminActState::Expired
+        } else {
+            self.state
+        }
+    }
+
+    /// The end of a pending act's life (ADR-0097 d23).
+    #[must_use]
+    pub fn expires_at(&self) -> Option<EventTime> {
+        use oml_domain::admin_act::{AdminActState, PENDING_LIFE_SECS};
+        (self.state == AdminActState::PendingConfirmation)
+            .then(|| {
+                EventTime::from_unix_micros(self.at.unix_micros() + PENDING_LIFE_SECS * 1_000_000)
+            })
+            .flatten()
+    }
+}
+
+/// A live admin person of a tenant (ADR-0097 d10, d11): an accepted,
+/// unpending entry with the admin flag, and when that flag was accepted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdminPerson {
+    pub user: Name,
+    pub admin_since: EventTime,
+    pub disabled: bool,
+}
+
+/// What the confirm-first rule reads of a tenant in one call (ADR-0097
+/// d10, d11): whether it never had two live admin persons, and its admin
+/// persons.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdminStanding {
+    pub sole_admin: bool,
+    pub persons: Vec<AdminPerson>,
+}
+
+/// Why a confirmation or a decline of an admin act is refused, each
+/// `request.validation` with `details.field: act` and `details.reason`
+/// (ADR-0097 d5, d10, d11, d23).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdminActRefusal {
+    /// The act waits on no confirmation: it took effect, or was settled.
+    NotPending,
+    /// The act expired unconfirmed; a late confirm never revives it.
+    Expired,
+    /// The confirming key counts as the person who took the act.
+    OwnAct,
+    /// The confirming key counts as no admin person of the tenant.
+    NotAdminPerson,
+    /// The confirming admin person's flag was accepted less than seven
+    /// days before the act.
+    TooNew,
+    /// Only a `sole_admin` act or a pending one is declined.
+    NotDeclinable,
+    /// The key waits on its own issuance's confirmation, and takes no added
+    /// grant, limit change or connect code meanwhile (ADR-0097 d23).
+    KeyPending,
+}
+
+impl AdminActRefusal {
+    /// `details.reason`.
+    #[must_use]
+    pub fn reason(self) -> &'static str {
+        match self {
+            AdminActRefusal::NotPending => "not_pending",
+            AdminActRefusal::Expired => "expired",
+            AdminActRefusal::OwnAct => "own_act",
+            AdminActRefusal::NotAdminPerson => "not_admin_person",
+            AdminActRefusal::TooNew => "too_new",
+            AdminActRefusal::NotDeclinable => "not_declinable",
+            AdminActRefusal::KeyPending => "key_pending",
+        }
+    }
+
+    /// The sentence the refusal answers.
+    #[must_use]
+    pub fn message(self) -> &'static str {
+        match self {
+            AdminActRefusal::NotPending => "the admin act waits on no confirmation",
+            AdminActRefusal::Expired => {
+                "the admin act expired unconfirmed, and a late confirm never revives it"
+            }
+            AdminActRefusal::OwnAct => {
+                "a second admin person confirms an admin act, never the person who took it"
+            }
+            AdminActRefusal::NotAdminPerson => {
+                "the confirming key counts as no admin person of the tenant"
+            }
+            AdminActRefusal::TooNew => {
+                "an admin person counts only once their admin flag is seven days older than the act"
+            }
+            AdminActRefusal::NotDeclinable => {
+                "only a pending admin act, or one taken at once under sole_admin, is declined"
+            }
+            AdminActRefusal::KeyPending => {
+                "the key waits on a second admin person's confirmation of its issuance, and takes no grant, limit change or connect code until then"
+            }
+        }
+    }
+
+    /// `details.field`: `key` for a pending key, else `act`.
+    #[must_use]
+    pub fn field(self) -> &'static str {
+        match self {
+            AdminActRefusal::KeyPending => "key",
+            _ => "act",
         }
     }
 }
@@ -288,6 +450,52 @@ impl KeyRotationRefusal {
             }
         }
     }
+}
+
+/// Why a key is not revoked (ADR-0097 d14), each `request.validation`
+/// with `details.field: key` and `details.reason`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyRevocationRefusal {
+    /// A session key ends with its entry, never by revocation.
+    SessionKey,
+    /// The server's reserved key resolves on no route.
+    Reserved,
+    /// The key is revoked already.
+    Revoked,
+}
+
+impl KeyRevocationRefusal {
+    /// `details.reason`.
+    #[must_use]
+    pub fn reason(self) -> &'static str {
+        match self {
+            KeyRevocationRefusal::SessionKey => "session_key",
+            KeyRevocationRefusal::Reserved => "reserved",
+            KeyRevocationRefusal::Revoked => "revoked",
+        }
+    }
+
+    /// The sentence the refusal answers.
+    #[must_use]
+    pub fn message(self) -> &'static str {
+        match self {
+            KeyRevocationRefusal::SessionKey => {
+                "a session key ends with its entry's session, never by revocation"
+            }
+            KeyRevocationRefusal::Reserved => "the server's reserved key resolves on no route",
+            KeyRevocationRefusal::Revoked => "the key is revoked already",
+        }
+    }
+}
+
+/// A revoked key (ADR-0097 d14): the key as it stands, the instant of its
+/// `key.revoked`, and the admin act it rode, `None` for a person's own.
+#[derive(Debug, Clone)]
+pub struct RevokedKey {
+    pub key: KeyRecord,
+    pub revoked_at: EventTime,
+    pub act_id: Option<Uuid>,
+    pub journal_seq: u64,
 }
 
 /// A rotated key (ADR-0096 d13): the key as it stands, its new value, shown
@@ -1862,6 +2070,12 @@ pub struct BootstrapPerson {
 /// it and its grants as stored, ids and epochs included (ADR-0025 d2).
 #[derive(Debug, Clone)]
 pub struct IssuedKey {
+    /// The issuance's admin act, for an admin key's issuance (ADR-0097
+    /// d2); `None` for every other issuance.
+    pub act_id: Option<Uuid>,
+    /// The act the key waits on when it is pending a second admin person's
+    /// confirmation (ADR-0097 d5, d23); `None` once it authenticates.
+    pub pending_act: Option<Uuid>,
     pub key_id: Uuid,
     /// The bearer key's value; empty for a connector key, which has none
     /// and whose [`IssuedKey::connect_code`] stands in its place (ADR-0031
@@ -3906,6 +4120,21 @@ pub enum AppError {
     /// A key that takes no new value, or a grace too long (ADR-0096 d13).
     #[error("{}", .0.message())]
     KeyRotation(KeyRotationRefusal),
+    /// A key the revoke verb does not end (ADR-0097 d14).
+    #[error("{}", .0.message())]
+    KeyRevocation(KeyRevocationRefusal),
+    /// A confirmation or decline of an admin act refused (ADR-0097 d5,
+    /// d11, d23).
+    #[error("{}", .0.message())]
+    AdminAct(AdminActRefusal),
+    /// A key whose widening act waits on a second admin person
+    /// authenticates nothing (ADR-0097 d23): `auth.invalid` with
+    /// `details.reason: pending_confirmation`.
+    #[error("this key waits on a second admin person's confirmation")]
+    KeyPendingConfirmation,
+    /// An admin act that requires a reason was sent none (ADR-0097 d26).
+    #[error("this admin act requires a reason")]
+    AdminActReasonRequired,
     #[error(
         "{verb} is outside the {role:?} verb ceiling (roles-and-keys.md permission matrix, R1)"
     )]
@@ -4690,6 +4919,9 @@ pub enum WebEmailOutcome {
     Allowed,
     Changed,
     Unchanged,
+    /// An admin flag that waits on a second admin person: nothing changed
+    /// yet (ADR-0097 d5).
+    PendingConfirmation,
 }
 
 /// A pin of a provider subject on an entry, as the store answers it

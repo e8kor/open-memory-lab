@@ -5,6 +5,7 @@
 //! denials on each request, in the one refusal order of roles-and-keys.md
 //! (ADR-0025 d1).
 
+mod admin_acts;
 mod auth;
 pub mod busy;
 mod emails;
@@ -18,6 +19,7 @@ mod linked_keys;
 mod metering;
 mod pages;
 mod rescan;
+mod revocation;
 mod rotation;
 mod search;
 mod signup;
@@ -125,6 +127,7 @@ use crate::ports::{
     ScanFinding, ScanOutcome, Scanner, Signer, SparseEncoder, StoreError, SubjectRow, TailEvent,
 };
 use crate::telemetry::{HITS_STORED, Label, RecallEvent, Remembered, Telemetry, TelemetryItem};
+use crate::types::AdminActRefusal;
 use crate::types::{
     AdminTodoCounts, BULK_VERDICT_MAX, BriefProposal, BriefProposalPage, BulkItem,
     BulkVerdictRequest, FindingVerdict, FoundBy, HELD_PAGE_MAX, HeldFilter, HeldItem,
@@ -655,8 +658,10 @@ const HELD_GUARDRAILS_MAX: usize = 50;
 /// How an issuance runs once its issuer is known (ADR-0045 d6, d16).
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Issuance<'a> {
-    /// An admin or operator key's issuance of a bearer or connector key.
-    Plain,
+    /// An admin or operator key's issuance of a bearer or connector key,
+    /// with the admin's reason: an admin's is a widening admin act
+    /// (ADR-0097 d5).
+    Plain(Option<&'a str>),
     /// A session key for the allowlist user named: no value.
     Session(&'a Name),
     /// A person's `<user>-web` issuing a key in its own root, sealed on the
@@ -3093,6 +3098,7 @@ where
             requests_per_minute: req.requests_per_minute,
             linked_user: None,
             link_pending: None,
+            pending_act: None,
         };
         (record, value)
     }
@@ -3250,6 +3256,169 @@ where
         )?;
         self.commit(event, MetadataFold::KeyRevoked { key_id }, None)
             .await
+    }
+
+    /// An admin key's issuance as one widening admin act (ADR-0097 d5,
+    /// d10, d23): `admin.act`, `key.issued` naming the act, and, when the
+    /// act takes effect at once under `sole_admin`, every `grant.issued` and
+    /// the connector key's `connection.code_issued`, in one chain, so a
+    /// refusal of any link journals none. A pending act journals the key
+    /// with its `pending_act`, and keeps the grants and the code's digest in
+    /// the act's effect for the confirmation to apply; the code is shown
+    /// once, now, and its ten minutes run from the confirmation (d6).
+    #[allow(clippy::too_many_arguments)]
+    async fn issue_as_admin_act(
+        &self,
+        issuer: &KeyRecord,
+        req: &IssueKeyRequest,
+        mut record: KeyRecord,
+        grants: Vec<Grant>,
+        oauth: Option<&Issuer>,
+        prev: Option<&SignedEnvelope>,
+        reason: Option<&str>,
+        user: Option<&NamedRef>,
+    ) -> Result<IssuedKey, AppError> {
+        let tenant_id = issuer.tenant_id;
+        let key_id = record.key_id;
+        // The confirm screen flags a principal spelled as a person's name:
+        // a user root holds it (ADR-0097 d23).
+        let principal_names_person = match Name::parse_reference(&req.principal) {
+            Ok(name) => match self
+                .journal
+                .resolve_name(tenant_id, NamedKind::Workspace, &name)
+                .await?
+            {
+                Some(id) => self
+                    .journal
+                    .workspace(tenant_id, id)
+                    .await?
+                    .is_some_and(|w| w.user_root),
+                None => false,
+            },
+            Err(_) => false,
+        };
+        let target = json!({
+            "key_id": key_id.to_string(),
+            "name": req.name.as_str(),
+            "role": req.role.as_str(),
+            "principal": req.principal,
+            "used_by": req.used_by.map(UsedBy::as_str),
+            "user": user.map(|u| u.name.as_str()),
+            "principal_names_person": principal_names_person,
+        });
+        let code = oauth.map(|oauth| self.new_connect_code(oauth, key_id, CONNECT_CODE_TTL_SECS));
+        let effect = json!({
+            "key_id": key_id.to_string(),
+            "grants": grants.iter().map(admin_acts::grant_json).collect::<Vec<_>>(),
+            "code": code.as_ref().map(|(code, _)| json!({
+                "code_id": code.code_id.to_string(),
+                "code_hash": code.code_hash.to_prefixed(),
+                "ttl_secs": CONNECT_CODE_TTL_SECS,
+            })),
+        });
+        let act = self
+            .begin_admin_act(
+                issuer,
+                oml_domain::admin_act::AdminActKind::IssueKey,
+                target,
+                reason,
+                effect,
+                prev,
+            )
+            .await?;
+        let pending = act.pending();
+        if pending {
+            record.pending_act = Some(act.act_id());
+        }
+        let mut payload =
+            admin_acts::with_act_id(Self::key_issued_payload(&record, req.used_by), act.act_id());
+        if pending && let Some(obj) = payload.as_object_mut() {
+            obj.insert("pending_act_id".to_owned(), json!(act.act_id().to_string()));
+        }
+        let event = self.seal(
+            Some(&act.event),
+            tenant_id,
+            event_types::KEY_ISSUED,
+            &issuer.principal,
+            Some(issuer.key_id),
+            payload,
+        )?;
+        let charged = record
+            .user
+            .filter(|_| record.credential != Credential::Session);
+        let ceiling = self.ceiling_for(tenant_id, charged).await?;
+        let issued_seq = event.envelope.seq;
+        let mut last = event.clone();
+        let mut links = vec![act.link(), (event, MetadataFold::KeyIssued(record))];
+        let mut stored = Vec::new();
+        if !pending {
+            for grant in grants {
+                let event = self.grant_event(&last, issuer, key_id, &grant)?;
+                let event = self.seal(
+                    Some(&last),
+                    tenant_id,
+                    &event.envelope.event_type,
+                    &event.envelope.principal,
+                    event.envelope.api_key_id,
+                    admin_acts::with_act_id(event.envelope.payload, act.act_id()),
+                )?;
+                stored.push(GrantRecord {
+                    grant: grant.clone(),
+                    epoch: event.envelope.seq,
+                });
+                last = event.clone();
+                links.push((event, MetadataFold::GrantIssued { key_id, grant }));
+            }
+            if let Some((code, _)) = &code {
+                let event = self.seal(
+                    Some(&last),
+                    tenant_id,
+                    event_types::CONNECTION_CODE_ISSUED,
+                    &issuer.principal,
+                    Some(issuer.key_id),
+                    admin_acts::with_act_id(
+                        code_issued_payload(code, issuer.key_id, None),
+                        act.act_id(),
+                    ),
+                )?;
+                links.push((
+                    event,
+                    MetadataFold::ConnectCodeIssued {
+                        code: code.clone(),
+                        voids: None,
+                    },
+                ));
+            }
+        }
+        let mut reqs: Vec<CommitRequest> = links
+            .into_iter()
+            .map(|(event, fold)| commit_request(event, fold, None))
+            .collect();
+        reqs[1].ceiling = ceiling;
+        self.commit_requests(reqs).await?;
+        Ok(IssuedKey {
+            key_id,
+            value: String::new(),
+            role: req.role,
+            principal: req.principal.clone(),
+            used_by: req.used_by,
+            default_workspace: None,
+            name: req.name.clone(),
+            crew_id: None,
+            user: None,
+            guardrail_scope: oml_domain::guardrail::GuardrailScope::ISSUANCE_DEFAULT,
+            expiry: req.expiry.clone(),
+            requests_per_minute: req.requests_per_minute,
+            access: KeyAccess {
+                issued_seq,
+                grants: stored,
+                denials: Vec::new(),
+                lift_epochs: Vec::new(),
+            },
+            connect_code: code.map(|(_, shown)| shown),
+            pending_act: pending.then(|| act.act_id()),
+            act_id: Some(act.act_id()),
+        })
     }
 
     /// The user root an issuance names in `user`: `user` is admitted on a
@@ -3563,6 +3732,8 @@ where
             tenant_id,
             root_workspace_id,
             admin_key: IssuedKey {
+                act_id: None,
+                pending_act: None,
                 key_id,
                 value,
                 role: issue.role,
@@ -3716,7 +3887,34 @@ where
                 verb: "issue_key",
             });
         }
-        self.issue_key_by(&issuer, req, Issuance::Plain).await
+        self.issue_key_by(&issuer, req, Issuance::Plain(None)).await
+    }
+
+    /// [`App::issue_key`] with the admin's reason, scanned and journalled in
+    /// the issuance's `admin.act` (ADR-0097 d26). An admin's issuance is
+    /// widening (d5): in a tenant that never had two live admin persons it
+    /// takes effect at once, marked `sole_admin` (d10); otherwise the key's
+    /// value is shown once, the key authenticates nothing, and its grants
+    /// and connect code wait in the act, until a second admin person
+    /// confirms it (d23). A pending issuance requires the reason.
+    ///
+    /// # Errors
+    /// As [`App::issue_key`], and [`AppError::AdminActReasonRequired`].
+    pub async fn issue_key_with_reason(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        req: &IssueKeyRequest,
+        reason: Option<&str>,
+    ) -> Result<IssuedKey, AppError> {
+        let issuer = self.key_act_caller(bearer.into(), "issue_key").await?.key;
+        if issuer.role != Role::Admin && issuer.role != Role::Operator {
+            return Err(AppError::VerbCeiling {
+                role: issuer.role,
+                verb: "issue_key",
+            });
+        }
+        self.issue_key_by(&issuer, req, Issuance::Plain(reason))
+            .await
     }
 
     /// [`App::issue_key`] once the issuer is known and its role checked for
@@ -3768,7 +3966,7 @@ where
         // Steps 1–3: the two-key rule, the issuer ceiling, admissibility.
         let ceiling = match how {
             Issuance::PersonsOwn(_) => Role::Admin,
-            Issuance::Plain | Issuance::Session(_) => issuer.role,
+            Issuance::Plain(_) | Issuance::Session(_) => issuer.role,
         };
         // A curator is a reviewer key used by an agent, whose submitter grants
         // the reviewer's admissible set is read as if absent (ADR-0030 d8).
@@ -3940,8 +4138,34 @@ where
         let guardrail_scope = record.guardrail_scope;
         let prev = match how {
             Issuance::PersonsOwn(head) => head.clone(),
-            Issuance::Plain | Issuance::Session(_) => self.head_event(tenant_id).await?,
+            Issuance::Plain(_) | Issuance::Session(_) => self.head_event(tenant_id).await?,
         };
+        // A key that could read, write, approve or ratify, by an admin key:
+        // a widening act (ADR-0097 d5).
+        if let Issuance::Plain(reason) = how
+            && issuer.role == Role::Admin
+        {
+            let issued = self
+                .issue_as_admin_act(
+                    &issuer,
+                    req,
+                    record,
+                    grants,
+                    oauth,
+                    prev.as_ref(),
+                    reason,
+                    user_ref.as_ref(),
+                )
+                .await?;
+            return Ok(IssuedKey {
+                value,
+                default_workspace,
+                crew_id,
+                user: user_ref,
+                guardrail_scope,
+                ..issued
+            });
+        }
         let event = self.seal(
             prev.as_ref(),
             tenant_id,
@@ -3989,6 +4213,8 @@ where
             reqs[0].ceiling = ceiling;
             self.commit_requests(reqs).await?;
             return Ok(IssuedKey {
+                act_id: None,
+                pending_act: None,
                 key_id,
                 value,
                 role: req.role,
@@ -4030,6 +4256,8 @@ where
             }
         }
         Ok(IssuedKey {
+            act_id: None,
+            pending_act: None,
             key_id,
             value,
             role: req.role,
@@ -4122,10 +4350,30 @@ where
         });
         with_reason(self, tenant_id, &mut payload, reason)?;
         let prev = self.head_at(tenant_id, head).await?;
+        // An admin's denial is a narrowing admin act (ADR-0097 d3); a
+        // person's own cut-off of a key naming them is not.
+        let act = self
+            .admin_act_of(
+                &admin,
+                oml_domain::admin_act::AdminActKind::DenyKey,
+                json!({
+                    "key_id": key_id.to_string(),
+                    "workspace_node_id": node.to_string(),
+                    // Denying a reviewer person's key is offensive
+                    // narrowing, loud at once (ADR-0097 d24).
+                    "offensive": target.role == Role::Reviewer
+                        && target.used_by == UsedBy::Person,
+                }),
+                reason,
+                prev.as_ref(),
+            )
+            .await?;
+        let prev = act.as_ref().map(|a| a.event.clone()).or(prev);
         let epoch = prev.as_ref().map_or(1, |p| p.envelope.seq + 1);
         if let Some(obj) = payload.as_object_mut() {
             obj.insert("epoch".to_owned(), json!(epoch));
         }
+        let payload = admin_acts::named(payload, act.as_ref());
         let event = self.seal(
             prev.as_ref(),
             tenant_id,
@@ -4135,14 +4383,16 @@ where
             payload,
         )?;
         let receipt = self
-            .commit(
-                event,
-                MetadataFold::KeyDenied {
-                    key_id,
-                    denial: denial.clone(),
-                    created_by: admin.key_id,
-                },
-                None,
+            .commit_with_act(
+                act,
+                vec![(
+                    event,
+                    MetadataFold::KeyDenied {
+                        key_id,
+                        denial: denial.clone(),
+                        created_by: admin.key_id,
+                    },
+                )],
             )
             .await?;
         Ok(DenialRecord {
@@ -4341,15 +4591,33 @@ where
         let ceiling = self.ceiling_for(key.tenant_id, namespace).await?;
         let mut payload = Self::workspace_create_payload(&workspace);
         with_reason(self, key.tenant_id, &mut payload, reason)?;
+        // An admin's create is a neutral admin act (ADR-0097 d9).
+        let act = if key.role == Role::Admin {
+            self.admin_act_of(
+                key,
+                oml_domain::admin_act::AdminActKind::CreateWorkspace,
+                json!({
+                    "workspace_id": workspace.workspace_id.to_string(),
+                    "name": workspace.name.as_str(),
+                    "parent_id": workspace.parent_id.map(|p| p.to_string()),
+                }),
+                reason,
+                prev.as_ref(),
+            )
+            .await?
+        } else {
+            None
+        };
+        let payload = admin_acts::named(payload, act.as_ref());
         let event = self.seal(
-            prev.as_ref(),
+            act.as_ref().map(|a| &a.event).or(prev.as_ref()),
             key.tenant_id,
             event_types::WORKSPACE_CREATE,
             &key.principal,
             Some(key.key_id),
             payload,
         )?;
-        let mut links = Vec::with_capacity(2);
+        let mut links = Vec::with_capacity(3);
         let mark = in_progress && in_progress_root_in(&ancestors).is_none();
         let mode_event = if mark {
             Some(self.seal(
@@ -4378,11 +4646,14 @@ where
                 },
             ));
         }
-        let mut requests: Vec<CommitRequest> = links
-            .into_iter()
+        let mut requests: Vec<CommitRequest> = act
+            .iter()
+            .map(admin_acts::BegunAct::link)
+            .chain(links)
             .map(|(event, fold)| commit_request(event, fold, None))
             .collect();
-        requests[0].ceiling = ceiling;
+        let created = usize::from(act.is_some());
+        requests[created].ceiling = ceiling;
         self.commit_requests(requests).await?;
         let mut workspace = workspace;
         workspace.in_progress = mark;
@@ -5335,6 +5606,7 @@ where
         let unlinked = KeyRecord {
             linked_user: None,
             link_pending: None,
+            pending_act: None,
             ..key.clone()
         };
         self.person_root_of(&unlinked).await
@@ -12313,6 +12585,39 @@ where
         ttl_secs: Option<i64>,
         head: Head<'_>,
     ) -> Result<ConnectCodeIssued, AppError> {
+        self.mint_connect_code_by_with_reason(admin, key, ttl_secs, head, None)
+            .await
+    }
+
+    /// [`App::mint_connect_code_with_ttl`] with the admin's reason, which a
+    /// mint that waits on a second admin person requires (ADR-0097 d26).
+    ///
+    /// # Errors
+    /// As [`App::mint_connect_code_with_ttl`], and a pending mint sent no
+    /// reason.
+    pub async fn mint_connect_code_with_reason(
+        &self,
+        api_key: impl Into<Bearer<'_>>,
+        key: Reference,
+        ttl_secs: Option<i64>,
+        reason: Option<&str>,
+    ) -> Result<ConnectCodeIssued, AppError> {
+        let admin = self
+            .key_act_caller(api_key.into(), "mint_connect_code")
+            .await?;
+        require_role(&admin, Role::Admin, "mint_connect_code")?;
+        self.mint_connect_code_by_with_reason(&admin.key, key, ttl_secs, Head::AtSeal, reason)
+            .await
+    }
+
+    async fn mint_connect_code_by_with_reason(
+        &self,
+        admin: &KeyRecord,
+        key: Reference,
+        ttl_secs: Option<i64>,
+        head: Head<'_>,
+        reason: Option<&str>,
+    ) -> Result<ConnectCodeIssued, AppError> {
         let ttl_secs = match ttl_secs {
             None => CONNECT_CODE_TTL_SECS,
             Some(seconds) if (1..=CONNECT_CODE_TTL_MAX_SECS).contains(&seconds) => seconds,
@@ -12357,18 +12662,62 @@ where
             .into_iter()
             .find(|c| c.redeemed_at.is_none() && c.voided_seq.is_none())
             .map(|c| c.code_id);
+        // A pending key takes no connect code (ADR-0097 d23).
+        if target.pending_act.is_some() {
+            return Err(AppError::AdminAct(AdminActRefusal::KeyPending));
+        }
         let (code, shown) = self.new_connect_code(oauth, key_id, ttl_secs);
         let prev = self.head_at(tenant_id, head).await?;
+        // An admin's mint is widening (ADR-0097 d5, d6): pending, the code
+        // is shown once and voids, opens and lives nothing until a second
+        // admin person confirms it, its life running from then.
+        let act = if admin.role == Role::Admin {
+            let act = self
+                .begin_admin_act(
+                    &admin,
+                    oml_domain::admin_act::AdminActKind::MintConnectCode,
+                    json!({
+                        "key_id": key_id.to_string(),
+                        "name": target.name.as_ref().map(Name::as_str),
+                        "role": target.role.as_str(),
+                        "principal": target.principal,
+                    }),
+                    reason,
+                    json!({
+                        "key_id": key_id.to_string(),
+                        "code": {
+                            "code_id": code.code_id.to_string(),
+                            "code_hash": code.code_hash.to_prefixed(),
+                            "ttl_secs": ttl_secs,
+                        },
+                    }),
+                    prev.as_ref(),
+                )
+                .await?;
+            if act.pending() {
+                self.commit_with_act(Some(act), Vec::new()).await?;
+                return Ok(shown);
+            }
+            Some(act)
+        } else {
+            None
+        };
         let event = self.seal(
-            prev.as_ref(),
+            act.as_ref().map(|a| &a.event).or(prev.as_ref()),
             tenant_id,
             event_types::CONNECTION_CODE_ISSUED,
             &admin.principal,
             Some(admin.key_id),
-            code_issued_payload(&code, admin.key_id, voids),
+            admin_acts::named(
+                code_issued_payload(&code, admin.key_id, voids),
+                act.as_ref(),
+            ),
         )?;
-        self.commit(event, MetadataFold::ConnectCodeIssued { code, voids }, None)
-            .await?;
+        self.commit_with_act(
+            act,
+            vec![(event, MetadataFold::ConnectCodeIssued { code, voids })],
+        )
+        .await?;
         Ok(shown)
     }
 

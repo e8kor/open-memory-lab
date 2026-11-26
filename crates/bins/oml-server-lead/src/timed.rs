@@ -922,6 +922,30 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         timed("fixes", self.inner.fixes(tenant_id, unconfirmed_only))
     }
 
+    fn admin_act(
+        &self,
+        tenant_id: Uuid,
+        act_id: Uuid,
+    ) -> impl Future<Output = Result<Option<oml_app::types::AdminActRecord>, StoreError>> + Send
+    {
+        timed("admin_act", self.inner.admin_act(tenant_id, act_id))
+    }
+
+    fn admin_acts(
+        &self,
+        tenant_id: Uuid,
+        state: Option<oml_app::domain::admin_act::AdminActState>,
+    ) -> impl Future<Output = Result<Vec<oml_app::types::AdminActRecord>, StoreError>> + Send {
+        timed("admin_acts", self.inner.admin_acts(tenant_id, state))
+    }
+
+    fn admin_standing(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<oml_app::types::AdminStanding, StoreError>> + Send {
+        timed("admin_standing", self.inner.admin_standing(tenant_id))
+    }
+
     fn member_of_no_release(
         &self,
         tenant_id: Uuid,

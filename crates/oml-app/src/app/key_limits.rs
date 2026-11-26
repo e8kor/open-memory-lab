@@ -7,6 +7,7 @@
 use serde_json::json;
 use uuid::Uuid;
 
+use oml_domain::admin_act::AdminActKind;
 use oml_domain::name::{NamedKind, Reference};
 use oml_domain::{EventTime, Role, event_types};
 
@@ -35,6 +36,12 @@ where
     /// [`AppError::KeyExpired`], which only a caller that presented the
     /// key's own credential is answered (ADR-0079 d2).
     pub fn require_unexpired(&self, key: &KeyRecord) -> Result<(), AppError> {
+        // A key whose widening act waits on a second admin person
+        // authenticates nothing on any path, read from the row the lookup
+        // already read (ADR-0097 d23).
+        if key.pending_act.is_some() {
+            return Err(AppError::KeyPendingConfirmation);
+        }
         match &key.expiry {
             Some(expiry) if key.expired_at(&self.clock.now()) => Err(AppError::KeyExpired {
                 expiry: expiry.clone(),
@@ -126,6 +133,27 @@ where
         key: Reference,
         change: KeyLimitsChange,
     ) -> Result<KeyRecord, AppError> {
+        Ok(self
+            .set_key_limits_with_reason(bearer, key, change, None)
+            .await?
+            .0)
+    }
+
+    /// [`Self::set_key_limits`] as an admin act with its reason (ADR-0097
+    /// d15): a raise, a cleared limit or a later expiry is widening, which
+    /// waits on a second admin person outside `sole_admin` and then changes
+    /// nothing yet; a lower rate or an earlier expiry is narrowing, at once.
+    /// The answer is the key as it stands and the act.
+    ///
+    /// # Errors
+    /// As [`Self::set_key_limits`], and a widening change sent no reason.
+    pub async fn set_key_limits_with_reason(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        key: Reference,
+        change: KeyLimitsChange,
+        reason: Option<&str>,
+    ) -> Result<(KeyRecord, crate::types::AdminActRecord), AppError> {
         let admin = self.key_act_caller(bearer.into(), "set_key_limits").await?;
         require_role(&admin, Role::Admin, "set_key_limits")?;
         let admin = admin.key;
@@ -153,32 +181,79 @@ where
         if target.role == Role::Admin {
             return Err(AppError::KeyLimits(KeyLimitsRefusal::AdminKey));
         }
+        let before = target.clone();
         if let Some(expiry) = change.expiry {
             target.expiry = expiry;
         }
         if let Some(rate) = change.requests_per_minute {
             target.requests_per_minute = rate;
         }
+        // The strictest part decides: any raise makes the change widening
+        // (ADR-0097 d15).
+        let later = |a: &Option<EventTime>, b: &Option<EventTime>| match (a, b) {
+            (Some(_), None) => true,
+            (Some(a), Some(b)) => b.unix_micros() > a.unix_micros(),
+            _ => false,
+        };
+        let raised = |a: Option<u32>, b: Option<u32>| match (a, b) {
+            (Some(_), None) => true,
+            (Some(a), Some(b)) => b > a,
+            _ => false,
+        };
+        let raise = later(&before.expiry, &target.expiry)
+            || raised(before.requests_per_minute, target.requests_per_minute);
+        let kind = if raise {
+            AdminActKind::RaiseLimits
+        } else {
+            AdminActKind::LowerLimits
+        };
         let prev = self.head_event(tenant_id).await?;
+        let act = self
+            .begin_admin_act(
+                &admin,
+                kind,
+                json!({
+                    "key_id": key_id.to_string(),
+                    "name": target.name.as_ref().map(|n| n.as_str()),
+                    "expiry": target.expiry.as_ref().map(EventTime::as_str),
+                    "requests_per_minute": target.requests_per_minute,
+                }),
+                reason,
+                json!({
+                    "key_id": key_id.to_string(),
+                    "expiry": target.expiry.as_ref().map(EventTime::as_str),
+                    "requests_per_minute": target.requests_per_minute,
+                }),
+                prev.as_ref(),
+            )
+            .await?;
+        if act.pending() {
+            let record = act.record.clone();
+            self.commit_with_act(Some(act), Vec::new()).await?;
+            return Ok((before, record));
+        }
         let event = self.seal(
-            prev.as_ref(),
+            Some(&act.event),
             tenant_id,
             event_types::KEY_LIMITS_SET,
             &admin.principal,
             Some(admin.key_id),
-            limits_set_payload(&target, admin.key_id),
+            super::admin_acts::with_act_id(limits_set_payload(&target, admin.key_id), act.act_id()),
         )?;
-        self.commit(
-            event,
-            MetadataFold::KeyLimitsSet {
-                key_id,
-                expiry: target.expiry.clone(),
-                requests_per_minute: target.requests_per_minute,
-            },
-            None,
+        let record = act.record.clone();
+        self.commit_with_act(
+            Some(act),
+            vec![(
+                event,
+                MetadataFold::KeyLimitsSet {
+                    key_id,
+                    expiry: target.expiry.clone(),
+                    requests_per_minute: target.requests_per_minute,
+                },
+            )],
         )
         .await?;
-        Ok(target)
+        Ok((target, record))
     }
 }
 

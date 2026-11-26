@@ -468,40 +468,6 @@ paths:
         '415': { $ref: 'openapi.yaml#/components/responses/UnsupportedMedia' }
         default: { $ref: 'openapi.yaml#/components/responses/Error' }
 
-  /v2/keys/{key}/revoke:
-    post:
-      tags: [keys]
-      operationId: revokeKey
-      summary: Journalled revocation, effective at the key's next request served by the lead, and after replication lag on a follower.
-      description: 'Requires: admin key role.'
-      parameters:
-        - { $ref: 'openapi.yaml#/components/parameters/KeyId' }
-        - { $ref: 'openapi.yaml#/components/parameters/IdempotencyKey' }
-      requestBody:
-        required: false
-        content:
-          application/json:
-            example:
-              reason: agent decommissioned
-            schema:
-              type: object
-              properties:
-                reason: { type: string }
-      responses:
-        '200':
-          description: Revoked.
-          headers:
-            X-Request-Id: { $ref: 'openapi.yaml#/components/headers/XRequestId' }
-          content:
-            application/json:
-              example:
-                journal_seq: 4360
-                event_id: evt_01JB2YW2DX4FZ6H8KM1P3R5T7
-                dry_run: false
-              schema: { $ref: '#/components/schemas/ActResult' }
-        '415': { $ref: 'openapi.yaml#/components/responses/UnsupportedMedia' }
-        default: { $ref: 'openapi.yaml#/components/responses/Error' }
-
   /v2/keys/{key}/grants:
     post:
       tags: [keys]
