@@ -41,10 +41,13 @@ class of disagreement found:
   group and SubagentStart one, each with no matcher, a timeout of 10 seconds
   and the status message "Loading OML guardrails", running `hook
   guardrails`, guarded as above; PreToolUse holds one group with the matcher
-  of d9's tools, a timeout of 5 seconds, onFailure "block" and the status
+  of d9's tools, a timeout of 5 seconds, no onFailure and the status
   message "Checking OML guardrails", running `hook pre-tool-use`, whose
-  command exits 0 in silence with no `oml` and with one older than the verb,
-  and exits non-zero when the verb fails, so a crash blocks the call;
+  command exits 0 in silence with no `oml`, with one older than the verb and
+  with OML_HOOK_DISABLE=1 (which runs no `oml` at all), and exits 1 when the
+  verb fails with any code, 2 included, so a crash or a stall lets the call
+  through with the verb's line on stderr and never blocks it (ADR-0037 d9,
+  amended 2026-11-26, #519);
 - plugins/oml/agents/ holds exactly one subagent, librarian.md, whose
   frontmatter is one plain-scalar `field: value` per line (no value starting
   with a YAML indicator, holding ': ' or ' #', ending in ':' or holding a
@@ -88,8 +91,9 @@ HOOKS = "hooks/hooks.json"
 # gives a plugin's SessionEnd hooks in all (ADR-0038 d7, d9).
 # Each event holds these groups, in order, each one command; a guarded
 # command exits 0 whatever `oml` does, and the checked one, the guardrail
-# check, exits 0 only when `oml` is missing or older than its verb, so a
-# failing check blocks the call (proposed ADR-0037 d6, d9).
+# check, exits 1, a non-blocking error, when its verb fails, so a failing
+# check lets the call through and says why (ADR-0037 d6, d9, amended
+# 2026-11-26, #519).
 GUARDRAIL_MATCHER = "^(Bash|PowerShell|Write|.*Edit|Read|Grep|Glob|WebFetch|mcp__.*)$"
 HOOK_EVENTS = {
     "SessionStart": [
@@ -432,13 +436,14 @@ def check_hook(
     if entry.get("statusMessage") != status:
         errors.append(f"{shown}: the {event} statusMessage is {entry.get('statusMessage')!r}, not {status!r}")
     command = entry.get("command", "")
+    if "onFailure" in entry:
+        errors.append(
+            f"{shown}: the {event} {' '.join(args)} hook sets onFailure {entry['onFailure']!r}; "
+            "no oml hook takes it, since a hook that fails or stalls must never block a call (ADR-0037 d9, #519)"
+        )
     if kind == "checked":
-        if entry.get("onFailure") != "block":
-            errors.append(f"{shown}: the {event} onFailure is {entry.get('onFailure')!r}, not 'block'")
         check_checked_command(shown, event, command, args, errors)
         return
-    if "onFailure" in entry:
-        errors.append(f"{shown}: the {event} {' '.join(args)} hook sets onFailure, which only the guardrail check takes")
 
     with tempfile.TemporaryDirectory() as tmp:
         no_oml = Path(tmp) / "no-oml"
@@ -467,10 +472,12 @@ def check_hook(
 
 
 def check_checked_command(shown: Path, event: str, command: str, args: list[str], errors: list[str]) -> None:
-    """The guardrail check's command: with no `oml`, or one older than the
-    verb (exit 2 on an unknown subcommand, so its `--help` probe fails), it
-    exits 0 in silence; with an `oml` whose verb fails it exits non-zero, so
-    the call is blocked, never allowed by a crash (proposed ADR-0037 d9)."""
+    """The guardrail check's command: with no `oml`, with one older than the
+    verb (exit 2 on an unknown subcommand, so its `--help` probe fails), and
+    with OML_HOOK_DISABLE=1, it exits 0 in silence, the last without running
+    `oml`; with an `oml` whose verb fails, whatever its code, it exits 1, a
+    non-blocking error, so a crash lets the call through and never blocks it
+    (ADR-0037 d9, amended 2026-11-26, #519)."""
     with tempfile.TemporaryDirectory() as tmp:
         no_oml = Path(tmp) / "no-oml"
         no_oml.mkdir()
@@ -486,28 +493,41 @@ def check_checked_command(shown: Path, event: str, command: str, args: list[str]
         if (run.returncode, run.stdout, run.stderr) != (0, "", ""):
             errors.append(f"{shown}: with an oml older than the verb the {event} command exits {run.returncode}, not 0 in silence: {command}")
 
-        failing = Path(tmp) / "failing"
-        failing.mkdir()
         argv = Path(tmp) / "argv"
-        (failing / "oml").write_text(
-            "#!/bin/sh\n"
-            "for a in \"$@\"; do [ \"$a\" = --help ] && exit 0; done\n"
-            f"printf '%s\\n' \"$@\" > '{argv}'\nexit 1\n"
-        )
-        (failing / "oml").chmod(0o755)
-        run = sh(command, failing)
-        ran = argv.read_text().splitlines() if argv.exists() else None
-        if ran != args:
-            errors.append(f"{shown}: the {event} command runs oml with {ran}, not `{' '.join(args)}`: {command}")
-        if run.returncode == 0:
-            errors.append(f"{shown}: an oml whose verb fails makes the {event} command exit 0, so a crash would allow the call: {command}")
+        for code in (1, 2):
+            failing = Path(tmp) / f"failing-{code}"
+            failing.mkdir()
+            (failing / "oml").write_text(
+                "#!/bin/sh\n"
+                "for a in \"$@\"; do [ \"$a\" = --help ] && exit 0; done\n"
+                f"printf '%s\\n' \"$@\" > '{argv}'\nexit {code}\n"
+            )
+            (failing / "oml").chmod(0o755)
+            run = sh(command, failing)
+            ran = argv.read_text().splitlines() if argv.exists() else None
+            if ran != args:
+                errors.append(f"{shown}: the {event} command runs oml with {ran}, not `{' '.join(args)}`: {command}")
+            if run.returncode != 1:
+                errors.append(
+                    f"{shown}: an oml whose verb exits {code} makes the {event} command exit {run.returncode}, "
+                    f"not 1, the non-blocking error that lets the call through: {command}"
+                )
+            argv.unlink(missing_ok=True)
+
+            run = sh(command, failing, {"OML_HOOK_DISABLE": "1"})
+            if (run.returncode, run.stdout, run.stderr) != (0, "", "") or argv.exists():
+                errors.append(
+                    f"{shown}: with OML_HOOK_DISABLE=1 the {event} command exits {run.returncode} "
+                    f"or runs oml, not 0 in silence without oml: {command}"
+                )
 
 
-def sh(command: str, path: Path) -> subprocess.CompletedProcess:
-    """`command` under /bin/sh with `path` as the whole PATH and no stdin."""
+def sh(command: str, path: Path, extra: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+    """`command` under /bin/sh with `path` as the whole PATH, `extra` as the
+    only other variables, and no stdin."""
     return subprocess.run(
         ["/bin/sh", "-c", command],
-        env={"PATH": str(path)},
+        env={"PATH": str(path), **(extra or {})},
         stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,

@@ -544,14 +544,54 @@ async fn an_edit_of_the_cache_directory_asks() {
     assert_eq!(doc["hookSpecificOutput"]["permissionDecision"], "ask");
 }
 
+/// A verb that cannot read its call fails open: a non-blocking exit (any
+/// code but 0 and 2), nothing on stdout, and one stderr line naming the
+/// cause and the bypass (ADR-0037 d9, amended 2026-11-26, #519).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_session_id_that_names_no_cache_file_blocks_the_call() {
+async fn a_check_that_cannot_read_its_call_lets_it_through_with_one_line_naming_the_bypass() {
     let dir = scratch("bad-session");
-    let stdin = json!({"session_id": "../etc", "tool_name": "Bash",
-                       "tool_input": {"command": "ls"}, "cwd": "/work"});
-    let out = hook("pre-tool-use", &dir, None, &stdin);
-    assert_eq!(out.status.code(), Some(2), "a blocking error");
-    assert!(String::from_utf8_lossy(&out.stderr).contains("session_id"));
+    for (stdin, cause) in [
+        (
+            json!({"session_id": "../etc", "tool_name": "Bash",
+                   "tool_input": {"command": "ls"}, "cwd": "/work"}),
+            "session_id",
+        ),
+        (json!(["not", "an", "object"]), "not a JSON object"),
+    ] {
+        let out = hook("pre-tool-use", &dir, None, &stdin);
+        assert_eq!(out.status.code(), Some(1), "a non-blocking error");
+        assert!(out.stdout.is_empty(), "no decision is printed");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(stderr.lines().count(), 1, "{stderr}");
+        assert!(
+            stderr.contains(cause)
+                && stderr.contains("not checked")
+                && stderr.contains("OML_HOOK_DISABLE=1"),
+            "{stderr}"
+        );
+    }
+}
+
+/// A server that cannot be reached at session start writes no cache, and
+/// every later call then goes through with the one-line warning: nothing is
+/// denied for want of a server (ADR-0037 d9, #519).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_server_unreachable_at_session_start_leaves_every_call_through_and_warned() {
+    let dir = scratch("unreachable-then-check");
+    let start_out = hook(
+        "guardrails",
+        &dir,
+        Some("http://127.0.0.1:9"),
+        &start("startup"),
+    );
+    assert!(start_out.status.success());
+    for call in [bash("git push"), tool("Read", json!({"file_path": "/work/a"}))] {
+        let out = hook("pre-tool-use", &dir, None, &call);
+        assert!(out.status.success());
+        let doc = stdout_json(&out);
+        assert!(doc.get("hookSpecificOutput").is_none(), "{doc}");
+        assert!(doc["systemMessage"].as_str().is_some(), "{doc}");
+    }
 }
 
 /// A held `never` rule served inside an in-progress root carries

@@ -657,6 +657,25 @@ mod home_tests {
         );
         assert_eq!(skills_home(&only(&[])), None);
     }
+
+    #[test]
+    fn doctor_warns_when_the_bypass_skips_the_check_and_names_a_value_it_does_not_take() {
+        let off = doctor_lines(&only(&[(BYPASS, "1")]));
+        assert_eq!(off.len(), 1, "{off:?}");
+        assert!(
+            off[0].starts_with("warn guardrail_check_off: OML_HOOK_DISABLE=1")
+                && off[0].contains("no tool call is checked"),
+            "{off:?}"
+        );
+        let odd = doctor_lines(&only(&[(BYPASS, "yes")]));
+        assert!(
+            odd.len() == 1 && odd[0].contains("\"yes\"") && odd[0].contains("takes 1"),
+            "{odd:?}"
+        );
+        assert!(doctor_lines(&only(&[])).is_empty());
+        assert!(doctor_lines(&only(&[(BYPASS, "")])).is_empty());
+        assert!(doctor_lines(&only(&[(BYPASS, "0")])).is_empty());
+    }
 }
 
 // The same cases with drive paths, mixed separators and a Windows home,
