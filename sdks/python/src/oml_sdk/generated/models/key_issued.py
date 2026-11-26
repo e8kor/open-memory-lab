@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from ..models.connection import Connection
     from ..models.denial import Denial
     from ..models.grant import Grant
+    from ..models.key_issued_admin_act import KeyIssuedAdminAct
     from ..models.key_live_connect_code_type_1 import KeyLiveConnectCodeType1
     from ..models.whoami_ref import WhoamiRef
 
@@ -76,6 +77,12 @@ class KeyIssued:
             (ADR-0031 d11).
         value (str | Unset): The secret — returned exactly once, journalled as issued-without-value.
         connect_code (ConnectCode | Unset):
+        admin_act (KeyIssuedAdminAct | Unset): An admin key's issuance is a widening admin act (ADR-0097 d5). state
+            pending_confirmation: the value or code is shown once here, and the key authenticates nothing (auth.invalid,
+            details.reason pending_confirmation) and holds no grant until a second admin person confirms the act with POST
+            /v2/admin/acts/{act}/confirm; a connect code's ten minutes run from the confirmation. state effective: the
+            tenant has never had two live admin persons, and the key took effect at once, marked sole_admin (ADR-0097 d10).
+            Absent for a person's own issuance. Since v0.8.6.
     """
 
     key_id: str
@@ -104,6 +111,7 @@ class KeyIssued:
     connections: list[Connection] | Unset = UNSET
     value: str | Unset = UNSET
     connect_code: ConnectCode | Unset = UNSET
+    admin_act: KeyIssuedAdminAct | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -234,6 +242,10 @@ class KeyIssued:
         if not isinstance(self.connect_code, Unset):
             connect_code = self.connect_code.to_dict()
 
+        admin_act: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.admin_act, Unset):
+            admin_act = self.admin_act.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -283,6 +295,8 @@ class KeyIssued:
             field_dict["value"] = value
         if connect_code is not UNSET:
             field_dict["connect_code"] = connect_code
+        if admin_act is not UNSET:
+            field_dict["admin_act"] = admin_act
 
         return field_dict
 
@@ -292,6 +306,7 @@ class KeyIssued:
         from ..models.connection import Connection
         from ..models.denial import Denial
         from ..models.grant import Grant
+        from ..models.key_issued_admin_act import KeyIssuedAdminAct
         from ..models.key_live_connect_code_type_1 import KeyLiveConnectCodeType1
         from ..models.whoami_ref import WhoamiRef
 
@@ -547,6 +562,13 @@ class KeyIssued:
         else:
             connect_code = ConnectCode.from_dict(_connect_code)
 
+        _admin_act = d.pop("admin_act", UNSET)
+        admin_act: KeyIssuedAdminAct | Unset
+        if isinstance(_admin_act, Unset):
+            admin_act = UNSET
+        else:
+            admin_act = KeyIssuedAdminAct.from_dict(_admin_act)
+
         key_issued = cls(
             key_id=key_id,
             name=name,
@@ -572,6 +594,7 @@ class KeyIssued:
             connections=connections,
             value=value,
             connect_code=connect_code,
+            admin_act=admin_act,
         )
 
         key_issued.additional_properties = d

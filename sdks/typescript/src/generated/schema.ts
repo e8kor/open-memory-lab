@@ -820,6 +820,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/keys/{key}/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * End one key, and nothing more.
+         * @description Requires: an admin key role in the key's tenant, a person's <user>-admin session key included, on any key of the tenant; or a person's <user>-web session key on that person's own keys, those that count as the person, any other key answering access.not_found (ADR-0097 d14, decided by the operator, 2026-11-25). Any other caller is access.verb_ceiling. The key authenticates nothing afterwards on any path: its value, its OAuth tokens and refresh tokens, and its connect codes, which are voided in the same commit. No cascade: the keys it issued keep working, and session keys come from the server, so revoking an admin key ends no sign-in. A session key (it ends with its entry), the server's reserved key and a revoked key are request.validation with details.field key and details.reason session_key, reserved or revoked. The body admits only reason, scanned, so cascade and rotation can be added later as new members; an unknown field is request.validation. An admin's revocation journals an admin.act, revoke_key (narrowing) or, for a key of another admin person, revoke_admin_key (against an admin), before key.revoked {key_id, revoked_by_key_id, actor_person, reason, act_id, cause}; a person's own revocation journals key.revoked alone, act_id null. Since v0.8.6.
+         */
+        post: operations["revokeKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/keys/self/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Link the calling admin key to its holder's person, pending that person's acceptance.
+         * @description Requires: an admin key presented by its own bearer value (possession); a session key is request.validation with details.field key and details.reason bearer_only, and another role access.verb_ceiling (ADR-0097 d22, decided by the operator, 2026-11-25). user names a user of the tenant with a user root and a web entry that is not disabled; otherwise details.field /user and details.reason user_unknown or user_disabled. The key is a live tenant bearer key used_by person that holds no link and none pending; otherwise details.field key and details.reason revoked, already_linked, not_a_tenant_key or not_used_by_person. The one self-link the server admits: POST /v2/keys/{key}/link keeps refusing self_link. Journalled as key.linked_person with actor self and accepted false: the key acts for no one until that person accepts the link from their own console session with POST /v2/keys/{key}/accept_link. Since v0.8.6.
+         */
+        post: operations["linkSelf"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/keys/{key}/link": {
         parameters: {
             query?: never;
@@ -1646,6 +1686,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/admin/acts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The tenant's admin acts, those waiting on a second admin person by default.
+         * @description Requires: admin key role. Every admin act outside content review is one record (ADR-0097 d1, d2): its class, fixed by the act (narrowing, erase, widening, consent, against_admin, neutral), its state, the person the acting key counted as, its reason and, for a widening act, what its confirmation applies. state is all, or one state; omitted, pending_confirmation. A pending act seven days old reads expired, and is final (ADR-0097 d23). Oldest first. Journals nothing. Since v0.8.6.
+         */
+        get: operations["listAdminActs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/admin/acts/{act}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A second admin person confirms a pending widening act, which takes effect in this commit.
+         * @description Requires: admin key role, a key that counts as a live admin person of the tenant: a <user>-admin session key, or an admin key linked to its person (ADR-0097 d5, d11). The act's effect applies in the confirmation's commit: a pending key's grants and connect code, a grant, a raised limit. Refused with request.validation, details.field act and details.reason: not_pending (the act took effect or was settled), expired (pending seven days; a late confirm never revives it), own_act (the key counts as the person who took the act), not_admin_person (the key counts as no live admin person) or too_new (that person's admin flag was accepted less than seven days before the act). An act the tenant does not hold is access.not_found. Journalled as admin.act with state confirmed and confirmed_by_person. Since v0.8.6.
+         */
+        post: operations["confirmAdminAct"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/admin/acts/{act}/decline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Decline a pending admin act, which then never takes effect, or revoke a key a sole_admin tenant issued at once.
+         * @description Requires: admin key role, the act's own actor included. Declining is narrowing (ADR-0097 d3), journalled as an admin.act decline_act of its own before the declined act's admin.act with state declined; a key the act issued is revoked in the same commit (key.revoked). Declined is final (ADR-0097 d23). Refused with request.validation, details.field act and details.reason: not_pending (already settled), expired, or not_declinable (an act that took effect at once outside sole_admin, or a sole_admin act other than a key's issuance). reason is optional and scanned. Since v0.8.6.
+         */
+        post: operations["declineAdminAct"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/review/fixes": {
         parameters: {
             query?: never;
@@ -1960,6 +2060,40 @@ export interface components {
             state: "open" | "closed";
             /** Format: date-time */
             closed_at: string | null;
+        };
+        /** @description One admin act (ADR-0097 d2): the confirm screen of d23 reads target (the key's role, principal, used_by, the root's person as user, and principal_names_person where the principal spells a person's name) and grants. Since v0.8.6. */
+        AdminAct: {
+            /** Format: uuid */
+            act_id: string;
+            act: string;
+            /** @enum {string} */
+            class: "narrowing" | "erase" | "widening" | "consent" | "against_admin" | "neutral";
+            /** @enum {string} */
+            state: "effective" | "pending_confirmation" | "confirmed" | "declined" | "expired" | "contested" | "settled";
+            target: {
+                [key: string]: unknown;
+            };
+            /** @description What a pending act's confirmation grants; empty once applied. */
+            grants: {
+                [key: string]: unknown;
+            }[];
+            reason: string | null;
+            /** Format: uuid */
+            actor_key_id: string | null;
+            actor_person: string | null;
+            confirmed_by_person: string | null;
+            sole_admin: boolean;
+            /** @description upgrade, deactivation, settlement or recovery for an act no admin took; null otherwise. */
+            cause: string | null;
+            /** Format: date-time */
+            at: string;
+            /** Format: date-time */
+            settled_at: string | null;
+            /**
+             * Format: date-time
+             * @description When a pending act expires as declined.
+             */
+            expires_at: string | null;
         };
         /** @description An admin's marked break-glass fix (ADR-0089 d3, d8, d15). admin_key_id and admin_person are served on the admin routes alone; a person's review read never names the admin. acts is served on GET /v2/review/fixes alone. Since v0.8.4. */
         Fix: {
@@ -3448,6 +3582,8 @@ export interface components {
             expiry?: string;
             /** @description The requests the key may make in one UTC minute, its own rate beside any quota of its account; the request past it is 429 limit.rate. Omitted, the key has none of its own. Refused for role admin (ADR-0079 d1, d4; since v0.7.3). */
             requests_per_minute?: number;
+            /** @description The issuing admin's reason, scanned as a verdict's reason and journalled in the issuance's admin.act. Required when the issuance waits on a second admin person: request.validation with details.field /reason and details.reason required; a missing one on an issuance that takes effect at once under sole_admin is journalled as null (ADR-0097 d26). Since v0.8.6. */
+            reason?: string;
         };
         /** @description A member sent replaces the value, null clears it, and a member not sent keeps it (ADR-0079 d5). */
         KeyLimitsRequest: {
@@ -3458,8 +3594,10 @@ export interface components {
             expiry?: string | null;
             /** @description The key's own requests per UTC minute; null: none of its own. */
             requests_per_minute?: number | null;
+            /** @description The admin's reason, scanned and journalled in the change's admin.act. A raise, a cleared limit or a later expiry is widening and waits on a second admin person outside sole_admin, which requires a reason; a lower rate or an earlier expiry is narrowing and takes effect at once (ADR-0097 d15). Since v0.8.6. */
+            reason?: string;
         };
-        /** @description A key's limits as they stand (ADR-0079 d5). */
+        /** @description A key's limits as they stand (ADR-0079 d5): a raise that waits on a second admin person leaves them unchanged until it is confirmed. */
         KeyLimits: {
             key_id: string;
             name: string | null;
@@ -3468,6 +3606,13 @@ export interface components {
             /** @description Whether the expiry has come on the server's clock. */
             expired: boolean;
             requests_per_minute: number | null;
+            /** @description The change's admin act: pending_confirmation for a raise that waits on a second admin person, effective otherwise (ADR-0097 d15). Since v0.8.6. */
+            admin_act?: {
+                /** Format: uuid */
+                act_id: string;
+                /** @enum {string} */
+                state: "effective" | "pending_confirmation";
+            };
         };
         KeyLinkRequest: {
             /** @description The user the key acts for in the console, by name (ADR-0085 d16). */
@@ -4070,6 +4215,13 @@ export interface components {
             /** @description The secret — returned exactly once, journalled as issued-without-value. */
             value?: string;
             connect_code?: components["schemas"]["ConnectCode"];
+            /** @description An admin key's issuance is a widening admin act (ADR-0097 d5). state pending_confirmation: the value or code is shown once here, and the key authenticates nothing (auth.invalid, details.reason pending_confirmation) and holds no grant until a second admin person confirms the act with POST /v2/admin/acts/{act}/confirm; a connect code's ten minutes run from the confirmation. state effective: the tenant has never had two live admin persons, and the key took effect at once, marked sole_admin (ADR-0097 d10). Absent for a person's own issuance. Since v0.8.6. */
+            admin_act?: {
+                /** Format: uuid */
+                act_id: string;
+                /** @enum {string} */
+                state: "effective" | "pending_confirmation";
+            };
         };
         ConnectCode: {
             code_id: string;
@@ -7105,6 +7257,116 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    revokeKey: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path: {
+                key: components["parameters"]["KeyId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                /**
+                 * @example {
+                 *       "reason": "agent decommissioned"
+                 *     }
+                 */
+                "application/json": {
+                    reason?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The key is revoked. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "key_id": "d405428e-4c99-426d-8826-76d28436e423",
+                     *       "name": "alice-laptop",
+                     *       "revoked_at": "2026-11-26T10:00:00.000000Z",
+                     *       "act_id": "0192f0a0-0000-7000-8000-000000000001",
+                     *       "journal_seq": 412
+                     *     }
+                     */
+                    "application/json": {
+                        key_id: string;
+                        name: string | null;
+                        /** Format: date-time */
+                        revoked_at: string;
+                        /** @description The admin act the revocation rode; null for a person's own. */
+                        act_id: string | null;
+                        journal_seq: number;
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    linkSelf: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "user": "alice"
+                 *     }
+                 */
+                "application/json": {
+                    user: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The link, pending. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        key_id: string;
+                        name: string | null;
+                        user: string;
+                        /** @constant */
+                        accepted: false;
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
     linkKey: {
         parameters: {
             query?: never;
@@ -7270,6 +7532,8 @@ export interface operations {
                 "application/json": {
                     /** @description How long the code lives, 1 second to 30 days; omitted, the ten-minute default. A lifetime past ten minutes is minted only for a connector key whose grants all sit on one workspace other than the universe and that names no user root; otherwise 422 oauth.connect_refused with details.reason not_confined. Outside 1 to 2592000 is request.validation naming /ttl_seconds (ADR-0067 d3). */
                     ttl_seconds?: number;
+                    /** @description The admin's reason, scanned and journalled in the mint's admin.act. An admin's mint is widening (ADR-0097 d5, d6): outside sole_admin it waits on a second admin person and requires a reason; the code is shown once here, voids no earlier code and redeems nothing until confirmed, and its life runs from the confirmation. A connector key that itself waits on its issuance's confirmation takes no code: request.validation with details.field key and details.reason key_pending. Since v0.8.6. */
+                    reason?: string;
                 };
             };
         };
@@ -9418,6 +9682,122 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Fix"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            default: components["responses"]["Error"];
+        };
+    };
+    listAdminActs: {
+        parameters: {
+            query?: {
+                state?: "all" | "effective" | "pending_confirmation" | "confirmed" | "declined" | "expired" | "contested" | "settled";
+            };
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The acts. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["AdminAct"][];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    confirmAdminAct: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path: {
+                act: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The confirmed act. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminAct"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            default: components["responses"]["Error"];
+        };
+    };
+    declineAdminAct: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path: {
+                act: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                /**
+                 * @example {
+                 *       "reason": "not this agent"
+                 *     }
+                 */
+                "application/json": {
+                    reason?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The declined act. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminAct"];
                 };
             };
             403: components["responses"]["Forbidden"];

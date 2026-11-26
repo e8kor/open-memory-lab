@@ -67,6 +67,10 @@ class KeyIssueRequest:
         requests_per_minute (int | Unset): The requests the key may make in one UTC minute, its own rate beside any
             quota of its account; the request past it is 429 limit.rate. Omitted, the key has none of its own. Refused for
             role admin (ADR-0079 d1, d4; since v0.7.3).
+        reason (str | Unset): The issuing admin's reason, scanned as a verdict's reason and journalled in the issuance's
+            admin.act. Required when the issuance waits on a second admin person: request.validation with details.field
+            /reason and details.reason required; a missing one on an issuance that takes effect at once under sole_admin is
+            journalled as null (ADR-0097 d26). Since v0.8.6.
     """
 
     role: Role
@@ -83,6 +87,7 @@ class KeyIssueRequest:
     connect_code: bool | Unset = False
     expiry: datetime.datetime | Unset = UNSET
     requests_per_minute: int | Unset = UNSET
+    reason: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         role = self.role.value
@@ -134,6 +139,8 @@ class KeyIssueRequest:
 
         requests_per_minute = self.requests_per_minute
 
+        reason = self.reason
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -166,6 +173,8 @@ class KeyIssueRequest:
             field_dict["expiry"] = expiry
         if requests_per_minute is not UNSET:
             field_dict["requests_per_minute"] = requests_per_minute
+        if reason is not UNSET:
+            field_dict["reason"] = reason
 
         return field_dict
 
@@ -239,6 +248,8 @@ class KeyIssueRequest:
 
         requests_per_minute = d.pop("requests_per_minute", UNSET)
 
+        reason = d.pop("reason", UNSET)
+
         key_issue_request = cls(
             role=role,
             name=name,
@@ -254,6 +265,7 @@ class KeyIssueRequest:
             connect_code=connect_code,
             expiry=expiry,
             requests_per_minute=requests_per_minute,
+            reason=reason,
         )
 
         return key_issue_request

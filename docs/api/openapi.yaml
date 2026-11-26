@@ -4555,7 +4555,7 @@ components:
         actor_person: { type: [string, 'null'] }
         confirmed_by_person: { type: [string, 'null'] }
         sole_admin: { type: boolean }
-        cause: { type: [string, 'null'], enum: [upgrade, deactivation, settlement, recovery, null] }
+        cause: { type: [string, 'null'], description: "upgrade, deactivation, settlement or recovery for an act no admin took; null otherwise." }
         at: { type: string, format: date-time }
         settled_at: { type: [string, 'null'], format: date-time }
         expires_at: { type: [string, 'null'], format: date-time, description: "When a pending act expires as declined." }

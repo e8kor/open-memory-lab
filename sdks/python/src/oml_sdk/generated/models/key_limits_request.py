@@ -19,10 +19,14 @@ class KeyLimitsRequest:
         expiry (datetime.datetime | None | Unset): The instant from which the key authenticates nothing, later than the
             server's clock; null: the key does not expire.
         requests_per_minute (int | None | Unset): The key's own requests per UTC minute; null: none of its own.
+        reason (str | Unset): The admin's reason, scanned and journalled in the change's admin.act. A raise, a cleared
+            limit or a later expiry is widening and waits on a second admin person outside sole_admin, which requires a
+            reason; a lower rate or an earlier expiry is narrowing and takes effect at once (ADR-0097 d15). Since v0.8.6.
     """
 
     expiry: datetime.datetime | None | Unset = UNSET
     requests_per_minute: int | None | Unset = UNSET
+    reason: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         expiry: None | str | Unset
@@ -39,6 +43,8 @@ class KeyLimitsRequest:
         else:
             requests_per_minute = self.requests_per_minute
 
+        reason = self.reason
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update({})
@@ -46,6 +52,8 @@ class KeyLimitsRequest:
             field_dict["expiry"] = expiry
         if requests_per_minute is not UNSET:
             field_dict["requests_per_minute"] = requests_per_minute
+        if reason is not UNSET:
+            field_dict["reason"] = reason
 
         return field_dict
 
@@ -81,9 +89,12 @@ class KeyLimitsRequest:
             d.pop("requests_per_minute", UNSET)
         )
 
+        reason = d.pop("reason", UNSET)
+
         key_limits_request = cls(
             expiry=expiry,
             requests_per_minute=requests_per_minute,
+            reason=reason,
         )
 
         return key_limits_request
