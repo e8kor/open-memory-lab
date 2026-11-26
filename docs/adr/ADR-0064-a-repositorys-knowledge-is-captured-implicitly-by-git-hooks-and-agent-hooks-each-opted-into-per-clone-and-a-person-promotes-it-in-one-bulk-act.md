@@ -833,7 +833,7 @@ more as a path, `request.validation`
 |---|---|---|
 | `SessionStart` | `session-start` | under the plugin's pair, the own-work listing and one budgeted recall, then `GET /v2/whoami` and the default workspace's read for the brief; one after another, 3 s a request, 8 s in all |
 | `SessionStart`, `SubagentStart` | `guardrails` | loads the key's reviewed rules as context and, at session start, writes the session's rule cache |
-| `PreToolUse` on `^(Bash\|PowerShell\|Write\|.*Edit\|Read\|Grep\|Glob\|WebFetch\|mcp__.*)$` | `pre-tool-use` | checks the call against the rule cache with no request; answers deny, ask or nothing, never allow; a failure blocks the call (`onFailure: block`) |
+| `PreToolUse` on `^(Bash\|PowerShell\|Write\|.*Edit\|Read\|Grep\|Glob\|WebFetch\|mcp__.*)$` | `pre-tool-use` | checks the call against the rule cache with no request; answers deny, ask or nothing, never allow; a failure or a stall lets the call through with one stderr line, and `OML_HOOK_DISABLE=1` skips it (ADR-0037 d9, amended 2026-11-26) |
 | `PostToolUseFailure` on `Bash` | `tool-failure` | with `OML_FAILURE_RECALL=1`, one recall from the error's words |
 | `UserPromptSubmit` | `user-prompt` | through the dispatcher: counts and hashes the turn when chat capture or per-turn recall is on; per-turn recall |
 | `Stop` | `stop` | through the dispatcher: chat capture's block when a capture is due; 1 s in the CLI, 2 s in `hooks.json` |

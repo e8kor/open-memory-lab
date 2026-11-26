@@ -58,8 +58,9 @@ fn read_object(stdin: &mut dyn Read) -> Result<Map<String, Value>, String> {
 /// # Errors
 ///
 /// Stdin is not the PreToolUse object, or its `session_id` names no cache
-/// file: the verb fails, which blocks the call (`onFailure: "block"`, and
-/// exit 2 for an older Claude Code).
+/// file: the verb fails with exit 1, a non-blocking error, so the call goes
+/// through unchecked and the cause reaches the user (ADR-0037 d9, amended
+/// 2026-11-26, #519).
 pub fn pre_tool_use(
     var: &dyn Fn(&str) -> Option<String>,
     stdin: &mut dyn Read,
@@ -135,6 +136,27 @@ pub fn pre_tool_use(
         })
         .to_string(),
     })
+}
+
+/// The bypass: `1` makes the plugin's PreToolUse command exit 0 before it
+/// runs `oml` at all, so no call is checked (ADR-0037 d9, amended
+/// 2026-11-26, #519). The verb itself does not read it, so `oml doctor`'s
+/// probe of the verb still answers.
+pub const BYPASS: &str = "OML_HOOK_DISABLE";
+
+/// `oml doctor`'s hook lines: the bypass set, or set to a value the
+/// plugin's command does not take. Nothing when it is unset, empty or `0`.
+#[must_use]
+pub fn doctor_lines(var: &dyn Fn(&str) -> Option<String>) -> Vec<String> {
+    match var(BYPASS).filter(|v| !v.is_empty()).as_deref() {
+        None | Some("0") => Vec::new(),
+        Some("1") => vec![format!(
+            "warn guardrail_check_off: {BYPASS}=1, so no tool call is checked against the session's guardrails; unset it and restart the session to check them"
+        )],
+        Some(other) => vec![format!(
+            "warn guardrail_check_off: {BYPASS} is {other:?}; it takes 1 or 0, so the check runs"
+        )],
+    }
 }
 
 /// The variable Claude Code sets to the session's project directory.

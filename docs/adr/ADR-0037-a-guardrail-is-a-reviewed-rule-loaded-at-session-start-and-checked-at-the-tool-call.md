@@ -7,7 +7,7 @@ answers: what a guardrail is and how it differs from steering; how it composes w
 
 # ADR-0037 — A guardrail is a claim of its own kind, ratified under its workspace's review policy, that the agent plugin loads at every session start within the scope an admin set on its key, and whose optional rule a local hook checks before each tool call
 
-**Status:** accepted design · 2026-11-04 · proposed 2026-10-31, revised 2026-11-04 onto the v0.4.0 API, ADR-0044 and ADR-0045, and accepted with release v0.5.1 · amended by [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) (d3, d4, d5, d6, d9, d10, d11, 2026-11-14), [ADR-0082](ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) (d17, 2026-11-14), [ADR-0083](ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) (d17, 2026-11-14) · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d10, 2026-11-14) · amended by [ADR-0091](ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md) (d4, 2026-11-14) · amended by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) (d5, d18 Q7, 2026-11-15)
+**Status:** accepted design · 2026-11-04 · proposed 2026-10-31, revised 2026-11-04 onto the v0.4.0 API, ADR-0044 and ADR-0045, and accepted with release v0.5.1 · amended by [ADR-0080](ADR-0080-a-skill-is-a-reviewed-claim-the-mcp-server-lists-as-a-prompt-and-serves-as-a-resource-loaded-live-and-never-copied.md) (d3, d4, d5, d6, d9, d10, d11, 2026-11-14), [ADR-0082](ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) (d17, 2026-11-14), [ADR-0083](ADR-0083-the-memories-page-is-one-cockpit-with-approved-to-review-and-submitted-views-and-held-rows-never-appear-as-approved.md) (d17, 2026-11-14) · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d10, 2026-11-14) · amended by [ADR-0091](ADR-0091-workareas-become-workspaces-and-the-dreamer-role-becomes-reviewer-on-every-surface-in-one-cut-and-the-journals-former-names-are-read-through-one-map.md) (d4, 2026-11-14) · amended by [ADR-0092](ADR-0092-search-filters-by-every-claim-kind-and-ranks-skills-and-guardrails-as-data-and-a-read-without-a-query-is-the-catalog-of-what-a-key-reads.md) (d5, d18 Q7, 2026-11-15) · amended 2026-11-26 (d9, a check that fails or stalls lets the call through, and a bypass; #519; proposed, awaiting the operator's acceptance)
 
 **Release:** introduced in v0.5.1 ([releases](../changelog.md))
 
@@ -240,6 +240,37 @@ answered all ten on 2026-11-04, and d18 records the answers.
     command -v oml >/dev/null 2>&1 || exit 0; oml hook pre-tool-use --help >/dev/null 2>&1 || exit 0; oml hook pre-tool-use
     ```
 
+    *(Amended 2026-11-26, #519; proposed, awaiting the operator's acceptance. On 2026-11-25 the
+    check timed out on a loaded host and, under `onFailure: "block"`, refused every tool call of
+    a session and its subagents, the calls that could diagnose it included; disabling the plugin
+    did not reach the running session. The row "the verb fails or stalls past 5 seconds" now
+    reads **lets the call through unchecked**: the entry drops `onFailure`, so a timeout is
+    Claude Code's non-blocking error, and the verb, on any error, prints one stderr line naming
+    the cause, "so the call is not checked", and the bypass, and exits 1, a non-blocking error;
+    the command ends `|| exit 1`, so no exit code of the verb, 2 included, blocks a call. A
+    bypass is added: `OML_HOOK_DISABLE=1` in the session's environment makes the command exit 0
+    before it runs `oml`, so the check costs no process; the verb itself does not read it, so
+    `oml doctor`'s probe still answers, and `oml doctor` prints `warn guardrail_check_off` while
+    it is set, or set to a value other than `1` or `0`. The command is now:*
+
+    ```sh
+    [ "${OML_HOOK_DISABLE:-}" = 1 ] && exit 0; command -v oml >/dev/null 2>&1 || exit 0; oml hook pre-tool-use --help >/dev/null 2>&1 || exit 0; oml hook pre-tool-use || exit 1
+    ```
+
+    *Unchanged: the check still makes no request, so the cache is still the session's, written
+    at its start; a cache that does not parse or whose digest does not match still denies every
+    call, since it is a decision on known rules and not a failure of the verb; and the matcher
+    is unchanged, since d8's `read` class matches `Read`, `Grep` and `Glob` and its `mcp` class
+    every `mcp__*` tool, so narrowing it is a change to d8 the operator has not made. The cost:
+    a checked rule now holds only while its verb runs within 5 seconds, so a host loaded enough
+    to stall the check runs that call unchecked, and says so. S4's
+    `a_session_id_that_names_no_cache_file_blocks_the_call` becomes
+    `a_check_that_cannot_read_its_call_lets_it_through_with_one_line_naming_the_bypass`, joined
+    by `a_server_unreachable_at_session_start_leaves_every_call_through_and_warned` and
+    `doctor_warns_when_the_bypass_skips_the_check_and_names_a_value_it_does_not_take`; and
+    `check_plugin.py` holds no `onFailure`, exit 1 from a verb that exits 1 or 2, and a silent
+    exit 0 without `oml` under `OML_HOOK_DISABLE=1`.)*
+
     **What this is, plainly.** A text guardrail is an instruction to a model, not a guarantee,
     and fails open as ADR-0029 d5 does. A checked rule is "harness-enforced where installed":
     without managed settings or a Team or Enterprise login a Claude Code mod can let through a
@@ -448,8 +479,10 @@ answered all ten on 2026-11-04, and d18 records the answers.
 | **d6 — A per-turn reminder at UserPromptSubmit** | The set does not change within a session; its effect is unmeasured (#112). |
 | **d8 — Regular expressions, or an `allow` effect** | The first can run away and differs across engines; the second lets a stored claim widen what an agent may do. |
 | **d9 — Fetch the set on every tool call** | A request per tool call, the tool's arguments sent to the server, and a down server stops all work. |
-| **d9 — An `exit 0` fallback after the check, as ADR-0029 d7 has** | A crash of the verb would allow the call, so `onFailure: "block"` would cover a timeout alone. |
+| **d9 — An `exit 0` fallback after the check, as ADR-0029 d7 has** | A crash of the verb would allow the call, so `onFailure: "block"` would cover a timeout alone. *(Revisited 2026-11-26, #519, proposed: a crash now lets the call through, by `|| exit 1`, a non-blocking error that keeps the verb's line on stderr, where `exit 0` would hide it.)* |
 | **d9 — With no cache, the newest cache of another session** | The check makes no request, so it cannot know the key's scope node, and another session's file may come from another key. |
+| **d9, amended 2026-11-26 — Keep `onFailure: "block"` and raise the timeout** | A longer timeout only moves the stall that held a session hostage on 2026-11-25 (#519); a check that cannot reach a verdict blocked even the calls that could repair it. |
+| **d9, amended 2026-11-26 — Block only when a known `never` or `must` rule matches and cannot be checked** | The harness kills a stalled verb before it knows which rules match, so a timeout cannot tell the two cases apart. |
 | **d9 — Fail closed with no cache at all** | Rejected by the maintainer on 2026-10-31: with no cache the hook knows no rule, and denying everything would stop every user whose server was down at session start. |
 | **d10 — A human verdict on every guardrail version that no policy removes, amending ADR-0012 d3** (the earlier reading) | Rejected by the maintainer on 2026-10-31: the workspace's review policy decides, and a workspace that wants a person names kind `guardrail` in `human_required_classes`. |
 | **d10 — A guardrail crew or a curator profile owning guardrails** | A new profile in the grant algebra for a kind the review policy already governs, and a crew that writes and reviews its own rules works against R2. |

@@ -41,9 +41,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v oml >/dev/null 2>&1 || exit 0; oml hook pre-tool-use --help >/dev/null 2>&1 || exit 0; oml hook pre-tool-use",
+            "command": "[ \"${OML_HOOK_DISABLE:-}\" = 1 ] && exit 0; command -v oml >/dev/null 2>&1 || exit 0; oml hook pre-tool-use --help >/dev/null 2>&1 || exit 0; oml hook pre-tool-use || exit 1",
             "timeout": 5,
-            "onFailure": "block",
             "statusMessage": "Checking OML guardrails"
           }
         ]

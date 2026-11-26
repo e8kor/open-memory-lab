@@ -1262,7 +1262,7 @@ oml hook guardrails [OPTIONS]
 
 ### `oml hook pre-tool-use`
 
-Check a tool call against the session rule cache without network access; return deny, ask, or nothing, never allow. Missing cache warns and decides nothing; failures exit 2 and block the call
+Check a tool call against the session rule cache without network access; return deny, ask, or nothing, never allow. Missing cache warns and decides nothing; failures exit 1 and let the call through unchecked
 
 ```
 oml hook pre-tool-use [OPTIONS]

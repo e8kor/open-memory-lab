@@ -585,7 +585,10 @@ async fn a_server_unreachable_at_session_start_leaves_every_call_through_and_war
         &start("startup"),
     );
     assert!(start_out.status.success());
-    for call in [bash("git push"), tool("Read", json!({"file_path": "/work/a"}))] {
+    for call in [
+        bash("git push"),
+        tool("Read", json!({"file_path": "/work/a"})),
+    ] {
         let out = hook("pre-tool-use", &dir, None, &call);
         assert!(out.status.success());
         let doc = stdout_json(&out);
