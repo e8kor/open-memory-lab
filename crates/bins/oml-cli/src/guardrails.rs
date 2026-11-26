@@ -681,11 +681,12 @@ mod home_tests {
     }
 
     #[test]
-    fn doctor_warns_when_the_bypass_skips_the_check_and_names_a_value_it_does_not_take() {
+    fn doctor_warns_when_the_bypass_skips_every_hook_and_names_a_value_it_does_not_take() {
         let off = doctor_lines(&only(&[(BYPASS, "1")]));
         assert_eq!(off.len(), 1, "{off:?}");
         assert!(
-            off[0].starts_with("warn guardrail_check_off: OML_HOOK_DISABLE=1")
+            off[0].starts_with("warn hooks_off: OML_HOOK_DISABLE=1")
+                && off[0].contains("runs none of its hooks")
                 && off[0].contains("no tool call is checked"),
             "{off:?}"
         );

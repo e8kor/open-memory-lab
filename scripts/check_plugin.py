@@ -36,7 +36,9 @@ class of disagreement found:
   (ADR-0038 d9). Each command, run under /bin/sh, exits 0 with no output
   when no `oml` is on PATH, and otherwise runs `oml` with exactly its
   arguments and exits 0 even when that `oml` fails (docs/cli/reference.md,
-  "oml hook session-start" and "oml hook tool-failure");
+  "oml hook session-start" and "oml hook tool-failure"); with
+  OML_HOOK_DISABLE=1 every command, the guardrail check's included, exits 0
+  in silence without running `oml` (ADR-0037 d9, amended 2026-11-26, #519);
 - the guardrail hooks (proposed ADR-0037 d6, d9): SessionStart holds a second
   group and SubagentStart one, each with no matcher, a timeout of 10 seconds
   and the status message "Loading OML guardrails", running `hook
@@ -469,6 +471,16 @@ def check_hook(
             errors.append(f"{shown}: the {event} command runs oml with {ran}, not `{' '.join(args)}`: {command}")
         if run.returncode != 0:
             errors.append(f"{shown}: a failing oml makes the {event} command exit {run.returncode}, not 0: {command}")
+        argv.unlink(missing_ok=True)
+
+        # OML_HOOK_DISABLE=1 skips every oml hook before `oml` runs
+        # (ADR-0037 d9, amended 2026-11-26, #519).
+        run = sh(command, stand_in, {"OML_HOOK_DISABLE": "1"})
+        if (run.returncode, run.stdout, run.stderr) != (0, "", "") or argv.exists():
+            errors.append(
+                f"{shown}: with OML_HOOK_DISABLE=1 the {event} command exits {run.returncode} "
+                f"or runs oml, not 0 in silence without oml: {command}"
+            )
 
 
 def check_checked_command(shown: Path, event: str, command: str, args: list[str], errors: list[str]) -> None:
