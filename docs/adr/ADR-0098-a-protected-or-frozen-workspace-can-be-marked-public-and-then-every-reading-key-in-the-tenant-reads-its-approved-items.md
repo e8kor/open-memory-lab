@@ -1,24 +1,28 @@
 <!--
 id: adr/ADR-0098-a-protected-or-frozen-workspace-can-be-marked-public-and-then-every-reading-key-in-the-tenant-reads-its-approved-items
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-26
 answers: how a workspace is shared with every key of its tenant without a grant per key; which keys read a public workspace and through which recall scopes; what a public workspace serves and whether authorship is shown; which workspaces are eligible and whether children inherit the flag; who sets and clears the flag and how it waits; how denials, ranking and federation interact with it; whether it crosses tenants or serves anonymous readers; and the surfaces, events, refusals, doctor lines, tests and release that carry it
 -->
 
 # ADR-0098 — A protected or frozen workspace can be marked public, and then every reading key in the tenant reads its approved items
 
-**Status:** proposed · 2026-11-26
+**Status:** accepted design · 2026-11-26, decided by the operator, who answered the record's three
+readings the same day. The answer on default recall (d3) differs from the draft's recommendation,
+and every rule that rested on that recommendation is re-derived here (marked **re-derived**).
+Each answer is marked **decided by the operator, 2026-11-26** where it applies.
 
 **Release:** v0.8.6, not built. It builds on [ADR-0097](ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md)'s
 admin-act envelope and lands after it in the same release.
 
 **Amends:** [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
-(d3: a user key reads a public node outside its root, read only),
+(d3: a user key reads a public node outside its root, read only; d10: a user root's recall also
+searches every public node),
 [ADR-0009](ADR-0009-status-ladder.md) (d5: setting and clearing the flag is an access act a frozen
 workspace admits, as a grant is),
 [ADR-0097](ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md)
-(d3 and d5: one act joins each class list). It supersedes nothing. Each amended record gains an
-amendment note when this record is accepted.
+(d3 and d5: one act joins each class list). Each carries an amendment note dated 2026-11-26. It
+supersedes nothing.
 
 **Depends on:** ADR-0097 (d2 envelope, d5 and d3 classes, d10 `sole_admin`, d11 the counted second
 admin, d23 pending acts, d26 reasons), [ADR-0072](ADR-0072-recall-searches-the-trusted-workspaces-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md)
@@ -64,7 +68,7 @@ Decided, not built.
   reach behaves as a `reader` grant with `covers: node` that the key does not hold: no grant row
   is written, nothing is issued, and the reach is computed on every request and cached nowhere, as
   effective access already is. A public node counts as read for every rule that asks whether a key
-  reads a node: recall scope, listings, the catalog (ADR-0092), `derives_from` readability
+  reads a node: recall, listings, the catalog (ADR-0092), `derives_from` readability
   (ADR-0025 d3), and an edge endpoint (ADR-0046 d5). It counts for no rule that asks for another
   role. It never gives submit, review, curation, ratification, a status or brief proposal, or
   `create`. The cost is one more input to effective access, read on every request (Bottleneck
@@ -86,37 +90,52 @@ Decided, not built.
   *Rejected:* tenant keys only, which leaves out the people the operator named; every key, a
   submitter included, which reverses ADR-0093's write-only shape for keys issued to write blind.
 
-- **d3 — A public node is not in any key's default recall scope: a key reaches it by naming it
-  as the scope, by a `sources` list, or by `sources: "wide"` (reading, for the operator to
-  confirm).** A recall still searches its scope's subtree, and for a scope inside a user root also
-  the `universe` node (ADR-0044 d10), and nothing else unless `sources` says so. The public reach
-  makes the node readable, so:
-  - **Scope.** `workspace: universe.ai-agents` on recall, on a listing or on `oml read` searches
-    that node, with the steering and guardrails of its ancestors that the key reads (ADR-0025 d8).
-  - **A list.** `sources: ["universe.ai-agents"]` searches it as a listed source, under ADR-0072
-    d5's rules, federation on the tenant included.
-  - **Wide.** `sources: "wide"` may select it as a candidate, and the widen hint (ADR-0072 d8) can
-    point at it when it holds more of the query's words. Both need federation on the tenant and
-    `accept_federated` on the node (d7).
+- **d3 — Every default recall searches every public node the key reads (decided by the operator,
+  2026-11-26; re-derived).** A recall with `sources: "scope"`, the default, searches the served
+  tips of subtree(scope) within reader effective access, for a scope inside a user root also the
+  `universe` node (ADR-0044 d10), and also the served tips of every public node the key reads and
+  no global deny removes, ranked together in the one total order of
+  [retrieval](../architecture/retrieval.md#order-of-the-answer).
+  It holds for tenant keys and user keys alike, and amends ADR-0044 d10's hit membership for user
+  roots. A recall scoped at a public node, or below an ancestor of one, counts that node once.
+  What rests on it:
+  - **Hits and instructions.** A public node outside the scope's ancestor chain contributes hits
+    of the knowledge kinds only. Its steering list does not apply at other scopes, because
+    applicable steering is read up the scope's ancestors (ADR-0025 d8), and its skills and
+    guardrails rank as hits only where ADR-0092 already admits them: at a scope that is the public
+    node itself. A public node's rules therefore never steer a recall elsewhere; they are read as
+    data where they are recalled.
+  - **The other modes.** `wide` is the scope, public nodes included, plus the candidates ADR-0072
+    d4 selects. A `sources` list searches the listed nodes alone, as ADR-0072 d5 says, so a public
+    node is in a list's answer only when the list names it.
+  - **Listings and the tail.** The listing (`GET /v1/memories` without `own`) and the events tail
+    keep their subtree scopes, as ADR-0044 d10 keeps them for `universe`: a key that wants a public
+    node's items as a list names it as the workspace.
+  - **The session start.** The session-start hook recalls at the default workspace (ADR-0029 d2),
+    so its recall carries public hits. The public node's own brief (ADR-0046 d7) is served only at
+    a scope that is that node.
+  - **`default_workspace`** stays a node the key's grants cover. A node reached only through the
+    flag does not qualify: clearing the flag would leave the key with a default it cannot read,
+    and every default recall already searches the node.
+  - **Explainability.** Each hit from a public node outside the scope carries `via: "public"`
+    beside its `workspace_path`, and `search.sources` lists each public node searched, so an
+    answer still says where each hit came from (ADR-0072 d8).
 
-  A key's `default_workspace` stays a node its grants cover; a node reached only through the flag
-  does not qualify, because clearing the flag would leave the key with a default it cannot read.
-  The session-start brief recalls at the default workspace (ADR-0029 d2), so a public node's brief
-  reaches a key only through a scope or a source the key names.
-  The cost: with federation off on the tenant, a user's agent finds a public node only by its
-  name, so the workspace's name has to be known, from the workspace list, the catalog or a
-  directory entry (d9).
-  *Rejected:* searching every public node in every default recall, as ADR-0044 d10 does for
-  `universe`, which makes every public node compete for rank and budget with each project's own
-  hits (the crowding #145 measures for `universe` alone) and changes every key's recall at once;
-  a per-key opt-in field, a setting no use has named yet (ADR-0039).
+  The cost, accepted by the operator: every public node competes for rank and budget with each
+  project's own hits in every default recall, the crowding #145 measures for `universe`, now for
+  every public node, and no field turns it off for one recall. Marking or clearing a node changes
+  every reading key's default answer at its next request (d7, ranking).
+  *Rejected:* leaving public nodes out of every default recall, reached only by naming them as
+  the scope, by a list or by `wide`, which the draft recommended and the operator did not take:
+  under it a user's agent with federation off finds a public node only by knowing its name; a
+  per-key opt-in field, a setting no use has named yet (ADR-0039).
 
 - **d4 — A public node serves its approved items only, with their authorship and provenance as
-  any reader sees them.** The reach serves the promoted tips of every kind a reader is served at
-  that node: knowledge, terms, skills, guardrails, documents and steering, each as data under
-  ADR-0092. It never serves a held version: a held row stays its author's alone (ADR-0025 d3), and
-  a public node is never in progress, because only a `development` node can be (ADR-0030 d1). The
-  reach covers the node alone (d5), so ADR-0080 d16's sharing of an in-progress subtree with its
+  any reader sees them (decided by the operator, 2026-11-26).** The reach serves the promoted tips
+  of every kind a reader is served at that node, within d3's rule for which kinds rank where. It
+  never serves a held version: a held row stays its author's alone (ADR-0025 d3), and a public
+  node is never in progress, because only a `development` node can be (ADR-0030 d1). The reach
+  covers the node alone (d5), so ADR-0080 d16's sharing of an in-progress subtree with its
   ancestors never passes through it. Retired versions are served as to any reader; an admin fix's
   marked overlay is served marked, as ADR-0089 serves it to any reader; release bindings, once
   built, apply to the public reach as to any grant (ADR-0085). Each row keeps its `principal`, its
@@ -140,8 +159,9 @@ Decided, not built.
     user_root`). They are capped at `development` (ADR-0085 d17), so the status rule already
     refuses them; the named reason says why the cap holds. A person's own work never becomes
     public through this flag.
-  - **`universe`** is eligible: it is permanently `protected`. Marked public, its node becomes
-    readable by tenant keys that hold no grant on it, served under ADR-0044 d9.
+  - **`universe`** is eligible (decided by the operator, 2026-11-26): it is permanently
+    `protected`. Marked public, its node becomes readable by tenant keys that hold no grant on it
+    and joins their default recall (d3), served under ADR-0044 d9. No exception is written for it.
   - **Frozen.** Setting and clearing the flag on a `frozen` node are admitted. ADR-0009 d5 freezes
     claim content and promotions; the flag changes who reads, which is an access act, unrelated to
     status, as ADR-0009's consequences already say of a grant on a frozen area. The table of what
@@ -179,24 +199,31 @@ Decided, not built.
   belongs to no person; setting at once with a later review, which ADR-0097 d1 rejects for every
   widening.
 
-- **d7 — A denial still wins, ranking is unchanged, and federation's own settings still apply.**
-  - **Denials.** A global deny naming the public node or a subtree above it removes the reach, as
-    it removes any grant. An admin cuts one key off a public node by denying it there, narrowing,
-    at once (ADR-0096 d4). A per-grant deny entry cuts only its own grant (effective access, step
-    1), so it does not remove the public reach, just as it does not remove another grant that
-    covers the node. A global deny is the tool for "this key never reads it".
-  - **Ranking.** Recall's ordering contract is unchanged. A public node's rows score with the same
-    statistics as any searched node (ADR-0072 d7), with no boost and no penalty, and the flag
-    enters no score.
-  - **Federation.** The flag makes a node readable; federation decides whether a recall scoped
-    elsewhere searches it. With federation off on the tenant, `wide` and lists are refused, as
-    today, and a key reaches the node by naming it as the scope. With federation on, the node is a
-    trusted source like any `protected` or `frozen` node the key reads (ADR-0072 d1), and
-    `accept_federated` off keeps it out of `wide` and out of lists from scopes outside it, while a
-    key still reads it as the scope. The tenant's federation policy is untouched.
+- **d7 — A denial still wins, the ordering contract is unchanged, and federation is not needed
+  (re-derived from d3).**
+  - **Denials.** A global deny naming the public node or a subtree above it removes the reach, from
+    default recall included, as it removes any grant. An admin cuts one key off a public node by
+    denying it there, narrowing, at once (ADR-0096 d4). A per-grant deny entry cuts only its own
+    grant (effective access, step 1), so it does not remove the public reach, just as it does not
+    remove another grant that covers the node. A global deny is the tool for "this key never
+    reads it".
+  - **Ranking.** Recall's ordering contract is unchanged: steering first and unranked, then one
+    ranked list. A public node's rows enter the default recall's statistics as the scope's own
+    nodes do (ADR-0072 d7, with R the scope and the public nodes), with no boost and no penalty,
+    and the flag enters no score. The cost: R changes when a node is marked or cleared, so the
+    scores of every key's default recall change with it, and a tenant's recall eval is re-run
+    after a node is marked. A tenant with no public node recalls exactly as before.
+  - **Federation.** A public node is searched by default recall whether or not federation is on
+    for the tenant, so the flag needs no federation. `accept_federated` keeps governing recalls
+    that reach a node through `wide` or a list from a scope outside it; it does not remove a
+    public node from default recall, which is the admin's decision through the flag (d6), and
+    clearing the flag is the way to remove it. `wide` already contains every public node as part
+    of its scope. The tenant's federation policy is untouched.
   *Rejected:* a public node that ignores global denials, which gives an admin no way to cut one
   key off it short of clearing the flag for everyone; a ranking boost for public rows, which
-  breaks ADR-0072 d7's rule that a score never depends on how a source was chosen.
+  breaks ADR-0072 d7's rule that a score never depends on how a source was chosen;
+  `accept_federated` off removing a public node from default recall, which gives a workspace
+  reviewer a veto over an admin act through a setting that grants nothing.
 
 - **d8 — Public means every authenticated key of the one tenant: never another tenant, never an
   unauthenticated reader.** Every read of a public node authenticates a key of the tenant that
@@ -204,7 +231,8 @@ Decided, not built.
   console's personal pages included, and no key of another tenant reaches it; the tenant boundary
   holds (ADR-0007). The flag is not an export allowance: export and import stay under ADR-0084,
   unchanged. A tenant with open sign-up (ADR-0068) gives each new person a key, and that key reads
-  every public node, which is the intent and the cost an admin weighs before marking one.
+  every public node in every default recall, which is the intent and the cost an admin weighs
+  before marking one.
   *Rejected:* an anonymous read route, which needs its own record on abuse, rate limits per caller
   without a key, and the site boundary; a read across tenants, which needs a record on the tenant
   boundary and is not what the operator asked for.
@@ -217,7 +245,7 @@ Decided, not built.
     workspace read serves `public: {value, since, act_id, sole_admin}` and, to an admin, the
     pending `act_id`. The tree read and the workspace list mark public nodes. The one-key read
     (ADR-0096 d8) serves `public_reach`, the public nodes the key reads through the flag, apart
-    from its grants, so a key's reach stays explainable.
+    from its grants, so a key's reach stays explainable. A recall hit gains `via: "public"` (d3).
   - **CLI.** `oml workspaces public set <workspace> --reason <text>` prints `effective` or "waits
     on another admin" with the act id; `oml workspaces public clear <workspace> [--reason <text>]`;
     `oml workspaces show` prints the flag.
@@ -225,50 +253,48 @@ Decided, not built.
     "Waits on another admin" while pending, and the act's history. The set appears in To do's
     "Admin acts to confirm" with ADR-0097 d23's confirm screen, which names the workspace, its
     status, its children that stay private, and that every reading key of the tenant, user keys
-    included, will read its approved items. The personal pages, the workspace picker and the
-    Memories cockpit label a public node "Public". Copy follows the neutral voice.
-  - **MCP.** No mode sets the flag. `oml_workspace` and the catalog serve `public` on each node, so
-    an agent can name a public node as its scope or source.
+    included, will recall its approved items by default. The personal pages, the workspace picker
+    and the Memories cockpit label a public node "Public". Copy follows the neutral voice.
+  - **MCP.** No mode sets the flag. `oml_workspace` and the catalog serve `public` on each node.
   - **Journal.** The `admin.act` envelope for each act; the effect `workspace.public_set
     {workspace_id, value, act_id, from}` in the commit where the act takes effect, which for a
     pending set is the confirmation's commit. The lake's twin tables replay it (ADR-0090 d18).
   - **Refusals.** `workspace.public_refused` with `details.reason` one of `status`, `user_root`,
     `pending`, `already_public`, `not_public`; `access.verb_ceiling` with `public_is_admin_only`;
     `access.not_found` for a workspace the caller cannot see, as for any route.
-  - **Doctor.** `workspace.public` (info: each public node, since when, its act and whether it was
-    `sole_admin`); `workspace.public_ineligible` (`critical`: a public node that is `development`
-    or inside a user root, which only a direct store edit can produce). A pending set is counted
-    by ADR-0097's `admin.act_pending_confirmation`.
-  - **A directory entry.** A public node needs no directory entry to be read, but a tenant that
-    wants its people to find it writes one, as [a directory workspace](../architecture/workspaces.md#a-directory-workspace)
-    describes.
+  - **Doctor.** `workspace.public` (info: each public node, since when, its act, whether it was
+    `sole_admin`, and its count of served rows, the load it adds to every default recall);
+    `workspace.public_ineligible` (`critical`: a public node that is `development` or inside a
+    user root, which only a direct store edit can produce). A pending set is counted by ADR-0097's
+    `admin.act_pending_confirmation`.
 
 - **d10 — It ships in v0.8.6 with one additive migration, after ADR-0097's envelope.** The
   migration adds `public` (false by default) and `public_act_id` to `workspaces`, and a partial
   index on the tenant's public nodes, under the table's row security. Every existing workspace
-  starts not public, so the upgrade changes no key's reach. For `universe.ai-agents` the operator's
-  steps are: freeze each child first, then the node, each by the ladder's two persons (ADR-0097
-  d17, or marked under `sole_admin`); then `oml workspaces public set universe.ai-agents --reason
-  "<reason>"` for the node and for each child to be shared, confirmed by a second admin person
-  where the tenant has one.
+  starts not public, so the upgrade changes no key's reach and no recall. For
+  `universe.ai-agents` the operator's steps are: freeze each child first, then the node, each by
+  the ladder's two persons (ADR-0097 d17, or marked under `sole_admin`); then `oml workspaces
+  public set universe.ai-agents --reason "<reason>"` for the node and for each child to be shared,
+  confirmed by a second admin person where the tenant has one.
 
 ## Consequences
 
-- **Docs on acceptance.** [Workspaces](../architecture/workspaces.md): effective access gains the
-  public input, the status table its row, a new section on public workspaces, and federation's
-  section the interaction of d7. [Lifecycle](../architecture/lifecycle.md): the horizontal bullet
-  names public nodes. [Roles and keys](../architecture/roles-and-keys.md): the read column and
-  the admin act. [Retrieval](../architecture/retrieval.md#searching-beyond-the-scope): reaching a
-  public node by scope, list or `wide`. The event catalog (`workspace.public_set`), the errors
-  page (`workspace.public_refused`), the HTTP and CLI references (generated), the guides
-  [administering](../guides/administering.md) and [workspaces](../use/workspaces.md), and the
-  design records. ADR-0009, ADR-0044 and ADR-0097 gain amendment notes.
+- **Docs.** [Workspaces](../architecture/workspaces.md) (effective access, the status table, a
+  section on public workspaces, federation's interaction), [lifecycle](../architecture/lifecycle.md)
+  (the horizontal bullet), [roles and keys](../architecture/roles-and-keys.md) (the read and the
+  admin act) and [retrieval](../architecture/retrieval.md#searching-beyond-the-scope) (default
+  recall over public nodes) carry the design as designed, not built. The event catalog
+  (`workspace.public_set`), the errors page (`workspace.public_refused`), the HTTP and CLI
+  references (generated), and the guides [administering](../guides/administering.md) and
+  [workspaces](../use/workspaces.md) change with the build. ADR-0009, ADR-0044 and ADR-0097 carry
+  amendment notes dated 2026-11-26.
 - **SDKs and counts.** One new route: the routed-operations count and the two SDK route-count
   assertions move by one; OpenAPI, both SDKs, and the HTTP and CLI references are regenerated.
 - **The cost, stated once.** Every reading key of the tenant, every future open-sign-up key
-  included, reads every public node and the principals that wrote there; the read cannot be
-  narrowed to a group, except by global denials one key at a time. A tenant that wants a group
-  keeps using grants.
+  included, recalls every public node by default and reads the principals that wrote there; the
+  read cannot be narrowed to a group, except by global denials one key at a time. A tenant that
+  wants a group keeps using grants. Each public node competes for rank in every default recall
+  (d3), an accepted cost that #145 measures.
 
 ### Security analysis
 
@@ -276,37 +302,52 @@ Decided, not built.
   (d5), and an eligible node is never in progress; the horizontal rule holds by construction.
 - **No review authority moves.** The reach is read only (d1); R1 to R4 are untouched, and an agent
   can neither set the flag nor gain any verb from it.
+- **No public rule steers elsewhere.** A public node's steering applies only at scopes below it on
+  its own chain, and its skills and guardrails rank as hits only at its own scope (d3), so marking
+  a node public puts no instruction into another workspace's recall.
 - **One admin cannot widen alone,** except under `sole_admin`, where the act is marked and the
   doctor names it (ADR-0097 d10). Clearing is narrowing, so a leaked admin key that clears a flag
   hides nothing; it narrows.
 - **Personal roots stay personal.** No node in a user root is eligible (d5).
-- **Residual.** A principal name in a public workspace is read by every key of the tenant (d4).
-  The tenant's admins decide that by marking the node.
+- **Residuals.** A principal name in a public workspace is read by every key of the tenant (d4).
+  An approved row of a public node reaches every reading key's default recall, so a wrong row
+  there has the tenant as its reach until it is demoted (ADR-0089) or the flag is cleared, both
+  at once; recalled text stays data, served with its findings (ADR-0074).
 
 ### Doctor lines
 
-`workspace.public` (info); `workspace.public_ineligible` (`critical`). Pending sets are counted by
-ADR-0097's `admin.act_pending_confirmation`.
+`workspace.public` (info, with each node's served-row count); `workspace.public_ineligible`
+(`critical`). Pending sets are counted by ADR-0097's `admin.act_pending_confirmation`.
 
 ### Bottleneck register
 
 Rows the build adds to [limits](../reference/limits.md):
 
 - **Effective access** reads the tenant's public node ids once per request, from a partial index
-  on `(tenant) where public`; no cache. The size of a tenant's public set is unmeasured, and a
-  measure issue is filed with the build.
-- **`wide` candidates** grow by the public nodes a key reads; ADR-0072 d12's cap and budget bound
-  them, unchanged.
+  on `(tenant) where public`; no cache.
+- **Default recall** searches every public node a key reads, so its candidate work and its
+  statistics grow with the rows of the tenant's public nodes, for every key and every recall. No
+  cap bounds the number of public nodes; `workspace.public` reports the rows they add. The cost is
+  unmeasured, and a measure issue is filed with the build beside #145.
+- **`wide` candidates** are unchanged beyond the scope's growth; ADR-0072 d12's cap and budget
+  bound them.
 
 ### Tests by sentence
 
 - `a_reader_key_reads_the_approved_items_of_a_public_workspace_it_holds_no_grant_on`
 - `a_user_key_reads_a_public_workspace_outside_its_root_and_writes_nothing_there`
+- `every_default_recall_searches_every_public_workspace_the_key_reads`
+- `a_user_roots_default_recall_searches_universe_and_every_public_workspace`
+- `a_hit_from_a_public_workspace_outside_the_scope_carries_via_public`
+- `a_public_workspaces_steering_and_guardrails_do_not_apply_at_another_scope`
+- `a_sources_list_searches_a_public_workspace_only_when_it_names_it`
+- `the_listing_without_a_workspace_does_not_list_public_items`
+- `a_public_workspace_cannot_be_a_keys_default_workspace`
 - `a_submitter_key_recalls_nothing_from_a_public_workspace`
 - `an_admin_key_reads_no_content_of_a_public_workspace`
 - `a_public_workspace_never_serves_a_held_version_to_a_key_that_did_not_write_it`
-- `a_public_workspace_is_not_in_a_user_keys_default_recall`
-- `a_public_workspace_is_searched_when_named_as_scope_or_listed_in_sources`
+- `a_public_workspace_serves_principal_and_readable_lineage`
+- `a_public_universe_serves_its_claims_without_their_source`
 - `a_child_of_a_public_workspace_stays_private`
 - `a_development_workspace_and_a_user_root_cannot_be_marked_public`
 - `a_frozen_workspace_can_be_marked_public_and_cleared`
@@ -314,24 +355,22 @@ Rows the build adds to [limits](../reference/limits.md):
 - `marking_a_workspace_public_takes_effect_at_once_under_sole_admin_marked`
 - `clearing_public_takes_effect_at_once_and_declines_a_pending_set`
 - `a_reviewer_key_cannot_set_public`
-- `a_global_deny_removes_a_public_workspace_from_a_keys_reach`
-- `a_public_workspaces_rows_score_the_same_as_under_a_grant`
-- `accept_federated_off_keeps_a_public_workspace_out_of_wide_recall`
+- `a_global_deny_removes_a_public_workspace_from_default_recall`
+- `a_public_workspace_is_recalled_by_default_with_federation_off`
+- `accept_federated_off_does_not_remove_a_public_workspace_from_default_recall`
+- `a_tenant_without_public_workspaces_recalls_exactly_as_before`
 - `a_key_of_another_tenant_never_reads_a_public_workspace`
 
 Each is red first, by breaking the rule it proves.
 
-### Questions for the operator
+### The operator's answers of 2026-11-26
 
-1. **Default recall (d3).** A public node is reached by scope, by a list, or by `wide`, and is not
-   in any default recall. Recommended: keep it so, and turn federation on for the tenant so the
-   widen hint points agents at it. The alternative is ADR-0044 d10's treatment of `universe` for
-   every public node.
-2. **Authorship (d4).** Public rows keep their principals and lineage, as any reader sees them.
-   Recommended: keep it so. The alternative serves them like curated `universe` claims, with no
-   author and no source.
-3. **`universe` itself (d5).** It is eligible. Recommended: eligible, with ADR-0044 d9's serving
-   unchanged, so no exception is written for it.
+1. **Default recall (d3):** every default recall searches every public node, as `universe` is
+   searched inside a user root. The draft recommended the opposite; d3, d7 and the bottleneck
+   register are re-derived from the answer, and the crowding cost is accepted.
+2. **Authorship (d4):** public rows keep their principals and lineage, as any reader sees them,
+   as recommended.
+3. **`universe` (d5):** eligible, with ADR-0044 d9's serving unchanged, as recommended.
 
 ## Rejected alternatives
 
@@ -342,6 +381,8 @@ Each is red first, by breaking the rule it proves.
 | **A new tenant-wide grant object** | A second grant model for one role; the flag carries the one role a public read can have. |
 | **Public `development` workspaces** | Breaks the horizontal rule: development rules are loose, and a development node may sit in an in-progress subtree. |
 | **Subtree coverage or inheritance** | A later child, or a ladder move, would widen every key's reach with no admin act. |
-| **Default recall of every public node** | Every public node competes with each project's own hits, and every key's recall changes at once (#145 measures the effect for `universe` alone). |
+| **Public nodes left out of default recall, reached by scope, list or `wide`** | The draft's recommendation, which the operator did not take (2026-11-26): with federation off a user's agent finds a public node only by knowing its name, which defeats "everybody can access". |
+| **Public steering and guardrails applied at every scope** | Puts one workspace's instructions into every recall of the tenant through a read flag; instructions apply up the scope's own chain (ADR-0025 d8). |
+| **Serving public rows without author and source** | Hides the evidence that makes a governed workspace worth sharing; the operator kept authorship (2026-11-26). |
 | **Set by a workspace reviewer, like `accept_federated`** | `accept_federated` grants nothing; `public` grants a read to keys that had none, which is widening, an admin act (ADR-0097 d5). |
 | **Anonymous or cross-tenant reads** | Each needs its own record on the boundary it crosses; the operator asked for every key of the tenant. |
