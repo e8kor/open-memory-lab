@@ -58,8 +58,9 @@ fn read_object(stdin: &mut dyn Read) -> Result<Map<String, Value>, String> {
 /// # Errors
 ///
 /// Stdin is not the PreToolUse object, or its `session_id` names no cache
-/// file: the verb fails, which blocks the call (`onFailure: "block"`, and
-/// exit 2 for an older Claude Code).
+/// file: the verb fails with exit 1, a non-blocking error, so the call goes
+/// through unchecked and the cause reaches the user (ADR-0037 d9, amended
+/// 2026-11-26, #519).
 pub fn pre_tool_use(
     var: &dyn Fn(&str) -> Option<String>,
     stdin: &mut dyn Read,
@@ -135,6 +136,28 @@ pub fn pre_tool_use(
         })
         .to_string(),
     })
+}
+
+/// The bypass: `1` makes every command in the plugin's `hooks.json` exit 0
+/// before it runs `oml` at all, so no oml hook runs and no call is checked
+/// (ADR-0037 d9, decided by the operator 2026-11-26, #519). The verbs
+/// themselves do not read it, so `oml doctor`'s probe of the check still
+/// answers.
+pub const BYPASS: &str = "OML_HOOK_DISABLE";
+
+/// `oml doctor`'s hook lines: the bypass set, or set to a value the
+/// plugin's commands do not take. Nothing when it is unset, empty or `0`.
+#[must_use]
+pub fn doctor_lines(var: &dyn Fn(&str) -> Option<String>) -> Vec<String> {
+    match var(BYPASS).filter(|v| !v.is_empty()).as_deref() {
+        None | Some("0") => Vec::new(),
+        Some("1") => vec![format!(
+            "warn hooks_off: {BYPASS}=1, so the oml plugin runs none of its hooks: no memory or guardrails load at session start and no tool call is checked; unset it and restart the session"
+        )],
+        Some(other) => vec![format!(
+            "warn hooks_off: {BYPASS} is {other:?}; it takes 1 or 0, so the hooks run"
+        )],
+    }
 }
 
 /// The variable Claude Code sets to the session's project directory.
@@ -656,6 +679,26 @@ mod home_tests {
             Some("/home/bo")
         );
         assert_eq!(skills_home(&only(&[])), None);
+    }
+
+    #[test]
+    fn doctor_warns_when_the_bypass_skips_every_hook_and_names_a_value_it_does_not_take() {
+        let off = doctor_lines(&only(&[(BYPASS, "1")]));
+        assert_eq!(off.len(), 1, "{off:?}");
+        assert!(
+            off[0].starts_with("warn hooks_off: OML_HOOK_DISABLE=1")
+                && off[0].contains("runs none of its hooks")
+                && off[0].contains("no tool call is checked"),
+            "{off:?}"
+        );
+        let odd = doctor_lines(&only(&[(BYPASS, "yes")]));
+        assert!(
+            odd.len() == 1 && odd[0].contains("\"yes\"") && odd[0].contains("takes 1"),
+            "{odd:?}"
+        );
+        assert!(doctor_lines(&only(&[])).is_empty());
+        assert!(doctor_lines(&only(&[(BYPASS, "")])).is_empty());
+        assert!(doctor_lines(&only(&[(BYPASS, "0")])).is_empty());
     }
 }
 

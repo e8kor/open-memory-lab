@@ -332,7 +332,7 @@ enum HookCommand {
     Guardrails,
     /// Check a tool call against the session rule cache without network access;
     /// return deny, ask, or nothing, never allow. Missing cache warns and decides
-    /// nothing; failures exit 2 and block the call.
+    /// nothing; failures exit 1 and let the call through unchecked.
     PreToolUse,
 }
 
@@ -1616,12 +1616,17 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                         }
                         ExitCode::SUCCESS
                     }
+                    // A check that cannot run fails open: exit 1 is a
+                    // non-blocking error, so the call goes through and the
+                    // line reaches the user (ADR-0037 d9, amended 2026-11-26,
+                    // #519).
                     Err(why) => {
                         let _ = writeln!(
                             std::io::stderr(),
-                            "oml hook pre-tool-use: {why}, so the call is blocked"
+                            "oml hook pre-tool-use: {why}, so the call is not checked; {}=1 skips every oml hook",
+                            oml_cli::guardrails::BYPASS
                         );
-                        ExitCode::from(2)
+                        ExitCode::FAILURE
                     }
                 }
             }
@@ -6529,6 +6534,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut chat = oml_cli::chat::doctor_lines(&|name: &str| std::env::var(name).ok());
     chat.extend(chat_server);
     let chat_warn = chat.iter().any(|line| line.starts_with("warn"));
+    // The hooks' bypass (ADR-0037 d9, decided by the operator 2026-11-26, #519).
+    let hooks = oml_cli::guardrails::doctor_lines(&|name: &str| std::env::var(name).ok());
+    let hooks_warn = !hooks.is_empty();
     skills.extend(local_skill_lines());
     let skills_warn = skills.iter().any(|line| line.starts_with("warn"));
     let documents_warn = documents.iter().any(|line| line.starts_with("warn"));
@@ -6577,6 +6585,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         || lifecycle_warn
         || sync_warn
         || chat_warn
+        || hooks_warn
         || skills_warn
         || documents_warn
         || builder_warn
@@ -6631,6 +6640,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "review": review,
             "sync": sync,
             "chat": chat,
+            "hooks": hooks,
             "skills": skills,
             "documents": documents,
             "builder": builder,
@@ -6806,6 +6816,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         for line in &chat {
             println!("chat        : {line}");
+        }
+        for line in &hooks {
+            println!("hooks       : {line}");
         }
         for line in &skills {
             println!("skills      : {line}");

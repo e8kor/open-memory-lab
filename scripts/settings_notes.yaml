@@ -178,6 +178,8 @@ client:
     note: The token budget of the session-start recall, an integer from 1 up.
   OML_FAILURE_RECALL:
     note: "`1` makes the plugin recall memories matching the error words after a failed command. Off by default."
+  OML_HOOK_DISABLE:
+    note: "`1` makes the plugin skip every hook without running `oml`: no memory or guardrails load and no tool call is checked. Set it before the session starts; `oml doctor` warns while it is set."
   OML_TURN_RECALL:
     note: "`1` makes the plugin recall on every prompt, within its budget. Off by default."
   OML_METRICS_URL:
