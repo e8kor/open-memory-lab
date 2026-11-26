@@ -96,6 +96,6 @@ The CLI, the SDKs, the hooks and the agent kit read these. The Claude Code plugi
 | `OML_SESSION_CONTEXT` | `off` stops the session-start hook from loading the workspace's memory into a session. It takes `on` or `off`. |
 | `OML_SESSION_CONTEXT_MAX_TOKENS` | The token budget of the session-start recall, an integer from 1 up. |
 | `OML_FAILURE_RECALL` | `1` makes the plugin recall memories matching the error words after a failed command. Off by default. |
-| `OML_HOOK_DISABLE` | `1` makes the plugin's PreToolUse hook skip the guardrail check without running `oml`, so no tool call is checked. Set it before the session starts; `oml doctor` warns while it is set. |
+| `OML_HOOK_DISABLE` | `1` makes the plugin skip every hook without running `oml`: no memory or guardrails load and no tool call is checked. Set it before the session starts; `oml doctor` warns while it is set. |
 | `OML_TURN_RECALL` | `1` makes the plugin recall on every prompt, within its budget. Off by default. |
 | `OML_METRICS_URL` | The lead's metrics listener, so that `oml doctor` can read rerank skips, scan findings and recall telemetry. |

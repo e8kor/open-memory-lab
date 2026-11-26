@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v oml >/dev/null 2>&1 || exit 0; oml hook session-start || exit 0",
+            "command": "[ \"${OML_HOOK_DISABLE:-}\" = 1 ] && exit 0; command -v oml >/dev/null 2>&1 || exit 0; oml hook session-start || exit 0",
             "timeout": 10,
             "statusMessage": "Loading OML memory"
           }
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v oml >/dev/null 2>&1 || exit 0; oml hook guardrails || exit 0",
+            "command": "[ \"${OML_HOOK_DISABLE:-}\" = 1 ] && exit 0; command -v oml >/dev/null 2>&1 || exit 0; oml hook guardrails || exit 0",
             "timeout": 10,
             "statusMessage": "Loading OML guardrails"
           }
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v oml >/dev/null 2>&1 || exit 0; oml hook guardrails || exit 0",
+            "command": "[ \"${OML_HOOK_DISABLE:-}\" = 1 ] && exit 0; command -v oml >/dev/null 2>&1 || exit 0; oml hook guardrails || exit 0",
             "timeout": 10,
             "statusMessage": "Loading OML guardrails"
           }
@@ -54,7 +54,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v oml >/dev/null 2>&1 || exit 0; oml hook tool-failure || exit 0",
+            "command": "[ \"${OML_HOOK_DISABLE:-}\" = 1 ] && exit 0; command -v oml >/dev/null 2>&1 || exit 0; oml hook tool-failure || exit 0",
             "timeout": 3
           }
         ]
@@ -65,7 +65,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v oml >/dev/null 2>&1 || exit 0; oml hook session-end || exit 0",
+            "command": "[ \"${OML_HOOK_DISABLE:-}\" = 1 ] && exit 0; command -v oml >/dev/null 2>&1 || exit 0; oml hook session-end || exit 0",
             "timeout": 1
           }
         ]
@@ -76,7 +76,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v oml >/dev/null 2>&1 || exit 0; oml hook user-prompt || exit 0",
+            "command": "[ \"${OML_HOOK_DISABLE:-}\" = 1 ] && exit 0; command -v oml >/dev/null 2>&1 || exit 0; oml hook user-prompt || exit 0",
             "timeout": 3
           }
         ]
@@ -87,7 +87,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v oml >/dev/null 2>&1 || exit 0; oml hook stop || exit 0",
+            "command": "[ \"${OML_HOOK_DISABLE:-}\" = 1 ] && exit 0; command -v oml >/dev/null 2>&1 || exit 0; oml hook stop || exit 0",
             "timeout": 2
           }
         ]
@@ -98,7 +98,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v oml >/dev/null 2>&1 || exit 0; oml hook pre-compact || exit 0",
+            "command": "[ \"${OML_HOOK_DISABLE:-}\" = 1 ] && exit 0; command -v oml >/dev/null 2>&1 || exit 0; oml hook pre-compact || exit 0",
             "timeout": 2
           }
         ]

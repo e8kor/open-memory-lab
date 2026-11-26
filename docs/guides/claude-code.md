@@ -109,10 +109,11 @@ call. The write is still held for review.
 - `OML_FAILURE_RECALL=1` makes a failed Bash command search for up to three distinctive words of
   its error. The cost: those words go to the server
   ([CLI reference](../cli/reference.md)).
-- `OML_HOOK_DISABLE=1`, set before the session starts, skips the guardrail check before each tool
-  call without running `oml`. The cost: no checked guardrail is enforced in that session, and
-  `oml doctor` warns while it is set. A check that fails or stalls past 5 seconds already lets
-  the call through, with one line on stderr naming the cause.
+- `OML_HOOK_DISABLE=1`, set before the session starts, skips every hook of the plugin without
+  running `oml`. The cost: no memory or guardrails load at session start, no checked guardrail
+  is enforced, and nothing is captured; `oml doctor` warns while it is set. A guardrail check
+  that fails or stalls past 5 seconds already lets the call through, with one line on stderr
+  naming the cause.
 
 ## Install without the CLI
 

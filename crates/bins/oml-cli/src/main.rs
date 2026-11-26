@@ -1623,7 +1623,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                     Err(why) => {
                         let _ = writeln!(
                             std::io::stderr(),
-                            "oml hook pre-tool-use: {why}, so the call is not checked; {}=1 skips the check",
+                            "oml hook pre-tool-use: {why}, so the call is not checked; {}=1 skips every oml hook",
                             oml_cli::guardrails::BYPASS
                         );
                         ExitCode::FAILURE
@@ -6534,7 +6534,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut chat = oml_cli::chat::doctor_lines(&|name: &str| std::env::var(name).ok());
     chat.extend(chat_server);
     let chat_warn = chat.iter().any(|line| line.starts_with("warn"));
-    // The guardrail check's bypass (ADR-0037 d9, amended 2026-11-26, #519).
+    // The hooks' bypass (ADR-0037 d9, decided by the operator 2026-11-26, #519).
     let hooks = oml_cli::guardrails::doctor_lines(&|name: &str| std::env::var(name).ok());
     let hooks_warn = !hooks.is_empty();
     skills.extend(local_skill_lines());

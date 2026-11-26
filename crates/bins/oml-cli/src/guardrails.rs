@@ -138,23 +138,24 @@ pub fn pre_tool_use(
     })
 }
 
-/// The bypass: `1` makes the plugin's PreToolUse command exit 0 before it
-/// runs `oml` at all, so no call is checked (ADR-0037 d9, amended
-/// 2026-11-26, #519). The verb itself does not read it, so `oml doctor`'s
-/// probe of the verb still answers.
+/// The bypass: `1` makes every command in the plugin's `hooks.json` exit 0
+/// before it runs `oml` at all, so no oml hook runs and no call is checked
+/// (ADR-0037 d9, decided by the operator 2026-11-26, #519). The verbs
+/// themselves do not read it, so `oml doctor`'s probe of the check still
+/// answers.
 pub const BYPASS: &str = "OML_HOOK_DISABLE";
 
 /// `oml doctor`'s hook lines: the bypass set, or set to a value the
-/// plugin's command does not take. Nothing when it is unset, empty or `0`.
+/// plugin's commands do not take. Nothing when it is unset, empty or `0`.
 #[must_use]
 pub fn doctor_lines(var: &dyn Fn(&str) -> Option<String>) -> Vec<String> {
     match var(BYPASS).filter(|v| !v.is_empty()).as_deref() {
         None | Some("0") => Vec::new(),
         Some("1") => vec![format!(
-            "warn guardrail_check_off: {BYPASS}=1, so no tool call is checked against the session's guardrails; unset it and restart the session to check them"
+            "warn hooks_off: {BYPASS}=1, so the oml plugin runs none of its hooks: no memory or guardrails load at session start and no tool call is checked; unset it and restart the session"
         )],
         Some(other) => vec![format!(
-            "warn guardrail_check_off: {BYPASS} is {other:?}; it takes 1 or 0, so the check runs"
+            "warn hooks_off: {BYPASS} is {other:?}; it takes 1 or 0, so the hooks run"
         )],
     }
 }

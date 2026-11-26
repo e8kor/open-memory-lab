@@ -275,8 +275,9 @@ it runs: a match denies the call or asks the user, and nothing is ever allowed b
 sends nothing to the server. Without the file, after a server outage at session start, the check
 decides nothing and says so once per call; restart the session to load the rules. A check that
 fails or takes longer than 5 seconds lets the call through unchecked, and its one line on stderr
-names the cause. `OML_HOOK_DISABLE=1`, set before the session starts, skips the check without
-running `oml`, and `oml doctor` warns while it is set. A text rule is
+names the cause. `OML_HOOK_DISABLE=1`, set before the session starts, skips every hook of the
+plugin without running `oml`: no memory or guardrails load and no call is checked. `oml doctor`
+warns while it is set. A text rule is
 an instruction to Claude, not a guarantee, and a checked rule holds only where this plugin's hooks
 run. See the
 [CLI reference](../../docs/cli/reference.md#oml-hook-guardrails-and-oml-hook-pre-tool-use).
