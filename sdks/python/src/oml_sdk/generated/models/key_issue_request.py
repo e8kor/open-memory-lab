@@ -80,7 +80,9 @@ class KeyIssueRequest:
             second admin person nothing is created until the confirmation, which creates the workspaces, writes the grants
             and names the act in one commit; a name taken by then answers 409 name.taken, applies nothing, and the act waits
             until it is declined or expires. A pending key whose default would be a workspace the act creates is issued with
-            no default. A creation below a user root counts on that account's workspaces meter (ADR-0097 d30). Since v0.8.6.
+            no default. A creation below a user root counts on that account's workspaces meter. At most 16 per issuance,
+            else request.validation with details.field /create_workspaces and details.reason too_many (ADR-0097 d30). Since
+            v0.8.6.
     """
 
     role: Role

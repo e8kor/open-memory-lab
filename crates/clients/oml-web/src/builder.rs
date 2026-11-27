@@ -594,6 +594,13 @@ impl Draft {
                 }
             }
         }
+        if self.new_workspaces.len() > GRANTS_MAX {
+            refuse(
+                "request.validation",
+                format!("A key creates at most {GRANTS_MAX} workspaces here (too_many)."),
+                "nw-h",
+            );
+        }
         // A new workspace brings the role's default grants, a reader and a
         // submitter grant for a contributor (ADR-0097 d30).
         for (i, w) in self.new_workspaces.iter().enumerate() {

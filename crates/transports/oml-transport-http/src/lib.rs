@@ -4404,9 +4404,21 @@ struct KeyIssueBody {
     create_workspaces: Vec<NewWorkspaceBody>,
 }
 
+/// The most workspaces one issuance creates (ADR-0097 d30): the session
+/// issuance's grant bound, chosen, not measured.
+pub(crate) const NEW_WORKSPACES_MAX: usize = 16;
+
 /// `create_workspaces[]` as the issuance takes it, each refusal naming its
 /// JSON Pointer (ADR-0097 d30).
 pub(crate) fn new_workspaces(sent: &[NewWorkspaceBody]) -> Result<Vec<NewWorkspace>, ApiError> {
+    // One issuance commits its creations in one chain, so it creates a
+    // bounded number (ADR-0097 d30; docs/reference/limits.md).
+    if sent.len() > NEW_WORKSPACES_MAX {
+        return Err(ApiError::validation(format!(
+            "an issuance creates at most {NEW_WORKSPACES_MAX} workspaces"
+        ))
+        .with_details(json!({ "field": "/create_workspaces", "reason": "too_many" })));
+    }
     sent.iter()
         .enumerate()
         .map(|(i, w)| {
@@ -5287,7 +5299,6 @@ fn whoami_grant_json(g: &GrantRecord) -> Value {
         "workspace_node_id": g.grant.node,
         "role": g.grant.role.as_str(),
         "covers": g.grant.covers.as_str(),
-        "create": g.grant.create,
         "epoch": g.epoch,
     })
 }

@@ -487,9 +487,9 @@ struct KeysIssueArgs {
     default_workspace: Option<String>,
     /// Grant <workspace>:<role>, or <workspace>:<role>:node for one node; workspace
     /// may be id or name. Repeatable. For a contributor key, each submitter grant
-    /// brings a reader grant on the same workspace. :create after the role lets
-    /// the key create child workspaces there; granting it waits on a second admin
-    /// person.
+    /// brings a reader grant on the same workspace. A create suffix,
+    /// <workspace>:<role>:create, lets the key create child workspaces there;
+    /// granting it waits on a second admin person.
     #[arg(long = "grant", value_parser = parse_grant)]
     grants: Vec<(String, String)>,
     /// Create the workspace <parent>/<name> in the same act and grant the key its

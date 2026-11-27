@@ -7760,7 +7760,11 @@ async fn whoami(router: &Router, token: &str) -> (StatusCode, Value) {
 fn whoami_grants(issued: &Value) -> Value {
     let mut grants = issued["grants"].clone();
     for grant in grants.as_array_mut().expect("grants") {
-        grant.as_object_mut().expect("grant").remove("deny");
+        let grant = grant.as_object_mut().expect("grant");
+        grant.remove("deny");
+        // whoami serves no create flag; the key's record does (ADR-0097
+        // d31).
+        grant.remove("create");
     }
     grants
 }
@@ -11773,11 +11777,11 @@ async fn a_web_session_key_issues_connects_and_cuts_off_its_own_keys() {
     drop_db(&rig.db_name).await;
 }
 
-/// The admin capacity issues no plain key through `POST /v2/keys`
-/// (`access.verb_ceiling`, `session_capacity`), and cuts a person's key off
-/// on universe as the admin page does (ADR-0070 d2, d5).
+/// The admin capacity issues through `POST /v2/keys` as an admin key does,
+/// one admin act (ADR-0097 d29), and cuts a person's key off on universe
+/// as the admin page does (ADR-0070 d5).
 #[tokio::test]
-async fn the_admin_capacity_issues_no_plain_key() {
+async fn the_admin_capacity_issues_a_key_as_an_admin_act() {
     let Some(rig) = web_rig().await else {
         return;
     };
@@ -11789,14 +11793,17 @@ async fn the_admin_capacity_issues_no_plain_key() {
         &rig.router,
         "POST",
         "/v2/keys",
-        web_call(&admin)
-            .idem("plain")
-            .body(json!({ "name": "minted", "role": "admin", "principal": "minted" })),
+        web_call(&admin).idem("plain").body(json!({
+            "name": "minted",
+            "role": "reader",
+            "principal": "minted",
+            "grants": [{ "workspace": "universe", "role": "reader" }],
+            "reason": "a reader for the dashboards",
+        })),
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
-    assert_envelope(&body, "access.verb_ceiling");
-    assert_eq!(body["error"]["details"]["reason"], "session_capacity");
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert!(body["admin_act"]["act_id"].is_string(), "{body}");
     let (status, _, denial) = send(
         &rig.router,
         "POST",

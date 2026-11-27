@@ -217,7 +217,8 @@ oml keys issue [OPTIONS] --role <ROLE> <KEY_NAME>
 | `--role <ROLE>` | reader \| contributor \| submitter \| reviewer \| admin. A contributor recalls and writes; a submitter writes without recall |
 | `--used-by <USED_BY>` | agent \| person \| service [default: agent] |
 | `--default-workspace <DEFAULT_WORKSPACE>` | Default workspace (id or name) for provider requests without one; must be covered by a grant. Defaults to the first grant's workspace |
-| `--grant <GRANTS>` | Grant <workspace>:<role>, or <workspace>:<role>:node for one node; workspace may be id or name. Repeatable. For a contributor key, each submitter grant brings a reader grant on the same workspace |
+| `--grant <GRANTS>` | Grant <workspace>:<role>, or <workspace>:<role>:node for one node; workspace may be id or name. Repeatable. For a contributor key, each submitter grant brings a reader grant on the same workspace. A create suffix, <workspace>:<role>:create, lets the key create child workspaces there; granting it waits on a second admin person |
+| `--create-workspace <PARENT/NAME>` | Create the workspace <parent>/<name> in the same act and grant the key its role's default grants on it, covering the subtree. Repeatable. Nothing is created while the issuance waits on a second admin person |
 | `--crew <CREW>` | Crew record (id or name), fixed for the key's life |
 | `--user <USER>` | User the key acts for. Grants must be under `universe.<user>`, where workspace names resolve; the first key creates that root |
 | `--principal <PRINCIPAL>` | Principal the key acts as |
@@ -251,6 +252,7 @@ oml keys issue-agent [OPTIONS] --principal <PRINCIPAL> <KEY_NAME>
 | `--out <OUT>` | Write the key to a new 0600 file without overwriting and print a line that reads it instead of the value |
 | `--connect-code` | Issue a claude.ai custom-connector key with a single-use connect code instead of a key value |
 | `--guardrail-scope <GUARDRAIL_SCOPE>` | Guardrail scope: workspace loads only the default workspace's guardrails; ancestors also loads every readable ancestor. Defaults to ancestors [possible values: workspace, ancestors] |
+| `--create-workspace <PARENT/NAME>` | Create the workspace <parent>/<name> in the same act and grant the key its role's default grants on it, covering the subtree. Repeatable. Nothing is created while the issuance waits on a second admin person |
 | `--expires <INSTANT>` | Instant the key stops authenticating, RFC 3339 with its offset, such as 2026-12-01T17:00:00Z; must be later than now. Omitted, the key does not expire. Refused for an admin key |
 | `--requests-per-minute <N>` | Requests the key may make in one UTC minute, from 1 to 1000000. Omitted, the key has no rate of its own. Refused for an admin key |
 

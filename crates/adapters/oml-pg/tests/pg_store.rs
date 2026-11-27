@@ -3081,8 +3081,9 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
                  - 'requests_per_minute' - 'linked_user_id' - 'link_pending_user_id' - 'pending_act_id'"
             }
             // 0014 adds covers, subtree for every grant it finds (ADR-0044
-            // d12).
-            (true, "grants") => "to_jsonb(t) - 'covers'",
+            // d12); 0071 adds may_create, false for every grant it finds
+            // (ADR-0097 d31).
+            (true, "grants") => "to_jsonb(t) - 'covers' - 'may_create'",
             // 0016 adds a guardrail's severity and rule, null on every other
             // kind (proposed ADR-0037 d10); 0020 adds the stored search
             // lexemes, generated from the claim (ADR-0049 d12); 0025 adds

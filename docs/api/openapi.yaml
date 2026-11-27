@@ -6290,7 +6290,7 @@ components:
         create_workspaces:
           type: array
           items: { $ref: '#/components/schemas/NewWorkspaceRequest' }
-          description: "Workspaces the issuance creates in the same act, each journalled as workspace.create before key.issued and granted to the key by its role's default grants over the subtree: a contributor reader and submitter, a submitter submitter, a reader reader, a reviewer reviewer. The creations, the key and its grants commit together or not at all. An admin key creates anywhere, a person's web session inside the own root; an operator key creates none (access.verb_ceiling). When the issuance waits on a second admin person nothing is created until the confirmation, which creates the workspaces, writes the grants and names the act in one commit; a name taken by then answers 409 name.taken, applies nothing, and the act waits until it is declined or expires. A pending key whose default would be a workspace the act creates is issued with no default. A creation below a user root counts on that account's workspaces meter (ADR-0097 d30). Since v0.8.6."
+          description: "Workspaces the issuance creates in the same act, each journalled as workspace.create before key.issued and granted to the key by its role's default grants over the subtree: a contributor reader and submitter, a submitter submitter, a reader reader, a reviewer reviewer. The creations, the key and its grants commit together or not at all. An admin key creates anywhere, a person's web session inside the own root; an operator key creates none (access.verb_ceiling). When the issuance waits on a second admin person nothing is created until the confirmation, which creates the workspaces, writes the grants and names the act in one commit; a name taken by then answers 409 name.taken, applies nothing, and the act waits until it is declined or expires. A pending key whose default would be a workspace the act creates is issued with no default. A creation below a user root counts on that account's workspaces meter. At most 16 per issuance, else request.validation with details.field /create_workspaces and details.reason too_many (ADR-0097 d30). Since v0.8.6."
 
     KeyLimitsRequest:
       type: object
@@ -6868,6 +6868,7 @@ components:
               workspace_id: { type: string, format: uuid }
               path: { type: string }
               covers: { type: string, enum: [subtree, node], description: "The grant's coverage; a client reads an answer without it, from a server before v0.8.5, as subtree (ADR-0096 d8)." }
+              create: { type: boolean, description: "Whether the grant lets the key create child workspaces where it reaches; a client reads an answer without it, from a server before v0.8.6, as false (ADR-0097 d31)." }
 
     HeldNamed:
       type: object

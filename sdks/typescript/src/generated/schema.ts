@@ -3598,7 +3598,7 @@ export interface components {
             requests_per_minute?: number;
             /** @description The issuing admin's reason, scanned as a verdict's reason and journalled in the issuance's admin.act. Required when the issuance waits on a second admin person: request.validation with details.field /reason and details.reason required; a missing one on an issuance that takes effect at once under sole_admin is journalled as null (ADR-0097 d26). Since v0.8.6. */
             reason?: string;
-            /** @description Workspaces the issuance creates in the same act, each journalled as workspace.create before key.issued and granted to the key by its role's default grants over the subtree: a contributor reader and submitter, a submitter submitter, a reader reader, a reviewer reviewer. The creations, the key and its grants commit together or not at all. An admin key creates anywhere, a person's web session inside the own root; an operator key creates none (access.verb_ceiling). When the issuance waits on a second admin person nothing is created until the confirmation, which creates the workspaces, writes the grants and names the act in one commit; a name taken by then answers 409 name.taken, applies nothing, and the act waits until it is declined or expires. A pending key whose default would be a workspace the act creates is issued with no default. A creation below a user root counts on that account's workspaces meter (ADR-0097 d30). Since v0.8.6. */
+            /** @description Workspaces the issuance creates in the same act, each journalled as workspace.create before key.issued and granted to the key by its role's default grants over the subtree: a contributor reader and submitter, a submitter submitter, a reader reader, a reviewer reviewer. The creations, the key and its grants commit together or not at all. An admin key creates anywhere, a person's web session inside the own root; an operator key creates none (access.verb_ceiling). When the issuance waits on a second admin person nothing is created until the confirmation, which creates the workspaces, writes the grants and names the act in one commit; a name taken by then answers 409 name.taken, applies nothing, and the act waits until it is declined or expires. A pending key whose default would be a workspace the act creates is issued with no default. A creation below a user root counts on that account's workspaces meter. At most 16 per issuance, else request.validation with details.field /create_workspaces and details.reason too_many (ADR-0097 d30). Since v0.8.6. */
             create_workspaces?: components["schemas"]["NewWorkspaceRequest"][];
         };
         /** @description A member sent replaces the value, null clears it, and a member not sent keeps it (ADR-0079 d5). */
@@ -4145,6 +4145,8 @@ export interface components {
                  * @enum {string}
                  */
                 covers: "subtree" | "node";
+                /** @description Whether the grant lets the key create child workspaces where it reaches; a client reads an answer without it, from a server before v0.8.6, as false (ADR-0097 d31). */
+                create?: boolean;
             }[];
         };
         /** @description GET /v2/review/held with ids (ADR-0055 d10; ADR-0070 d5). */
