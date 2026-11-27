@@ -186,7 +186,24 @@ where
     /// opens, the act's contest, under a sealed cookie naming the act and
     /// the person for ten minutes. The console's own contest page is the
     /// console lane's; this is the server's form.
-    pub(crate) fn contest_page(&self, grant: &oml_app::app::ContestGrant) -> Response {
+    pub(crate) async fn contest_page(&self, grant: &oml_app::app::ContestGrant) -> Response {
+        // What the act is, by whom, when and why, read under the grant; a
+        // read that fails draws the form alone, which still contests.
+        let about = match self.app.contest_act(grant).await {
+            Ok(act) => format!(
+                r#"<dl class="oml-facts"><dt>Act</dt><dd>{}</dd><dt>Taken by</dt><dd>{}</dd><dt>Taken</dt><dd>{}</dd><dt>Reason</dt><dd>{}</dd></dl>"#,
+                escape(&act.act.as_str().replace('_', " ")),
+                act.actor_person.as_ref().map_or_else(
+                    || "an admin key that counts as no person".to_owned(),
+                    |p| format!(r#"<span class="mono">{}</span>"#, escape(p.as_str()))
+                ),
+                escape(act.at.as_str()),
+                act.reason
+                    .as_deref()
+                    .map_or_else(|| "none given".to_owned(), escape),
+            ),
+            Err(_) => String::new(),
+        };
         let sealed = self.pages().sealer.seal(
             json!({
                 "t": grant.tenant_id.to_string(),
@@ -201,7 +218,9 @@ where
             StatusCode::OK,
             bare(
                 "Contest",
-                r#"<h1>Contest</h1><p class="desc">An act against this admin person is open. This sign-in opens its contest and nothing else: a contest restores the flag and the sign-in, and the admin keys stay suspended until the act is settled.</p><form method="post" action="/web/contest"><button type="submit" class="primary">Contest the act</button></form>"#,
+                &format!(
+                    r#"<h1>Contest</h1><p class="desc">An act against this admin person is open. This sign-in opens its contest and nothing else: a contest restores the flag and the sign-in, and the admin keys stay suspended until the act is settled.</p>{about}<form method="post" action="/web/contest"><button type="submit" class="primary">Contest the act</button></form>"#
+                ),
             ),
         );
         append_cookie(

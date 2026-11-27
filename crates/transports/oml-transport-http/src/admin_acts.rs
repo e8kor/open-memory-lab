@@ -215,13 +215,20 @@ where
             };
             let acts = st
                 .app
-                .admin_acts(acting.bearer(), state)
+                .admin_acts_listed(acting.bearer(), state)
                 .await
                 .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-            Ok(json_response(
-                StatusCode::OK,
-                &json!({ "items": acts.iter().map(admin_act_json).collect::<Vec<_>>() }),
-            ))
+            // Each act says whether the caller's person may confirm or
+            // review it, as the To do count judges it (ADR-0097 d2, d11).
+            let items: Vec<Value> = acts
+                .iter()
+                .map(|(act, to_confirm)| {
+                    let mut item = admin_act_json(act);
+                    item["to_confirm"] = json!(to_confirm);
+                    item
+                })
+                .collect();
+            Ok(json_response(StatusCode::OK, &json!({ "items": items })))
         };
         finish(&rid, inner.await)
     }

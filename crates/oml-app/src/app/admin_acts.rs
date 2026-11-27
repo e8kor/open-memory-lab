@@ -128,6 +128,38 @@ fn grant_from_json(value: &Value) -> Result<Grant, AppError> {
     })
 }
 
+/// An admin person as a confirmation judges them (ADR-0097 d11).
+pub(crate) struct ConfirmerView {
+    pub(crate) person: oml_domain::name::Name,
+    /// When their admin flag was accepted, in microseconds.
+    pub(crate) since: i64,
+}
+
+/// Whether `act` is one the admin person of `view` may confirm or review
+/// at `now` (ADR-0097 d2, d10, d11): never their own; a pending act at
+/// least seven days younger than their flag; a widening act a
+/// `sole_admin` tenant took at once, once their flag is seven days old;
+/// and an unsettled time box younger than their flag by seven days (d13).
+/// The one predicate the To do count and the acts list read, so the two
+/// agree.
+pub(crate) fn to_confirm(view: &ConfirmerView, act: &AdminActRecord, now: &EventTime) -> bool {
+    use oml_domain::admin_act::{AdminActClass, AdminActState, counts_for_act};
+    if act.actor_person.as_ref() == Some(&view.person) {
+        return false;
+    }
+    match act.state_at(now) {
+        AdminActState::PendingConfirmation => counts_for_act(view.since, act.at.unix_micros()),
+        // Neither a `sole_admin` act nor a time box counts for a person whose
+        // flag is younger than seven days (ADR-0097 d10, d11, d13).
+        AdminActState::Effective => {
+            counts_for_act(view.since, now.unix_micros())
+                && ((act.sole_admin && act.class() == AdminActClass::Widening)
+                    || (act.timebox() && counts_for_act(view.since, act.at.unix_micros())))
+        }
+        _ => false,
+    }
+}
+
 /// The `admin.act` payload of `record` (ADR-0097 d2).
 pub(crate) fn act_payload(record: &AdminActRecord) -> Value {
     json!({
@@ -189,18 +221,22 @@ where
         timebox: bool,
     ) -> Result<BegunAct, AppError> {
         let tenant_id = admin.tenant_id;
-        let (state, sole_admin) = if act.class() == AdminActClass::Widening {
-            let standing = self.journal.admin_standing(tenant_id).await?;
-            if standing.sole_admin && !self.act_against_admin_open(tenant_id).await? {
-                (AdminActState::Effective, true)
-            } else if timebox {
-                (AdminActState::Effective, false)
+        // Widening, and an erase's shred, wait on a second admin person
+        // outside `sole_admin` (d4, d5, d10); a time box takes effect at
+        // once and is settled afterwards (d13).
+        let (state, sole_admin) =
+            if matches!(act.class(), AdminActClass::Widening | AdminActClass::Erase) {
+                let standing = self.journal.admin_standing(tenant_id).await?;
+                if standing.sole_admin && !self.act_against_admin_open(tenant_id).await? {
+                    (AdminActState::Effective, true)
+                } else if timebox {
+                    (AdminActState::Effective, false)
+                } else {
+                    (AdminActState::PendingConfirmation, false)
+                }
             } else {
-                (AdminActState::PendingConfirmation, false)
-            }
-        } else {
-            (AdminActState::Effective, false)
-        };
+                (AdminActState::Effective, false)
+            };
         if reason.is_none() && act.requires_reason() && !sole_admin {
             return Err(AppError::AdminActReasonRequired);
         }
@@ -237,7 +273,7 @@ where
             // contest or a reversal restores (d8).
             effect: if matches!(
                 act.class(),
-                AdminActClass::Widening | AdminActClass::AgainstAdmin
+                AdminActClass::Widening | AdminActClass::AgainstAdmin | AdminActClass::Erase
             ) {
                 effect
             } else {
@@ -372,8 +408,28 @@ where
         bearer: impl Into<Bearer<'_>>,
         state: Option<AdminActState>,
     ) -> Result<Vec<AdminActRecord>, AppError> {
+        Ok(self
+            .admin_acts_listed(bearer, state)
+            .await?
+            .into_iter()
+            .map(|(act, _)| act)
+            .collect())
+    }
+
+    /// [`Self::admin_acts`], each act with whether the calling admin person
+    /// may confirm or review it, as the To do count judges it
+    /// (one predicate for both; ADR-0097 d2, d10, d11).
+    ///
+    /// # Errors
+    /// The caller's authentication and role, and the store's.
+    pub async fn admin_acts_listed(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        state: Option<AdminActState>,
+    ) -> Result<Vec<(AdminActRecord, bool)>, AppError> {
         let admin = self.authenticate_bearer(bearer.into()).await?;
         require_role(&admin, Role::Admin, "admin_acts")?;
+        let view = self.confirmer_view(&admin.key).await?;
         let now = self.clock.now();
         // An expired act is stored pending; it is listed as expired.
         let stored = match state {
@@ -387,7 +443,13 @@ where
         if let Some(wanted) = state {
             acts.retain(|a| a.state == wanted);
         }
-        Ok(acts)
+        Ok(acts
+            .into_iter()
+            .map(|act| {
+                let flag = view.as_ref().is_some_and(|v| to_confirm(v, &act, &now));
+                (act, flag)
+            })
+            .collect())
     }
 }
 
@@ -681,6 +743,47 @@ where
                     }
                 })?;
             }
+            AdminActKind::AcceptFederation => {
+                // The field set back off, while the node still accepts.
+                let Some(workspace_id) = uuid_at(effect, "workspace_id") else {
+                    return Ok(());
+                };
+                if self
+                    .journal
+                    .federation_declining(tenant_id, &[workspace_id])
+                    .await?
+                    .is_empty()
+                {
+                    let prev = links.last().map(|(e, _)| e.clone()).expect("a link");
+                    links.push(self.workspace_federation_event(
+                        Some(&prev),
+                        admin,
+                        workspace_id,
+                        false,
+                        Some(undo.decline_id),
+                    )?);
+                }
+            }
+            AdminActKind::WidenFederationPolicy => {
+                // Each field the change sent set back to the value the act
+                // found, over the policy as it stands now.
+                let now = self.journal.federation_policy(tenant_id).await?;
+                let change = effect.get("change").cloned().unwrap_or(Value::Null);
+                let from = effect.get("from").cloned().unwrap_or(Value::Null);
+                let mut back = serde_json::Map::new();
+                for field in ["enabled", "default_sources", "max_sources"] {
+                    if change.get(field).is_some_and(|v| !v.is_null())
+                        && let Some(v) = from.get(field)
+                    {
+                        back.insert(field.to_owned(), v.clone());
+                    }
+                }
+                let policy = super::federation::apply_change_json(now, &Value::Object(back));
+                if policy != now {
+                    let prev = links.last().map(|(e, _)| e.clone()).expect("a link");
+                    links.push(self.policy_event(&prev, admin, policy, now, undo.decline_id)?);
+                }
+            }
             AdminActKind::AllowAdmin => {
                 let bad = || AppError::StoredResponse(format!("admin act {} entry", act.act_id));
                 let text = |field: &str| {
@@ -930,6 +1033,15 @@ where
                 let code = effect.get("code").ok_or_else(|| {
                     AppError::StoredResponse(format!("admin act {} holds no code", act.act_id))
                 })?;
+                // A key cut off since the mint is refused at the
+                // confirmation as at the mint, and the act waits (#353).
+                if let Some(target) = self.journal.key(tenant_id, key_id).await?
+                    && self.cut_off(&target).await?
+                {
+                    return Err(super::connect_refused(
+                        oml_domain::oauth::ConnectRefused::CutOff,
+                    ));
+                }
                 self.confirmed_code(admin, act, key_id, code, links).await?;
             }
             AdminActKind::RaiseLimits => {
@@ -976,6 +1088,62 @@ where
             }
             AdminActKind::WorkspacePublicSet => {
                 self.confirmed_public_set(admin, act, links).await?;
+            }
+            AdminActKind::AcceptFederation => {
+                // The node as it stands at the confirmation: one that
+                // accepts already changes nothing (ADR-0097 d5).
+                let workspace_id = effect
+                    .get("workspace_id")
+                    .and_then(Value::as_str)
+                    .and_then(|s| Uuid::parse_str(s).ok())
+                    .ok_or_else(|| {
+                        AppError::StoredResponse(format!(
+                            "admin act {} names no workspace",
+                            act.act_id
+                        ))
+                    })?;
+                if !self
+                    .journal
+                    .federation_declining(tenant_id, &[workspace_id])
+                    .await?
+                    .is_empty()
+                {
+                    let prev = last(links);
+                    links.push(self.workspace_federation_event(
+                        Some(&prev),
+                        admin,
+                        workspace_id,
+                        true,
+                        Some(act.act_id),
+                    )?);
+                }
+            }
+            AdminActKind::WidenFederationPolicy => {
+                // The change over the policy as it stands at the
+                // confirmation (ADR-0097 d5).
+                let from = self.journal.federation_policy(tenant_id).await?;
+                let policy = super::federation::apply_change_json(
+                    from,
+                    effect.get("change").unwrap_or(&Value::Null),
+                );
+                if policy != from {
+                    let prev = last(links);
+                    links.push(self.policy_event(&prev, admin, policy, from, act.act_id)?);
+                }
+            }
+            AdminActKind::Erase => {
+                let memory_id = effect
+                    .get("memory_id")
+                    .and_then(Value::as_str)
+                    .and_then(|s| Uuid::parse_str(s).ok())
+                    .ok_or_else(|| {
+                        AppError::StoredResponse(format!("admin act {} names no claim", act.act_id))
+                    })?;
+                let prev = last(links);
+                links.push(
+                    self.confirmed_shred(admin, memory_id, &prev, act.act_id)
+                        .await?,
+                );
             }
             AdminActKind::AllowAdmin => {
                 let bad = || AppError::StoredResponse(format!("admin act {} entry", act.act_id));

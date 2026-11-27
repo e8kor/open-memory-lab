@@ -84,6 +84,11 @@ class RescanReport:
         admin_acts_pending (int | Unset): Admin acts that wait on a second admin person: doctor's
             admin.act_pending_confirmation (ADR-0097 d5).
         admin_act_oldest_pending_seconds (int | Unset): The oldest pending admin act's age in seconds, 0 with none.
+        admin_erase_shreds_pending (int | Unset): Erases whose shred waits on a second admin person, their bytes kept:
+            doctor's admin.erase_shred_pending (ADR-0097 d4). Not counted in admin_acts_pending, since a pending shred never
+            expires. Since v0.8.6.
+        admin_erase_shred_oldest_seconds (int | Unset): The oldest pending shred's age in seconds, 0 with none (ADR-0097
+            d4). Since v0.8.6.
         admin_acts_sole_admin (int | Unset): Widening acts taken at once under sole_admin: doctor's admin.act_sole_admin
             (ADR-0097 d10).
         sole_admin (bool | Unset): Whether the tenant has never had two live admin persons (ADR-0097 d10).
@@ -137,6 +142,8 @@ class RescanReport:
     web_emails_pending: int | Unset = UNSET
     admin_acts_pending: int | Unset = UNSET
     admin_act_oldest_pending_seconds: int | Unset = UNSET
+    admin_erase_shreds_pending: int | Unset = UNSET
+    admin_erase_shred_oldest_seconds: int | Unset = UNSET
     admin_acts_sole_admin: int | Unset = UNSET
     sole_admin: bool | Unset = UNSET
     admin_acts_without_reason: int | Unset = UNSET
@@ -235,6 +242,10 @@ class RescanReport:
 
         admin_act_oldest_pending_seconds = self.admin_act_oldest_pending_seconds
 
+        admin_erase_shreds_pending = self.admin_erase_shreds_pending
+
+        admin_erase_shred_oldest_seconds = self.admin_erase_shred_oldest_seconds
+
         admin_acts_sole_admin = self.admin_acts_sole_admin
 
         sole_admin = self.sole_admin
@@ -320,6 +331,12 @@ class RescanReport:
         if admin_act_oldest_pending_seconds is not UNSET:
             field_dict["admin_act_oldest_pending_seconds"] = (
                 admin_act_oldest_pending_seconds
+            )
+        if admin_erase_shreds_pending is not UNSET:
+            field_dict["admin_erase_shreds_pending"] = admin_erase_shreds_pending
+        if admin_erase_shred_oldest_seconds is not UNSET:
+            field_dict["admin_erase_shred_oldest_seconds"] = (
+                admin_erase_shred_oldest_seconds
             )
         if admin_acts_sole_admin is not UNSET:
             field_dict["admin_acts_sole_admin"] = admin_acts_sole_admin
@@ -476,6 +493,12 @@ class RescanReport:
             "admin_act_oldest_pending_seconds", UNSET
         )
 
+        admin_erase_shreds_pending = d.pop("admin_erase_shreds_pending", UNSET)
+
+        admin_erase_shred_oldest_seconds = d.pop(
+            "admin_erase_shred_oldest_seconds", UNSET
+        )
+
         admin_acts_sole_admin = d.pop("admin_acts_sole_admin", UNSET)
 
         sole_admin = d.pop("sole_admin", UNSET)
@@ -529,6 +552,8 @@ class RescanReport:
             web_emails_pending=web_emails_pending,
             admin_acts_pending=admin_acts_pending,
             admin_act_oldest_pending_seconds=admin_act_oldest_pending_seconds,
+            admin_erase_shreds_pending=admin_erase_shreds_pending,
+            admin_erase_shred_oldest_seconds=admin_erase_shred_oldest_seconds,
             admin_acts_sole_admin=admin_acts_sole_admin,
             sole_admin=sole_admin,
             admin_acts_without_reason=admin_acts_without_reason,

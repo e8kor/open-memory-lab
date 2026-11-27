@@ -2742,3 +2742,477 @@ async fn an_acceptance_records_the_provider_subject_and_the_sessions_age() {
     assert_eq!(evidence["session_age_seconds"], 90);
     assert!(evidence["provider_subject_digests"].is_array());
 }
+
+// -- erase: the demotion at once, the shred after a second admin person
+// (ADR-0097 d4; amendment of 2026-11-27, answer 5) ---------------------------
+
+/// A writer and a reviewer agent key on `crew`, issued while the tenant is
+/// still `sole_admin`, so both take effect at once.
+async fn crew_pair(r: &Rig) -> (IssuedKey, IssuedKey) {
+    let writer = r
+        .app
+        .issue_key(r.admin(), &agent_req())
+        .await
+        .expect("a writer");
+    let reviewer = r
+        .app
+        .issue_key(
+            r.admin(),
+            &IssueKeyRequest {
+                role: Role::Reviewer,
+                principal: "rex".to_owned(),
+                grants: vec![
+                    GrantRequest {
+                        node: by_name("crew"),
+                        role: Role::Reviewer,
+                        deny: Vec::new(),
+                        covers: Covers::Subtree,
+                        create: false,
+                    },
+                    GrantRequest {
+                        node: by_name("crew"),
+                        role: Role::Reader,
+                        deny: Vec::new(),
+                        covers: Covers::Subtree,
+                        create: false,
+                    },
+                ],
+                ..agent_req()
+            },
+        )
+        .await
+        .expect("a reviewer");
+    (writer, reviewer)
+}
+
+fn claim_req(idem: &str, body: &str) -> oml_app::types::SubmitRequest {
+    oml_app::types::SubmitRequest {
+        on_similar: Default::default(),
+        anchor: None,
+        origin: None,
+        idempotency_key: idem.to_owned(),
+        claim_key: Some("vault-token".to_owned()),
+        verb: None,
+        kind: oml_app::domain::MemoryKind::Memory,
+        body: body.to_owned(),
+        workspace: Some(by_name("crew")),
+        derives_from: Vec::new(),
+        severity: None,
+        rule: None,
+        kind_fields: None,
+        valid_from: None,
+        valid_until: None,
+        format: None,
+        title: None,
+    }
+}
+
+async fn submitted(r: &Rig, writer: &IssuedKey, idem: &str, body: &str) -> Uuid {
+    r.app
+        .submit_memory(writer.value.as_str(), &claim_req(idem, body))
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id
+}
+
+/// A successor of `target`, version `version`, by the contributor key.
+async fn superseded(
+    r: &Rig,
+    writer: &IssuedKey,
+    idem: &str,
+    target: Uuid,
+    version: u32,
+    body: &str,
+) -> Uuid {
+    r.app
+        .supersede(
+            writer.value.as_str(),
+            &oml_app::types::SupersedeRequest {
+                on_similar: Default::default(),
+                anchor: None,
+                origin: None,
+                expected_version: version - 1,
+                idempotency_key: idem.to_owned(),
+                target_id: target,
+                body: body.to_owned(),
+                kind: None,
+                retirement: false,
+                derives_from: Vec::new(),
+                reason: None,
+                workspace: None,
+                refuse_vocabulary_target: false,
+                severity: None,
+                rule: None,
+                kind_fields: None,
+                valid_from: None,
+                valid_until: None,
+                format: None,
+                title: None,
+            },
+        )
+        .await
+        .expect("supersede")
+        .receipt
+        .memory_id
+}
+
+async fn approved(r: &Rig, reviewer: &IssuedKey, id: Uuid) {
+    r.app
+        .post_verdict(
+            reviewer.value.as_str(),
+            id,
+            oml_app::types::Verdict::Approve,
+            None,
+        )
+        .await
+        .expect("approve");
+}
+
+/// Two promoted versions of one claim, v1 and its successor v2, the tip;
+/// then alice and bob, admin persons accepted eight days ago.
+async fn erase_rig() -> (Rig, IssuedKey, Uuid, Uuid) {
+    let r = rig().await;
+    let (writer, reviewer) = crew_pair(&r).await;
+    let v1 = submitted(&r, &writer, "e1", "the vault token is abc").await;
+    approved(&r, &reviewer, v1).await;
+    let v2 = superseded(&r, &writer, "e2", v1, 2, "the vault token is abcd").await;
+    approved(&r, &reviewer, v2).await;
+    r.admin_person("alice").await;
+    r.admin_person("bob").await;
+    r.clock.advance(8 * DAY);
+    (r, writer, v1, v2)
+}
+
+fn erase(target: Uuid) -> oml_app::app::FixRequest {
+    oml_app::app::FixRequest {
+        act: oml_app::types::FixAct::Erase,
+        target,
+        reason: "ticket 9: a secret was written".to_owned(),
+        body: None,
+        title: None,
+    }
+}
+
+async fn status_and_body(r: &Rig, id: Uuid) -> (oml_app::domain::MemoryStatus, String) {
+    let m = r
+        .store
+        .memory(r.boot.tenant_id, id)
+        .await
+        .expect("a read")
+        .expect("held");
+    (m.status, m.body)
+}
+
+/// With two admin persons an erase demotes every promoted version of the
+/// claim at once, as a fix, and keeps the bytes; the shred waits, unexpired
+/// past a week, until a second admin person confirms it, and the actor's
+/// own person cannot.
+#[tokio::test]
+async fn erase_demotes_at_once_and_shreds_only_after_a_second_admin_person() {
+    use oml_app::domain::MemoryStatus;
+    let (r, _writer, v1, v2) = erase_rig().await;
+    let alice = r.admin_session("alice").await;
+    let outcome = r
+        .app
+        .admin_fix(Bearer::Session(&alice), &erase(v2))
+        .await
+        .expect("the erase");
+    let fix = outcome.fix().expect("a promoted target is a fix").clone();
+    assert_eq!(fix.act, oml_app::types::FixAct::Erase);
+    for id in [v1, v2] {
+        let (status, body) = status_and_body(&r, id).await;
+        assert_eq!(status, MemoryStatus::Demoted, "demoted at once");
+        assert!(!body.is_empty(), "the bytes are kept");
+    }
+    let act = last_act(&r, "erase").await;
+    assert_eq!(act.act_id, outcome.act().act_id);
+    assert_eq!(act.state, AdminActState::PendingConfirmation);
+    assert!(!act.sole_admin);
+    assert_eq!(act.expires_at(), None, "a pending shred never expires");
+    r.clock.advance(8 * DAY);
+    assert!(matches!(
+        r.app
+            .confirm_admin_act(Bearer::Session(&r.admin_session("alice").await), act.act_id)
+            .await
+            .unwrap_err(),
+        AppError::AdminAct(AdminActRefusal::OwnAct)
+    ));
+    let before = r.journal().await.len();
+    let confirmed = r
+        .app
+        .confirm_admin_act(Bearer::Session(&r.admin_session("bob").await), act.act_id)
+        .await
+        .expect("bob confirms the shred");
+    assert_eq!(confirmed.state, AdminActState::Confirmed);
+    let events = r.journal().await;
+    let added: Vec<&str> = events[before..]
+        .iter()
+        .map(|e| e.envelope.event_type.as_str())
+        .collect();
+    assert_eq!(
+        added,
+        [event_types::ADMIN_ACT, event_types::LIFECYCLE_ERASE]
+    );
+    assert_eq!(
+        events[before + 1].envelope.payload["act_id"],
+        act.act_id.to_string()
+    );
+    for id in [v1, v2] {
+        let (status, body) = status_and_body(&r, id).await;
+        assert_eq!(status, MemoryStatus::Erased);
+        assert!(body.is_empty(), "shredded");
+    }
+}
+
+/// A declined shred leaves the claim demoted and its bytes kept.
+#[tokio::test]
+async fn a_declined_shred_leaves_the_claim_demoted_and_its_bytes_kept() {
+    use oml_app::domain::MemoryStatus;
+    let (r, _writer, _v1, v2) = erase_rig().await;
+    let alice = r.admin_session("alice").await;
+    let outcome = r
+        .app
+        .admin_fix(Bearer::Session(&alice), &erase(v2))
+        .await
+        .expect("the erase");
+    r.app
+        .decline_admin_act(
+            Bearer::Session(&r.admin_session("bob").await),
+            outcome.act().act_id,
+            Some("the text is no secret"),
+        )
+        .await
+        .expect("bob declines");
+    let (status, body) = status_and_body(&r, v2).await;
+    assert_eq!(status, MemoryStatus::Demoted);
+    assert_eq!(body, "the vault token is abcd");
+}
+
+/// An erase whose target is not a promoted version has nothing to demote:
+/// it records the pending shred act alone, with no fix record, and the
+/// claim's served tip stays.
+#[tokio::test]
+async fn an_erase_of_a_version_that_is_not_promoted_records_only_the_pending_shred_act() {
+    use oml_app::domain::MemoryStatus;
+    let (r, writer, _v1, v2) = erase_rig().await;
+    let held = superseded(&r, &writer, "e3", v2, 3, "the vault token is abcde").await;
+    let alice = r.admin_session("alice").await;
+    let before = r.journal().await.len();
+    let outcome = r
+        .app
+        .admin_fix(Bearer::Session(&alice), &erase(held))
+        .await
+        .expect("the erase");
+    assert!(outcome.fix().is_none(), "no fix record");
+    assert_eq!(outcome.act().state, AdminActState::PendingConfirmation);
+    let added: Vec<String> = r.journal().await[before..]
+        .iter()
+        .map(|e| e.envelope.event_type.clone())
+        .collect();
+    assert_eq!(added, [event_types::ADMIN_ACT]);
+    assert!(
+        r.store
+            .fixes(r.boot.tenant_id, false)
+            .await
+            .expect("fixes")
+            .is_empty()
+    );
+    assert_eq!(status_and_body(&r, v2).await.0, MemoryStatus::Promoted);
+    assert_eq!(status_and_body(&r, held).await.0, MemoryStatus::Held);
+}
+
+/// In a `sole_admin` tenant the shred runs at once, and the act is marked.
+#[tokio::test]
+async fn under_sole_admin_an_erase_shreds_at_once_marked() {
+    use oml_app::domain::MemoryStatus;
+    let r = rig().await;
+    let (writer, reviewer) = crew_pair(&r).await;
+    let v1 = submitted(&r, &writer, "e1", "the vault token is abc").await;
+    approved(&r, &reviewer, v1).await;
+    r.admin_person("alice").await;
+    let alice = r.admin_session("alice").await;
+    let outcome = r
+        .app
+        .admin_fix(Bearer::Session(&alice), &erase(v1))
+        .await
+        .expect("the erase");
+    assert!(outcome.fix().is_some());
+    assert_eq!(outcome.act().state, AdminActState::Effective);
+    assert!(outcome.act().sole_admin);
+    let (status, body) = status_and_body(&r, v1).await;
+    assert_eq!(status, MemoryStatus::Erased);
+    assert!(body.is_empty());
+}
+
+// -- federation acts in the envelope (ADR-0097 d3, d5) ---------------------
+
+/// An admin's federation acts ride the admin act: declining federation on a
+/// workspace is narrowing and takes effect at once, accepting it again is
+/// widening and waits, applying only at a second admin person's
+/// confirmation.
+#[tokio::test]
+async fn an_admins_federation_acceptance_waits_on_a_second_admin_person_and_applies_at_confirmation()
+ {
+    let r = two_admins().await;
+    let alice = r.admin_session("alice").await;
+    let declined = r
+        .app
+        .set_workspace_federation_with_reason(
+            Bearer::Session(&alice),
+            by_name("crew"),
+            false,
+            Some("the crew holds drafts"),
+        )
+        .await
+        .expect("a decline at once");
+    assert!(!declined.now.accept_federated);
+    assert!(declined.pending.is_none());
+    let narrowing = last_act(&r, "decline_federation").await;
+    assert_eq!(narrowing.state, AdminActState::Effective);
+    let events = r.journal().await;
+    let set = events
+        .iter()
+        .rev()
+        .find(|e| e.envelope.event_type == event_types::WORKSPACE_FEDERATION_SET)
+        .expect("the effect");
+    assert_eq!(set.envelope.payload["act_id"], narrowing.act_id.to_string());
+    let pending = r
+        .app
+        .set_workspace_federation_with_reason(
+            Bearer::Session(&alice),
+            by_name("crew"),
+            true,
+            Some("the drafts are gone"),
+        )
+        .await
+        .expect("a pending acceptance");
+    assert!(!pending.now.accept_federated, "nothing took effect");
+    let act = pending.pending.expect("the act waits");
+    assert_eq!(act.act.as_str(), "accept_federation");
+    assert_eq!(act.state, AdminActState::PendingConfirmation);
+    r.app
+        .confirm_admin_act(Bearer::Session(&r.admin_session("bob").await), act.act_id)
+        .await
+        .expect("bob confirms");
+    let crew = r
+        .store
+        .resolve_name(r.boot.tenant_id, NamedKind::Workspace, &name("crew"))
+        .await
+        .expect("a read")
+        .expect("crew");
+    assert!(
+        r.store
+            .federation_declining(r.boot.tenant_id, &[crew])
+            .await
+            .expect("a read")
+            .is_empty(),
+        "accepted at the confirmation"
+    );
+}
+
+/// Widening the tenant's federation policy waits on a second admin person
+/// and applies its change at the confirmation; narrowing takes effect at
+/// once; a change that does both is refused, as two acts of two classes.
+#[tokio::test]
+async fn widening_the_federation_policy_waits_and_narrowing_it_takes_effect_at_once() {
+    use oml_app::federation::FederationPolicyChange;
+    let r = two_admins().await;
+    let alice = r.admin_session("alice").await;
+    let widen = FederationPolicyChange {
+        enabled: Some(true),
+        default_sources: None,
+        max_sources: Some(8),
+    };
+    let taken = r
+        .app
+        .set_federation_policy_with_reason(Bearer::Session(&alice), widen, Some("wider recall"))
+        .await
+        .expect("a pending widening");
+    assert!(!taken.now.0.policy.enabled, "nothing took effect");
+    let act = taken.pending.expect("the act waits");
+    assert_eq!(act.act.as_str(), "widen_federation_policy");
+    r.app
+        .confirm_admin_act(Bearer::Session(&r.admin_session("bob").await), act.act_id)
+        .await
+        .expect("bob confirms");
+    let policy = r
+        .store
+        .federation_policy(r.boot.tenant_id)
+        .await
+        .expect("the policy");
+    assert!(policy.enabled);
+    assert_eq!(policy.max_sources, 8);
+    let narrowed = r
+        .app
+        .set_federation_policy_with_reason(
+            Bearer::Session(&alice),
+            FederationPolicyChange {
+                enabled: None,
+                default_sources: None,
+                max_sources: Some(4),
+            },
+            None,
+        )
+        .await
+        .expect("a narrowing at once");
+    assert!(narrowed.pending.is_none());
+    assert_eq!(narrowed.now.0.policy.max_sources, 4);
+    assert_eq!(
+        last_act(&r, "narrow_federation_policy").await.state,
+        AdminActState::Effective
+    );
+    let mixed = r
+        .app
+        .set_federation_policy_with_reason(
+            Bearer::Session(&alice),
+            FederationPolicyChange {
+                enabled: Some(false),
+                default_sources: None,
+                max_sources: Some(16),
+            },
+            Some("both at once"),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(mixed, AppError::AdminField { .. }), "{mixed:?}");
+}
+
+/// In a `sole_admin` tenant a federation widening takes effect at once,
+/// marked, and its decline sets the field back.
+#[tokio::test]
+async fn a_declined_sole_admin_federation_acceptance_is_undone() {
+    let r = rig().await;
+    r.admin_person("alice").await;
+    let alice = r.admin_session("alice").await;
+    r.app
+        .set_workspace_federation_with_reason(Bearer::Session(&alice), by_name("crew"), false, None)
+        .await
+        .expect("declined at once");
+    let taken = r
+        .app
+        .set_workspace_federation_with_reason(Bearer::Session(&alice), by_name("crew"), true, None)
+        .await
+        .expect("accepted at once");
+    assert!(taken.now.accept_federated);
+    let act = last_act(&r, "accept_federation").await;
+    assert!(act.sole_admin);
+    r.app
+        .decline_admin_act(Bearer::Session(&alice), act.act_id, Some("too wide"))
+        .await
+        .expect("declined");
+    let crew = r
+        .store
+        .resolve_name(r.boot.tenant_id, NamedKind::Workspace, &name("crew"))
+        .await
+        .expect("a read")
+        .expect("crew");
+    assert_eq!(
+        r.store
+            .federation_declining(r.boot.tenant_id, &[crew])
+            .await
+            .expect("a read"),
+        vec![crew],
+        "the decline set the field back"
+    );
+}

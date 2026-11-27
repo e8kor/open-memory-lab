@@ -4122,6 +4122,18 @@ async fn a_removed_admins_sign_in_opens_only_the_contest_of_the_removal() {
     let (status, token, body) = sign_in_google(&rig, "sub-1", EMAIL).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.contains("Contest the act"), "{body}");
+    // The page names the act it contests: what, by whom, when and why,
+    // in the console's neutral voice (ADR-0097 d8).
+    assert!(body.contains("remove admin"), "{body}");
+    assert!(
+        body.contains("alice&#39;s laptop was stolen")
+            || body.contains("alice's laptop was stolen"),
+        "{body}"
+    );
+    assert!(body.contains("Taken"), "{body}");
+    for word in [" you ", " your ", " my "] {
+        assert!(!body.to_lowercase().contains(word), "{word}: {body}");
+    }
     assert_eq!(token, None, "no session opens");
     let (status, token, body) = sign_in_google(&rig, "sub-2", EMAIL).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);

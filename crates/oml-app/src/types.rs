@@ -342,7 +342,7 @@ impl AdminActRecord {
     #[must_use]
     pub fn state_at(&self, now: &EventTime) -> oml_domain::admin_act::AdminActState {
         use oml_domain::admin_act::{AdminActState, PENDING_LIFE_SECS};
-        if self.state == AdminActState::PendingConfirmation
+        if self.expires()
             && now.unix_micros() - self.at.unix_micros() >= PENDING_LIFE_SECS * 1_000_000
         {
             AdminActState::Expired
@@ -351,11 +351,20 @@ impl AdminActRecord {
         }
     }
 
+    /// Whether the act is pending widening, whose life ends (d23). A
+    /// pending shred never expires: d23's expiry is widening's, and the
+    /// bytes it keeps are reported by doctor until a second admin person
+    /// confirms or declines it (d4).
+    fn expires(&self) -> bool {
+        use oml_domain::admin_act::{AdminActClass, AdminActState};
+        self.state == AdminActState::PendingConfirmation && self.class() != AdminActClass::Erase
+    }
+
     /// The end of a pending act's life (ADR-0097 d23).
     #[must_use]
     pub fn expires_at(&self) -> Option<EventTime> {
-        use oml_domain::admin_act::{AdminActState, PENDING_LIFE_SECS};
-        (self.state == AdminActState::PendingConfirmation)
+        use oml_domain::admin_act::PENDING_LIFE_SECS;
+        self.expires()
             .then(|| {
                 EventTime::from_unix_micros(self.at.unix_micros() + PENDING_LIFE_SECS * 1_000_000)
             })

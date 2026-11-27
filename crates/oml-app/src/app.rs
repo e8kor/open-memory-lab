@@ -35,8 +35,7 @@ pub use auth::{Callback, CallbackRefusal, ContestGrant, WEB_SESSION_TTL_SECS};
 pub use exports::{ExportCounts, ExportRequest, Exported};
 pub use federation::WideKey;
 pub use fixes::{
-    Demotion, Erasure, FIX_REASON_MAX_BYTES, FixRequest, FixStats, ReviewedFix,
-    SERVER_KEY_PRINCIPAL,
+    FIX_REASON_MAX_BYTES, FixOutcome, FixRequest, FixStats, ReviewedFix, SERVER_KEY_PRINCIPAL,
 };
 pub use imports::{
     ImportAnswer, ImportFinished, ImportJob, ImportPlan, ImportRequest, ImportStart,
@@ -8667,53 +8666,50 @@ where
     /// bottleneck register): two indexed reads, pending and effective, and
     /// the tenant's admin standing.
     async fn acts_to_confirm(&self, admin: &KeyRecord) -> Result<u64, AppError> {
-        use oml_domain::admin_act::{AdminActClass, AdminActState, counts_for_act};
-        let tenant_id = admin.tenant_id;
-        let Some(person) = self.counted_person_of(admin).await? else {
-            return Ok(0);
-        };
-        let standing = self.journal.admin_standing(tenant_id).await?;
-        let Some(me) = standing
-            .persons
-            .iter()
-            .find(|p| p.user == person && !p.disabled)
-        else {
+        use oml_domain::admin_act::AdminActState;
+        let Some(view) = self.confirmer_view(admin).await? else {
             return Ok(0);
         };
         let now = self.clock.now();
-        let since = me.admin_since.unix_micros();
         let mut count = 0_u64;
-        for act in self
-            .journal
-            .admin_acts(tenant_id, Some(AdminActState::PendingConfirmation))
-            .await?
-        {
-            if act.state_at(&now) == AdminActState::PendingConfirmation
-                && act.actor_person.as_ref() != Some(&person)
-                && counts_for_act(since, act.at.unix_micros())
+        for state in [AdminActState::PendingConfirmation, AdminActState::Effective] {
+            // An effective act is one to review only once the person's flag
+            // is seven days old: the read is skipped before then (d11).
+            if state == AdminActState::Effective
+                && !oml_domain::admin_act::counts_for_act(view.since, now.unix_micros())
             {
-                count += 1;
+                continue;
             }
-        }
-        // The effective acts are read only for a person whose flag is seven
-        // days old: neither a `sole_admin` act nor a time box counts for a
-        // younger one (ADR-0097 d10, d11, d13).
-        if counts_for_act(since, now.unix_micros()) {
-            for a in self
+            count += self
                 .journal
-                .admin_acts(tenant_id, Some(AdminActState::Effective))
+                .admin_acts(admin.tenant_id, Some(state))
                 .await?
                 .iter()
-                .filter(|a| a.actor_person.as_ref() != Some(&person))
-            {
-                if (a.sole_admin && a.class() == AdminActClass::Widening)
-                    || (a.timebox() && counts_for_act(since, a.at.unix_micros()))
-                {
-                    count += 1;
-                }
-            }
+                .filter(|a| admin_acts::to_confirm(&view, a, &now))
+                .count() as u64;
         }
         Ok(count)
+    }
+
+    /// The live admin person `admin` counts as, and when their admin flag
+    /// was accepted: what judges which acts they may confirm (ADR-0097
+    /// d11); `None` for a key that counts as no live admin person.
+    pub(crate) async fn confirmer_view(
+        &self,
+        admin: &KeyRecord,
+    ) -> Result<Option<admin_acts::ConfirmerView>, AppError> {
+        let Some(person) = self.counted_person_of(admin).await? else {
+            return Ok(None);
+        };
+        let standing = self.journal.admin_standing(admin.tenant_id).await?;
+        Ok(standing
+            .persons
+            .iter()
+            .find(|p| p.user == person && !p.disabled)
+            .map(|me| admin_acts::ConfirmerView {
+                since: me.admin_since.unix_micros(),
+                person,
+            }))
     }
 
     /// `GET /v2/review/briefs` (ADR-0096 d7): the pending brief edges on
@@ -13592,6 +13588,11 @@ where
         }
         if target.expired_at(&self.clock.now()) {
             return Err(connect_refused(ConnectRefused::Expired));
+        }
+        // A cut-off key is refused as an expired one is: its connection
+        // would read and write nothing (#353).
+        if self.cut_off(&target).await? {
+            return Err(connect_refused(ConnectRefused::CutOff));
         }
         let oauth = self
             .oauth_issuer

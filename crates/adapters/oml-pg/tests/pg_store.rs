@@ -6779,6 +6779,47 @@ async fn bootstrap_pg(app: &PgApp, tenant_name: &str) -> oml_app::types::Bootstr
     .expect("bootstrap")
 }
 
+/// [`bootstrap_pg`] with its admin key linked to the person `alice`, as an
+/// admin fix requires (ADR-0089, the operator's decision of 2026-11-19).
+async fn person_bootstrap_pg(app: &PgApp, tenant_name: &str) -> oml_app::types::BootstrapResult {
+    app.bootstrap_tenant_for(
+        &BootstrapRequest {
+            tenant_name: name(tenant_name),
+            admin_key_name: name("root-admin"),
+            admin_principal: "alice-admin".to_owned(),
+        },
+        Some(&oml_app::types::BootstrapPerson {
+            user: name("alice"),
+            email: oml_app::domain::web::Email::parse("alice@example.com").expect("an email"),
+        }),
+    )
+    .await
+    .expect("bootstrap")
+}
+
+/// `act` on `target` through the one surface that demotes or erases, the
+/// admin fix act (ADR-0089 d16; #502); an erase shreds at once, since the
+/// tenant has only ever had one admin person (ADR-0097 d4, d10).
+async fn fix_pg(
+    app: &PgApp,
+    admin: &str,
+    act: oml_app::types::FixAct,
+    target: Uuid,
+) -> Result<oml_app::types::FixRecord, AppError> {
+    app.admin_fix(
+        admin,
+        &oml_app::app::FixRequest {
+            act,
+            target,
+            reason: "ticket 41: the claim is wrong in production".to_owned(),
+            body: None,
+            title: None,
+        },
+    )
+    .await
+    .map(|o| o.fix().cloned().expect("a fix record"))
+}
+
 /// A workspace `child` under `parent`, created by `admin`; its id.
 async fn workspace_pg(app: &PgApp, admin: &str, child: &str, parent: Uuid) -> Uuid {
     app.create_workspace(admin, &name(child), Some(parent.into()), None)
@@ -12570,8 +12611,29 @@ async fn two_promoted_pg(
     store: &PgStore,
     tenant: &str,
 ) -> (PgApp, Uuid, String, String, Uuid, Uuid) {
+    two_promoted_pg_with(store, tenant, false).await
+}
+
+/// [`two_promoted_pg`] with its admin key linked to `alice`, as the fix act
+/// that demotes and erases requires (#502).
+async fn fix_two_promoted_pg(
+    store: &PgStore,
+    tenant: &str,
+) -> (PgApp, Uuid, String, String, Uuid, Uuid) {
+    two_promoted_pg_with(store, tenant, true).await
+}
+
+async fn two_promoted_pg_with(
+    store: &PgStore,
+    tenant: &str,
+    person: bool,
+) -> (PgApp, Uuid, String, String, Uuid, Uuid) {
     let app = app_over_pg(store);
-    let boot = bootstrap_pg(&app, tenant).await;
+    let boot = if person {
+        person_bootstrap_pg(&app, tenant).await
+    } else {
+        bootstrap_pg(&app, tenant).await
+    };
     let admin = boot.admin_key.value.clone();
     let crew = workspace_pg(&app, &admin, "crew", boot.root_workspace_id).await;
     let writer = writer_pg(&app, &admin, crew).await;
@@ -12656,12 +12718,11 @@ async fn a_demotion_returns_the_tip_and_keeps_the_text_in_postgres() {
     }
     let created = Mutex::new(Vec::new());
     let store = fresh_store(&created).await;
-    let (app, tenant, admin, _writer, v1, v2) = two_promoted_pg(&store, "demote").await;
-    let demotion = app
-        .demote_version(admin.as_str(), v2)
+    let (app, tenant, admin, _writer, v1, v2) = fix_two_promoted_pg(&store, "demote").await;
+    let demotion = fix_pg(&app, admin.as_str(), oml_app::types::FixAct::Demote, v2)
         .await
         .expect("demote the tip");
-    assert_eq!(demotion.restored.map(|r| r.artifact_id), Some(v1));
+    assert_eq!(demotion.served_id, Some(v1));
     let row = store.memory(tenant, v2).await.expect("read").expect("row");
     assert_eq!(row.status, MemoryStatus::Demoted);
     assert!(!row.is_tip);
@@ -12686,14 +12747,15 @@ async fn a_demotion_returns_the_tip_and_keeps_the_text_in_postgres() {
     // Demoting it again is refused before the store; its claim's version
     // below, once demoted, returns no tip.
     assert!(matches!(
-        app.demote_version(admin.as_str(), v2).await.unwrap_err(),
-        AppError::Transition(_)
+        fix_pg(&app, admin.as_str(), oml_app::types::FixAct::Demote, v2)
+            .await
+            .unwrap_err(),
+        AppError::FixTargetNotPromoted { .. }
     ));
-    let last = app
-        .demote_version(admin.as_str(), v1)
+    let last = fix_pg(&app, admin.as_str(), oml_app::types::FixAct::Demote, v1)
         .await
         .expect("demote v1");
-    assert_eq!(last.restored, None);
+    assert_eq!(last.served_id, None);
     assert!(
         store
             .claim_tip(tenant, row.workspace_id, "canary")
@@ -12712,7 +12774,7 @@ async fn an_erase_leaves_no_clear_body_in_the_live_row_its_passages_queue_teleme
     }
     let created = Mutex::new(Vec::new());
     let store = fresh_store(&created).await;
-    let (app, tenant, admin, writer, v1, v2) = two_promoted_pg(&store, "erase").await;
+    let (app, tenant, admin, writer, v1, v2) = fix_two_promoted_pg(&store, "erase").await;
     // A held successor in the review queue, a passage of v2, and a recall
     // that served v2 with its query text kept (the tenant opted in).
     let v3 = app
@@ -12809,8 +12871,25 @@ async fn an_erase_leaves_no_clear_body_in_the_live_row_its_passages_queue_teleme
     )
     .await;
     let (digest, bytes): (Vec<u8>, i32) = (before.get(0), before.get(1));
-    let erasure = app.erase_claim(admin.as_str(), v2).await.expect("erase");
-    assert_eq!(erasure.erased.len(), 3, "every version of the claim");
+    fix_pg(&app, admin.as_str(), oml_app::types::FixAct::Erase, v2)
+        .await
+        .expect("erase");
+    let erased = store
+        .events_range(tenant, 1, 10_000)
+        .await
+        .expect("the journal");
+    let erase = erased
+        .iter()
+        .rev()
+        .find(|e| e.envelope.event_type == oml_app::domain::event_types::LIFECYCLE_ERASE)
+        .expect("the erase");
+    assert_eq!(
+        erase.envelope.payload["artifact_ids"]
+            .as_array()
+            .map(Vec::len),
+        Some(3),
+        "every version of the claim"
+    );
     assert_eq!(traces(passages, v2).await, 0, "no passage");
     assert_eq!(traces(queued, v3).await, 0, "off the review queue");
     let erased_events = "SELECT count(*) FROM recall_events \
@@ -12961,7 +13040,7 @@ async fn an_erase_destroys_the_versions_data_key_and_no_other() {
     }
     let created = Mutex::new(Vec::new());
     let store = fresh_store(&created).await;
-    let (app, tenant, admin, writer, v1, v2) = two_promoted_pg(&store, "erasekey").await;
+    let (app, tenant, admin, writer, v1, v2) = fix_two_promoted_pg(&store, "erasekey").await;
     // Another claim of the same tenant, and another tenant's version, each
     // keyed by the lake writer: the erase reaches neither.
     let untouched = app
@@ -12987,7 +13066,9 @@ async fn an_erase_destroys_the_versions_data_key_and_no_other() {
     live_key(&store, tenant, v1).await;
     live_key(&store, tenant, untouched).await;
     live_key(&store, other_tenant, other_v1).await;
-    app.erase_claim(admin.as_str(), v1).await.expect("erase");
+    fix_pg(&app, admin.as_str(), oml_app::types::FixAct::Erase, v1)
+        .await
+        .expect("erase");
     let (gone, destroyed, _) = key_state(&store, tenant, v1).await;
     assert!(gone, "the wrapped key is gone");
     assert!(destroyed.is_some(), "and its destruction stamped");
@@ -13372,7 +13453,7 @@ async fn document_rig(store: &PgStore, tenant: &str) -> DocumentRig {
         )
         .expect("a configuration"),
     );
-    let boot = bootstrap_pg(&app, tenant).await;
+    let boot = person_bootstrap_pg(&app, tenant).await;
     let admin = boot.admin_key.value.clone();
     let crew = workspace_pg(&app, &admin, "crew", boot.root_workspace_id).await;
     let writer = writer_pg(&app, &admin, crew).await;
@@ -13858,7 +13939,7 @@ async fn migrations_0059_and_0060_apply_over_0058_with_a_document_row_and_count_
     drop_dbs(&created).await;
 }
 
-/// A promoted document erased through `erase_claim` leaves nothing that
+/// A promoted document erased through the admin fix act leaves nothing that
 /// was cut or derived from its text (ADR-0081 d3; ADR-0089 d16; ADR-0005
 /// d2): its passages, its lexical and its sparse postings, its sparse
 /// queue entry, its words in the vocabulary and its counts all go with the
@@ -13922,7 +14003,9 @@ async fn a_documents_passages_postings_words_and_sparse_entries_go_with_its_eras
     );
     assert_eq!(queued, 0, "encoded, off the queue");
     assert_eq!((words, counts), (1, 1), "its words and its counts");
-    app.erase_claim(admin.as_str(), doc).await.expect("erase");
+    fix_pg(&app, admin.as_str(), oml_app::types::FixAct::Erase, doc)
+        .await
+        .expect("erase");
     assert_eq!(
         left().await,
         (0, 0, 0, 0, 0, 0),

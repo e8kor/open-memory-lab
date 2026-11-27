@@ -534,6 +534,11 @@ struct KeysIssueArgs {
     /// except in a tenant that has only ever had one admin person.
     #[arg(long)]
     reason: Option<String>,
+    /// Write the value to a new owner-only (0600) file, refusing one that
+    /// exists, and print its path instead of the value; with --json the
+    /// answer names the path as key_file and carries no value.
+    #[arg(long)]
+    out: Option<PathBuf>,
     #[command(flatten)]
     limits: KeyLimitArgs,
 }
@@ -586,8 +591,8 @@ struct IssueAgentArgs {
     #[arg(long, default_value = "agent", value_parser = ["agent", "person"])]
     used_by: String,
     /// contributor recalls and writes the workspace; submitter writes it without
-    /// recall.
-    #[arg(long, default_value = "contributor", value_parser = ["contributor", "submitter"])]
+    /// recall; reader only recalls it.
+    #[arg(long, default_value = "contributor", value_parser = ["contributor", "submitter", "reader"])]
     role: String,
     /// Write the key to a new 0600 file without overwriting and print a line that
     /// reads it instead of the value.
@@ -673,6 +678,10 @@ enum WorkspacesCommand {
         /// `on` lets federated recalls search it (the default); `off` declines.
         #[arg(value_parser = ["on", "off"])]
         accept: String,
+        /// Why: an admin's `on` waits on another admin person and requires
+        /// one, unless the tenant has only ever had one admin person.
+        #[arg(long)]
+        reason: Option<String>,
     },
     /// Mark a protected or frozen workspace public, so every reading key of
     /// the tenant reads its approved items and recalls them by default, or
@@ -1005,6 +1014,11 @@ enum SearchCommand {
         /// the most a sources list names, 0 to 64.
         #[arg(long)]
         max_sources: Option<u32>,
+        /// Why: a change that searches more waits on another admin person
+        /// and requires one, unless the tenant has only ever had one admin
+        /// person.
+        #[arg(long)]
+        reason: Option<String>,
     },
 }
 
@@ -1895,6 +1909,12 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             command: KeysCommand::Issue(args),
         } => {
             let client = resolve(cli, &stored)?;
+            // The file is created before anything is sent, so a path that
+            // cannot hold the value fails while no key exists (#528).
+            let key_file = match &args.out {
+                Some(path) => Some(KeyFile::create(path).map_err(CliError::Local)?),
+                None => None,
+            };
             let grants = with_reader_beside_submitters(&args.grants, &args.role);
             if !cli.json {
                 for (node, _) in grants.iter().filter(|g| !args.grants.contains(g)) {
@@ -1942,15 +1962,51 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 body["reason"] = json!(reason);
             }
             args.limits.add_to(&mut body);
-            let (_, response) = client.post("/v2/keys", &body, &write_opts())?;
+            let mut response = match client.post("/v2/keys", &body, &write_opts()) {
+                Ok((_, response)) => response,
+                Err(e) => {
+                    // The empty file holds nothing either way, so it goes.
+                    if let Some(Err(note)) = key_file.map(KeyFile::discard) {
+                        eprintln!("note: {note}");
+                    }
+                    return Err(e);
+                }
+            };
+            // With --out the value goes to the file alone (#528).
+            let shown = match key_file {
+                Some(file) => {
+                    let shown = file.shown().to_owned();
+                    let value = response["value"].as_str().unwrap_or_default().to_owned();
+                    file.write_value(&value).map_err(|e| {
+                        CliError::local(format!(
+                            "key {} ({}) was issued, but writing {shown} failed ({e}); its value                              is lost and the key is live. Revoke it with oml keys revoke {}",
+                            field(&response, "name"),
+                            field(&response, "key_id"),
+                            field(&response, "key_id"),
+                        ))
+                    })?;
+                    if let Some(answer) = response.as_object_mut() {
+                        answer.remove("value");
+                        answer.insert("key_file".to_owned(), json!(shown));
+                    }
+                    Some(shown)
+                }
+                None => None,
+            };
             if cli.json {
                 print_json(&response);
             } else {
-                println!("key issued — SHOWN ONCE");
+                match &shown {
+                    Some(path) => println!("key issued — its value is only in {path} (0600)"),
+                    None => println!("key issued — SHOWN ONCE"),
+                }
                 println!();
                 println!("    name   : {}", field(&response, "name"));
                 println!("    key id : {}", field(&response, "key_id"));
-                println!("    key    : {}", field(&response, "value"));
+                match &shown {
+                    Some(path) => println!("    file   : {path}"),
+                    None => println!("    key    : {}", field(&response, "value")),
+                }
                 println!("    role   : {}", field(&response, "role"));
                 println!("    default: {}", field(&response, "default_workspace_id"));
                 if response["user"].is_object() {
@@ -1970,7 +2026,9 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                     }
                 }
                 println!();
-                println!("store this value now; the server keeps only its hash.");
+                if shown.is_none() {
+                    println!("store this value now; the server keeps only its hash.");
+                }
                 // A widening admin act waits on a second admin person
                 // (ADR-0097 d5, d23).
                 if response["admin_act"]["state"] == "pending_confirmation" {
@@ -2447,16 +2505,30 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         }
 
         Command::Workspaces {
-            command: WorkspacesCommand::Federation { workspace, accept },
+            command:
+                WorkspacesCommand::Federation {
+                    workspace,
+                    accept,
+                    reason,
+                },
         } => {
             let client = resolve(cli, &stored)?;
-            let (_, response) = client.post(
+            let mut body = json!({ "accept_federated": accept == "on" });
+            if let Some(reason) = reason {
+                body["reason"] = json!(reason);
+            }
+            let (status, response) = client.post(
                 &format!("/v2/workspaces/{}/federation", segment(workspace)?),
-                &json!({ "accept_federated": accept == "on" }),
+                &body,
                 &write_opts(),
             )?;
             if cli.json {
                 print_json(&response);
+            } else if status == 202 {
+                println!(
+                    "{}",
+                    federation_pending(&format!("workspace {workspace}"), &response)
+                );
             } else {
                 println!(
                     "workspace {workspace} {} federated reads",
@@ -3073,6 +3145,14 @@ fn node_suffix(grant: &Value) -> &'static str {
 /// `oml workspaces public set|clear`'s line (ADR-0098 d9): `effective`
 /// with the flag now held, or that the set waits on another admin person,
 /// with the act id either way.
+/// A federation widening that waits on another admin person (ADR-0097 d5).
+fn federation_pending(what: &str, act: &Value) -> String {
+    let id = act["act_id"].as_str().unwrap_or("?");
+    format!(
+        "{what}: the change waits on another admin person (act {id}); they confirm it with oml admin confirm {id}"
+    )
+}
+
 fn public_printed(workspace: &str, status: u16, response: &Value) -> String {
     let act = response["act_id"].as_str().unwrap_or("?");
     if status == 202 {
@@ -4468,8 +4548,12 @@ fn run_issue_agent(
         Some(path) => Some(KeyFile::create(path).map_err(CliError::Local)?),
         None => None,
     };
-    let grants =
-        with_reader_beside_submitters(&[(workspace.clone(), "submitter".to_owned())], &args.role);
+    // A reader key reads the workspace and writes nothing (#528).
+    let grants = if args.role == "reader" {
+        vec![(workspace.clone(), "reader".to_owned())]
+    } else {
+        with_reader_beside_submitters(&[(workspace.clone(), "submitter".to_owned())], &args.role)
+    };
     let mut body = json!({
         "role": args.role,
         "name": args.key_name,
@@ -5329,6 +5413,7 @@ fn run_search(
             enabled,
             default_sources,
             max_sources,
+            reason,
         } => {
             let policy = if enabled.is_none() && default_sources.is_none() && max_sources.is_none()
             {
@@ -5344,9 +5429,20 @@ fn run_search(
                 if let Some(m) = max_sources {
                     body.insert("max_sources".to_owned(), Value::from(*m));
                 }
-                client
-                    .post("/v2/federation", &Value::Object(body), &write_opts())?
-                    .1
+                if let Some(reason) = reason {
+                    body.insert("reason".to_owned(), Value::from(reason.as_str()));
+                }
+                let (status, response) =
+                    client.post("/v2/federation", &Value::Object(body), &write_opts())?;
+                if status == 202 {
+                    if cli.json {
+                        print_json(&response);
+                    } else {
+                        println!("{}", federation_pending("the federation policy", &response));
+                    }
+                    return Ok(ExitCode::SUCCESS);
+                }
+                response
             };
             if cli.json {
                 print_json(&policy);
@@ -7990,7 +8086,7 @@ fn flagged_creates_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
 /// out. A server before a count does not report it, and its line is then
 /// absent; a count that is no unsigned integer is named, never read as zero.
 fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
-    const LINES: [(&str, &str, &str); 21] = [
+    const LINES: [(&str, &str, &str); 22] = [
         (
             "held_successors_stranded",
             "memory.held_successor_stranded",
@@ -8050,6 +8146,11 @@ fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
             "admin_acts_pending",
             "admin.act_pending_confirmation",
             "admin act(s) wait on a second admin person; each takes effect only once confirmed with oml admin confirm <act>, and expires as declined after 7 days",
+        ),
+        (
+            "admin_erase_shreds_pending",
+            "admin.erase_shred_pending",
+            "erase(s) demoted their claim and keep its bytes until a second admin person confirms the shred with oml admin confirm <act>, or declines it",
         ),
         (
             "admin_acts_sole_admin",
@@ -8132,6 +8233,13 @@ fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
                         .and_then(Value::as_u64)
                         .unwrap_or(0);
                     format!("warn {line}: {n} {what}; {left} days left before revocation")
+                }
+                Some(n) if *field == "admin_erase_shreds_pending" => {
+                    let oldest = report
+                        .get("admin_erase_shred_oldest_seconds")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    format!("warn {line}: {n} {what}; the oldest is {oldest} s old")
                 }
                 Some(n) if *field == "admin_acts_pending" => {
                     let oldest = report
@@ -9441,6 +9549,7 @@ mod tests {
                 "key.link_pending: not read; an admin key reads it".to_owned(),
                 "web.email_pending: not read; an admin key reads it".to_owned(),
                 "admin.act_pending_confirmation: not read; an admin key reads it".to_owned(),
+                "admin.erase_shred_pending: not read; an admin key reads it".to_owned(),
                 "admin.act_sole_admin: not read; an admin key reads it".to_owned(),
                 "admin.act_without_reason: not read; an admin key reads it".to_owned(),
                 "admin.act_expired: not read; an admin key reads it".to_owned(),
@@ -9504,6 +9613,18 @@ mod tests {
         assert_eq!(
             lifecycle_doctor(Some(&Ok(json!({ "web_emails_pending": 0 })))),
             vec!["web.email_pending: 0".to_owned()]
+        );
+    }
+
+    #[test]
+    fn the_lifecycle_doctor_warns_of_erases_whose_shred_waits_with_the_oldest_age() {
+        let report = json!({
+            "admin_erase_shreds_pending": 1,
+            "admin_erase_shred_oldest_seconds": 7200,
+        });
+        assert_eq!(
+            lifecycle_doctor(Some(&Ok(report))),
+            vec!["warn admin.erase_shred_pending: 1 erase(s) demoted their claim and keep its bytes until a second admin person confirms the shred with oml admin confirm <act>, or declines it; the oldest is 7200 s old".to_owned()]
         );
     }
 

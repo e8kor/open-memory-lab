@@ -133,7 +133,13 @@ fn front(lead: SocketAddr, web: SocketAddr) -> Router {
 async fn rig() -> Rig {
     // The console suite adds several admin entries to reach its persons;
     // the admin act's confirm-first rule has its own suite (ADR-0097 d10).
-    let store = MemStore::new().keeping_sole_admin();
+    rig_on(MemStore::new().keeping_sole_admin(), false).await
+}
+
+/// [`rig`] over `store`; with `one_clock` the tests' own app shares the
+/// lead's clock, so an act a test takes after moving it is as old as the
+/// lead reads it (ADR-0097 d11).
+async fn rig_on(store: MemStore, one_clock: bool) -> Rig {
     let providers = MemSignIn::new();
     let boot = test_app(&store)
         .bootstrap_tenant(&BootstrapRequest {
@@ -174,9 +180,14 @@ async fn rig() -> Rig {
         api: oml_web::api(Arc::new(transport), WEB_CLIENT_SECRET).expect("an API client"),
     });
     let web = serve(web).await;
+    let app = if one_clock {
+        test_app_on(&store, lead_clock.clone())
+    } else {
+        test_app(&store)
+    };
     let rig = Rig {
         lead_clock,
-        app: Arc::new(test_app(&store)),
+        app: Arc::new(app),
         store,
         router: front(lead, web),
         direct: front(web, web),
@@ -2255,7 +2266,7 @@ async fn every_signed_in_page_draws_the_sign_out_control_in_its_header() {
         );
         drawn += 1;
     }
-    assert_eq!(drawn, 28, "every page route of oml_web::PAGES was read");
+    assert_eq!(drawn, 29, "every page route of oml_web::PAGES was read");
     // A page an act answers is drawn by the same chrome.
     let (status, _, page) = act(
         &rig,
@@ -12543,4 +12554,184 @@ async fn the_admin_key_builder_issues_a_key_with_a_new_workspace_and_a_create_gr
     assert!(shown.contains("OML_API_KEY="), "{shown}");
     assert!(shown.contains("Shown once"), "{shown}");
     key_named(&rig, "ops-bot").await;
+}
+
+// -- admin acts on the console (ADR-0097 d2, d23) ----------------------------
+
+/// A tenant with two admin persons, alice and bob, accepted eight days ago,
+/// and an agent key the boot admin key issued since, pending: it waits on a
+/// second admin person.
+async fn two_admins_and_a_pending_key() -> (Rig, String) {
+    let rig = rig_on(MemStore::new(), true).await;
+    rig.allow(EMAIL, "alice", true).await;
+    rig.allow("bob@example.com", "bob", true).await;
+    rig.lead_clock.advance(8 * 86_400);
+    let issued = rig
+        .app
+        .issue_key_with_reason(
+            rig.boot.admin_key.value.as_str(),
+            &oml_app::types::IssueKeyRequest {
+                profile: None,
+                role: oml_app::domain::Role::Reader,
+                name: Name::parse("acts-agent").expect("a name"),
+                principal: "acts-agent".to_owned(),
+                used_by: Some(oml_app::domain::UsedBy::Agent),
+                default_workspace: None,
+                crew: None,
+                grants: vec![oml_app::types::GrantRequest {
+                    node: oml_app::domain::name::Reference::parse("universe").expect("a name"),
+                    role: oml_app::domain::Role::Reader,
+                    deny: Vec::new(),
+                    covers: oml_app::domain::access::Covers::Subtree,
+                    create: false,
+                }],
+                user: None,
+                connect_code: false,
+                guardrail_scope: None,
+                expiry: None,
+                requests_per_minute: None,
+                person: None,
+                create_workspaces: Vec::new(),
+            },
+            Some("an agent for the nightly digest"),
+        )
+        .await
+        .expect("a pending issuance");
+    let act = issued.pending_act.expect("the issuance waits");
+    (rig, act.to_string())
+}
+
+/// The administration To do lists the act under "Admin acts to confirm",
+/// and its confirm screen shows what a confirmation applies (d23): the
+/// role, the grants, `used_by`, the principal, who took it and why; the
+/// confirmation applies it and the screen says so.
+#[tokio::test]
+async fn admin_acts_to_confirm_open_a_confirm_screen_whose_confirmation_applies_the_act() {
+    let (rig, act) = two_admins_and_a_pending_key().await;
+    let cookie = signed_in(&rig, "sub-alice", EMAIL).await;
+    let (status, _, todo) = send(&rig.router, get("/web/admin/todo", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{todo}");
+    // The two admin flags the boot key set at once under sole admin, and
+    // the pending issuance: as the counts read serves them (d10).
+    assert!(todo.contains("Admin acts to confirm · 3"), "{todo}");
+    let link = format!("/web/admin/acts?act={act}");
+    assert!(todo.contains(&link), "{todo}");
+    let (status, _, screen) = send(&rig.router, get(&link, Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{screen}");
+    for shown in [
+        "issue key",
+        "widening",
+        "pending confirmation",
+        "an agent for the nightly digest",
+        "acts-agent",
+        "Grants a confirmation applies",
+        "reader",
+        "agent",
+        "Confirm",
+        "Decline",
+    ] {
+        assert!(screen.contains(shown), "{shown}: {screen}");
+    }
+    for word in [" you ", " your ", " my "] {
+        assert!(!screen.to_lowercase().contains(word), "{word}");
+    }
+    let csrf = csrf_of(&screen);
+    let (status, headers, body) = send(
+        &rig.router,
+        post(
+            "/web/admin/acts",
+            &[
+                ("csrf_token", csrf.as_str()),
+                ("action", "confirm"),
+                ("act", act.as_str()),
+            ],
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let location = headers[http::header::LOCATION]
+        .to_str()
+        .expect("a location");
+    assert_eq!(location, format!("{link}&done=confirmed"));
+    let (_, _, after) = send(&rig.router, get(location, Some(&cookie))).await;
+    assert!(after.contains("confirmed: the act took effect"), "{after}");
+    assert!(after.contains("Confirmed by"), "{after}");
+    assert!(
+        !after.contains(r#"value="confirm""#),
+        "no form once settled"
+    );
+}
+
+/// A decline on the confirm screen carries a reason: one sent without is
+/// refused before any API call, and one with it is final.
+#[tokio::test]
+async fn a_decline_on_the_confirm_screen_requires_a_reason_and_is_final() {
+    let (rig, act) = two_admins_and_a_pending_key().await;
+    let cookie = signed_in(&rig, "sub-bob", "bob@example.com").await;
+    let link = format!("/web/admin/acts?act={act}");
+    let (_, _, screen) = send(&rig.router, get(&link, Some(&cookie))).await;
+    let csrf = csrf_of(&screen);
+    let (status, _, body) = send(
+        &rig.router,
+        post(
+            "/web/admin/acts",
+            &[
+                ("csrf_token", csrf.as_str()),
+                ("action", "decline"),
+                ("act", act.as_str()),
+            ],
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.contains("a decline carries a reason"), "{body}");
+    let (status, headers, body) = send(
+        &rig.router,
+        post(
+            "/web/admin/acts",
+            &[
+                ("csrf_token", csrf.as_str()),
+                ("action", "decline"),
+                ("act", act.as_str()),
+                ("reason", "the digest runs elsewhere"),
+            ],
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let location = headers[http::header::LOCATION]
+        .to_str()
+        .expect("a location");
+    let (_, _, after) = send(&rig.router, get(location, Some(&cookie))).await;
+    assert!(
+        after.contains("declined: the act never takes effect"),
+        "{after}"
+    );
+    assert!(!after.contains(r#"value="decline""#), "{after}");
+}
+
+/// The admin acts list draws every act, newest first, each opening its
+/// screen; a person with no admin entry is not found there.
+#[tokio::test]
+async fn the_admin_acts_list_draws_every_act_and_is_not_found_to_a_non_admin() {
+    let (rig, act) = two_admins_and_a_pending_key().await;
+    let cookie = signed_in(&rig, "sub-alice", EMAIL).await;
+    let (status, _, list) = send(&rig.router, get("/web/admin/acts", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    assert!(list.contains("<h1>Admin acts</h1>"), "{list}");
+    assert!(
+        list.contains(&format!("/web/admin/acts?act={act}")),
+        "{list}"
+    );
+    assert!(
+        list.contains("allow admin"),
+        "the flags are acts too: {list}"
+    );
+    rig.allow("carol@example.com", "carol", false).await;
+    let carol = signed_in(&rig, "sub-carol", "carol@example.com").await;
+    let (status, _, _) = send(&rig.router, get("/web/admin/acts", Some(&carol))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }

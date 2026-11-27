@@ -65,6 +65,8 @@ fn report_json(
         "web_emails_pending": fixes.emails_pending,
         "admin_acts_pending": fixes.acts_pending,
         "admin_act_oldest_pending_seconds": fixes.act_oldest_pending_seconds,
+        "admin_erase_shreds_pending": fixes.shreds_pending,
+        "admin_erase_shred_oldest_seconds": fixes.shred_oldest_pending_seconds,
         "admin_acts_sole_admin": fixes.acts_sole_admin,
         "sole_admin": fixes.sole_admin,
         "admin_acts_without_reason": fixes.acts_without_reason,

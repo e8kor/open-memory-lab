@@ -188,6 +188,11 @@ pub enum AdminActKind {
     Fix,
     /// Clearing a workspace's `public` flag (ADR-0098 d6).
     WorkspacePublicClear,
+    /// Turning a workspace's `accept_federated` off (d3; ADR-0072 d5).
+    DeclineFederation,
+    /// A tenant federation policy that searches less: federation off, a
+    /// narrower default or fewer sources (d3).
+    NarrowFederationPolicy,
     // Erase (d4).
     /// Erasing a claim: the demotion at once, the shred after a second
     /// admin person.
@@ -206,6 +211,11 @@ pub enum AdminActKind {
     RaiseLimits,
     /// Setting a workspace's `public` flag (ADR-0098 d6).
     WorkspacePublicSet,
+    /// Accepting federation for a workspace (d5; ADR-0072 d5).
+    AcceptFederation,
+    /// A tenant federation policy that searches more: federation on, the
+    /// `wide` default or more sources (d5).
+    WidenFederationPolicy,
     // Consent (d7).
     /// Linking a key to a person, pending until that person accepts.
     LinkKey,
@@ -254,6 +264,8 @@ pub const ADMIN_ACT_KINDS: &[AdminActKind] = &[
     AdminActKind::RemoveOwn,
     AdminActKind::Fix,
     AdminActKind::WorkspacePublicClear,
+    AdminActKind::DeclineFederation,
+    AdminActKind::NarrowFederationPolicy,
     AdminActKind::Erase,
     AdminActKind::IssueKey,
     AdminActKind::AddGrant,
@@ -261,6 +273,8 @@ pub const ADMIN_ACT_KINDS: &[AdminActKind] = &[
     AdminActKind::MintConnectCode,
     AdminActKind::RaiseLimits,
     AdminActKind::WorkspacePublicSet,
+    AdminActKind::AcceptFederation,
+    AdminActKind::WidenFederationPolicy,
     AdminActKind::LinkKey,
     AdminActKind::RevokeAdminKey,
     AdminActKind::UnflagAdmin,
@@ -295,14 +309,18 @@ impl AdminActKind {
             | K::UnflagOwn
             | K::RemoveOwn
             | K::Fix
-            | K::WorkspacePublicClear => AdminActClass::Narrowing,
+            | K::WorkspacePublicClear
+            | K::DeclineFederation
+            | K::NarrowFederationPolicy => AdminActClass::Narrowing,
             K::Erase => AdminActClass::Erase,
             K::IssueKey
             | K::AddGrant
             | K::AllowAdmin
             | K::MintConnectCode
             | K::RaiseLimits
-            | K::WorkspacePublicSet => AdminActClass::Widening,
+            | K::WorkspacePublicSet
+            | K::AcceptFederation
+            | K::WidenFederationPolicy => AdminActClass::Widening,
             K::LinkKey => AdminActClass::Consent,
             K::RevokeAdminKey
             | K::UnflagAdmin
@@ -338,6 +356,8 @@ impl AdminActKind {
             K::RemoveOwn => "remove_own",
             K::Fix => "fix",
             K::WorkspacePublicClear => "workspace_public_clear",
+            K::DeclineFederation => "decline_federation",
+            K::NarrowFederationPolicy => "narrow_federation_policy",
             K::Erase => "erase",
             K::IssueKey => "issue_key",
             K::AddGrant => "add_grant",
@@ -345,6 +365,8 @@ impl AdminActKind {
             K::MintConnectCode => "mint_connect_code",
             K::RaiseLimits => "raise_limits",
             K::WorkspacePublicSet => "workspace_public_set",
+            K::AcceptFederation => "accept_federation",
+            K::WidenFederationPolicy => "widen_federation_policy",
             K::LinkKey => "link_key",
             K::RevokeAdminKey => "revoke_admin_key",
             K::UnflagAdmin => "unflag_admin",
@@ -473,6 +495,15 @@ mod tests {
         );
         assert_eq!(AdminActKind::RaiseLimits.class(), AdminActClass::Widening);
         assert_eq!(AdminActKind::LowerLimits.class(), AdminActClass::Narrowing);
+    }
+
+    #[test]
+    fn accepting_federation_and_widening_its_policy_are_widening_and_the_reverse_narrowing() {
+        use AdminActKind as K;
+        assert_eq!(K::AcceptFederation.class(), AdminActClass::Widening);
+        assert_eq!(K::WidenFederationPolicy.class(), AdminActClass::Widening);
+        assert_eq!(K::DeclineFederation.class(), AdminActClass::Narrowing);
+        assert_eq!(K::NarrowFederationPolicy.class(), AdminActClass::Narrowing);
     }
 
     #[test]

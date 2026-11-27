@@ -5,6 +5,7 @@ from urllib.parse import quote
 import httpx
 
 from ...client import AuthenticatedClient, Client
+from ...models.admin_act import AdminAct
 from ...models.error_envelope import ErrorEnvelope
 from ...models.set_workspace_federation_body import SetWorkspaceFederationBody
 from ...models.set_workspace_federation_response_200 import (
@@ -51,11 +52,16 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ErrorEnvelope | SetWorkspaceFederationResponse200:
+) -> AdminAct | ErrorEnvelope | SetWorkspaceFederationResponse200:
     if response.status_code == 200:
         response_200 = SetWorkspaceFederationResponse200.from_dict(response.json())
 
         return response_200
+
+    if response.status_code == 202:
+        response_202 = AdminAct.from_dict(response.json())
+
+        return response_202
 
     if response.status_code == 415:
         response_415 = ErrorEnvelope.from_dict(response.json())
@@ -69,7 +75,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ErrorEnvelope | SetWorkspaceFederationResponse200]:
+) -> Response[AdminAct | ErrorEnvelope | SetWorkspaceFederationResponse200]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -87,15 +93,18 @@ def sync_detailed(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
     idempotency_key: str,
-) -> Response[ErrorEnvelope | SetWorkspaceFederationResponse200]:
+) -> Response[AdminAct | ErrorEnvelope | SetWorkspaceFederationResponse200]:
     """Whether recalls scoped elsewhere may search this workspace when they ask for wider sources
     (ADR-0072).
 
      Requires: a reviewer key used_by person with reviewer effective access on the node, or an admin key;
     every other key is refused before any lookup with access.verb_ceiling, details.reason
     federation_is_person_only (ADR-0072 d5). It grants nothing: off, a key that reads the node still
-    recalls there by naming it as the scope. Setting the value the node holds journals nothing;
-    otherwise journals workspace.federation_set. Since v0.7.0.
+    recalls there by naming it as the scope. An admin key's change is an admin act (ADR-0097 d3, d5):
+    false is narrowing and takes effect at once; true is widening, at once marked sole_admin in a tenant
+    that has only ever had one admin person, and otherwise answers 202 with the pending act and applies
+    at its confirmation. A person's reviewer key acts as the person, never as an admin act. Setting the
+    value the node holds journals nothing; otherwise journals workspace.federation_set. Since v0.7.0.
 
     Args:
         workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
@@ -115,7 +124,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope | SetWorkspaceFederationResponse200]
+        Response[AdminAct | ErrorEnvelope | SetWorkspaceFederationResponse200]
     """
 
     kwargs = _get_kwargs(
@@ -143,15 +152,18 @@ def sync(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
     idempotency_key: str,
-) -> ErrorEnvelope | SetWorkspaceFederationResponse200 | None:
+) -> AdminAct | ErrorEnvelope | SetWorkspaceFederationResponse200 | None:
     """Whether recalls scoped elsewhere may search this workspace when they ask for wider sources
     (ADR-0072).
 
      Requires: a reviewer key used_by person with reviewer effective access on the node, or an admin key;
     every other key is refused before any lookup with access.verb_ceiling, details.reason
     federation_is_person_only (ADR-0072 d5). It grants nothing: off, a key that reads the node still
-    recalls there by naming it as the scope. Setting the value the node holds journals nothing;
-    otherwise journals workspace.federation_set. Since v0.7.0.
+    recalls there by naming it as the scope. An admin key's change is an admin act (ADR-0097 d3, d5):
+    false is narrowing and takes effect at once; true is widening, at once marked sole_admin in a tenant
+    that has only ever had one admin person, and otherwise answers 202 with the pending act and applies
+    at its confirmation. A person's reviewer key acts as the person, never as an admin act. Setting the
+    value the node holds journals nothing; otherwise journals workspace.federation_set. Since v0.7.0.
 
     Args:
         workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
@@ -171,7 +183,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope | SetWorkspaceFederationResponse200
+        AdminAct | ErrorEnvelope | SetWorkspaceFederationResponse200
     """
 
     return sync_detailed(
@@ -194,15 +206,18 @@ async def asyncio_detailed(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
     idempotency_key: str,
-) -> Response[ErrorEnvelope | SetWorkspaceFederationResponse200]:
+) -> Response[AdminAct | ErrorEnvelope | SetWorkspaceFederationResponse200]:
     """Whether recalls scoped elsewhere may search this workspace when they ask for wider sources
     (ADR-0072).
 
      Requires: a reviewer key used_by person with reviewer effective access on the node, or an admin key;
     every other key is refused before any lookup with access.verb_ceiling, details.reason
     federation_is_person_only (ADR-0072 d5). It grants nothing: off, a key that reads the node still
-    recalls there by naming it as the scope. Setting the value the node holds journals nothing;
-    otherwise journals workspace.federation_set. Since v0.7.0.
+    recalls there by naming it as the scope. An admin key's change is an admin act (ADR-0097 d3, d5):
+    false is narrowing and takes effect at once; true is widening, at once marked sole_admin in a tenant
+    that has only ever had one admin person, and otherwise answers 202 with the pending act and applies
+    at its confirmation. A person's reviewer key acts as the person, never as an admin act. Setting the
+    value the node holds journals nothing; otherwise journals workspace.federation_set. Since v0.7.0.
 
     Args:
         workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
@@ -222,7 +237,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope | SetWorkspaceFederationResponse200]
+        Response[AdminAct | ErrorEnvelope | SetWorkspaceFederationResponse200]
     """
 
     kwargs = _get_kwargs(
@@ -248,15 +263,18 @@ async def asyncio(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
     idempotency_key: str,
-) -> ErrorEnvelope | SetWorkspaceFederationResponse200 | None:
+) -> AdminAct | ErrorEnvelope | SetWorkspaceFederationResponse200 | None:
     """Whether recalls scoped elsewhere may search this workspace when they ask for wider sources
     (ADR-0072).
 
      Requires: a reviewer key used_by person with reviewer effective access on the node, or an admin key;
     every other key is refused before any lookup with access.verb_ceiling, details.reason
     federation_is_person_only (ADR-0072 d5). It grants nothing: off, a key that reads the node still
-    recalls there by naming it as the scope. Setting the value the node holds journals nothing;
-    otherwise journals workspace.federation_set. Since v0.7.0.
+    recalls there by naming it as the scope. An admin key's change is an admin act (ADR-0097 d3, d5):
+    false is narrowing and takes effect at once; true is widening, at once marked sole_admin in a tenant
+    that has only ever had one admin person, and otherwise answers 202 with the pending act and applies
+    at its confirmation. A person's reviewer key acts as the person, never as an admin act. Setting the
+    value the node holds journals nothing; otherwise journals workspace.federation_set. Since v0.7.0.
 
     Args:
         workspace (str): A workspace, by its node id, its name or its qualified name. Resolved
@@ -276,7 +294,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope | SetWorkspaceFederationResponse200
+        AdminAct | ErrorEnvelope | SetWorkspaceFederationResponse200
     """
 
     return (

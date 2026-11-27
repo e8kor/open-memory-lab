@@ -7,8 +7,8 @@
 //!
 //! No transport routes either: the one surface is the fix act,
 //! `POST /v2/admin/fixes` (ADR-0089 d15, d16), which journals `admin.fix`
-//! and calls these in the same transaction. Until it lands they are reached
-//! in process alone, by an admin key.
+//! and plans these in the same transaction; no other entry reaches them
+//! (#502).
 
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -32,8 +32,8 @@ use crate::ports::{
     Scanner, Signer, StoreError, WebStore,
 };
 use crate::types::{
-    AppError, Approval, Bearer, Credential, FixAct, FixRecord, FixState, FormatFields,
-    GuardrailFields, KeyRecord, KindFields, MemoryRecord, VersionRef,
+    AdminActRecord, AppError, Approval, Bearer, Credential, FixAct, FixRecord, FixState,
+    FormatFields, GuardrailFields, KeyRecord, KindFields, MemoryRecord, VersionRef,
 };
 use oml_domain::access::effective_roles;
 use oml_domain::guardrail::GuardrailScope;
@@ -49,30 +49,12 @@ const ERASE_COPY_CLASSES: [&str; 5] = [
     "silver.body",
 ];
 
-/// A demotion as committed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Demotion {
-    pub demoted: VersionRef,
-    /// The version served as the tip again, when the demoted one was the
-    /// tip and a promoted, non-demoted version lies below it.
-    pub restored: Option<VersionRef>,
-    pub journal_seq: u64,
-}
-
 /// A demotion read and sealed, not yet committed.
 struct PlannedDemotion {
     event: SignedEnvelope,
     fold: MetadataFold,
-    demotion: Demotion,
     memory: MemoryRecord,
     restored: Option<MemoryRecord>,
-}
-
-/// An erasure as committed: every version of the claim, by version.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Erasure {
-    pub erased: Vec<VersionRef>,
-    pub journal_seq: u64,
 }
 
 fn version_ref(m: &MemoryRecord) -> VersionRef {
@@ -90,39 +72,14 @@ where
     I: IdGen,
     Sc: Scanner,
 {
-    /// Demotes `memory_id`, any promoted version (ADR-0089 d16): it is
-    /// served by no read at any instant, and when it was the tip the latest
-    /// earlier promoted, non-demoted version of its claim is the tip again,
-    /// or none is. Journals `lifecycle.demote` under the admin's key. A
-    /// version that is not promoted is [`AppError::Transition`]; a
-    /// retirement or a `term`, `term_mapping` or `vocab_release` version is
-    /// [`AppError::DemoteKindUnsupported`]; one the
-    /// tenant does not hold is [`AppError::NotFound`]; a version or claim
-    /// that changed since it was read is [`crate::ports::StoreError::TipMoved`].
-    ///
-    /// # Errors
-    /// The refusals above, a key that is not an admin's, and the store's.
-    pub async fn demote_version(
-        &self,
-        bearer: impl Into<Bearer<'_>>,
-        memory_id: Uuid,
-    ) -> Result<Demotion, AppError> {
-        let admin = self.admin_caller(bearer.into(), "demote").await?.key;
-        let planned = self.plan_demotion(&admin, memory_id, None).await?;
-        self.commit_requests(vec![commit_request(planned.event, planned.fold, None)])
-            .await?;
-        Ok(planned.demotion)
-    }
-
     /// A demotion of `memory_id` read and sealed, not committed:
-    /// [`Self::demote_version`] commits it alone, sealed on the head read
-    /// after its reads (`prev` `None`), and the fix act commits it with its
-    /// `admin.fix`, sealed on the head it read first (ADR-0089 d16).
+    /// The fix act commits it with its `admin.fix`, sealed on `prev`, the
+    /// head it read first (ADR-0089 d16).
     async fn plan_demotion(
         &self,
         admin: &KeyRecord,
         memory_id: Uuid,
-        prev: Option<Option<SignedEnvelope>>,
+        prev: Option<&SignedEnvelope>,
     ) -> Result<PlannedDemotion, AppError> {
         let tenant_id = admin.tenant_id;
         let memory = self
@@ -175,22 +132,8 @@ where
             }
             _ => None,
         };
-        let prev = match prev {
-            Some(prev) => prev,
-            None => self.head_event(tenant_id).await?,
-        };
-        let event = self.demote_event(
-            prev.as_ref(),
-            admin,
-            &memory,
-            restored.as_ref(),
-            reopened.as_ref(),
-        )?;
-        let demotion = Demotion {
-            demoted: version_ref(&memory),
-            restored: restored.as_ref().map(version_ref),
-            journal_seq: event.envelope.seq,
-        };
+        let event =
+            self.demote_event(prev, admin, &memory, restored.as_ref(), reopened.as_ref())?;
         let fold = MetadataFold::MemoryDemoted {
             memory_id,
             restored: restored.as_ref().map(|r| r.memory_id),
@@ -199,46 +142,21 @@ where
         Ok(PlannedDemotion {
             event,
             fold,
-            demotion,
             memory,
             restored,
         })
     }
 
-    /// Erases the claim `memory_id` is a version of: every version of its
-    /// `claim_key` in its workspace, whatever its state (ADR-0089 d16;
-    /// ADR-0005 d2, amended 2026-11-17). One `lifecycle.erase` names them
-    /// all, and in its transaction each row's body and what derives from it
-    /// are emptied, its passages and telemetry erased and its data key
-    /// destroyed; the digest, title, attribution and lineage stay. It
-    /// commits through `commit_requests`, so the tenant's widen
-    /// signals drop with it (ADR-0005 d4). A claim already erased is
-    /// [`AppError::Transition`]; a version the tenant does not hold is
-    /// [`AppError::NotFound`]; a claim that gained a version since it was
-    /// read is [`crate::ports::StoreError::TipMoved`].
-    ///
-    /// # Errors
-    /// The refusals above, a key that is not an admin's, and the store's.
-    pub async fn erase_claim(
-        &self,
-        bearer: impl Into<Bearer<'_>>,
-        memory_id: Uuid,
-    ) -> Result<Erasure, AppError> {
-        let admin = self.admin_caller(bearer.into(), "erase").await?.key;
-        let (event, fold, erasure, _) = self.plan_erasure(&admin, memory_id, None).await?;
-        self.commit_requests(vec![commit_request(event, fold, None)])
-            .await?;
-        Ok(erasure)
-    }
-
-    /// An erasure of the claim `memory_id` is a version of, read and sealed,
-    /// not committed; `prev` as [`Self::plan_demotion`]'s (ADR-0089 d16).
+    /// An erasure of the claim `memory_id` is a version of, read and sealed
+    /// on `prev`, not committed (ADR-0089 d16), naming `act_id` where a
+    /// confirmed shred applies it (ADR-0097 d4).
     async fn plan_erasure(
         &self,
         admin: &KeyRecord,
         memory_id: Uuid,
-        prev: Option<Option<SignedEnvelope>>,
-    ) -> Result<(SignedEnvelope, MetadataFold, Erasure, MemoryRecord), AppError> {
+        prev: Option<&SignedEnvelope>,
+        act_id: Option<Uuid>,
+    ) -> Result<(SignedEnvelope, MetadataFold, MemoryRecord), AppError> {
         let tenant_id = admin.tenant_id;
         let named = self
             .journal
@@ -251,19 +169,11 @@ where
             .await?;
         // An erase takes every version, so a claim is erased once.
         transition(named.status, MemoryStatus::Erased)?;
-        let prev = match prev {
-            Some(prev) => prev,
-            None => self.head_event(tenant_id).await?,
-        };
-        let event = self.erase_event(prev.as_ref(), admin, &named, &versions)?;
-        let erasure = Erasure {
-            erased: versions.iter().map(version_ref).collect(),
-            journal_seq: event.envelope.seq,
-        };
+        let event = self.erase_event(prev, admin, &named, &versions, act_id)?;
         let fold = MetadataFold::ClaimErased {
             memory_ids: versions.iter().map(|v| v.memory_id).collect(),
         };
-        Ok((event, fold, erasure, named))
+        Ok((event, fold, named))
     }
 
     /// `lifecycle.demote` of `memory`, returning `restored` (ADR-0089 d16;
@@ -306,14 +216,9 @@ where
         admin: &KeyRecord,
         named: &MemoryRecord,
         versions: &[MemoryRecord],
+        act_id: Option<Uuid>,
     ) -> Result<SignedEnvelope, AppError> {
-        self.seal(
-            prev,
-            admin.tenant_id,
-            event_types::LIFECYCLE_ERASE,
-            &admin.principal,
-            Some(admin.key_id),
-            json!({
+        let payload = json!({
                 "artifact_id": named.memory_id.to_string(),
                 "version": named.version,
                 "workspace_id": named.workspace_id.to_string(),
@@ -325,7 +230,17 @@ where
                 "dek_destroyed": true,
                 "copy_classes": ERASE_COPY_CLASSES,
                 "erased_by_key_id": admin.key_id.to_string(),
-            }),
+        });
+        self.seal(
+            prev,
+            admin.tenant_id,
+            event_types::LIFECYCLE_ERASE,
+            &admin.principal,
+            Some(admin.key_id),
+            match act_id {
+                Some(act_id) => super::admin_acts::with_act_id(payload, act_id),
+                None => payload,
+            },
         )
     }
 }
@@ -349,6 +264,38 @@ pub struct FixRequest {
     /// An edit's title, where its format takes one; refused on every
     /// other act.
     pub title: Option<String>,
+}
+
+/// What an admin's fix act took (ADR-0089 d2; ADR-0097 d4): a fix and the
+/// admin act it rides, or, for an erase of a version that is not promoted
+/// outside `sole_admin`, the pending shred act alone, with no fix record
+/// (ADR-0097, amendment of 2026-11-27, answer 5).
+#[derive(Debug, Clone, PartialEq)]
+pub enum FixOutcome {
+    Fixed {
+        fix: Box<FixRecord>,
+        act: AdminActRecord,
+    },
+    ShredPending(AdminActRecord),
+}
+
+impl FixOutcome {
+    /// The fix record, where the act made one.
+    #[must_use]
+    pub fn fix(&self) -> Option<&FixRecord> {
+        match self {
+            FixOutcome::Fixed { fix, .. } => Some(&**fix),
+            FixOutcome::ShredPending(_) => None,
+        }
+    }
+
+    /// The admin act the fix rides.
+    #[must_use]
+    pub fn act(&self) -> &AdminActRecord {
+        match self {
+            FixOutcome::Fixed { act, .. } | FixOutcome::ShredPending(act) => act,
+        }
+    }
 }
 
 /// A fix as a person's reviewer key reads it (ADR-0089 d15): never the
@@ -414,7 +361,7 @@ where
         &self,
         bearer: impl Into<Bearer<'_>>,
         req: &FixRequest,
-    ) -> Result<FixRecord, AppError> {
+    ) -> Result<FixOutcome, AppError> {
         let admin = self.admin_caller(bearer.into(), "fix").await?.key;
         if admin.used_by != UsedBy::Person {
             return Err(AppError::FixRequiresPerson {
@@ -456,8 +403,8 @@ where
         let prev = self.head_event(admin.tenant_id).await?;
         // Every fix rides an admin act, first in its chain: a content fix
         // is narrowing and keeps ADR-0089's settlement; an erase is its own
-        // class (ADR-0097 d2, d3, d4; the split shred of d4 is not built,
-        // so the erase still shreds at once).
+        // class, whose shred waits on a second admin person outside
+        // `sole_admin` (ADR-0097 d2, d3, d4).
         let act = self
             .begin_admin_act(
                 &admin,
@@ -472,11 +419,13 @@ where
                     "target": req.target.to_string(),
                 }),
                 Some(reason),
-                json!({}),
+                json!({ "memory_id": req.target.to_string() }),
                 prev.as_ref(),
             )
             .await?;
         let act_id = act.act_id();
+        let shred_waits = act.pending();
+        let act_record = act.record.clone();
         let (act_event, act_fold) = act.link();
         let prev = Some(act_event.clone());
         let (links, fix) = match req.act {
@@ -491,9 +440,28 @@ where
                 )
                 .await?
             }
+            FixAct::Erase if shred_waits => {
+                // The demotion half at once, the shred at the confirmation
+                // (ADR-0097 d4). A target that is not a promoted version has
+                // nothing to demote: the act waits on its shred alone, with
+                // no fix record (amendment of 2026-11-27, answer 5).
+                let named = self
+                    .journal
+                    .memory(admin.tenant_id, req.target)
+                    .await?
+                    .ok_or(AppError::NotFound)?;
+                transition(named.status, MemoryStatus::Erased)?;
+                if named.status != MemoryStatus::Promoted {
+                    self.commit_requests(vec![commit_request(act_event, act_fold, None)])
+                        .await?;
+                    return Ok(FixOutcome::ShredPending(act_record));
+                }
+                self.erase_demotion(&admin, admin_person, &named, prev.as_ref(), fix_id, reason)
+                    .await?
+            }
             FixAct::Erase => {
-                let (event, fold, _, named) = self
-                    .plan_erasure(&admin, req.target, Some(prev.clone()))
+                let (event, fold, named) = self
+                    .plan_erasure(&admin, req.target, prev.as_ref(), None)
                     .await?;
                 let fix = FixRecord {
                     fix_id,
@@ -602,7 +570,103 @@ where
         };
         self.observer
             .admin_fix(fix.act.as_str(), fix.loosens_guardrail);
-        Ok(fix)
+        Ok(FixOutcome::Fixed {
+            fix: Box::new(fix),
+            act: act_record,
+        })
+    }
+
+    /// An erase's demotion half (ADR-0097 d4): every promoted version of
+    /// `named`'s claim demoted in one chain, the earlier ones first and the
+    /// tip last, so none is restored and the claim serves nothing while its
+    /// shred waits; every byte is kept. A retirement is not demoted, as no
+    /// demotion takes one, and a vocabulary claim is
+    /// [`AppError::DemoteKindUnsupported`], as its demotion is (ADR-0089
+    /// d16, note of 2026-11-18).
+    async fn erase_demotion(
+        &self,
+        admin: &KeyRecord,
+        admin_person: &Name,
+        named: &MemoryRecord,
+        prev: Option<&SignedEnvelope>,
+        fix_id: Uuid,
+        reason: &str,
+    ) -> Result<(Vec<CommitRequest>, FixRecord), AppError> {
+        if matches!(
+            named.kind,
+            MemoryKind::Term | MemoryKind::TermMapping | MemoryKind::VocabRelease
+        ) {
+            return Err(AppError::DemoteKindUnsupported {
+                kind: named.kind,
+                retirement: named.retirement,
+            });
+        }
+        let mut promoted: Vec<MemoryRecord> = self
+            .journal
+            .claim_versions(admin.tenant_id, named.workspace_id, &named.claim_key)
+            .await?
+            .into_iter()
+            .filter(|v| v.status == MemoryStatus::Promoted && !v.retirement)
+            .collect();
+        promoted.sort_by_key(|v| (v.is_tip, v.version));
+        let mut links = Vec::new();
+        let mut last = prev.cloned();
+        for version in &promoted {
+            let event = self.demote_event(last.as_ref(), admin, version, None, None)?;
+            last = Some(event.clone());
+            links.push(commit_request(
+                event,
+                MetadataFold::MemoryDemoted {
+                    memory_id: version.memory_id,
+                    restored: None,
+                    reopened: None,
+                },
+                None,
+            ));
+        }
+        let first = links.first().map(|l| l.event.envelope.clone()).ok_or(
+            AppError::FixTargetNotPromoted {
+                status: named.status,
+            },
+        )?;
+        let fix = FixRecord {
+            fix_id,
+            act: FixAct::Erase,
+            target_id: named.memory_id,
+            workspace_id: named.workspace_id,
+            claim_key: named.claim_key.clone(),
+            replaced_id: Some(named.memory_id),
+            served_id: None,
+            reason: reason.to_owned(),
+            loosens_guardrail: promoted.iter().any(|v| v.is_tip && instruction(v)),
+            admin_key_id: admin.key_id,
+            admin_person: admin_person.clone(),
+            lifecycle_event_id: first.event_id,
+            state: FixState::Unconfirmed,
+            fixed_at: first.at,
+            settled_by_key_id: None,
+            settled_same_user: None,
+            settled_at: None,
+            restored_id: None,
+            superseded_by: None,
+        };
+        Ok((links, fix))
+    }
+
+    /// The shred a confirmed erase applies (ADR-0097 d4): the claim's
+    /// erasure as it stands now, sealed on `prev` under the confirming
+    /// admin's key and naming the act.
+    pub(crate) async fn confirmed_shred(
+        &self,
+        admin: &KeyRecord,
+        memory_id: Uuid,
+        prev: &SignedEnvelope,
+        act_id: Uuid,
+    ) -> Result<(SignedEnvelope, MetadataFold), AppError> {
+        let (event, fold, _) = self
+            .plan_erasure(admin, memory_id, Some(prev), Some(act_id))
+            .await?;
+        Ok((event, fold))
     }
 
     /// A demotion as a fix: only an approved version (ADR-0089 d16). The
@@ -627,9 +691,7 @@ where
                 status: memory.status,
             });
         }
-        let planned = self
-            .plan_demotion(admin, target, Some(prev.cloned()))
-            .await?;
+        let planned = self.plan_demotion(admin, target, prev).await?;
         let m = &planned.memory;
         let fix = FixRecord {
             fix_id,
@@ -1520,6 +1582,43 @@ where
             && !self.acts_for_fix_admin(key, fix).await?)
     }
 
+    /// Whether `key` confirms `fix` as a person other than its admin's, as
+    /// [`Self::confirm_fix`] judges it: [`Self::settles_as_other_person`],
+    /// and for an edit or a retirement R2 by key and by person over the
+    /// served version's lineage ([`Self::lineage_person_rule`]), so `oml
+    /// doctor` does not count a claim's own author as one who settles its
+    /// edit (ADR-0089 d15; #508 N2).
+    async fn confirms_as_other_person(
+        &self,
+        key: &KeyRecord,
+        fix: &FixRecord,
+    ) -> Result<bool, AppError> {
+        if !self.settles_as_other_person(key, fix).await? {
+            return Ok(false);
+        }
+        let (FixAct::Edit | FixAct::Retire, Some(served)) = (fix.act, fix.served_id) else {
+            return Ok(true);
+        };
+        let Some(served) = self.journal.memory(key.tenant_id, served).await? else {
+            return Ok(false);
+        };
+        if check_reviewer(
+            key.role,
+            &key.principal,
+            key.key_id,
+            &served.lineage_closure(),
+        )
+        .is_err()
+        {
+            return Ok(false);
+        }
+        match self.lineage_person_rule(key, &served, false).await {
+            Ok(_) => Ok(true),
+            Err(AppError::SamePerson) => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Whether `key` acts for the person recorded on `fix` as its admin's:
     /// on either reading of [`Self::acts_for`], or because the walk that
     /// counts its person passes through the fix's admin key
@@ -1662,6 +1761,12 @@ pub struct FixStats {
     /// in seconds (ADR-0097 doctor `admin.act_pending_confirmation`).
     pub acts_pending: u64,
     pub act_oldest_pending_seconds: u64,
+    /// Erases whose shred waits on a second admin person, their bytes
+    /// kept, and the oldest's age in seconds (ADR-0097 d4, doctor
+    /// `admin.erase_shred_pending`). Not counted in `acts_pending`, since a
+    /// pending shred never expires.
+    pub shreds_pending: u64,
+    pub shred_oldest_pending_seconds: u64,
     /// Acts taken at once under `sole_admin` (`admin.act_sole_admin`).
     pub acts_sole_admin: u64,
     /// Whether the tenant has never had two live admin persons.
@@ -1729,6 +1834,13 @@ where
             let age = u64::try_from((now.unix_micros() - act.at.unix_micros()).max(0) / 1_000_000)
                 .unwrap_or(0);
             match act.state_at(&now) {
+                oml_domain::admin_act::AdminActState::PendingConfirmation
+                    if act.class() == oml_domain::admin_act::AdminActClass::Erase =>
+                {
+                    stats.shreds_pending += 1;
+                    stats.shred_oldest_pending_seconds =
+                        stats.shred_oldest_pending_seconds.max(age);
+                }
                 oml_domain::admin_act::AdminActState::PendingConfirmation => {
                     stats.acts_pending += 1;
                     stats.act_oldest_pending_seconds = stats.act_oldest_pending_seconds.max(age);
@@ -1834,10 +1946,12 @@ where
                     for r in &reviewers {
                         if effective_roles(&r.grants, &r.denials, &ids).contains(&Role::Reviewer) {
                             any = true;
-                            // The settlement's own predicate, so a key that
-                            // counts as no one, or acts for the admin's
-                            // person on any reading, is no other person.
-                            if self.settles_as_other_person(&r.key, fix).await? {
+                            // The settlement's own predicates, so a key that
+                            // counts as no one, acts for the admin's person on
+                            // any reading, or is refused by the lineage rule
+                            // its confirmation applies, is no other person
+                            // (#508 N2).
+                            if self.confirms_as_other_person(&r.key, fix).await? {
                                 other = true;
                             }
                         }
