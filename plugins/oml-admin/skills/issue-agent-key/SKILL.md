@@ -49,6 +49,8 @@ follows from that.
     - whether the key writes without recall (`--role submitter`): a submitter key holds the
       submitter grant alone and reads only its own memories. Without it the key is a contributor
       and the CLI adds a reader grant beside the submitter grant; say so before you run it.
+    - whether the key only reads (`--role reader`): a reader key holds one reader grant on the
+      workspace, recalls there and writes nothing, so its plugin hooks and MCP entry only read.
 
 2. Choose the key file: `$HOME/.config/oml/keys/<principal>`, with each `/` of the principal
    written as `-`, so `crew/agent-7` becomes `crew-agent-7`. If the operator names another path,
@@ -61,8 +63,8 @@ follows from that.
     mkdir -p "$HOME/.config/oml/keys" && chmod 700 "$HOME/.config/oml/keys"
     ```
 
-4. Run the issuance, adding `--user <user>`, `--used-by person`, `--crew <crew>` or
-   `--role submitter` only if the operator asked (with `--user`, `--workspace` may be left out):
+4. Run the issuance, adding `--user <user>`, `--used-by person`, `--crew <crew>`,
+   `--role submitter` or `--role reader` only if the operator asked (with `--user`, `--workspace` may be left out):
 
     ```sh
     oml keys issue-agent agent-7-laptop --principal crew/agent-7 --workspace metals-crew --out "$HOME/.config/oml/keys/crew-agent-7"

@@ -534,6 +534,11 @@ struct KeysIssueArgs {
     /// except in a tenant that has only ever had one admin person.
     #[arg(long)]
     reason: Option<String>,
+    /// Write the value to a new owner-only (0600) file, refusing one that
+    /// exists, and print its path instead of the value; with --json the
+    /// answer names the path as key_file and carries no value.
+    #[arg(long)]
+    out: Option<PathBuf>,
     #[command(flatten)]
     limits: KeyLimitArgs,
 }
@@ -586,8 +591,8 @@ struct IssueAgentArgs {
     #[arg(long, default_value = "agent", value_parser = ["agent", "person"])]
     used_by: String,
     /// contributor recalls and writes the workspace; submitter writes it without
-    /// recall.
-    #[arg(long, default_value = "contributor", value_parser = ["contributor", "submitter"])]
+    /// recall; reader only recalls it.
+    #[arg(long, default_value = "contributor", value_parser = ["contributor", "submitter", "reader"])]
     role: String,
     /// Write the key to a new 0600 file without overwriting and print a line that
     /// reads it instead of the value.
@@ -1904,6 +1909,12 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             command: KeysCommand::Issue(args),
         } => {
             let client = resolve(cli, &stored)?;
+            // The file is created before anything is sent, so a path that
+            // cannot hold the value fails while no key exists (#528).
+            let key_file = match &args.out {
+                Some(path) => Some(KeyFile::create(path).map_err(CliError::Local)?),
+                None => None,
+            };
             let grants = with_reader_beside_submitters(&args.grants, &args.role);
             if !cli.json {
                 for (node, _) in grants.iter().filter(|g| !args.grants.contains(g)) {
@@ -1951,15 +1962,51 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 body["reason"] = json!(reason);
             }
             args.limits.add_to(&mut body);
-            let (_, response) = client.post("/v2/keys", &body, &write_opts())?;
+            let mut response = match client.post("/v2/keys", &body, &write_opts()) {
+                Ok((_, response)) => response,
+                Err(e) => {
+                    // The empty file holds nothing either way, so it goes.
+                    if let Some(Err(note)) = key_file.map(KeyFile::discard) {
+                        eprintln!("note: {note}");
+                    }
+                    return Err(e);
+                }
+            };
+            // With --out the value goes to the file alone (#528).
+            let shown = match key_file {
+                Some(file) => {
+                    let shown = file.shown().to_owned();
+                    let value = response["value"].as_str().unwrap_or_default().to_owned();
+                    file.write_value(&value).map_err(|e| {
+                        CliError::local(format!(
+                            "key {} ({}) was issued, but writing {shown} failed ({e}); its value                              is lost and the key is live. Revoke it with oml keys revoke {}",
+                            field(&response, "name"),
+                            field(&response, "key_id"),
+                            field(&response, "key_id"),
+                        ))
+                    })?;
+                    if let Some(answer) = response.as_object_mut() {
+                        answer.remove("value");
+                        answer.insert("key_file".to_owned(), json!(shown));
+                    }
+                    Some(shown)
+                }
+                None => None,
+            };
             if cli.json {
                 print_json(&response);
             } else {
-                println!("key issued — SHOWN ONCE");
+                match &shown {
+                    Some(path) => println!("key issued — its value is only in {path} (0600)"),
+                    None => println!("key issued — SHOWN ONCE"),
+                }
                 println!();
                 println!("    name   : {}", field(&response, "name"));
                 println!("    key id : {}", field(&response, "key_id"));
-                println!("    key    : {}", field(&response, "value"));
+                match &shown {
+                    Some(path) => println!("    file   : {path}"),
+                    None => println!("    key    : {}", field(&response, "value")),
+                }
                 println!("    role   : {}", field(&response, "role"));
                 println!("    default: {}", field(&response, "default_workspace_id"));
                 if response["user"].is_object() {
@@ -1979,7 +2026,9 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                     }
                 }
                 println!();
-                println!("store this value now; the server keeps only its hash.");
+                if shown.is_none() {
+                    println!("store this value now; the server keeps only its hash.");
+                }
                 // A widening admin act waits on a second admin person
                 // (ADR-0097 d5, d23).
                 if response["admin_act"]["state"] == "pending_confirmation" {
@@ -4499,8 +4548,12 @@ fn run_issue_agent(
         Some(path) => Some(KeyFile::create(path).map_err(CliError::Local)?),
         None => None,
     };
-    let grants =
-        with_reader_beside_submitters(&[(workspace.clone(), "submitter".to_owned())], &args.role);
+    // A reader key reads the workspace and writes nothing (#528).
+    let grants = if args.role == "reader" {
+        vec![(workspace.clone(), "reader".to_owned())]
+    } else {
+        with_reader_beside_submitters(&[(workspace.clone(), "submitter".to_owned())], &args.role)
+    };
     let mut body = json!({
         "role": args.role,
         "name": args.key_name,

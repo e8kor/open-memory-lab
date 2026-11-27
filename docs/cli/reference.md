@@ -230,6 +230,7 @@ oml keys issue [OPTIONS] --role <ROLE> <KEY_NAME>
 | `--guardrail-scope <GUARDRAIL_SCOPE>` | Guardrail scope: workspace loads only the default workspace's guardrails; ancestors also loads every readable ancestor. Defaults to ancestors [possible values: workspace, ancestors] |
 | `--profile <PROFILE>` | Key profile: curator is an agent-held reviewer that narrows within an in-progress workspace and never promotes [possible values: curator] |
 | `--reason <REASON>` | Why the key is issued; scanned and journalled with the issuance. An admin key's issuance waits on a second admin person and requires it, except in a tenant that has only ever had one admin person |
+| `--out <OUT>` | Write the value to a new owner-only (0600) file, refusing one that exists, and print its path instead of the value; with --json the answer names the path as key_file and carries no value |
 | `--expires <INSTANT>` | Instant the key stops authenticating, RFC 3339 with its offset, such as 2026-12-01T17:00:00Z; must be later than now. Omitted, the key does not expire. Refused for an admin key |
 | `--requests-per-minute <N>` | Requests the key may make in one UTC minute, from 1 to 1000000. Omitted, the key has no rate of its own. Refused for an admin key |
 
@@ -252,7 +253,7 @@ oml keys issue-agent [OPTIONS] --principal <PRINCIPAL> <KEY_NAME>
 | `--user <USER>` | User the key acts for, under `universe.<user>`; the first key for a user creates that root |
 | `--crew <CREW>` | Crew record (id or name), fixed for the key's life |
 | `--used-by <USED_BY>` | Who holds the key [default: agent] [possible values: agent, person] |
-| `--role <ROLE>` | contributor recalls and writes the workspace; submitter writes it without recall [default: contributor] [possible values: contributor, submitter] |
+| `--role <ROLE>` | contributor recalls and writes the workspace; submitter writes it without recall; reader only recalls it [default: contributor] [possible values: contributor, submitter, reader] |
 | `--out <OUT>` | Write the key to a new 0600 file without overwriting and print a line that reads it instead of the value |
 | `--connect-code` | Issue a claude.ai custom-connector key with a single-use connect code instead of a key value |
 | `--guardrail-scope <GUARDRAIL_SCOPE>` | Guardrail scope: workspace loads only the default workspace's guardrails; ancestors also loads every readable ancestor. Defaults to ancestors [possible values: workspace, ancestors] |
@@ -483,6 +484,10 @@ oml workspaces federation [OPTIONS] <WORKSPACE> <ACCEPT>
 |---|---|
 | `<WORKSPACE>` | Workspace id or name |
 | `<ACCEPT>` | `on` lets federated recalls search it (the default); `off` declines [possible values: on, off] |
+
+| Option | Meaning |
+|---|---|
+| `--reason <REASON>` | Why: an admin's `on` waits on another admin person and requires one, unless the tenant has only ever had one admin person |
 
 ### `oml workspaces public`
 
@@ -838,6 +843,7 @@ oml search federation [OPTIONS]
 | `--enabled <ENABLED>` | `on` lets recalls ask for wider sources; `off` refuses them [possible values: on, off] |
 | `--default-sources <DEFAULT_SOURCES>` | The sources an absent `sources` reads: `scope` or `wide` [possible values: scope, wide] |
 | `--max-sources <MAX_SOURCES>` | The most workspaces a wide recall searches beside its scope, and the most a sources list names, 0 to 64 |
+| `--reason <REASON>` | Why: a change that searches more waits on another admin person and requires one, unless the tenant has only ever had one admin person |
 
 
 ## `oml usage`

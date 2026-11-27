@@ -7806,7 +7806,10 @@ async fn keys_issue_out_writes_the_value_to_a_0600_file_and_never_to_stdout_or_s
     let wa = lab.workspace("metals");
     let dir = lab.dir.join("keys");
     std::fs::create_dir_all(&dir).expect("key directory");
-    for (name, role, json) in [("blind-reader", "reader", false), ("blind-json", "reader", true)] {
+    for (name, role, json) in [
+        ("blind-reader", "reader", false),
+        ("blind-json", "reader", true),
+    ] {
         let path = dir.join(name);
         let shown = path.to_str().expect("a UTF-8 path");
         let grant = format!("{wa}:{role}");
@@ -7815,13 +7818,24 @@ async fn keys_issue_out_writes_the_value_to_a_0600_file_and_never_to_stdout_or_s
             args.push("--json");
         }
         args.extend([
-            "keys", "issue", name, "--role", role, "--principal", name, "--grant", &grant,
-            "--out", shown,
+            "keys",
+            "issue",
+            name,
+            "--role",
+            role,
+            "--principal",
+            name,
+            "--grant",
+            &grant,
+            "--out",
+            shown,
         ]);
         let (code, stdout, stderr) = lab.text(&args);
         assert_eq!(code, 0, "{stderr}");
         let written = std::fs::read_to_string(&path).expect("the key file");
-        let value = written.strip_suffix('\n').expect("the value and one newline");
+        let value = written
+            .strip_suffix('\n')
+            .expect("the value and one newline");
         assert!(value.starts_with("oml_"), "{written:?}");
         #[cfg(unix)]
         assert_eq!(mode_of(&path), 0o600, "the key file is owner-only");
@@ -7851,8 +7865,17 @@ async fn keys_issue_out_refuses_an_existing_file_and_issues_nothing() {
     lab.take_requests();
     let grant = format!("{wa}:reader");
     let (code, _stdout, stderr) = lab.text(&[
-        "keys", "issue", "never-issued", "--role", "reader", "--principal", "p", "--grant",
-        &grant, "--out", shown,
+        "keys",
+        "issue",
+        "never-issued",
+        "--role",
+        "reader",
+        "--principal",
+        "p",
+        "--grant",
+        &grant,
+        "--out",
+        shown,
     ]);
     assert_ne!(code, 0, "{stderr}");
     assert!(lab.take_requests().is_empty(), "nothing was sent");
