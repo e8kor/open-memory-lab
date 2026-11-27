@@ -174,7 +174,7 @@ The benchmarks run every pipeline through the same served path as an agent. The 
 | `wide` | the subtree, plus the `protected` and `frozen` workspaces the key reads elsewhere that accept federated reads | the subtree and every such workspace, searched or not |
 | a list of names | exactly the listed workspaces, answered whole or refused | the listed workspaces |
 
-Designed, not built: every `scope` recall also searches the tenant's public workspaces that the key reads, with or without federation, and scores with their statistics beside the subtree's; each such hit carries `via: "public"`. A list searches a public workspace only when it names it ([ADR-0098](../adr/ADR-0098-a-protected-or-frozen-workspace-can-be-marked-public-and-then-every-reading-key-in-the-tenant-reads-its-approved-items.md) d3, d7).
+Every `scope` recall also searches the tenant's public workspaces that the key reads, with or without federation, and scores with their statistics beside the subtree's; each such hit carries `via: "public"`. A list searches a public workspace only when it names it ([ADR-0098](../adr/ADR-0098-a-protected-or-frozen-workspace-can-be-marked-public-and-then-every-reading-key-in-the-tenant-reads-its-approved-items.md) d3, d7).
 
 Below the tenant's `max_sources` (8 by default), `wide` searches every such workspace. Above it, `wide` searches the workspaces holding the largest share of the query's matching rows. Each word is weighted by its rarity, and ties break by name. `search.sources.cut` counts the rest. A large workspace ranks high only by holding most of the matches. So `universe` is chosen beside a small crew on its share, not its size.
 

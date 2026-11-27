@@ -52,6 +52,9 @@ pub(super) struct SourcePlan {
     pub reference: Option<Vec<Uuid>>,
     /// The federated nodes searched: a hit on one is `via: federated`.
     pub federated: BTreeSet<Uuid>,
+    /// The public nodes outside the scope searched: a hit on one is `via:
+    /// public` (ADR-0098 d3).
+    pub public: BTreeSet<Uuid>,
     pub report: Option<SourcesReport>,
     pub record: Option<FederationRecord>,
 }
@@ -247,6 +250,7 @@ where
         policy: Option<FederationPolicy>,
         scope: Uuid,
         hit_nodes: &[Uuid],
+        public: &BTreeSet<Uuid>,
         kinds: &[MemoryKind],
         pipeline: Pipeline,
         query: &str,
@@ -262,9 +266,50 @@ where
         };
         // `scope` is today's answer, and it reads nothing more: no policy,
         // no candidate and no count, federation on or off (d12, as amended).
-        if sources == Sources::Scope {
+        if sources == Sources::Scope && public.is_empty() {
             return Ok(SourcePlan {
                 promoted: hit_nodes.to_vec(),
+                ..SourcePlan::default()
+            });
+        }
+        // Only `bm25_postings` prunes, and never under `match: all`
+        // (ADR-0052 d4, d6).
+        let prunes = pipeline.retrievers().contains(&RetrieverKind::Bm25Postings)
+            && req.match_mode == MatchMode::Any;
+        let counts_scope = |nodes: Vec<Uuid>| CountsScope {
+            nodes,
+            kinds: kinds.to_vec(),
+            expired_at,
+            prunes,
+        };
+        // A default recall that searched a public node outside the scope
+        // lists each one in `search.sources`, so every hit still says where
+        // it came from; the statistics are the hit nodes', public ones
+        // among them, as the scope's own (ADR-0098 d3, d7). Federation is
+        // neither read nor needed.
+        if sources == Sources::Scope {
+            let counts = self
+                .journal
+                .reference_counts(tenant_id, &counts_scope(hit_nodes.to_vec()), query)
+                .await?;
+            let kept = Kept::of(&counts);
+            let reference = kept.sum(hit_nodes.iter());
+            let mut searched = Vec::with_capacity(public.len());
+            for node in hit_nodes.iter().filter(|n| public.contains(n)) {
+                searched.push(
+                    self.searched(caller, *node, None, Via::Public, &kept, &reference)
+                        .await?,
+                );
+            }
+            return Ok(SourcePlan {
+                promoted: hit_nodes.to_vec(),
+                public: public.clone(),
+                report: Some(SourcesReport {
+                    mode: "scope",
+                    considered: searched.len(),
+                    searched,
+                    cut: CutReport::default(),
+                }),
                 ..SourcePlan::default()
             });
         }
@@ -310,16 +355,6 @@ where
                 pipeline: pipeline.as_str().to_owned(),
             });
         }
-        // Only `bm25_postings` prunes, and never under `match: all`
-        // (ADR-0052 d4, d6).
-        let prunes = pipeline.retrievers().contains(&RetrieverKind::Bm25Postings)
-            && req.match_mode == MatchMode::Any;
-        let counts_scope = |nodes: Vec<Uuid>| CountsScope {
-            nodes,
-            kinds: kinds.to_vec(),
-            expired_at,
-            prunes,
-        };
         match sources {
             Sources::List(names) => {
                 // (4) Each name in index order, the first unusable one
@@ -344,7 +379,9 @@ where
                     .collect();
                 let mut searched = Vec::with_capacity(listed.len());
                 for node in &listed {
-                    let via = if federated.contains(node) {
+                    let via = if public.contains(node) {
+                        Via::Public
+                    } else if federated.contains(node) {
                         Via::Federated
                     } else {
                         Via::Scope
@@ -354,6 +391,11 @@ where
                             .await?,
                     );
                 }
+                let listed_public: BTreeSet<Uuid> = listed
+                    .iter()
+                    .filter(|n| public.contains(n))
+                    .copied()
+                    .collect();
                 Ok(SourcePlan {
                     promoted: listed.clone(),
                     held_within: Some(listed.iter().copied().collect()),
@@ -372,6 +414,7 @@ where
                         reference_workspace_ids: listed,
                     }),
                     federated,
+                    public: listed_public,
                 })
             }
             Sources::Scope | Sources::Wide => {
@@ -422,7 +465,11 @@ where
                             caller,
                             *node,
                             paths.get(node),
-                            Via::Scope,
+                            if public.contains(node) {
+                                Via::Public
+                            } else {
+                                Via::Scope
+                            },
                             &kept,
                             &reference,
                         )
@@ -463,6 +510,7 @@ where
                         reference_workspace_ids: r,
                     }),
                     federated: selected.into_iter().collect(),
+                    public: public.clone(),
                 })
             }
         }
@@ -733,7 +781,7 @@ where
         let counts = kept.of_node(&node);
         let matched_words = match via {
             Via::Scope => Vec::new(),
-            Via::Federated => kept
+            Via::Federated | Via::Public => kept
                 .words
                 .iter()
                 .zip(&counts.df)

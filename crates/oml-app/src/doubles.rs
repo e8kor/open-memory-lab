@@ -1141,6 +1141,7 @@ fn fold_poc_event(
                     grants: Vec::new(),
                     denials: Vec::new(),
                     lift_epochs: Vec::new(),
+                    public_nodes: Vec::new(),
                 },
             );
             state.keys.insert(
@@ -1893,6 +1894,19 @@ fn apply_fold(
                 state.declining.insert(workspace_id);
             }
         }
+        MetadataFold::WorkspacePublicSet {
+            workspace_id,
+            public,
+            act_id,
+        } => {
+            let Some(node) = state.workspaces.get_mut(&workspace_id) else {
+                return Err(StoreError::Backend(format!(
+                    "workspace {workspace_id} is not held by this tenant"
+                )));
+            };
+            node.public = public;
+            node.public_act_id = Some(act_id);
+        }
         MetadataFold::TelemetrySettingsSet { query_text_since } => {
             state.query_text_since = query_text_since;
         }
@@ -2147,6 +2161,7 @@ fn apply_fold(
                     grants: Vec::new(),
                     denials: Vec::new(),
                     lift_epochs: Vec::new(),
+                    public_nodes: Vec::new(),
                 },
             );
             state.keys.insert(key.key_id, key);
@@ -3043,6 +3058,8 @@ fn assign_names_fold(
                 };
                 let workspace = WorkspaceRecord {
                     in_progress: false,
+                    public: false,
+                    public_act_id: None,
                     workspace_id: id,
                     tenant_id,
                     parent_id: unnamed.parent_id,
@@ -5679,7 +5696,18 @@ impl JournalStore for MemStore {
             return Ok(None);
         };
         let state = tenant.lock().expect("tenant lock");
-        Ok(state.access.get(&key_id).cloned())
+        // The tenant's public nodes, read in the same snapshot (ADR-0098
+        // d1).
+        let public_nodes: Vec<Uuid> = state
+            .workspaces
+            .values()
+            .filter(|w| w.public)
+            .map(|w| w.workspace_id)
+            .collect();
+        Ok(state.access.get(&key_id).cloned().map(|mut access| {
+            access.public_nodes = public_nodes;
+            access
+        }))
     }
 
     async fn resolve_name(
@@ -5865,6 +5893,21 @@ impl JournalStore for MemStore {
             workspaces: state.unnamed_workspaces.keys().copied().collect(),
             keys,
         })
+    }
+
+    async fn public_workspaces(&self, tenant_id: Uuid) -> Result<Vec<WorkspaceRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let mut nodes: Vec<WorkspaceRecord> = state
+            .workspaces
+            .values()
+            .filter(|w| w.public)
+            .cloned()
+            .collect();
+        nodes.sort_by(|a, b| a.name.as_str().as_bytes().cmp(b.name.as_str().as_bytes()));
+        Ok(nodes)
     }
 
     async fn workspace(

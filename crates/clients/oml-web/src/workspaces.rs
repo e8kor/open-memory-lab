@@ -537,8 +537,14 @@ fn table(
             Ok(offers) => {
                 let _ = write!(
                     out,
-                    r#"<tr>{named}<td>{}{pending}</td><td>{}</td><td>{}</td></tr>"#,
+                    r#"<tr>{named}<td>{}{}{pending}</td><td>{}</td><td>{}</td></tr>"#,
                     text(&offers.transitions.status),
+                    // Every reading key of the tenant reads it (ADR-0098 d9).
+                    if node.public.value {
+                        r#" <span class="tag oml-chip is-quiet">Public</span>"#
+                    } else {
+                        ""
+                    },
                     // The mode as the drafts-visibility toggle reads it
                     // (ADR-0091 d16); the stored modes do not change.
                     if offers.transitions.mode == "in_progress" {

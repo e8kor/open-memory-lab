@@ -114,7 +114,7 @@ fn grant_from_json(value: &Value) -> Result<Grant, AppError> {
 }
 
 /// The `admin.act` payload of `record` (ADR-0097 d2).
-fn act_payload(record: &AdminActRecord) -> Value {
+pub(crate) fn act_payload(record: &AdminActRecord) -> Value {
     json!({
         "act_id": record.act_id.to_string(),
         "act": record.act.as_str(),
@@ -333,6 +333,7 @@ where
         // What a declined act undoes: the key it issued, the one revocable
         // effect a widening act leaves; any other `sole_admin` act is not
         // declinable until its revocation is built.
+        let mut unpublic = None;
         let revokes = match act.act {
             AdminActKind::IssueKey => act
                 .target
@@ -340,6 +341,24 @@ where
                 .and_then(Value::as_str)
                 .and_then(|s| Uuid::parse_str(s).ok()),
             _ if act.state == AdminActState::PendingConfirmation => None,
+            // A `sole_admin` set of `public` is revoked by clearing the
+            // flag it set, while that set is still the node's (ADR-0098
+            // d6; ADR-0097 d10).
+            AdminActKind::WorkspacePublicSet => {
+                let node = match act
+                    .target
+                    .get("workspace_id")
+                    .and_then(Value::as_str)
+                    .and_then(|s| Uuid::parse_str(s).ok())
+                {
+                    Some(id) => self.journal.workspace(tenant_id, id).await?,
+                    None => None,
+                };
+                unpublic = node
+                    .filter(|n| super::public::revokes_public(&act, n))
+                    .map(|n| n.workspace_id);
+                None
+            }
             _ => return Err(AppError::AdminAct(AdminActRefusal::NotDeclinable)),
         };
         let prev = self.head_event(tenant_id).await?;
@@ -392,6 +411,17 @@ where
                 }),
             )?;
             links.push((event, MetadataFold::KeyRevoked { key_id }));
+        }
+        if let Some(workspace_id) = unpublic {
+            let prev = links.last().map(|(e, _)| e.clone()).expect("a link");
+            links.push(self.public_set_link(
+                &admin,
+                &prev,
+                workspace_id,
+                false,
+                decline.act_id(),
+                true,
+            )?);
         }
         let reqs = links
             .into_iter()
@@ -576,6 +606,9 @@ where
                         requests_per_minute,
                     },
                 ));
+            }
+            AdminActKind::WorkspacePublicSet => {
+                self.confirmed_public_set(admin, act, links).await?;
             }
             AdminActKind::AllowAdmin => {
                 let bad = || AppError::StoredResponse(format!("admin act {} entry", act.act_id));

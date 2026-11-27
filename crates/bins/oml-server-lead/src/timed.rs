@@ -1200,6 +1200,13 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         timed("unnamed_rows", self.inner.unnamed_rows(tenant_id))
     }
 
+    fn public_workspaces(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<WorkspaceRecord>, StoreError>> + Send {
+        timed("public_workspaces", self.inner.public_workspaces(tenant_id))
+    }
+
     fn workspace(
         &self,
         tenant_id: Uuid,

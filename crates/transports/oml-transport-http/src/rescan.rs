@@ -18,7 +18,11 @@ use crate::traffic::Rid;
 use crate::{ApiState, bearer, finish, json_response, retry_chain};
 
 /// openapi.yaml `RescanReport`.
-fn report_json(r: &RescanReport, fixes: &oml_app::app::FixStats) -> Value {
+fn report_json(
+    r: &RescanReport,
+    fixes: &oml_app::app::FixStats,
+    public: &oml_app::app::PublicStats,
+) -> Value {
     let action = |veto: bool| if veto { "veto" } else { "hold" };
     json!({
         "scanner_version": r.scanner_version,
@@ -66,6 +70,17 @@ fn report_json(r: &RescanReport, fixes: &oml_app::app::FixStats) -> Value {
         "admin_acts_expired": fixes.acts_expired,
         "admin_acts_offensive": fixes.acts_offensive,
         "admin_narrowing_burst": fixes.narrowing_burst,
+        // The doctor's `workspace.public` and `workspace.public_ineligible`
+        // (ADR-0098 d9).
+        "public_workspaces": public.public.iter().map(|w| json!({
+            "workspace_id": w.workspace_id,
+            "name": w.name,
+            "since": w.flag.since.as_ref().map(|at| at.as_str()),
+            "act_id": w.flag.act_id,
+            "sole_admin": w.flag.sole_admin,
+            "served_rows": w.served_rows,
+        })).collect::<Vec<_>>(),
+        "public_ineligible": public.ineligible,
     })
 }
 
@@ -141,7 +156,15 @@ where
                 .admin_fix_stats(&token)
                 .await
                 .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-            Ok(json_response(StatusCode::OK, &report_json(&report, &fixes)))
+            let public = st
+                .app
+                .admin_public_stats(&token)
+                .await
+                .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+            Ok(json_response(
+                StatusCode::OK,
+                &report_json(&report, &fixes, &public),
+            ))
         }
         .await;
         finish(rid, result)

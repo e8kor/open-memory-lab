@@ -650,6 +650,14 @@ enum WorkspacesCommand {
         #[arg(value_parser = ["on", "off"])]
         accept: String,
     },
+    /// Mark a protected or frozen workspace public, so every reading key of
+    /// the tenant reads its approved items and recalls them by default, or
+    /// clear the mark. An admin person only; a set waits on another admin
+    /// person unless the tenant has only ever had one.
+    Public {
+        #[command(subcommand)]
+        command: WorkspacePublicCommand,
+    },
     /// Set a workspace's crew record (admin key).
     Crew {
         #[command(subcommand)]
@@ -910,6 +918,28 @@ enum AdminCommand {
         /// scanned, counts under 5 as <5; no artifact id, claim key or text.
         #[arg(long, conflicts_with = "record_held")]
         rates: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum WorkspacePublicCommand {
+    /// Mark the workspace public: an admin act of class widening, which
+    /// waits on another admin person and journals workspace.public_set when
+    /// it takes effect.
+    Set {
+        /// Workspace id or name.
+        workspace: String,
+        /// Why every reading key of the tenant should read it.
+        #[arg(long)]
+        reason: String,
+    },
+    /// Clear the mark: narrowing, at once; a set that waits is declined.
+    Clear {
+        /// Workspace id or name.
+        workspace: String,
+        /// Why the workspace stops being public.
+        #[arg(long)]
+        reason: Option<String>,
     },
 }
 
@@ -2314,6 +2344,8 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                     );
                 }
                 println!("    crew    : {}", crew_line(&response["crew"]));
+                // ADR-0098 d9: the flag, since when, and a set that waits.
+                println!("    public  : {}", public_line(&response["public"]));
                 for c in response["children"].as_array().into_iter().flatten() {
                     println!(
                         "    child   : {} ({}, {})",
@@ -2360,6 +2392,31 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                         "declines"
                     }
                 );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Workspaces {
+            command: WorkspacesCommand::Public { command },
+        } => {
+            let (workspace, public, reason) = match command {
+                WorkspacePublicCommand::Set { workspace, reason } => {
+                    (workspace, true, Some(reason.as_str()))
+                }
+                WorkspacePublicCommand::Clear { workspace, reason } => {
+                    (workspace, false, reason.as_deref())
+                }
+            };
+            let client = resolve(cli, &stored)?;
+            let (status, response) = client.post(
+                &format!("/v2/workspaces/{}/public", segment(workspace)?),
+                &json!({ "public": public, "reason": reason }),
+                &write_opts(),
+            )?;
+            if cli.json {
+                print_json(&response);
+            } else {
+                println!("{}", public_printed(workspace, status, &response));
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -2937,6 +2994,46 @@ fn node_suffix(grant: &Value) -> &'static str {
     } else {
         ""
     }
+}
+
+/// `oml workspaces public set|clear`'s line (ADR-0098 d9): `effective`
+/// with the flag now held, or that the set waits on another admin person,
+/// with the act id either way.
+fn public_printed(workspace: &str, status: u16, response: &Value) -> String {
+    let act = response["act_id"].as_str().unwrap_or("?");
+    if status == 202 {
+        format!(
+            "workspace {workspace}: public waits on another admin person (act {act}); they confirm it with oml admin confirm {act}"
+        )
+    } else if response["public"] == true {
+        format!("workspace {workspace}: public, effective (act {act})")
+    } else {
+        format!("workspace {workspace}: not public, effective (act {act})")
+    }
+}
+
+/// `oml workspaces show`'s public line: yes since when, marked
+/// `sole_admin` where it took effect so, or no; and a set that waits.
+fn public_line(public: &Value) -> String {
+    let mut line = if public["value"] == true {
+        format!(
+            "yes, since {}{}",
+            public["since"].as_str().unwrap_or("?"),
+            if public["sole_admin"] == true {
+                " (sole_admin)"
+            } else {
+                ""
+            }
+        )
+    } else {
+        "no".to_owned()
+    };
+    if let Some(act) = public["pending_act_id"].as_str() {
+        line.push_str(&format!(
+            "; a set waits on another admin person (act {act})"
+        ));
+    }
+    line
 }
 
 /// A crew record as one line: its name and id, or `—` for none.
@@ -6663,7 +6760,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let withdrawals = withdrawn_queue_doctor(rescan_read.as_ref());
     let withdrawals_fail = withdrawals.iter().any(|line| line.starts_with("fail"));
     let withdrawals_warn = withdrawals.iter().any(|line| line.starts_with("warn"));
-    let lifecycle = lifecycle_doctor(rescan_read.as_ref());
+    let mut lifecycle = lifecycle_doctor(rescan_read.as_ref());
+    lifecycle.extend(public_doctor(rescan_read.as_ref()));
     let lifecycle_warn = lifecycle.iter().any(|line| line.starts_with("warn"));
     let lifecycle_fail = lifecycle.iter().any(|line| line.starts_with("fail"));
     let telemetry_warn = telemetry.iter().any(|line| line.starts_with("warn"));
@@ -7683,6 +7781,57 @@ fn withdrawn_queue_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
     } else {
         "memory.withdrawn_in_queue: 0".to_owned()
     }]
+}
+
+/// Doctor's public workspace lines (ADR-0098 d9), from the same admin
+/// rescan window: `workspace.public` names each public workspace, since
+/// when, by which act, whether it took effect under `sole_admin`, and its
+/// served rows, the load it adds to every default recall of the tenant;
+/// `workspace.public_ineligible` fails for a public workspace that is
+/// `development` or inside a user root, which only a direct store edit
+/// produces. A server before the flag reports neither, and the lines are
+/// then absent.
+fn public_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
+    let Some(Ok(report)) = read else {
+        return Vec::new();
+    };
+    let (Some(public), Some(ineligible)) = (
+        report.get("public_workspaces").and_then(Value::as_array),
+        report.get("public_ineligible").and_then(Value::as_array),
+    ) else {
+        return Vec::new();
+    };
+    let rows: u64 = public
+        .iter()
+        .filter_map(|w| w["served_rows"].as_u64())
+        .sum();
+    let mut lines = vec![format!(
+        "workspace.public: {} public workspace(s), {rows} served row(s) every default recall of the tenant also searches",
+        public.len()
+    )];
+    for w in public {
+        lines.push(format!(
+            "workspace.public: {} since {} (act {}{}), {} served row(s)",
+            w["name"].as_str().unwrap_or("?"),
+            w["since"].as_str().unwrap_or("?"),
+            w["act_id"].as_str().unwrap_or("?"),
+            if w["sole_admin"] == true {
+                ", sole_admin"
+            } else {
+                ""
+            },
+            w["served_rows"].as_u64().unwrap_or(0)
+        ));
+    }
+    lines.push(if ineligible.is_empty() {
+        "workspace.public_ineligible: 0".to_owned()
+    } else {
+        format!(
+            "fail workspace.public_ineligible: {} public workspace(s) are development or inside a user root, which no admin act allows; clear each with oml workspaces public clear <workspace>",
+            ineligible.len()
+        )
+    });
+    lines
 }
 
 /// Doctor's lifecycle lines (ADR-0089 d16, notes of 2026-11-18; ADR-0085

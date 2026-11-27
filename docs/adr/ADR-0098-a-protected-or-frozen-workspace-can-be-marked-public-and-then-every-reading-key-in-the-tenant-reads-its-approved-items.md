@@ -12,7 +12,7 @@ readings the same day. The answer on default recall (d3) differs from the draft'
 and every rule that rested on that recommendation is re-derived here (marked **re-derived**).
 Each answer is marked **decided by the operator, 2026-11-26** where it applies.
 
-**Release:** v0.8.6, not built. It builds on [ADR-0097](ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md)'s
+**Release:** v0.8.6, built. It builds on [ADR-0097](ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md)'s
 admin-act envelope and lands after it in the same release.
 
 **Amends:** [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)

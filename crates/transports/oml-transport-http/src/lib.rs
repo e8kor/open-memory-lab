@@ -28,6 +28,7 @@ mod imports;
 pub mod mcp;
 mod metering;
 pub mod oauth;
+mod public;
 mod rescan;
 mod search;
 pub mod session;
@@ -149,6 +150,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/workspaces/{workspace}/crew"),
     ("POST", "/v2/workspaces/{workspace}/mode"),
     ("POST", "/v2/workspaces/{workspace}/federation"),
+    ("POST", "/v2/workspaces/{workspace}/public"),
     ("POST", "/v2/workspaces/{workspace}/exports"),
     ("POST", "/v2/workspaces/{workspace}/transitions"),
     (
@@ -431,6 +433,7 @@ where
             ("POST", "/v2/workspaces/{workspace}/federation") => {
                 post(Self::set_workspace_federation)
             }
+            ("POST", "/v2/workspaces/{workspace}/public") => post(Self::set_workspace_public),
             ("POST", "/v2/workspaces/{workspace}/exports") => post(Self::export_workspace_route),
             ("POST", "/v2/workspaces/{workspace}/transitions") => post(Self::propose_transition),
             ("POST", "/v2/workspaces/{workspace}/transitions/{transition_id}/ratify") => {
@@ -2580,8 +2583,12 @@ where
                 // The path derived from the parent names and the crew record
                 // as stored, as the workspace read serves them (ADR-0025 d14;
                 // ADR-0026 d8).
-                let mut response =
-                    workspace_json(&created.workspace, &created.path, created.crew.as_ref());
+                let mut response = workspace_json(
+                    &created.workspace,
+                    &created.path,
+                    created.crew.as_ref(),
+                    &oml_app::types::PublicFlag::default(),
+                );
                 if let Some(obj) = response.as_object_mut() {
                     obj.insert("created_at".to_owned(), json!(system_event_time().as_str()));
                 }
@@ -3106,7 +3113,7 @@ where
         let items: Vec<Value> = page
             .items
             .iter()
-            .map(|n| workspace_json(&n.workspace, &n.path, n.crew.as_ref()))
+            .map(|n| workspace_json(&n.workspace, &n.path, n.crew.as_ref(), &n.public))
             .collect();
         Ok(json_response(
             StatusCode::OK,
@@ -3170,6 +3177,8 @@ where
                     "status": w.status.as_str(),
                     "user_root": w.user_root,
                     "mode": if w.in_progress { "in_progress" } else { "standard" },
+                    // The picker labels a public node (ADR-0098 d9).
+                    "public": w.public,
                     "counts": {
                         "promoted": r.approved,
                         "held": r.held,
@@ -3832,7 +3841,12 @@ where
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(
             StatusCode::OK,
-            &workspace_json(&info.workspace, &info.path, info.crew.as_ref()),
+            &workspace_json(
+                &info.workspace,
+                &info.path,
+                info.crew.as_ref(),
+                &info.public,
+            ),
         ))
     }
 }
@@ -5079,6 +5093,9 @@ fn key_json(detail: &KeyDetail, connections: &[ConnectionRecord], expired: bool)
         "revoked_at": key.revoked_at.as_ref().map(|at| at.as_str()),
         "rotated_from": Value::Null,
         "grants": detail.access.grants.iter().map(grant_json).collect::<Vec<_>>(),
+        // The public nodes the key reads through the flag, apart from its
+        // grants (ADR-0098 d9).
+        "public_reach": detail.public_reach,
         "denials": detail
             .access
             .denials
@@ -6387,7 +6404,12 @@ fn linked_key_json(key: &KeyRecord, user: Option<&Name>, pending: bool) -> Value
 /// openapi.yaml `Workspace`: the node, its name, its derived path, its
 /// status and the crew record it names, or null when it names none
 /// (ADR-0025 d14; ADR-0026 d1, d8).
-fn workspace_json(workspace: &WorkspaceRecord, path: &str, crew: Option<&CrewRecord>) -> Value {
+fn workspace_json(
+    workspace: &WorkspaceRecord,
+    path: &str,
+    crew: Option<&CrewRecord>,
+    public: &oml_app::types::PublicFlag,
+) -> Value {
     json!({
         "id": workspace.workspace_id,
         "name": workspace.name.as_str(),
@@ -6398,7 +6420,25 @@ fn workspace_json(workspace: &WorkspaceRecord, path: &str, crew: Option<&CrewRec
         "user_root": workspace.user_root,
         // A person's key puts a workspace in progress (ADR-0030 d1, d13).
         "mode": if workspace.in_progress { "in_progress" } else { "standard" },
+        // Every reading key of the tenant reads a public node (ADR-0098 d9).
+        "public": public_json(public),
     })
+}
+
+/// openapi.yaml `PublicFlag`: the value, since when and by which admin act,
+/// whether it took effect under `sole_admin`, and, to an admin key on the
+/// workspace read, a set that waits on a second admin person (ADR-0098 d9).
+fn public_json(public: &oml_app::types::PublicFlag) -> Value {
+    let mut value = json!({
+        "value": public.value,
+        "since": public.since.as_ref().map(|at| at.as_str()),
+        "act_id": public.act_id,
+        "sole_admin": public.sole_admin,
+    });
+    if let (Some(act_id), Some(obj)) = (public.pending_act_id, value.as_object_mut()) {
+        obj.insert("pending_act_id".to_owned(), json!(act_id));
+    }
+    value
 }
 
 /// openapi.yaml `WorkspaceView`: the `Workspace` fields and the calling key's
@@ -6406,7 +6446,12 @@ fn workspace_json(workspace: &WorkspaceRecord, path: &str, crew: Option<&CrewRec
 /// ADR-0026 d8).
 #[must_use]
 pub fn workspace_view_json(info: &WorkspaceInfo) -> Value {
-    let mut value = workspace_json(&info.workspace, &info.path, info.crew.as_ref());
+    let mut value = workspace_json(
+        &info.workspace,
+        &info.path,
+        info.crew.as_ref(),
+        &info.public,
+    );
     if let Some(obj) = value.as_object_mut() {
         obj.insert(
             "children".to_owned(),

@@ -728,6 +728,14 @@ pub enum MetadataFold {
         workspace_id: Uuid,
         accept_federated: bool,
     },
+    /// `workspace.public_set`: the node's `public` flag and the admin act
+    /// whose effect it is; the store refuses a node it does not hold
+    /// (ADR-0098 d6, d9).
+    WorkspacePublicSet {
+        workspace_id: Uuid,
+        public: bool,
+        act_id: Uuid,
+    },
 }
 
 /// The outbox row written in the same transaction as the event; the lake
@@ -1989,6 +1997,13 @@ pub trait JournalStore: Retriever + Send + Sync {
         tenant_id: Uuid,
         workspace_id: Uuid,
     ) -> impl Future<Output = Result<Option<WorkspaceRecord>, StoreError>> + Send;
+
+    /// The tenant's public nodes, ordered by name in byte order, from the
+    /// partial index on them (ADR-0098 d9, the doctor's `workspace.public`).
+    fn public_workspaces(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<WorkspaceRecord>, StoreError>> + Send;
 
     /// The node and each parent in turn, from the node to the root, by
     /// `parent_id`; `None` for a node this tenant does not hold. This is the

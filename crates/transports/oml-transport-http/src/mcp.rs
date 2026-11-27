@@ -1935,6 +1935,8 @@ where
             ("name", "name"),
             ("path", "path"),
             ("status", "status"),
+            // Read only: no mode sets it (ADR-0098 d9).
+            ("public", "public"),
             ("crew", "crew"),
             ("parent_id", "parent"),
             ("children", "children"),

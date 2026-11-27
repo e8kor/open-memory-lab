@@ -175,6 +175,8 @@ pub enum AdminActKind {
     LowerLimits,
     /// Declining a pending or `sole_admin` act (d3, d10).
     DeclineAct,
+    /// Clearing a workspace's `public` flag (ADR-0098 d6).
+    WorkspacePublicClear,
     // Erase (d4).
     /// Erasing a claim: the demotion at once, the shred after a second
     /// admin person.
@@ -191,6 +193,8 @@ pub enum AdminActKind {
     MintConnectCode,
     /// A raise, a cleared limit, a later expiry or a looser quota (d15).
     RaiseLimits,
+    /// Setting a workspace's `public` flag (ADR-0098 d6).
+    WorkspacePublicSet,
     // Consent (d7).
     /// Linking a key to a person, pending until that person accepts.
     LinkKey,
@@ -232,12 +236,14 @@ pub const ADMIN_ACT_KINDS: &[AdminActKind] = &[
     AdminActKind::CloseDeletion,
     AdminActKind::LowerLimits,
     AdminActKind::DeclineAct,
+    AdminActKind::WorkspacePublicClear,
     AdminActKind::Erase,
     AdminActKind::IssueKey,
     AdminActKind::AddGrant,
     AdminActKind::AllowAdmin,
     AdminActKind::MintConnectCode,
     AdminActKind::RaiseLimits,
+    AdminActKind::WorkspacePublicSet,
     AdminActKind::LinkKey,
     AdminActKind::RevokeAdminKey,
     AdminActKind::UnflagAdmin,
@@ -266,11 +272,15 @@ impl AdminActKind {
             | K::RemovePerson
             | K::CloseDeletion
             | K::LowerLimits
-            | K::DeclineAct => AdminActClass::Narrowing,
+            | K::DeclineAct
+            | K::WorkspacePublicClear => AdminActClass::Narrowing,
             K::Erase => AdminActClass::Erase,
-            K::IssueKey | K::AddGrant | K::AllowAdmin | K::MintConnectCode | K::RaiseLimits => {
-                AdminActClass::Widening
-            }
+            K::IssueKey
+            | K::AddGrant
+            | K::AllowAdmin
+            | K::MintConnectCode
+            | K::RaiseLimits
+            | K::WorkspacePublicSet => AdminActClass::Widening,
             K::LinkKey => AdminActClass::Consent,
             K::RevokeAdminKey | K::UnflagAdmin | K::RemoveAdmin | K::DisableAdmin => {
                 AdminActClass::AgainstAdmin
@@ -299,12 +309,14 @@ impl AdminActKind {
             K::CloseDeletion => "close_deletion",
             K::LowerLimits => "lower_limits",
             K::DeclineAct => "decline_act",
+            K::WorkspacePublicClear => "workspace_public_clear",
             K::Erase => "erase",
             K::IssueKey => "issue_key",
             K::AddGrant => "add_grant",
             K::AllowAdmin => "allow_admin",
             K::MintConnectCode => "mint_connect_code",
             K::RaiseLimits => "raise_limits",
+            K::WorkspacePublicSet => "workspace_public_set",
             K::LinkKey => "link_key",
             K::RevokeAdminKey => "revoke_admin_key",
             K::UnflagAdmin => "unflag_admin",
@@ -413,5 +425,25 @@ mod tests {
         );
         assert_eq!(AdminActKind::RaiseLimits.class(), AdminActClass::Widening);
         assert_eq!(AdminActKind::LowerLimits.class(), AdminActClass::Narrowing);
+    }
+
+    #[test]
+    fn setting_a_workspace_public_is_widening_and_clearing_it_is_narrowing() {
+        assert_eq!(
+            AdminActKind::WorkspacePublicSet.class(),
+            AdminActClass::Widening
+        );
+        assert_eq!(
+            AdminActKind::WorkspacePublicSet.as_str(),
+            "workspace_public_set"
+        );
+        assert_eq!(
+            AdminActKind::WorkspacePublicClear.class(),
+            AdminActClass::Narrowing
+        );
+        assert_eq!(
+            AdminActKind::WorkspacePublicClear.as_str(),
+            "workspace_public_clear"
+        );
     }
 }

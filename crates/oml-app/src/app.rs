@@ -18,6 +18,7 @@ mod key_limits;
 mod linked_keys;
 mod metering;
 mod pages;
+mod public;
 mod rescan;
 mod revocation;
 mod rotation;
@@ -44,6 +45,7 @@ pub use pages::{
     OwnKey, OwnKeyShape, QueueRow, REGION_COUNT_MAX, Region, Regions, VerdictTrail, WebListRequest,
     WorkspaceOffer, WorkspaceOffers,
 };
+pub use public::{PublicNodeStats, PublicStats};
 pub use rescan::{RESCAN_MAX_EVENTS, RescanHit, RescanReport};
 pub use search::SearchSettings;
 pub use signup::{
@@ -347,6 +349,14 @@ pub struct Caller {
     key: KeyRecord,
     grants: Vec<Grant>,
     denials: Vec<KeyDenial>,
+    /// The key's grants and, when its role reads, a reader grant on each
+    /// public node alone that the key does not hold: what every effective
+    /// access check reads (ADR-0098 d1). `grants` alone is what the key
+    /// holds and is served.
+    reach: Vec<Grant>,
+    /// The tenant's public nodes this key's role reads, before any global
+    /// deny; empty for a key whose role does not read (ADR-0098 d2).
+    public: Vec<Uuid>,
     /// The epoch of the access read above (workspaces.md permission epoch).
     permission_epoch: u64,
     /// The own key set when it is wider than the key itself: a person's
@@ -377,16 +387,37 @@ impl Caller {
                 key,
                 grants: Vec::new(),
                 denials: Vec::new(),
+                reach: Vec::new(),
+                public: Vec::new(),
                 permission_epoch: 0,
                 own_keys: Vec::new(),
                 gate_read: std::sync::Mutex::new(None),
                 previous_value: false,
             };
         };
+        let permission_epoch = access.permission_epoch();
+        let grants: Vec<Grant> = access.grants.into_iter().map(|g| g.grant).collect();
+        // The public reach, for a key whose role reads (ADR-0098 d1, d2).
+        let public = if oml_domain::access::reads_public(key.role) {
+            access.public_nodes
+        } else {
+            Vec::new()
+        };
+        let reach = grants
+            .iter()
+            .cloned()
+            .chain(
+                public
+                    .iter()
+                    .map(|n| oml_domain::access::public_reach_grant(*n)),
+            )
+            .collect();
         Caller {
+            permission_epoch,
+            grants,
+            reach,
+            public,
             key,
-            permission_epoch: access.permission_epoch(),
-            grants: access.grants.into_iter().map(|g| g.grant).collect(),
             denials: access.denials.into_iter().map(|d| d.denial).collect(),
             own_keys: Vec::new(),
             gate_read: std::sync::Mutex::new(None),
@@ -460,9 +491,10 @@ impl Caller {
         }
     }
 
-    /// `effective_roles` at the node whose ancestry, node to root, this is.
+    /// `effective_roles` at the node whose ancestry, node to root, this is,
+    /// over the key's grants and its public reach (ADR-0098 d1).
     fn effective(&self, ancestry: &[Uuid]) -> BTreeSet<Role> {
-        effective_roles(&self.grants, &self.denials, ancestry)
+        effective_roles(&self.reach, &self.denials, ancestry)
     }
 
     /// Whether a global per-key denial covers the node: deny-wins, own rows
@@ -2919,6 +2951,33 @@ where
         }
     }
 
+    /// The public nodes `caller` reads that `hit_nodes` does not hold yet,
+    /// each added to it: a recall's served tips there rank with the
+    /// scope's own, and a node already in the scope counts once (ADR-0098
+    /// d3). A global deny naming the node or an ancestor removes it (d7);
+    /// a key with no global deny reads no ancestry for this.
+    async fn public_hit_nodes(
+        &self,
+        caller: &Caller,
+        hit_nodes: &mut Vec<Uuid>,
+    ) -> Result<BTreeSet<Uuid>, AppError> {
+        let mut added = BTreeSet::new();
+        for &node in &caller.public {
+            if hit_nodes.contains(&node) {
+                continue;
+            }
+            if !caller.denials.is_empty() {
+                let ancestry = self.ancestry(caller.key.tenant_id, node).await?;
+                if !caller.effective(&ancestry).contains(&Role::Reader) {
+                    continue;
+                }
+            }
+            hit_nodes.push(node);
+            added.insert(node);
+        }
+        Ok(added)
+    }
+
     async fn head_event(&self, tenant_id: Uuid) -> Result<Option<SignedEnvelope>, AppError> {
         match self.journal.chain_head(tenant_id).await? {
             None => Ok(None),
@@ -3414,6 +3473,7 @@ where
                 grants: stored,
                 denials: Vec::new(),
                 lift_epochs: Vec::new(),
+                public_nodes: Vec::new(),
             },
             connect_code: code.map(|(_, shown)| shown),
             pending_act: pending.then(|| act.act_id()),
@@ -3514,6 +3574,8 @@ where
     async fn create_user_root(&self, issuer: &KeyRecord, user: &UserRoot) -> Result<(), AppError> {
         let workspace = WorkspaceRecord {
             in_progress: false,
+            public: false,
+            public_act_id: None,
             workspace_id: user.id,
             tenant_id: issuer.tenant_id,
             parent_id: Some(user.universe),
@@ -3651,6 +3713,8 @@ where
         let root_workspace_id = self.ids.new_id();
         let workspace = WorkspaceRecord {
             in_progress: false,
+            public: false,
+            public_act_id: None,
             workspace_id: root_workspace_id,
             tenant_id,
             parent_id: None,
@@ -3751,6 +3815,7 @@ where
                     grants: Vec::new(),
                     denials: Vec::new(),
                     lift_epochs: Vec::new(),
+                    public_nodes: Vec::new(),
                 },
                 connect_code: None,
             },
@@ -3777,6 +3842,8 @@ where
     ) -> Result<Vec<CommitRequest>, AppError> {
         let root = WorkspaceRecord {
             in_progress: false,
+            public: false,
+            public_act_id: None,
             workspace_id: self.ids.new_id(),
             tenant_id,
             parent_id: Some(universe),
@@ -4232,6 +4299,7 @@ where
                     grants: stored,
                     denials: Vec::new(),
                     lift_epochs: Vec::new(),
+                    public_nodes: Vec::new(),
                 },
                 connect_code: Some(shown),
             });
@@ -4275,6 +4343,7 @@ where
                 grants: stored,
                 denials: Vec::new(),
                 lift_epochs: Vec::new(),
+                public_nodes: Vec::new(),
             },
             connect_code: None,
         })
@@ -4574,6 +4643,8 @@ where
         }
         let workspace = WorkspaceRecord {
             in_progress: false,
+            public: false,
+            public_act_id: None,
             workspace_id: self.ids.new_id(),
             tenant_id: key.tenant_id,
             parent_id,
@@ -4745,7 +4816,21 @@ where
                 .await?
                 .is_empty(),
         };
+        // The node's `public` flag, and to an admin key the set that waits
+        // on a second admin person (ADR-0098 d9).
+        let mut public = self
+            .public_flags(tenant_id, &[&workspace])
+            .await?
+            .remove(&node)
+            .unwrap_or_default();
+        if structure {
+            public.pending_act_id = self
+                .pending_public_set(tenant_id, node)
+                .await?
+                .map(|a| a.act_id);
+        }
         Ok(WorkspaceInfo {
+            public,
             in_progress_root,
             stale_versions,
             approved_by_kind,
@@ -4864,8 +4949,12 @@ where
             }
             .encode()
         });
-        // Many nodes may name one crew, which is read once.
+        // Many nodes may name one crew, which is read once; each public
+        // node's act is read for its flag (ADR-0098 d9).
         let mut crews: BTreeMap<Uuid, Option<CrewRecord>> = BTreeMap::new();
+        let mut flags = self
+            .public_flags(tenant_id, &page.iter().map(|(_, w)| w).collect::<Vec<_>>())
+            .await?;
         let mut items = Vec::with_capacity(page.len());
         for (names, workspace) in page {
             let path = names.iter().map(Name::as_str).collect::<Vec<_>>().join(".");
@@ -4879,6 +4968,7 @@ where
                 },
             };
             items.push(TreeNode {
+                public: flags.remove(&workspace.workspace_id).unwrap_or_default(),
                 workspace,
                 path,
                 crew,
@@ -5037,12 +5127,14 @@ where
                     issued.payload["guardrail_scope"]
                 ))
             })?;
+        let public_reach = self.public_reach_of(&record, &access).await?;
         Ok(KeyDetail {
             key: record,
             user,
             used_by,
             guardrail_scope,
             access,
+            public_reach,
         })
     }
 
@@ -5285,6 +5377,8 @@ where
         self.observer.mode_set(mode.as_str());
         Ok(WorkspaceRecord {
             in_progress: mode == WorkspaceMode::InProgress,
+            public: false,
+            public_act_id: None,
             ..node
         })
     }
@@ -6652,7 +6746,10 @@ where
             .await?
             .unwrap_or_default();
         let readable = self.nodes_with(caller, workspace, Role::Reader).await?;
-        let hit_nodes = with_universe(caller, &readable, &scope_ancestry);
+        let mut hit_nodes = with_universe(caller, &readable, &scope_ancestry);
+        // Recall's scope there holds every public node the key reads
+        // (ADR-0098 d3).
+        self.public_hit_nodes(caller, &mut hit_nodes).await?;
         let scope = CandidateScope {
             reference: None,
             promoted_nodes: hit_nodes.clone(),
@@ -8664,15 +8761,11 @@ where
         }
         // A scope inside a user root also searches `universe`'s own claims
         // where the key reads that node, ranked with the scope's own; own
-        // held rows never include them (ADR-0044 d10).
-        let mut hit_nodes = readable.clone();
-        if scope_ancestry.iter().any(|w| w.user_root)
-            && let Some(&universe) = ancestry.last()
-            && caller.effective(&[universe]).contains(&Role::Reader)
-            && !hit_nodes.contains(&universe)
-        {
-            hit_nodes.push(universe);
-        }
+        // held rows never include them (ADR-0044 d10). Every default recall
+        // also searches every public node the key reads, ranked in the one
+        // order, counted once (ADR-0098 d3).
+        let mut hit_nodes = with_universe(caller, &readable, &scope_ancestry);
+        let public = self.public_hit_nodes(caller, &mut hit_nodes).await?;
         // The hit kinds: those named, or with none named every hit kind but
         // the vocabulary kinds, which join only by a workspace's opt-in,
         // unbuilt (ADR-0092 d1, d12 reading 2). The statistics count the
@@ -8741,6 +8834,7 @@ where
                 policy,
                 scope,
                 &hit_nodes,
+                &public,
                 &counted_kinds,
                 pipeline,
                 &query,
@@ -9173,7 +9267,10 @@ where
                     // workspace is the scope's or another team's (ADR-0072
                     // d8).
                     source: plan.report.as_ref().map(|_| {
-                        if plan.federated.contains(&home) {
+                        if plan.public.contains(&home) {
+                            // A public node outside the scope (ADR-0098 d3).
+                            crate::federation::Via::Public
+                        } else if plan.federated.contains(&home) {
                             crate::federation::Via::Federated
                         } else {
                             crate::federation::Via::Scope
@@ -11512,8 +11609,9 @@ where
         // it, and the retry reads them again (ADR-0001 d2).
         let prev = self.head_event(key.tenant_id).await?;
 
+        // An edge endpoint on a public node counts as read (ADR-0098 d1).
         let grants: Vec<LabelledGrant> = caller
-            .grants
+            .reach
             .iter()
             .cloned()
             .map(LabelledGrant::from)
@@ -12453,7 +12551,8 @@ where
         let own_keys = caller.own_key_ids();
         let tail_caller = TailCaller {
             own_keys: &own_keys,
-            grants: &caller.grants,
+            // A public node in the scope's subtree is read (ADR-0098 d1).
+            grants: &caller.reach,
             denials: &caller.denials,
             scope,
         };

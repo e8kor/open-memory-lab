@@ -865,6 +865,41 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "role": role.as_str(),
             "used_by": used_by.as_str(),
         })),
+        // Only an admin person sets or clears `public` (ADR-0098 d6).
+        AppError::PublicIsAdminOnly { role } => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "access.verb_ceiling",
+            "R1: marking a workspace public gives every reading key of the tenant a read, an admin person's act, never an agent's or a workspace reviewer's.",
+            format!(
+                "setting or clearing a workspace's public flag needs an admin person, a linked admin key or <user>-admin, and this is a {} key",
+                role.as_str()
+            ),
+        )
+        .with_details(json!({
+            "reason": "public_is_admin_only",
+            "role": role.as_str(),
+        })),
+        // What the node is or holds refuses the flag (ADR-0098 d5, d6).
+        AppError::WorkspacePublicRefused {
+            workspace_id,
+            reason,
+            act_id,
+        } => {
+            let mut details = json!({
+                "workspace_id": workspace_id.to_string(),
+                "reason": reason.reason(),
+            });
+            if let (Some(act_id), Some(obj)) = (act_id, details.as_object_mut()) {
+                obj.insert("act_id".to_owned(), json!(act_id.to_string()));
+            }
+            ApiError::new(
+                StatusCode::CONFLICT,
+                "workspace.public_refused",
+                "Only a protected or frozen workspace outside every user root is marked public, one set at a time, and only a public one is cleared.",
+                reason.message().to_owned(),
+            )
+            .with_details(details)
+        }
         // Only a person's reviewer key or a tenant admin sets a workspace's
         // federation field (ADR-0072 d5).
         AppError::FederationHumanOnly { role, used_by } => ApiError::new(

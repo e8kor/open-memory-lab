@@ -65,6 +65,8 @@ Verbs: `oml workspaces create <parent> <name> [--crew <crew>]`, `tree`, `show`, 
 
 A new workspace starts in `development` and climbs to `protected` and `frozen` with `oml workspaces status`; one key proposes each step and another ratifies it. An admin key reads every workspace's structure, never a memory, except through the journaled [admin read](../api/http-api.md) routes.
 
+An admin person marks a `protected` or `frozen` workspace public with `oml workspaces public set <workspace> --reason <text>`. Every reader, contributor and reviewer key of the tenant, a person's own keys included, then reads its approved items without a grant and recalls them in every default recall, each hit marked `via: "public"`. The mark covers that workspace alone, never its children, and a `development` workspace or anything in a person's own root is refused. Setting it waits on a second admin person, who confirms it with `oml admin confirm <act>`, unless the tenant has only ever had one admin person; `oml workspaces public clear <workspace>` takes effect at once. A global deny still cuts one key off it. `oml doctor` lists each public workspace with the rows it adds to every recall ([ADR-0098](../adr/ADR-0098-a-protected-or-frozen-workspace-can-be-marked-public-and-then-every-reading-key-in-the-tenant-reads-its-approved-items.md)).
+
 Workspaces, crews, keys and tenants carry a **name**: unique in the tenant, never changed or released ([names](../concepts.md)). Every verb accepts a name where it accepts an id.
 
 ## Crews
