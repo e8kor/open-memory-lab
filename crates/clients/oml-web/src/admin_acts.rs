@@ -155,24 +155,25 @@ fn facts(act: &AdminAct) -> String {
     }
     out.push_str("</dl>");
     if !act.grants.is_empty() {
-        out.push_str(
-            r#"<h2>Grants a confirmation applies</h2><table><tr><th>Role</th><th>Workspace</th><th>Covers</th><th>Denies</th></tr>"#,
-        );
+        // A list, not a table: a grant's line wraps at a phone's width.
+        out.push_str(r#"<h2>Grants a confirmation applies</h2><ul class="oml-todo">"#);
         for grant in &act.grants {
             let field = |name: &str| grant.get(name).and_then(serde_json::Value::as_str);
+            let denies = grant
+                .get("deny")
+                .and_then(serde_json::Value::as_array)
+                .map_or(0, Vec::len);
             let _ = write!(
                 out,
-                r#"<tr><td>{}</td><td class="mono">{}</td><td>{}</td><td>{}</td></tr>"#,
+                r#"<li><span class="oml-decision">{}</span> on <span class="mono">{}</span> · covers the {} · {} denial{}</li>"#,
                 text(field("role").unwrap_or("?")),
                 text(field("node").unwrap_or("?")),
                 text(field("covers").unwrap_or("?")),
-                grant
-                    .get("deny")
-                    .and_then(serde_json::Value::as_array)
-                    .map_or(0, Vec::len),
+                denies,
+                if denies == 1 { "" } else { "s" },
             );
         }
-        out.push_str("</table>");
+        out.push_str("</ul>");
     }
     out
 }
