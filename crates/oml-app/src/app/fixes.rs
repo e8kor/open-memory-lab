@@ -1549,6 +1549,43 @@ where
             && !self.acts_for_fix_admin(key, fix).await?)
     }
 
+    /// Whether `key` confirms `fix` as a person other than its admin's, as
+    /// [`Self::confirm_fix`] judges it: [`Self::settles_as_other_person`],
+    /// and for an edit or a retirement R2 by key and by person over the
+    /// served version's lineage ([`Self::lineage_person_rule`]), so `oml
+    /// doctor` does not count a claim's own author as one who settles its
+    /// edit (ADR-0089 d15; #508 N2).
+    async fn confirms_as_other_person(
+        &self,
+        key: &KeyRecord,
+        fix: &FixRecord,
+    ) -> Result<bool, AppError> {
+        if !self.settles_as_other_person(key, fix).await? {
+            return Ok(false);
+        }
+        let (FixAct::Edit | FixAct::Retire, Some(served)) = (fix.act, fix.served_id) else {
+            return Ok(true);
+        };
+        let Some(served) = self.journal.memory(key.tenant_id, served).await? else {
+            return Ok(false);
+        };
+        if check_reviewer(
+            key.role,
+            &key.principal,
+            key.key_id,
+            &served.lineage_closure(),
+        )
+        .is_err()
+        {
+            return Ok(false);
+        }
+        match self.lineage_person_rule(key, &served, false).await {
+            Ok(_) => Ok(true),
+            Err(AppError::SamePerson) => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Whether `key` acts for the person recorded on `fix` as its admin's:
     /// on either reading of [`Self::acts_for`], or because the walk that
     /// counts its person passes through the fix's admin key
@@ -1870,10 +1907,12 @@ where
                     for r in &reviewers {
                         if effective_roles(&r.grants, &r.denials, &ids).contains(&Role::Reviewer) {
                             any = true;
-                            // The settlement's own predicate, so a key that
-                            // counts as no one, or acts for the admin's
-                            // person on any reading, is no other person.
-                            if self.settles_as_other_person(&r.key, fix).await? {
+                            // The settlement's own predicates, so a key that
+                            // counts as no one, acts for the admin's person on
+                            // any reading, or is refused by the lineage rule
+                            // its confirmation applies, is no other person
+                            // (#508 N2).
+                            if self.confirms_as_other_person(&r.key, fix).await? {
                                 other = true;
                             }
                         }
