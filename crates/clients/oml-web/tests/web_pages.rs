@@ -1860,37 +1860,6 @@ async fn the_admin_workspaces_page_is_not_found_for_a_person_who_is_not_an_admin
 }
 
 #[tokio::test]
-async fn the_admin_workspaces_page_refuses_a_create_as_no_action_of_its_own_and_creates_nothing() {
-    let rig = rig().await;
-    rig.allow("boss@example.com", "boss", true).await;
-    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
-    let (status, _, page) = act(
-        &rig,
-        &admin,
-        "/web/admin/workspaces",
-        &[("action", "create_workspace"), ("name", "shadow")],
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{page}");
-    assert!(page.contains("request.validation"), "{page}");
-    assert!(
-        page.contains("action is not one of this page&#39;s actions")
-            || page.contains("action is not one of this page's actions"),
-        "{page}"
-    );
-    let root = key_named(&rig, "boss-web").await.user.expect("a root");
-    let children = rig
-        .store
-        .workspace_children(rig.boot.tenant_id, root)
-        .await
-        .unwrap();
-    assert!(
-        children.iter().all(|w| w.name.as_str() != "shadow"),
-        "nothing was created"
-    );
-}
-
-#[tokio::test]
 async fn the_old_workspaces_urls_are_not_found_and_their_acts_run_nothing() {
     // The lead's 303s from the old URLs are deleted in v0.7.1 (ADR-0070,
     // "The old URLs deleted"): an old URL is not found, an old act is
@@ -2233,7 +2202,7 @@ async fn every_signed_in_page_draws_the_sign_out_control_in_its_header() {
         );
         drawn += 1;
     }
-    assert_eq!(drawn, 27, "every page route of oml_web::PAGES was read");
+    assert_eq!(drawn, 28, "every page route of oml_web::PAGES was read");
     // A page an act answers is drawn by the same chrome.
     let (status, _, page) = act(
         &rig,

@@ -149,10 +149,22 @@ pub(crate) struct NewDraft {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct AdminDraft {
     pub user: String,
+    /// `person` or `service`; empty is `agent`.
     pub used_by: String,
     pub principal: String,
     pub crew: String,
     pub reason: String,
+}
+
+impl AdminDraft {
+    /// Who holds the key, `agent` when the draft names no one else.
+    fn used_by(&self) -> &str {
+        if self.used_by.is_empty() {
+            "agent"
+        } else {
+            &self.used_by
+        }
+    }
 }
 
 /// The form's fields as read from the query.
@@ -217,10 +229,6 @@ impl Draft {
             grants,
             new_workspaces,
             scope: "ancestors".to_owned(),
-            admin: AdminDraft {
-                used_by: "agent".to_owned(),
-                ..AdminDraft::default()
-            },
             ..Self::default()
         }
     }
@@ -306,9 +314,11 @@ impl Draft {
             rate: get("rpm"),
             admin: AdminDraft {
                 user: get("ku"),
+                // Empty is an agent's key, the default, so a personal draft
+                // carries no admin field (ADR-0097 d29).
                 used_by: match get("kb").as_str() {
                     b @ ("person" | "service") => b.to_owned(),
-                    _ => "agent".to_owned(),
+                    _ => String::new(),
                 },
                 principal: get("kp"),
                 crew: get("kc"),
@@ -427,7 +437,7 @@ impl Draft {
         }
         if side == Side::Admin {
             let a = &self.admin;
-            body["used_by"] = json!(a.used_by);
+            body["used_by"] = json!(a.used_by());
             body["principal"] = json!(if a.principal.is_empty() {
                 &self.name
             } else {
@@ -1148,7 +1158,7 @@ pub(crate) fn form_body_as(
             out,
             r#"<div class="oml-filterrow top"><label>Acts for the user<input class="oml-input" name="ku" value="{}"><span class="desc">Empty: a tenant key that names no user. With a user, every grant lies in that user's root.</span></label><label>Held by<select class="oml-select" name="kb">{}{}{}</select></label></div><div class="oml-filterrow top"><label>Principal<input class="oml-input" name="kp" value="{}"><span class="desc">Empty: the key's name.</span></label><label>Crew<input class="oml-input" name="kc" value="{}"><span class="desc">Empty: no crew. Fixed for the key's life.</span></label></div>"#,
             attr(&a.user),
-            option("agent", "an agent", &a.used_by),
+            option("agent", "an agent", a.used_by()),
             option("person", "a person", &a.used_by),
             option("service", "a service", &a.used_by),
             attr(&a.principal),
@@ -1410,7 +1420,7 @@ pub(crate) fn review_body_as(
     );
     if side == Side::Admin {
         let a = &draft.admin;
-        let mut facts = vec![format!("held by {}", text(&a.used_by))];
+        let mut facts = vec![format!("held by {}", text(a.used_by()))];
         if !a.user.is_empty() {
             facts.push(format!("acts for <code>{}</code>", short(&a.user)));
         }
