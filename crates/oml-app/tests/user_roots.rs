@@ -5660,8 +5660,12 @@ async fn fix_rig_for(person: Option<&str>) -> FixRig {
         .expect("bootstrap");
     let admin = boot.admin_key.value.as_str();
     let ops = console_admin(&app, admin, "ops").await;
-    signed_in(&app, admin, "alice", false).await;
-    signed_in(&app, admin, "bob", false).await;
+    // The bootstrap's person keeps the admin flag the bootstrap gave them:
+    // their own un-flag would revoke the bootstrap's admin key, which
+    // belongs to them (ADR-0097 d21).
+    for user in ["alice", "bob"] {
+        signed_in(&app, admin, user, person == Some(user)).await;
+    }
     app.create_workspace(admin, &name("team"), Some(by_name("universe")), None)
         .await
         .expect("a shared workspace");
@@ -6957,10 +6961,13 @@ async fn an_email_an_admin_adds_for_the_bootstraps_person_waits_on_that_person()
 /// change, which keeps an admin, is refused as an un-flagging is.
 #[tokio::test]
 async fn the_last_admin_entry_changed_to_wait_on_another_person_is_refused() {
-    let r = fix_rig().await;
+    let r = fix_rig_for(None).await;
+    // The bootstrap's key belongs to no person here, so `ops` is the one
+    // admin person; an act against an admin carries a reason (ADR-0097
+    // d21, d26), so the last-admin guard is what refuses it.
     let err = r
         .app
-        .allow_web_email_keeping(
+        .allow_web_email_with_reason(
             r.boot.admin_key.value.as_str(),
             &WebEmailRequest {
                 email: email("ops@example.com"),
@@ -6968,6 +6975,7 @@ async fn the_last_admin_entry_changed_to_wait_on_another_person_is_refused() {
                 admin: true,
             },
             true,
+            Some("a test"),
         )
         .await
         .unwrap_err();
@@ -7139,17 +7147,22 @@ async fn a_bootstrap_claim_refused_at_its_email_leaves_no_partial_tenant() {
 /// ADR-0045 d10's CLI allowance.
 #[tokio::test]
 async fn the_last_admin_entry_is_never_removed_or_unflagged_by_a_bearer_admin_key_either() {
-    let r = fix_rig().await;
+    let r = fix_rig_for(None).await;
+    // The bootstrap's key belongs to no person here, so `ops` is the one
+    // admin person; an act against an admin carries a reason (ADR-0097
+    // d21, d26), so the last-admin guard is what refuses it.
     let admin = r.boot.admin_key.value.as_str();
     let err = r
         .app
-        .allow_web_email(
+        .allow_web_email_with_reason(
             admin,
             &WebEmailRequest {
                 email: email("ops@example.com"),
                 user: name("ops"),
                 admin: false,
             },
+            true,
+            Some("a test"),
         )
         .await
         .unwrap_err();
@@ -7159,7 +7172,7 @@ async fn the_last_admin_entry_is_never_removed_or_unflagged_by_a_bearer_admin_ke
     );
     let err = r
         .app
-        .remove_web_email(admin, &email("ops@example.com"))
+        .remove_web_email_with_reason(admin, &email("ops@example.com"), true, Some("a test"))
         .await
         .unwrap_err();
     assert!(
@@ -7173,7 +7186,10 @@ async fn the_last_admin_entry_is_never_removed_or_unflagged_by_a_bearer_admin_ke
 /// (ADR-0097 d25; ADR-0045 d10).
 #[tokio::test]
 async fn another_tenants_admin_entry_does_not_count_toward_the_last_admin() {
-    let r = fix_rig().await;
+    let r = fix_rig_for(None).await;
+    // The bootstrap's key belongs to no person here, so `ops` is the one
+    // admin person; an act against an admin carries a reason (ADR-0097
+    // d21, d26), so the last-admin guard is what refuses it.
     let other = r
         .app
         .bootstrap_tenant_for(
@@ -7189,7 +7205,12 @@ async fn another_tenants_admin_entry_does_not_count_toward_the_last_admin() {
     let _zed = console_admin(&r.app, other.admin_key.value.as_str(), "zed").await;
     let err = r
         .app
-        .remove_web_email(r.boot.admin_key.value.as_str(), &email("ops@example.com"))
+        .remove_web_email_with_reason(
+            r.boot.admin_key.value.as_str(),
+            &email("ops@example.com"),
+            true,
+            Some("a test"),
+        )
         .await
         .unwrap_err();
     assert!(

@@ -99,20 +99,60 @@ impl Rig {
             .expect("journal")
     }
 
-    /// An admin entry for `user`, under the bootstrap key.
+    /// An admin entry for `user`, under the bootstrap key. Once the tenant
+    /// has had two admin persons the flag is widening and waits (ADR-0097
+    /// d5): it is then confirmed by the first admin person whose flag is
+    /// seven days old, the clock moved on eight days where none is (d11).
     async fn admin_person(&self, user: &str) {
-        let (entry, _) = self
-            .app
-            .allow_web_email(
-                self.admin(),
-                &WebEmailRequest {
-                    email: Email::parse(&format!("{user}@example.com")).expect("an email"),
-                    user: name(user),
-                    admin: true,
-                },
-            )
-            .await
-            .expect("the admin entry");
+        let req = WebEmailRequest {
+            email: Email::parse(&format!("{user}@example.com")).expect("an email"),
+            user: name(user),
+            admin: true,
+        };
+        let entry = match self.app.allow_web_email(self.admin(), &req).await {
+            Ok((entry, _)) => entry,
+            Err(AppError::AdminActReasonRequired) => {
+                // The confirmer's flag must be seven days older than the
+                // act, which lives seven days itself (d11, d23).
+                self.clock.advance(8 * DAY);
+                self.app
+                    .allow_web_email_with_reason(self.admin(), &req, true, Some("a test admin"))
+                    .await
+                    .expect("a pending admin entry");
+                let act = self
+                    .store
+                    .admin_acts(self.boot.tenant_id, None)
+                    .await
+                    .expect("acts")
+                    .into_iter()
+                    .rev()
+                    .find(|a| a.act.as_str() == "allow_admin")
+                    .expect("the pending flag");
+                let persons = self
+                    .store
+                    .admin_standing(self.boot.tenant_id)
+                    .await
+                    .expect("standing")
+                    .persons;
+                let confirmer = persons
+                    .iter()
+                    .find(|p| p.user.as_str() != user && !p.disabled)
+                    .expect("an admin person")
+                    .user
+                    .clone();
+                let session = self.admin_session(confirmer.as_str()).await;
+                self.app
+                    .confirm_admin_act(Bearer::Session(&session), act.act_id)
+                    .await
+                    .expect("the flag is confirmed");
+                self.store
+                    .web_entry_by_email(&req.email.digest())
+                    .await
+                    .expect("a read")
+                    .expect("the entry")
+            }
+            Err(e) => panic!("the admin entry: {e:?}"),
+        };
         self.app
             .web_ensure_keys(&entry)
             .await
@@ -460,9 +500,11 @@ async fn a_declined_or_expired_widening_never_takes_effect() {
 async fn a_tenant_that_had_two_admin_persons_never_returns_to_sole_admin_on_a_removal() {
     let r = two_admins().await;
     r.app
-        .remove_web_email(
+        .remove_web_email_with_reason(
             r.admin(),
             &Email::parse("bob@example.com").expect("an email"),
+            true,
+            Some("bob left"),
         )
         .await
         .expect("bob's entry is removed");
@@ -668,9 +710,11 @@ async fn removing_the_last_live_admin_person_is_refused_on_every_surface() {
         .await
         .expect("bob's disabled entry takes the flag");
     let alices = Email::parse("alice@example.com").expect("an email");
+    // An act against an admin carries a reason (d26), so the guard is
+    // what refuses it.
     let err = r
         .app
-        .remove_web_email(r.admin(), &alices)
+        .remove_web_email_with_reason(r.admin(), &alices, true, Some("a test"))
         .await
         .unwrap_err();
     assert!(
@@ -679,13 +723,15 @@ async fn removing_the_last_live_admin_person_is_refused_on_every_surface() {
     );
     let err = r
         .app
-        .allow_web_email(
+        .allow_web_email_with_reason(
             r.admin(),
             &WebEmailRequest {
                 email: alices,
                 user: name("alice"),
                 admin: false,
             },
+            true,
+            Some("a test"),
         )
         .await
         .unwrap_err();
@@ -1100,29 +1146,35 @@ async fn admin_acts_to_confirm_counts_what_another_admin_person_may_confirm() {
     let r = two_admins().await;
     let alice = r.admin_session("alice").await;
     let bob = r.admin_session("bob").await;
+    let counts = |caller| {
+        let app = &r.app;
+        async move {
+            app.admin_todo_counts(Bearer::Session(caller))
+                .await
+                .expect("the counts")
+                .acts_to_confirm
+        }
+    };
+    // The two flags taken at once under `sole_admin` are already counted
+    // for each of them (d10); the pending issuance adds to bob's alone.
+    let (bobs_before, alices_before) = (counts(&bob).await, counts(&alice).await);
     r.app
         .issue_key_with_reason(Bearer::Session(&alice), &agent_req(), Some("an agent"))
         .await
         .expect("a pending issuance");
-    let bobs = r
-        .app
-        .admin_todo_counts(Bearer::Session(&bob))
-        .await
-        .expect("bob's counts");
-    assert_eq!(bobs.acts_to_confirm, 1);
-    let alices = r
-        .app
-        .admin_todo_counts(Bearer::Session(&alice))
-        .await
-        .expect("alice's counts");
-    assert_eq!(alices.acts_to_confirm, 0, "never the person's own act");
+    assert_eq!(counts(&bob).await, bobs_before + 1);
+    assert_eq!(
+        counts(&alice).await,
+        alices_before,
+        "never the person's own act"
+    );
     r.clock.advance(7 * DAY);
-    let bobs = r
-        .app
-        .admin_todo_counts(Bearer::Session(&r.admin_session("bob").await))
-        .await
-        .expect("bob's counts");
-    assert_eq!(bobs.acts_to_confirm, 0, "an expired act is not counted");
+    let bob = r.admin_session("bob").await;
+    assert_eq!(
+        counts(&bob).await,
+        bobs_before,
+        "an expired act is not counted"
+    );
 }
 
 // -- acts on an admin person's standing (ADR-0097 d8, d21) -----------------

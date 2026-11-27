@@ -592,6 +592,9 @@ Decided, not built.
     2026-11-25:** a child in the shared tree counts against the account of the person the creating
     key counts as (d12), and, for a key that counts as no person (a tenant agent key belongs to no
     account, ADR-0071 d1), against the account of the admin person whose act granted the flag.
+    **Amended by the operator, 2026-11-27 (answer 8 of the second amendment of that date):** a
+    flagged child in the shared tree is charged to no account; only the key's request rate bounds
+    it, and doctor's `workspace.flagged_creates` counts it.
   - **Rate.** The key's `requests_per_minute` bounds how fast it creates, as for every create.
 
   This reverses ADR-0095 d3's "own root only" for flagged grants and its answer Q5 (2026-11-24),
@@ -928,6 +931,53 @@ left. Each answer is recorded here before the code that takes it.
   4. pending grants live in `admin_acts.effect`, the table of their own d23 asks for;
   5. an admin's issuance (the act, the key, its grants and its connect code) is one atomic chain;
   6. `<user>-curate` acts count as admin acts.
+
+## Amendment of 2026-11-27 (second): the core2 and issue lanes' questions (decided by the operator)
+
+Decided by the operator on 2026-11-27, answering the questions the v0.8.6 core2 lane (PR #524) and
+issue lane (PR #526) left. Each answer is recorded here before the code that takes it. Answers 1 to
+7 and 9 are the lanes' recommendations; answer 8 is not, and amends d31's quota sentence.
+
+1. **d8's "three or more admin persons" counts the live admin persons plus every open act's
+   target.** A person un-flagged, removed or disabled by an act still open counts toward the three,
+   so the act against them does not drop the tenant into the freeze by itself.
+2. **Revoking another admin's key is final (d8, d14).** It suspends nothing and opens no dispute or
+   freeze: the revocation is the containment, and the target keeps their flag, their entry and their
+   other keys.
+3. **A removed admin entry keeps its identity in the act's effect (d8).** The `remove_admin` act
+   records the entry as it was (email digest, user, admin flag) in its effect, and the contest-only
+   sign-in looks the act up by the signing-in address's email digest when no entry matches, so a
+   removed admin can contest. A contest of a removal restores the entry with its flag and sign-in,
+   as a contest of an un-flag or a disable does.
+4. **An admin person disabling themselves is still refused (d8, d21).** A person ends their own
+   admin standing by un-flagging or removing their own entry, which revokes their admin keys at
+   once; a self-disable is refused, as before.
+5. **d4's erase of a target that is not a promoted version records only the pending shred act,
+   with no fix record.** The demotion half applies only to a promoted version; anything else has
+   nothing to demote, and the act waits on its shred alone.
+6. **d21: the person on an admin key must hold an admin flag.** An admin issuance names a person
+   whose web entry is live and carries the admin flag; any other person is refused
+   `request.validation` with `details.reason: admin_key_requires_admin_person`, naming the person.
+   This holds at issuance and at the link's acceptance: a person whose flag came off before they
+   accept the link cannot accept it.
+7. **A pending key whose default is a workspace the act creates gets the default at confirmation
+   (d30).** The pending issuance names no default it creates (the key is read with no default
+   while it waits). The confirmation's commit journals a new effect, `key.default_set {key_id,
+   default_workspace_id, act_id}`, after the creations, so the key starts with the default its
+   issuance asked for. A `sole_admin` issuance sets the default in its own commit, as before.
+8. **A flagged (d31 `create`) child in the shared tree is not charged to any account's
+   `workspaces` meter; only the request rate bounds it (not the lanes' recommendation).** A child
+   inside a person's root counts on that person's meter as before. This replaces d31's quota
+   sentence of 2026-11-25 for the shared tree. **Cost:** a tenant agent key holding the flag on a
+   shared node is bounded only by its `requests_per_minute` (ADR-0079): at the default rate it can
+   add a node a request, without limit over time, and the meter that bounds a person's own tree
+   does not see it. The admin who grants the flag accepts that bound, and the doctor counts what
+   flagged grants created: `workspace.flagged_creates` (info) lists, per creating key, the
+   workspaces created in the shared tree under a `create` grant, so an admin sees the growth the
+   meter does not.
+9. **Every `create_workspaces[]` parent must already exist (d30).** No creation in one request
+   nests under another creation of the same request; a parent the tenant does not hold is
+   `request.validation` naming the entry, before anything is journalled.
 
 ## Rejected alternatives
 

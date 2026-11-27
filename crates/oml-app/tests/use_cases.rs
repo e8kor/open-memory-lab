@@ -3047,9 +3047,16 @@ async fn a_workspace_names_its_crew_record_by_name_and_the_read_serves_the_recor
         updated.envelope.event_type,
         event_types::WORKSPACE_CREW_UPDATED
     );
+    // A workspace's crew is an admin act, whose act_id the effect names
+    // (ADR-0097 d2).
+    assert!(updated.envelope.payload["act_id"].is_string());
     assert_eq!(
         updated.envelope.payload,
-        json!({ "workspace_id": bare.to_string(), "crew_id": crew.crew_id.to_string() })
+        json!({
+            "workspace_id": bare.to_string(),
+            "crew_id": crew.crew_id.to_string(),
+            "act_id": updated.envelope.payload["act_id"],
+        })
     );
 }
 
@@ -3089,8 +3096,12 @@ async fn a_crew_update_changes_its_charter_and_manager_and_never_its_name() {
             "charter_uri": Value::Null,
             "external_manager": "crewd.example.com",
             "created_by_key_id": boot.admin_key.key_id.to_string(),
+            // A crew is an admin act, whose act_id the effect names
+            // (ADR-0097 d2).
+            "act_id": created.envelope.payload["act_id"],
         })
     );
+    assert!(created.envelope.payload["act_id"].is_string());
 
     let updated = app
         .update_crew(
@@ -3124,6 +3135,7 @@ async fn a_crew_update_changes_its_charter_and_manager_and_never_its_name() {
             "charter_uri": "https://crews.example.com/metals/charter.md",
             "external_manager": "crewd.example.com",
             "updated_by_key_id": boot.admin_key.key_id.to_string(),
+            "act_id": event.envelope.payload["act_id"],
         }),
         "the full new values"
     );
@@ -7263,8 +7275,11 @@ async fn connections_are_listed_and_revoked_with_oauth_issuer_unset() {
             "revoked_by_key_id": admin.key_id.to_string(),
             "cause": "admin",
             "reason_digest": sha256_digest_string(b"lost phone"),
+            // A connection's revocation is an admin act (ADR-0097 d2).
+            "act_id": event.payload["act_id"],
         })
     );
+    assert!(event.payload["act_id"].is_string());
     let listed = app
         .list_connections(&admin.value, issued.key_id.into())
         .await
@@ -12318,7 +12333,9 @@ async fn a_validated_workspaces_crew_record_can_still_be_updated() {
     assert_eq!(
         types,
         [
+            event_types::ADMIN_ACT,
             event_types::WORKSPACE_CREW_UPDATED,
+            event_types::ADMIN_ACT,
             event_types::CREW_UPDATED
         ]
     );
@@ -19164,12 +19181,17 @@ async fn an_admin_edit_serves_at_once_marked_admin_fix_and_unconfirmed() {
     let events = journal(&store, boot.tenant_id).await;
     assert_eq!(
         types_after(&events, head),
-        ["submission.remember", "lifecycle.supersede", "admin.fix"]
+        [
+            "admin.act",
+            "submission.remember",
+            "lifecycle.supersede",
+            "admin.fix"
+        ]
     );
     let admin_fix = &events.last().expect("admin.fix").envelope.payload;
     assert_eq!(
         admin_fix["lifecycle_event_id"],
-        events[head + 1].envelope.event_id.to_string(),
+        events[head + 2].envelope.event_id.to_string(),
         "admin.fix names the lifecycle event it caused"
     );
     assert_eq!(admin_fix["reason"], fix.reason);
@@ -19233,7 +19255,7 @@ async fn a_demotion_fix_journals_the_demotion_then_admin_fix_and_marks_the_resto
     let events = journal(&store, boot.tenant_id).await;
     assert_eq!(
         types_after(&events, head),
-        ["lifecycle.demote", "admin.fix"]
+        ["admin.act", "lifecycle.demote", "admin.fix"]
     );
     let got = app.get_memory(&reader.value, v1).await.expect("v1 serves");
     assert_eq!(got.memory.approval.expect("approved").act(), "admin_fix");
@@ -19860,7 +19882,9 @@ async fn link_keys(app: &TestApp, admin: &str, keys: &[Uuid], person: &str) {
     use oml_app::domain::web::Email;
     use oml_app::types::{Bearer, WebEmailRequest};
     let mut sessions = Vec::new();
-    for (user, is_admin) in [(format!("ops-{person}"), true), (person.to_owned(), false)] {
+    // One console admin, `ops`, links every person's keys, so the tenant
+    // keeps one admin person and stays `sole_admin` (ADR-0097 d10).
+    for (user, is_admin) in [("ops".to_owned(), true), (person.to_owned(), false)] {
         let (entry, _) = app
             .allow_web_email(
                 admin,
@@ -20088,8 +20112,9 @@ async fn a_same_person_brief_ratification_outside_the_own_root_is_refused_or_mar
     assert_eq!(event.envelope.payload["sole_admin"], true);
     assert!(marked.journal_seq.is_some());
 
-    // Two admin persons take the tenant out of sole_admin for good.
-    for user in ["adm1", "adm2"] {
+    // A second admin person takes the tenant out of sole_admin for good:
+    // `ops` and `adm1` are two live admin persons (ADR-0097 d10).
+    for user in ["adm1"] {
         r.app
             .allow_web_email(
                 &r.boot.admin_key.value,
