@@ -272,9 +272,10 @@ impl Session {
                 n: t.review + t.briefs,
                 truncated: t.truncated,
             }),
-            // The guardrail-loosening alerts (ADR-0096 d7).
+            // The guardrail-loosening alerts (ADR-0096 d7) and the admin
+            // acts to confirm (ADR-0097 d2).
             Scope::Administration => self.admin_todo.map_or(Todo::Unread, |t| Todo::Counted {
-                n: t.alerts,
+                n: t.alerts + t.acts_to_confirm,
                 truncated: t.truncated,
             }),
         }

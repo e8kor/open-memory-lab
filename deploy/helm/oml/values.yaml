@@ -153,6 +153,8 @@ web:
       pathType: Exact
     - path: /web/admin/todo
       pathType: Exact
+    - path: /web/admin/acts
+      pathType: Exact
     - path: /web/keys
       pathType: Exact
     - path: /web/keys/new

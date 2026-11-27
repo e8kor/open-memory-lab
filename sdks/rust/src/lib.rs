@@ -35,7 +35,7 @@ pub use transport::{HttpTransport, Sending, Transport, TransportError};
 /// and of each struct it holds, to the operation's 2xx schema;
 /// `every_method_sends_the_method_path_and_type_its_table_entry_names`
 /// holds the methods to it.
-pub const OPERATIONS: [&str; 47] = [
+pub const OPERATIONS: [&str; 50] = [
     "authorizationServerMetadata GET /.well-known/oauth-authorization-server resp:AuthorizationServerMetadata",
     "whoami GET /v2/whoami query:person resp:Whoami",
     "getGuardrails GET /v1/guardrails query:workspace resp:GuardrailSet",
@@ -60,6 +60,9 @@ pub const OPERATIONS: [&str; 47] = [
     "reviewQueue GET /v2/review/queue resp:ReviewQueue",
     "todoCounts GET /v2/todo/counts query:workspace resp:TodoCounts",
     "adminTodoCounts GET /v2/admin/todo/counts resp:AdminTodoCounts",
+    "listAdminActs GET /v2/admin/acts query:state resp:AdminActList",
+    "confirmAdminAct POST /v2/admin/acts/{act}/confirm resp:AdminAct",
+    "declineAdminAct POST /v2/admin/acts/{act}/decline body:reason resp:AdminAct",
     "issueKey POST /v2/keys body:name,role,connect_code,expiry resp:KeyIssued",
     "mintConnectCode POST /v2/keys/{key}/connect-codes resp:ConnectCode",
     "addDenial POST /v2/keys/{key}/denials body:workspace resp:Denial",
@@ -1594,7 +1597,49 @@ pub struct TodoCounts {
 pub struct AdminTodoCounts {
     #[serde(default)]
     pub alerts: u64,
+    /// The admin acts the calling admin person may confirm (ADR-0097 d2,
+    /// d10, d11); 0 from a server before v0.8.6.
+    #[serde(default)]
+    pub acts_to_confirm: u64,
     pub truncated: bool,
+}
+
+/// `GET /v2/admin/acts`'s answer.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct AdminActList {
+    pub items: Vec<AdminAct>,
+}
+
+/// One admin act (openapi.yaml `AdminAct`; ADR-0097 d2, d23): what the
+/// confirm screen reads, the target's role, principal, `used_by` and the
+/// root's person, and what a confirmation grants.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct AdminAct {
+    pub act_id: String,
+    pub act: String,
+    pub class: String,
+    pub state: String,
+    pub target: Value,
+    #[serde(default)]
+    pub grants: Vec<Value>,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub actor_person: Option<String>,
+    #[serde(default)]
+    pub confirmed_by_person: Option<String>,
+    pub sole_admin: bool,
+    #[serde(default)]
+    pub cause: Option<String>,
+    pub at: String,
+    #[serde(default)]
+    pub settled_at: Option<String>,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    /// Whether the calling admin person may confirm or review the act, as
+    /// the To do count judges it (ADR-0097 d11); served by the list alone.
+    #[serde(default)]
+    pub to_confirm: bool,
 }
 
 /// A grant as a listed key carries it: the role, the workspace's path and
@@ -3018,6 +3063,62 @@ impl<T: Transport> Client<T> {
                 "from_artifact_id": artifact_id,
                 "to_workspace_id": workspace,
             }),
+        )
+        .await
+    }
+
+    /// `GET /v2/admin/acts?state=`: the tenant's admin acts in `state`, or
+    /// `all`, oldest first (ADR-0097 d2).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn admin_acts(&self, call: &Call<'_>, state: &str) -> Result<Vec<AdminAct>, Error> {
+        let answer: AdminActList = self
+            .get(
+                Some(call),
+                format!("/v2/admin/acts?state={}", encode(state)),
+            )
+            .await?;
+        Ok(answer.items)
+    }
+
+    /// `POST /v2/admin/acts/{act}/confirm`: a second admin person confirms
+    /// a pending act, which takes effect in that commit (ADR-0097 d5, d11).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn confirm_admin_act(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        act: &str,
+    ) -> Result<AdminAct, Error> {
+        self.post(
+            call,
+            format!("/v2/admin/acts/{}/confirm", encode(act)),
+            idempotency_key,
+            &serde_json::json!({}),
+        )
+        .await
+    }
+
+    /// `POST /v2/admin/acts/{act}/decline {reason}`: a decline, final, which
+    /// undoes a `sole_admin` act it declines (ADR-0097 d3, d10, d23).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn decline_admin_act(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        act: &str,
+        reason: &str,
+    ) -> Result<AdminAct, Error> {
+        self.post(
+            call,
+            format!("/v2/admin/acts/{}/decline", encode(act)),
+            idempotency_key,
+            &serde_json::json!({ "reason": reason }),
         )
         .await
     }

@@ -128,6 +128,35 @@ fn grant_from_json(value: &Value) -> Result<Grant, AppError> {
     })
 }
 
+/// An admin person as a confirmation judges them (ADR-0097 d11).
+pub(crate) struct ConfirmerView {
+    pub(crate) person: oml_domain::name::Name,
+    /// When their admin flag was accepted, in microseconds.
+    pub(crate) since: i64,
+}
+
+/// Whether `act` is one the admin person of `view` may confirm or review
+/// at `now` (ADR-0097 d2, d10, d11): never their own; a pending act at
+/// least seven days younger than their flag; and a widening act a
+/// `sole_admin` tenant took at once, once their flag is seven days old.
+/// The one predicate the To do count and the acts list read, so the two
+/// agree.
+pub(crate) fn to_confirm(view: &ConfirmerView, act: &AdminActRecord, now: &EventTime) -> bool {
+    use oml_domain::admin_act::{AdminActClass, AdminActState, counts_for_act};
+    if act.actor_person.as_ref() == Some(&view.person) {
+        return false;
+    }
+    match act.state_at(now) {
+        AdminActState::PendingConfirmation => counts_for_act(view.since, act.at.unix_micros()),
+        AdminActState::Effective => {
+            act.sole_admin
+                && act.class() == AdminActClass::Widening
+                && counts_for_act(view.since, now.unix_micros())
+        }
+        _ => false,
+    }
+}
+
 /// The `admin.act` payload of `record` (ADR-0097 d2).
 pub(crate) fn act_payload(record: &AdminActRecord) -> Value {
     json!({
@@ -340,8 +369,28 @@ where
         bearer: impl Into<Bearer<'_>>,
         state: Option<AdminActState>,
     ) -> Result<Vec<AdminActRecord>, AppError> {
+        Ok(self
+            .admin_acts_listed(bearer, state)
+            .await?
+            .into_iter()
+            .map(|(act, _)| act)
+            .collect())
+    }
+
+    /// [`Self::admin_acts`], each act with whether the calling admin person
+    /// may confirm or review it, as the To do count judges it
+    /// ([`to_confirm`]; ADR-0097 d2, d10, d11).
+    ///
+    /// # Errors
+    /// The caller's authentication and role, and the store's.
+    pub async fn admin_acts_listed(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        state: Option<AdminActState>,
+    ) -> Result<Vec<(AdminActRecord, bool)>, AppError> {
         let admin = self.authenticate_bearer(bearer.into()).await?;
         require_role(&admin, Role::Admin, "admin_acts")?;
+        let view = self.confirmer_view(&admin.key).await?;
         let now = self.clock.now();
         // An expired act is stored pending; it is listed as expired.
         let stored = match state {
@@ -355,7 +404,13 @@ where
         if let Some(wanted) = state {
             acts.retain(|a| a.state == wanted);
         }
-        Ok(acts)
+        Ok(acts
+            .into_iter()
+            .map(|act| {
+                let flag = view.as_ref().is_some_and(|v| to_confirm(v, &act, &now));
+                (act, flag)
+            })
+            .collect())
     }
 }
 

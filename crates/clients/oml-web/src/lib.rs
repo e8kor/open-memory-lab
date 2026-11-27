@@ -9,6 +9,7 @@
 
 mod acts;
 pub mod admin;
+pub mod admin_acts;
 pub mod atlas;
 pub mod brief;
 pub mod builder;
@@ -102,6 +103,8 @@ pub const PAGES: &[(&str, &str)] = &[
     ("GET", todo::TODO_FIX_PATH),
     ("POST", todo::TODO_FIX_PATH),
     ("GET", ADMIN_TODO_PATH),
+    ("GET", admin_acts::ACTS_PATH),
+    ("POST", admin_acts::ACTS_PATH),
     ("GET", USER_KEYS_PATH),
     ("POST", USER_KEYS_PATH),
     ("GET", keys::NEW_KEY_PATH),
@@ -393,6 +396,10 @@ pub fn router(web: Web) -> Router {
         .route(TODO_JUDGE_PATH, get(todo::judge_page).post(todo::judge_act))
         .route(todo::TODO_FIX_PATH, get(todo::fix_page).post(todo::fix_act))
         .route(ADMIN_TODO_PATH, get(todo::admin_page))
+        .route(
+            admin_acts::ACTS_PATH,
+            get(admin_acts::page).post(admin_acts::act),
+        )
         .route(USER_KEYS_PATH, get(keys::user_page).post(keys::user_act))
         .route(keys::NEW_KEY_PATH, get(builder::page))
         .route(keys::ADMIN_NEW_KEY_PATH, get(builder::admin_page))

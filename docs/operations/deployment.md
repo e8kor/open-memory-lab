@@ -142,8 +142,8 @@ private network.
   of its own, today `/web/guardrails`, `/web/workspace` and its forms, `/web/admin/workspace`, `/web/workspaces`, `/web/admin/workspaces`, `/web/memories`,
   `/web/atlas`, `/web/admin/memories`, `/web/admin/atlas`, `/web/data/memories`,
   `/web/admin/data/memories`, `/web/review` and `/web/admin/review` (each a `308` for this
-  release), `/web/todo`, `/web/todo/judge`, `/web/admin/todo`, `/web/keys` and `/web/admin/keys`,
-  each for `GET` and, for the Workspaces, To do, Judge and Keys pages, `POST`. Since
+  release), `/web/todo`, `/web/todo/judge`, `/web/admin/todo`, `/web/admin/acts`, `/web/keys` and `/web/admin/keys`,
+  each for `GET` and, for the Workspaces, To do, Judge, admin acts and Keys pages, `POST`. Since
   v0.7.1 the old `?view=` addresses and `/web/admin` answer not found.
   `deploy/caddy/Caddyfile` is a Caddy configuration that routes them; a page that moves in a
   later release adds a route there.

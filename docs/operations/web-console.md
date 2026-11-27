@@ -21,7 +21,7 @@ the Memories list at `GET /web/memories` and `GET /web/admin/memories`; the Cata
 `GET /web/catalog`; the Atlas at
 `GET /web/atlas` and `GET /web/admin/atlas`, with the list's JSON at `GET /web/data/memories` and
 `GET /web/admin/data/memories`; the To do page at `/web/todo` and `/web/admin/todo`, with the Judge
-page at `/web/todo/judge`; and the
+page at `/web/todo/judge`; the admin acts at `/web/admin/acts`, whose `?act=<id>` is one act's confirm screen, confirming or declining it with a reason (ADR-0097 d2, d23); and the
 Keys view at `/web/keys` and `/web/admin/keys`. Every act on them runs through the API as the
 person's session keys, and a form sent twice runs once. Making a workspace's drafts visible to everyone working here or to
 the writing key only, proposing or ratifying a status change, and a bulk verdict are confirmed first. Every page of
@@ -185,7 +185,7 @@ included. For Caddy (`deploy/caddy/Caddyfile` is the full route table):
 
 ```caddyfile
 memory.example.com {
-	@oml_web path /web/guardrails /web/workspace /web/workspace/new /web/workspace/edit /web/workspace/retire /web/admin/workspace /web/workspaces /web/admin/workspaces /web/memories /web/catalog /web/atlas /web/admin/memories /web/admin/atlas /web/data/memories /web/admin/data/memories /web/review /web/admin/review /web/todo /web/todo/judge /web/admin/todo /web/keys /web/admin/keys
+	@oml_web path /web/guardrails /web/workspace /web/workspace/new /web/workspace/edit /web/workspace/retire /web/admin/workspace /web/workspaces /web/admin/workspaces /web/memories /web/catalog /web/atlas /web/admin/memories /web/admin/atlas /web/data/memories /web/admin/data/memories /web/review /web/admin/review /web/todo /web/todo/judge /web/admin/todo /web/admin/acts /web/keys /web/admin/keys
 	reverse_proxy @oml_web 127.0.0.1:8091
 	reverse_proxy 127.0.0.1:8090
 }

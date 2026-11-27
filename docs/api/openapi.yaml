@@ -4736,7 +4736,8 @@ components:
         cause: { type: [string, 'null'], description: "upgrade, deactivation, settlement or recovery for an act no admin took; null otherwise." }
         at: { type: string, format: date-time }
         settled_at: { type: [string, 'null'], format: date-time }
-        expires_at: { type: [string, 'null'], format: date-time, description: "When a pending act expires as declined." }
+        expires_at: { type: [string, 'null'], format: date-time, description: "When a pending act expires as declined; null for a pending shred, which never expires (ADR-0097 d4)." }
+        to_confirm: { type: boolean, description: "Served on GET /v2/admin/acts alone: whether the calling admin person may confirm or review the act, as the To do count acts_to_confirm judges it: never their own act, a pending act taken at least seven days after their admin flag was accepted, and a widening act a sole_admin tenant took at once once that flag is seven days old (ADR-0097 d2, d10, d11). Since v0.8.6." }
 
     Fix:
       type: object

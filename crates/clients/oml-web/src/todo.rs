@@ -1506,14 +1506,17 @@ pub async fn admin_page(
         |u| format!("{}-admin", u.name),
     );
     let credential = session.credential(Capacity::Admin);
-    let (fix_ids, investigation_ids) = (calls.next_ids(), calls.next_ids());
-    let (fix_call, investigation_call) = (
+    let (fix_ids, investigation_ids, act_ids) =
+        (calls.next_ids(), calls.next_ids(), calls.next_ids());
+    let (fix_call, investigation_call, act_call) = (
         call(&credential, &fix_ids),
         call(&credential, &investigation_ids),
+        call(&credential, &act_ids),
     );
-    let (fixes, investigations) = tokio::join!(
+    let (fixes, investigations, admin_acts) = tokio::join!(
         web.api.admin_fixes(&fix_call),
-        web.api.investigations(&investigation_call)
+        web.api.investigations(&investigation_call),
+        web.api.admin_acts(&act_call, "all")
     );
     let fixes = match fixes {
         Ok(fixes) => fixes,
@@ -1523,6 +1526,17 @@ pub async fn admin_page(
         Ok(open) => open,
         Err(e) => return outcome::page(&e, &calls, ADMIN_TODO_PATH),
     };
+    let admin_acts = match admin_acts {
+        Ok(listed) => listed,
+        Err(e) => return outcome::page(&e, &calls, ADMIN_TODO_PATH),
+    };
+    // Admin acts to confirm (ADR-0097 d2, d10, d11, d23): the acts the API
+    // marks this person may confirm or review, as its count judges them.
+    let act_rows: Vec<String> = admin_acts
+        .iter()
+        .filter(|a| a.to_confirm)
+        .map(crate::admin_acts::act_row)
+        .collect();
     let mut body = format!(
         r#"<header class="oml-section-head"><div class="top"><h1>To do</h1></div><p class="desc">What waits for {}, oldest first in each group. Verdicts, confirmations and ratifications are a person's acts, on the Personal side.</p></header>"#,
         code(&admin)
@@ -1561,6 +1575,12 @@ pub async fn admin_page(
     let mut empty = Vec::new();
     for (id, title, desc, rows) in [
         (
+            "todo-acts",
+            "Admin acts to confirm",
+            "Widening acts of another admin person that wait on a second admin person, and acts a sole admin took at once; each opens its confirm screen.",
+            &act_rows,
+        ),
+        (
             "todo-fixes",
             "Admin fixes, unconfirmed",
             "Fixes in this tenant that no person has confirmed or reverted.",
@@ -1593,8 +1613,8 @@ pub async fn admin_page(
         }
         body.push_str("</ul></section>");
     }
-    if empty.len() == 3 {
-        body.push_str(r#"<div class="oml-empty"><p>Nothing waits for this account.</p><p class="desc">Admin fixes no person has confirmed or reverted, the alerts among them, and this key's open investigations appear here.</p></div>"#);
+    if empty.len() == 4 {
+        body.push_str(r#"<div class="oml-empty"><p>Nothing waits for this account.</p><p class="desc">Admin acts to confirm, admin fixes no person has confirmed or reverted, the alerts among them, and this key's open investigations appear here.</p></div>"#);
     } else if !empty.is_empty() {
         let _ = write!(
             body,
