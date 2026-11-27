@@ -267,7 +267,7 @@ pub async fn admin_counts(app: &TestApp, admin: &str) {
     use oml_app::types::Bearer;
     let ops = entry_of(app, admin, "ops", true).await;
     if let Ok(key) = app
-        .link_self(admin, &Name::parse("ops").expect("a name"))
+        .link_self(admin, &Name::parse("ops").expect("a name"), Some("the person holds this key"))
         .await
     {
         let web = session_of(app, &ops, Capacity::Web).await;
@@ -291,7 +291,7 @@ pub async fn counts_as(app: &TestApp, admin: &str, key_id: uuid::Uuid, person: &
     app.link_key_to_person(
         Bearer::Session(&by),
         key_id.into(),
-        &Name::parse(person).expect("a name"),
+        &Name::parse(person).expect("a name"), Some("the person holds this key"),
     )
     .await
     .expect("the key is linked");

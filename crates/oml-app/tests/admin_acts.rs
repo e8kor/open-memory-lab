@@ -784,6 +784,90 @@ async fn removing_the_last_live_admin_person_is_refused_on_every_surface() {
     );
 }
 
+// -- a link is a consent act (ADR-0097 d7; amendment of 2026-11-27, answer 15) --
+
+/// Linking a key to a person is a consent admin act with a required reason:
+/// a link without one is refused before anything is journalled, by an
+/// admin's console session and by a key's self-link alike, and one with it
+/// journals `admin.act` of class `consent` and then `key.linked_person`
+/// naming the act.
+#[tokio::test]
+async fn a_link_is_a_consent_admin_act_that_requires_a_reason() {
+    let r = rig().await;
+    r.admin_person("alice").await;
+    let rhea = r
+        .app
+        .issue_key(r.admin(), &person_reviewer_req("rhea"))
+        .await
+        .expect("rhea's reviewer key");
+    let rhea_entry = r
+        .app
+        .allow_web_email(r.admin(), &entry_of("rhea", false))
+        .await
+        .expect("rhea's entry")
+        .0;
+    r.app.web_ensure_keys(&rhea_entry).await.expect("keys");
+    let alice = r.admin_session("alice").await;
+    let before = r.journal().await.len();
+    let err = r
+        .app
+        .link_key_to_person(
+            Bearer::Session(&alice),
+            rhea.key_id.into(),
+            &name("rhea"),
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::AdminActReasonRequired), "{err:?}");
+    let err = r
+        .app
+        .link_self(r.admin(), &name("alice"), None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::AdminActReasonRequired), "{err:?}");
+    assert_eq!(r.journal().await.len(), before, "nothing is journalled");
+    for own in [false, true] {
+        let (linked, actor) = if own {
+            (
+                r.app
+                    .link_self(r.admin(), &name("alice"), Some("rhea's laptop reviewer"))
+                    .await
+                    .expect("self-linked"),
+                Some("self"),
+            )
+        } else {
+            (
+                r.app
+                    .link_key_to_person(
+                        Bearer::Session(&alice),
+                        rhea.key_id.into(),
+                        &name("rhea"),
+                        Some("rhea's laptop reviewer"),
+                    )
+                    .await
+                    .expect("linked"),
+                None,
+            )
+        };
+        let events = r.journal().await;
+        let (act, link) = (
+            &events[events.len() - 2].envelope,
+            &events[events.len() - 1].envelope,
+        );
+        assert_eq!(act.event_type, event_types::ADMIN_ACT);
+        assert_eq!(act.payload["act"], "link_key");
+        assert_eq!(act.payload["class"], "consent");
+        assert_eq!(act.payload["state"], "effective");
+        assert_eq!(act.payload["reason"], "rhea's laptop reviewer");
+        assert_eq!(act.payload["target"]["key_id"], linked.key_id.to_string());
+        assert_eq!(link.event_type, event_types::KEY_LINKED_PERSON);
+        assert_eq!(link.payload["act_id"], act.payload["act_id"]);
+        assert_eq!(link.payload["actor"].as_str(), actor);
+        assert!(linked.link_pending.is_some(), "the person's acceptance waits");
+    }
+}
+
 // -- self-link by possession (ADR-0097 d22) -------------------------------------
 
 /// An admin key links itself to its holder's person by possession, and the
@@ -796,7 +880,7 @@ async fn an_admin_key_links_to_its_holders_person_only_once_that_person_accepts(
     // The bootstrap key stands unlinked, as a key from before v0.8.6 does.
     let linked = r
         .app
-        .link_self(r.admin(), &name("alice"))
+        .link_self(r.admin(), &name("alice"), Some("the person holds this key"))
         .await
         .expect("a pending self-link");
     assert!(linked.link_pending.is_some());
@@ -1452,7 +1536,7 @@ async fn a_suspended_unlinked_admin_key_still_links_itself() {
     assert!(matches!(err, AppError::KeySuspended), "{err:?}");
     r.app.whoami(r.admin()).await.expect("whoami still answers");
     r.app
-        .link_self(r.admin(), &name("alice"))
+        .link_self(r.admin(), &name("alice"), Some("the person holds this key"))
         .await
         .expect("it links itself");
     let web = r.person_session("alice", Capacity::Web).await;
@@ -2503,7 +2587,7 @@ async fn offensive_narrowing_notifies_every_admin_person_and_the_workspaces_revi
         .0;
     r.app.web_ensure_keys(&rhea_entry).await.expect("keys");
     r.app
-        .link_key_to_person(Bearer::Session(&alice), rhea.key_id.into(), &name("rhea"))
+        .link_key_to_person(Bearer::Session(&alice), rhea.key_id.into(), &name("rhea"), Some("the person holds this key"))
         .await
         .expect("linked");
     let rhea_web = r.person_session("rhea", Capacity::Web).await;

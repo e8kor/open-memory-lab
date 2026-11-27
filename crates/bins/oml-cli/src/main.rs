@@ -462,6 +462,10 @@ enum KeysCommand {
         /// The person's user name.
         #[arg(long)]
         person: String,
+        /// Why; required, scanned and journalled with the link's consent
+        /// act.
+        #[arg(long)]
+        reason: String,
     },
     /// Revoke one connector-key connection and journal connection.revoked.
     Disconnect {
@@ -2046,12 +2050,12 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         }
 
         Command::Keys {
-            command: KeysCommand::LinkSelf { person },
+            command: KeysCommand::LinkSelf { person, reason },
         } => {
             let client = resolve(cli, &stored)?;
             let (_, response) = client.post(
                 "/v2/keys/self/link",
-                &json!({ "user": person }),
+                &json!({ "user": person, "reason": reason }),
                 &write_opts(),
             )?;
             if cli.json {
@@ -8197,7 +8201,7 @@ fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
         (
             "admin_keys_unlinked_suspended",
             "admin.key_unlinked_suspended",
-            "admin key(s) suspended as unlinked at the upgrade; each links itself with oml keys link-self --person <name> and its person accepts on the console's Keys page",
+            "admin key(s) suspended as unlinked at the upgrade; each links itself with oml keys link-self --person <name> --reason <why> and its person accepts on the console's Keys page",
         ),
         (
             "admin_disputes_open",

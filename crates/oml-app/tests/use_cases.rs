@@ -276,7 +276,7 @@ async fn counted_as(app: &TestApp, admin: &str, issued: &IssuedKey, principal: &
     app.link_key_to_person(
         oml_app::types::Bearer::Session(&linker),
         issued.key_id.into(),
-        &name(principal),
+        &name(principal), Some("the person holds this key"),
     )
     .await
     .expect("the key is linked");
@@ -622,9 +622,10 @@ async fn happy_path_end_to_end() {
     // that make the reviewer key count as a person, as an instruction
     // verdict and a ladder ratification need (ADR-0097 d12): the admin
     // person's and the reviewer's entries with their session keys, the
-    // link and its acceptance.
+    // link (its consent act and `key.linked_person`, ADR-0097 d7) and its
+    // acceptance.
     let head = app.verify_chain(admin).await.expect("verify chain");
-    assert_eq!(head.seq, 41);
+    assert_eq!(head.seq, 42);
     assert_eq!(head.tenant_id, boot.tenant_id);
 
     // The reader's tail serves only what it may see, ascending, with
@@ -647,7 +648,7 @@ async fn happy_path_end_to_end() {
             event_types::LIFECYCLE_PROMOTE
         ]
     );
-    assert_eq!((tail.head_seq, tail.next_after_seq), (41, 41));
+    assert_eq!((tail.head_seq, tail.next_after_seq), (42, 42));
     let promote = &tail.events[1];
     assert!(!promote.names_actor, "the tail names no reviewer");
     assert!(
@@ -19197,7 +19198,7 @@ async fn link_person(app: &TestApp, admin: &str, key_id: Uuid, person: &str) {
     let _ = app
         .unlink_key_from_person(Bearer::Session(&ops), key_id.into())
         .await;
-    app.link_key_to_person(Bearer::Session(&ops), key_id.into(), &name(person))
+    app.link_key_to_person(Bearer::Session(&ops), key_id.into(), &name(person), Some("the person holds this key"))
         .await
         .expect("linked, pending");
     // The named person accepts it from their own console session (ADR-0085
@@ -20061,7 +20062,7 @@ async fn link_keys(app: &TestApp, admin: &str, keys: &[Uuid], person: &str) {
         let _ = app
             .unlink_key_from_person(Bearer::Session(&ops), (*key_id).into())
             .await;
-        app.link_key_to_person(Bearer::Session(&ops), (*key_id).into(), &name(person))
+        app.link_key_to_person(Bearer::Session(&ops), (*key_id).into(), &name(person), Some("the person holds this key"))
             .await
             .expect("linked, pending");
         app.accept_key_link(Bearer::Session(&own), (*key_id).into())
@@ -20620,7 +20621,7 @@ async fn a_previous_value_in_its_grace_runs_no_key_act() {
     );
     assert_eq!(
         verb_of(
-            app.link_key_to_person(old, bea.key_id.into(), &name("alice"))
+            app.link_key_to_person(old, bea.key_id.into(), &name("alice"), Some("the person holds this key"))
                 .await
                 .unwrap_err()
         ),

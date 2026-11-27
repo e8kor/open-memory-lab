@@ -1832,7 +1832,7 @@ async fn startup_names(
     if suspended + revoked > 0 {
         eprintln!(
             "oml-server: {suspended} unlinked admin keys suspended and {revoked} revoked at start \
-             (ADR-0097 d21); each links itself with `oml keys link-self --person <name>`"
+             (ADR-0097 d21); each links itself with `oml keys link-self --person <name> --reason <why>`"
         );
     }
     Ok(assigned)

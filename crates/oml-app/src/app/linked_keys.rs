@@ -7,10 +7,11 @@
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+use oml_domain::admin_act::AdminActKind;
 use oml_domain::name::{Name, NamedKind, Reference};
 use oml_domain::{Role, UsedBy, event_types};
 
-use super::{App, Caller, require_role};
+use super::{App, Caller, commit_request, require_role};
 use crate::ports::{Clock, IdGen, MetadataFold, Scanner, Signer, WebStore};
 use crate::types::{AppError, Bearer, Credential, KeyRecord, WebSessionRecord};
 
@@ -64,6 +65,7 @@ where
         bearer: impl Into<Bearer<'_>>,
         key: Reference,
         user: &Name,
+        reason: Option<&str>,
     ) -> Result<KeyRecord, AppError> {
         let admin = self.key_act_caller(bearer.into(), "link_key").await?;
         require_role(&admin, Role::Admin, "link_key")?;
@@ -96,32 +98,76 @@ where
             });
         }
         target.link_pending = Some(root.workspace_id);
+        self.journal_link(&admin, &target, user, root.workspace_id, reason, false)
+            .await?;
+        Ok(target)
+    }
+
+    /// A link's commit (ADR-0097 d7; amendment of 2026-11-27, answer 15):
+    /// the `link_key` admin act, consent, whose reason is required, and
+    /// then `key.linked_person` naming it, pending until the person
+    /// accepts. `own` marks a key's self-link (d22).
+    async fn journal_link(
+        &self,
+        by: &KeyRecord,
+        target: &KeyRecord,
+        user: &Name,
+        root: Uuid,
+        reason: Option<&str>,
+        own: bool,
+    ) -> Result<(), AppError> {
+        let tenant_id = by.tenant_id;
         let prev = self.head_event(tenant_id).await?;
+        let act = self
+            .begin_admin_act(
+                by,
+                AdminActKind::LinkKey,
+                json!({
+                    "key_id": target.key_id.to_string(),
+                    "name": target.name.as_ref().map(Name::as_str),
+                    "role": target.role.as_str(),
+                    "user": user.as_str(),
+                    "self_link": own,
+                }),
+                reason,
+                json!({}),
+                prev.as_ref(),
+            )
+            .await?;
+        let mut payload = json!({
+            "key_id": target.key_id.to_string(),
+            "user": user.as_str(),
+            "user_root_id": root.to_string(),
+            "linked_by_key_id": by.key_id.to_string(),
+            "accepted": false,
+            "act_id": act.act_id().to_string(),
+        });
+        if own {
+            payload["actor"] = json!("self");
+        }
         let event = self.seal(
-            prev.as_ref(),
+            Some(&act.event),
             tenant_id,
             event_types::KEY_LINKED_PERSON,
-            &admin.principal,
-            Some(admin.key_id),
-            json!({
-                "key_id": target.key_id.to_string(),
-                "user": user.as_str(),
-                "user_root_id": root.workspace_id.to_string(),
-                "linked_by_key_id": admin.key_id.to_string(),
-                "accepted": false,
-            }),
+            &by.principal,
+            Some(by.key_id),
+            payload,
         )?;
-        self.commit(
-            event,
-            MetadataFold::KeyLinked {
-                key_id: target.key_id,
-                user_root: Some(root.workspace_id),
-                accepted: false,
-            },
-            None,
-        )
+        let (act_event, act_fold) = act.link();
+        self.commit_requests(vec![
+            commit_request(act_event, act_fold, None),
+            commit_request(
+                event,
+                MetadataFold::KeyLinked {
+                    key_id: target.key_id,
+                    user_root: Some(root),
+                    accepted: false,
+                },
+                None,
+            ),
+        ])
         .await?;
-        Ok(target)
+        Ok(())
     }
 
     /// `POST /v2/keys/self/link {user}` (ADR-0097 d22, decided by the
@@ -140,6 +186,7 @@ where
         &self,
         bearer: impl Into<Bearer<'_>>,
         user: &Name,
+        reason: Option<&str>,
     ) -> Result<KeyRecord, AppError> {
         // A key suspended as unlinked at the upgrade still reaches this
         // route (ADR-0097 d22, the production migration).
@@ -182,32 +229,8 @@ where
             });
         }
         target.link_pending = Some(root.workspace_id);
-        let prev = self.head_event(tenant_id).await?;
-        let event = self.seal(
-            prev.as_ref(),
-            tenant_id,
-            event_types::KEY_LINKED_PERSON,
-            &caller.principal,
-            Some(caller.key_id),
-            json!({
-                "key_id": target.key_id.to_string(),
-                "user": user.as_str(),
-                "user_root_id": root.workspace_id.to_string(),
-                "linked_by_key_id": caller.key_id.to_string(),
-                "accepted": false,
-                "actor": "self",
-            }),
-        )?;
-        self.commit(
-            event,
-            MetadataFold::KeyLinked {
-                key_id: target.key_id,
-                user_root: Some(root.workspace_id),
-                accepted: false,
-            },
-            None,
-        )
-        .await?;
+        self.journal_link(&caller, &target, user, root.workspace_id, reason, true)
+            .await?;
         Ok(target)
     }
 

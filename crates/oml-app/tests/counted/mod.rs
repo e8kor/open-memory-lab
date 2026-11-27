@@ -101,7 +101,7 @@ pub async fn link_to(app: &TestApp, admin: &str, key_id: Uuid, person: &str) {
     let ops = linker(app, admin).await;
     let entry = entry_of(app, admin, person, false).await;
     let by = session_of(app, &ops, Capacity::Admin).await;
-    app.link_key_to_person(Bearer::Session(&by), key_id.into(), &name(person))
+    app.link_key_to_person(Bearer::Session(&by), key_id.into(), &name(person), Some("the person holds this key"))
         .await
         .expect("the key is linked");
     let web = session_of(app, &entry, Capacity::Web).await;
@@ -115,7 +115,7 @@ pub async fn link_to(app: &TestApp, admin: &str, key_id: Uuid, person: &str) {
 /// keys it issues count as ops; a key already linked is left as it is.
 pub async fn admin_counts(app: &TestApp, admin: &str) {
     let ops = linker(app, admin).await;
-    match app.link_self(admin, &ops.user).await {
+    match app.link_self(admin, &ops.user, Some("the person holds this key")).await {
         Ok(key) => {
             let web = session_of(app, &ops, Capacity::Web).await;
             app.accept_key_link(Bearer::Session(&web), key.key_id.into())

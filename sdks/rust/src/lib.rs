@@ -3299,9 +3299,10 @@ impl<T: Transport> Client<T> {
         .await
     }
 
-    /// `POST /v2/keys/{key}/link`: an admin links a person's tenant key to
-    /// `user`, or `None`, `POST /v2/keys/{key}/unlink`, ends its link
-    /// (ADR-0085 d16).
+    /// `POST /v2/keys/{key}/link {user, reason}`: an admin links a person's
+    /// tenant key to `user`, a consent act whose reason is required, or
+    /// `None`, `POST /v2/keys/{key}/unlink`, ends its link (ADR-0085 d16;
+    /// ADR-0097 d7).
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
@@ -3310,10 +3311,13 @@ impl<T: Transport> Client<T> {
         call: &Call<'_>,
         idempotency_key: &str,
         key: &str,
-        user: Option<&str>,
+        user: Option<(&str, &str)>,
     ) -> Result<KeyLink, Error> {
         let (verb, body) = match user {
-            Some(user) => ("link", serde_json::json!({ "user": user })),
+            Some((user, reason)) => (
+                "link",
+                serde_json::json!({ "user": user, "reason": reason }),
+            ),
             None => ("unlink", serde_json::json!({})),
         };
         self.post(

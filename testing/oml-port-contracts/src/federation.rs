@@ -89,7 +89,7 @@ pub async fn counted<S: WebStore + ConnectionStore>(
         .web_caller(&sessions[0], Capacity::Admin)
         .await
         .expect("the console admin");
-    app.link_key_to_person(Bearer::Session(&ops), key_id.into(), &users[1])
+    app.link_key_to_person(Bearer::Session(&ops), key_id.into(), &users[1], Some("the person holds this key"))
         .await
         .expect("linked");
     let own = app

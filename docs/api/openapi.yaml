@@ -2098,7 +2098,7 @@ paths:
       tags: [keys]
       operationId: linkSelf
       summary: Link the calling admin key to its holder's person, pending that person's acceptance.
-      description: 'Requires: an admin key presented by its own bearer value (possession); a session key is request.validation with details.field key and details.reason bearer_only, and another role access.verb_ceiling (ADR-0097 d22, decided by the operator, 2026-11-25). user names a user of the tenant with a user root and a web entry that is not disabled; otherwise details.field /user and details.reason user_unknown or user_disabled. The key is a live tenant bearer key used_by person that holds no link and none pending; otherwise details.field key and details.reason revoked, already_linked, not_a_tenant_key or not_used_by_person. The one self-link the server admits: POST /v2/keys/{key}/link keeps refusing self_link. Journalled as key.linked_person with actor self and accepted false: the key acts for no one until that person accepts the link from their own console session with POST /v2/keys/{key}/accept_link. Since v0.8.6.'
+      description: 'Requires: an admin key presented by its own bearer value (possession); a session key is request.validation with details.field key and details.reason bearer_only, and another role access.verb_ceiling (ADR-0097 d22, decided by the operator, 2026-11-25). user names a user of the tenant with a user root and a web entry that is not disabled; otherwise details.field /user and details.reason user_unknown or user_disabled. The key is a live tenant bearer key used_by person that holds no link and none pending; otherwise details.field key and details.reason revoked, already_linked, not_a_tenant_key or not_used_by_person. The one self-link the server admits: POST /v2/keys/{key}/link keeps refusing self_link. Journalled as key.linked_person with actor self and accepted false: the key acts for no one until that person accepts the link from their own console session with POST /v2/keys/{key}/accept_link. A link is the link_key admin act, class consent, journalled first in the commit as admin.act with its reason, and key.linked_person names its act_id; reason is required and scanned, and a link without one is request.validation with details.field /reason and details.reason required (ADR-0097 d7, d26; amendment of 2026-11-27, answer 15). Since v0.8.6.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -2109,12 +2109,14 @@ paths:
           application/json:
             example:
               user: alice
+              reason: the deployer's key, held by alice
             schema:
               type: object
               additionalProperties: false
-              required: [user]
+              required: [user, reason]
               properties:
                 user: { type: string }
+                reason: { type: string }
       responses:
         '200':
           description: The link, pending.
@@ -2140,7 +2142,7 @@ paths:
       tags: [keys]
       operationId: linkKey
       summary: Link a person's tenant key to the user who signs in, so the console acts with it in shared workspaces.
-      description: 'Requires: a console admin session, <user>-admin through its capacity credential, in the key''s own tenant; another role is access.verb_ceiling, a bearer admin key, which names no person, is request.validation with details.field key and details.reason session_admin_only, and no MCP tool or CLI command reaches the route (the operator, 2026-11-17: "Console only"). user names a user of the tenant with a user root and a web entry, none of it disabled, and never the calling admin''s own person; otherwise request.validation with details.field /user and details.reason user_unknown, user_disabled or self_link. The key is a live tenant bearer key used_by person that holds no link, an admin key''s included; otherwise request.validation with details.field key and details.reason revoked (a key past its expiry too), already_linked (unlink it first), not_a_tenant_key (a user key, a session key or a connector key) or not_used_by_person. Journalled as key.linked_person, with accepted false: the link is pending, and the key acts for no one, until that user accepts it from their own console session with POST /v2/keys/{key}/accept_link (the operator''s decision of 2026-11-19). The key is refused already_linked while a link pends too. From the acceptance on, the key writes into that user''s root as their key wherever its grants allow, and oml-web may name it in OML-Acting-Key beside that user''s capacity credential on the console''s acting routes (GET /v2/whoami, GET /v2/review/held, GET /v1/memories/{artifact_id}, POST /v2/review/verdicts/bulk): the request runs as the key, with its grants and verb ceilings. The header sent twice, on another route, without a capacity credential, or naming a key the link no longer admits answers auth.invalid with details.reason acting_key_not_linked and runs nothing (ADR-0085 d16, amended 2026-11-17). The Idempotency-Key is required and not replayed. Since v0.8.3.'
+      description: 'Requires: a console admin session, <user>-admin through its capacity credential, in the key''s own tenant; another role is access.verb_ceiling, a bearer admin key, which names no person, is request.validation with details.field key and details.reason session_admin_only, and no MCP tool or CLI command reaches the route (the operator, 2026-11-17: "Console only"). user names a user of the tenant with a user root and a web entry, none of it disabled, and never the calling admin''s own person; otherwise request.validation with details.field /user and details.reason user_unknown, user_disabled or self_link. The key is a live tenant bearer key used_by person that holds no link, an admin key''s included; otherwise request.validation with details.field key and details.reason revoked (a key past its expiry too), already_linked (unlink it first), not_a_tenant_key (a user key, a session key or a connector key) or not_used_by_person. Journalled as key.linked_person, with accepted false: the link is pending, and the key acts for no one, until that user accepts it from their own console session with POST /v2/keys/{key}/accept_link (the operator''s decision of 2026-11-19). The key is refused already_linked while a link pends too. From the acceptance on, the key writes into that user''s root as their key wherever its grants allow, and oml-web may name it in OML-Acting-Key beside that user''s capacity credential on the console''s acting routes (GET /v2/whoami, GET /v2/review/held, GET /v1/memories/{artifact_id}, POST /v2/review/verdicts/bulk): the request runs as the key, with its grants and verb ceilings. The header sent twice, on another route, without a capacity credential, or naming a key the link no longer admits answers auth.invalid with details.reason acting_key_not_linked and runs nothing (ADR-0085 d16, amended 2026-11-17). The Idempotency-Key is required and not replayed. A link is the link_key admin act, class consent, journalled first in the commit as admin.act with its reason, and key.linked_person names its act_id; reason is required and scanned, and a link without one is request.validation with details.field /reason and details.reason required (ADR-0097 d7, d26; amendment of 2026-11-27, answer 15). Since v0.8.3.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -2153,6 +2155,7 @@ paths:
           application/json:
             example:
               user: alice
+              reason: alice reviews with this key
             schema: { $ref: '#/components/schemas/KeyLinkRequest' }
       responses:
         '200':
@@ -6635,9 +6638,10 @@ components:
     KeyLinkRequest:
       type: object
       additionalProperties: false
-      required: [user]
+      required: [user, reason]
       properties:
         user: { type: string, description: "The user the key acts for in the console, by name (ADR-0085 d16)." }
+        reason: { type: string, description: "Why the key is linked; required, scanned and journalled with the link's consent act (ADR-0097 d7, d26)." }
 
     UploadOpenRequest:
       type: object

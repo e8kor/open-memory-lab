@@ -2436,10 +2436,12 @@ where
         )
     }
 
-    /// `POST /v2/keys/{key}/link {user}`: an admin key links a live tenant
-    /// key a person holds to that person, journalled as `key.linked_person`
-    /// and pending until the person accepts it (ADR-0085 d16, amended
-    /// 2026-11-17 and by the operator's decision of 2026-11-19).
+    /// `POST /v2/keys/{key}/link {user, reason}`: an admin key links a live
+    /// tenant key a person holds to that person, journalled as the
+    /// `link_key` consent act and `key.linked_person`, pending until the
+    /// person accepts it (ADR-0085 d16, amended 2026-11-17 and by the
+    /// operator's decision of 2026-11-19; ADR-0097 d7, answer 15 of
+    /// 2026-11-27).
     async fn link_key_inner(
         st: &Self,
         key_id: &str,
@@ -2450,6 +2452,9 @@ where
         #[serde(deny_unknown_fields)]
         struct LinkBody {
             user: String,
+            // Required: a link is a consent admin act (ADR-0097 d7, d26;
+            // amendment of 2026-11-27, answer 15).
+            reason: Option<String>,
         }
         st.require_writes_open()?;
         let acting = acting(headers, None)?;
@@ -2461,7 +2466,7 @@ where
         })?;
         let linked = retry_chain(|| {
             st.app
-                .link_key_to_person(acting.bearer(), key.clone(), &user)
+                .link_key_to_person(acting.bearer(), key.clone(), &user, req.reason.as_deref())
         })
         .await
         .map_err(|e| map_app_error(e, ErrorContext::Write))?;

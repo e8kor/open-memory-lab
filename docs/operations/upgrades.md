@@ -105,7 +105,7 @@ Three rules start at the upgrade and need a person behind a key ([ADR-0097](../a
 - The admin read needs a person-linked admin key or a session. Before the upgrade, link the CLI
   admin key that opens investigations: with a second admin person, their console links it and the
   operator accepts; in a one-admin tenant, after v0.8.6 starts, run
-  `oml keys link-self --person <operator>` under that key and accept the link from the console
+  `oml keys link-self --person <operator> --reason <why>` under that key and accept the link from the console
   (d22). Until then `oml admin read` answers `admin.read_requires_person` and the console's admin
   pages read as usual through `<user>-admin`.
 

@@ -42,6 +42,8 @@ struct SettleBody {
 #[serde(deny_unknown_fields)]
 struct LinkSelfBody {
     user: String,
+    /// Required: a link is a consent admin act (ADR-0097 d7, d26).
+    reason: Option<String>,
 }
 
 /// The body of `POST /v2/keys/{key}/revoke`: `reason` alone, so `cascade`
@@ -372,7 +374,7 @@ where
                 ApiError::validation("user is a user's name")
                     .with_details(json!({ "field": "/user" }))
             })?;
-            let key = retry_chain(|| st.app.link_self(acting.bearer(), &user))
+            let key = retry_chain(|| st.app.link_self(acting.bearer(), &user, sent.reason.as_deref()))
                 .await
                 .map_err(|e| map_app_error(e, ErrorContext::Write))?;
             Ok(json_response(

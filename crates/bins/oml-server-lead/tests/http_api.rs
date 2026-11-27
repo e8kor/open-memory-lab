@@ -10644,7 +10644,10 @@ async fn an_omls_credential_without_the_web_client_is_auth_invalid() {
 /// under the rig's admin key; the status and the body.
 async fn link_key(rig: &WebRig, admin: &str, key: &str, user: Option<&str>) -> (StatusCode, Value) {
     let (verb, body) = match user {
-        Some(user) => ("link", json!({ "user": user })),
+        Some(user) => (
+            "link",
+            json!({ "user": user, "reason": "the person holds this key" }),
+        ),
         None => ("unlink", json!({})),
     };
     let (status, _, body) = send(

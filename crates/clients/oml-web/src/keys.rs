@@ -1273,10 +1273,17 @@ fn deny_form(csrf: &str, key: &str, fields: &Fields) -> String {
 }
 
 fn link_forms(csrf: &str, user: &str) -> String {
-    let fields = |placeholder: &str| {
+    // A link is a consent act whose reason is required (ADR-0097 d7, d26;
+    // amendment of 2026-11-27, answer 15); an unlink takes none.
+    let fields = |placeholder: &str, reason: bool| {
         format!(
-            "{}{}{}",
+            "{}{}{}{}",
             input("key", placeholder, "", true),
+            if reason {
+                input("reason", "Reason for the link", "", true)
+            } else {
+                String::new()
+            },
             hidden("user", user),
             acts::nonce_field()
         )
@@ -1289,7 +1296,7 @@ fn link_forms(csrf: &str, user: &str) -> String {
             ADMIN_KEYS_PATH,
             "link_key",
             csrf,
-            &fields("tenant key name"),
+            &fields("tenant key name", true),
             "Link key",
             false
         ),
@@ -1297,7 +1304,7 @@ fn link_forms(csrf: &str, user: &str) -> String {
             ADMIN_KEYS_PATH,
             "unlink_key",
             csrf,
-            &fields("linked key name"),
+            &fields("linked key name", false),
             "Unlink key",
             false
         )
@@ -1316,7 +1323,8 @@ fn defined(side: Side, action: &str, name: &str) -> bool {
         "rotate_key" => {
             matches!(name, "key" | "confirm" | "grace") || (side == Side::Admin && name == "user")
         }
-        "link_key" | "unlink_key" => matches!(name, "key" | "user"),
+        "link_key" => matches!(name, "key" | "user" | "reason"),
+        "unlink_key" => matches!(name, "key" | "user"),
         "set_limits" => matches!(name, "key" | "expires" | "no_expiry" | "rate" | "no_rate"),
         "deny_on" => matches!(name, "key" | "workspace" | "reason"),
         "accept_email" => matches!(name, "email" | "admin"),
@@ -1472,7 +1480,7 @@ async fn act(
     };
     let required: &[&str] = match action {
         "issue_key" | "connect_key" | "build_key" => &["name"],
-        "link_key" => &["key", "user"],
+        "link_key" => &["key", "user", "reason"],
         "deny_on" => &["key", "workspace", "reason"],
         "accept_email" => &["email", "admin"],
         "decline_email" => &["email"],
@@ -1741,7 +1749,10 @@ async fn act(
         "link_key" | "unlink_key" => {
             let name = fields.given("key").unwrap_or_default();
             let user = fields.given("user");
-            let linked_to = (action == "link_key").then_some(user).flatten();
+            let linked_to = (action == "link_key")
+                .then_some(user)
+                .flatten()
+                .map(|u| (u, fields.given("reason").unwrap_or_default()));
             let listed = user.map_or_else(String::new, |u| format!("user={}&", encode(u)));
             let done = if linked_to.is_some() {
                 "linked"
