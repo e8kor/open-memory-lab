@@ -119,6 +119,7 @@ branch that reserved later renumbers.
 | adr | 0095 | `main` |  | an agent creates its own child workspaces writes guardrails and propos | used |
 | adr | 0096 | `main` |  | a person builds a key in the console with grants inside the own root a | used |
 | adr | 0097 | `main` |  | every admin act is one journalled record narrowing takes effect at onc | used |
+| adr | 0098 | `docs/adr-public-workspaces` |  | A protected or frozen workspace can be marked public, and then every reading key in the tenant reads its approved items | reserved |
 | migration | 0001 | `main` |  | init | used |
 | migration | 0002 | `main` |  | poc adapter | used |
 | migration | 0003 | `main` |  | lead startup | used |
@@ -190,3 +191,4 @@ branch that reserved later renumbers.
 | migration | 0068 | `main` |  | imports by importer | used |
 | migration | 0069 | `main` |  | key previous hashes | used |
 | migration | 0070 | `bulk086/core` |  | admin acts, pending keys and admin entry age (ADR-0097 d1, d2, d10, d11, d23) | reserved |
+| migration | 0071 | `bulk086/issue` |  | grant create flag (ADR-0097 d31) | reserved |
