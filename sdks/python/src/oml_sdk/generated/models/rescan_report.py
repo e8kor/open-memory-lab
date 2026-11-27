@@ -69,6 +69,8 @@ class RescanReport:
             and the lake writer's fold rule out: doctor's lake.erased_key_live (ADR-0005 d2).
         investigations_open_long (int | Unset): Admin investigations open for more than seven days: doctor's
             admin.investigation_open_long (ADR-0089 d10).
+        investigations_past_pages (int | Unset): Open admin investigations past 50 pages, a placeholder: doctor's
+            admin.investigation_pages (ADR-0097 d16).
         fixes_unconfirmed (int | Unset): Admin fixes no person has confirmed or reverted (ADR-0089 d15).
         fix_oldest_unconfirmed_seconds (int | Unset): The oldest unconfirmed fix's age in seconds, 0 with none.
         fixes_loosening_guardrail (int | Unset): Unconfirmed fixes that loosen a guardrail (ADR-0089 d15).
@@ -91,6 +93,8 @@ class RescanReport:
             admin.act_expired (ADR-0097 d23).
         admin_acts_offensive (int | Unset): Offensive narrowing in the last 24 hours: doctor's admin.offensive_narrowing
             (ADR-0097 d24).
+        admin_timeboxes_unsettled (int | Unset): Time boxes no second admin person has settled, open or ended: doctor's
+            admin.timebox_open (ADR-0097 d13).
         admin_narrowing_burst (int | Unset): The most narrowing acts one admin person took in the last 24 hours:
             doctor's admin.narrowing_burst (ADR-0097 d24).
         admin_keys_suspended (int | Unset): Admin keys suspended while an act against their person is open: doctor's
@@ -122,6 +126,7 @@ class RescanReport:
     held_successors_stranded: int | Unset = UNSET
     erased_keys_live: int | Unset = UNSET
     investigations_open_long: int | Unset = UNSET
+    investigations_past_pages: int | Unset = UNSET
     fixes_unconfirmed: int | Unset = UNSET
     fix_oldest_unconfirmed_seconds: int | Unset = UNSET
     fixes_loosening_guardrail: int | Unset = UNSET
@@ -137,6 +142,7 @@ class RescanReport:
     admin_acts_without_reason: int | Unset = UNSET
     admin_acts_expired: int | Unset = UNSET
     admin_acts_offensive: int | Unset = UNSET
+    admin_timeboxes_unsettled: int | Unset = UNSET
     admin_narrowing_burst: int | Unset = UNSET
     admin_keys_suspended: int | Unset = UNSET
     admin_keys_unlinked_suspended: int | Unset = UNSET
@@ -207,6 +213,8 @@ class RescanReport:
 
         investigations_open_long = self.investigations_open_long
 
+        investigations_past_pages = self.investigations_past_pages
+
         fixes_unconfirmed = self.fixes_unconfirmed
 
         fix_oldest_unconfirmed_seconds = self.fix_oldest_unconfirmed_seconds
@@ -236,6 +244,8 @@ class RescanReport:
         admin_acts_expired = self.admin_acts_expired
 
         admin_acts_offensive = self.admin_acts_offensive
+
+        admin_timeboxes_unsettled = self.admin_timeboxes_unsettled
 
         admin_narrowing_burst = self.admin_narrowing_burst
 
@@ -285,6 +295,8 @@ class RescanReport:
             field_dict["erased_keys_live"] = erased_keys_live
         if investigations_open_long is not UNSET:
             field_dict["investigations_open_long"] = investigations_open_long
+        if investigations_past_pages is not UNSET:
+            field_dict["investigations_past_pages"] = investigations_past_pages
         if fixes_unconfirmed is not UNSET:
             field_dict["fixes_unconfirmed"] = fixes_unconfirmed
         if fix_oldest_unconfirmed_seconds is not UNSET:
@@ -319,6 +331,8 @@ class RescanReport:
             field_dict["admin_acts_expired"] = admin_acts_expired
         if admin_acts_offensive is not UNSET:
             field_dict["admin_acts_offensive"] = admin_acts_offensive
+        if admin_timeboxes_unsettled is not UNSET:
+            field_dict["admin_timeboxes_unsettled"] = admin_timeboxes_unsettled
         if admin_narrowing_burst is not UNSET:
             field_dict["admin_narrowing_burst"] = admin_narrowing_burst
         if admin_keys_suspended is not UNSET:
@@ -438,6 +452,8 @@ class RescanReport:
 
         investigations_open_long = d.pop("investigations_open_long", UNSET)
 
+        investigations_past_pages = d.pop("investigations_past_pages", UNSET)
+
         fixes_unconfirmed = d.pop("fixes_unconfirmed", UNSET)
 
         fix_oldest_unconfirmed_seconds = d.pop("fix_oldest_unconfirmed_seconds", UNSET)
@@ -470,6 +486,8 @@ class RescanReport:
 
         admin_acts_offensive = d.pop("admin_acts_offensive", UNSET)
 
+        admin_timeboxes_unsettled = d.pop("admin_timeboxes_unsettled", UNSET)
+
         admin_narrowing_burst = d.pop("admin_narrowing_burst", UNSET)
 
         admin_keys_suspended = d.pop("admin_keys_suspended", UNSET)
@@ -500,6 +518,7 @@ class RescanReport:
             held_successors_stranded=held_successors_stranded,
             erased_keys_live=erased_keys_live,
             investigations_open_long=investigations_open_long,
+            investigations_past_pages=investigations_past_pages,
             fixes_unconfirmed=fixes_unconfirmed,
             fix_oldest_unconfirmed_seconds=fix_oldest_unconfirmed_seconds,
             fixes_loosening_guardrail=fixes_loosening_guardrail,
@@ -515,6 +534,7 @@ class RescanReport:
             admin_acts_without_reason=admin_acts_without_reason,
             admin_acts_expired=admin_acts_expired,
             admin_acts_offensive=admin_acts_offensive,
+            admin_timeboxes_unsettled=admin_timeboxes_unsettled,
             admin_narrowing_burst=admin_narrowing_burst,
             admin_keys_suspended=admin_keys_suspended,
             admin_keys_unlinked_suspended=admin_keys_unlinked_suspended,

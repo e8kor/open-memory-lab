@@ -16,6 +16,7 @@ class ErrorCode(StrEnum):
     ADMIN_FIX_SUPERSEDED = "admin.fix_superseded"
     ADMIN_FIX_TARGET_NOT_PROMOTED = "admin.fix_target_not_promoted"
     ADMIN_INVESTIGATION_REQUIRED = "admin.investigation_required"
+    ADMIN_READ_REQUIRES_PERSON = "admin.read_requires_person"
     AUTH_INVALID = "auth.invalid"
     AUTH_MISSING = "auth.missing"
     BUNDLE_DECRYPT_FAILED = "bundle.decrypt_failed"

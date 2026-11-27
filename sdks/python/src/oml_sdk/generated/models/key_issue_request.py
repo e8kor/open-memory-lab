@@ -59,6 +59,15 @@ class KeyIssueRequest:
         profile (KeyIssueRequestProfile | Unset): curator: a reviewer key used by an agent that may reject, propose
             retirements and summaries, and flag contradictions inside an in-progress workspace only, and never approves; any
             other role or used_by is request.validation, details.field /profile (ADR-0030 d8, d9).
+        timebox (bool | Unset): A time box (ADR-0097 d13): an admin person's issuance that takes effect at once in any
+            tenant, for a reader, submitter or contributor key whose grants are reader and submitter grants in shared
+            workspaces, never into a user root or an in-progress subtree, with an expiry no more than 24 hours away that
+            everything issued under it inherits. It requires reason, and is an issue_key admin act marked timebox, which a
+            second admin person settles afterwards with confirmAdminAct or declineAdminAct (a decline revokes the key). One
+            open box per admin person per workspace, and one renewal while the first is unsettled; refused while an act
+            against an admin is open or a freeze holds. Each refusal is request.validation with details.field /timebox and
+            details.reason not_admin_person, shape, not_shared, until, open, renewals_exhausted or against_admin_open. Since
+            v0.8.6. Default: False.
         connect_code (bool | Unset): Issue a connector key (ADR-0031 d7): no bearer value is minted, and the 201 carries
             connect_code in place of value. Refused with 422 oauth.connect_refused for an admin or operator role (role),
             used_by service (used_by_service), or a deployment without oauth.issuer (not_configured). Default: False.
@@ -96,6 +105,7 @@ class KeyIssueRequest:
     principal: str | Unset = UNSET
     guardrail_scope: GuardrailScope | Unset = UNSET
     profile: KeyIssueRequestProfile | Unset = UNSET
+    timebox: bool | Unset = False
     connect_code: bool | Unset = False
     expiry: datetime.datetime | Unset = UNSET
     requests_per_minute: int | Unset = UNSET
@@ -144,6 +154,8 @@ class KeyIssueRequest:
         if not isinstance(self.profile, Unset):
             profile = self.profile.value
 
+        timebox = self.timebox
+
         connect_code = self.connect_code
 
         expiry: str | Unset = UNSET
@@ -187,6 +199,8 @@ class KeyIssueRequest:
             field_dict["guardrail_scope"] = guardrail_scope
         if profile is not UNSET:
             field_dict["profile"] = profile
+        if timebox is not UNSET:
+            field_dict["timebox"] = timebox
         if connect_code is not UNSET:
             field_dict["connect_code"] = connect_code
         if expiry is not UNSET:
@@ -260,6 +274,8 @@ class KeyIssueRequest:
         else:
             profile = KeyIssueRequestProfile(_profile)
 
+        timebox = d.pop("timebox", UNSET)
+
         connect_code = d.pop("connect_code", UNSET)
 
         _expiry = d.pop("expiry", UNSET)
@@ -296,6 +312,7 @@ class KeyIssueRequest:
             principal=principal,
             guardrail_scope=guardrail_scope,
             profile=profile,
+            timebox=timebox,
             connect_code=connect_code,
             expiry=expiry,
             requests_per_minute=requests_per_minute,
