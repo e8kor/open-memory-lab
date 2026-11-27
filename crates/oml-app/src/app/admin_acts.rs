@@ -893,6 +893,15 @@ where
                 let code = effect.get("code").ok_or_else(|| {
                     AppError::StoredResponse(format!("admin act {} holds no code", act.act_id))
                 })?;
+                // A key cut off since the mint is refused at the
+                // confirmation as at the mint, and the act waits (#353).
+                if let Some(target) = self.journal.key(tenant_id, key_id).await?
+                    && self.cut_off(&target).await?
+                {
+                    return Err(super::connect_refused(
+                        oml_domain::oauth::ConnectRefused::CutOff,
+                    ));
+                }
                 self.confirmed_code(admin, act, key_id, code, links).await?;
             }
             AdminActKind::RaiseLimits => {

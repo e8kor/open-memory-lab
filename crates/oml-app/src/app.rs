@@ -13252,6 +13252,11 @@ where
         if target.expired_at(&self.clock.now()) {
             return Err(connect_refused(ConnectRefused::Expired));
         }
+        // A cut-off key is refused as an expired one is: its connection
+        // would read and write nothing (#353).
+        if self.cut_off(&target).await? {
+            return Err(connect_refused(ConnectRefused::CutOff));
+        }
         let oauth = self
             .oauth_issuer
             .as_ref()

@@ -207,23 +207,28 @@ where
         }
         // A key cut off, by a denial on `universe`, stays cut off: a new
         // value would only hand it out again.
+        if self.cut_off(target).await? {
+            return refuse(KeyRotationRefusal::CutOff);
+        }
+        Ok(())
+    }
+
+    /// Whether `key` is cut off: denied on `universe`, so it reads and
+    /// writes nothing (ADR-0096 d4).
+    pub(crate) async fn cut_off(&self, key: &KeyRecord) -> Result<bool, AppError> {
         let universe = self
             .journal
             .resolve_name(
-                target.tenant_id,
+                key.tenant_id,
                 NamedKind::Workspace,
                 &Name::parse("universe").expect("universe is a name"),
             )
             .await?;
-        let cut_off = self
+        Ok(self
             .journal
-            .key_access(target.tenant_id, target.key_id)
+            .key_access(key.tenant_id, key.key_id)
             .await?
-            .is_some_and(|a| a.denials.iter().any(|d| Some(d.denial.node) == universe));
-        if cut_off {
-            return refuse(KeyRotationRefusal::CutOff);
-        }
-        Ok(())
+            .is_some_and(|a| a.denials.iter().any(|d| Some(d.denial.node) == universe)))
     }
 
     /// The instant until which `key`'s previous value still authenticates,
