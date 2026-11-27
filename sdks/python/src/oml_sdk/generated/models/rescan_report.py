@@ -110,6 +110,18 @@ class RescanReport:
             with none. Since v0.8.6.
         admin_disputes_open (int | Unset): Open acts against an admin below three admin persons, a freeze the operator
             settles: doctor's admin.dispute_open, critical (ADR-0097 d8). Since v0.8.6.
+        operator_settlements_due (int | Unset): Freezes open at least 24 hours, a placeholder, which the operator may
+            settle from the host with oml operator settle: doctor's operator.settlement_due (ADR-0097 d19). Since v0.8.6.
+        key_issuer_unexpected_shape (int | Unset): Keys the tenant's server issuer issued that are not one of the four
+            session-key shapes (<user>-web, <user>-review, <user>-curate, <user>-admin): doctor's
+            key.issuer_unexpected_shape, critical (ADR-0097 d18). Since v0.8.6.
+        mail_unconfigured (int | Unset): 1 when no mail relay is configured (mail.host and mail.from unset), so recovery
+            and settlement notices are journalled and shown in-product only: doctor's notice.mail_unconfigured (ADR-0097
+            d20). Since v0.8.6.
+        mail_delivery_failures (int | Unset): Notice emails the relay refused or did not take since the lead started;
+            the acts they told about stand: doctor's notice.mail_delivery_failed (ADR-0097 d20). Since v0.8.6.
+        mail_last_failure (None | str | Unset): The last failed delivery's reason, naming the SMTP stage and code and
+            never an address. Since v0.8.6.
     """
 
     scanner_version: None | str
@@ -155,6 +167,11 @@ class RescanReport:
     admin_keys_unlinked_suspended: int | Unset = UNSET
     admin_unlinked_days_left: int | Unset = UNSET
     admin_disputes_open: int | Unset = UNSET
+    operator_settlements_due: int | Unset = UNSET
+    key_issuer_unexpected_shape: int | Unset = UNSET
+    mail_unconfigured: int | Unset = UNSET
+    mail_delivery_failures: int | Unset = UNSET
+    mail_last_failure: None | str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         scanner_version: None | str
@@ -268,6 +285,20 @@ class RescanReport:
 
         admin_disputes_open = self.admin_disputes_open
 
+        operator_settlements_due = self.operator_settlements_due
+
+        key_issuer_unexpected_shape = self.key_issuer_unexpected_shape
+
+        mail_unconfigured = self.mail_unconfigured
+
+        mail_delivery_failures = self.mail_delivery_failures
+
+        mail_last_failure: None | str | Unset
+        if isinstance(self.mail_last_failure, Unset):
+            mail_last_failure = UNSET
+        else:
+            mail_last_failure = self.mail_last_failure
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -360,6 +391,16 @@ class RescanReport:
             field_dict["admin_unlinked_days_left"] = admin_unlinked_days_left
         if admin_disputes_open is not UNSET:
             field_dict["admin_disputes_open"] = admin_disputes_open
+        if operator_settlements_due is not UNSET:
+            field_dict["operator_settlements_due"] = operator_settlements_due
+        if key_issuer_unexpected_shape is not UNSET:
+            field_dict["key_issuer_unexpected_shape"] = key_issuer_unexpected_shape
+        if mail_unconfigured is not UNSET:
+            field_dict["mail_unconfigured"] = mail_unconfigured
+        if mail_delivery_failures is not UNSET:
+            field_dict["mail_delivery_failures"] = mail_delivery_failures
+        if mail_last_failure is not UNSET:
+            field_dict["mail_last_failure"] = mail_last_failure
 
         return field_dict
 
@@ -521,6 +562,23 @@ class RescanReport:
 
         admin_disputes_open = d.pop("admin_disputes_open", UNSET)
 
+        operator_settlements_due = d.pop("operator_settlements_due", UNSET)
+
+        key_issuer_unexpected_shape = d.pop("key_issuer_unexpected_shape", UNSET)
+
+        mail_unconfigured = d.pop("mail_unconfigured", UNSET)
+
+        mail_delivery_failures = d.pop("mail_delivery_failures", UNSET)
+
+        def _parse_mail_last_failure(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        mail_last_failure = _parse_mail_last_failure(d.pop("mail_last_failure", UNSET))
+
         rescan_report = cls(
             scanner_version=scanner_version,
             scanned=scanned,
@@ -565,6 +623,11 @@ class RescanReport:
             admin_keys_unlinked_suspended=admin_keys_unlinked_suspended,
             admin_unlinked_days_left=admin_unlinked_days_left,
             admin_disputes_open=admin_disputes_open,
+            operator_settlements_due=operator_settlements_due,
+            key_issuer_unexpected_shape=key_issuer_unexpected_shape,
+            mail_unconfigured=mail_unconfigured,
+            mail_delivery_failures=mail_delivery_failures,
+            mail_last_failure=mail_last_failure,
         )
 
         return rescan_report

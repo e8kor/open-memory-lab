@@ -257,6 +257,10 @@ from .notice_detail import NoticeDetail
 from .notice_kind import NoticeKind
 from .o_auth_error import OAuthError
 from .o_auth_error_error import OAuthErrorError
+from .operator_settle_body import OperatorSettleBody
+from .operator_settle_body_outcome import OperatorSettleBodyOutcome
+from .operator_settle_response_200 import OperatorSettleResponse200
+from .operator_settle_response_200_mail import OperatorSettleResponse200Mail
 from .origin import Origin
 from .origin_kind import OriginKind
 from .own_admin_reads_response_200 import OwnAdminReadsResponse200
@@ -274,6 +278,7 @@ from .protected_resource_metadata_scopes_supported_item import (
 from .public_flag import PublicFlag
 from .ready import Ready
 from .ready_checks import ReadyChecks
+from .ready_operator_tokens import ReadyOperatorTokens
 from .ready_scan_type_0 import ReadyScanType0
 from .ready_status import ReadyStatus
 from .ready_web_client import ReadyWebClient
@@ -742,6 +747,10 @@ __all__ = (
     "NoticeKind",
     "OAuthError",
     "OAuthErrorError",
+    "OperatorSettleBody",
+    "OperatorSettleBodyOutcome",
+    "OperatorSettleResponse200",
+    "OperatorSettleResponse200Mail",
     "Origin",
     "OriginKind",
     "OwnAdminReadsResponse200",
@@ -755,6 +764,7 @@ __all__ = (
     "PublicFlag",
     "Ready",
     "ReadyChecks",
+    "ReadyOperatorTokens",
     "ReadyScanType0",
     "ReadyStatus",
     "ReadyWebClient",

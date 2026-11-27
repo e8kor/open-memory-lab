@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.ready_operator_tokens import ReadyOperatorTokens
 from ..models.ready_status import ReadyStatus
 from ..models.ready_web_client import ReadyWebClient
 from ..types import UNSET, Unset
@@ -29,6 +30,9 @@ class Ready:
             connections are on here, not from the discovery paths it checks (ADR-0031 d14).
         build (Build): The build that answered (http-api.md "Health"). Times are UTC, YYYY-MM-DDTHH:MM:SSZ; a field
             nothing could supply is the string unknown.
+        operator_tokens (ReadyOperatorTokens | Unset): Whether this start wrote the tenants' operator tokens to
+            operator.token_dir: written, none (no tenant yet, or a composition that writes none), or failed, which doctor
+            names operator.token_unwritten (ADR-0097 d19). No count: the probe answers anyone. Since v0.8.6.
         web_client (ReadyWebClient | Unset): The client identity oml-web proves when it presents a capacity credential
             (web.client_secret), or none; with none every capacity credential is refused and doctor warns (ADR-0070 d2).
         scan (None | ReadyScanType0 | Unset): The scanner's rule set, how many rules it loaded and whether the personal-
@@ -40,6 +44,7 @@ class Ready:
     checks: ReadyChecks
     oauth_issuer: None | str
     build: Build
+    operator_tokens: ReadyOperatorTokens | Unset = UNSET
     web_client: ReadyWebClient | Unset = UNSET
     scan: None | ReadyScanType0 | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -55,6 +60,10 @@ class Ready:
         oauth_issuer = self.oauth_issuer
 
         build = self.build.to_dict()
+
+        operator_tokens: str | Unset = UNSET
+        if not isinstance(self.operator_tokens, Unset):
+            operator_tokens = self.operator_tokens.value
 
         web_client: str | Unset = UNSET
         if not isinstance(self.web_client, Unset):
@@ -78,6 +87,8 @@ class Ready:
                 "build": build,
             }
         )
+        if operator_tokens is not UNSET:
+            field_dict["operator_tokens"] = operator_tokens
         if web_client is not UNSET:
             field_dict["web_client"] = web_client
         if scan is not UNSET:
@@ -104,6 +115,13 @@ class Ready:
         oauth_issuer = _parse_oauth_issuer(d.pop("oauth_issuer"))
 
         build = Build.from_dict(d.pop("build"))
+
+        _operator_tokens = d.pop("operator_tokens", UNSET)
+        operator_tokens: ReadyOperatorTokens | Unset
+        if isinstance(_operator_tokens, Unset):
+            operator_tokens = UNSET
+        else:
+            operator_tokens = ReadyOperatorTokens(_operator_tokens)
 
         _web_client = d.pop("web_client", UNSET)
         web_client: ReadyWebClient | Unset
@@ -134,6 +152,7 @@ class Ready:
             checks=checks,
             oauth_issuer=oauth_issuer,
             build=build,
+            operator_tokens=operator_tokens,
             web_client=web_client,
             scan=scan,
         )

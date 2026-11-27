@@ -1886,6 +1886,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/operator/tenants/{tenant}/acts/{act}/settle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The operator, from the host, confirms or reverses the contested act of a freeze open at least 24 hours.
+         * @description Authenticated by the tenant's operator token of this start alone, sent as OML-Operator-Token: at each start the server writes one per tenant to <operator.token_dir>/<tenant>.token, mode 0600, and oml operator settle, run as root, reads it (ADR-0097 d19; the operator's answer 13 of 2026-11-27). A request that also sends Authorization is auth.invalid with details.reason operator_route_takes_no_key; a missing token, or one that is not the tenant's of this start, auth.invalid with details.reason operator_token. The act must be an open act against an admin below three admin persons, a freeze, else request.validation with details.reason not_frozen; and open at least 24 hours, a placeholder, else details.reason freeze_too_recent. confirm revokes the target's suspended admin keys, cause settlement, and undoes a contest's restoration; reverse lifts the suspension and restores the entry where no contest did. It issues no key and reads no content. Journalled in one commit: admin.act with state settled and no settler, operator.settlement, the effect's events, and notice.written kind settlement to every admin person and both parties. The notice is then emailed to them through the mail relay (d20; answer 14): mail is sent, unconfigured or failed, with mail_failure naming the SMTP stage and code, and the settlement stands either way. Since v0.8.6.
+         */
+        post: operations["operatorSettle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/admin/acts/{act}/decline": {
         parameters: {
             query?: never;
@@ -3024,11 +3044,16 @@ export interface components {
             default_sources: "scope" | "wide";
             /** @description The most workspaces a wide recall searches beside its scope, and the most a list names; 8 by default. */
             max_sources: number;
+            /** @description The wide keys, listed to an admin key; empty to a maintenance key, which reads the counts below (ADR-0097 d18). */
             wide_keys: {
                 /** Format: uuid */
                 key_id: string;
                 candidates: number;
             }[];
+            /** @description How many keys met more than 1,000 candidate sources since the lead started, to an admin and a maintenance key alike (ADR-0097 d18). Since v0.8.6. */
+            wide_key_count?: number;
+            /** @description The most candidate sources any of those keys met; 0 with none. Since v0.8.6. */
+            wide_key_most_candidates?: number;
             /** @description The widen hint's signals on this tenant since the lead started; doctor warns on a failed build, on evictions, and on recalls that found none while none was built. */
             widen_signal: {
                 /** @description Signals built. */
@@ -4564,6 +4589,11 @@ export interface components {
             oauth_issuer: string | null;
             build: components["schemas"]["Build"];
             /**
+             * @description Whether this start wrote the tenants' operator tokens to operator.token_dir: written, none (no tenant yet, or a composition that writes none), or failed, which doctor names operator.token_unwritten (ADR-0097 d19). No count: the probe answers anyone. Since v0.8.6.
+             * @enum {string}
+             */
+            operator_tokens?: "written" | "none" | "failed";
+            /**
              * @description The client identity oml-web proves when it presents a capacity credential (web.client_secret), or none; with none every capacity credential is refused and doctor warns (ADR-0070 d2).
              * @enum {string}
              */
@@ -4757,6 +4787,16 @@ export interface components {
             admin_unlinked_days_left?: number;
             /** @description Open acts against an admin below three admin persons, a freeze the operator settles: doctor's admin.dispute_open, critical (ADR-0097 d8). Since v0.8.6. */
             admin_disputes_open?: number;
+            /** @description Freezes open at least 24 hours, a placeholder, which the operator may settle from the host with oml operator settle: doctor's operator.settlement_due (ADR-0097 d19). Since v0.8.6. */
+            operator_settlements_due?: number;
+            /** @description Keys the tenant's server issuer issued that are not one of the four session-key shapes (<user>-web, <user>-review, <user>-curate, <user>-admin): doctor's key.issuer_unexpected_shape, critical (ADR-0097 d18). Since v0.8.6. */
+            key_issuer_unexpected_shape?: number;
+            /** @description 1 when no mail relay is configured (mail.host and mail.from unset), so recovery and settlement notices are journalled and shown in-product only: doctor's notice.mail_unconfigured (ADR-0097 d20). Since v0.8.6. */
+            mail_unconfigured?: number;
+            /** @description Notice emails the relay refused or did not take since the lead started; the acts they told about stand: doctor's notice.mail_delivery_failed (ADR-0097 d20). Since v0.8.6. */
+            mail_delivery_failures?: number;
+            /** @description The last failed delivery's reason, naming the SMTP stage and code and never an address. Since v0.8.6. */
+            mail_last_failure?: string | null;
         };
         /** @description The build that answered (http-api.md "Health"). Times are UTC, YYYY-MM-DDTHH:MM:SSZ; a field nothing could supply is the string unknown. */
         Build: {
@@ -10469,6 +10509,62 @@ export interface operations {
                 };
             };
             403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            default: components["responses"]["Error"];
+        };
+    };
+    operatorSettle: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description The tenant's operator token of this start; never logged. */
+                "OML-Operator-Token": string;
+            };
+            path: {
+                tenant: string;
+                act: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "outcome": "confirm"
+                 *     }
+                 */
+                "application/json": {
+                    /** @enum {string} */
+                    outcome: "confirm" | "reverse";
+                };
+            };
+        };
+        responses: {
+            /** @description The settled act, the persons notified, and what the relay did with the email. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        act: components["schemas"]["AdminAct"];
+                        notified: string[];
+                        /** @enum {string} */
+                        mail: "sent" | "unconfigured" | "failed";
+                        mail_failure: string | null;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
             default: components["responses"]["Error"];
