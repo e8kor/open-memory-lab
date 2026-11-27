@@ -1426,7 +1426,7 @@ pub async fn the_last_admin_entry_is_refused_a_change_that_leaves_it_pending<
     w.signed_in("bob", false).await;
     let err = w
         .app
-        .allow_web_email_keeping(
+        .allow_web_email_with_reason(
             w.admin.as_str(),
             &WebEmailRequest {
                 email: Email::parse("ann@example.com").expect("an email"),
@@ -1434,6 +1434,7 @@ pub async fn the_last_admin_entry_is_refused_a_change_that_leaves_it_pending<
                 admin: true,
             },
             true,
+            Some("a test"),
         )
         .await
         .unwrap_err();

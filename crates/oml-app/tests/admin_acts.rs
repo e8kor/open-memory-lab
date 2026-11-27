@@ -1814,12 +1814,7 @@ async fn a_flagged_child_in_the_shared_tree_is_charged_to_no_account() {
             .find(|m| m.meter == Meter::Workspaces)
             .map_or(0, |m| m.used)
     };
-    let before = used(
-        r.app
-            .usage_of(r.boot.tenant_id, root)
-            .await
-            .expect("usage"),
-    );
+    let before = used(r.app.usage_of(r.boot.tenant_id, root).await.expect("usage"));
     r.app
         .create_workspace(
             flagged.value.as_str(),
@@ -1842,12 +1837,7 @@ async fn a_flagged_child_in_the_shared_tree_is_charged_to_no_account() {
         grant.grant.grant_id.to_string()
     );
     assert_eq!(
-        used(
-            r.app
-                .usage_of(r.boot.tenant_id, root)
-                .await
-                .expect("usage")
-        ),
+        used(r.app.usage_of(r.boot.tenant_id, root).await.expect("usage")),
         before,
         "no account is charged for the shared tree"
     );

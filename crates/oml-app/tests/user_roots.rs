@@ -5718,6 +5718,22 @@ async fn fix_rig_for(person: Option<&str>) -> FixRig {
     }
 }
 
+/// `user`'s entry takes the admin flag, as the person on an admin key must
+/// hold one (ADR-0097 d21, the operator's decision of 2026-11-27).
+async fn flag_admin(r: &FixRig, user: &str) {
+    r.app
+        .allow_web_email(
+            r.boot.admin_key.value.as_str(),
+            &WebEmailRequest {
+                email: email(&format!("{user}@example.com")),
+                user: name(user),
+                admin: true,
+            },
+        )
+        .await
+        .expect("the admin flag");
+}
+
 fn edit(target: Uuid, body: &str) -> oml_app::app::FixRequest {
     oml_app::app::FixRequest {
         act: oml_app::types::FixAct::Edit,
@@ -5936,6 +5952,7 @@ async fn a_console_admin_links_an_admin_key_to_another_person_and_never_to_its_o
 #[tokio::test]
 async fn an_admin_key_linked_to_another_person_takes_no_fix_until_that_person_accepts() {
     let r = fix_rig_for(None).await;
+    flag_admin(&r, "bob").await;
     let admin = r.boot.admin_key.value.as_str();
     let pending = r
         .app
@@ -5977,6 +5994,7 @@ async fn an_admin_key_linked_to_another_person_takes_no_fix_until_that_person_ac
 #[tokio::test]
 async fn a_relink_after_the_fix_leaves_the_settlement_judged_against_the_recorded_person() {
     let r = fix_rig().await;
+    flag_admin(&r, "bob").await;
     let admin_key = r.boot.admin_key.key_id;
     let fix = r
         .app
@@ -6663,6 +6681,7 @@ async fn a_key_an_admin_mints_in_another_persons_root_counts_as_the_admins_perso
 #[tokio::test]
 async fn a_key_issued_in_the_fix_admins_root_settles_as_the_admins_person_whoever_minted_it() {
     let r = fix_rig().await;
+    flag_admin(&r, "bob").await;
     let admin = r.boot.admin_key.value.as_str();
     let writer = user_writer(&r.app, admin, "bob", "bob/laptop").await;
     let reviewer = user_reviewer(&r.app, admin, "bob", "bob/review").await;
@@ -6720,6 +6739,7 @@ async fn a_key_issued_in_the_fix_admins_root_settles_as_the_admins_person_whoeve
 #[tokio::test]
 async fn a_key_the_fix_admins_key_issued_settles_as_the_admins_person_after_a_relink() {
     let r = fix_rig().await;
+    flag_admin(&r, "bob").await;
     let admin = r.boot.admin_key.value.as_str();
     let claim = carols_claim_by_admin_minted_keys(&r).await;
     let forged = user_reviewer(&r.app, admin, "carol", "carol/forged").await;
@@ -6788,6 +6808,7 @@ async fn a_reviewer_key_that_counts_as_no_one_is_no_other_person_in_the_fix_stat
 #[tokio::test]
 async fn a_key_issued_in_the_authors_root_reverts_a_fix_of_the_authors_claim_as_the_author() {
     let r = fix_rig().await;
+    flag_admin(&r, "bob").await;
     let admin = r.boot.admin_key.value.as_str();
     signed_in(&r.app, admin, "dora", false).await;
     let web = console_of(&r.app, &r.store, "dora").await;

@@ -3213,9 +3213,7 @@ pub async fn a_revoked_key_no_longer_resolves_by_its_hash<S: JournalStore>(store
 /// and reads back; a revoked key, or a node the tenant does not hold, is
 /// refused and commits nothing (event-catalog.md `key.default_set`;
 /// ADR-0097 d30, the operator's decision of 2026-11-27).
-pub async fn key_default_set_sets_a_live_keys_default_and_refuses_anything_else<
-    S: JournalStore,
->(
+pub async fn key_default_set_sets_a_live_keys_default_and_refuses_anything_else<S: JournalStore>(
     store: &S,
 ) {
     let mut rig = ChainRig::new(5100);
@@ -3252,10 +3250,16 @@ pub async fn key_default_set_sets_a_live_keys_default_and_refuses_anything_else<
     let head = store.chain_head(t).await.expect("head");
     let (event_type, payload, fold) = set(key.key_id, Uuid::from_u128(0xD5_0003));
     let refused = rig.commit(store, event_type, payload, fold, None).await;
-    assert!(matches!(refused, Err(StoreError::Backend(_))), "{refused:?}");
+    assert!(
+        matches!(refused, Err(StoreError::Backend(_))),
+        "{refused:?}"
+    );
     let (event_type, payload, fold) = set(Uuid::from_u128(0xD5_0004), root);
     let refused = rig.commit(store, event_type, payload, fold, None).await;
-    assert!(matches!(refused, Err(StoreError::Backend(_))), "{refused:?}");
+    assert!(
+        matches!(refused, Err(StoreError::Backend(_))),
+        "{refused:?}"
+    );
     assert_eq!(
         store.chain_head(t).await.expect("head"),
         head,
