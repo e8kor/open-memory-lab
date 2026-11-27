@@ -581,7 +581,7 @@ where
             Some(access)
         };
         let mut caller = Caller::of(rows.key, access.clone());
-        caller.session = Some((session.created_at.clone(), session.email_hash.clone()));
+        caller.session = Some((session.created_at.clone(), session.email_hash));
         // Every session key of the person but the admin capacity's owns the
         // rows of every key of the person: the keys naming their root and
         // their web, review and curate session keys, never a linked tenant

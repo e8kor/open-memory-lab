@@ -11274,7 +11274,7 @@ impl JournalStore for PgStore {
     ) -> Result<Vec<oml_app::types::NoticeRecord>, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
-        let rows: Vec<(Uuid, String, Option<Uuid>, Value, String, Option<String>)> =
+        let rows: Vec<NoticeRow> =
             sqlx::query_as(
                 "SELECT id, kind, act_id, detail, \
                         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'), \
@@ -12814,6 +12814,10 @@ async fn fold_sole_admin(
     .map_err(backend)?;
     Ok(())
 }
+
+/// A notice row as `notices` reads it: id, kind, act, detail, written and
+/// dismissed instants (ADR-0097 d20; 0074).
+type NoticeRow = (Uuid, String, Option<Uuid>, Value, String, Option<String>);
 
 /// `admin.act`'s fold (ADR-0097 d2; 0070): the first envelope inserts the
 /// act's row, effective or pending; a later one moves it only from a state

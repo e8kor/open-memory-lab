@@ -330,7 +330,7 @@ where
         // event, as the callers read it.
         let effect = reqs.last().map(|r| CommitReceipt {
             seq: r.event.envelope.seq,
-            hash: r.event.hash.clone(),
+            hash: r.event.hash,
         });
         let before = reqs.len();
         if let Some(act) = &act {
