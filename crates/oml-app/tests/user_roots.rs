@@ -6897,6 +6897,68 @@ async fn a_key_the_fix_admins_key_issued_settles_as_the_admins_person_after_a_re
     assert_eq!(stats.admin_person_only, 1, "{stats:?}");
 }
 
+/// #508 N1: alice's second admin key mints `carol/forged2`, alice's
+/// bootstrap admin key demotes carol's claim, and the second key is then
+/// relinked to bob, who accepts. `carol/forged2` now counts as bob, and its
+/// walk misses the fix's admin key, but its issuance recorded the person
+/// its issuer counted as, alice, so it settles the fix only as alice would:
+/// neither a confirm nor a revert, and the doctor count agrees (ADR-0097,
+/// amendment of 2026-11-27, answer 17).
+#[tokio::test]
+async fn a_key_counts_as_its_issuers_person_at_issuance_when_it_settles_a_fix() {
+    let r = fix_rig().await;
+    flag_admin(&r, "bob").await;
+    let admin = r.boot.admin_key.value.as_str();
+    let claim = carols_claim_by_admin_minted_keys(&r).await;
+    let second = r
+        .app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                user: None,
+                used_by: Some(UsedBy::Person),
+                person: Some(name("alice")),
+                ..user_req(Role::Admin, "unused", "alice/second", Vec::new())
+            },
+        )
+        .await
+        .expect("a second admin key alice holds");
+    accept_link(&r.app, &r.store, "alice", second.key_id).await;
+    let forged = user_reviewer(&r.app, second.value.as_str(), "carol", "carol/forged2").await;
+    let held = r
+        .store
+        .key(r.boot.tenant_id, forged.key_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert_eq!(held.issuer_person, Some(name("alice")), "recorded at issuance");
+    let fix = r
+        .app
+        .admin_fix(admin, &fix_req(oml_app::types::FixAct::Demote, claim, None))
+        .await
+        .expect("alice's admin key demotes carol's claim")
+        .fix()
+        .cloned()
+        .expect("a fix record");
+    assert_eq!(fix.admin_person, name("alice"));
+    r.app
+        .unlink_key_from_person(Bearer::Session(&r.ops), second.key_id.into())
+        .await
+        .expect("unlinked");
+    link_accepted(&r.app, &r.store, &r.ops, second.key_id, "bob").await;
+    for settle in [true, false] {
+        let err = if settle {
+            r.app.confirm_fix(&forged.value, fix.fix_id).await
+        } else {
+            r.app.revert_fix(&forged.value, fix.fix_id).await
+        }
+        .unwrap_err();
+        assert!(matches!(err, AppError::SamePerson), "{err:?}");
+    }
+    let listed = r.app.review_fixes(&forged.value).await.expect("list");
+    assert!(!listed[0].settles, "{listed:?}");
+}
+
 /// The re-verifier's sixth-round probe B: a person's reviewer key that
 /// counts as no one confirms no fix, so `oml doctor` does not count it as
 /// another person who could: with bob's reviewer key unlinked, only alice's

@@ -6644,6 +6644,7 @@ async fn operator_key(store: &MemStore, tenant: Uuid) -> String {
         link_pending: None,
         pending_act: None,
         suspended: None,
+        issuer_person: None,
     };
     seal_onto(
         store,

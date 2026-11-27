@@ -1180,6 +1180,7 @@ fn fold_poc_event(
                     link_pending: None,
                     pending_act: None,
                     suspended: None,
+                    issuer_person: None,
                 },
             );
         }

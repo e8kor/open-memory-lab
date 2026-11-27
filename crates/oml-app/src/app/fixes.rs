@@ -1447,6 +1447,7 @@ where
             link_pending: None,
             pending_act: None,
             suspended: None,
+            issuer_person: None,
         }
     }
 
@@ -1620,14 +1621,36 @@ where
     }
 
     /// Whether `key` acts for the person recorded on `fix` as its admin's:
-    /// on either reading of [`Self::acts_for`], or because the walk that
+    /// on either reading of [`Self::acts_for`], because the walk that
     /// counts its person passes through the fix's admin key
     /// ([`Self::counted_through`]), so a key that key issued stays the
     /// admin's person after the admin key is relinked to another (ADR-0089,
-    /// the reading of 2026-11-20).
+    /// the reading of 2026-11-20), or because a key on that walk was issued
+    /// by a key counting as the admin's person then ([`Self::issued_as`];
+    /// #508 N1).
     async fn acts_for_fix_admin(&self, key: &KeyRecord, fix: &FixRecord) -> Result<bool, AppError> {
         Ok(self.acts_for(key, &fix.admin_person).await?
-            || self.counted_through(key, fix.admin_key_id).await?)
+            || self.counted_through(key, fix.admin_key_id).await?
+            || self.issued_as(key, &fix.admin_person).await?)
+    }
+
+    /// Whether a key on the walk that counts `key`'s person, `key` itself
+    /// included, counts as its issuer and was issued by a key that counted
+    /// as `person` at that issuance (`issuer_person`): a user key that no
+    /// session serves, the keys [`Self::counted_person_of`] walks past. A
+    /// relink of the issuer after the issuance then moves nothing; a
+    /// person's tenant key and a session key count as their own link and
+    /// session, and their issuer is not read (ADR-0097, amendment of
+    /// 2026-11-27, answer 17; #508 N1). A walk that counts the key as no one
+    /// reads as issued as `person`, failing closed.
+    async fn issued_as(&self, key: &KeyRecord, person: &Name) -> Result<bool, AppError> {
+        Ok(self.counted_walk(key).await?.is_none_or(|walk| {
+            walk.iter().any(|k| {
+                k.user.is_some()
+                    && k.session_user.is_none()
+                    && k.issuer_person.as_ref() == Some(person)
+            })
+        }))
     }
 
     /// R2 by person over `m`'s lineage. The settler is read on both

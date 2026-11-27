@@ -3315,7 +3315,7 @@ fn workspace_from_row(row: &PgRow) -> Result<WorkspaceRecord, StoreError> {
 const KEY_COLUMNS: &str = "id, tenant_id, role, principal, used_by, default_workspace_id, \
      issued_by, hash, credential, name, crew_id, user_root_id, session_for, guardrail_scope, \
      profile, requests_per_minute, linked_user_id, link_pending_user_id, pending_act_id, \
-     suspended_cause, suspended_act_id, \
+     suspended_cause, suspended_act_id, issuer_person::text AS issuer_person, \
      to_char(suspended_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS suspended_at_signed, \
      to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
@@ -3513,6 +3513,7 @@ fn key_from_row(row: &PgRow) -> Result<KeyRecord, StoreError> {
         link_pending: row.try_get("link_pending_user_id").map_err(backend)?,
         pending_act: row.try_get("pending_act_id").map_err(backend)?,
         suspended: suspension_from_row(row)?,
+        issuer_person: stored_name(row, "issuer_person")?,
     })
 }
 
@@ -5538,14 +5539,15 @@ async fn apply_fold(
                 "INSERT INTO api_keys (id, tenant_id, hash, credential, role, principal, \
                  used_by, default_workspace_id, issued_by, issued_seq, name, crew_id, \
                  user_root_id, session_for, guardrail_scope, profile, expires_at, \
-                 requests_per_minute) \
+                 issuer_person, requests_per_minute) \
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, \
-                 ($17)::timestamptz, $18)"
+                 $17, ($18)::timestamptz, $19)"
             } else {
                 "INSERT INTO api_keys (id, tenant_id, hash, credential, role, principal, \
                  used_by, default_workspace_id, issued_by, issued_seq, name, crew_id, \
-                 user_root_id, session_for, guardrail_scope, profile) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)"
+                 user_root_id, session_for, guardrail_scope, profile, issuer_person) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, \
+                 $17)"
             };
             let mut insert = sqlx::query(insert)
                 .bind(k.key_id)
@@ -5563,7 +5565,8 @@ async fn apply_fold(
                 .bind(k.user)
                 .bind(k.session_user.as_ref().map(Name::as_str))
                 .bind(k.guardrail_scope.as_str())
-                .bind(k.profile.map(KeyProfile::as_str));
+                .bind(k.profile.map(KeyProfile::as_str))
+                .bind(k.issuer_person.as_ref().map(Name::as_str));
             if limited {
                 insert = insert
                     .bind(k.expiry.as_ref().map(EventTime::as_str))

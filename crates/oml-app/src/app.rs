@@ -3214,6 +3214,7 @@ where
             link_pending: None,
             pending_act: None,
             suspended: None,
+            issuer_person: None,
         };
         (record, value)
     }
@@ -3249,6 +3250,11 @@ where
         // The key's own rate, absent for a key with none (ADR-0079 d4).
         if let (Some(rate), Some(obj)) = (record.requests_per_minute, payload.as_object_mut()) {
             obj.insert("requests_per_minute".to_owned(), json!(rate));
+        }
+        // The issuer's person at issuance, absent for an issuer that counts
+        // as no person (ADR-0097, amendment of 2026-11-27, answer 17).
+        if let (Some(person), Some(obj)) = (&record.issuer_person, payload.as_object_mut()) {
+            obj.insert("issuer_person".to_owned(), json!(person.as_str()));
         }
         payload
     }
@@ -4621,6 +4627,10 @@ where
             user.as_ref().map(|u| u.id),
             Some(issuer.key_id),
         );
+        // The person the issuer counts as now, kept for the key's life, so a
+        // relink of the issuer later moves nothing a fix's settlement reads
+        // (ADR-0097, amendment of 2026-11-27, answer 17; #508 N1).
+        record.issuer_person = self.counted_person_of(&issuer).await?;
         // A session key has no value and so no hash: nothing can present it
         // (ADR-0045 d6).
         if let Issuance::Session(session_user) = how {
@@ -6158,7 +6168,7 @@ where
     /// counts the key as no one: a user key with no issuer, an issuer the
     /// tenant does not hold, or a chain longer than [`COUNTED_PERSON_DEPTH`]
     /// (ADR-0089 and ADR-0085 d16, the operator's decision of 2026-11-20).
-    async fn counted_walk(&self, key: &KeyRecord) -> Result<Option<Vec<KeyRecord>>, AppError> {
+    pub(crate) async fn counted_walk(&self, key: &KeyRecord) -> Result<Option<Vec<KeyRecord>>, AppError> {
         let mut walk = vec![key.clone()];
         for _ in 0..COUNTED_PERSON_DEPTH {
             let Some(key) = walk.last() else {

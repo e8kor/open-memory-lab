@@ -155,6 +155,13 @@ pub struct KeyRecord {
     /// it still reaches `/v2/whoami` and `POST /v2/keys/self/link` (d22,
     /// the production migration). `None` for every other key.
     pub suspended: Option<KeySuspension>,
+    /// The person the issuing key counted as at issuance, recorded the way
+    /// `author_person` is at a write (#448): a key counts as that person
+    /// too when it settles a fix, whatever its issuer's link becomes
+    /// (ADR-0097, amendment of 2026-11-27, answer 17; #508 N1). `None` for
+    /// a key whose issuer counted as no person, and for every key issued
+    /// before v0.8.6.
+    pub issuer_person: Option<Name>,
 }
 
 /// Why and since when a key is suspended (ADR-0097 d8, d21).
