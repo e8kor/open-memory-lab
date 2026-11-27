@@ -4652,6 +4652,20 @@ pub enum AppError {
         "a key acting for the author's person judges no version outside that person's root (review.author_in_lineage)"
     )]
     SamePerson,
+    /// An instruction verdict, a fix settlement or a ladder ratification
+    /// from a key that counts as no person (ADR-0097 d12): none of the
+    /// three is taken by such a key. `review.person_required` with
+    /// `details.reason: counts_as_no_person`.
+    #[error("a key that counts as no person takes no {act} (ADR-0097 d12; review.person_required)")]
+    CountsAsNoPerson { act: &'static str },
+    /// A ladder ratification by the proposer's person, or, where the
+    /// proposing key counts as no person, by the person of the admin who
+    /// issued it (ADR-0097 d17). `review.ratifier_is_proposer` with
+    /// `details.reason` `same_person` or `issued_the_proposer`.
+    #[error(
+        "the ratifier counts as the proposer's person (ADR-0097 d17; review.ratifier_is_proposer)"
+    )]
+    RatifierSamePerson { issued_the_proposer: bool },
     /// The edge is decided: ratified before this call, or by a commit that
     /// won the store's compare-and-set. Nothing was journalled.
     // reading: errors.md declares no edge-specific code; a verdict on a

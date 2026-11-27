@@ -4,6 +4,8 @@
 //! proposer against another person, and an in-progress workspace with held
 //! rows. Each test is named after the sentence it proves.
 
+mod counted;
+
 use oml_app::App;
 use oml_app::app::{WorkspaceOffer, WorkspaceOffers};
 use oml_app::domain::WorkspaceStatus;
@@ -143,6 +145,10 @@ async fn world() -> World {
     };
     let ann = person("ann-review").await;
     let bob = person("bob-review").await;
+    // Each person's reviewer key counts as its person, as a ladder
+    // ratification needs (ADR-0097 d12, d17).
+    counted::link_to(&app, &admin, ann.key_id, "annie").await;
+    counted::link_to(&app, &admin, bob.key_id, "bobby").await;
     World {
         app,
         boot,

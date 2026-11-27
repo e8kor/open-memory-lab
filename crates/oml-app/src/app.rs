@@ -6621,6 +6621,23 @@ where
                 "same_user": self.same_person(key.tenant_id, proposal.proposer_key_id, key).await?,
             }),
         )?;
+        // A `sole_admin` ratification by the proposer's own person is
+        // marked on the transition (ADR-0097 d17).
+        let event = if self.ratifier_person_rule(key, &proposal).await? {
+            let env = event.envelope;
+            let mut payload = env.payload;
+            payload["sole_admin"] = Value::Bool(true);
+            self.seal(
+                prev.as_ref(),
+                env.tenant_id,
+                &env.event_type,
+                &env.principal,
+                env.api_key_id,
+                payload,
+            )?
+        } else {
+            event
+        };
         self.commit(
             event,
             MetadataFold::TransitionRatified {
@@ -6705,7 +6722,86 @@ where
         // takes).
         ratify_check(proposal.from, ladder, node.status, proposal.to, &children)
             .map_err(refused)?;
+        self.ratifier_person_rule(key, &proposal).await?;
         Ok((proposal, node))
+    }
+
+    /// The ladder's two identities as two persons (ADR-0097 d12, d17): the
+    /// ratifier counts as a person, that person is not the proposer's, and,
+    /// where the proposing key counts as no person, not the person of the
+    /// admin who issued it, so one admin cannot propose through an agent
+    /// key they issued and ratify through their own session. Under
+    /// `sole_admin` a ratification by the proposer's own person, or by the
+    /// issuing admin's, is admitted, and the answer is `true`: the
+    /// transition is marked `sole_admin`. Refused: a ratifier that counts as
+    /// no person ([`AppError::CountsAsNoPerson`]) and the same person
+    /// ([`AppError::RatifierSamePerson`]).
+    pub(crate) async fn ratifier_person_rule(
+        &self,
+        key: &KeyRecord,
+        proposal: &TransitionRecord,
+    ) -> Result<bool, AppError> {
+        let Some(ratifier) = self.counted_person_of(key).await? else {
+            return Err(AppError::CountsAsNoPerson {
+                act: "ladder ratification",
+            });
+        };
+        let proposer = self
+            .journal
+            .key(key.tenant_id, proposal.proposer_key_id)
+            .await?;
+        let proposer_person = match &proposer {
+            Some(p) => self.counted_person_of(p).await?,
+            None => None,
+        };
+        let same = if proposer_person.as_ref() == Some(&ratifier) {
+            Some(false)
+        } else if proposer_person.is_none() {
+            // The admin act that issued the proposing key names its person;
+            // a key issued before admin acts were journalled is read off
+            // its issuer as it counts now.
+            let issuing = match proposer.as_ref() {
+                Some(p) => self.issuing_person(p).await?,
+                None => None,
+            };
+            (issuing.as_ref() == Some(&ratifier)).then_some(true)
+        } else {
+            None
+        };
+        match same {
+            None => Ok(false),
+            Some(_) if self.journal.admin_standing(key.tenant_id).await?.sole_admin => Ok(true),
+            Some(issued_the_proposer) => Err(AppError::RatifierSamePerson {
+                issued_the_proposer,
+            }),
+        }
+    }
+
+    /// The person of the admin who issued `key`: the `actor_person` of the
+    /// `issue_key` act that names it, and for a key issued before admin
+    /// acts were journalled, the person its issuer counts as (ADR-0097 d17).
+    async fn issuing_person(&self, key: &KeyRecord) -> Result<Option<Name>, AppError> {
+        let id = key.key_id.to_string();
+        if let Some(act) = self
+            .journal
+            .admin_acts(key.tenant_id, None)
+            .await?
+            .into_iter()
+            .find(|a| {
+                a.act == oml_domain::admin_act::AdminActKind::IssueKey
+                    && (a.effect.get("key_id").and_then(Value::as_str) == Some(id.as_str())
+                        || a.target.get("key_id").and_then(Value::as_str) == Some(id.as_str()))
+            })
+        {
+            return Ok(act.actor_person);
+        }
+        match key.issued_by {
+            Some(issuer) => match self.journal.key(key.tenant_id, issuer).await? {
+                Some(issuer) => self.counted_person_of(&issuer).await,
+                None => Ok(None),
+            },
+            None => Ok(None),
+        }
     }
 
     /// The lead's start on the names schema, before it serves: each chain of
@@ -8784,6 +8880,19 @@ where
                 key.crew_id.is_some(),
                 key.profile.is_some(),
             )?;
+        }
+        // An instruction verdict needs a key that counts as a person, not
+        // only a person's reviewer key: a minted `used_by: person` key that
+        // counts as no one approves no instruction (ADR-0097 d12). A
+        // knowledge verdict keeps key-level R2.
+        if verdict == Verdict::Approve
+            && (memory.kind.class().needs_person()
+                || replaced_kind.is_some_and(|k| k.class().needs_person()))
+            && self.counted_person_of(key).await?.is_none()
+        {
+            return Err(AppError::CountsAsNoPerson {
+                act: "instruction verdict",
+            });
         }
 
         let verdict_event = self.seal(

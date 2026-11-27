@@ -1938,3 +1938,324 @@ async fn no_creation_nests_under_another_creation_of_the_same_issuance() {
     assert!(matches!(err, AppError::NotFound), "{err:?}");
     assert_eq!(r.journal().await.len(), before, "nothing is journalled");
 }
+
+fn grant_on(node: &str, role: Role) -> GrantRequest {
+    GrantRequest {
+        node: by_name(node),
+        role,
+        deny: Vec::new(),
+        covers: Covers::Subtree,
+        create: false,
+    }
+}
+
+fn person_reviewer_req(principal: &str) -> IssueKeyRequest {
+    IssueKeyRequest {
+        role: Role::Reviewer,
+        principal: principal.to_owned(),
+        used_by: Some(UsedBy::Person),
+        grants: vec![grant_on("crew", Role::Reviewer)],
+        ..agent_req()
+    }
+}
+
+fn submit_req(idem: &str, kind: oml_app::domain::MemoryKind) -> oml_app::types::SubmitRequest {
+    oml_app::types::SubmitRequest {
+        on_similar: Default::default(),
+        anchor: None,
+        origin: None,
+        idempotency_key: idem.to_owned(),
+        claim_key: Some(format!("claim-{idem}")),
+        verb: None,
+        kind,
+        body: format!("the body of {idem}"),
+        workspace: Some(by_name("crew")),
+        derives_from: Vec::new(),
+        severity: None,
+        rule: None,
+        kind_fields: None,
+        valid_from: None,
+        valid_until: None,
+        format: None,
+        title: None,
+    }
+}
+
+async fn held(r: &Rig, writer: &IssuedKey, idem: &str, kind: oml_app::domain::MemoryKind) -> Uuid {
+    r.app
+        .submit_memory(writer.value.as_str(), &submit_req(idem, kind))
+        .await
+        .expect("submitted")
+        .receipt
+        .memory_id
+}
+
+/// A minted `used_by: person` reviewer key that counts as no person approves
+/// no instruction: d12 closes the minted-pair attack at the verdict, while a
+/// knowledge verdict keeps key-level R2 and the same key approves a fact.
+#[tokio::test]
+async fn an_instruction_verdict_from_a_key_that_counts_as_no_person_is_refused() {
+    let r = rig().await;
+    let writer = r
+        .app
+        .issue_key(r.admin(), &agent_req())
+        .await
+        .expect("a writer");
+    let minted = r
+        .app
+        .issue_key(r.admin(), &person_reviewer_req("minted"))
+        .await
+        .expect("a minted reviewer");
+    let steering = held(&r, &writer, "steer", oml_app::domain::MemoryKind::Steering).await;
+    let refused = r
+        .app
+        .post_verdict(
+            minted.value.as_str(),
+            steering,
+            oml_app::types::Verdict::Approve,
+            None,
+        )
+        .await
+        .expect_err("a key that counts as no person approves no instruction");
+    assert!(
+        matches!(refused, AppError::CountsAsNoPerson { .. }),
+        "{refused:?}"
+    );
+    let fact = held(&r, &writer, "fact", oml_app::domain::MemoryKind::Memory).await;
+    r.app
+        .post_verdict(
+            minted.value.as_str(),
+            fact,
+            oml_app::types::Verdict::Approve,
+            None,
+        )
+        .await
+        .expect("a knowledge verdict keeps key-level R2");
+}
+
+/// A crew's agent reviewer key still approves knowledge in production
+/// (ADR-0001 d5, "Agents approve knowledge", kept by ADR-0097 d12).
+#[tokio::test]
+async fn a_crew_agent_reviewer_key_still_approves_knowledge_in_production() {
+    let r = rig().await;
+    let writer = r
+        .app
+        .issue_key(r.admin(), &agent_req())
+        .await
+        .expect("a writer");
+    let agent = r
+        .app
+        .issue_key(
+            r.admin(),
+            &IssueKeyRequest {
+                role: Role::Reviewer,
+                principal: "crew-reviewer".to_owned(),
+                grants: vec![grant_on("crew", Role::Reviewer)],
+                ..agent_req()
+            },
+        )
+        .await
+        .expect("an agent reviewer");
+    let proposal = r
+        .app
+        .propose_transition(
+            r.admin(),
+            by_name("crew"),
+            oml_app::domain::WorkspaceStatus::Protected,
+        )
+        .await
+        .expect("a proposal");
+    r.admin_person("alice").await;
+    let admin = r.admin_session("alice").await;
+    r.app
+        .ratify_transition(
+            Bearer::Session(&admin),
+            by_name("crew"),
+            proposal.transition_id,
+        )
+        .await
+        .expect("a person ratifies the move to protected");
+    let fact = held(&r, &writer, "fact", oml_app::domain::MemoryKind::Memory).await;
+    r.app
+        .post_verdict(
+            agent.value.as_str(),
+            fact,
+            oml_app::types::Verdict::Approve,
+            None,
+        )
+        .await
+        .expect("an agent reviewer approves knowledge in a protected workspace");
+}
+
+/// The ladder's ratifier counts as a person (d12) other than the
+/// proposer's (d17): a key that counts as no one is refused, the
+/// proposer's own person is refused outside `sole_admin`, and another
+/// admin person ratifies.
+#[tokio::test]
+async fn a_ladder_ratifier_must_count_as_a_person_other_than_the_proposer() {
+    let r = rig().await;
+    r.admin_person("alice").await;
+    // Alice's own bearer key, linked while she is the only admin person.
+    let alice = r.linked_admin_key("alice").await;
+    r.admin_person("bob").await;
+    r.clock.advance(8 * DAY);
+    let minted = r
+        .app
+        .issue_key_with_reason(
+            r.admin(),
+            &person_reviewer_req("minted"),
+            Some("a reviewer"),
+        )
+        .await
+        .expect("a pending reviewer");
+    let bob = r.admin_session("bob").await;
+    r.app
+        .confirm_admin_act(Bearer::Session(&bob), minted.pending_act.expect("pending"))
+        .await
+        .expect("bob confirms");
+    let proposal = r
+        .app
+        .propose_transition(
+            alice.value.as_str(),
+            by_name("crew"),
+            oml_app::domain::WorkspaceStatus::Protected,
+        )
+        .await
+        .expect("alice proposes");
+    let none = r
+        .app
+        .ratify_transition(
+            minted.value.as_str(),
+            by_name("crew"),
+            proposal.transition_id,
+        )
+        .await
+        .expect_err("a key that counts as no person ratifies nothing");
+    assert!(
+        matches!(none, AppError::CountsAsNoPerson { .. }),
+        "{none:?}"
+    );
+    let alice_review = r.admin_session("alice").await;
+    let same = r
+        .app
+        .ratify_transition(
+            Bearer::Session(&alice_review),
+            by_name("crew"),
+            proposal.transition_id,
+        )
+        .await
+        .expect_err("the proposer's own person ratifies nothing");
+    assert!(
+        matches!(
+            same,
+            AppError::RatifierSamePerson {
+                issued_the_proposer: false
+            }
+        ),
+        "{same:?}"
+    );
+    r.app
+        .ratify_transition(
+            Bearer::Session(&bob),
+            by_name("crew"),
+            proposal.transition_id,
+        )
+        .await
+        .expect("another admin person ratifies");
+}
+
+/// One admin cannot propose through an agent key they issued and ratify
+/// through their own session (d17, the operator's decision of 2026-11-26).
+#[tokio::test]
+async fn an_admin_cannot_ratify_a_proposal_from_an_agent_key_they_issued() {
+    let r = two_admins().await;
+    let alice = r.admin_session("alice").await;
+    let agent = r
+        .app
+        .issue_key_with_reason(
+            Bearer::Session(&alice),
+            &IssueKeyRequest {
+                role: Role::Reviewer,
+                principal: "alice-agent".to_owned(),
+                grants: vec![grant_on("crew", Role::Reviewer)],
+                ..agent_req()
+            },
+            Some("an agent reviewer"),
+        )
+        .await
+        .expect("a pending agent key");
+    let bob = r.admin_session("bob").await;
+    r.app
+        .confirm_admin_act(Bearer::Session(&bob), agent.pending_act.expect("pending"))
+        .await
+        .expect("bob confirms");
+    let proposal = r
+        .app
+        .propose_transition(
+            agent.value.as_str(),
+            by_name("crew"),
+            oml_app::domain::WorkspaceStatus::Protected,
+        )
+        .await
+        .expect("the agent proposes");
+    let refused = r
+        .app
+        .ratify_transition(
+            Bearer::Session(&alice),
+            by_name("crew"),
+            proposal.transition_id,
+        )
+        .await
+        .expect_err("the issuing admin ratifies nothing");
+    assert!(
+        matches!(
+            refused,
+            AppError::RatifierSamePerson {
+                issued_the_proposer: true
+            }
+        ),
+        "{refused:?}"
+    );
+    r.app
+        .ratify_transition(
+            Bearer::Session(&bob),
+            by_name("crew"),
+            proposal.transition_id,
+        )
+        .await
+        .expect("another admin person ratifies");
+}
+
+/// Under `sole_admin` a one-person tenant still moves the ladder: the
+/// proposer's own person ratifies, and the transition is marked (d17).
+#[tokio::test]
+async fn a_sole_admin_ratification_by_the_proposers_own_person_is_admitted_and_marked() {
+    let r = rig().await;
+    r.admin_person("alice").await;
+    let alice = r.linked_admin_key("alice").await;
+    let proposal = r
+        .app
+        .propose_transition(
+            alice.value.as_str(),
+            by_name("crew"),
+            oml_app::domain::WorkspaceStatus::Protected,
+        )
+        .await
+        .expect("alice proposes");
+    let again = r.admin_session("alice").await;
+    r.app
+        .ratify_transition(
+            Bearer::Session(&again),
+            by_name("crew"),
+            proposal.transition_id,
+        )
+        .await
+        .expect("a sole_admin ratification by the proposer's person");
+    let events = r.journal().await;
+    let ratified = events
+        .iter()
+        .rev()
+        .find(|e| e.envelope.event_type == event_types::WORKSPACE_STATUS_TRANSITION)
+        .expect("the transition");
+    assert_eq!(ratified.envelope.payload["sole_admin"], true);
+}
