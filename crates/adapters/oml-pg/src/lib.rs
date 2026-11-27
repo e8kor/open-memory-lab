@@ -13663,6 +13663,15 @@ impl WebStore for PgStore {
         .await
     }
 
+    async fn web_keys_issued_by(
+        &self,
+        tenant_id: Uuid,
+        issuer: Uuid,
+    ) -> Result<Vec<KeyRecord>, StoreError> {
+        self.keys_where(tenant_id, "issued_by = $2", |q| q.bind(issuer))
+            .await
+    }
+
     async fn web_pending_links(&self, tenant_id: Uuid) -> Result<Vec<KeyRecord>, StoreError> {
         self.keys_where(
             tenant_id,

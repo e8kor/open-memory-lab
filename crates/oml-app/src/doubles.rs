@@ -1000,6 +1000,17 @@ impl MemStore {
         }
     }
 
+    /// Points a key row's `issued_by` at `issuer`, as no verb does: a
+    /// fixture for doctor's flag of a server-issuer issuance outside the
+    /// session-key shapes (ADR-0097 d18).
+    pub fn set_key_issuer(&self, tenant_id: Uuid, key_id: Uuid, issuer: Uuid) {
+        let tenant = self.tenant(tenant_id);
+        let mut state = tenant.lock().expect("tenant lock");
+        if let Some(key) = state.keys.get_mut(&key_id) {
+            key.issued_by = Some(issuer);
+        }
+    }
+
     /// Marks a key row revoked at `at`, as only the issuance's own cleanup
     /// does: a fixture for a linked key revoked after its link (ADR-0085
     /// d16).
@@ -6771,6 +6782,14 @@ impl WebStore for MemStore {
                 && k.credential == Credential::Bearer
                 && k.linked_user.is_none()
         }))
+    }
+
+    async fn web_keys_issued_by(
+        &self,
+        tenant_id: Uuid,
+        issuer: Uuid,
+    ) -> Result<Vec<KeyRecord>, StoreError> {
+        Ok(self.tenant_keys(tenant_id, |k| k.issued_by == Some(issuer)))
     }
 
     async fn web_pending_links(&self, tenant_id: Uuid) -> Result<Vec<KeyRecord>, StoreError> {

@@ -2415,6 +2415,15 @@ pub trait WebStore: JournalStore {
         tenant_id: Uuid,
     ) -> impl Future<Output = Result<Vec<KeyRecord>, StoreError>> + Send;
 
+    /// Every key of the tenant `issuer` issued, revoked ones included, in
+    /// name order: doctor reads the server issuer's issuances against the
+    /// four session-key shapes (ADR-0097 d18).
+    fn web_keys_issued_by(
+        &self,
+        tenant_id: Uuid,
+        issuer: Uuid,
+    ) -> impl Future<Output = Result<Vec<KeyRecord>, StoreError>> + Send;
+
     /// The tenant's live keys whose link waits on its person's acceptance,
     /// in name order (ADR-0085 d16, the operator's decision of 2026-11-19).
     fn web_pending_links(
@@ -3520,4 +3529,18 @@ impl Formats for ProseFormats {
     fn adapters(&self) -> Vec<&'static str> {
         vec!["identity/1"]
     }
+}
+
+/// The outbound mail relay (ADR-0097 d20; answer 14 of 2026-11-27): plain
+/// SMTP to one local relay the host configures, which handles TLS and
+/// authentication, so the server holds no mail credential. The composition
+/// supplies it; a send that fails names its reason, and the act it tells
+/// about stands.
+pub trait Mailer: Send + Sync {
+    /// Hands `mail` to the relay, or names why the relay refused it or
+    /// could not be reached. The reason never carries an address.
+    fn send<'a>(
+        &'a self,
+        mail: &'a crate::types::OutboundMail,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
 }

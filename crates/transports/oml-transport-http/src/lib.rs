@@ -28,6 +28,7 @@ mod imports;
 pub mod mcp;
 mod metering;
 pub mod oauth;
+pub mod operator;
 mod public;
 mod rescan;
 mod search;
@@ -191,6 +192,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/admin/acts/{act}/decline"),
     ("POST", "/v2/admin/acts/{act}/contest"),
     ("POST", "/v2/admin/acts/{act}/settle"),
+    ("POST", "/v2/operator/tenants/{tenant}/acts/{act}/settle"),
     ("GET", "/v2/review/fixes"),
     ("POST", "/v2/review/fixes/{fix_id}/confirm"),
     ("POST", "/v2/review/fixes/{fix_id}/revert"),
@@ -315,6 +317,13 @@ pub struct ApiState<J, S, C, I, Sc> {
     /// The identity `oml-web` proves to present a capacity credential
     /// (ADR-0070 d2).
     web_client: session::WebClient,
+    /// The operator tokens this start wrote, one per tenant (ADR-0097
+    /// d19; answer 13); none, and the operator route refuses every call.
+    operator: Arc<operator::OperatorTokens>,
+    /// The mail relay, where the composition configured one (d20; answer
+    /// 14), and what it did since the start.
+    mailer: Option<Arc<dyn oml_app::ports::Mailer>>,
+    mail_health: Arc<operator::MailHealth>,
 }
 
 impl<J: Clone, S, C, I, Sc> Clone for ApiState<J, S, C, I, Sc> {
@@ -333,6 +342,9 @@ impl<J: Clone, S, C, I, Sc> Clone for ApiState<J, S, C, I, Sc> {
             traffic: self.traffic.clone(),
             web: self.web.clone(),
             web_client: self.web_client.clone(),
+            operator: Arc::clone(&self.operator),
+            mailer: self.mailer.clone(),
+            mail_health: Arc::clone(&self.mail_health),
         }
     }
 }
@@ -481,6 +493,9 @@ where
             ("POST", "/v2/admin/acts/{act}/decline") => post(Self::admin_act_decline_route),
             ("POST", "/v2/admin/acts/{act}/contest") => post(Self::admin_act_contest_route),
             ("POST", "/v2/admin/acts/{act}/settle") => post(Self::admin_act_settle_route),
+            ("POST", "/v2/operator/tenants/{tenant}/acts/{act}/settle") => {
+                post(Self::operator_settle_route)
+            }
             ("GET", "/v2/review/fixes") => get(Self::review_fixes_route),
             ("POST", "/v2/review/fixes/{fix_id}/confirm") => post(Self::fix_confirm_route),
             ("POST", "/v2/review/fixes/{fix_id}/revert") => post(Self::fix_revert_route),
@@ -552,6 +567,9 @@ where
             traffic: traffic::Traffic::default(),
             web: None,
             web_client: session::WebClient::default(),
+            operator: Arc::default(),
+            mailer: None,
+            mail_health: Arc::default(),
         }
     }
 
@@ -588,6 +606,21 @@ where
     #[must_use]
     pub fn with_web_client(mut self, web_client: session::WebClient) -> Self {
         self.web_client = web_client;
+        self
+    }
+
+    /// The operator tokens the start wrote (ADR-0097 d19; answer 13).
+    #[must_use]
+    pub fn with_operator_tokens(mut self, tokens: operator::OperatorTokens) -> Self {
+        self.operator = Arc::new(tokens);
+        self
+    }
+
+    /// The mail relay the recovery and settlement emails go to (ADR-0097
+    /// d20; answer 14).
+    #[must_use]
+    pub fn with_mailer(mut self, mailer: Arc<dyn oml_app::ports::Mailer>) -> Self {
+        self.mailer = Some(mailer);
         self
     }
 
@@ -661,6 +694,10 @@ where
             // credential, `none` where neither is set: doctor warns then,
             // and every capacity credential is refused (ADR-0070 d2).
             "web_client": st.web_client.identity(),
+            // Whether this start wrote its operator tokens: doctor's
+            // operator.token_unwritten reads it (ADR-0097 d19; answer 13).
+            // No count: the probe answers anyone.
+            "operator_tokens": st.operator.state(),
             // The claim formats this build serves and the adapters that
             // derive their search text: doctor's formats line reads them
             // (ADR-0056 d14).

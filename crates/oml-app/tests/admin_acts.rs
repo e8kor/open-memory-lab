@@ -1525,6 +1525,219 @@ async fn below_three_admins_an_act_against_an_admin_freezes_both_sides() {
     );
 }
 
+/// Two admin persons: bob, with an admin key of his own issued while he
+/// was the one admin person, and alice; both counted eight days on.
+async fn two_admins_bob_keyed() -> (Rig, IssuedKey) {
+    let r = rig().await;
+    r.admin_person("bob").await;
+    let bobs = r.linked_admin_key("bob").await;
+    r.admin_person("alice").await;
+    r.clock.advance(8 * DAY);
+    (r, bobs)
+}
+
+/// Alice un-flags bob below three admin persons: a freeze.
+async fn frozen_unflag(r: &Rig) -> oml_app::types::AdminActRecord {
+    let alice = r.admin_session("alice").await;
+    r.app
+        .allow_web_email_with_reason(
+            Bearer::Session(&alice),
+            &entry_of("bob", false),
+            true,
+            Some("a dispute"),
+        )
+        .await
+        .expect("alice un-flags bob");
+    last_act(r, "unflag_admin").await
+}
+
+/// The operator's settlement confirms or reverses the contested act of a
+/// freeze open 24 hours, and does nothing else: confirmed, the target's
+/// suspended admin keys are revoked and the freeze ends; one commit holds
+/// the settled `admin.act`, `operator.settlement`, the revocation and a
+/// `settlement` notice to every admin person, and the email goes to both
+/// (ADR-0097 d19, d20).
+#[tokio::test]
+async fn settlement_confirms_or_reverses_the_contested_act_and_nothing_else() {
+    let (r, bobs) = two_admins_bob_keyed().await;
+    let act = frozen_unflag(&r).await;
+    let err = r
+        .app
+        .operator_settle(r.boot.tenant_id, act.act_id, true)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::AdminAct(AdminActRefusal::FreezeTooRecent)),
+        "{err:?}"
+    );
+    r.clock.advance(DAY + 60);
+    let before = r.journal().await.len();
+    let settled = r
+        .app
+        .operator_settle(r.boot.tenant_id, act.act_id, true)
+        .await
+        .expect("the operator confirms");
+    assert_eq!(settled.act.state, AdminActState::Settled);
+    assert_eq!(settled.act.confirmed_by_person, None);
+    assert_eq!(settled.act.settled_by_key_id, None);
+    let events = r.journal().await;
+    let types: Vec<&str> = events[before..]
+        .iter()
+        .map(|e| e.envelope.event_type.as_str())
+        .collect();
+    assert_eq!(
+        types,
+        [
+            event_types::ADMIN_ACT,
+            event_types::OPERATOR_SETTLEMENT,
+            event_types::KEY_REVOKED,
+            event_types::NOTICE_WRITTEN,
+        ],
+        "the settlement issues no key and changes nothing else"
+    );
+    let settlement = &events[before + 1].envelope;
+    assert_eq!(settlement.principal, oml_app::app::OPERATOR_PRINCIPAL);
+    assert_eq!(settlement.api_key_id, None, "no key acts");
+    assert_eq!(settlement.payload["outcome"], "confirmed");
+    assert_eq!(settlement.payload["act_id"], act.act_id.to_string());
+    let notice = &events[before + 3].envelope.payload;
+    assert_eq!(notice["kind"], "settlement");
+    assert_eq!(notice["recipients"], serde_json::json!(["alice", "bob"]));
+    assert_eq!(
+        settled.notified,
+        vec![name("alice"), name("bob")],
+        "every admin person and both parties"
+    );
+    let mut to: Vec<String> = settled
+        .mail
+        .to
+        .iter()
+        .map(|e| e.as_str().to_owned())
+        .collect();
+    to.sort();
+    assert_eq!(to, ["alice@example.com", "bob@example.com"]);
+    let key = r
+        .store
+        .key(r.boot.tenant_id, bobs.key_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert!(key.revoked_at.is_some(), "confirmed: bob's key is revoked");
+    assert!(
+        r.app
+            .freeze(r.boot.tenant_id)
+            .await
+            .expect("read")
+            .is_none(),
+        "the freeze ends"
+    );
+    let err = r
+        .app
+        .operator_settle(r.boot.tenant_id, act.act_id, false)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::AdminAct(AdminActRefusal::NotFrozen)),
+        "a settled act is settled once: {err:?}"
+    );
+}
+
+/// The operator's reversal gives the target back the flag and lifts the
+/// suspension of their admin keys (ADR-0097 d8, d19).
+#[tokio::test]
+async fn an_operator_reversal_restores_the_flag_and_lifts_the_suspension() {
+    let (r, bobs) = two_admins_bob_keyed().await;
+    let act = frozen_unflag(&r).await;
+    let err = r
+        .app
+        .admin_acts(bobs.value.as_str(), None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::KeySuspended), "{err:?}");
+    r.clock.advance(DAY + 60);
+    r.app
+        .operator_settle(r.boot.tenant_id, act.act_id, false)
+        .await
+        .expect("the operator reverses");
+    let entry = r
+        .store
+        .web_entry_by_email(&entry_of("bob", true).email.digest())
+        .await
+        .expect("read")
+        .expect("bob's entry");
+    assert!(entry.admin, "the flag comes back");
+    r.app
+        .admin_acts(bobs.value.as_str(), None)
+        .await
+        .expect("reversed: the suspension lifts");
+}
+
+/// With three or more admin persons no freeze opens, so the host settles
+/// nothing: a third admin person settles in the tenant (ADR-0097 d8, d19).
+#[tokio::test]
+async fn the_operator_settles_only_a_freeze() {
+    let (r, _) = three_admins().await;
+    let alice = r.admin_session("alice").await;
+    r.app
+        .allow_web_email_with_reason(
+            Bearer::Session(&alice),
+            &entry_of("carol", false),
+            true,
+            Some("a dispute"),
+        )
+        .await
+        .expect("alice un-flags carol");
+    let act = last_act(&r, "unflag_admin").await;
+    r.clock.advance(2 * DAY);
+    let err = r
+        .app
+        .operator_settle(r.boot.tenant_id, act.act_id, true)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::AdminAct(AdminActRefusal::NotFrozen)),
+        "{err:?}"
+    );
+    let stats = r.app.fix_stats(r.boot.tenant_id).await.expect("stats");
+    assert_eq!(stats.settlements_due, 0);
+}
+
+/// Doctor counts a freeze the operator may settle once it is 24 hours old
+/// (`operator.settlement_due`, ADR-0097 d19).
+#[tokio::test]
+async fn a_freeze_open_a_day_is_due_for_the_operators_settlement() {
+    let (r, _) = two_admins_bob_keyed().await;
+    frozen_unflag(&r).await;
+    let stats = r.app.fix_stats(r.boot.tenant_id).await.expect("stats");
+    assert_eq!((stats.disputes_open, stats.settlements_due), (1, 0));
+    r.clock.advance(DAY);
+    let stats = r.app.fix_stats(r.boot.tenant_id).await.expect("stats");
+    assert_eq!((stats.disputes_open, stats.settlements_due), (1, 1));
+}
+
+/// Doctor flags any key the server issuer issued that is not one of the
+/// four session-key shapes, and none of the session keys it issues
+/// (`key.issuer_unexpected_shape`, ADR-0097 d18).
+#[tokio::test]
+async fn doctor_flags_a_server_issuer_key_outside_the_session_key_shapes() {
+    let r = rig().await;
+    r.admin_person("alice").await;
+    let stats = r.app.fix_stats(r.boot.tenant_id).await.expect("stats");
+    assert_eq!(stats.issuer_unexpected_shape, 0, "alice's session keys");
+    let agent = r
+        .app
+        .issue_key(r.admin(), &agent_req())
+        .await
+        .expect("an agent key");
+    r.store.set_key_issuer(
+        r.boot.tenant_id,
+        agent.key_id,
+        oml_app::app::server_issuer_id(r.boot.tenant_id),
+    );
+    let stats = r.app.fix_stats(r.boot.tenant_id).await.expect("stats");
+    assert_eq!(stats.issuer_unexpected_shape, 1);
+}
+
 /// The upgrade window: an admin key with no accepted link is suspended at
 /// the start, still reaches whoami and its self-link, and authenticates
 /// again once its person accepts the link (ADR-0097 d21, d22).

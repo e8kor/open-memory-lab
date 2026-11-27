@@ -101,6 +101,16 @@ fn report_json(
                 .collect(),
         );
         obj.insert("public_ineligible".to_owned(), json!(public.ineligible));
+        // Doctor's `operator.settlement_due` (ADR-0097 d19) and
+        // `key.issuer_unexpected_shape` (d18).
+        obj.insert(
+            "operator_settlements_due".to_owned(),
+            json!(fixes.settlements_due),
+        );
+        obj.insert(
+            "key_issuer_unexpected_shape".to_owned(),
+            json!(fixes.issuer_unexpected_shape),
+        );
     }
     report
 }
@@ -188,6 +198,11 @@ where
                 .await
                 .map_err(|e| map_app_error(e, ErrorContext::Write))?;
             let mut body = report_json(&report, &fixes, &public);
+            // Doctor's `notice.mail_unconfigured` and
+            // `notice.mail_delivery_failed` (ADR-0097 d20; answer 14).
+            if let (Some(obj), Value::Object(mail)) = (body.as_object_mut(), st.mail_report()) {
+                obj.extend(mail);
+            }
             // Doctor's `workspace.flagged_creates` (ADR-0097 d31, the
             // operator's decision of 2026-11-27).
             if let Some(obj) = body.as_object_mut() {

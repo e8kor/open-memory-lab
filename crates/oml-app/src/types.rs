@@ -512,6 +512,12 @@ pub enum AdminActRefusal {
     /// Below three admin persons the act is settled by the operator from
     /// the host, not in the tenant (d8, d19).
     FewerThanThree,
+    /// The operator settles only the act of a freeze: an open contestable
+    /// act below three admin persons (d19).
+    NotFrozen,
+    /// The operator settles a freeze only once it has been open 24 hours,
+    /// a placeholder (d19).
+    FreezeTooRecent,
 }
 
 impl AdminActRefusal {
@@ -530,6 +536,8 @@ impl AdminActRefusal {
             AdminActRefusal::NotTarget => "not_target",
             AdminActRefusal::NotSettler => "not_settler",
             AdminActRefusal::FewerThanThree => "fewer_than_three",
+            AdminActRefusal::NotFrozen => "not_frozen",
+            AdminActRefusal::FreezeTooRecent => "freeze_too_recent",
         }
     }
 
@@ -565,6 +573,12 @@ impl AdminActRefusal {
             }
             AdminActRefusal::FewerThanThree => {
                 "below three admin persons the operator settles the act from the host"
+            }
+            AdminActRefusal::NotFrozen => {
+                "the operator settles only the act of a freeze: an open act against an admin below three admin persons"
+            }
+            AdminActRefusal::FreezeTooRecent => {
+                "the operator settles a freeze only once it has been open 24 hours"
             }
         }
     }
@@ -4422,6 +4436,26 @@ pub struct FixRecord {
     /// The later fix that took over this one's mark, for a fix
     /// [`FixState::Superseded`] (ADR-0089 d17).
     pub superseded_by: Option<Uuid>,
+}
+
+/// One email the server hands to the mail relay (ADR-0097 d20; answer
+/// 14): a recovery or settlement notice, plain text, to every admin
+/// person of the tenant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutboundMail {
+    pub to: Vec<oml_domain::web::Email>,
+    pub subject: String,
+    pub body: String,
+}
+
+/// What the operator's host settlement of a freeze did (ADR-0097 d19): the
+/// settled act, the persons its notice went to, and the email the
+/// composition sends to the relay after the commit.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OperatorSettlement {
+    pub act: AdminActRecord,
+    pub notified: Vec<Name>,
+    pub mail: OutboundMail,
 }
 
 /// One notice to one person (ADR-0097 d20): what it tells about, the admin

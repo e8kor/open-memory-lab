@@ -24,8 +24,16 @@ use super::{App, commit_request, require_role};
 use crate::ports::{Clock, IdGen, MetadataFold, Scanner, Signer, WebStore};
 use crate::types::{
     AdminActRecord, AdminActRefusal, AppError, Bearer, Credential, KeyRecord, KeySuspension,
-    SuspensionCause, WebEmailRequest, WebEntry,
+    OperatorSettlement, OutboundMail, SuspensionCause, WebEmailRequest, WebEntry,
 };
+
+/// The principal the operator's host acts seal under, with no key acting
+/// (ADR-0097 d19).
+pub const OPERATOR_PRINCIPAL: &str = "oml:operator";
+
+/// How long a freeze is open before the operator may settle it from the
+/// host: 24 hours, a placeholder (ADR-0097 d19).
+pub const OPERATOR_SETTLE_AFTER_US: i64 = 24 * 3_600 * 1_000_000;
 
 /// The links a chain ends with, appended in order.
 type Links = Vec<(SignedEnvelope, MetadataFold)>;
@@ -63,6 +71,23 @@ fn target_user(act: &AdminActRecord) -> Option<Name> {
         .get("user")
         .and_then(Value::as_str)
         .and_then(|u| Name::parse(u).ok())
+}
+
+/// Whether `key` is one of the four session-key shapes the server issuer
+/// issues (ADR-0097 d18; ADR-0045 d6).
+fn session_key_shape(key: &KeyRecord) -> bool {
+    let (Some(user), Some(name)) = (&key.session_user, &key.name) else {
+        return false;
+    };
+    key.credential == Credential::Session
+        && oml_domain::web::SESSION_KEY_SUFFIXES.iter().any(|suffix| {
+            let role = match *suffix {
+                "web" => Role::Contributor,
+                "review" => Role::Reviewer,
+                _ => Role::Admin,
+            };
+            name.as_str() == format!("{}-{suffix}", user.as_str()) && key.role == role
+        })
 }
 
 impl<J, S, C, I, Sc> App<J, S, C, I, Sc>
@@ -474,18 +499,211 @@ where
         act.state = AdminActState::Settled;
         act.confirmed_by_person = if confirm { settler } else { None };
         act.settled_by_key_id = Some(admin.key_id);
+        let by = Sealer::of(&admin);
         let prev = self.head_event(tenant_id).await?;
         let event = self.seal(
             prev.as_ref(),
             tenant_id,
             event_types::ADMIN_ACT,
-            &admin.principal,
-            Some(admin.key_id),
+            &by.principal,
+            by.key_id,
             act_payload(&act),
         )?;
         let at = event.envelope.at.clone();
         let mut links: Links = vec![(event, MetadataFold::AdminAct(Box::new(act.clone())))];
-        let suspended: Vec<KeyRecord> = match &target {
+        self.settlement_links(&by, &admin, &act, confirm, contested, &mut links)
+            .await?;
+        self.commit_links(links).await?;
+        act.settled_at = Some(at);
+        Ok(act)
+    }
+
+    /// `POST /v2/operator/tenants/{tenant}/acts/{act}/settle` (ADR-0097
+    /// d19): the operator, from the host, confirms or reverses the
+    /// contested act of a freeze open at least 24 hours, a placeholder. The
+    /// composition has checked the host's per-tenant token; no key acts.
+    /// The settlement does what a third admin person's does (d8): confirmed,
+    /// the target's suspended admin keys are revoked, `cause: settlement`;
+    /// reversed, the suspension lifts and the entry is restored. It issues
+    /// no key and reads no content. In one commit: the settled `admin.act`,
+    /// naming no settler, `operator.settlement`, the effect's events, and a
+    /// `settlement` notice to every admin person and both parties (d20).
+    /// The answer carries the notice's email for the composition to send.
+    ///
+    /// # Errors
+    /// `not_frozen` for an act that is not an open act against an admin
+    /// below three admin persons, `freeze_too_recent` before 24 hours, an
+    /// act the tenant does not hold, and the store's.
+    pub async fn operator_settle(
+        &self,
+        tenant_id: Uuid,
+        act_id: Uuid,
+        confirm: bool,
+    ) -> Result<OperatorSettlement, AppError> {
+        let mut act = self
+            .journal
+            .admin_act(tenant_id, act_id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        if !act.act.contestable()
+            || !matches!(
+                act.state,
+                AdminActState::Effective | AdminActState::Contested
+            )
+            || self.dispute_admins(tenant_id).await? >= 3
+        {
+            return Err(AppError::AdminAct(AdminActRefusal::NotFrozen));
+        }
+        let now = self.clock.now();
+        if now.unix_micros().saturating_sub(act.at.unix_micros()) < OPERATOR_SETTLE_AFTER_US {
+            return Err(AppError::AdminAct(AdminActRefusal::FreezeTooRecent));
+        }
+        // The entry is restored or taken again as the act's own admin key
+        // set it, as a contest restores it; the events are sealed as the
+        // operator, with no key acting.
+        let actor_key = match act.actor_key_id {
+            Some(id) => self.journal.key(tenant_id, id).await?,
+            None => None,
+        }
+        .ok_or_else(|| {
+            AppError::StoredResponse(format!("admin act {act_id} names no actor key"))
+        })?;
+        let by = Sealer {
+            tenant_id,
+            principal: OPERATOR_PRINCIPAL.to_owned(),
+            key_id: None,
+        };
+        let contested = act.state == AdminActState::Contested;
+        let freeze_opened_at = act.at.clone();
+        act.state = AdminActState::Settled;
+        act.confirmed_by_person = None;
+        act.settled_by_key_id = None;
+        let target = target_user(&act);
+        let prev = self.head_event(tenant_id).await?;
+        let event = self.seal(
+            prev.as_ref(),
+            tenant_id,
+            event_types::ADMIN_ACT,
+            &by.principal,
+            None,
+            act_payload(&act),
+        )?;
+        let at = event.envelope.at.clone();
+        let mut links: Links = vec![(event, MetadataFold::AdminAct(Box::new(act.clone())))];
+        let outcome = if confirm { "confirmed" } else { "reversed" };
+        self.push_link(
+            &by,
+            act_id,
+            &mut links,
+            event_types::OPERATOR_SETTLEMENT,
+            json!({
+                "outcome": outcome,
+                "act": act.act.as_str(),
+                "initiator": act.actor_person.as_ref().map(Name::as_str),
+                "target": target.as_ref().map(Name::as_str),
+                "freeze_opened_at": freeze_opened_at.as_str(),
+            }),
+            MetadataFold::AdminRead,
+        )?;
+        self.settlement_links(&by, &actor_key, &act, confirm, contested, &mut links)
+            .await?;
+        let mut recipients = self.admin_persons(tenant_id).await?;
+        recipients.extend(act.actor_person.clone());
+        recipients.extend(target.clone());
+        let detail = json!({
+            "act": act.act.as_str(),
+            "target": act.target,
+            "actor_person": act.actor_person.as_ref().map(Name::as_str),
+            "outcome": outcome,
+        });
+        let notified: Vec<Name> = recipients.iter().cloned().collect();
+        let last = links.last().map(|(e, _)| e.clone()).expect("a link");
+        links.push(self.notice_link(
+            &last,
+            Some(act_id),
+            super::notices::NoticeSpec {
+                kind: oml_domain::notice::NoticeKind::Settlement,
+                recipients,
+                detail,
+            },
+        )?);
+        self.commit_links(links).await?;
+        act.settled_at = Some(at);
+        let mut to = self.entry_emails(tenant_id, &notified).await?;
+        if let Ok((email, _, _)) = Self::before_entry(&act)
+            && !to.contains(&email)
+        {
+            to.push(email);
+        }
+        let mail = OutboundMail {
+            to,
+            subject: "OML: the operator settled an act against an admin person".to_owned(),
+            body: format!(
+                "The operator settled an act against an admin person from the host.\n\n\
+                 Tenant: {tenant_id}\n\
+                 Act: {act_id} ({kind})\n\
+                 Outcome: {outcome}\n\
+                 Initiator: {initiator}\n\
+                 Target: {target}\n\n\
+                 The settlement is journalled as operator.settlement, and each admin person \
+                 finds its notice in To do on the console.\n",
+                kind = act.act.as_str(),
+                initiator = act.actor_person.as_ref().map_or("none", Name::as_str),
+                target = target.as_ref().map_or("none", Name::as_str),
+            ),
+        };
+        Ok(OperatorSettlement {
+            act,
+            notified,
+            mail,
+        })
+    }
+
+    /// The addresses of the entries naming any of `persons`, a disabled or
+    /// pending entry included: a recovery or settlement email goes to the
+    /// admin persons who see nothing in-product (ADR-0097 d20).
+    async fn entry_emails(
+        &self,
+        tenant_id: Uuid,
+        persons: &[Name],
+    ) -> Result<Vec<Email>, AppError> {
+        const PAGE: usize = 200;
+        let mut found = Vec::new();
+        let mut after = None;
+        loop {
+            let page = self
+                .journal
+                .web_entries(tenant_id, after.as_ref(), PAGE)
+                .await?;
+            for entry in &page {
+                if persons.contains(&entry.user) && !found.contains(&entry.email) {
+                    found.push(entry.email.clone());
+                }
+            }
+            match page.last() {
+                Some(last) if page.len() == PAGE => after = Some(last.email.digest()),
+                _ => return Ok(found),
+            }
+        }
+    }
+
+    /// What a settlement does after its settled `admin.act` link, whoever
+    /// settles (ADR-0097 d8, d19): confirmed, the target's admin keys the
+    /// act suspended are revoked, `cause: settlement`, and a contest's
+    /// restoration is undone; reversed, the suspension lifts and the entry
+    /// is restored where no contest restored it. `entry_key` is the key the
+    /// restored entry records as having set it.
+    async fn settlement_links(
+        &self,
+        by: &Sealer,
+        entry_key: &KeyRecord,
+        act: &AdminActRecord,
+        confirm: bool,
+        contested: bool,
+        links: &mut Links,
+    ) -> Result<(), AppError> {
+        let tenant_id = by.tenant_id;
+        let suspended: Vec<KeyRecord> = match &target_user(act) {
             Some(user) => self
                 .admin_keys_of(tenant_id, user)
                 .await?
@@ -499,13 +717,12 @@ where
             None => Vec::new(),
         };
         for key in suspended {
-            let prev = links.last().map(|(e, _)| e.clone()).expect("a link");
             let (event_type, payload, fold) = if confirm {
                 (
                     event_types::KEY_REVOKED,
                     json!({
                         "key_id": key.key_id.to_string(),
-                        "revoked_by_key_id": admin.key_id.to_string(),
+                        "revoked_by_key_id": by.key_id.map(|k| k.to_string()),
                         "actor_person": act.confirmed_by_person.as_ref().map(Name::as_str),
                         "reason": Value::Null,
                         "cause": AdminActCause::Settlement.as_str(),
@@ -522,29 +739,32 @@ where
                     MetadataFold::KeySuspensionLifted { key_id: key.key_id },
                 )
             };
-            let event = self.seal(
-                Some(&prev),
-                tenant_id,
-                event_type,
-                &admin.principal,
-                Some(admin.key_id),
-                with_act_id(payload, act.act_id),
-            )?;
-            links.push((event, fold));
+            self.push_link(by, act.act_id, links, event_type, payload, fold)?;
         }
-        let by = Sealer::of(&admin);
         match (confirm, contested) {
             // A contest restored the entry; the confirmed act applies again.
-            (true, true) => self.reapply_standing(&admin, &by, &act, &mut links).await?,
+            (true, true) => self.reapply_standing(entry_key, by, act, links).await?,
             // Reversed with no contest: the entry comes back now.
-            (false, false) => {
-                self.restore_standing(&admin, &by, &act, &mut links).await?;
-            }
+            (false, false) => self.restore_standing(entry_key, by, act, links).await?,
             _ => {}
         }
-        self.commit_links(links).await?;
-        act.settled_at = Some(at);
-        Ok(act)
+        Ok(())
+    }
+
+    /// The keys the tenant's server issuer issued that are not one of the
+    /// four session-key shapes (`key.issuer_unexpected_shape`, critical,
+    /// ADR-0097 d18): a session key named `<user>-web` (contributor),
+    /// `<user>-review` (reviewer), `<user>-curate` or `<user>-admin`
+    /// (admin), serving that user.
+    pub(crate) async fn issuer_unexpected_shapes(&self, tenant_id: Uuid) -> Result<u64, AppError> {
+        let issuer = super::fixes::server_issuer_id(tenant_id);
+        Ok(self
+            .journal
+            .web_keys_issued_by(tenant_id, issuer)
+            .await?
+            .iter()
+            .filter(|k| !session_key_shape(k))
+            .count() as u64)
     }
 
     /// The entry as the act found it, from its effect (ADR-0097 d8).
@@ -744,6 +964,20 @@ where
             }
         }
         Ok(persons.len())
+    }
+
+    /// The freezes open at least 24 hours, which the operator may settle
+    /// from the host (`operator.settlement_due`, ADR-0097 d19).
+    pub(crate) async fn settlements_due(&self, tenant_id: Uuid) -> Result<u64, AppError> {
+        let open = self.open_disputes(tenant_id).await?;
+        if open.is_empty() || self.dispute_admins(tenant_id).await? >= 3 {
+            return Ok(0);
+        }
+        let now = self.clock.now().unix_micros();
+        Ok(open
+            .iter()
+            .filter(|a| now.saturating_sub(a.at.unix_micros()) >= OPERATOR_SETTLE_AFTER_US)
+            .count() as u64)
     }
 
     /// The freeze an open dispute below three admin persons holds, if any

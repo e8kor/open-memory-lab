@@ -158,6 +158,11 @@ enum Command {
         #[command(subcommand)]
         command: AdminCommand,
     },
+    /// Host verbs, run as root on the server's host with the tenant's operator token.
+    Operator {
+        #[command(subcommand)]
+        command: OperatorCommand,
+    },
     /// Submit a claim for review, replace one with --replaces, or propose its retirement.
     Write(WriteArgs),
     /// Fetch a memory by artifact id, recall with --query, or list memories.
@@ -209,6 +214,27 @@ enum Command {
     Demo {
         #[command(subcommand)]
         command: DemoCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum OperatorCommand {
+    /// Confirm or reverse the contested act of a freeze open at least 24 hours.
+    #[command(group(clap::ArgGroup::new("outcome").required(true).args(["confirm", "reverse"])))]
+    Settle {
+        /// The tenant's id, as oml whoami names it.
+        tenant: String,
+        /// The act's id, as oml admin acts lists it.
+        act: String,
+        /// Confirm the act: the target's suspended admin keys are revoked.
+        #[arg(long)]
+        confirm: bool,
+        /// Reverse the act: the suspension lifts and the entry is restored.
+        #[arg(long)]
+        reverse: bool,
+        /// The server's operator.token_dir, which holds <tenant>.token.
+        #[arg(long, env = "OML_OPERATOR__TOKEN_DIR")]
+        token_dir: std::path::PathBuf,
     },
 }
 
@@ -2057,6 +2083,56 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             Ok(ExitCode::SUCCESS)
         }
 
+        Command::Operator {
+            command:
+                OperatorCommand::Settle {
+                    tenant,
+                    act,
+                    confirm,
+                    reverse: _,
+                    token_dir,
+                },
+        } => {
+            let client = resolve_url(cli, &stored)?;
+            let tenant = uuid::Uuid::parse_str(&tenant)
+                .map_err(|_| CliError::local(format!("{tenant:?} is not a tenant id")))?;
+            let token = operator_token(&token_dir, tenant)?;
+            let path = format!(
+                "/v2/operator/tenants/{tenant}/acts/{}/settle",
+                segment(&act)?
+            );
+            let outcome = if *confirm { "confirm" } else { "reverse" };
+            let (_, response) =
+                client.post_operator(&path, &json!({ "outcome": outcome }), &token)?;
+            if cli.json {
+                print_json(&response);
+            } else {
+                println!(
+                    "act {} settled from the host: {}; notified {}",
+                    field(&response["act"], "act_id"),
+                    if *confirm { "confirmed" } else { "reversed" },
+                    response["notified"]
+                        .as_array()
+                        .map(|p| p
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .collect::<Vec<_>>()
+                            .join(", "))
+                        .unwrap_or_default()
+                );
+                match response["mail"].as_str() {
+                    Some("sent") => println!("email handed to the mail relay"),
+                    Some("failed") => println!(
+                        "warn the mail relay did not take the email ({}); the settlement stands",
+                        response["mail_failure"].as_str().unwrap_or("?")
+                    ),
+                    _ => println!(
+                        "warn no mail relay is configured (mail.host, mail.from): the notice is in-product only"
+                    ),
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Keys {
             command: KeysCommand::ConvertSelf { to },
         } => {
@@ -3151,6 +3227,41 @@ fn one_line_error(e: &CliError) -> String {
         #[allow(unreachable_patterns)]
         _ => "refused".to_owned(),
     }
+}
+
+/// Doctor's `operator.token_unwritten` (ADR-0097 d19): a start that could
+/// not write its operator tokens refuses every host settlement until a
+/// start writes them.
+fn operator_token_doctor(ready: Option<&(u16, Value)>) -> Vec<String> {
+    match ready {
+        Some((_, body)) if body["operator_tokens"] == "failed" => vec![
+            "warn operator.token_unwritten: the server could not write its operator tokens, so oml operator settle is refused; read the start log's operator_tokens_unwritten line and fix operator.token_dir"
+                .to_owned(),
+        ],
+        _ => Vec::new(),
+    }
+}
+
+/// The tenant's operator token of the server's current start, from
+/// `<dir>/<tenant>.token` (ADR-0097 d19; answer 13). Only root and the
+/// server's user read the file; the token is sent and never printed.
+fn operator_token(dir: &std::path::Path, tenant: uuid::Uuid) -> Result<String, CliError> {
+    let path = dir.join(format!("{tenant}.token"));
+    let text = std::fs::read_to_string(&path).map_err(|e| {
+        CliError::local(format!(
+            "cannot read the operator token {}: {} (run as root on the server's host, with --token-dir naming the server's operator.token_dir)",
+            path.display(),
+            e.kind()
+        ))
+    })?;
+    let token = text.trim();
+    if token.is_empty() {
+        return Err(CliError::local(format!(
+            "{} holds no token",
+            path.display()
+        )));
+    }
+    Ok(token.to_owned())
 }
 
 fn write_opts() -> CallOpts {
@@ -7018,6 +7129,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut lifecycle = lifecycle_doctor(rescan_read.as_ref());
     lifecycle.extend(public_doctor(rescan_read.as_ref()));
     lifecycle.extend(flagged_creates_doctor(rescan_read.as_ref()));
+    lifecycle.extend(operator_token_doctor(ready.as_ref()));
     let lifecycle_warn = lifecycle.iter().any(|line| line.starts_with("warn"));
     let lifecycle_fail = lifecycle.iter().any(|line| line.starts_with("fail"));
     let telemetry_warn = telemetry.iter().any(|line| line.starts_with("warn"));
@@ -7444,6 +7556,16 @@ fn federation_doctor(settings: Option<&Value>) -> Vec<String> {
             "warn key {} reads {} trusted workspaces outside its scopes, above 1,000: each recall of a federated tenant reads their counts, so its statistics read grows with them",
             key["key_id"].as_str().unwrap_or("?"),
             key["candidates"]
+        ));
+    }
+    // A maintenance key reads the counts and no key list (ADR-0097 d18).
+    let listed = settings["wide_keys"].as_array().map_or(0, Vec::len);
+    if listed == 0
+        && let Some(n) = settings["wide_key_count"].as_u64().filter(|n| *n > 0)
+    {
+        lines.push(format!(
+            "warn {n} key(s) read up to {} trusted workspaces outside their scopes, above 1,000: each recall of a federated tenant reads their counts, so its statistics read grows with them; an admin key's oml doctor names the keys",
+            settings["wide_key_most_candidates"]
         ));
     }
     // The widen hint's signal (ADR-0072 d8, as built by #244): a build that
@@ -8128,7 +8250,7 @@ fn flagged_creates_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
 /// out. A server before a count does not report it, and its line is then
 /// absent; a count that is no unsigned integer is named, never read as zero.
 fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
-    const LINES: [(&str, &str, &str); 22] = [
+    const LINES: [(&str, &str, &str); 26] = [
         (
             "held_successors_stranded",
             "memory.held_successor_stranded",
@@ -8239,6 +8361,26 @@ fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
             "admin.dispute_open",
             "act(s) against an admin open below three admin persons: both parties take no widening act until the operator settles it from the host",
         ),
+        (
+            "operator_settlements_due",
+            "operator.settlement_due",
+            "freeze(s) open at least 24 hours: the operator settles each from the host with oml operator settle <tenant> <act> --confirm|--reverse",
+        ),
+        (
+            "key_issuer_unexpected_shape",
+            "key.issuer_unexpected_shape",
+            "key(s) the server issuer issued outside the four session-key shapes; revoke each with oml keys revoke <key> --reason <why> and report it",
+        ),
+        (
+            "mail_unconfigured",
+            "notice.mail_unconfigured",
+            "no mail relay is set (mail.host, mail.from): recovery and settlement notices are shown in-product only, and a dormant admin sees none",
+        ),
+        (
+            "mail_delivery_failures",
+            "notice.mail_delivery_failed",
+            "notice email(s) the mail relay refused or did not take since the lead started; the acts they told about stand",
+        ),
     ];
     let report = match read {
         None => {
@@ -8266,8 +8408,20 @@ fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
                 // ordinary: a placeholder (ADR-0097 d24).
                 Some(n) if *field == "admin_narrowing_burst" && n <= 20 => format!("{line}: {n}"),
                 // Critical: offensive narrowing is loud (ADR-0097 d24).
-                Some(n) if *field == "admin_acts_offensive" || *field == "admin_disputes_open" => {
+                Some(n)
+                    if *field == "admin_acts_offensive"
+                        || *field == "admin_disputes_open"
+                        || *field == "key_issuer_unexpected_shape" =>
+                {
                     format!("fail {line}: {n} {what}")
+                }
+                Some(_) if *field == "mail_unconfigured" => format!("warn {line}: {what}"),
+                Some(n) if *field == "mail_delivery_failures" => {
+                    let last = report
+                        .get("mail_last_failure")
+                        .and_then(Value::as_str)
+                        .unwrap_or("?");
+                    format!("fail {line}: {n} {what}; the last: {last}")
                 }
                 Some(n) if *field == "admin_keys_unlinked_suspended" => {
                     let left = report
@@ -9607,7 +9761,11 @@ mod tests {
                 "admin.timebox_open: not read; an admin key reads it".to_owned(),
                 "admin.key_suspended: not read; an admin key reads it".to_owned(),
                 "admin.key_unlinked_suspended: not read; an admin key reads it".to_owned(),
-                "admin.dispute_open: not read; an admin key reads it".to_owned()
+                "admin.dispute_open: not read; an admin key reads it".to_owned(),
+                "operator.settlement_due: not read; an admin key reads it".to_owned(),
+                "key.issuer_unexpected_shape: not read; an admin key reads it".to_owned(),
+                "notice.mail_unconfigured: not read; an admin key reads it".to_owned(),
+                "notice.mail_delivery_failed: not read; an admin key reads it".to_owned()
             ]
         );
         assert_eq!(
@@ -9617,6 +9775,38 @@ mod tests {
                     .to_owned()
             ]
         );
+    }
+
+    #[test]
+    fn the_lifecycle_doctor_names_a_settlement_due_an_issuer_out_of_shape_and_the_mail_relay() {
+        let report = json!({
+            "operator_settlements_due": 1,
+            "key_issuer_unexpected_shape": 1,
+            "mail_unconfigured": 1,
+            "mail_delivery_failures": 2,
+            "mail_last_failure": "the relay refused RCPT TO with 550",
+        });
+        assert_eq!(
+            lifecycle_doctor(Some(&Ok(report))),
+            vec![
+                "warn operator.settlement_due: 1 freeze(s) open at least 24 hours: the operator settles each from the host with oml operator settle <tenant> <act> --confirm|--reverse".to_owned(),
+                "fail key.issuer_unexpected_shape: 1 key(s) the server issuer issued outside the four session-key shapes; revoke each with oml keys revoke <key> --reason <why> and report it".to_owned(),
+                "warn notice.mail_unconfigured: no mail relay is set (mail.host, mail.from): recovery and settlement notices are shown in-product only, and a dormant admin sees none".to_owned(),
+                "fail notice.mail_delivery_failed: 2 notice email(s) the mail relay refused or did not take since the lead started; the acts they told about stand; the last: the relay refused RCPT TO with 550".to_owned(),
+            ]
+        );
+        let fine = json!({ "mail_unconfigured": 0, "mail_delivery_failures": 0 });
+        assert_eq!(
+            lifecycle_doctor(Some(&Ok(fine))),
+            vec![
+                "notice.mail_unconfigured: 0".to_owned(),
+                "notice.mail_delivery_failed: 0".to_owned(),
+            ]
+        );
+        let ready = (200, json!({ "operator_tokens": "failed" }));
+        assert_eq!(operator_token_doctor(Some(&ready)).len(), 1);
+        let ready = (200, json!({ "operator_tokens": "written" }));
+        assert!(operator_token_doctor(Some(&ready)).is_empty());
     }
 
     #[test]
@@ -10328,6 +10518,25 @@ mod tests {
         assert_eq!(valid_line(&open), "none declared");
         let ended = serde_json::json!({ "valid_from": null, "valid_until": "2015" });
         assert_eq!(valid_line(&ended), "from any time, until 2015");
+    }
+
+    #[test]
+    fn a_maintenance_keys_federation_doctor_counts_the_wide_keys_it_cannot_list() {
+        let settings = json!({
+            "enabled": true,
+            "max_sources": 8,
+            "wide_keys": [],
+            "wide_key_count": 2,
+            "wide_key_most_candidates": 1500,
+            "widen_signal": { "built": 1, "unserved": 0, "evicted": 0, "failed": 0, "last_failure": null },
+        });
+        assert_eq!(
+            federation_doctor(Some(&settings)),
+            vec![
+                "warn 2 key(s) read up to 1500 trusted workspaces outside their scopes, above 1,000: each recall of a federated tenant reads their counts, so its statistics read grows with them; an admin key's oml doctor names the keys"
+                    .to_owned()
+            ]
+        );
     }
 
     #[test]

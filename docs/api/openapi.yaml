@@ -4084,6 +4084,54 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         default: { $ref: '#/components/responses/Error' }
 
+  /v2/operator/tenants/{tenant}/acts/{act}/settle:
+    post:
+      tags: [admin]
+      operationId: operatorSettle
+      summary: The operator, from the host, confirms or reverses the contested act of a freeze open at least 24 hours.
+      description: 'Authenticated by the tenant''s operator token of this start alone, sent as OML-Operator-Token: at each start the server writes one per tenant to <operator.token_dir>/<tenant>.token, mode 0600, and oml operator settle, run as root, reads it (ADR-0097 d19; the operator''s answer 13 of 2026-11-27). A request that also sends Authorization is auth.invalid with details.reason operator_route_takes_no_key; a missing token, or one that is not the tenant''s of this start, auth.invalid with details.reason operator_token. The act must be an open act against an admin below three admin persons, a freeze, else request.validation with details.reason not_frozen; and open at least 24 hours, a placeholder, else details.reason freeze_too_recent. confirm revokes the target''s suspended admin keys, cause settlement, and undoes a contest''s restoration; reverse lifts the suspension and restores the entry where no contest did. It issues no key and reads no content. Journalled in one commit: admin.act with state settled and no settler, operator.settlement, the effect''s events, and notice.written kind settlement to every admin person and both parties. The notice is then emailed to them through the mail relay (d20; answer 14): mail is sent, unconfigured or failed, with mail_failure naming the SMTP stage and code, and the settlement stands either way. Since v0.8.6.'
+      security: []
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: tenant, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: act, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: OML-Operator-Token, in: header, required: true, schema: { type: string }, description: 'The tenant''s operator token of this start; never logged.' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              outcome: confirm
+            schema:
+              type: object
+              required: [outcome]
+              additionalProperties: false
+              properties:
+                outcome: { type: string, enum: [confirm, reverse] }
+      responses:
+        '200':
+          description: The settled act, the persons notified, and what the relay did with the email.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [act, notified, mail, mail_failure]
+                properties:
+                  act: { $ref: '#/components/schemas/AdminAct' }
+                  notified: { type: array, items: { type: string } }
+                  mail: { type: string, enum: [sent, unconfigured, failed] }
+                  mail_failure: { type: [string, 'null'] }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        default: { $ref: '#/components/responses/Error' }
+
   /v2/admin/acts/{act}/decline:
     post:
       tags: [admin]
@@ -5818,6 +5866,7 @@ components:
         max_sources: { type: integer, minimum: 0, maximum: 64, description: 'The most workspaces a wide recall searches beside its scope, and the most a list names; 8 by default.' }
         wide_keys:
           type: array
+          description: 'The wide keys, listed to an admin key; empty to a maintenance key, which reads the counts below (ADR-0097 d18).'
           items:
             type: object
             additionalProperties: false
@@ -5825,6 +5874,8 @@ components:
             properties:
               key_id: { type: string, format: uuid }
               candidates: { type: integer, minimum: 0 }
+        wide_key_count: { type: integer, minimum: 0, description: 'How many keys met more than 1,000 candidate sources since the lead started, to an admin and a maintenance key alike (ADR-0097 d18). Since v0.8.6.' }
+        wide_key_most_candidates: { type: integer, minimum: 0, description: 'The most candidate sources any of those keys met; 0 with none. Since v0.8.6.' }
         widen_signal:
           type: object
           additionalProperties: false
@@ -7456,6 +7507,14 @@ components:
             The lead's oauth.issuer, or null where connections are off; doctor reads whether
             connections are on here, not from the discovery paths it checks (ADR-0031 d14).
         build: { $ref: '#/components/schemas/Build' }
+        operator_tokens:
+          type: string
+          enum: [written, none, failed]
+          description: >-
+            Whether this start wrote the tenants' operator tokens to operator.token_dir: written,
+            none (no tenant yet, or a composition that writes none), or failed, which doctor
+            names operator.token_unwritten (ADR-0097 d19). No count: the probe answers anyone.
+            Since v0.8.6.
         web_client:
           type: string
           enum: [none, secret, mtls, secret+mtls]
@@ -7658,6 +7717,11 @@ components:
         admin_keys_unlinked_suspended: { type: integer, minimum: 0, description: 'Admin keys suspended as unlinked at the upgrade, which reach only /v2/whoami and POST /v2/keys/self/link: doctor''s admin.key_unlinked_suspended (ADR-0097 d21). Since v0.8.6.' }
         admin_unlinked_days_left: { type: integer, minimum: 0, description: 'The fewest days an unlinked admin key has left before it is revoked, 0 with none. Since v0.8.6.' }
         admin_disputes_open: { type: integer, minimum: 0, description: 'Open acts against an admin below three admin persons, a freeze the operator settles: doctor''s admin.dispute_open, critical (ADR-0097 d8). Since v0.8.6.' }
+        operator_settlements_due: { type: integer, minimum: 0, description: 'Freezes open at least 24 hours, a placeholder, which the operator may settle from the host with oml operator settle: doctor''s operator.settlement_due (ADR-0097 d19). Since v0.8.6.' }
+        key_issuer_unexpected_shape: { type: integer, minimum: 0, description: 'Keys the tenant''s server issuer issued that are not one of the four session-key shapes (<user>-web, <user>-review, <user>-curate, <user>-admin): doctor''s key.issuer_unexpected_shape, critical (ADR-0097 d18). Since v0.8.6.' }
+        mail_unconfigured: { type: integer, minimum: 0, maximum: 1, description: '1 when no mail relay is configured (mail.host and mail.from unset), so recovery and settlement notices are journalled and shown in-product only: doctor''s notice.mail_unconfigured (ADR-0097 d20). Since v0.8.6.' }
+        mail_delivery_failures: { type: integer, minimum: 0, description: 'Notice emails the relay refused or did not take since the lead started; the acts they told about stand: doctor''s notice.mail_delivery_failed (ADR-0097 d20). Since v0.8.6.' }
+        mail_last_failure: { type: [string, 'null'], description: 'The last failed delivery''s reason, naming the SMTP stage and code and never an address. Since v0.8.6.' }
 
     Build:
       type: object

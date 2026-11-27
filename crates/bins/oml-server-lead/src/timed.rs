@@ -1653,6 +1653,17 @@ impl<J: WebStore> WebStore for Timed<J> {
         )
     }
 
+    fn web_keys_issued_by(
+        &self,
+        tenant_id: Uuid,
+        issuer: Uuid,
+    ) -> impl Future<Output = Result<Vec<KeyRecord>, StoreError>> + Send {
+        timed(
+            "web_keys_issued_by",
+            self.inner.web_keys_issued_by(tenant_id, issuer),
+        )
+    }
+
     fn web_pending_links(
         &self,
         tenant_id: Uuid,

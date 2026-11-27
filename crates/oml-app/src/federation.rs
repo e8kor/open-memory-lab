@@ -100,6 +100,18 @@ pub struct FederationSettings {
     /// The widen hint's signal on this tenant since the lead started, for
     /// doctor (#244).
     pub widen_signal: WidenSignalHealth,
+    /// How many keys met more than 1,000 candidate sources since the lead
+    /// started, and the most any of them met: the counts a `maintenance`
+    /// key reads in place of the list (ADR-0072 d12; ADR-0097 d18).
+    pub wide_counts: WideKeyCounts,
+}
+
+/// The wide keys counted, not listed (ADR-0097 d18: a `maintenance` key
+/// never reads a key list).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WideKeyCounts {
+    pub keys: usize,
+    pub most_candidates: usize,
 }
 
 /// How the widen hint's precomputed signal fared on a tenant since the

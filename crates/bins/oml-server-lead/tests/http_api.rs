@@ -8246,8 +8246,8 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     );
     assert_eq!(
         declared.len(),
-        123,
-        "the source check (ADR-0057 d5), the workspace mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the four web routes the lead keeps (ADR-0045 d25; its two JSON routes are oml-web's, ADR-0070 d7 (b), and GET and POST /web/admin are deleted, ADR-0070 \"The old URLs deleted\"), open sign-up's one the lead keeps, POST /web/sign-up (ADR-0068 d10; the onboarding and users pages are oml-web's, ADR-0070 d7 (b)), the web console's ten (ADR-0070 d5), the sign-in page oml-web sends to (ADR-0070 d4) , federation's three (ADR-0072 d5), usage metering's six (ADR-0071 d5, d6), a key's limits (ADR-0079 d5), a key's link, unlink and acceptance (ADR-0085 d16), the withdrawal (ADR-0083 d13), the skill read (ADR-0080 d11), the five upload routes (ADR-0004 d3), the workspace export and the import and its status (ADR-0084 d15), the admin investigation's open, list and close (ADR-0089 d10, d15), the five fix routes, the admin's fix and list and a person's list, confirm and revert (ADR-0089 d15), a pending sign-in email's acceptance and removal by its person (ADR-0045 d2, the operator's decision of 2026-11-19), the imports listing and the brief proposals (ADR-0096 d6, d7), and the admin acts' list, confirm and decline, a key's revocation and an admin key's self-link (ADR-0097 d2, d14, d22), and a workspace's public flag (ADR-0098 d9), and ADR-0097 d8's contest and settle and the contest-only sign-in's POST /web/contest, and a person's admin-read count and notices, listed and dismissed (ADR-0097 d16, d20), and an admin key's conversion into a maintenance key (ADR-0097 d18)"
+        124,
+        "the source check (ADR-0057 d5), the workspace mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the four web routes the lead keeps (ADR-0045 d25; its two JSON routes are oml-web's, ADR-0070 d7 (b), and GET and POST /web/admin are deleted, ADR-0070 \"The old URLs deleted\"), open sign-up's one the lead keeps, POST /web/sign-up (ADR-0068 d10; the onboarding and users pages are oml-web's, ADR-0070 d7 (b)), the web console's ten (ADR-0070 d5), the sign-in page oml-web sends to (ADR-0070 d4) , federation's three (ADR-0072 d5), usage metering's six (ADR-0071 d5, d6), a key's limits (ADR-0079 d5), a key's link, unlink and acceptance (ADR-0085 d16), the withdrawal (ADR-0083 d13), the skill read (ADR-0080 d11), the five upload routes (ADR-0004 d3), the workspace export and the import and its status (ADR-0084 d15), the admin investigation's open, list and close (ADR-0089 d10, d15), the five fix routes, the admin's fix and list and a person's list, confirm and revert (ADR-0089 d15), a pending sign-in email's acceptance and removal by its person (ADR-0045 d2, the operator's decision of 2026-11-19), the imports listing and the brief proposals (ADR-0096 d6, d7), and the admin acts' list, confirm and decline, a key's revocation and an admin key's self-link (ADR-0097 d2, d14, d22), and a workspace's public flag (ADR-0098 d9), and ADR-0097 d8's contest and settle and the contest-only sign-in's POST /web/contest, and a person's admin-read count and notices, listed and dismissed (ADR-0097 d16, d20), and an admin key's conversion into a maintenance key (ADR-0097 d18), and the operator's host settlement (ADR-0097 d19)"
     );
     assert_eq!(oauth.len(), 6, "the six OAuth operations");
 
@@ -13221,5 +13221,77 @@ async fn an_admin_keys_previous_value_in_its_grace_adds_no_web_email() {
     .await;
     assert_eq!(status, StatusCode::OK, "{added}");
     assert_eq!(whoami_status(&rig, &old).await, StatusCode::OK);
+    drop_db(&rig.db_name).await;
+}
+
+/// The operator route admits only the tenant's token of this start, sent as
+/// `OML-Operator-Token` with no key: a bearer key beside it, no token, a
+/// wrong token and another tenant's token are `auth.invalid`, each naming
+/// why, and `/readyz` says the tokens were written (ADR-0097 d19; answer
+/// 13).
+#[tokio::test]
+async fn the_operator_route_admits_only_the_tenants_token_of_this_start() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let (admin, tenant, _) = bootstrap(&rig.router).await;
+    let router = lead_state(
+        &rig.store,
+        rig.signing.clone(),
+        pg_ping(rig.store.pool().clone()),
+        true,
+        None,
+    )
+    .with_operator_tokens(oml_transport_http::operator::OperatorTokens::new([(
+        tenant,
+        "omlop_the-tenants-token".to_owned(),
+    )]))
+    .into_router();
+    let path = |tenant: Uuid| {
+        format!(
+            "/v2/operator/tenants/{tenant}/acts/{}/settle",
+            Uuid::from_u128(7)
+        )
+    };
+    let settle = |call: Call| call.body(json!({ "outcome": "confirm" }));
+    let reason = |body: &Value| body["error"]["details"]["reason"].clone();
+    for (call, why) in [
+        (
+            Call::auth(&admin).header("oml-operator-token", "omlop_the-tenants-token"),
+            "operator_route_takes_no_key",
+        ),
+        (Call::default(), "operator_token"),
+        (
+            Call::default().header("oml-operator-token", "omlop_another"),
+            "operator_token",
+        ),
+    ] {
+        let (status, _, body) = send(&router, "POST", &path(tenant), settle(call)).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+        assert_envelope(&body, "auth.invalid");
+        assert_eq!(reason(&body), why, "{body}");
+    }
+    let (status, _, body) = send(
+        &router,
+        "POST",
+        &path(Uuid::from_u128(9)),
+        settle(Call::default().header("oml-operator-token", "omlop_the-tenants-token")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "another tenant's: {body}");
+    let (status, _, body) = send(
+        &router,
+        "POST",
+        &path(tenant),
+        settle(Call::default().header("oml-operator-token", "omlop_the-tenants-token")),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "the token admits; no such act: {body}"
+    );
+    let (_, _, ready) = send(&router, "GET", "/readyz", Call::default()).await;
+    assert_eq!(ready["operator_tokens"], "written");
     drop_db(&rig.db_name).await;
 }

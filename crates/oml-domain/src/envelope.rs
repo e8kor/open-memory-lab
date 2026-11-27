@@ -202,6 +202,9 @@ pub mod event_types {
     pub const NOTICE_WRITTEN: &str = "notice.written";
     /// A person dismissed a notice of their own (ADR-0097 d20).
     pub const NOTICE_DISMISSED: &str = "notice.dismissed";
+    /// The operator settled a frozen dispute from the host: the contested
+    /// act confirmed or reversed, and nothing else (ADR-0097 d19).
+    pub const OPERATOR_SETTLEMENT: &str = "operator.settlement";
     /// A person confirmed an admin's fix (ADR-0089 d8).
     pub const ADMIN_FIX_CONFIRMED: &str = "admin.fix_confirmed";
     /// A person reverted an admin's fix (ADR-0089 d8).

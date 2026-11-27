@@ -327,7 +327,8 @@ pub const SERVER_ISSUER_PRINCIPAL: &str = "oml:server-issuer";
 
 /// The tenant's reserved server issuer's id, derived as the server key's is
 /// (ADR-0097 d18): the issuer of the four session-key shapes.
-pub(super) fn server_issuer_id(tenant_id: Uuid) -> Uuid {
+#[must_use]
+pub fn server_issuer_id(tenant_id: Uuid) -> Uuid {
     reserved_key_id(b"oml:server-issuer\0", tenant_id)
 }
 
@@ -1869,6 +1870,13 @@ pub struct FixStats {
     /// Open acts against an admin below three admin persons: a freeze
     /// (`admin.dispute_open`, critical, ADR-0097 d8).
     pub disputes_open: u64,
+    /// Freezes open at least 24 hours, which the operator may settle from
+    /// the host (`operator.settlement_due`, ADR-0097 d19).
+    pub settlements_due: u64,
+    /// Keys the tenant's server issuer issued that are not one of the four
+    /// session-key shapes (`key.issuer_unexpected_shape`, critical,
+    /// ADR-0097 d18).
+    pub issuer_unexpected_shape: u64,
 }
 
 impl<J, S, C, I, Sc> App<J, S, C, I, Sc>
@@ -1982,6 +1990,8 @@ where
             }
         }
         stats.disputes_open = u64::from(self.freeze(tenant_id).await?.is_some());
+        stats.settlements_due = self.settlements_due(tenant_id).await?;
+        stats.issuer_unexpected_shape = self.issuer_unexpected_shapes(tenant_id).await?;
         if all.is_empty() {
             return Ok(stats);
         }

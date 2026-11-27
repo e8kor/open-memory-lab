@@ -9,6 +9,7 @@
 
 #[cfg(feature = "e2e-sign-in")]
 pub mod e2e;
+pub mod host;
 pub mod objects;
 pub mod otlp;
 pub mod timed;
@@ -116,6 +117,14 @@ pub struct Config {
     /// where upload parts are kept and the two limits (ADR-0004 d3, as
     /// amended 2026-11-17).
     pub uploads: UploadSettings,
+    /// `operator.token_dir`: where each start writes the tenants' operator
+    /// tokens, 0600 in a 0700 directory; `oml-operator` when unset
+    /// (ADR-0097 d19; answer 13).
+    pub operator_token_dir: PathBuf,
+    /// `mail.host`, `mail.port` and `mail.from`: the one local relay the
+    /// recovery and settlement emails go to; `None` when unset, and doctor
+    /// warns `notice.mail_unconfigured` (ADR-0097 d20; answer 14).
+    pub mail: Option<host::SmtpRelay>,
 }
 
 /// The upload sessions' settings (ADR-0004 d3, as amended 2026-11-17).
@@ -563,6 +572,59 @@ const KEY_RERANK_MAX_TOKENS: &str = "search.rerank.max_tokens";
 const KEY_SPARSE_MODEL_DIR: &str = "search.sparse.model_dir";
 const KEY_SPARSE_FETCH: &str = "search.sparse.fetch";
 const KEY_SPARSE_THREADS: &str = "search.sparse.threads";
+const KEY_OPERATOR_TOKEN_DIR: &str = "operator.token_dir";
+const KEY_MAIL_HOST: &str = "mail.host";
+const KEY_MAIL_PORT: &str = "mail.port";
+const KEY_MAIL_FROM: &str = "mail.from";
+
+/// `mail.host`, `mail.port` and `mail.from` (ADR-0097 d20; answer 14):
+/// none set, no relay; a host and a sender, the relay, on port 25 unless
+/// `mail.port` names another. One without the other, a port with neither,
+/// a host that is not one name or address, or a sender that is not an
+/// address stops the start.
+fn mail_relay(
+    lookup: &dyn Fn(&str) -> Option<String>,
+) -> Result<Option<host::SmtpRelay>, ConfigError> {
+    let set = |key: &str| lookup(key).filter(|v| !v.trim().is_empty());
+    let (host, port, from) = (set(KEY_MAIL_HOST), set(KEY_MAIL_PORT), set(KEY_MAIL_FROM));
+    let (host, from) = match (host, from) {
+        (None, None) if port.is_none() => return Ok(None),
+        (Some(host), Some(from)) => (host, from),
+        _ => {
+            return Err(ConfigError::Invalid(format!(
+                "{KEY_MAIL_HOST} and {KEY_MAIL_FROM} are set together or not at all (configuration.md)"
+            )));
+        }
+    };
+    let host = host.trim().to_owned();
+    if host
+        .chars()
+        .any(|c| c.is_whitespace() || c.is_control() || c == '/')
+    {
+        return Err(ConfigError::Invalid(format!(
+            "{KEY_MAIL_HOST} {host:?} is not a host name or address (configuration.md)"
+        )));
+    }
+    let port = match port {
+        None => 25,
+        Some(value) => value
+            .trim()
+            .parse::<u16>()
+            .ok()
+            .filter(|p| *p > 0)
+            .ok_or_else(|| {
+                ConfigError::Invalid(format!(
+                    "{KEY_MAIL_PORT} {value:?} is not a port from 1 to 65535 (configuration.md)"
+                ))
+            })?,
+    };
+    let from = oml_app::domain::web::Email::parse(from.trim()).map_err(|_| {
+        ConfigError::Invalid(format!(
+            "{KEY_MAIL_FROM} is not an email address (configuration.md)"
+        ))
+    })?;
+    Ok(Some(host::SmtpRelay { host, port, from }))
+}
 
 /// A secret from `key` or, instead, the owner-only file `file_key` names
 /// (#230): both set stops the start, and the secret passes the rule both
@@ -881,6 +943,10 @@ impl Config {
         let listen = lookup(KEY_LISTEN).unwrap_or_else(|| "127.0.0.1:8080".to_owned());
         let keyring_path =
             lookup(KEY_KEYRING_PATH).map_or_else(|| PathBuf::from("oml-keyring"), PathBuf::from);
+        let operator_token_dir = lookup(KEY_OPERATOR_TOKEN_DIR)
+            .filter(|v| !v.trim().is_empty())
+            .map_or_else(|| PathBuf::from("oml-operator"), PathBuf::from);
+        let mail = mail_relay(&lookup)?;
         // A value that is not exactly a public origin stops the start
         // (configuration.md, oauth.issuer; ADR-0031 d1).
         let oauth_issuer = lookup(KEY_OAUTH_ISSUER)
@@ -1211,6 +1277,8 @@ impl Config {
             rerank,
             sparse,
             uploads,
+            operator_token_dir,
+            mail,
         })
     }
 
@@ -2453,6 +2521,57 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
     profiles: Option<oml_app::types::QuotaProfiles>,
     uploads: Option<UploadSettings>,
 ) -> Result<LeadStart, String> {
+    start_lead_hosted(
+        store,
+        signing_key,
+        oauth_issuer,
+        fetcher,
+        traffic,
+        web,
+        brief_max_tokens,
+        search,
+        reranker,
+        sparse,
+        web_client,
+        shared,
+        profiles,
+        uploads,
+        host::HostVerbs::default(),
+    )
+    .await
+}
+
+/// [`start_lead_with_models`] with the host verbs `main` composes
+/// (ADR-0097 d19, d20): each start writes the tenants' operator tokens
+/// under `host.token_dir`, and the settlement and recovery emails go to
+/// `host.mailer`. A token that cannot be written is logged as
+/// [`host::EVENT_OPERATOR_TOKENS_UNWRITTEN`], and the lead serves with the
+/// operator route refusing every call.
+///
+/// # Errors
+///
+/// As [`start_lead_with`].
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one argument per setting main composes"
+)]
+pub async fn start_lead_hosted<F: DocumentFetcher + 'static>(
+    store: &PgStore,
+    signing_key: SigningKey,
+    oauth_issuer: Option<Issuer>,
+    fetcher: F,
+    traffic: Traffic,
+    web: Option<WebPages>,
+    brief_max_tokens: u64,
+    search: Option<SearchConfig>,
+    reranker: Option<Arc<dyn oml_app::ports::Reranker>>,
+    sparse: Option<Arc<dyn oml_app::ports::SparseEncoder>>,
+    web_client: WebClient,
+    shared: bool,
+    profiles: Option<oml_app::types::QuotaProfiles>,
+    uploads: Option<UploadSettings>,
+    host: host::HostVerbs,
+) -> Result<LeadStart, String> {
     // The retrievers the database can run decide which pipelines may be
     // served: a configuration naming one it cannot run stops the start,
     // naming the pipeline and what is missing (ADR-0049 d8).
@@ -2636,6 +2755,35 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
         Some(pages) => state.with_web(pages),
         None => state,
     };
+    // The operator tokens of this start, one per tenant (ADR-0097 d19;
+    // answer 13): never printed, logged or journalled.
+    let tokens = match &host.token_dir {
+        None => oml_transport_http::operator::OperatorTokens::default(),
+        Some(dir) => match host::write_operator_tokens(dir, &tenants) {
+            Ok(tokens) => {
+                tracing::info!(
+                    event = "operator_tokens_written",
+                    tenants = tokens.len(),
+                    dir = %dir.display(),
+                    "operator tokens written, one per tenant, 0600"
+                );
+                tokens
+            }
+            Err(reason) => {
+                tracing::error!(
+                    event = host::EVENT_OPERATOR_TOKENS_UNWRITTEN,
+                    reason = %reason,
+                    "OPERATOR TOKENS NOT WRITTEN — oml operator settle is refused until a start writes them (operator.token_dir)"
+                );
+                oml_transport_http::operator::OperatorTokens::failed()
+            }
+        },
+    };
+    let state = state.with_operator_tokens(tokens);
+    let state = match host.mailer {
+        Some(mailer) => state.with_mailer(mailer),
+        None => state,
+    };
     let router = state
         .with_web_client(web_client)
         .with_names_assigned(names.is_ok())
@@ -2736,6 +2884,58 @@ mod tests {
             .expect("env-over-file config loads");
         assert_eq!(cfg.postgres_url, "postgres://env/db");
         assert_eq!(cfg.listen, "0.0.0.0:9999");
+    }
+
+    /// The mail relay is off with no `mail.*` set, on with a host and a
+    /// sender, port 25 unless named, and one without the other, a port
+    /// alone, a bad port or a bad sender stops the start (ADR-0097 d20;
+    /// answer 14). `operator.token_dir` defaults to `oml-operator` (d19).
+    #[test]
+    fn the_mail_relay_needs_a_host_and_a_sender_and_the_token_dir_has_a_default() {
+        let base = [
+            ("OML_POSTGRES__URL", "postgres://env/db"),
+            ("OML_POSTGRES__OWNER_URL", "postgres://owner@env/db"),
+        ];
+        let load = |extra: &[(&str, &str)]| {
+            let env = env_of(&[base.as_slice(), extra].concat());
+            Config::from_sources(None, &|k| env.get(k).cloned())
+        };
+        let cfg = load(&[]).expect("defaults load");
+        assert_eq!(cfg.mail, None);
+        assert_eq!(cfg.operator_token_dir, PathBuf::from("oml-operator"));
+        let cfg = load(&[
+            ("OML_MAIL__HOST", "127.0.0.1"),
+            ("OML_MAIL__FROM", "oml@example.org"),
+        ])
+        .expect("loads");
+        let relay = cfg.mail.expect("a relay");
+        assert_eq!((relay.host.as_str(), relay.port), ("127.0.0.1", 25));
+        assert_eq!(relay.from.as_str(), "oml@example.org");
+        let cfg = load(&[
+            ("OML_MAIL__HOST", "relay.local"),
+            ("OML_MAIL__PORT", "2525"),
+            ("OML_MAIL__FROM", "oml@example.org"),
+            ("OML_OPERATOR__TOKEN_DIR", "/run/oml/operator"),
+        ])
+        .expect("loads");
+        assert_eq!(cfg.mail.expect("a relay").port, 2525);
+        assert_eq!(cfg.operator_token_dir, PathBuf::from("/run/oml/operator"));
+        for extra in [
+            &[("OML_MAIL__HOST", "127.0.0.1")][..],
+            &[("OML_MAIL__FROM", "oml@example.org")][..],
+            &[("OML_MAIL__PORT", "25")][..],
+            &[
+                ("OML_MAIL__HOST", "127.0.0.1"),
+                ("OML_MAIL__PORT", "0"),
+                ("OML_MAIL__FROM", "oml@example.org"),
+            ][..],
+            &[
+                ("OML_MAIL__HOST", "127.0.0.1"),
+                ("OML_MAIL__FROM", "not an address"),
+            ][..],
+        ] {
+            assert!(load(extra).is_err(), "{extra:?} stops the start");
+        }
     }
 
     /// `server.shared` is false when unset, read as `true` or `false`, and

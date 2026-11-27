@@ -61,6 +61,14 @@ pub(super) struct SourcePlan {
     pub record: Option<FederationRecord>,
 }
 
+/// The wide keys' counts (ADR-0097 d18).
+fn wide_counts(wide: &[WideKey]) -> crate::federation::WideKeyCounts {
+    crate::federation::WideKeyCounts {
+        keys: wide.len(),
+        most_candidates: wide.iter().map(|k| k.candidates).max().unwrap_or(0),
+    }
+}
+
 /// A candidate source: a trusted node outside the scope the key reads.
 #[derive(Debug, Clone)]
 pub(super) struct Candidate {
@@ -87,15 +95,19 @@ where
         // (ADR-0097 d18).
         let admin = self.counts_caller(bearer, "federation_settings").await?.key;
         let policy = self.journal.federation_policy(admin.tenant_id).await?;
+        let wide = self.wide_keys_of(admin.tenant_id);
+        let wide_counts = wide_counts(&wide);
+        // A maintenance key reads the counts and never the list.
         let wide = if admin.role == Role::Maintenance {
             Vec::new()
         } else {
-            self.wide_keys_of(admin.tenant_id)
+            wide
         };
         Ok((
             FederationSettings {
                 policy,
                 widen_signal: self.widen.health_of(admin.tenant_id),
+                wide_counts,
             },
             wide,
         ))
@@ -193,13 +205,15 @@ where
                 now = policy;
             }
         }
+        let wide = self.wide_keys_of(tenant_id);
         Ok(FederationActTaken {
             now: (
                 FederationSettings {
                     policy: now,
                     widen_signal: self.widen.health_of(tenant_id),
+                    wide_counts: wide_counts(&wide),
                 },
-                self.wide_keys_of(tenant_id),
+                wide,
             ),
             pending,
         })

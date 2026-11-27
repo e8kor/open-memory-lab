@@ -54,6 +54,10 @@ fn settings_json(settings: &FederationSettings, wide_keys: &[WideKey]) -> Value 
             "key_id": k.key_id,
             "candidates": k.candidates,
         })).collect::<Vec<_>>(),
+        // The counts, which a maintenance key reads in place of the list
+        // (ADR-0097 d18).
+        "wide_key_count": settings.wide_counts.keys,
+        "wide_key_most_candidates": settings.wide_counts.most_candidates,
         "widen_signal": {
             "built": settings.widen_signal.built,
             "unserved": settings.widen_signal.unserved,
