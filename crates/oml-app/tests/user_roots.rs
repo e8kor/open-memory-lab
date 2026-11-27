@@ -5869,6 +5869,62 @@ async fn another_persons_linked_key_confirms_a_linked_admins_fix() {
     assert_eq!(confirmed.settled_same_user, Some(false));
 }
 
+/// #508 N2: bob wrote the claim alice's admin key edits, so the lineage rule
+/// refuses bob's reviewer key the confirm and the revert; alice's own
+/// reviewer key acts for the admin's person. `oml doctor` counts the fix as
+/// one only the admin's person holds reviewer on, as the settlement judges
+/// it (ADR-0089 d15; ADR-0001 d5).
+#[tokio::test]
+async fn the_doctor_count_reads_a_claims_own_author_as_no_other_person_who_settles_its_edit() {
+    let r = fix_rig().await;
+    let admin = r.boot.admin_key.value.as_str();
+    let ops = console_admin(&r.app, admin, "ops").await;
+    // Bob writes a claim in team with a key linked to him; alice approves it.
+    let bob_writer = r
+        .app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                user: None,
+                used_by: Some(UsedBy::Person),
+                ..user_req(
+                    Role::Contributor,
+                    "unused",
+                    "bob/contributor",
+                    vec![
+                        grant(by_name("team"), Role::Submitter),
+                        grant(by_name("team"), Role::Reader),
+                    ],
+                )
+            },
+        )
+        .await
+        .expect("bob's contributor key");
+    link_accepted(&r.app, &r.store, &ops, bob_writer.key_id, "bob").await;
+    let bobs = written(
+        &r.app,
+        &bob_writer.value,
+        &submit("fx2", "The cache warms at boot.", Some("team")),
+    )
+    .await;
+    r.app
+        .post_verdict(&r.alice_review.value, bobs, Verdict::Approve, None)
+        .await
+        .expect("alice approves");
+    let fix = r
+        .app
+        .admin_fix(admin, &edit(bobs, "The cache warms lazily."))
+        .await
+        .expect("fix")
+        .fix()
+        .cloned()
+        .expect("a fix record");
+    let stats = r.app.fix_stats(r.boot.tenant_id).await.expect("stats");
+    assert_eq!(stats.unconfirmed, 1, "{stats:?}");
+    assert_eq!(stats.admin_person_only, 1, "{stats:?}");
+    let _ = fix;
+}
+
 #[tokio::test]
 async fn a_reverter_is_refused_a_fix_of_a_claim_their_own_person_wrote_in_a_shared_workspace() {
     let r = fix_rig().await;
