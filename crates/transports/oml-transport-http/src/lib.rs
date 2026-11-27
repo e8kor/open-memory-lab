@@ -2192,12 +2192,20 @@ where
         };
         let label = req.label.clone();
         let reason = req.reason.clone();
+        let timebox = req.timebox;
         let st = st.clone();
         claim
             .run(async move {
-                let issued = retry_chain(|| {
-                    st.app
-                        .issue_key_with_reason(acting.bearer(), &issue, reason.as_deref())
+                let issued = retry_chain(|| async {
+                    if timebox {
+                        st.app
+                            .issue_timeboxed_key(acting.bearer(), &issue, reason.as_deref())
+                            .await
+                    } else {
+                        st.app
+                            .issue_key_with_reason(acting.bearer(), &issue, reason.as_deref())
+                            .await
+                    }
                 })
                 .await
                 .map_err(|e| console::ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
@@ -4421,6 +4429,10 @@ struct KeyIssueBody {
     /// (ADR-0097 d21).
     #[serde(default)]
     person: Option<String>,
+    /// A time box: issued at once for at most a day, settled afterwards
+    /// by a second admin person (ADR-0097 d13).
+    #[serde(default)]
+    timebox: bool,
     /// Parsed only to be refused while the first-admin-key path is unbuilt
     /// (ADR-0039 d9).
     tenant: Option<String>,

@@ -307,6 +307,8 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         .with_details(json!({ "reason": "expired", "expiry": expiry.as_str() })),
         AppError::KeyRevocation(refusal) => ApiError::validation(refusal.message())
             .with_details(json!({ "field": "key", "reason": refusal.reason() })),
+        AppError::Timebox(refusal) => ApiError::validation(refusal.message())
+            .with_details(json!({ "field": "/timebox", "reason": refusal.reason() })),
         AppError::AdminAct(refusal) => ApiError::validation(refusal.message())
             .with_details(json!({ "field": refusal.field(), "reason": refusal.reason() })),
         AppError::KeyPendingConfirmation => ApiError::auth_invalid("pending_confirmation"),

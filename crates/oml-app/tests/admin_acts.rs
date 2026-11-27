@@ -2504,3 +2504,202 @@ async fn offensive_narrowing_notifies_every_admin_person_and_the_workspaces_revi
         "every admin person is told, the actor too"
     );
 }
+
+fn boxed_req(hours: u64, r: &Rig) -> IssueKeyRequest {
+    let now = r.app.now().unix_micros();
+    let until = oml_app::domain::EventTime::from_unix_micros(
+        now + i64::try_from(hours * 3_600_000_000).expect("micros"),
+    )
+    .expect("an instant");
+    IssueKeyRequest {
+        expiry: Some(until),
+        ..agent_req()
+    }
+}
+
+/// A narrow time box: in a tenant with two admin persons, an admin person
+/// issues a reader and submitter key on a shared workspace at once, for at
+/// most a day; it is refused past a day, into a user root, and while a box
+/// of theirs is open there; one renewal is admitted, a third box waits
+/// until a second admin person settles the first; a decline revokes the
+/// key (ADR-0097 d13).
+#[tokio::test]
+async fn a_time_box_admits_reader_and_submitter_grants_in_shared_workspaces_for_at_most_a_day() {
+    let r = two_admins().await;
+    let alice = r.admin_session("alice").await;
+    let bob = r.admin_session("bob").await;
+    let too_long = r
+        .app
+        .issue_timeboxed_key(
+            Bearer::Session(&alice),
+            &boxed_req(25, &r),
+            Some("incident 4"),
+        )
+        .await
+        .expect_err("a box lasts at most a day");
+    assert!(
+        matches!(
+            too_long,
+            AppError::Timebox(oml_app::types::TimeboxRefusal::Until)
+        ),
+        "{too_long:?}"
+    );
+    let first = r
+        .app
+        .issue_timeboxed_key(
+            Bearer::Session(&alice),
+            &boxed_req(2, &r),
+            Some("incident 4"),
+        )
+        .await
+        .expect("a box takes effect at once");
+    assert_eq!(first.pending_act, None);
+    r.app
+        .whoami(&first.value)
+        .await
+        .expect("the boxed key authenticates at once");
+    let open = r
+        .app
+        .issue_timeboxed_key(
+            Bearer::Session(&alice),
+            &boxed_req(2, &r),
+            Some("incident 4"),
+        )
+        .await
+        .expect_err("one open box per person per workspace");
+    assert!(
+        matches!(
+            open,
+            AppError::Timebox(oml_app::types::TimeboxRefusal::Open)
+        ),
+        "{open:?}"
+    );
+    r.clock.advance(3 * 3_600);
+    let err = r.app.whoami(&first.value).await.expect_err("the box ended");
+    assert!(matches!(err, AppError::KeyExpired { .. }), "{err:?}");
+    let renewal = r
+        .app
+        .issue_timeboxed_key(
+            Bearer::Session(&alice),
+            &boxed_req(2, &r),
+            Some("incident 4"),
+        )
+        .await
+        .expect("one renewal");
+    r.clock.advance(3 * 3_600);
+    let third = r
+        .app
+        .issue_timeboxed_key(
+            Bearer::Session(&alice),
+            &boxed_req(2, &r),
+            Some("incident 4"),
+        )
+        .await
+        .expect_err("a third box waits on a settlement");
+    assert!(
+        matches!(
+            third,
+            AppError::Timebox(oml_app::types::TimeboxRefusal::RenewalsExhausted)
+        ),
+        "{third:?}"
+    );
+    let first_act = r
+        .store
+        .admin_acts(r.boot.tenant_id, Some(AdminActState::Effective))
+        .await
+        .expect("acts")
+        .into_iter()
+        .find(|a| a.timebox() && a.target["key_id"] == first.key_id.to_string())
+        .expect("the first box");
+    let settled = r
+        .app
+        .confirm_admin_act(Bearer::Session(&bob), first_act.act_id)
+        .await
+        .expect("bob settles the first box");
+    assert_eq!(settled.state, AdminActState::Confirmed);
+    let after = r
+        .app
+        .issue_timeboxed_key(
+            Bearer::Session(&alice),
+            &boxed_req(2, &r),
+            Some("incident 4"),
+        )
+        .await
+        .expect("a box again once the first is settled");
+    let renewal_act = r
+        .store
+        .admin_acts(r.boot.tenant_id, Some(AdminActState::Effective))
+        .await
+        .expect("acts")
+        .into_iter()
+        .find(|a| a.timebox() && a.target["key_id"] == after.key_id.to_string())
+        .expect("the latest box");
+    r.app
+        .decline_admin_act(
+            Bearer::Session(&bob),
+            renewal_act.act_id,
+            Some("not needed"),
+        )
+        .await
+        .expect("bob declines it");
+    let err = r
+        .app
+        .whoami(&after.value)
+        .await
+        .expect_err("declined, revoked");
+    assert!(matches!(err, AppError::Unauthorized), "{err:?}");
+    let _ = renewal;
+    let root = r
+        .app
+        .issue_timeboxed_key(
+            Bearer::Session(&alice),
+            &IssueKeyRequest {
+                grants: vec![grant_on("alice", Role::Reader)],
+                ..boxed_req(2, &r)
+            },
+            Some("incident 5"),
+        )
+        .await
+        .expect_err("never into a user root");
+    assert!(
+        matches!(
+            root,
+            AppError::Timebox(
+                oml_app::types::TimeboxRefusal::NotShared | oml_app::types::TimeboxRefusal::Shape
+            )
+        ),
+        "{root:?}"
+    );
+}
+
+/// No time box while an act against an admin is open (ADR-0097 d13).
+#[tokio::test]
+async fn a_time_box_is_refused_while_an_act_against_an_admin_is_open() {
+    let r = two_admins().await;
+    let alice = r.admin_session("alice").await;
+    r.app
+        .allow_web_email_with_reason(
+            Bearer::Session(&alice),
+            &entry_of("bob", false),
+            true,
+            Some("bob left"),
+        )
+        .await
+        .expect("alice un-flags bob, an act against an admin");
+    let refused = r
+        .app
+        .issue_timeboxed_key(
+            Bearer::Session(&alice),
+            &boxed_req(2, &r),
+            Some("incident 6"),
+        )
+        .await
+        .expect_err("refused while the act is open");
+    assert!(
+        matches!(
+            refused,
+            AppError::Timebox(oml_app::types::TimeboxRefusal::AgainstAdminOpen)
+        ),
+        "{refused:?}"
+    );
+}

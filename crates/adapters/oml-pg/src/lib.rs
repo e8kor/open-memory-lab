@@ -12858,7 +12858,10 @@ async fn fold_admin_act(
             .map_err(backend)?;
             return Ok(());
         }
-        St::Confirmed | St::Expired => &["pending_confirmation"],
+        // A time box took effect at once and is settled afterwards
+        // (ADR-0097 d13).
+        St::Confirmed => &["pending_confirmation", "effective"],
+        St::Expired => &["pending_confirmation"],
         St::Declined => &["pending_confirmation", "effective"],
         St::Contested => &["effective"],
         St::Settled => &["effective", "contested"],
@@ -12868,7 +12871,10 @@ async fn fold_admin_act(
         "UPDATE admin_acts SET state = $3, confirmed_by_person = $4, settled_by_key_id = $5, \
                 settled_at = ($6)::timestamptz \
           WHERE tenant_id = $1 AND id = $2 AND state = ANY($7) \
-            AND ($3 <> 'declined' OR state = 'pending_confirmation' OR sole_admin)",
+            AND ($3 <> 'declined' OR state = 'pending_confirmation' OR sole_admin \
+                 OR target ->> 'timebox' = 'true') \
+            AND ($3 <> 'confirmed' OR state = 'pending_confirmation' \
+                 OR target ->> 'timebox' = 'true')",
     )
     .bind(tenant_id)
     .bind(act.act_id)

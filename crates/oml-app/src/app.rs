@@ -164,7 +164,7 @@ use crate::types::{
     VerdictRequest, VersionRef, WebEntry, Whoami, WithdrawReceipt, WithdrawRequest, WorkspaceInfo,
     WorkspaceRecord, WorkspaceStatusView,
 };
-use crate::types::{CatalogMark, KindCount};
+use crate::types::{CatalogMark, KindCount, TimeboxRefusal};
 use crate::types::{Preview, PreviewFacts, PreviewRequest, SkillShadow};
 use crate::types::{ServedSkill, SkillBody, SkillRead, SkillRequest, SkillSet};
 use oml_domain::skills::{SKILL_PAGE, SkillCandidate, offer, skill_uri};
@@ -695,13 +695,21 @@ const HELD_GUARDRAILS_MAX: usize = 50;
 pub(crate) enum Issuance<'a> {
     /// An admin or operator key's issuance of a bearer or connector key,
     /// with the admin's reason: an admin's is a widening admin act
-    /// (ADR-0097 d5).
-    Plain(Option<&'a str>),
+    /// (ADR-0097 d5); with a time box, taken at once (d13).
+    Plain(Option<&'a str>, Option<&'a Timebox>),
     /// A session key for the allowlist user named: no value.
     Session(&'a Name),
     /// A person's `<user>-web` issuing a key in its own root, sealed on the
     /// chain head read before that key's access ([`Head::BeforeAccess`]).
     PersonsOwn(&'a Option<SignedEnvelope>),
+}
+
+/// A time box an issuance carries (ADR-0097 d13): the workspaces its
+/// grants name, and whether it renews an earlier box there.
+#[derive(Debug)]
+pub(crate) struct Timebox {
+    pub nodes: Vec<String>,
+    pub renewal: bool,
 }
 
 /// The chain head an act seals its commit on.
@@ -3389,7 +3397,7 @@ where
                 None => Ok(None),
             };
         }
-        if !matches!(how, Issuance::Plain(_)) {
+        if !matches!(how, Issuance::Plain(..)) {
             return Ok(None);
         }
         let Some(person) = req
@@ -3443,7 +3451,7 @@ where
         creations: &[WorkspaceRecord],
         oauth: Option<&Issuer>,
         prev: Option<&SignedEnvelope>,
-        reason: Option<&str>,
+        (reason, timebox): (Option<&str>, Option<&Timebox>),
         user: Option<&NamedRef>,
         person: Option<&NamedRef>,
     ) -> Result<IssuedKey, AppError> {
@@ -3477,6 +3485,11 @@ where
             "root_person": user.map(|u| u.name.as_str()),
             "person": person.map(|p| p.name.as_str()),
             "principal_names_person": principal_names_person,
+            // A time box, taken at once until its expiry (ADR-0097 d13).
+            "timebox": timebox.is_some(),
+            "until": timebox.and(record.expiry.as_ref()).map(EventTime::as_str),
+            "timebox_nodes": timebox.map(|t| t.nodes.clone()),
+            "renewal": timebox.is_some_and(|t| t.renewal),
             // The workspaces the issuance creates, which the confirm screen
             // names (ADR-0097 d30).
             "create_workspaces": creations
@@ -3510,13 +3523,14 @@ where
             })),
         });
         let act = self
-            .begin_admin_act(
+            .begin_admin_act_boxed(
                 issuer,
                 oml_domain::admin_act::AdminActKind::IssueKey,
                 target,
                 reason,
                 effect,
                 prev,
+                timebox.is_some(),
             )
             .await?;
         let pending = act.pending();
@@ -4163,7 +4177,8 @@ where
                 verb: "issue_key",
             });
         }
-        self.issue_key_by(&issuer, req, Issuance::Plain(None)).await
+        self.issue_key_by(&issuer, req, Issuance::Plain(None, None))
+            .await
     }
 
     /// [`App::issue_key`] with the admin's reason, scanned and journalled in
@@ -4189,7 +4204,144 @@ where
                 verb: "issue_key",
             });
         }
-        self.issue_key_by(&issuer, req, Issuance::Plain(reason))
+        self.issue_key_by(&issuer, req, Issuance::Plain(reason, None))
+            .await
+    }
+
+    /// A time box (ADR-0097 d13): an admin person issues, at once and in any
+    /// tenant, a reader, submitter or contributor key whose grants are
+    /// reader and submitter grants in shared workspaces, never into a user
+    /// root or an in-progress subtree, with an expiry at most 24 hours away
+    /// that everything issued under it inherits; the key issues nothing. It
+    /// is a widening `issue_key` act marked `timebox`, effective at once and
+    /// settled afterwards by a second admin person who counts (d11): a
+    /// confirmation settles it, a decline revokes the key. One open box per
+    /// actor person per workspace, and one renewal, after which a box on the
+    /// workspace is refused until a second admin person settles the first.
+    /// Refused while an act against an admin is open and during a freeze.
+    /// It requires a reason (d26).
+    ///
+    /// # Errors
+    /// [`AppError::Timebox`] naming the rule, [`AppError::AdminActReasonRequired`],
+    /// and [`App::issue_key`]'s.
+    pub async fn issue_timeboxed_key(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        req: &IssueKeyRequest,
+        reason: Option<&str>,
+    ) -> Result<IssuedKey, AppError> {
+        use oml_domain::admin_act::{AdminActKind, AdminActState, TIMEBOX_MAX_SECS};
+        let issuer = self.key_act_caller(bearer.into(), "issue_key").await?.key;
+        if issuer.role != Role::Admin {
+            return Err(AppError::VerbCeiling {
+                role: issuer.role,
+                verb: "issue_key",
+            });
+        }
+        let tenant_id = issuer.tenant_id;
+        let refused = |r| Err(AppError::Timebox(r));
+        let Some(person) = self.counted_person_of(&issuer).await? else {
+            return refused(TimeboxRefusal::NotAdminPerson);
+        };
+        if !self.is_admin_person(tenant_id, Some(&person)).await? {
+            return refused(TimeboxRefusal::NotAdminPerson);
+        }
+        if !matches!(req.role, Role::Reader | Role::Submitter | Role::Contributor)
+            || req.grants.is_empty()
+            || req
+                .grants
+                .iter()
+                .any(|g| !matches!(g.role, Role::Reader | Role::Submitter) || g.create)
+            || req.connect_code
+            || req.user.is_some()
+            || req.person.is_some()
+            || !req.create_workspaces.is_empty()
+        {
+            return refused(TimeboxRefusal::Shape);
+        }
+        let now = self.clock.now();
+        match &req.expiry {
+            Some(until)
+                if until.unix_micros() > now.unix_micros()
+                    && until.unix_micros() - now.unix_micros() <= TIMEBOX_MAX_SECS * 1_000_000 => {}
+            _ => return refused(TimeboxRefusal::Until),
+        }
+        if reason.is_none() {
+            return Err(AppError::AdminActReasonRequired);
+        }
+        if self.act_against_admin_open(tenant_id).await? || self.freeze(tenant_id).await?.is_some()
+        {
+            return refused(TimeboxRefusal::AgainstAdminOpen);
+        }
+        // Shared workspaces only: no user root, no in-progress subtree, and
+        // under a subtree grant no in-progress node below.
+        let mut nodes = BTreeSet::new();
+        for g in &req.grants {
+            let node = self.resolve(&issuer, NamedKind::Workspace, &g.node).await?;
+            if self.root_person_of(tenant_id, node).await?.is_some()
+                || self
+                    .journal
+                    .workspace(tenant_id, node)
+                    .await?
+                    .is_some_and(|w| w.user_root)
+                || self.in_progress_root(tenant_id, node).await?.is_some()
+                || (g.covers == oml_domain::access::Covers::Subtree
+                    && self
+                        .subtree_roots(tenant_id, node)
+                        .await?
+                        .values()
+                        .any(Option::is_some))
+            {
+                return refused(TimeboxRefusal::NotShared);
+            }
+            nodes.insert(node.to_string());
+        }
+        // One open box per actor person per workspace, and one renewal
+        // while the first is unsettled.
+        let mut renewal = false;
+        for act in self
+            .journal
+            .admin_acts(tenant_id, Some(AdminActState::Effective))
+            .await?
+            .iter()
+            .filter(|a| {
+                a.act == AdminActKind::IssueKey
+                    && a.timebox()
+                    && a.actor_person.as_ref() == Some(&person)
+            })
+        {
+            let boxed: BTreeSet<String> = act
+                .target
+                .get("timebox_nodes")
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect();
+            if boxed.is_disjoint(&nodes) {
+                continue;
+            }
+            let open = act
+                .target
+                .get("until")
+                .and_then(Value::as_str)
+                .and_then(|u| EventTime::parse(u).ok())
+                .is_some_and(|u| u.unix_micros() > now.unix_micros());
+            if open {
+                return refused(TimeboxRefusal::Open);
+            }
+            // A first box and its one renewal wait unsettled at most.
+            if renewal {
+                return refused(TimeboxRefusal::RenewalsExhausted);
+            }
+            renewal = true;
+        }
+        let timebox = Timebox {
+            nodes: nodes.into_iter().collect(),
+            renewal,
+        };
+        self.issue_key_by(&issuer, req, Issuance::Plain(reason, Some(&timebox)))
             .await
     }
 
@@ -4243,7 +4395,7 @@ where
         if !req.create_workspaces.is_empty() {
             let admitted = match how {
                 Issuance::PersonsOwn(_) => true,
-                Issuance::Plain(_) => issuer.role == Role::Admin,
+                Issuance::Plain(..) => issuer.role == Role::Admin,
                 Issuance::Session(_) => false,
             };
             if !admitted {
@@ -4290,7 +4442,7 @@ where
         // Steps 1–3: the two-key rule, the issuer ceiling, admissibility.
         let ceiling = match how {
             Issuance::PersonsOwn(_) => Role::Admin,
-            Issuance::Plain(_) | Issuance::Session(_) => issuer.role,
+            Issuance::Plain(..) | Issuance::Session(_) => issuer.role,
         };
         // A curator is a reviewer key used by an agent, whose submitter grants
         // the reviewer's admissible set is read as if absent (ADR-0030 d8).
@@ -4475,11 +4627,11 @@ where
         let guardrail_scope = record.guardrail_scope;
         let prev = match how {
             Issuance::PersonsOwn(head) => head.clone(),
-            Issuance::Plain(_) | Issuance::Session(_) => self.head_event(tenant_id).await?,
+            Issuance::Plain(..) | Issuance::Session(_) => self.head_event(tenant_id).await?,
         };
         // A key that could read, write, approve or ratify, by an admin key:
         // a widening act (ADR-0097 d5).
-        if let Issuance::Plain(reason) = how
+        if let Issuance::Plain(reason, timebox) = how
             && issuer.role == Role::Admin
         {
             let issued = self
@@ -4491,7 +4643,7 @@ where
                     &creations,
                     oauth,
                     prev.as_ref(),
-                    reason,
+                    (reason, timebox),
                     user_ref.as_ref(),
                     admin_person.as_ref(),
                 )
@@ -8536,11 +8688,12 @@ where
                 count += 1;
             }
         }
+        let effective = self
+            .journal
+            .admin_acts(tenant_id, Some(AdminActState::Effective))
+            .await?;
         if counts_for_act(since, now.unix_micros()) {
-            count += self
-                .journal
-                .admin_acts(tenant_id, Some(AdminActState::Effective))
-                .await?
+            count += effective
                 .iter()
                 .filter(|a| {
                     a.sole_admin
@@ -8549,6 +8702,16 @@ where
                 })
                 .count() as u64;
         }
+        // Time boxes another admin person took, which this one settles
+        // under the same age rule as a confirmation (ADR-0097 d11, d13).
+        count += effective
+            .iter()
+            .filter(|a| {
+                a.timebox()
+                    && a.actor_person.as_ref() != Some(&person)
+                    && counts_for_act(since, a.at.unix_micros())
+            })
+            .count() as u64;
         Ok(count)
     }
 

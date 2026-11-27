@@ -258,7 +258,79 @@ pub struct AdminActRecord {
     pub effect: Value,
 }
 
+/// Why a time-boxed issuance is refused, `request.validation` with
+/// `details.field: /timebox` and `details.reason` (ADR-0097 d13).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimeboxRefusal {
+    /// The issuer counts as no live admin person.
+    NotAdminPerson,
+    /// The key is not a reader, submitter or contributor key whose grants
+    /// are reader and submitter grants on shared workspaces, with no
+    /// create flag, connect code, user, person or new workspace.
+    Shape,
+    /// A grant reaches a user root or an in-progress subtree.
+    NotShared,
+    /// The box names no `expiry`, or one more than 24 hours away.
+    Until,
+    /// The actor person already holds an open box on the workspace.
+    Open,
+    /// One renewal is taken; a second admin person settles the first box
+    /// before another.
+    RenewalsExhausted,
+    /// An act against an admin is open, or a freeze holds.
+    AgainstAdminOpen,
+}
+
+impl TimeboxRefusal {
+    /// `details.reason`.
+    #[must_use]
+    pub fn reason(self) -> &'static str {
+        match self {
+            TimeboxRefusal::NotAdminPerson => "not_admin_person",
+            TimeboxRefusal::Shape => "shape",
+            TimeboxRefusal::NotShared => "not_shared",
+            TimeboxRefusal::Until => "until",
+            TimeboxRefusal::Open => "open",
+            TimeboxRefusal::RenewalsExhausted => "renewals_exhausted",
+            TimeboxRefusal::AgainstAdminOpen => "against_admin_open",
+        }
+    }
+
+    /// The sentence the refusal answers.
+    #[must_use]
+    pub fn message(self) -> &'static str {
+        match self {
+            TimeboxRefusal::NotAdminPerson => "a time box is an admin person's act",
+            TimeboxRefusal::Shape => {
+                "a time box issues a reader, submitter or contributor key whose grants are reader and submitter grants, with no create flag, connect code, user, person or new workspace"
+            }
+            TimeboxRefusal::NotShared => {
+                "a time box grants in shared workspaces only, never into a user root or an in-progress subtree"
+            }
+            TimeboxRefusal::Until => {
+                "a time box takes an expiry no more than 24 hours away, which everything issued under it inherits"
+            }
+            TimeboxRefusal::Open => {
+                "this admin person already holds an open time box on this workspace"
+            }
+            TimeboxRefusal::RenewalsExhausted => {
+                "one renewal is taken: a second admin person settles the first time box before another"
+            }
+            TimeboxRefusal::AgainstAdminOpen => {
+                "no time box is taken while an act against an admin is open or a freeze holds"
+            }
+        }
+    }
+}
+
 impl AdminActRecord {
+    /// Whether the act is a time-boxed issuance, taken at once and settled
+    /// afterwards by a second admin person (ADR-0097 d13).
+    #[must_use]
+    pub fn timebox(&self) -> bool {
+        self.target.get("timebox") == Some(&Value::Bool(true))
+    }
+
     /// The act's class, fixed by its act (ADR-0097 d2).
     #[must_use]
     pub fn class(&self) -> oml_domain::admin_act::AdminActClass {
@@ -4684,6 +4756,9 @@ pub enum AppError {
         "a key acting for the author's person judges no version outside that person's root (review.author_in_lineage)"
     )]
     SamePerson,
+    /// A time-boxed issuance refused (ADR-0097 d13).
+    #[error("{}", .0.message())]
+    Timebox(TimeboxRefusal),
     /// The admin read from a key that counts as no person: it needs a
     /// person-linked admin key or a session (ADR-0097 d16;
     /// `admin.read_requires_person`).

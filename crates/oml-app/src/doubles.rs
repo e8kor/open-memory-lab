@@ -1722,10 +1722,17 @@ fn apply_fold(
                 }
                 Some(held) => {
                     let admitted = match act.state {
-                        St::Confirmed | St::Expired => held.state == St::PendingConfirmation,
+                        // A time box took effect at once and is settled
+                        // afterwards (ADR-0097 d13).
+                        St::Confirmed => {
+                            held.state == St::PendingConfirmation
+                                || (held.state == St::Effective && held.timebox())
+                        }
+                        St::Expired => held.state == St::PendingConfirmation,
                         St::Declined => {
                             held.state == St::PendingConfirmation
-                                || (held.state == St::Effective && held.sole_admin)
+                                || (held.state == St::Effective
+                                    && (held.sole_admin || held.timebox()))
                         }
                         St::Contested => held.state == St::Effective,
                         St::Settled => matches!(held.state, St::Effective | St::Contested),

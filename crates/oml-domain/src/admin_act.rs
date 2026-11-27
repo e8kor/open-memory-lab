@@ -399,6 +399,11 @@ impl AdminActKind {
 /// days, a placeholder, chosen, not measured (ADR-0097 d11).
 pub const SECOND_ADMIN_AGE_SECS: i64 = 7 * 86_400;
 
+/// The longest a time box runs: 24 hours, a placeholder (ADR-0097 d13).
+/// Its key's expiry is the box's `until`, so anything issued under its
+/// grants ends with it.
+pub const TIMEBOX_MAX_SECS: i64 = 86_400;
+
 /// How long a pending widening act waits before it expires as declined:
 /// seven days, a placeholder that must exceed the notice escalation hours
 /// (ADR-0097 d23).
