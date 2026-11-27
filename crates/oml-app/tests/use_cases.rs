@@ -9924,6 +9924,46 @@ async fn a_limits_change_on_a_session_key_a_revoked_key_or_no_key_is_refused_by_
     assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
 }
 
+/// A connector key cut off by a denial on `universe` and not expired is
+/// refused a connect code by name, as an expired one is: the connection it
+/// would open reads and writes nothing (#353).
+#[tokio::test]
+async fn a_cut_off_unexpired_connector_key_is_refused_a_connect_code() {
+    let store = MemStore::new();
+    let (app, _clock) = oauth_app_with_clock(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let issued = app
+        .issue_key(
+            admin,
+            &connector_req("crew/claude-cut", vec![grant(crew, Role::Submitter)]),
+        )
+        .await
+        .expect("a connector key");
+    app.deny_key(
+        admin,
+        Reference::Id(issued.key_id),
+        Reference::Id(boot.root_workspace_id),
+    )
+    .await
+    .expect("cut off on universe");
+    let head = journal(&store, boot.tenant_id).await.len();
+    let err = app
+        .mint_connect_code(admin, Reference::Id(issued.key_id))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        connect_refused(&err),
+        Some(ConnectRefused::CutOff),
+        "{err:?}"
+    );
+    assert_eq!(
+        journal(&store, boot.tenant_id).await.len(),
+        head,
+        "a refusal journals nothing"
+    );
+}
+
 /// A connection is exactly its key: from the connector key's expiry on its
 /// access token is told the key expired, its refresh is `invalid_grant`
 /// and rotates nothing, and no connect code is minted for it; once an
