@@ -12557,8 +12557,29 @@ async fn two_promoted_pg(
     store: &PgStore,
     tenant: &str,
 ) -> (PgApp, Uuid, String, String, Uuid, Uuid) {
+    two_promoted_pg_with(store, tenant, false).await
+}
+
+/// [`two_promoted_pg`] with its admin key linked to `alice`, as the fix act
+/// that demotes and erases requires (#502).
+async fn fix_two_promoted_pg(
+    store: &PgStore,
+    tenant: &str,
+) -> (PgApp, Uuid, String, String, Uuid, Uuid) {
+    two_promoted_pg_with(store, tenant, true).await
+}
+
+async fn two_promoted_pg_with(
+    store: &PgStore,
+    tenant: &str,
+    person: bool,
+) -> (PgApp, Uuid, String, String, Uuid, Uuid) {
     let app = app_over_pg(store);
-    let boot = person_bootstrap_pg(&app, tenant).await;
+    let boot = if person {
+        person_bootstrap_pg(&app, tenant).await
+    } else {
+        bootstrap_pg(&app, tenant).await
+    };
     let admin = boot.admin_key.value.clone();
     let crew = workspace_pg(&app, &admin, "crew", boot.root_workspace_id).await;
     let writer = writer_pg(&app, &admin, crew).await;
@@ -12643,7 +12664,7 @@ async fn a_demotion_returns_the_tip_and_keeps_the_text_in_postgres() {
     }
     let created = Mutex::new(Vec::new());
     let store = fresh_store(&created).await;
-    let (app, tenant, admin, _writer, v1, v2) = two_promoted_pg(&store, "demote").await;
+    let (app, tenant, admin, _writer, v1, v2) = fix_two_promoted_pg(&store, "demote").await;
     let demotion = fix_pg(&app, admin.as_str(), oml_app::types::FixAct::Demote, v2)
         .await
         .expect("demote the tip");
@@ -12699,7 +12720,7 @@ async fn an_erase_leaves_no_clear_body_in_the_live_row_its_passages_queue_teleme
     }
     let created = Mutex::new(Vec::new());
     let store = fresh_store(&created).await;
-    let (app, tenant, admin, writer, v1, v2) = two_promoted_pg(&store, "erase").await;
+    let (app, tenant, admin, writer, v1, v2) = fix_two_promoted_pg(&store, "erase").await;
     // A held successor in the review queue, a passage of v2, and a recall
     // that served v2 with its query text kept (the tenant opted in).
     let v3 = app
@@ -12965,7 +12986,7 @@ async fn an_erase_destroys_the_versions_data_key_and_no_other() {
     }
     let created = Mutex::new(Vec::new());
     let store = fresh_store(&created).await;
-    let (app, tenant, admin, writer, v1, v2) = two_promoted_pg(&store, "erasekey").await;
+    let (app, tenant, admin, writer, v1, v2) = fix_two_promoted_pg(&store, "erasekey").await;
     // Another claim of the same tenant, and another tenant's version, each
     // keyed by the lake writer: the erase reaches neither.
     let untouched = app
