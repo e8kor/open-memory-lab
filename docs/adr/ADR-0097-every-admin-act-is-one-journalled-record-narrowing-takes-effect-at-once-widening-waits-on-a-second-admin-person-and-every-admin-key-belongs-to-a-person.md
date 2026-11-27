@@ -980,6 +980,51 @@ issue lane (PR #526) left. Each answer is recorded here before the code that tak
    creation of the same request among them, is refused as any unknown workspace is
    (`access.not_found`), before anything is journalled.
 
+## Amendment of 2026-11-27 (third): the host and finish lanes' questions (decided by the operator)
+
+Decided by the operator on 2026-11-27, answering the questions the v0.8.6 host lane (PR #529) and
+finish lane (PR #530) left. Each answer is recorded here before the code that takes it. Answers 13
+to 15, 17 and 18 are the lanes' recommendations; 16 and 19 accept every reading those lanes took.
+
+13. **d19's token (decided by the operator, 2026-11-27).** At each start the server writes one
+    operator token per tenant to a 0600 file only root reads, bound to the tenant id and that
+    process start; a restart replaces it, so a token outlives no process. `oml operator recover`
+    and `oml operator settle`, run as root, read the token and call an operator-only route, which
+    refuses any bearer key and any other token. No admin key is involved, and the token is never
+    printed, logged or journalled.
+14. **d20's mail (decided by the operator, 2026-11-27).** Mail is plain SMTP to one local relay
+    configured on the host, which handles TLS and authentication; the server holds no mail
+    credential. The settings name the relay's host and port and the sender address. With no relay
+    set, a recovery or settlement journals its notice and doctor reports
+    `notice.mail_unconfigured`; a relay that refuses or cannot be reached is reported as
+    `notice.mail_delivery_failed`, and the act it tells about stands.
+15. **d7's link is a consent admin act (decided by the operator, 2026-11-27).** In v0.8.6 a link
+    of a key to a person is journalled as an `admin.act` of class `consent` with a required
+    reason (d26). The console's link form, the HTTP link body and every link caller send a reason;
+    a link without one is refused `request.validation` with `details: {field: /reason, reason: required}`, as any admin act missing its reason is.
+16. **The host lane's readings are accepted (decided by the operator, 2026-11-27).**
+    - d12's check covers approvals only, so any reviewer may still reject an instruction.
+    - A d13 renewal allows at most a first box and one renewal per person per workspace.
+    - "The workspace concerned" in d24 is the denied node for a denial and the fix's workspace for
+      a fix. Disabling a person or revoking a person's key notifies only admin persons.
+    - The refusal names are `counts_as_no_person`, `issued_the_proposer`,
+      `admin.read_requires_person` and the `/timebox` reasons.
+17. **#508 N1: the issuer's person (decided by the operator, 2026-11-27).** At issuance the key
+    record keeps the person the issuing key counted as, `issuer_person`, recorded the way
+    `author_person` is at a write (#448). A key issued by a linked key counts as that person when
+    it settles a fix, so a person cannot confirm a fix through a key their own other key issued.
+18. **The confirm reason (decided by the operator, 2026-11-27).** `POST
+    /v2/admin/acts/{act}/confirm` requires a reason, stored with the act (d26) as
+    `confirm_reason`, so the console's confirm screen requires one too. A confirmation without
+    one is refused `request.validation` with `details: {field: /reason, reason: required}`, as any admin act missing its reason is.
+19. **The finish lane's readings are accepted (decided by the operator, 2026-11-27).**
+    - A pending shred never expires.
+    - A federation policy change that both widens and narrows is refused (`request.validation`)
+      and must be sent as two acts.
+    - Erase demotes every promoted version except a retirement, and a vocabulary claim's erase is
+      refused with `lifecycle.demote_kind_unsupported`.
+    - A held successor is not demoted while the shred waits.
+
 ## Rejected alternatives
 
 | Alternative | Why not |
