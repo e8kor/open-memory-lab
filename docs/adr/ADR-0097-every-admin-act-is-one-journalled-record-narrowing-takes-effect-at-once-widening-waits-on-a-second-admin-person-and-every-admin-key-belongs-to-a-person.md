@@ -1025,6 +1025,38 @@ to 15, 17 and 18 are the lanes' recommendations; 16 and 19 accept every reading 
       refused with `lifecycle.demote_kind_unsupported`.
     - A held successor is not demoted while the shred waits.
 
+## Amendment of 2026-11-27 (fourth): the host verbs and mail ship in v0.8.6 (decided by the operator)
+
+Decided by the operator on 2026-11-27, the third batch of that day. Each answer is recorded here
+before the code that takes it. Answers 21 and 22 are not the lanes' recommendations.
+
+20. **v0.8.6 ships complete (decided by the operator, 2026-11-27).** d19, the host verbs, and d20,
+    the mail, are built before the review.
+21. **d19's dormancy is read from the request log (decided by the operator, 2026-11-27; not the
+    recommendation, which was a `last_authenticated_at` the key row keeps).** `oml operator
+    recover` is admitted only when the request log shows no admin key of the tenant authenticated
+    in the last 30 days. Its costs, recorded:
+    - The request log keeps 30 days (ADR-0042 d8), so the window equals the retention. The check
+      fails closed when the log does not reach back the full 30 days, from a fresh install, purged
+      rows or a gap: it refuses with a named reason, `operator.recover_refused` with
+      `log_too_short`, and never reads a missing log as dormancy.
+    - The log is read tenant-bound. Where its rows carry no tenant, the tenant is derived through
+      the key id.
+    - Doctor gets a line for the log coverage the check depends on.
+22. **d19's completion is a background sweep (decided by the operator, 2026-11-27; not the
+    recommendation, which was a second run of the verb).** The server completes a requested
+    recovery once 72 hours pass with no admin sign-in, and any admin sign-in in the window cancels
+    it. Its costs, recorded: the server holds a timer; the sweep is idempotent across replicas and
+    restart-safe through one journalled completion per request; and doctor reports a request past
+    its 72 hours that is not completed.
+23. **The last lane's readings, all accepted (decided by the operator, 2026-11-27).**
+    - A `maintenance` key carries no `used_by` constraint.
+    - A conversion keeps the key's person link.
+    - The server issuer is a reserved key of its own, apart from the revert key.
+    - `link_self` is a consent act and needs a reason.
+    - A pending or disabled entry gets no session keys.
+    - `check_signup_policy` checks only that the tenant exists.
+
 ## Rejected alternatives
 
 | Alternative | Why not |
