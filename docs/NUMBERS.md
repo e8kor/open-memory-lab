@@ -191,3 +191,5 @@ branch that reserved later renumbers.
 | migration | 0068 | `main` |  | imports by importer | used |
 | migration | 0069 | `main` |  | key previous hashes | used |
 | migration | 0070 | `bulk086/core` |  | admin acts, pending keys and admin entry age (ADR-0097 d1, d2, d10, d11, d23) | reserved |
+| migration | 0071 | `bulk086/issue` |  | grant create flag (ADR-0097 d31) | reserved |
+| migration | 0072 | `bulk086/public` |  | workspaces public flag | reserved |
