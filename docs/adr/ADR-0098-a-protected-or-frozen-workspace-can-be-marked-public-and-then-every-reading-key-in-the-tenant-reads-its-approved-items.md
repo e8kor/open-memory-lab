@@ -372,6 +372,25 @@ Each is red first, by breaking the rule it proves.
    as recommended.
 3. **`universe` (d5):** eligible, with ADR-0044 d9's serving unchanged, as recommended.
 
+### The operator's answers of 2026-11-27 (decided by the operator)
+
+Decided by the operator on 2026-11-27, answering the questions the v0.8.6 public lane (PR #525)
+left; each is the lane's recommendation and is recorded here before the code that takes it.
+
+1. **A user key resolves a bare name to a shared node when that node is public (d2, d9).** A user
+   key's bare workspace name resolves inside its own root first (ADR-0044 d5); where the root holds
+   no such name, it resolves to the tenant's shared node of that name when that node is public, so
+   `oml recall --scope <name>` and every other call that names a workspace reach a public node the
+   key reads. A shared node that is not public stays unresolvable to a user key, `access.not_found`,
+   as before, so the name of a private shared node is not disclosed.
+2. **An admin key that counts as no person is refused (d6).** Setting or clearing the flag needs an
+   admin person: a `<user>-admin` session, or an admin key linked to its person. An admin key that
+   counts as no person is refused `access.verb_ceiling`, `details.reason: public_is_admin_only`,
+   and runs `oml keys link-self` first (ADR-0097 d22).
+3. **`public` is an object on `Workspace` everywhere, and a boolean on the counted tree (d9).** The
+   workspace read, the tree read and the workspace list serve `public: {value, since, act_id,
+   sole_admin}` on each node; the counted tree, a count per node, serves `public: true|false`.
+
 ## Rejected alternatives
 
 | Alternative | Why not |
