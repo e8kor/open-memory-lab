@@ -959,7 +959,7 @@ paths:
               additionalProperties: false
               required: [public]
               properties:
-                public: { type: boolean, description: true sets the flag, false clears it. }
+                public: { type: boolean, description: 'true sets the flag, false clears it.' }
                 reason: { type: [string, 'null'], description: 'Why; required for a set outside sole_admin, scanned as a verdict''s reason is and journalled with the admin act (ADR-0097 d26).' }
       responses:
         '200':
@@ -4861,6 +4861,7 @@ components:
         - workspace.in_progress_refused
         - workspace.held_remaining
         - workspace.admin_key_under_root
+        - workspace.public_refused
         - workspace.transition_refused
         - review.author_in_lineage
         - review.person_required

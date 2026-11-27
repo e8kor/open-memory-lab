@@ -25,9 +25,10 @@ class RecallResponseHitsItem:
         memory (Memory):
         score (float): The pipeline's score, comparable within one answer only; ties break by artifact_id ascending.
         matched (RecallMatched): Why a hit matched (ADR-0049 d6).
-        via (RecallResponseHitsItemVia | Unset): Under sources wide or a list only: scope when the hit's workspace is
-            the recall's scope or under it, federated when it is another workspace the key reads; memory.workspace_path
-            names it (ADR-0072 d8).
+        via (RecallResponseHitsItemVia | Unset): Under sources wide or a list, and under scope where a public workspace
+            was searched: scope when the hit's workspace is the recall's scope or under it, federated when it is another
+            workspace the key reads, public when it is a public workspace outside the scope (ADR-0072 d8; ADR-0098 d3);
+            memory.workspace_path names it.
         passage (RecallPassage | Unset): A document's hit only: the passage it serves (ADR-0081 d3, d4). A document is
             ranked by its passages and contributes one hit, its best passage by score, then ordinal; the hit's memory.text
             is that passage's lines byte for byte and memory.tokens its budget, so k counts claims and max_tokens counts the

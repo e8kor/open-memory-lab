@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
+from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -58,6 +59,8 @@ class KeyIssued:
         rotated_from (None | str | Unset): The key_id this key succeeded by rotation, if any (key.rotated links the
             two).
         grants (list[Grant] | Unset):
+        public_reach (list[UUID] | Unset): The public workspaces the key reads through the flag, apart from its grants,
+            a global deny applied; empty for a key whose role does not read (ADR-0098 d1, d9). Since v0.8.6.
         denials (list[Denial] | Unset):
         epoch (int | Unset):
         credential (KeyCredential | Unset): bearer: the key has a value presented as Authorization: Bearer. connection:
@@ -100,6 +103,7 @@ class KeyIssued:
     revoked_at: datetime.datetime | None | Unset = UNSET
     rotated_from: None | str | Unset = UNSET
     grants: list[Grant] | Unset = UNSET
+    public_reach: list[UUID] | Unset = UNSET
     denials: list[Denial] | Unset = UNSET
     epoch: int | Unset = UNSET
     credential: KeyCredential | Unset = UNSET
@@ -192,6 +196,13 @@ class KeyIssued:
                 grants_item = grants_item_data.to_dict()
                 grants.append(grants_item)
 
+        public_reach: list[str] | Unset = UNSET
+        if not isinstance(self.public_reach, Unset):
+            public_reach = []
+            for public_reach_item_data in self.public_reach:
+                public_reach_item = str(public_reach_item_data)
+                public_reach.append(public_reach_item)
+
         denials: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.denials, Unset):
             denials = []
@@ -277,6 +288,8 @@ class KeyIssued:
             field_dict["rotated_from"] = rotated_from
         if grants is not UNSET:
             field_dict["grants"] = grants
+        if public_reach is not UNSET:
+            field_dict["public_reach"] = public_reach
         if denials is not UNSET:
             field_dict["denials"] = denials
         if epoch is not UNSET:
@@ -456,6 +469,15 @@ class KeyIssued:
 
                 grants.append(grants_item)
 
+        _public_reach = d.pop("public_reach", UNSET)
+        public_reach: list[UUID] | Unset = UNSET
+        if _public_reach is not UNSET:
+            public_reach = []
+            for public_reach_item_data in _public_reach:
+                public_reach_item = UUID(public_reach_item_data)
+
+                public_reach.append(public_reach_item)
+
         _denials = d.pop("denials", UNSET)
         denials: list[Denial] | Unset = UNSET
         if _denials is not UNSET:
@@ -585,6 +607,7 @@ class KeyIssued:
             revoked_at=revoked_at,
             rotated_from=rotated_from,
             grants=grants,
+            public_reach=public_reach,
             denials=denials,
             epoch=epoch,
             credential=credential,

@@ -17,8 +17,9 @@ T = TypeVar("T", bound="RecallSources")
 
 @_attrs_define
 class RecallSources:
-    """Under sources wide or a list: what was searched and why (ADR-0072 d8). Every name and number is of a workspace the
-    key reads (d6).
+    """Under sources wide or a list: what was searched and why (ADR-0072 d8); under scope, served only where the recall
+    also searched a public workspace outside the scope, which it then lists (ADR-0098 d3). Every name and number is of a
+    workspace the key reads (d6).
 
         Attributes:
             mode (RecallSourcesMode):

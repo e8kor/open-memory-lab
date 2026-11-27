@@ -3,6 +3,7 @@ from enum import StrEnum
 
 class RecallSourcesSearchedItemVia(StrEnum):
     FEDERATED = "federated"
+    PUBLIC = "public"
     SCOPE = "scope"
 
     def __str__(self) -> str:
