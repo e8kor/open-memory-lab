@@ -990,8 +990,7 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         &self,
         tenant_id: Uuid,
         person: &oml_app::domain::name::Name,
-    ) -> impl Future<Output = Result<Vec<oml_app::types::AdminReadCount>, StoreError>> + Send
-    {
+    ) -> impl Future<Output = Result<Vec<oml_app::types::AdminReadCount>, StoreError>> + Send {
         timed(
             "admin_read_counts",
             self.inner.admin_read_counts(tenant_id, person),

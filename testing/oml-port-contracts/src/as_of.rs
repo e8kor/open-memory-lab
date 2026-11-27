@@ -17,7 +17,7 @@ use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::{EventTime, MemoryKind, Role, UsedBy};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, SeqIdGen};
 use oml_app::federation::Sources;
-use oml_app::ports::{Clock, JournalStore};
+use oml_app::ports::{Clock, ConnectionStore, JournalStore, WebStore};
 use oml_app::search::{MatchMode, Pipeline, SearchConfig};
 use oml_app::types::{
     AnchorFilter, AppError, BootstrapRequest, GrantRequest, IssueKeyRequest, IssuedKey,
@@ -68,7 +68,7 @@ pub struct AsOfWorld<S: JournalStore> {
     idem: AtomicU64,
 }
 
-impl<S: JournalStore + Clone> AsOfWorld<S> {
+impl<S: WebStore + ConnectionStore + Clone> AsOfWorld<S> {
     /// The tree and the keys, serving `searches`, the first the default.
     pub async fn new(store: S, searches: &[&str]) -> Self {
         let pipelines: Vec<Pipeline> = searches
@@ -131,6 +131,9 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
             vec![grant(home, Role::Reader)],
         )
         .await;
+        // The reviewer counts as a person, as an instruction verdict needs
+        // (ADR-0097 d12).
+        crate::federation::counted(&app, admin.as_str(), boot.tenant_id, reviewer.key_id).await;
         AsOfWorld {
             app,
             clock,
@@ -414,7 +417,7 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
 }
 
 /// A key issued by the tenant admin.
-async fn issue<S: JournalStore + Clone>(
+async fn issue<S: WebStore + ConnectionStore + Clone>(
     app: &AsOfApp<S>,
     admin: &str,
     role: Role,
@@ -454,7 +457,9 @@ fn one(id: Uuid) -> BTreeSet<Uuid> {
 /// `every_pipeline_answers_an_as_of_recall_over_the_scope_at_the_instant`:
 /// before the first promotion nothing, between the two the first version,
 /// after the second the second, in recall, the listing, steering and get.
-pub async fn an_as_of_read_serves_the_tip_the_claim_had_then<S: JournalStore + Clone>(
+pub async fn an_as_of_read_serves_the_tip_the_claim_had_then<
+    S: WebStore + ConnectionStore + Clone,
+>(
     store: S,
     searches: &[&str],
 ) {
@@ -535,7 +540,9 @@ pub async fn an_as_of_read_serves_the_tip_the_claim_had_then<S: JournalStore + C
 /// `an_as_of_read_applies_todays_grants_and_denials`: a reader that read
 /// the claim at an instant reads nothing at that instant once denied today,
 /// and a key with no grant on the node never reads it at any instant.
-pub async fn an_as_of_read_applies_todays_grants_and_denials<S: JournalStore + Clone>(
+pub async fn an_as_of_read_applies_todays_grants_and_denials<
+    S: WebStore + ConnectionStore + Clone,
+>(
     store: S,
     searches: &[&str],
 ) {
@@ -581,7 +588,7 @@ pub async fn an_as_of_read_never_serves_a_version_erased_today<S, E, Fut>(
     searches: &[&str],
     erase: E,
 ) where
-    S: JournalStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
     E: Fn(Uuid, Uuid) -> Fut,
     Fut: core::future::Future<Output = ()>,
 {
@@ -634,7 +641,7 @@ pub async fn an_as_of_read_never_serves_a_version_erased_today<S, E, Fut>(
 /// demoted version below the tip leaves the instants it was the tip with
 /// none.
 pub async fn an_as_of_read_skips_a_demoted_version_and_serves_the_version_below_it<
-    S: JournalStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
 >(
     store: S,
     searches: &[&str],
@@ -727,7 +734,7 @@ pub async fn an_as_of_read_skips_a_demoted_version_and_serves_the_version_below_
 /// ratification ends `v1` there (ADR-0059 d4); demoting `v2` leaves `v1`
 /// open again, served today and at an instant before the demotion.
 pub async fn a_demotion_restores_the_end_the_version_had_before_its_supersession<
-    S: JournalStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
 >(
     store: S,
     searches: &[&str],
@@ -790,7 +797,7 @@ pub async fn a_demotion_restores_the_end_the_version_had_before_its_supersession
 /// past, `v3` supersedes `v2`, and demoting `v2` leaves `v1` open again, so
 /// an as-of read in `v2`'s tenure serves `v1` in its place.
 pub async fn demoting_a_version_below_the_tip_restores_the_end_its_ratification_gave_the_version_it_replaced<
-    S: JournalStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
 >(
     store: S,
     searches: &[&str],
@@ -835,7 +842,7 @@ pub async fn demoting_a_version_below_the_tip_restores_the_end_its_ratification_
 /// rows (#474): the version it names as reopened carries the end the event
 /// names, and with none named the version the demoted one replaces keeps
 /// the end it had.
-async fn demote_and_check_the_event<S: JournalStore + Clone>(
+async fn demote_and_check_the_event<S: WebStore + ConnectionStore + Clone>(
     w: &AsOfWorld<S>,
     store: &S,
     id: Uuid,
@@ -927,7 +934,7 @@ pub async fn the_demote_event_names_what_the_store_wrote_in_either_order<S, F, F
     make: F,
     searches: &[&str],
 ) where
-    S: JournalStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
     F: Fn() -> Fut,
     Fut: core::future::Future<Output = S>,
 {
@@ -993,7 +1000,7 @@ pub async fn the_demote_event_names_what_the_store_wrote_in_either_order<S, F, F
 
 /// `a_retired_claim_serves_its_earlier_tip_before_the_retirement_and_nothing_after`.
 pub async fn a_retired_claim_serves_its_earlier_tip_before_the_retirement<
-    S: JournalStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
 >(
     store: S,
     searches: &[&str],
@@ -1024,7 +1031,7 @@ pub async fn a_retired_claim_serves_its_earlier_tip_before_the_retirement<
 /// recorded by the instant is served with `include_unreviewed`, one recorded
 /// after it is not, a version held then and promoted since is absent, and
 /// another key never meets a held row.
-pub async fn held_rows_at_an_instant_follow_todays_rules<S: JournalStore + Clone>(
+pub async fn held_rows_at_an_instant_follow_todays_rules<S: WebStore + ConnectionStore + Clone>(
     store: S,
     searches: &[&str],
 ) {
@@ -1080,7 +1087,7 @@ pub async fn held_rows_at_an_instant_follow_todays_rules<S: JournalStore + Clone
 /// held rows today; at an instant, only those recorded by it, and a row held
 /// then and approved since is absent, in recall and the scoped listing.
 pub async fn inside_an_in_progress_scope_held_rows_at_an_instant_follow_todays_rules<
-    S: JournalStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
 >(
     store: S,
     searches: &[&str],
@@ -1139,7 +1146,7 @@ pub async fn inside_an_in_progress_scope_held_rows_at_an_instant_follow_todays_r
 /// store takes the two node sets apart, the own held rows' and every
 /// author's, in every statement.
 pub async fn a_read_at_an_ancestor_serves_a_descendant_in_progress_subtree_beside_its_own_held_rows<
-    S: JournalStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
 >(
     store: S,
     searches: &[&str],
@@ -1282,7 +1289,7 @@ pub async fn a_read_at_an_ancestor_serves_a_descendant_in_progress_subtree_besid
 
 /// `an_as_of_after_the_leads_clock_is_refused`, and the arguments `as_of`
 /// does not combine with, each refused naming its field.
-pub async fn an_as_of_after_the_leads_clock_is_refused<S: JournalStore + Clone>(
+pub async fn an_as_of_after_the_leads_clock_is_refused<S: WebStore + ConnectionStore + Clone>(
     store: S,
     searches: &[&str],
 ) {
@@ -1343,7 +1350,7 @@ pub async fn an_as_of_after_the_leads_clock_is_refused<S: JournalStore + Clone>(
 
 /// Every law but the erasure one, which needs a store-specific act.
 /// A user's key on its own root, named `user`, of `role`.
-async fn user_key<S: JournalStore + Clone>(
+async fn user_key<S: WebStore + ConnectionStore + Clone>(
     w: &AsOfWorld<S>,
     user: &Name,
     role: Role,
@@ -1393,7 +1400,7 @@ async fn user_key<S: JournalStore + Clone>(
 /// numbers, and the usage meter counts the chain as the one live memory it
 /// was before, never a second.
 pub async fn a_claim_whose_approved_versions_are_all_demoted_takes_a_new_version_continuing_its_numbers<
-    S: JournalStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
 >(
     store: S,
     searches: &[&str],
@@ -1518,7 +1525,7 @@ pub async fn a_claim_whose_approved_versions_are_all_demoted_takes_a_new_version
 
 pub async fn run_as_of_suite<S, F, Fut>(make: F, searches: &[&str])
 where
-    S: JournalStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
     F: Fn() -> Fut,
     Fut: core::future::Future<Output = S>,
 {

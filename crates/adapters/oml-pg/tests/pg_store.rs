@@ -6803,7 +6803,7 @@ async fn reviewer_pg(
             role: Role::Reviewer,
             name: name(key_name),
             principal: principal.to_owned(),
-            used_by: None,
+            used_by: Some(oml_app::domain::UsedBy::Person),
             default_workspace: None,
             crew: None,
             connect_code: false,
@@ -6871,6 +6871,9 @@ async fn propose_then_ratify_through_the_serving_role_moves_status_and_journals_
     let (t, admin) = (boot.tenant_id, boot.admin_key.value.clone());
     let crew = workspace_pg(&app, &admin, "crew", boot.root_workspace_id).await;
     let dora = reviewer_pg(&app, &admin, "dora-key", "dora", crew).await;
+    // Dora's key counts as a person, as a ratification needs (ADR-0097
+    // d12, d17).
+    oml_port_contracts::federation::counted(&app, &admin, t, dora.key_id).await;
     let other = bootstrap_pg(&app, "globex").await;
 
     let proposal = app

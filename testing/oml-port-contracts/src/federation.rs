@@ -22,7 +22,7 @@ use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::{MemoryKind, Role, UsedBy, WorkspaceStatus};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, SeqIdGen};
 use oml_app::federation::{FederationPolicyChange, Sources, Via};
-use oml_app::ports::JournalStore;
+use oml_app::ports::{ConnectionStore, JournalStore, WebStore};
 use oml_app::search::{MatchMode, Pipeline, SearchConfig};
 use oml_app::types::{
     AnchorFilter, AppError, BootstrapRequest, GrantRequest, IssueKeyRequest, IssuedKey,
@@ -47,6 +47,58 @@ fn fresh(prefix: &str) -> Name {
         "{prefix}-{}",
         NAMES.fetch_add(1, Ordering::Relaxed)
     ))
+}
+
+/// `key_id` linked to a person of its own and accepted from that person's
+/// session, so it counts as that person (ADR-0085 d16; ADR-0097 d12).
+pub async fn counted<S: WebStore + ConnectionStore>(
+    app: &App<S, MemSigner, FixedClock, SeqIdGen, MarkerScanner>,
+    admin: &str,
+    tenant: Uuid,
+    key_id: Uuid,
+) {
+    use oml_app::app::Capacity;
+    use oml_app::domain::web::Email;
+    use oml_app::types::{Bearer, WebEmailRequest};
+    let tag = tenant.simple().to_string();
+    let mut sessions = Vec::new();
+    let mut users = Vec::new();
+    for (user, is_admin) in [(fresh("fed-ops"), true), (fresh("fed-person"), false)] {
+        let (entry, _) = app
+            .allow_web_email(
+                admin,
+                &WebEmailRequest {
+                    email: Email::parse(&format!("{}-{}@example.com", user.as_str(), &tag[..8]))
+                        .expect("an email"),
+                    user: user.clone(),
+                    admin: is_admin,
+                },
+            )
+            .await
+            .expect("an entry");
+        app.web_ensure_keys(&entry).await.expect("session keys");
+        let token = app
+            .web_session_open(&entry, 3600, None)
+            .await
+            .expect("a session")
+            .token;
+        sessions.push(app.web_session(&token).await.expect("read").expect("live"));
+        users.push(user);
+    }
+    let ops = app
+        .web_caller(&sessions[0], Capacity::Admin)
+        .await
+        .expect("the console admin");
+    app.link_key_to_person(Bearer::Session(&ops), key_id.into(), &users[1])
+        .await
+        .expect("linked");
+    let own = app
+        .web_caller(&sessions[1], Capacity::Web)
+        .await
+        .expect("the person's console");
+    app.accept_key_link(Bearer::Session(&own), key_id.into())
+        .await
+        .expect("accepted");
 }
 
 fn grant(node: Uuid, role: Role, deny: Vec<Uuid>) -> GrantRequest {
@@ -86,7 +138,7 @@ pub struct FedWorld<S: JournalStore> {
     idem: AtomicU64,
 }
 
-impl<S: JournalStore + Clone> FedWorld<S> {
+impl<S: WebStore + ConnectionStore + Clone> FedWorld<S> {
     /// The tree, the keys, and the rows each test adds to; federation on.
     pub async fn new(store: S) -> Self {
         Self::with_limits(store, WidenLimits::default()).await
@@ -168,6 +220,9 @@ impl<S: JournalStore + Clone> FedWorld<S> {
             ],
         )
         .await;
+        // The reviewer counts as a person, as a ladder ratification needs
+        // (ADR-0097 d12, d17): linked to its person and accepted.
+        counted(&app, admin.as_str(), boot.tenant_id, reviewer.key_id).await;
         let mut world = FedWorld {
             app,
             store,
@@ -506,7 +561,10 @@ const QUERIES: [&str; 3] = [
 /// Each mode's and query's fingerprint for `key` at `home`, at `k` 10 and
 /// with `max_sources` 8 and 1, so a cut is exercised; each `scope` answer
 /// read off a widen signal built over the rows as they are now.
-async fn answers<S: JournalStore + Clone>(w: &FedWorld<S>, key: &IssuedKey) -> Vec<String> {
+async fn answers<S: WebStore + ConnectionStore + Clone>(
+    w: &FedWorld<S>,
+    key: &IssuedKey,
+) -> Vec<String> {
     let mut out = Vec::new();
     // Every signal built before is past its bound, so each is rebuilt.
     w.clock.advance(WIDEN_SIGNAL_MAX_AGE_SECS.unsigned_abs());
@@ -534,7 +592,9 @@ async fn answers<S: JournalStore + Clone>(w: &FedWorld<S>, key: &IssuedKey) -> V
 /// `considered`, `cut`, hits, scores, `did_you_mean`, the counts
 /// or the event's record, against W absent: an empty `development` node no
 /// key reads into, which is no source.
-pub async fn an_unreadable_workspace_changes_no_byte_of_any_answer<S: JournalStore + Clone>(
+pub async fn an_unreadable_workspace_changes_no_byte_of_any_answer<
+    S: WebStore + ConnectionStore + Clone,
+>(
     store: S,
 ) {
     let mut w = FedWorld::seeded(store).await;
@@ -560,7 +620,9 @@ pub async fn an_unreadable_workspace_changes_no_byte_of_any_answer<S: JournalSto
 
 /// Test 2: W readable but `development`, in progress, or committed with
 /// `accept_federated` off changes no byte of an answer scoped elsewhere.
-pub async fn a_readable_workspace_that_is_no_source_changes_no_byte<S: JournalStore + Clone>(
+pub async fn a_readable_workspace_that_is_no_source_changes_no_byte<
+    S: WebStore + ConnectionStore + Clone,
+>(
     store: S,
 ) {
     let mut w = FedWorld::seeded(store).await;
@@ -615,7 +677,11 @@ pub async fn a_readable_workspace_that_is_no_source_changes_no_byte<S: JournalSt
 
 /// Test 3: a key that reads the scope and not W never meets W's id or
 /// name, in any recall mode's whole answer or in the scope's read.
-pub async fn a_scope_reader_never_meets_an_unreadable_workspace<S: JournalStore + Clone>(store: S) {
+pub async fn a_scope_reader_never_meets_an_unreadable_workspace<
+    S: WebStore + ConnectionStore + Clone,
+>(
+    store: S,
+) {
     let w = FedWorld::seeded(store).await;
     let key = w.key(Role::Reader, &["home"], &[]).await;
     let legal = w.node("legal");
@@ -658,7 +724,7 @@ pub struct RefusalWorld<S: JournalStore> {
 }
 
 /// Test 4, the world.
-pub async fn refusal_world<S: JournalStore + Clone>(store: S) -> RefusalWorld<S> {
+pub async fn refusal_world<S: WebStore + ConnectionStore + Clone>(store: S) -> RefusalWorld<S> {
     let mut w = FedWorld::seeded(store).await;
     w.create("secret", "crew").await;
     let secret = w.promote("secret", "invoice retry policy").await;
@@ -701,7 +767,7 @@ pub async fn refusal_world<S: JournalStore + Clone>(store: S) -> RefusalWorld<S>
 /// Test 4, one sample: `runs` recalls of the list `names`, each refused,
 /// the refusal of each the same bytes, returned. The work these reads do is
 /// what the caller counts (#295).
-pub async fn refusal_sample<S: JournalStore + Clone>(
+pub async fn refusal_sample<S: WebStore + ConnectionStore + Clone>(
     t: &RefusalWorld<S>,
     names: [&str; 2],
     runs: usize,
@@ -733,7 +799,7 @@ pub async fn refusal_sample<S: JournalStore + Clone>(
 /// four warm-ups of each, so neither pays the other's cold caches. A
 /// measurement run weekly by the bench workflow, not by the gating suite
 /// (#295).
-pub async fn refusal_timings<S: JournalStore + Clone>(
+pub async fn refusal_timings<S: WebStore + ConnectionStore + Clone>(
     t: &RefusalWorld<S>,
     runs: usize,
 ) -> (Vec<f64>, Vec<f64>) {
@@ -769,7 +835,11 @@ pub fn assert_refusals_within_noise(unreadable: Vec<f64>, absent: Vec<f64>) {
 /// a `Cc` pipeline, then the names. The two refusals' work, which a
 /// latency would show, is counted by each store's own test, not timed here
 /// (#295).
-pub async fn a_list_is_answered_whole_or_refused_in_d5s_order<S: JournalStore + Clone>(store: S) {
+pub async fn a_list_is_answered_whole_or_refused_in_d5s_order<
+    S: WebStore + ConnectionStore + Clone,
+>(
+    store: S,
+) {
     let RefusalWorld { world: w, key, .. } = refusal_world(store).await;
     let list = |names: &[&str]| {
         Some(Sources::List(
@@ -1006,7 +1076,11 @@ pub async fn a_list_is_answered_whole_or_refused_in_d5s_order<S: JournalStore + 
 
 /// Test 5: reader on a source revoked, then a recall at once: the source is
 /// absent, so no candidate set was cached.
-pub async fn a_revoked_source_is_absent_from_the_next_recall<S: JournalStore + Clone>(store: S) {
+pub async fn a_revoked_source_is_absent_from_the_next_recall<
+    S: WebStore + ConnectionStore + Clone,
+>(
+    store: S,
+) {
     let w = FedWorld::seeded(store).await;
     let key = w
         .key(Role::Reader, &["crew", "legal", "product"], &[])
@@ -1073,7 +1147,9 @@ pub async fn a_revoked_source_is_absent_from_the_next_recall<S: JournalStore + C
 /// it, on `search` (`bm25` and `bm25-postings`; the PostgreSQL suite runs
 /// the latter with limits under which a selection's postings cross the
 /// budget).
-pub async fn a_hits_score_never_depends_on_which_sources_were_selected<S: JournalStore + Clone>(
+pub async fn a_hits_score_never_depends_on_which_sources_were_selected<
+    S: WebStore + ConnectionStore + Clone,
+>(
     store: S,
     search: &str,
 ) {
@@ -1081,7 +1157,7 @@ pub async fn a_hits_score_never_depends_on_which_sources_were_selected<S: Journa
 }
 
 /// Test 6 at `k`: a small `k` makes a pruning read's rescore depth bind.
-pub async fn a_hits_score_never_depends_on_selection_at<S: JournalStore + Clone>(
+pub async fn a_hits_score_never_depends_on_selection_at<S: WebStore + ConnectionStore + Clone>(
     store: S,
     search: &str,
     k: usize,
@@ -1179,7 +1255,7 @@ pub struct TimingWorld<S: JournalStore> {
 }
 
 /// Test 7, the world.
-pub async fn timing_world<S: JournalStore + Clone>(store: S) -> TimingWorld<S> {
+pub async fn timing_world<S: WebStore + ConnectionStore + Clone>(store: S) -> TimingWorld<S> {
     let mut world = FedWorld::seeded(store).await;
     let mut templates = [Uuid::nil(); 2];
     for (i, (node, parent)) in [("vault", "universe"), ("vault-denied", "crew")]
@@ -1206,7 +1282,7 @@ pub async fn timing_world<S: JournalStore + Clone>(store: S) -> TimingWorld<S> {
 
 /// Test 7, one sample: wall times of `runs` `wide` recalls under `search`,
 /// after one warm-up.
-pub async fn timing_sample<S: JournalStore + Clone>(
+pub async fn timing_sample<S: WebStore + ConnectionStore + Clone>(
     t: &TimingWorld<S>,
     search: &str,
     runs: usize,
@@ -1245,7 +1321,7 @@ pub async fn timing_sample<S: JournalStore + Clone>(
 /// copies, it shows no copied row and no statistic of one reaches the
 /// answer, whatever the host's load; the timing half is a measurement run
 /// outside the gating suite (#278).
-pub async fn answer_sample<S: JournalStore + Clone>(
+pub async fn answer_sample<S: WebStore + ConnectionStore + Clone>(
     t: &TimingWorld<S>,
     search: &str,
 ) -> Vec<String> {
@@ -1294,7 +1370,7 @@ fn quantile(mut v: Vec<f64>, q: f64) -> f64 {
 /// and a list are refused at `/sources`; turned on, a `scope` answer
 /// is the same answer byte for byte but for the widen hint.
 pub async fn with_federation_off_scope_is_todays_answer_and_wider_is_refused<
-    S: JournalStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
 >(
     store: S,
 ) {
@@ -1361,7 +1437,9 @@ pub async fn with_federation_off_scope_is_todays_answer_and_wider_is_refused<
 
 /// Test 9a: a list's scores and answer are byte-identical whatever the
 /// unlisted workspaces hold.
-pub async fn a_lists_answer_depends_on_the_listed_workspaces_alone<S: JournalStore + Clone>(
+pub async fn a_lists_answer_depends_on_the_listed_workspaces_alone<
+    S: WebStore + ConnectionStore + Clone,
+>(
     store: S,
 ) {
     let mut w = FedWorld::seeded(store).await;
@@ -1409,7 +1487,7 @@ pub async fn a_lists_answer_depends_on_the_listed_workspaces_alone<S: JournalSto
 /// `legal` hold "kiwi" at the same rate per row; `product` holds it on one
 /// stray row; `orchard`, under `crew`, holds it on both its rows when
 /// `orchard` is true. The key reads `crew`, `legal` and `product`.
-pub async fn kiwi_world<S: JournalStore + Clone>(
+pub async fn kiwi_world<S: WebStore + ConnectionStore + Clone>(
     store: S,
     orchard: bool,
 ) -> (FedWorld<S>, IssuedKey) {
@@ -1417,7 +1495,7 @@ pub async fn kiwi_world<S: JournalStore + Clone>(
 }
 
 /// [`kiwi_world`] under the widen signal's bounds `limits`.
-pub async fn kiwi_world_within<S: JournalStore + Clone>(
+pub async fn kiwi_world_within<S: WebStore + ConnectionStore + Clone>(
     store: S,
     orchard: bool,
     limits: WidenLimits,
@@ -1452,7 +1530,7 @@ pub async fn kiwi_world_within<S: JournalStore + Clone>(
 }
 
 /// A `scope` recall of "kiwi" at `home` and its hint.
-pub async fn kiwi_hint<S: JournalStore + Clone>(
+pub async fn kiwi_hint<S: WebStore + ConnectionStore + Clone>(
     w: &FedWorld<S>,
     key: &IssuedKey,
     k: usize,
@@ -1469,7 +1547,7 @@ pub async fn kiwi_hint<S: JournalStore + Clone>(
 /// per row, with the candidates holding the word and the lower bound on
 /// their rows.
 pub async fn the_widen_hint_fires_on_a_richer_source_and_never_on_a_stray_row<
-    S: JournalStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
 >(
     store: S,
 ) {
@@ -1517,7 +1595,7 @@ pub async fn the_widen_hint_fires_on_a_richer_source_and_never_on_a_stray_row<
 /// lead builds it off the request, the next recall reads the hint from it
 /// (#244).
 pub async fn a_scope_recall_without_its_signal_carries_no_hint_and_asks_for_one<
-    S: JournalStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
 >(
     store: S,
 ) {
@@ -1561,7 +1639,11 @@ pub async fn a_scope_recall_without_its_signal_carries_no_hint_and_asks_for_one<
 /// A signal built under the key's grants before a change serves no hint,
 /// so counts of a node the key no longer reads never reach an answer; the
 /// signal rebuilt under the new grants decides the hint again (d6; #244).
-pub async fn a_signal_built_under_other_grants_serves_no_hint<S: JournalStore + Clone>(store: S) {
+pub async fn a_signal_built_under_other_grants_serves_no_hint<
+    S: WebStore + ConnectionStore + Clone,
+>(
+    store: S,
+) {
     let (w, key) = kiwi_world(store, true).await;
     w.fresh_signal(&key, "kiwi", "home", Some(Sources::Scope))
         .await;
@@ -1588,7 +1670,9 @@ pub async fn a_signal_built_under_other_grants_serves_no_hint<S: JournalStore + 
 
 /// A signal past its refresh age still serves and asks to be rebuilt; at
 /// its bound it serves nothing until it is (#244).
-pub async fn a_signal_at_its_age_bound_serves_no_hint<S: JournalStore + Clone>(store: S) {
+pub async fn a_signal_at_its_age_bound_serves_no_hint<S: WebStore + ConnectionStore + Clone>(
+    store: S,
+) {
     let (w, key) = kiwi_world(store, true).await;
     w.fresh_signal(&key, "kiwi", "home", Some(Sources::Scope))
         .await;
@@ -1613,7 +1697,9 @@ pub async fn a_signal_at_its_age_bound_serves_no_hint<S: JournalStore + Clone>(s
 /// a demotion, a mode change and a policy change do: the next `scope`
 /// recall carries no hint from counts taken before it, and asks for a
 /// signal built after it (#244, review F4, F5).
-pub async fn a_status_transition_drops_the_tenants_signals_at_once<S: JournalStore + Clone>(
+pub async fn a_status_transition_drops_the_tenants_signals_at_once<
+    S: WebStore + ConnectionStore + Clone,
+>(
     store: S,
 ) {
     let (w, key) = kiwi_world(store, true).await;
@@ -1653,7 +1739,9 @@ pub async fn a_status_transition_drops_the_tenants_signals_at_once<S: JournalSto
 /// A signal past the tenant's share is never read whole and never held;
 /// the build counts as failed with its reason, and no recall asks for it
 /// again until the mark is as old as the signal's bound (#244, review F1).
-pub async fn a_signal_past_the_tenants_share_is_marked_and_not_rebuilt<S: JournalStore + Clone>(
+pub async fn a_signal_past_the_tenants_share_is_marked_and_not_rebuilt<
+    S: WebStore + ConnectionStore + Clone,
+>(
     store: S,
 ) {
     let limits = WidenLimits {
@@ -1700,7 +1788,7 @@ pub async fn a_signal_past_the_tenants_share_is_marked_and_not_rebuilt<S: Journa
 /// signal alone is counted as failed and marked, and the builds behind it
 /// go on (#244, review round 2, R3).
 pub async fn a_stopped_build_marks_its_own_signal_and_the_builds_behind_it_go_on<
-    S: JournalStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
 >(
     store: S,
 ) {
@@ -1756,7 +1844,9 @@ pub async fn a_stopped_build_marks_its_own_signal_and_the_builds_behind_it_go_on
 /// equal the reference counts read over the same nodes, kinds and expiry,
 /// pruning or not, and a vocabulary past its cap is not read (#244). Whether any read pruned a word, so a store that
 /// prunes can hold that the law met its pruning.
-pub async fn the_signals_counts_equal_the_reference_counts<S: JournalStore + Clone>(
+pub async fn the_signals_counts_equal_the_reference_counts<
+    S: WebStore + ConnectionStore + Clone,
+>(
     store: S,
 ) -> bool {
     let mut pruned_any = false;
@@ -1860,7 +1950,7 @@ pub async fn the_signals_counts_equal_the_reference_counts<S: JournalStore + Clo
 
 /// A `wide` answer marks each hit's source: `scope` for the scope's
 /// workspaces, `federated` for every other (d8).
-pub async fn a_wide_answer_marks_each_hits_source<S: JournalStore + Clone>(store: S) {
+pub async fn a_wide_answer_marks_each_hits_source<S: WebStore + ConnectionStore + Clone>(store: S) {
     let w = FedWorld::seeded(store).await;
     let key = w
         .key(Role::Reader, &["crew", "legal", "product"], &[])
@@ -1890,7 +1980,7 @@ pub async fn a_wide_answer_marks_each_hits_source<S: JournalStore + Clone>(store
 /// Held rows are never federated: under `wide` and a list, with
 /// `include_unreviewed`, the writer's own held row on a candidate is never a
 /// hit, while its held row in the scope is (ADR-0072 d7).
-pub async fn a_held_row_is_never_federated<S: JournalStore + Clone>(store: S) {
+pub async fn a_held_row_is_never_federated<S: WebStore + ConnectionStore + Clone>(store: S) {
     let w = FedWorld::seeded(store).await;
     let elsewhere = w.hold("legal", "invoice retry policy held elsewhere").await;
     let here = w.hold("home", "invoice retry policy held here").await;
@@ -1931,7 +2021,9 @@ pub async fn a_held_row_is_never_federated<S: JournalStore + Clone>(store: S) {
 /// A held row's score is the same on the scan and on the postings under a
 /// reference set, a word no row of the set holds scoring nothing on either
 /// (ADR-0072 d7; ADR-0052 d4).
-pub async fn a_held_row_scores_alike_on_the_scan_and_the_postings<S: JournalStore + Clone>(
+pub async fn a_held_row_scores_alike_on_the_scan_and_the_postings<
+    S: WebStore + ConnectionStore + Clone,
+>(
     store: S,
 ) {
     let w = FedWorld::seeded(store).await;
@@ -1975,7 +2067,7 @@ pub async fn a_held_row_scores_alike_on_the_scan_and_the_postings<S: JournalStor
 /// tenant's policy, each change is journalled with what it replaced, a
 /// change that changes nothing journals nothing, and `max_sources` past 64
 /// is refused at its field (ADR-0072 d5).
-pub async fn the_policies_are_never_an_agents_act<S: JournalStore + Clone>(store: S) {
+pub async fn the_policies_are_never_an_agents_act<S: WebStore + ConnectionStore + Clone>(store: S) {
     let w = FedWorld::seeded(store).await;
     let root = w.node("universe");
     let reviewer = |used_by: UsedBy, profile: Option<KeyProfile>| {
@@ -2110,7 +2202,9 @@ pub async fn the_policies_are_never_an_agents_act<S: JournalStore + Clone>(store
 /// The candidate-count report counts |C| with no scope set aside: the
 /// trusted workspaces the key reads that accept federated reads, never a
 /// `development` or a declining one (ADR-0072, "Who gains"; #205).
-pub async fn the_candidate_count_is_the_trusted_sources_a_key_reads<S: JournalStore + Clone>(
+pub async fn the_candidate_count_is_the_trusted_sources_a_key_reads<
+    S: WebStore + ConnectionStore + Clone,
+>(
     store: S,
 ) {
     let w = FedWorld::seeded(store).await;
@@ -2143,7 +2237,10 @@ pub async fn the_candidate_count_is_the_trusted_sources_a_key_reads<S: JournalSt
 /// A world of `n` protected workspaces under `fleet`, one memory each, and a
 /// key reading them all: d12's budget at 1,000 candidates is measured over
 /// it (ADR-0072 d12).
-pub async fn fleet_world<S: JournalStore + Clone>(store: S, n: usize) -> (FedWorld<S>, IssuedKey) {
+pub async fn fleet_world<S: WebStore + ConnectionStore + Clone>(
+    store: S,
+    n: usize,
+) -> (FedWorld<S>, IssuedKey) {
     let mut w = FedWorld::new(store).await;
     w.create("fleet", "universe").await;
     for i in 0..n {
@@ -2161,7 +2258,7 @@ pub async fn fleet_world<S: JournalStore + Clone>(store: S, n: usize) -> (FedWor
 }
 
 /// One mode's wall times at `fleet-0`, after a warm-up.
-pub async fn fleet_sample<S: JournalStore + Clone>(
+pub async fn fleet_sample<S: WebStore + ConnectionStore + Clone>(
     w: &FedWorld<S>,
     key: &IssuedKey,
     sources: Option<Sources>,
@@ -2197,7 +2294,7 @@ pub fn quantile_of(v: Vec<f64>, q: f64) -> f64 {
 /// the store's own bulk path.
 pub async fn run_federation_suite<S, F, Fut>(make: F, searches: &[&str])
 where
-    S: JournalStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
     F: Fn() -> Fut,
     Fut: core::future::Future<Output = S>,
 {
@@ -2222,7 +2319,7 @@ where
 /// built by #244) over fresh stores from `make`.
 pub async fn run_widen_suite<S, F, Fut>(make: F)
 where
-    S: JournalStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
     F: Fn() -> Fut,
     Fut: core::future::Future<Output = S>,
 {
