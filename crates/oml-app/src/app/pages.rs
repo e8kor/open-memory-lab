@@ -996,6 +996,12 @@ where
         }
         // Adding a grant or a capacity is widening, a person's root
         // included (ADR-0097 d5, d6): pending, the grants wait in the act.
+        let mut root_persons = BTreeSet::new();
+        for grant in &resolved {
+            if let Some(person) = self.root_person_of(tenant_id, grant.node).await? {
+                root_persons.insert(person.as_str().to_owned());
+            }
+        }
         let prev = self.head_event(tenant_id).await?;
         let act = self
             .begin_admin_act(
@@ -1006,6 +1012,10 @@ where
                     "name": key.name.as_ref().map(Name::as_str),
                     "role": key.role.as_str(),
                     "principal": key.principal,
+                    // The roots' persons the grants reach, which the confirm
+                    // screen names and a grant at once under `sole_admin`
+                    // notifies (ADR-0097 d6).
+                    "root_persons": root_persons,
                 }),
                 reason,
                 serde_json::json!({

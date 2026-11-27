@@ -853,6 +853,7 @@ where
             &json!({
                 "review": counts.review,
                 "briefs": counts.briefs,
+                "notices": counts.notices,
                 "truncated": counts.truncated,
             }),
         ))

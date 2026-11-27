@@ -147,7 +147,16 @@ where
             MetadataFold::KeyRevoked { key_id },
             None,
         ));
-        let receipt = self.commit_requests(reqs).await?;
+        // Revoking a person's key, or another admin's, is loud (ADR-0097
+        // d20, d24); the answer names the revocation's own seq.
+        let revoked_seq = reqs.last().map(|r| r.event.envelope.seq);
+        if let Some(act) = &act {
+            self.with_notice(&act.record, &mut reqs).await?;
+        }
+        let mut receipt = self.commit_requests(reqs).await?;
+        if let Some(seq) = revoked_seq {
+            receipt.seq = seq;
+        }
         Ok(RevokedKey {
             key: KeyRecord {
                 revoked_at: Some(revoked_at.clone()),

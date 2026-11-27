@@ -547,14 +547,19 @@ async fn one_revoke_verb_ends_any_key_and_cascades_to_none() {
         .await
         .expect("no cascade: a key it issued keeps working");
     let events = r.journal().await;
-    let last = &events[events.len() - 1].envelope;
+    // An act against an admin is loud: its notice closes the commit
+    // (ADR-0097 d20).
+    let notice = &events[events.len() - 1].envelope;
+    assert_eq!(notice.event_type, event_types::NOTICE_WRITTEN);
+    assert_eq!(notice.payload["kind"], "act_against_admin");
+    let last = &events[events.len() - 2].envelope;
     assert_eq!(last.event_type, event_types::KEY_REVOKED);
     assert_eq!(last.payload["reason"], "leaked");
     assert_eq!(
         last.payload["act_id"],
         revoked.act_id.expect("an act").to_string()
     );
-    let act = &events[events.len() - 2].envelope;
+    let act = &events[events.len() - 3].envelope;
     assert_eq!(act.event_type, event_types::ADMIN_ACT);
     // Another admin person's key: an act against an admin, final (d8).
     assert_eq!(act.payload["act"], "revoke_admin_key");
@@ -2350,5 +2355,152 @@ async fn the_admin_read_needs_a_person_and_is_counted_per_person() {
     assert!(
         alice_counts.is_empty(),
         "a shared read counts against no one"
+    );
+}
+
+/// Under `sole_admin` an admin's key in another person's root takes effect
+/// at once, marked, and that person is told in-product in the issuance's
+/// own commit: a notice in their To do, which they dismiss (ADR-0097 d6,
+/// d20).
+#[tokio::test]
+async fn a_reach_into_a_persons_root_under_sole_admin_takes_effect_at_once_and_notifies_the_person()
+{
+    let r = rig().await;
+    r.admin_person("alice").await;
+    let carol = r
+        .app
+        .allow_web_email(r.admin(), &entry_of("carol", false))
+        .await
+        .expect("carol's entry")
+        .0;
+    r.app.web_ensure_keys(&carol).await.expect("carol's keys");
+    let alice = r.admin_session("alice").await;
+    let before = r.journal().await.len();
+    let issued = r
+        .app
+        .issue_key(
+            Bearer::Session(&alice),
+            &IssueKeyRequest {
+                user: Some(name("carol")),
+                grants: vec![
+                    grant_on("carol", Role::Reader),
+                    grant_on("carol", Role::Submitter),
+                ],
+                ..agent_req()
+            },
+        )
+        .await
+        .expect("a key in carol's root");
+    assert_eq!(issued.pending_act, None, "at once under sole_admin");
+    let added: Vec<String> = r.journal().await[before..]
+        .iter()
+        .map(|e| e.envelope.event_type.clone())
+        .collect();
+    assert_eq!(
+        added.last().map(String::as_str),
+        Some(event_types::NOTICE_WRITTEN)
+    );
+    let web = r.person_session("carol", Capacity::Web).await;
+    let notices = r
+        .app
+        .notices(Bearer::Session(&web), false)
+        .await
+        .expect("carol's notices");
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].kind.as_str(), "root_reach");
+    assert_eq!(
+        r.app
+            .todo_counts(Bearer::Session(&web), None)
+            .await
+            .expect("counts")
+            .notices,
+        1
+    );
+    assert!(
+        r.app
+            .notices(Bearer::Session(&alice), false)
+            .await
+            .expect("alice's notices")
+            .is_empty(),
+        "the actor is not told of their own reach"
+    );
+    r.app
+        .dismiss_notice(Bearer::Session(&web), notices[0].notice_id)
+        .await
+        .expect("carol dismisses it");
+    assert_eq!(
+        r.app
+            .todo_counts(Bearer::Session(&web), None)
+            .await
+            .expect("counts")
+            .notices,
+        0
+    );
+    let again = r
+        .app
+        .dismiss_notice(Bearer::Session(&web), notices[0].notice_id)
+        .await
+        .expect_err("a dismissed notice is gone");
+    assert!(matches!(again, AppError::NotFound), "{again:?}");
+}
+
+/// Offensive narrowing is loud: denying a reviewer person's key writes, in
+/// the denial's own commit, a notice to every admin person and to every
+/// reviewer person of the workspace concerned (ADR-0097 d20, d24).
+#[tokio::test]
+async fn offensive_narrowing_notifies_every_admin_person_and_the_workspaces_reviewer_persons() {
+    let r = rig().await;
+    r.admin_person("alice").await;
+    let rhea = r
+        .app
+        .issue_key(r.admin(), &person_reviewer_req("rhea"))
+        .await
+        .expect("rhea's reviewer key");
+    let alice = r.admin_session("alice").await;
+    let rhea_entry = r
+        .app
+        .allow_web_email(r.admin(), &entry_of("rhea", false))
+        .await
+        .expect("rhea's entry")
+        .0;
+    r.app.web_ensure_keys(&rhea_entry).await.expect("keys");
+    r.app
+        .link_key_to_person(Bearer::Session(&alice), rhea.key_id.into(), &name("rhea"))
+        .await
+        .expect("linked");
+    let rhea_web = r.person_session("rhea", Capacity::Web).await;
+    r.app
+        .accept_key_link(Bearer::Session(&rhea_web), rhea.key_id.into())
+        .await
+        .expect("accepted");
+    let other = r
+        .app
+        .issue_key(r.admin(), &person_reviewer_req("other"))
+        .await
+        .expect("another reviewer key");
+    r.app
+        .deny_key(
+            Bearer::Session(&alice),
+            other.key_id.into(),
+            by_name("crew"),
+        )
+        .await
+        .expect("the denial takes effect at once");
+    let to_rhea = r
+        .app
+        .notices(Bearer::Session(&rhea_web), false)
+        .await
+        .expect("rhea's notices");
+    assert_eq!(to_rhea.len(), 1, "a reviewer person of crew is told");
+    assert_eq!(to_rhea[0].kind.as_str(), "offensive_narrowing");
+    let to_alice = r
+        .app
+        .notices(Bearer::Session(&alice), false)
+        .await
+        .expect("alice's notices");
+    assert_eq!(
+        to_alice.len(),
+        1,
+        "every admin person is told, the actor too"
     );
 }

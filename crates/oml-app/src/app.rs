@@ -19,6 +19,7 @@ mod investigations;
 mod key_limits;
 mod linked_keys;
 mod metering;
+mod notices;
 mod pages;
 mod public;
 mod rescan;
@@ -3472,6 +3473,8 @@ where
             "principal": req.principal,
             "used_by": req.used_by.map(UsedBy::as_str),
             "user": user.map(|u| u.name.as_str()),
+            // The root's person the confirm screen names (ADR-0097 d6).
+            "root_person": user.map(|u| u.name.as_str()),
             "person": person.map(|p| p.name.as_str()),
             "principal_names_person": principal_names_person,
             // The workspaces the issuance creates, which the confirm screen
@@ -3655,6 +3658,9 @@ where
         for (req, ceiling) in reqs.iter_mut().zip(ceilings) {
             req.ceiling = ceiling;
         }
+        // A key issued at once under `sole_admin` into another person's
+        // root notifies that person (ADR-0097 d6, d20).
+        self.with_notice(&act.record, &mut reqs).await?;
         self.commit_requests(reqs).await?;
         Ok(IssuedKey {
             key_id,
@@ -6031,6 +6037,19 @@ where
             .is_none_or(|walk| walk.iter().any(|k| k.key_id == through)))
     }
 
+    /// The name of the user root `key` was issued in, if any (ADR-0097 d6).
+    pub(crate) async fn person_root_name(&self, key: &KeyRecord) -> Result<Option<Name>, AppError> {
+        match key.user {
+            Some(root) => Ok(self
+                .journal
+                .workspace(key.tenant_id, root)
+                .await?
+                .filter(|w| w.user_root)
+                .map(|w| w.name)),
+            None => Ok(None),
+        }
+    }
+
     /// The person whose own root holds `workspace`, or `None` for a node
     /// of the shared tree (ADR-0097 d16).
     pub(crate) async fn root_person_of(
@@ -8302,6 +8321,28 @@ where
                 verb: "todo_counts",
             });
         }
+        // The Notices group: the person's notices not dismissed, whatever
+        // the workspace named (ADR-0097 d20).
+        let notices = match &caller.key.session_user {
+            Some(person) => self
+                .journal
+                .notices(caller.key.tenant_id, person, false)
+                .await?
+                .len() as u64,
+            None => 0,
+        };
+        let mut counts = self.todo_review_counts(&caller, workspace).await?;
+        counts.notices = notices.min(TODO_COUNT_CAP);
+        counts.truncated |= notices > TODO_COUNT_CAP;
+        Ok(counts)
+    }
+
+    /// [`Self::todo_counts`]'s To review and Brief proposals groups.
+    async fn todo_review_counts(
+        &self,
+        caller: &Caller,
+        workspace: Option<&Reference>,
+    ) -> Result<TodoCounts, AppError> {
         let none = TodoCounts::default();
         let Some(reviewer) = self
             .sibling_session_caller(&caller.key, Capacity::Review)
@@ -8381,6 +8422,7 @@ where
                     return Ok(TodoCounts {
                         review,
                         briefs,
+                        notices: 0,
                         truncated: true,
                     });
                 }
@@ -8402,6 +8444,7 @@ where
                         return Ok(TodoCounts {
                             review: TODO_COUNT_CAP,
                             briefs,
+                            notices: 0,
                             truncated: true,
                         });
                     }
@@ -8420,6 +8463,7 @@ where
         Ok(TodoCounts {
             review,
             briefs,
+            notices: 0,
             truncated: briefs_truncated,
         })
     }
@@ -13418,6 +13462,10 @@ where
                         "name": target.name.as_ref().map(Name::as_str),
                         "role": target.role.as_str(),
                         "principal": target.principal,
+                        // The root's person the confirm screen names, and
+                        // whom a mint at once under `sole_admin` notifies
+                        // (ADR-0097 d6).
+                        "root_person": self.person_root_name(&target).await?.as_ref().map(Name::as_str),
                     }),
                     reason,
                     json!({

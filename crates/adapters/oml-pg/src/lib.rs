@@ -4705,6 +4705,55 @@ async fn apply_fold(
                 .map_err(backend)?;
             }
         }
+        MetadataFold::NoticeWritten {
+            notice_id,
+            kind,
+            act_id,
+            recipients,
+            detail,
+        } => {
+            // One row per recipient (ADR-0097 d20; 0074).
+            for recipient in &recipients {
+                sqlx::query(
+                    "INSERT INTO notices (tenant_id, id, recipient, kind, act_id, detail, \
+                            created_at, seq) \
+                     VALUES ($1, $2, $3, $4, $5, $6, $7::timestamptz, $8)",
+                )
+                .bind(tenant_id)
+                .bind(notice_id)
+                .bind(recipient.as_str())
+                .bind(kind.as_str())
+                .bind(act_id)
+                .bind(&detail)
+                .bind(at.as_str())
+                .bind(seq)
+                .execute(&mut **tx)
+                .await
+                .map_err(backend)?;
+            }
+        }
+        MetadataFold::NoticeDismissed {
+            notice_id,
+            recipient,
+        } => {
+            let dismissed = sqlx::query(
+                "UPDATE notices SET dismissed_at = $4::timestamptz \
+                  WHERE tenant_id = $1 AND id = $2 AND recipient = $3 AND dismissed_at IS NULL",
+            )
+            .bind(tenant_id)
+            .bind(notice_id)
+            .bind(recipient.as_str())
+            .bind(at.as_str())
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if dismissed.rows_affected() != 1 {
+                return Err(StoreError::Backend(format!(
+                    "notice {notice_id} is not an undismissed notice of {}",
+                    recipient.as_str()
+                )));
+            }
+        }
         MetadataFold::AdminAct(act) => {
             fold_admin_act(tx, tenant_id, &act, seq, at).await?;
         }
@@ -6837,6 +6886,8 @@ async fn meter_plan(
         | MetadataFold::WebEmailRemoved { .. }
         | MetadataFold::AdminRead
         | MetadataFold::AdminMemoryRead { .. }
+        | MetadataFold::NoticeWritten { .. }
+        | MetadataFold::NoticeDismissed { .. }
         | MetadataFold::InvestigationOpened { .. }
         | MetadataFold::InvestigationClosed { .. }
         | MetadataFold::AdminFixRecorded(_)
@@ -8829,6 +8880,90 @@ impl PgStore {
 }
 
 impl JournalStore for PgStore {
+    async fn web_person_reviewers(
+        &self,
+        tenant_id: Uuid,
+    ) -> Result<Vec<PersonReviewer>, StoreError> {
+        // The keys, then their grants and the denials in force, in one
+        // snapshot: three statements over `api_keys`, `grants` and
+        // `key_denials`, never `memories` (#435).
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        one_snapshot(&mut tx).await?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let keys = sqlx::query(&format!(
+            "SELECT {KEY_COLUMNS} FROM api_keys WHERE tenant_id = $1 AND role = 'reviewer' \
+             AND used_by = 'person' AND crew_id IS NULL AND profile IS NULL \
+             AND revoked_at IS NULL ORDER BY name"
+        ))
+        .bind(tenant_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?
+        .iter()
+        .map(key_from_row)
+        .collect::<Result<Vec<_>, _>>()?;
+        let ids: Vec<Uuid> = keys.iter().map(|k| k.key_id).collect();
+        let grants = sqlx::query(
+            "SELECT key_id, id, role, workspace_node_id, deny, covers, may_create FROM grants \
+             WHERE tenant_id = $1 AND key_id = ANY($2) AND revoked_epoch IS NULL \
+             ORDER BY epoch ASC, id ASC",
+        )
+        .bind(tenant_id)
+        .bind(&ids)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        let denials = sqlx::query(
+            "SELECT key_id, id, workspace_node_id FROM key_denials \
+             WHERE tenant_id = $1 AND key_id = ANY($2) AND lifted_epoch IS NULL \
+             ORDER BY epoch ASC, id ASC",
+        )
+        .bind(tenant_id)
+        .bind(&ids)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        let mut out: Vec<PersonReviewer> = keys
+            .into_iter()
+            .map(|key| PersonReviewer {
+                key,
+                grants: Vec::new(),
+                denials: Vec::new(),
+            })
+            .collect();
+        for row in &grants {
+            let role: String = row.try_get("role").map_err(backend)?;
+            let deny: Value = row.try_get("deny").map_err(backend)?;
+            let covers: String = row.try_get("covers").map_err(backend)?;
+            let grant = Grant {
+                grant_id: row.try_get("id").map_err(backend)?,
+                node: row.try_get("workspace_node_id").map_err(backend)?,
+                role: role_from_str(&role)?,
+                deny: deny_from_json(&deny)?,
+                covers: Covers::parse(&covers).ok_or_else(|| {
+                    StoreError::Backend(format!("grants.covers {covers:?} is not a coverage"))
+                })?,
+                create: row.try_get("may_create").map_err(backend)?,
+            };
+            let key_id: Uuid = row.try_get("key_id").map_err(backend)?;
+            if let Some(r) = out.iter_mut().find(|r| r.key.key_id == key_id) {
+                r.grants.push(grant);
+            }
+        }
+        for row in &denials {
+            let denial = KeyDenial {
+                denial_id: row.try_get("id").map_err(backend)?,
+                node: row.try_get("workspace_node_id").map_err(backend)?,
+            };
+            let key_id: Uuid = row.try_get("key_id").map_err(backend)?;
+            if let Some(r) = out.iter_mut().find(|r| r.key.key_id == key_id) {
+                r.denials.push(denial);
+            }
+        }
+        Ok(out)
+    }
+
     async fn upload_open(
         &self,
         session: &oml_app::types::UploadSession,
@@ -11129,6 +11264,50 @@ impl JournalStore for PgStore {
         _memory_id: Uuid,
     ) -> Result<bool, StoreError> {
         Ok(true)
+    }
+
+    async fn notices(
+        &self,
+        tenant_id: Uuid,
+        recipient: &Name,
+        dismissed: bool,
+    ) -> Result<Vec<oml_app::types::NoticeRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows: Vec<(Uuid, String, Option<Uuid>, Value, String, Option<String>)> =
+            sqlx::query_as(
+                "SELECT id, kind, act_id, detail, \
+                        to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'), \
+                        to_char(dismissed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+                   FROM notices \
+                  WHERE tenant_id = $1 AND recipient = $2 AND ($3 OR dismissed_at IS NULL) \
+                  ORDER BY seq, id",
+            )
+            .bind(tenant_id)
+            .bind(recipient.as_str())
+            .bind(dismissed)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.into_iter()
+            .map(|(id, kind, act_id, detail, at, dismissed_at)| {
+                Ok(oml_app::types::NoticeRecord {
+                    notice_id: id,
+                    recipient: recipient.clone(),
+                    kind: oml_app::domain::notice::NoticeKind::parse(&kind)
+                        .ok_or_else(|| StoreError::Backend(format!("notice kind {kind}")))?,
+                    act_id,
+                    detail,
+                    at: EventTime::parse(&at).map_err(backend)?,
+                    dismissed_at: dismissed_at
+                        .as_deref()
+                        .map(EventTime::parse)
+                        .transpose()
+                        .map_err(backend)?,
+                })
+            })
+            .collect()
     }
 
     async fn admin_read_counts(
@@ -13518,90 +13697,6 @@ impl WebStore for PgStore {
                 })
             })
             .collect()
-    }
-
-    async fn web_person_reviewers(
-        &self,
-        tenant_id: Uuid,
-    ) -> Result<Vec<PersonReviewer>, StoreError> {
-        // The keys, then their grants and the denials in force, in one
-        // snapshot: three statements over `api_keys`, `grants` and
-        // `key_denials`, never `memories` (#435).
-        let mut tx = self.pool.begin().await.map_err(backend)?;
-        one_snapshot(&mut tx).await?;
-        set_tenant(&mut tx, tenant_id).await?;
-        let keys = sqlx::query(&format!(
-            "SELECT {KEY_COLUMNS} FROM api_keys WHERE tenant_id = $1 AND role = 'reviewer' \
-             AND used_by = 'person' AND crew_id IS NULL AND profile IS NULL \
-             AND revoked_at IS NULL ORDER BY name"
-        ))
-        .bind(tenant_id)
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(backend)?
-        .iter()
-        .map(key_from_row)
-        .collect::<Result<Vec<_>, _>>()?;
-        let ids: Vec<Uuid> = keys.iter().map(|k| k.key_id).collect();
-        let grants = sqlx::query(
-            "SELECT key_id, id, role, workspace_node_id, deny, covers, may_create FROM grants \
-             WHERE tenant_id = $1 AND key_id = ANY($2) AND revoked_epoch IS NULL \
-             ORDER BY epoch ASC, id ASC",
-        )
-        .bind(tenant_id)
-        .bind(&ids)
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(backend)?;
-        let denials = sqlx::query(
-            "SELECT key_id, id, workspace_node_id FROM key_denials \
-             WHERE tenant_id = $1 AND key_id = ANY($2) AND lifted_epoch IS NULL \
-             ORDER BY epoch ASC, id ASC",
-        )
-        .bind(tenant_id)
-        .bind(&ids)
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(backend)?;
-        tx.commit().await.map_err(backend)?;
-        let mut out: Vec<PersonReviewer> = keys
-            .into_iter()
-            .map(|key| PersonReviewer {
-                key,
-                grants: Vec::new(),
-                denials: Vec::new(),
-            })
-            .collect();
-        for row in &grants {
-            let role: String = row.try_get("role").map_err(backend)?;
-            let deny: Value = row.try_get("deny").map_err(backend)?;
-            let covers: String = row.try_get("covers").map_err(backend)?;
-            let grant = Grant {
-                grant_id: row.try_get("id").map_err(backend)?,
-                node: row.try_get("workspace_node_id").map_err(backend)?,
-                role: role_from_str(&role)?,
-                deny: deny_from_json(&deny)?,
-                covers: Covers::parse(&covers).ok_or_else(|| {
-                    StoreError::Backend(format!("grants.covers {covers:?} is not a coverage"))
-                })?,
-                create: row.try_get("may_create").map_err(backend)?,
-            };
-            let key_id: Uuid = row.try_get("key_id").map_err(backend)?;
-            if let Some(r) = out.iter_mut().find(|r| r.key.key_id == key_id) {
-                r.grants.push(grant);
-            }
-        }
-        for row in &denials {
-            let denial = KeyDenial {
-                denial_id: row.try_get("id").map_err(backend)?,
-                node: row.try_get("workspace_node_id").map_err(backend)?,
-            };
-            let key_id: Uuid = row.try_get("key_id").map_err(backend)?;
-            if let Some(r) = out.iter_mut().find(|r| r.key.key_id == key_id) {
-                r.denials.push(denial);
-            }
-        }
-        Ok(out)
     }
 
     async fn web_admin_search(

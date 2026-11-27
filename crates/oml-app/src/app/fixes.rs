@@ -557,6 +557,36 @@ where
             MetadataFold::AdminFixRecorded(Box::new(fix.clone())),
             None,
         ));
+        // A production fix that loosens a guardrail is offensive narrowing:
+        // loud at once, to every admin person and every reviewer person of
+        // the fix's workspace, in the fix's own commit (ADR-0097 d20, d24).
+        let production = self
+            .journal
+            .workspace(admin.tenant_id, fix.workspace_id)
+            .await?
+            .is_some_and(|w| w.status != WorkspaceStatus::Development);
+        if fix.loosens_guardrail && production {
+            let detail = json!({
+                "act": act.record.act.as_str(),
+                "target": act.record.target,
+                "actor_person": act.record.actor_person.as_ref().map(Name::as_str),
+                "loosens_guardrail": true,
+            });
+            let spec = self
+                .offensive_notice(
+                    admin.tenant_id,
+                    &act.record.target,
+                    Some(fix.workspace_id),
+                    detail,
+                )
+                .await?;
+            let prev = links
+                .last()
+                .map(|r| r.event.clone())
+                .expect("the fix's event");
+            let (event, fold) = self.notice_link(&prev, Some(act_id), spec)?;
+            links.push(commit_request(event, fold, None));
+        }
         match self.commit_requests(links).await {
             Err(StoreError::TipMoved { .. }) => {
                 return Err(AppError::TipConflict {

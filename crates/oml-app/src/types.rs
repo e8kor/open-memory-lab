@@ -2742,6 +2742,9 @@ pub struct TodoCounts {
     /// The Brief proposals group: the pending brief edges the person's
     /// reviewer key may ratify (ADR-0096 d7).
     pub briefs: u64,
+    /// The Notices group: the person's notices not dismissed (ADR-0097
+    /// d20).
+    pub notices: u64,
     /// Whether a count passed [`TODO_COUNT_CAP`].
     pub truncated: bool,
 }
@@ -4276,6 +4279,21 @@ pub struct FixRecord {
     /// The later fix that took over this one's mark, for a fix
     /// [`FixState::Superseded`] (ADR-0089 d17).
     pub superseded_by: Option<Uuid>,
+}
+
+/// One notice to one person (ADR-0097 d20): what it tells about, the admin
+/// act it names, when it was written, and whether the person dismissed it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoticeRecord {
+    pub notice_id: Uuid,
+    pub recipient: Name,
+    pub kind: oml_domain::notice::NoticeKind,
+    pub act_id: Option<Uuid>,
+    /// What the notice names besides the act: the act's kind, its target's
+    /// key, person or workspace.
+    pub detail: Value,
+    pub at: EventTime,
+    pub dismissed_at: Option<EventTime>,
 }
 
 /// The admin reads of one person's own root in one month (ADR-0097 d16):

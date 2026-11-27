@@ -1581,13 +1581,15 @@ paths:
               example:
                 review: 3
                 briefs: 1
+                notices: 0
                 truncated: false
               schema:
                 type: object
-                required: [review, briefs, truncated]
+                required: [review, briefs, notices, truncated]
                 properties:
                   review: { type: integer, minimum: 0, maximum: 1000, description: "The To review group's length: the held rows the person's reviewer key may judge." }
                   briefs: { type: integer, minimum: 0, maximum: 1000, description: "The Brief proposals group's length: the pending brief edges GET /v2/review/briefs would list the person's reviewer key, at workspace and below or everywhere, never one it or its principal proposed; counted up to 1,000 and sharing truncated (ADR-0096 d7). Since v0.8.5." }
+                  notices: { type: integer, minimum: 0, maximum: 1000, description: "The Notices group's length: the person's notices not dismissed, as GET /v2/web/notices lists them, whatever the workspace (ADR-0097 d20). Since v0.8.6." }
                   truncated: { type: boolean, description: "Whether a count passed 1,000 and answers 1,000, or stopped after reading 2,000 held rows and answers what it counted." }
         '403': { $ref: '#/components/responses/Forbidden' }
         default: { $ref: '#/components/responses/Error' }
@@ -3065,6 +3067,60 @@ paths:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
             X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/web/notices:
+    get:
+      tags: [web]
+      operationId: listNotices
+      summary: The calling person's in-product notices.
+      description: 'Requires: a key that counts as a person, the person''s session keys among them; one that counts as no person answers access.not_found. A notice is written in the commit of the act it tells about: an act against an admin, to every admin person; offensive narrowing (a production fix that loosens a guardrail, disabling a person, revoking a person''s key, denying a reviewer person''s key), to every admin person and every reviewer person of the workspace concerned; a reach into a person''s own root taken at once under sole_admin, to that person (ADR-0097 d6, d20, d24). Oldest first; the dismissed ones too with dismissed=true. Journals nothing. Since v0.8.6.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: dismissed, in: query, required: false, schema: { type: boolean, default: false } }
+      responses:
+        '200':
+          description: The notices.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Notice' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/web/notices/{notice}/dismiss:
+    post:
+      tags: [web]
+      operationId: dismissNotice
+      summary: The person dismisses a notice of their own.
+      description: 'Requires: a key that counts as the notice''s recipient. Journals notice.dismissed; it is the person''s own act, not an admin act. A notice that is not the person''s, or is already dismissed, answers access.not_found (ADR-0097 d20). No body. Since v0.8.6.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: notice, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The notice, dismissed.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Notice' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/web/admin-reads:
@@ -4726,6 +4782,17 @@ components:
         age_seconds: { type: integer, minimum: 0 }
         state: { type: string, enum: [open, closed] }
         closed_at: { type: [string, 'null'], format: date-time }
+    Notice:
+      type: object
+      description: One in-product notice to one person (ADR-0097 d20).
+      required: [notice_id, kind, act_id, detail, at, dismissed_at]
+      properties:
+        notice_id: { type: string, format: uuid }
+        kind: { type: string, enum: [act_against_admin, offensive_narrowing, root_reach, recovery, settlement] }
+        act_id: { type: [string, 'null'], format: uuid, description: The admin act the notice tells about. }
+        detail: { type: object, description: 'The act''s kind, its target and the person the acting key counted as.' }
+        at: { type: string, format: date-time }
+        dismissed_at: { type: [string, 'null'], format: date-time }
     AdminAct:
       type: object
       description: "One admin act (ADR-0097 d2): the confirm screen of d23 reads target (the key's role, principal, used_by, the root's person as user, and principal_names_person where the principal spells a person's name) and grants. Since v0.8.6."

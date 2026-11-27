@@ -17,7 +17,7 @@ use oml_domain::admin_act::{AdminActClass, AdminActKind, AdminActState, counts_f
 use oml_domain::{EventTime, Role, Sha256Hash, SignedEnvelope, event_types};
 
 use super::{App, code_issued_payload, commit_request, require_role};
-use crate::ports::{Clock, IdGen, JournalStore, MetadataFold, Scanner, Signer};
+use crate::ports::{Clock, CommitReceipt, IdGen, JournalStore, MetadataFold, Scanner, Signer};
 use crate::types::{AdminActRecord, AdminActRefusal, AppError, Bearer, ConnectCode, KeyRecord};
 
 /// An admin act sealed and not yet committed: its envelope, first in the
@@ -295,7 +295,7 @@ where
         act: Option<BegunAct>,
         links: Vec<(SignedEnvelope, MetadataFold)>,
     ) -> Result<crate::ports::CommitReceipt, AppError> {
-        let mut reqs = Vec::with_capacity(links.len() + 1);
+        let mut reqs = Vec::with_capacity(links.len() + 2);
         if let Some(act) = &act {
             let (event, fold) = act.link();
             reqs.push(commit_request(event, fold, None));
@@ -305,7 +305,22 @@ where
                 .into_iter()
                 .map(|(event, fold)| commit_request(event, fold, None)),
         );
-        Ok(self.commit_requests(reqs).await?)
+        // The notice a loud act writes, in its own commit (ADR-0097 d20),
+        // after the effect; the receipt still names the effect's last
+        // event, as the callers read it.
+        let effect = reqs.last().map(|r| CommitReceipt {
+            seq: r.event.envelope.seq,
+            hash: r.event.hash.clone(),
+        });
+        let before = reqs.len();
+        if let Some(act) = &act {
+            self.with_notice(&act.record, &mut reqs).await?;
+        }
+        let receipt = self.commit_requests(reqs).await?;
+        Ok(match effect {
+            Some(effect) if before > 0 && effect.seq < receipt.seq => effect,
+            _ => receipt,
+        })
     }
 
     /// Whether an act against an admin is open in the tenant: then widening

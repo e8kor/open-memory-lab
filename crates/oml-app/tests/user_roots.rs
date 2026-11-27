@@ -5162,6 +5162,8 @@ async fn the_admin_search_serves_only_the_kinds_its_kind_list_names() {
         },
     )
     .await;
+    // The admin read needs a person-linked admin key (ADR-0097 d16).
+    counted::admin_counts(&app, admin).await;
     let investigation = app
         .open_investigation(admin, "the kinds filter")
         .await
