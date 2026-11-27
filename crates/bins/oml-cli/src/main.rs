@@ -7990,7 +7990,7 @@ fn flagged_creates_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
 /// out. A server before a count does not report it, and its line is then
 /// absent; a count that is no unsigned integer is named, never read as zero.
 fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
-    const LINES: [(&str, &str, &str); 19] = [
+    const LINES: [(&str, &str, &str); 20] = [
         (
             "held_successors_stranded",
             "memory.held_successor_stranded",
@@ -8005,6 +8005,11 @@ fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
             "investigations_open_long",
             "admin.investigation_open_long",
             "admin investigation(s) open for more than 7 days; the key that opened each closes it with oml admin investigate --close <id>",
+        ),
+        (
+            "investigations_past_pages",
+            "admin.investigation_pages",
+            "open admin investigation(s) read more than 50 pages; the person who opened each closes it with oml admin investigate --close <id> once the investigation is done",
         ),
         (
             "fixes_unconfirmed",

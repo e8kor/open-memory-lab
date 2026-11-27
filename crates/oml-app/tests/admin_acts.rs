@@ -2259,3 +2259,96 @@ async fn a_sole_admin_ratification_by_the_proposers_own_person_is_admitted_and_m
         .expect("the transition");
     assert_eq!(ratified.envelope.payload["sole_admin"], true);
 }
+
+/// The admin read needs a person-linked admin key or a session: a key that
+/// counts as no person opens no investigation. Each page it serves counts
+/// once against the person whose own root it read, by month, and that
+/// person reads the count; a read of the shared tree counts against no one
+/// (ADR-0097 d16).
+#[tokio::test]
+async fn the_admin_read_needs_a_person_and_is_counted_per_person() {
+    let r = rig().await;
+    let refused = r
+        .app
+        .open_investigation(r.admin(), "ticket 1")
+        .await
+        .expect_err("an unlinked admin key opens no investigation");
+    assert!(
+        matches!(refused, AppError::AdminReadRequiresPerson),
+        "{refused:?}"
+    );
+    r.admin_person("alice").await;
+    let carol = r
+        .app
+        .allow_web_email(r.admin(), &entry_of("carol", false))
+        .await
+        .expect("carol's entry")
+        .0;
+    r.app.web_ensure_keys(&carol).await.expect("carol's keys");
+    let carols = r
+        .app
+        .issue_key(
+            r.admin(),
+            &IssueKeyRequest {
+                user: Some(name("carol")),
+                grants: vec![
+                    grant_on("carol", Role::Reader),
+                    grant_on("carol", Role::Submitter),
+                ],
+                ..agent_req()
+            },
+        )
+        .await
+        .expect("a key in carol's root");
+    let own = r
+        .app
+        .submit_memory(
+            carols.value.as_str(),
+            &oml_app::types::SubmitRequest {
+                workspace: Some(by_name("carol")),
+                ..submit_req("mine", oml_app::domain::MemoryKind::Memory)
+            },
+        )
+        .await
+        .expect("carol writes")
+        .receipt
+        .memory_id;
+    let writer = r
+        .app
+        .issue_key(r.admin(), &agent_req())
+        .await
+        .expect("a writer");
+    let shared = held(&r, &writer, "shared", oml_app::domain::MemoryKind::Memory).await;
+    let alice = r.admin_session("alice").await;
+    let investigation = r
+        .app
+        .open_investigation(Bearer::Session(&alice), "ticket 2")
+        .await
+        .expect("a person's session opens an investigation")
+        .investigation_id;
+    for id in [own, own, shared] {
+        r.app
+            .admin_read(Bearer::Session(&alice), id, Some(investigation))
+            .await
+            .expect("an admin read");
+    }
+    let session = r.person_session("carol", Capacity::Web).await;
+    let (person, counts) = r
+        .app
+        .own_admin_reads(Bearer::Session(&session))
+        .await
+        .expect("carol reads her count");
+    assert_eq!(person.as_str(), "carol");
+    assert_eq!(counts.len(), 1);
+    assert_eq!(counts[0].reads, 2);
+    let (alice_person, alice_counts) = r
+        .app
+        .own_admin_reads(Bearer::Session(&alice))
+        .await
+        .expect("alice reads hers");
+    assert_eq!(alice_person.as_str(), "alice");
+    assert!(
+        alice_counts.is_empty(),
+        "a shared read counts against no one"
+    );
+}

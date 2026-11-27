@@ -54,6 +54,7 @@ fn report_json(
         "held_successors_stranded": r.held_successors_stranded,
         "erased_keys_live": r.erased_keys_live,
         "investigations_open_long": r.investigations_open_long,
+        "investigations_past_pages": r.investigations_past_pages,
         "fixes_unconfirmed": fixes.unconfirmed,
         "fix_oldest_unconfirmed_seconds": fixes.oldest_unconfirmed_seconds,
         "fixes_loosening_guardrail": fixes.loosening_guardrail,

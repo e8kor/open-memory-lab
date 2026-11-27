@@ -6031,6 +6031,29 @@ where
             .is_none_or(|walk| walk.iter().any(|k| k.key_id == through)))
     }
 
+    /// The person whose own root holds `workspace`, or `None` for a node
+    /// of the shared tree (ADR-0097 d16).
+    pub(crate) async fn root_person_of(
+        &self,
+        tenant_id: Uuid,
+        workspace: Uuid,
+    ) -> Result<Option<Name>, AppError> {
+        let Some(root) = self
+            .journal
+            .workspace(tenant_id, workspace)
+            .await?
+            .and_then(|w| w.user())
+        else {
+            return Ok(None);
+        };
+        Ok(self
+            .journal
+            .workspace(tenant_id, root)
+            .await?
+            .filter(|w| w.user_root)
+            .map(|w| w.name))
+    }
+
     /// Whether `workspace` sits inside the user root named `person`
     /// (ADR-0082 d7): the root a settlement compares against the person a
     /// key counts as, never the root the key was issued in (the operator's

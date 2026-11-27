@@ -584,9 +584,13 @@ pub enum MetadataFold {
     /// its open investigations, whose read count moves; the store refuses
     /// an investigation that is not open or not the key's with
     /// [`StoreError::InvestigationNotOpen`] (ADR-0045 d21; ADR-0089 d10).
+    /// `persons` are the persons whose own roots the page read: each one's
+    /// count of admin reads for the month of the event moves by one
+    /// (ADR-0097 d16).
     AdminMemoryRead {
         investigation_id: Uuid,
         key_id: Uuid,
+        persons: Vec<oml_domain::name::Name>,
     },
     /// `admin.fix`: the fix's row, unconfirmed, and the mark on the
     /// version it made the served tip (`served_id`), in the commit that
@@ -1818,6 +1822,14 @@ pub trait JournalStore: Retriever + Send + Sync {
         tenant_id: Uuid,
         memory_id: Uuid,
     ) -> impl Future<Output = Result<bool, StoreError>> + Send;
+
+    /// The admin reads of `person`'s own root, one count per month
+    /// (`YYYY-MM`, UTC) with any, oldest first (ADR-0097 d16).
+    fn admin_read_counts(
+        &self,
+        tenant_id: Uuid,
+        person: &oml_domain::name::Name,
+    ) -> impl Future<Output = Result<Vec<crate::types::AdminReadCount>, StoreError>> + Send;
 
     /// One investigation of the tenant, open or closed (ADR-0089 d10).
     fn investigation(

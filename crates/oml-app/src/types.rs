@@ -4278,6 +4278,20 @@ pub struct FixRecord {
     pub superseded_by: Option<Uuid>,
 }
 
+/// The admin reads of one person's own root in one month (ADR-0097 d16):
+/// one per page an admin read that served a row of that root.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdminReadCount {
+    /// `YYYY-MM`, UTC.
+    pub month: String,
+    pub reads: u64,
+}
+
+/// How many pages one investigation may read before `oml doctor` names it
+/// (`admin.investigation_pages`): fifty, a placeholder, chosen, not
+/// measured (ADR-0097 d16).
+pub const INVESTIGATION_PAGES_WARN: u64 = 50;
+
 /// An admin key's investigation: the reason its reads of claim text are
 /// made under, open until the key closes it (ADR-0089 d10, d15).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4652,6 +4666,11 @@ pub enum AppError {
         "a key acting for the author's person judges no version outside that person's root (review.author_in_lineage)"
     )]
     SamePerson,
+    /// The admin read from a key that counts as no person: it needs a
+    /// person-linked admin key or a session (ADR-0097 d16;
+    /// `admin.read_requires_person`).
+    #[error("the admin read needs a person-linked admin key or a session (ADR-0097 d16)")]
+    AdminReadRequiresPerson,
     /// An instruction verdict, a fix settlement or a ladder ratification
     /// from a key that counts as no person (ADR-0097 d12): none of the
     /// three is taken by such a key. `review.person_required` with

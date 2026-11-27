@@ -458,6 +458,8 @@ struct TenantState {
     valid_until_before: BTreeMap<Uuid, Option<oml_domain::valid_time::ValidEnd>>,
     /// The admin investigations, by id (ADR-0089 d10; 0063).
     investigations: BTreeMap<Uuid, crate::types::Investigation>,
+    /// Admin reads of each person's own root by month (ADR-0097 d16).
+    admin_read_counts: BTreeMap<(Name, String), u64>,
     /// The admin fixes, by id (ADR-0089 d3; 0064).
     fixes: BTreeMap<Uuid, crate::types::FixRecord>,
     /// The admin acts, by id (ADR-0097 d2; 0070).
@@ -1650,6 +1652,7 @@ fn apply_fold(
         MetadataFold::AdminMemoryRead {
             investigation_id,
             key_id,
+            persons,
         } => {
             match state
                 .investigations
@@ -1658,6 +1661,13 @@ fn apply_fold(
             {
                 Some(i) => i.reads += 1,
                 None => return Err(StoreError::InvestigationNotOpen { investigation_id }),
+            }
+            let month = at.as_str().get(..7).unwrap_or_default().to_owned();
+            for person in persons {
+                *state
+                    .admin_read_counts
+                    .entry((person, month.clone()))
+                    .or_default() += 1;
             }
         }
         MetadataFold::AdminAct(act) => {
@@ -5365,6 +5375,29 @@ impl JournalStore for MemStore {
         _memory_id: Uuid,
     ) -> Result<bool, StoreError> {
         Ok(true)
+    }
+
+    async fn admin_read_counts(
+        &self,
+        tenant_id: Uuid,
+        person: &Name,
+    ) -> Result<Vec<crate::types::AdminReadCount>, StoreError> {
+        Ok(self
+            .tenant_existing(tenant_id)
+            .map(|tenant| {
+                tenant
+                    .lock()
+                    .expect("tenant lock")
+                    .admin_read_counts
+                    .iter()
+                    .filter(|((p, _), _)| p == person)
+                    .map(|((_, month), reads)| crate::types::AdminReadCount {
+                        month: month.clone(),
+                        reads: *reads,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default())
     }
 
     async fn investigation(

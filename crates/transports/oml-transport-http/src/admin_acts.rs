@@ -89,6 +89,34 @@ where
 {
     /// `GET /v2/admin/acts?state=`: the tenant's admin acts, oldest first;
     /// `pending_confirmation` by default, `all` for every one.
+    /// `GET /v2/web/admin-reads` (ADR-0097 d16): the count of admin reads
+    /// of the calling person's own root, by month.
+    pub(crate) async fn own_admin_reads_route(
+        State(st): State<Self>,
+        rid: Rid,
+        headers: HeaderMap,
+    ) -> Response {
+        let inner = async {
+            let acting = acting(&headers, None)?;
+            let (person, months) = st
+                .app
+                .own_admin_reads(acting.bearer())
+                .await
+                .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+            Ok(json_response(
+                StatusCode::OK,
+                &json!({
+                    "person": person.as_str(),
+                    "months": months
+                        .iter()
+                        .map(|m| json!({ "month": m.month, "reads": m.reads }))
+                        .collect::<Vec<_>>(),
+                }),
+            ))
+        };
+        finish(&rid, inner.await)
+    }
+
     pub(crate) async fn admin_acts_route(
         State(st): State<Self>,
         rid: Rid,

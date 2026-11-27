@@ -1027,6 +1027,13 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         .with_details(json!({
             "reason": if issued_the_proposer { "issued_the_proposer" } else { "same_person" },
         })),
+        AppError::AdminReadRequiresPerson => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "admin.read_requires_person",
+            "The admin read needs a person-linked admin key or a session, and counts its reads per person (ADR-0097 d16).",
+            "this admin key counts as no person",
+        )
+        .with_details(json!({ "reason": "counts_as_no_person" })),
         AppError::SamePerson => ApiError::new(
             StatusCode::FORBIDDEN,
             "review.author_in_lineage",

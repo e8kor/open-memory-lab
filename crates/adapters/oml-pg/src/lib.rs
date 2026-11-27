@@ -4672,6 +4672,7 @@ async fn apply_fold(
         MetadataFold::AdminMemoryRead {
             investigation_id,
             key_id,
+            persons,
         } => {
             let counted = sqlx::query(
                 "UPDATE admin_investigations SET reads = reads + 1 \
@@ -4685,6 +4686,23 @@ async fn apply_fold(
             .map_err(backend)?;
             if counted.rows_affected() != 1 {
                 return Err(StoreError::InvestigationNotOpen { investigation_id });
+            }
+            // One count per person whose own root the page read, for the
+            // month of the read (ADR-0097 d16; 0074).
+            let month = at.as_str().get(..7).unwrap_or_default().to_owned();
+            for person in &persons {
+                sqlx::query(
+                    "INSERT INTO admin_read_counts (tenant_id, person, month, reads) \
+                     VALUES ($1, $2, $3, 1) \
+                     ON CONFLICT (tenant_id, person, month) \
+                     DO UPDATE SET reads = admin_read_counts.reads + 1",
+                )
+                .bind(tenant_id)
+                .bind(person.as_str())
+                .bind(&month)
+                .execute(&mut **tx)
+                .await
+                .map_err(backend)?;
             }
         }
         MetadataFold::AdminAct(act) => {
@@ -11111,6 +11129,32 @@ impl JournalStore for PgStore {
         _memory_id: Uuid,
     ) -> Result<bool, StoreError> {
         Ok(true)
+    }
+
+    async fn admin_read_counts(
+        &self,
+        tenant_id: Uuid,
+        person: &Name,
+    ) -> Result<Vec<oml_app::types::AdminReadCount>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT month, reads FROM admin_read_counts \
+              WHERE tenant_id = $1 AND person = $2 ORDER BY month",
+        )
+        .bind(tenant_id)
+        .bind(person.as_str())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(rows
+            .into_iter()
+            .map(|(month, reads)| oml_app::types::AdminReadCount {
+                month,
+                reads: u64::try_from(reads).unwrap_or(0),
+            })
+            .collect())
     }
 
     async fn investigation(

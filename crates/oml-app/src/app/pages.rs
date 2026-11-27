@@ -1736,7 +1736,10 @@ where
         self.journal_admin_read(
             &caller.key,
             investigation,
-            items.iter().map(|m| m.memory.memory_id).collect(),
+            items
+                .iter()
+                .map(|m| (m.memory.memory_id, m.memory.workspace_id))
+                .collect(),
             search.query.as_deref(),
         )
         .await?;
@@ -1764,8 +1767,13 @@ where
             .await?
             .ok_or(AppError::NotFound)?;
         let read = self.admin_memory(tenant_id, memory, true).await?;
-        self.journal_admin_read(&caller.key, investigation, vec![memory_id], None)
-            .await?;
+        self.journal_admin_read(
+            &caller.key,
+            investigation,
+            vec![(memory_id, read.memory.workspace_id)],
+            None,
+        )
+        .await?;
         Ok(read)
     }
 
@@ -1843,15 +1851,25 @@ where
         Ok(out)
     }
 
+    /// One `memory.admin_read` for a page served, and one count per person
+    /// whose own root the page read, for the month of the read, which that
+    /// person sees on their own page (ADR-0097 d16).
     async fn journal_admin_read(
         &self,
         admin: &KeyRecord,
         investigation_id: Uuid,
-        artifact_ids: Vec<Uuid>,
+        read: Vec<(Uuid, Uuid)>,
         query: Option<&str>,
     ) -> Result<(), AppError> {
-        let ids: BTreeSet<String> = artifact_ids.iter().map(Uuid::to_string).collect();
+        let ids: BTreeSet<String> = read.iter().map(|(id, _)| id.to_string()).collect();
         let tenant_id = admin.tenant_id;
+        let mut persons = BTreeSet::new();
+        let workspaces: BTreeSet<Uuid> = read.iter().map(|(_, w)| *w).collect();
+        for workspace in workspaces {
+            if let Some(person) = self.root_person_of(tenant_id, workspace).await? {
+                persons.insert(person);
+            }
+        }
         let prev = self.head_event(tenant_id).await?;
         let event = self.seal(
             prev.as_ref(),
@@ -1870,6 +1888,7 @@ where
             MetadataFold::AdminMemoryRead {
                 investigation_id,
                 key_id: admin.key_id,
+                persons: persons.into_iter().collect(),
             },
             None,
         )
