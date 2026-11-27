@@ -935,7 +935,7 @@ async fn the_over_quota_pre_pass_writes_nothing<S: JournalStore + Clone>(store: 
         .with_signup(oml_app::types::SignupPolicy {
             mode: oml_app::domain::signup::SignupMode::Open,
             tenant_id,
-            issuer: name("root-admin"),
+            issuer: Some(name("root-admin")),
             terms_version: "2026-11-06".to_owned(),
             terms_url: "https://example.com/terms".to_owned(),
             privacy_url: "https://example.com/privacy".to_owned(),

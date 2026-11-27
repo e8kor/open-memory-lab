@@ -9,7 +9,7 @@ use sha2::{Digest as _, Sha256};
 use unicode_normalization::UnicodeNormalization as _;
 use uuid::Uuid;
 
-/// The six roles (ADR-0010, admission.md; ADR-0093 d1). The order is the
+/// The seven roles (ADR-0010; ADR-0097 d18 adds `maintenance`, admission.md; ADR-0093 d1). The order is the
 /// tables' listing order — it sorts a role set
 /// (`crate::access::effective_roles`) — never a privilege order: roles do not
 /// imply one another (roles-and-keys.md). `Contributor` is a key role only,
@@ -23,6 +23,10 @@ pub enum Role {
     Reviewer,
     Admin,
     Operator,
+    /// A service's key that reads counts only and takes the rescan, in
+    /// place of an admin key: no grant, no claim text, key value, email or
+    /// key list (ADR-0097 d18).
+    Maintenance,
 }
 
 impl Role {
@@ -35,6 +39,7 @@ impl Role {
             Role::Reviewer => "reviewer",
             Role::Admin => "admin",
             Role::Operator => "operator",
+            Role::Maintenance => "maintenance",
         }
     }
 }

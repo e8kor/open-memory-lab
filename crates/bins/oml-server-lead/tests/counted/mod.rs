@@ -107,9 +107,14 @@ pub async fn link<J, S, C, I, Sc>(
             .expect("the session key")
     };
     let by = session(ops, Capacity::Admin).await;
-    app.link_key_to_person(Bearer::Session(&by), key_id.into(), &user, Some("the person holds this key"))
-        .await
-        .expect("the key is linked");
+    app.link_key_to_person(
+        Bearer::Session(&by),
+        key_id.into(),
+        &user,
+        Some("the person holds this key"),
+    )
+    .await
+    .expect("the key is linked");
     let web = session(entry, Capacity::Web).await;
     app.accept_key_link(Bearer::Session(&web), key_id.into())
         .await
@@ -187,9 +192,14 @@ pub async fn link_by_founder<J, S, C, I, Sc, W>(
         .await
         .expect("the person's entry");
     app.web_ensure_keys(&entry).await.expect("session keys");
-    app.link_key_to_person(Bearer::Session(&admin), key_id.into(), &user, Some("the person holds this key"))
-        .await
-        .expect("the key is linked");
+    app.link_key_to_person(
+        Bearer::Session(&admin),
+        key_id.into(),
+        &user,
+        Some("the person holds this key"),
+    )
+    .await
+    .expect("the key is linked");
     let token = app
         .web_session_open(&entry, 3600, None)
         .await

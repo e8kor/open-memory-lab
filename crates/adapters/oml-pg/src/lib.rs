@@ -2630,6 +2630,7 @@ fn role_from_str(s: &str) -> Result<Role, StoreError> {
         "reviewer" => Ok(Role::Reviewer),
         "admin" => Ok(Role::Admin),
         "operator" => Ok(Role::Operator),
+        "maintenance" => Ok(Role::Maintenance),
         other => Err(StoreError::Backend(format!("unknown role {other:?}"))),
     }
 }
@@ -5825,6 +5826,26 @@ async fn apply_fold(
                 .map_err(backend)?;
             }
         }
+        MetadataFold::KeyConverted { key_id } => {
+            // Only a live admin bearer key converts, in place: the id and
+            // the hash stay, and the role's rate is set (ADR-0097 d18).
+            let set = sqlx::query(
+                "UPDATE api_keys SET role = 'maintenance', requests_per_minute = $3 \
+                 WHERE tenant_id = $1 AND id = $2 AND revoked_at IS NULL \
+                 AND credential = 'bearer' AND role = 'admin'",
+            )
+            .bind(tenant_id)
+            .bind(key_id)
+            .bind(i64::from(oml_app::app::MAINTENANCE_REQUESTS_PER_MINUTE))
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if set.rows_affected() != 1 {
+                return Err(StoreError::Backend(format!(
+                    "key {key_id} is not a live admin bearer key of this tenant"
+                )));
+            }
+        }
         MetadataFold::KeyLimitsSet {
             key_id,
             expiry,
@@ -6874,6 +6895,7 @@ async fn meter_plan(
         // An expired key stays on its account's keys meter: its date can
         // be moved later (ADR-0079 d3).
         | MetadataFold::KeyLimitsSet { .. }
+        | MetadataFold::KeyConverted { .. }
         | MetadataFold::KeyDefaultSet { .. }
         | MetadataFold::KeyRotated { .. }
         | MetadataFold::KeyLinked { .. }

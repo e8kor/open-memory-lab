@@ -139,7 +139,7 @@ pub fn admissible_grant_roles(key_role: Role) -> &'static [Role] {
         Role::Contributor => &[Role::Reader, Role::Submitter],
         Role::Submitter => &[Role::Submitter],
         Role::Reviewer => &[Role::Reader, Role::Reviewer],
-        Role::Admin | Role::Operator => &[],
+        Role::Admin | Role::Operator | Role::Maintenance => &[],
     }
 }
 
@@ -234,9 +234,12 @@ pub fn issuable_key_roles(issuer_role: Role) -> &'static [Role] {
             Role::Submitter,
             Role::Reviewer,
             Role::Admin,
+            Role::Maintenance,
         ],
         Role::Operator => &[Role::Admin, Role::Operator],
-        Role::Reader | Role::Contributor | Role::Submitter | Role::Reviewer => &[],
+        Role::Reader | Role::Contributor | Role::Submitter | Role::Reviewer | Role::Maintenance => {
+            &[]
+        }
     }
 }
 

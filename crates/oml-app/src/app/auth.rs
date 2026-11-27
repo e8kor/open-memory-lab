@@ -412,12 +412,22 @@ where
     /// key whose issuance creates `universe.<user>`, submitter and reader on
     /// it; `<user>-review`, a tenant reviewer key with reviewer and reader on
     /// that root; and, for an admin entry, `<user>-admin`. Each is issued
-    /// by the admin key that added the entry, only when missing, so a sign-in
-    /// whose issuance failed part way completes at the next one. Every
+    /// by the tenant's reserved server issuer, never an admin key (ADR-0097
+    /// d18, reversing ADR-0045 d6's "under the admin key that added the
+    /// entry"), only for an accepted entry that is not disabled, and only
+    /// when missing, so a sign-in whose issuance failed part way completes
+    /// at the next one. `<user>-admin` is issued only for an entry whose
+    /// admin flag is in force: a pending flag is not on the entry until its
+    /// confirmation (d5). Every
     /// session key's principal is its own name, so R2 lets `<user>-review`
     /// approve the person's agents' writes.
     pub async fn web_ensure_keys(&self, entry: &WebEntry) -> Result<(), AppError> {
         let tenant_id = entry.tenant_id;
+        // A pending or disabled entry signs in to nothing, so it is issued
+        // nothing (ADR-0097 d18).
+        if entry.pending || entry.disabled_at.is_some() {
+            return Ok(());
+        }
         let held = self
             .journal
             .web_session_keys(tenant_id, &entry.user)
@@ -438,12 +448,13 @@ where
         if needed.is_empty() {
             return Ok(());
         }
-        let issuer = self
-            .journal
-            .key(tenant_id, entry.added_by)
-            .await?
-            .filter(|k| k.revoked_at.is_none() && k.role == Role::Admin)
-            .ok_or(AppError::WebKeyMissing { capacity: "web" })?;
+        // The server issuer, issued and revoked in a commit of its own the
+        // first time a tenant needs it (ADR-0097 d18).
+        let prev = self.head_event(tenant_id).await?;
+        let (issuer, links) = self.server_issuer(tenant_id, prev.as_ref()).await?;
+        if !links.is_empty() {
+            self.commit_requests(links).await?;
+        }
         let root = Reference::Name(entry.user.clone());
         let grant = |role: Role| GrantRequest {
             node: root.clone(),
@@ -663,8 +674,8 @@ where
     /// A person's own sign-up (ADR-0068 d2), after the terms page: in open
     /// mode, for a provider-verified identity no entry holds, with the
     /// current terms version accepted; an address an entry holds is refused
-    /// whatever its tenant or flag. A drawn user, the entry under
-    /// `signup.issuer` journalled as `web.signed_up` with the email's
+    /// whatever its tenant or flag. A drawn user, the entry under the
+    /// server issuer (ADR-0097 d18) journalled as `web.signed_up` with the email's
     /// digest, the provider subject pinned. The caller then issues the
     /// session keys and opens a session.
     pub async fn web_sign_up(
@@ -746,38 +757,32 @@ where
         Ok(entry)
     }
 
-    /// The live admin key `signup.issuer` names in the sign-up tenant;
-    /// otherwise the start's check failed or the key was revoked since,
-    /// and the sign-up fails closed (ADR-0068 d1, d11).
+    /// The sign-up tenant's reserved server issuer, as stored or as issued
+    /// and revoked in a commit of its own (ADR-0097 d18): a sign-up's entry
+    /// is added under it, and `signup.issuer` is read and ignored.
     async fn signup_issuer(&self, policy: &SignupPolicy) -> Result<KeyRecord, AppError> {
-        let id = self
-            .journal
-            .resolve_name(policy.tenant_id, NamedKind::Key, &policy.issuer)
-            .await?
-            .ok_or(AppError::WebKeyMissing {
-                capacity: "signup issuer",
-            })?;
-        self.journal
-            .key(policy.tenant_id, id)
-            .await?
-            .filter(|k| k.role == Role::Admin && k.revoked_at.is_none())
-            .ok_or(AppError::WebKeyMissing {
-                capacity: "signup issuer",
-            })
+        let prev = self.head_event(policy.tenant_id).await?;
+        let (issuer, links) = self.server_issuer(policy.tenant_id, prev.as_ref()).await?;
+        if !links.is_empty() {
+            self.commit_requests(links).await?;
+        }
+        Ok(issuer)
     }
 
-    /// Whether the start's settings name a live admin key in an existing
-    /// tenant (ADR-0068 d1): the composition stops when not.
+    /// Whether the start's settings name an existing tenant (ADR-0068 d1):
+    /// the composition stops when not. `signup.issuer` is no longer read
+    /// (ADR-0097 d18).
     pub async fn check_signup_policy(&self) -> Result<(), String> {
         let Some(policy) = self.signup_policy() else {
             return Ok(());
         };
-        self.signup_issuer(policy).await.map(|_| ()).map_err(|_| {
-            format!(
-                "signup.issuer {} is not a live admin key of the tenant signup.tenant names (ADR-0068 d1)",
-                policy.issuer.as_str()
-            )
-        })
+        match self.head_event(policy.tenant_id).await {
+            Ok(Some(_)) => Ok(()),
+            _ => Err(format!(
+                "signup.tenant {} is not a tenant of this deployment (ADR-0068 d1)",
+                policy.tenant_id
+            )),
+        }
     }
 
     /// A drawn name no workspace, key or entry of the tenant holds.

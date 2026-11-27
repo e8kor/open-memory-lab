@@ -724,9 +724,11 @@ fn signup_policy(
             "{KEY_SIGNUP_TENANT} {tenant:?} is not a tenant id (ADR-0068 d1)"
         ))
     })?;
-    let issuer = required(KEY_SIGNUP_ISSUER)?;
-    let issuer = oml_app::domain::name::Name::parse(issuer.trim())
-        .map_err(|e| ConfigError::Invalid(format!("{KEY_SIGNUP_ISSUER}: {e} (ADR-0068 d1)")))?;
+    // Read and ignored for one release: the server issuer adds a sign-up's
+    // entry, and doctor names a value still set (ADR-0097 d18).
+    let issuer = lookup(KEY_SIGNUP_ISSUER)
+        .filter(|v| !v.trim().is_empty())
+        .and_then(|v| oml_app::domain::name::Name::parse(v.trim()).ok());
     let number = |key: &str, default: u64| -> Result<u64, ConfigError> {
         match lookup(key) {
             None => Ok(default),

@@ -12,8 +12,14 @@
 -- issued before it reads null, which counts as no recorded person: the
 -- settlement then reads its issuer chain as before.
 --
--- What it costs a live database: two nullable columns; no existing row is
--- read or rewritten.
+-- api_keys.role gains 'maintenance' (d18): a service's key that reads counts
+-- only, issued by an admin as a widening act or converted in place from an
+-- admin key by key.converted. The check is replaced NOT VALID and validated
+-- in the same transaction: every existing row holds one of the old roles,
+-- which the new check admits.
+--
+-- What it costs a live database: two nullable columns, and one scan of
+-- api_keys to validate the role check; no existing row is rewritten.
 
 SET LOCAL lock_timeout = '5s';
 
@@ -24,3 +30,10 @@ COMMENT ON COLUMN admin_acts.confirm_reason IS
 ALTER TABLE api_keys ADD COLUMN issuer_person text;
 COMMENT ON COLUMN api_keys.issuer_person IS
     'The person the issuing key counted as at issuance, since v0.8.6 (#508 N1).';
+
+ALTER TABLE api_keys DROP CONSTRAINT api_keys_role_check;
+ALTER TABLE api_keys
+    ADD CONSTRAINT api_keys_role_check
+        CHECK (role IN ('reader', 'contributor', 'submitter', 'reviewer', 'admin', 'operator',
+                        'maintenance')) NOT VALID;
+ALTER TABLE api_keys VALIDATE CONSTRAINT api_keys_role_check;

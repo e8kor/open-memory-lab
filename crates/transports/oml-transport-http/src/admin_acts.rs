@@ -46,6 +46,13 @@ struct LinkSelfBody {
     reason: Option<String>,
 }
 
+/// The body of `POST /v2/keys/self/convert` (ADR-0097 d18).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConvertBody {
+    to: String,
+}
+
 /// The body of `POST /v2/keys/{key}/revoke`: `reason` alone, so `cascade`
 /// and rotation can join later as new members (ADR-0097 d14).
 #[derive(Deserialize, Default)]
@@ -261,8 +268,8 @@ where
                 st.app
                     .confirm_admin_act(acting.bearer(), id, sent.reason.as_deref())
             })
-                .await
-                .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
             Ok(json_response(StatusCode::OK, &admin_act_json(&act)))
         };
         finish(&rid, inner.await)
@@ -374,9 +381,12 @@ where
                 ApiError::validation("user is a user's name")
                     .with_details(json!({ "field": "/user" }))
             })?;
-            let key = retry_chain(|| st.app.link_self(acting.bearer(), &user, sent.reason.as_deref()))
-                .await
-                .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+            let key = retry_chain(|| {
+                st.app
+                    .link_self(acting.bearer(), &user, sent.reason.as_deref())
+            })
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
             Ok(json_response(
                 StatusCode::OK,
                 &json!({
@@ -384,6 +394,44 @@ where
                     "name": key.name.as_ref().map(|n| n.as_str()),
                     "user": user.as_str(),
                     "accepted": false,
+                }),
+            ))
+        };
+        finish(&rid, inner.await)
+    }
+
+    /// `POST /v2/keys/self/convert {to: maintenance}` (ADR-0097 d18): the
+    /// calling admin key becomes a maintenance key in place, keeping its
+    /// value; journalled as `key.converted`.
+    pub(crate) async fn convert_self_route(
+        State(st): State<Self>,
+        rid: Rid,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
+        let inner = async {
+            st.require_writes_open()?;
+            let acting = acting(&headers, None)?;
+            let sent: ConvertBody = parse_json(&headers, &body)?;
+            let to = match sent.to.as_str() {
+                "maintenance" => oml_app::domain::Role::Maintenance,
+                _ => {
+                    return Err(ApiError::validation(
+                        "an admin key converts into a maintenance key only (ADR-0097 d18)",
+                    )
+                    .with_details(json!({ "field": "/to", "reason": "not_maintenance" })));
+                }
+            };
+            let key = retry_chain(|| st.app.convert_self(acting.bearer(), to))
+                .await
+                .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+            Ok(json_response(
+                StatusCode::OK,
+                &json!({
+                    "key_id": key.key_id,
+                    "name": key.name.as_ref().map(|n| n.as_str()),
+                    "role": key.role.as_str(),
+                    "requests_per_minute": key.requests_per_minute,
                 }),
             ))
         };

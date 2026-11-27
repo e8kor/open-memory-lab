@@ -4081,7 +4081,11 @@ mod tests {
             decodes(&client.todo_counts(&CALL, Some("alice")).await),
             decodes(&client.admin_todo_counts(&CALL).await),
             decodes(&client.admin_acts(&CALL, "all").await),
-            decodes(&client.confirm_admin_act(&CALL, "idem-a1", "act-1", "checked").await),
+            decodes(
+                &client
+                    .confirm_admin_act(&CALL, "idem-a1", "act-1", "checked")
+                    .await,
+            ),
             decodes(
                 &client
                     .decline_admin_act(&CALL, "idem-a2", "act-1", "not this agent")

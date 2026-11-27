@@ -3269,6 +3269,57 @@ pub async fn key_default_set_sets_a_live_keys_default_and_refuses_anything_else<
     );
 }
 
+/// `key.converted` turns a live admin bearer key into a `maintenance` key
+/// in place: the same id and hash, the role's request rate. Any other key,
+/// a reader or a key already converted, is refused and commits nothing
+/// (event-catalog.md `key.converted`; ADR-0097 d18).
+pub async fn key_converted_makes_a_live_admin_key_a_maintenance_key_and_refuses_any_other<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(29);
+    rig.seed_chain(store, 0).await;
+    let admin = key_record(rig.tenant_id, Uuid::from_u128(0xC0), Role::Admin, None);
+    let reader = key_record(rig.tenant_id, Uuid::from_u128(0xC1), Role::Reader, None);
+    rig.issue_key(store, admin.clone()).await;
+    rig.issue_key(store, reader.clone()).await;
+    let convert = |key_id: Uuid| {
+        (
+            event_types::KEY_CONVERTED,
+            json!({ "key_id": key_id, "from": "admin", "to": "maintenance" }),
+            MetadataFold::KeyConverted { key_id },
+        )
+    };
+    let (event_type, payload, fold) = convert(admin.key_id);
+    rig.commit(store, event_type, payload, fold, None)
+        .await
+        .expect("the admin key converts");
+    let stored = store
+        .key(rig.tenant_id, admin.key_id)
+        .await
+        .expect("read")
+        .expect("the key");
+    assert_eq!(stored.role, Role::Maintenance);
+    assert_eq!(stored.key_hash, admin.key_hash, "the hash is kept");
+    assert_eq!(stored.requests_per_minute, Some(60));
+    for key_id in [reader.key_id, admin.key_id] {
+        let head = store.chain_head(rig.tenant_id).await.expect("head");
+        let (event_type, payload, fold) = convert(key_id);
+        assert!(
+            rig.commit(store, event_type, payload, fold, None)
+                .await
+                .is_err(),
+            "only a live admin key converts"
+        );
+        assert_eq!(
+            store.chain_head(rig.tenant_id).await.expect("head"),
+            head,
+            "nothing is committed"
+        );
+    }
+}
+
 /// A key's expiry and its requests per minute fold in with `key.issued`
 /// and read back exactly; `key.limits_set` replaces both, `None` clearing
 /// one. A key past its expiry still resolves by its hash, since the use
@@ -11370,6 +11421,12 @@ where
     .await;
     Box::pin(
         a_keys_limits_fold_with_its_issuance_and_are_replaced_by_key_limits_set(&new_store().await),
+    )
+    .await;
+    Box::pin(
+        key_converted_makes_a_live_admin_key_a_maintenance_key_and_refuses_any_other(
+            &new_store().await,
+        ),
     )
     .await;
     Box::pin(

@@ -222,7 +222,8 @@ where
         limit: usize,
         record_held: bool,
     ) -> Result<RescanReport, AppError> {
-        let admin = self.admin_caller(bearer.into(), "rescan").await?.key;
+        // An admin key's or a maintenance key's (ADR-0097 d18).
+        let admin = self.counts_caller(bearer, "rescan").await?.key;
         let tenant_id = admin.tenant_id;
         let limit = limit.clamp(1, RESCAN_MAX_EVENTS);
         let events = self

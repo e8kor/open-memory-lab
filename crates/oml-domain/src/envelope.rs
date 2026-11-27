@@ -65,6 +65,10 @@ pub mod event_types {
     /// An admin key set another key's expiry and request rate: both values
     /// as they stand after the change (ADR-0079 d5).
     pub const KEY_LIMITS_SET: &str = "key.limits_set";
+    /// An admin key converted itself into a `maintenance` key in place,
+    /// keeping its id and hash: `{key_id, from: admin, to: maintenance}`
+    /// (ADR-0097 d18).
+    pub const KEY_CONVERTED: &str = "key.converted";
     /// A key's default workspace is set: a pending issuance's confirmation
     /// names the workspace it creates as the key's default (ADR-0097 d30,
     /// the operator's decision of 2026-11-27).

@@ -824,9 +824,14 @@ impl Lab {
             .await
             .expect("the person's entry");
         app.web_ensure_keys(&entry).await.expect("keys");
-        app.link_key_to_person(Bearer::Session(&admin), key_id.into(), &user, Some("the person holds this key"))
-            .await
-            .expect("linked");
+        app.link_key_to_person(
+            Bearer::Session(&admin),
+            key_id.into(),
+            &user,
+            Some("the person holds this key"),
+        )
+        .await
+        .expect("linked");
         let web = session(entry, Capacity::Web).await;
         app.accept_key_link(Bearer::Session(&web), key_id.into())
             .await

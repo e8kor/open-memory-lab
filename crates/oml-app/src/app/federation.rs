@@ -83,17 +83,21 @@ where
         &self,
         bearer: impl Into<Bearer<'_>>,
     ) -> Result<(FederationSettings, Vec<WideKey>), AppError> {
-        let admin = self
-            .admin_caller(bearer.into(), "federation_settings")
-            .await?
-            .key;
+        // An admin key's, or a maintenance key's with no key listed
+        // (ADR-0097 d18).
+        let admin = self.counts_caller(bearer, "federation_settings").await?.key;
         let policy = self.journal.federation_policy(admin.tenant_id).await?;
+        let wide = if admin.role == Role::Maintenance {
+            Vec::new()
+        } else {
+            self.wide_keys_of(admin.tenant_id)
+        };
         Ok((
             FederationSettings {
                 policy,
                 widen_signal: self.widen.health_of(admin.tenant_id),
             },
-            self.wide_keys_of(admin.tenant_id),
+            wide,
         ))
     }
 

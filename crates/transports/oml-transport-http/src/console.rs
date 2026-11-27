@@ -774,7 +774,13 @@ where
     /// oldest per workspace, tenant-wide, by path, and no content
     /// (ADR-0045 d10; ADR-0080 d16, #435).
     async fn review_queue_inner(st: &Self, headers: &HeaderMap) -> Result<Response, ApiError> {
-        let caller = st.console_caller(headers).await?;
+        // A maintenance key reads these counts too (ADR-0097 d18).
+        let acting = acting(headers, None)?;
+        let caller = st
+            .app
+            .counts_caller(acting.bearer(), "review_queue")
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         let rows = st
             .app
             .review_queue(&caller)

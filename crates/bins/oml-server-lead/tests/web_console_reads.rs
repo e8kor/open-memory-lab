@@ -243,7 +243,11 @@ async fn a_session_keys_read_resolves_its_caller_on_the_gates_access_once_and_a_
         use oml_app::types::Bearer;
         let linked = rig
             .app
-            .link_self(rig.admin.as_str(), &Name::parse("alice").expect("a name"), Some("the person holds this key"))
+            .link_self(
+                rig.admin.as_str(),
+                &Name::parse("alice").expect("a name"),
+                Some("the person holds this key"),
+            )
             .await
             .expect("the self-link");
         let session = rig

@@ -122,7 +122,7 @@ fn policy(tenant_id: uuid::Uuid) -> SignupPolicy {
     SignupPolicy {
         mode: SignupMode::Open,
         tenant_id,
-        issuer: Name::parse("root-admin").expect("a name"),
+        issuer: Some(Name::parse("root-admin").expect("a name")),
         terms_version: TERMS.to_owned(),
         terms_url: "https://example.com/terms".to_owned(),
         privacy_url: "https://example.com/privacy".to_owned(),
@@ -1422,7 +1422,10 @@ async fn the_start_pages_answer_nothing_without_a_session() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_signup_issuer_that_is_not_an_admin_key_stops_the_start() {
+/// `signup.issuer` is read and ignored since v0.8.6: one that names no key
+/// no longer stops the start, since the server issuer adds a sign-up's
+/// entry (ADR-0097 d18).
+async fn a_signup_issuer_is_read_and_ignored_and_the_start_goes_on() {
     let db = fresh_name();
     if !mint_database(&db).await {
         return;
@@ -1431,7 +1434,7 @@ async fn a_signup_issuer_that_is_not_an_admin_key_stops_the_start() {
     let key = SigningKey::from_bytes(&OsIds.new_secret());
     let boot = tenant(&store, &key, "oml").await;
     let mut p = policy(boot.tenant_id);
-    p.issuer = Name::parse("nobody").unwrap();
+    p.issuer = Some(Name::parse("nobody").unwrap());
     let started = start_lead_with(
         &store,
         key,
@@ -1447,8 +1450,7 @@ async fn a_signup_issuer_that_is_not_an_admin_key_stops_the_start() {
         None,
     )
     .await;
-    let error = started.err().expect("the start stops");
-    assert!(error.contains("signup.issuer"), "{error}");
+    assert!(started.is_ok(), "the start goes on: {:?}", started.err());
     drop_db(&db).await;
 }
 

@@ -361,12 +361,7 @@ pub async fn act(
             .map(|_| "confirmed")
     } else {
         web.api
-            .decline_admin_act(
-                &call(&credential, &ids),
-                &key,
-                act_id,
-                reason,
-            )
+            .decline_admin_act(&call(&credential, &ids), &key, act_id, reason)
             .await
             .map(|_| "declined")
     };

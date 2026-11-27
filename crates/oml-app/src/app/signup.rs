@@ -227,6 +227,12 @@ where
     /// (ADR-0068 d5).
     pub async fn list_web_users(&self, admin: &Caller) -> Result<Vec<UserRow>, AppError> {
         require_role(admin, Role::Admin, "web_users")?;
+        self.web_user_rows(admin).await
+    }
+
+    /// [`Self::list_web_users`]'s rows, the caller's role checked by its
+    /// caller.
+    async fn web_user_rows(&self, admin: &Caller) -> Result<Vec<UserRow>, AppError> {
         let tenant_id = admin.key.tenant_id;
         let mut by_user: BTreeMap<Name, (bool, bool)> = BTreeMap::new();
         let mut after = None;
@@ -644,7 +650,16 @@ where
         &self,
         bearer: impl Into<crate::types::Bearer<'_>>,
     ) -> Result<(Vec<UserRow>, Vec<DeletionRequest>), AppError> {
-        let caller = self.authenticate_bearer(bearer.into()).await?;
+        // A maintenance key reads the rows' counts: no key listed and no
+        // deletion named (ADR-0097 d18).
+        let caller = self.counts_caller(bearer, "web_users").await?;
+        if caller.key.role == Role::Maintenance {
+            let mut rows = self.web_user_rows(&caller).await?;
+            for row in &mut rows {
+                row.admin_keys.clear();
+            }
+            return Ok((rows, Vec::new()));
+        }
         Ok((
             self.list_web_users(&caller).await?,
             self.pending_deletions(&caller).await?,

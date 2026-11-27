@@ -276,7 +276,8 @@ async fn counted_as(app: &TestApp, admin: &str, issued: &IssuedKey, principal: &
     app.link_key_to_person(
         oml_app::types::Bearer::Session(&linker),
         issued.key_id.into(),
-        &name(principal), Some("the person holds this key"),
+        &name(principal),
+        Some("the person holds this key"),
     )
     .await
     .expect("the key is linked");
@@ -623,9 +624,10 @@ async fn happy_path_end_to_end() {
     // verdict and a ladder ratification need (ADR-0097 d12): the admin
     // person's and the reviewer's entries with their session keys, the
     // link (its consent act and `key.linked_person`, ADR-0097 d7) and its
-    // acceptance.
+    // acceptance; and the server issuer's issuance and revocation, the
+    // first time a session key is issued (d18).
     let head = app.verify_chain(admin).await.expect("verify chain");
-    assert_eq!(head.seq, 42);
+    assert_eq!(head.seq, 44);
     assert_eq!(head.tenant_id, boot.tenant_id);
 
     // The reader's tail serves only what it may see, ascending, with
@@ -648,7 +650,7 @@ async fn happy_path_end_to_end() {
             event_types::LIFECYCLE_PROMOTE
         ]
     );
-    assert_eq!((tail.head_seq, tail.next_after_seq), (42, 42));
+    assert_eq!((tail.head_seq, tail.next_after_seq), (44, 44));
     let promote = &tail.events[1];
     assert!(!promote.names_actor, "the tail names no reviewer");
     assert!(
@@ -15761,7 +15763,7 @@ fn metered(probe: TestApp, tenant_id: Uuid, quotas: oml_app::domain::signup::Quo
         .with_signup(oml_app::types::SignupPolicy {
             mode: oml_app::domain::signup::SignupMode::Open,
             tenant_id,
-            issuer: name("root-admin"),
+            issuer: Some(name("root-admin")),
             terms_version: "2026-11-06".to_owned(),
             terms_url: "https://example.com/terms".to_owned(),
             privacy_url: "https://example.com/privacy".to_owned(),
@@ -16120,7 +16122,7 @@ async fn metered_on_a_clock(
         .with_signup(oml_app::types::SignupPolicy {
             mode: oml_app::domain::signup::SignupMode::Open,
             tenant_id: tenant_id.unwrap_or(boot.tenant_id),
-            issuer: name("root-admin"),
+            issuer: Some(name("root-admin")),
             terms_version: "2026-11-06".to_owned(),
             terms_url: "https://example.com/terms".to_owned(),
             privacy_url: "https://example.com/privacy".to_owned(),
@@ -19198,9 +19200,14 @@ async fn link_person(app: &TestApp, admin: &str, key_id: Uuid, person: &str) {
     let _ = app
         .unlink_key_from_person(Bearer::Session(&ops), key_id.into())
         .await;
-    app.link_key_to_person(Bearer::Session(&ops), key_id.into(), &name(person), Some("the person holds this key"))
-        .await
-        .expect("linked, pending");
+    app.link_key_to_person(
+        Bearer::Session(&ops),
+        key_id.into(),
+        &name(person),
+        Some("the person holds this key"),
+    )
+    .await
+    .expect("linked, pending");
     // The named person accepts it from their own console session (ADR-0085
     // d16, the operator's decision of 2026-11-19).
     let own = app
@@ -20062,9 +20069,14 @@ async fn link_keys(app: &TestApp, admin: &str, keys: &[Uuid], person: &str) {
         let _ = app
             .unlink_key_from_person(Bearer::Session(&ops), (*key_id).into())
             .await;
-        app.link_key_to_person(Bearer::Session(&ops), (*key_id).into(), &name(person), Some("the person holds this key"))
-            .await
-            .expect("linked, pending");
+        app.link_key_to_person(
+            Bearer::Session(&ops),
+            (*key_id).into(),
+            &name(person),
+            Some("the person holds this key"),
+        )
+        .await
+        .expect("linked, pending");
         app.accept_key_link(Bearer::Session(&own), (*key_id).into())
             .await
             .expect("accepted");
@@ -20621,9 +20633,14 @@ async fn a_previous_value_in_its_grace_runs_no_key_act() {
     );
     assert_eq!(
         verb_of(
-            app.link_key_to_person(old, bea.key_id.into(), &name("alice"), Some("the person holds this key"))
-                .await
-                .unwrap_err()
+            app.link_key_to_person(
+                old,
+                bea.key_id.into(),
+                &name("alice"),
+                Some("the person holds this key")
+            )
+            .await
+            .unwrap_err()
         ),
         "link_key"
     );

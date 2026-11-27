@@ -1,7 +1,7 @@
 ---
 status: Stable
 verified: 2026-11-25
-answers: "how to upgrade an OML server: how migrations run, v0.8.6's migration 0074 and the person a reviewer, ratifier or admin-read key needs, the upgrade steps in order, what rollback does and does not mean, the upgrade from a pre-0.3.1 install, the v0.5.4 fix, how to move from v0.3, v0.8.5's migrations 0067, 0068 and 0069, the workspaces quota, the oml_write modes and the Python SDK that upgrades with the server, key rotation and what a previous value runs in its grace, the last admin entry kept on every surface and the read-only counts before v0.8.6, the v0.8.4 role rename that clients take in the server's window, with no key issued or listed until both run v0.8.4, what v0.8.4's migrations 0063, 0064 and 0066 cost, the admin key links, links and sign-in emails that wait on their person, and the reset of a database that ran a draft of 0063 or 0064, the v0.8.3 rename that clients take before the server, what the v0.8.3 migrations cost and what waits during them, and the storage.url to set before v0.8.3's uploads"
+answers: "how to upgrade an OML server: how migrations run, v0.8.6's migrations 0074 and 0075, the person a reviewer, ratifier or admin-read key needs, the deployer's admin keys converted to maintenance keys, the confirm and link reasons, the upgrade steps in order, what rollback does and does not mean, the upgrade from a pre-0.3.1 install, the v0.5.4 fix, how to move from v0.3, v0.8.5's migrations 0067, 0068 and 0069, the workspaces quota, the oml_write modes and the Python SDK that upgrades with the server, key rotation and what a previous value runs in its grace, the last admin entry kept on every surface and the read-only counts before v0.8.6, the v0.8.4 role rename that clients take in the server's window, with no key issued or listed until both run v0.8.4, what v0.8.4's migrations 0063, 0064 and 0066 cost, the admin key links, links and sign-in emails that wait on their person, and the reset of a database that ran a draft of 0063 or 0064, the v0.8.3 rename that clients take before the server, what the v0.8.3 migrations cost and what waits during them, and the storage.url to set before v0.8.3's uploads"
 ---
 
 # Upgrade OML
@@ -109,9 +109,36 @@ Three rules start at the upgrade and need a person behind a key ([ADR-0097](../a
   (d22). Until then `oml admin read` answers `admin.read_requires_person` and the console's admin
   pages read as usual through `<user>-admin`.
 
-Not in this release: the `maintenance` role and the deployer's `maintenance-key` post-step (d18),
-the host verbs (d19) and the mail relay settings (d20). The deployer files keep their admin keys
-until the release that ships d18.
+### Migration 0075, the maintenance role and the deployer's keys
+
+Migration 0075 adds two nullable columns, `admin_acts.confirm_reason` and `api_keys.issuer_person`,
+and replaces `api_keys`'s role check so it admits `maintenance`, validated in the same
+transaction: one scan of `api_keys`, which is small, and no row rewritten ([ADR-0097](../adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) d18, d26).
+A key issued before it records no issuer's person, and an act confirmed before it no reason.
+
+No service needs an admin key from v0.8.6 on (d18). After the upgrade, each admin key a service
+holds, the deployer's among them, converts itself in place: under that key run
+
+```bash
+oml keys convert-self --to maintenance
+```
+
+The key keeps its value, so the files that hold it need no change, and from then on it reads the
+counts `oml doctor` reads and runs `oml admin rescan --record-held`, and nothing else. The release
+notes carry `<!-- oml-deployer: post-step maintenance-key -->` for a deployer that runs the step
+itself. Session keys are issued by the tenant's reserved server issuer from the first sign-in
+after the upgrade; open sign-up's `signup.issuer` is read and ignored, and `oml doctor` names it
+until it is removed.
+
+Three changes that clients send ([ADR-0097](../adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) d7, d26):
+
+- `POST /v2/admin/acts/{act}/confirm` requires a `reason` (`oml admin confirm <act> --reason`).
+- A link of a key to a person requires a `reason`, on `POST /v2/keys/{key}/link` and `POST
+  /v2/keys/self/link` (`oml keys link-self --reason`).
+- An older CLI or console that sends neither is refused `request.validation` with
+  `details.field: /reason`, and nothing is journalled.
+
+Not in this release: the host verbs (d19) and the mail relay settings (d20).
 
 ## Upgrading to v0.8.5
 

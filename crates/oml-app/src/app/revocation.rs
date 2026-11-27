@@ -18,7 +18,9 @@ use oml_domain::{Role, event_types};
 
 use super::admin_acts::BegunAct;
 use super::auth::is_web_session_key;
-use super::fixes::{SERVER_KEY_PRINCIPAL, server_key_id};
+use super::fixes::{
+    SERVER_ISSUER_PRINCIPAL, SERVER_KEY_PRINCIPAL, server_issuer_id, server_key_id,
+};
 use super::{App, commit_request};
 use crate::ports::{Clock, IdGen, JournalStore, MetadataFold, Scanner, Signer};
 use crate::types::{AppError, Bearer, Credential, KeyRecord, KeyRevocationRefusal, RevokedKey};
@@ -72,7 +74,10 @@ where
         if target.credential == Credential::Session {
             return Err(AppError::KeyRevocation(KeyRevocationRefusal::SessionKey));
         }
-        if target.key_id == server_key_id(tenant_id) && target.principal == SERVER_KEY_PRINCIPAL {
+        if (target.key_id == server_key_id(tenant_id) && target.principal == SERVER_KEY_PRINCIPAL)
+            || (target.key_id == server_issuer_id(tenant_id)
+                && target.principal == SERVER_ISSUER_PRINCIPAL)
+        {
             return Err(AppError::KeyRevocation(KeyRevocationRefusal::Reserved));
         }
         if target.revoked_at.is_some() {

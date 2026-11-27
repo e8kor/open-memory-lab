@@ -385,7 +385,7 @@ async fn world_at_one_request_a_minute() -> World {
         .with_signup(oml_app::types::SignupPolicy {
             mode: oml_app::domain::signup::SignupMode::Allowlist,
             tenant_id: boot.tenant_id,
-            issuer: name("acme-admin"),
+            issuer: Some(name("acme-admin")),
             terms_version: "2026-11-06".to_owned(),
             terms_url: "https://oml.example.com/terms".to_owned(),
             privacy_url: "https://oml.example.com/privacy".to_owned(),

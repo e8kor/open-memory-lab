@@ -319,9 +319,22 @@ fn instruction(m: &MemoryRecord) -> bool {
 /// The reserved server key's id in `tenant_id`: one per tenant, derived
 /// from the tenant's id so every replica finds the same one.
 pub(super) fn server_key_id(tenant_id: Uuid) -> Uuid {
+    reserved_key_id(b"oml:server-key\0", tenant_id)
+}
+
+/// The principal of the tenant's reserved server issuer (ADR-0097 d18).
+pub const SERVER_ISSUER_PRINCIPAL: &str = "oml:server-issuer";
+
+/// The tenant's reserved server issuer's id, derived as the server key's is
+/// (ADR-0097 d18): the issuer of the four session-key shapes.
+pub(super) fn server_issuer_id(tenant_id: Uuid) -> Uuid {
+    reserved_key_id(b"oml:server-issuer\0", tenant_id)
+}
+
+fn reserved_key_id(salt: &[u8], tenant_id: Uuid) -> Uuid {
     use sha2::{Digest, Sha256};
     let digest = Sha256::new()
-        .chain_update(b"oml:server-key\0")
+        .chain_update(salt)
         .chain_update(tenant_id.as_bytes())
         .finalize();
     let mut bytes = [0_u8; 16];
@@ -1416,19 +1429,17 @@ where
         })
     }
 
-    /// The tenant's reserved server key, and when the tenant has none yet,
-    /// the links that issue it and revoke it at once, to lead the revert's
-    /// commit (ADR-0089 d17 c5): role reader with no grant, `used_by:
-    /// service`, principal [`SERVER_KEY_PRINCIPAL`], a derived name, and a
-    /// value nobody is shown. It authenticates nothing.
-    fn server_key_record(&self, tenant_id: Uuid) -> KeyRecord {
-        let key_id = server_key_id(tenant_id);
+    /// A reserved key of the server: role reader with no grant, `used_by:
+    /// service`, a derived name, and a value nobody is shown, revoked at its
+    /// issuance so it authenticates nothing (ADR-0089 d17 c5; ADR-0097
+    /// d18).
+    fn reserved_key_record(&self, tenant_id: Uuid, key_id: Uuid, principal: &str) -> KeyRecord {
         let secret = self.ids.new_secret();
         KeyRecord {
             key_id,
             tenant_id,
             role: Role::Reader,
-            principal: SERVER_KEY_PRINCIPAL.to_owned(),
+            principal: principal.to_owned(),
             used_by: UsedBy::Service,
             default_workspace: None,
             issued_by: None,
@@ -1451,18 +1462,56 @@ where
         }
     }
 
-    /// See [`Self::server_key_record`]: the key as stored, or as issued and
-    /// revoked in links sealed by the server on `prev`.
+    /// The tenant's reserved server key, and when the tenant has none yet,
+    /// the links that issue it and revoke it at once, to lead the revert's
+    /// commit (ADR-0089 d17 c5): role reader with no grant, `used_by:
+    /// service`, principal [`SERVER_KEY_PRINCIPAL`], a derived name, and a
+    /// value nobody is shown. It authenticates nothing.
+    /// The key as stored, or as issued and revoked in links sealed by the
+    /// server on `prev`.
     async fn server_key(
         &self,
         tenant_id: Uuid,
         prev: Option<&SignedEnvelope>,
     ) -> Result<(KeyRecord, Vec<CommitRequest>), AppError> {
-        let key_id = server_key_id(tenant_id);
+        self.reserved_key(
+            tenant_id,
+            server_key_id(tenant_id),
+            SERVER_KEY_PRINCIPAL,
+            prev,
+        )
+        .await
+    }
+
+    /// The tenant's reserved server issuer (ADR-0097 d18), as stored, or as
+    /// issued and revoked in links sealed by the server on `prev`: it issues
+    /// the four session-key shapes in place of the admin key that added an
+    /// entry, and authenticates nothing.
+    pub(super) async fn server_issuer(
+        &self,
+        tenant_id: Uuid,
+        prev: Option<&SignedEnvelope>,
+    ) -> Result<(KeyRecord, Vec<CommitRequest>), AppError> {
+        self.reserved_key(
+            tenant_id,
+            server_issuer_id(tenant_id),
+            SERVER_ISSUER_PRINCIPAL,
+            prev,
+        )
+        .await
+    }
+
+    async fn reserved_key(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+        principal: &str,
+        prev: Option<&SignedEnvelope>,
+    ) -> Result<(KeyRecord, Vec<CommitRequest>), AppError> {
         if let Some(stored) = self.journal.key(tenant_id, key_id).await? {
             return Ok((stored, Vec::new()));
         }
-        let record = self.server_key_record(tenant_id);
+        let record = self.reserved_key_record(tenant_id, key_id, principal);
         let issued = self.seal(
             prev,
             tenant_id,

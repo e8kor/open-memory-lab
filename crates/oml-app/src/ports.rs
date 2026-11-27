@@ -325,6 +325,12 @@ pub enum MetadataFold {
         expiry: Option<EventTime>,
         requests_per_minute: Option<u32>,
     },
+    /// `key.converted`: the live admin bearer key becomes a `maintenance`
+    /// key from this commit on, keeping its id and hash. The store refuses
+    /// any other key (ADR-0097 d18).
+    KeyConverted {
+        key_id: Uuid,
+    },
     /// `key.default_set`: the live key's default workspace becomes
     /// `default_workspace`, a node of its tenant, from this commit on. The
     /// store refuses a key it does not hold, a revoked key, and a node it

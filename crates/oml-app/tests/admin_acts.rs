@@ -392,7 +392,10 @@ async fn a_confirmation_requires_a_reason_and_the_act_keeps_it() {
         .confirm_admin_act(Bearer::Session(&alice), act_id, Some("checked with ops"))
         .await
         .expect("alice confirms with a reason");
-    assert_eq!(confirmed.confirm_reason.as_deref(), Some("checked with ops"));
+    assert_eq!(
+        confirmed.confirm_reason.as_deref(),
+        Some("checked with ops")
+    );
     let held = r
         .store
         .admin_act(r.boot.tenant_id, act_id)
@@ -429,7 +432,8 @@ async fn an_admin_person_accepted_less_than_seven_days_ago_confirms_nothing() {
         .app
         .confirm_admin_act(
             Bearer::Session(&alice),
-            issued.pending_act.expect("pending"), Some("confirmed"),
+            issued.pending_act.expect("pending"),
+            Some("confirmed"),
         )
         .await
         .unwrap_err();
@@ -450,7 +454,8 @@ async fn an_admin_person_accepted_less_than_seven_days_ago_confirms_nothing() {
         .app
         .confirm_admin_act(
             Bearer::Session(&alice),
-            issued.pending_act.expect("pending"), Some("confirmed"),
+            issued.pending_act.expect("pending"),
+            Some("confirmed"),
         )
         .await
         .unwrap_err();
@@ -460,7 +465,11 @@ async fn an_admin_person_accepted_less_than_seven_days_ago_confirms_nothing() {
     );
     let bob = r.admin_session("bob").await;
     r.app
-        .confirm_admin_act(Bearer::Session(&bob), issued.pending_act.expect("pending"), Some("confirmed"))
+        .confirm_admin_act(
+            Bearer::Session(&bob),
+            issued.pending_act.expect("pending"),
+            Some("confirmed"),
+        )
         .await
         .expect("bob confirms alice's act");
 }
@@ -864,7 +873,10 @@ async fn a_link_is_a_consent_admin_act_that_requires_a_reason() {
         assert_eq!(link.event_type, event_types::KEY_LINKED_PERSON);
         assert_eq!(link.payload["act_id"], act.payload["act_id"]);
         assert_eq!(link.payload["actor"].as_str(), actor);
-        assert!(linked.link_pending.is_some(), "the person's acceptance waits");
+        assert!(
+            linked.link_pending.is_some(),
+            "the person's acceptance waits"
+        );
     }
 }
 
@@ -2237,7 +2249,11 @@ async fn a_ladder_ratifier_must_count_as_a_person_other_than_the_proposer() {
         .expect("a pending reviewer");
     let bob = r.admin_session("bob").await;
     r.app
-        .confirm_admin_act(Bearer::Session(&bob), minted.pending_act.expect("pending"), Some("confirmed"))
+        .confirm_admin_act(
+            Bearer::Session(&bob),
+            minted.pending_act.expect("pending"),
+            Some("confirmed"),
+        )
         .await
         .expect("bob confirms");
     let proposal = r
@@ -2313,7 +2329,11 @@ async fn an_admin_cannot_ratify_a_proposal_from_an_agent_key_they_issued() {
         .expect("a pending agent key");
     let bob = r.admin_session("bob").await;
     r.app
-        .confirm_admin_act(Bearer::Session(&bob), agent.pending_act.expect("pending"), Some("confirmed"))
+        .confirm_admin_act(
+            Bearer::Session(&bob),
+            agent.pending_act.expect("pending"),
+            Some("confirmed"),
+        )
         .await
         .expect("bob confirms");
     let proposal = r
@@ -2587,7 +2607,12 @@ async fn offensive_narrowing_notifies_every_admin_person_and_the_workspaces_revi
         .0;
     r.app.web_ensure_keys(&rhea_entry).await.expect("keys");
     r.app
-        .link_key_to_person(Bearer::Session(&alice), rhea.key_id.into(), &name("rhea"), Some("the person holds this key"))
+        .link_key_to_person(
+            Bearer::Session(&alice),
+            rhea.key_id.into(),
+            &name("rhea"),
+            Some("the person holds this key"),
+        )
         .await
         .expect("linked");
     let rhea_web = r.person_session("rhea", Capacity::Web).await;
@@ -3055,7 +3080,11 @@ async fn erase_demotes_at_once_and_shreds_only_after_a_second_admin_person() {
     r.clock.advance(8 * DAY);
     assert!(matches!(
         r.app
-            .confirm_admin_act(Bearer::Session(&r.admin_session("alice").await), act.act_id, Some("confirmed"))
+            .confirm_admin_act(
+                Bearer::Session(&r.admin_session("alice").await),
+                act.act_id,
+                Some("confirmed")
+            )
             .await
             .unwrap_err(),
         AppError::AdminAct(AdminActRefusal::OwnAct)
@@ -3063,7 +3092,11 @@ async fn erase_demotes_at_once_and_shreds_only_after_a_second_admin_person() {
     let before = r.journal().await.len();
     let confirmed = r
         .app
-        .confirm_admin_act(Bearer::Session(&r.admin_session("bob").await), act.act_id, Some("confirmed"))
+        .confirm_admin_act(
+            Bearer::Session(&r.admin_session("bob").await),
+            act.act_id,
+            Some("confirmed"),
+        )
         .await
         .expect("bob confirms the shred");
     assert_eq!(confirmed.state, AdminActState::Confirmed);
@@ -3214,7 +3247,11 @@ async fn an_admins_federation_acceptance_waits_on_a_second_admin_person_and_appl
     assert_eq!(act.act.as_str(), "accept_federation");
     assert_eq!(act.state, AdminActState::PendingConfirmation);
     r.app
-        .confirm_admin_act(Bearer::Session(&r.admin_session("bob").await), act.act_id, Some("confirmed"))
+        .confirm_admin_act(
+            Bearer::Session(&r.admin_session("bob").await),
+            act.act_id,
+            Some("confirmed"),
+        )
         .await
         .expect("bob confirms");
     let crew = r
@@ -3255,7 +3292,11 @@ async fn widening_the_federation_policy_waits_and_narrowing_it_takes_effect_at_o
     let act = taken.pending.expect("the act waits");
     assert_eq!(act.act.as_str(), "widen_federation_policy");
     r.app
-        .confirm_admin_act(Bearer::Session(&r.admin_session("bob").await), act.act_id, Some("confirmed"))
+        .confirm_admin_act(
+            Bearer::Session(&r.admin_session("bob").await),
+            act.act_id,
+            Some("confirmed"),
+        )
         .await
         .expect("bob confirms");
     let policy = r

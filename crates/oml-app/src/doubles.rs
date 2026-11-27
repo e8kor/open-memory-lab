@@ -2310,6 +2310,20 @@ fn apply_fold(
                 }
             }
         }
+        MetadataFold::KeyConverted { key_id } => {
+            let Some(key) = state.keys.get_mut(&key_id).filter(|k| {
+                k.revoked_at.is_none()
+                    && k.credential == Credential::Bearer
+                    && k.role == Role::Admin
+            }) else {
+                return Err(StoreError::Backend(format!(
+                    "key {key_id} is not a live admin bearer key of this tenant"
+                )));
+            };
+            key.role = Role::Maintenance;
+            // The role's request rate, a placeholder (ADR-0097 d18).
+            key.requests_per_minute = Some(crate::app::MAINTENANCE_REQUESTS_PER_MINUTE);
+        }
         MetadataFold::KeyLimitsSet {
             key_id,
             expiry,

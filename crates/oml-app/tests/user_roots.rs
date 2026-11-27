@@ -2218,9 +2218,14 @@ async fn link_accepted(
     key_id: Uuid,
     user: &str,
 ) {
-    app.link_key_to_person(Bearer::Session(ops), key_id.into(), &name(user), Some("the person holds this key"))
-        .await
-        .expect("linked, pending");
+    app.link_key_to_person(
+        Bearer::Session(ops),
+        key_id.into(),
+        &name(user),
+        Some("the person holds this key"),
+    )
+    .await
+    .expect("linked, pending");
     accept_link(app, store, user, key_id).await;
 }
 
@@ -2233,7 +2238,12 @@ async fn an_admin_links_a_person_tenant_key_and_the_link_is_journalled() {
     signed_in(&app, admin, "alice", false).await;
     let key = person_tenant_key(&app, admin, "alice/dev-review", Vec::new()).await;
     let linked = app
-        .link_key_to_person(Bearer::Session(&ops), key.key_id.into(), &name("alice"), Some("the person holds this key"))
+        .link_key_to_person(
+            Bearer::Session(&ops),
+            key.key_id.into(),
+            &name("alice"),
+            Some("the person holds this key"),
+        )
         .await
         .expect("linked");
     let root = app
@@ -2293,20 +2303,35 @@ async fn linking_an_agent_held_key_is_refused() {
         (user_key.key_id, "not_a_tenant_key"),
     ] {
         let err = app
-            .link_key_to_person(Bearer::Session(&ops), key.into(), &name("alice"), Some("the person holds this key"))
+            .link_key_to_person(
+                Bearer::Session(&ops),
+                key.into(),
+                &name("alice"),
+                Some("the person holds this key"),
+            )
             .await
             .unwrap_err();
         assert!(link_refused(&err, reason), "{reason}: {err:?}");
     }
     let person = person_tenant_key(&app, admin, "alice/dev-review", Vec::new()).await;
     let err = app
-        .link_key_to_person(Bearer::Session(&ops), person.key_id.into(), &name("nobody"), Some("the person holds this key"))
+        .link_key_to_person(
+            Bearer::Session(&ops),
+            person.key_id.into(),
+            &name("nobody"),
+            Some("the person holds this key"),
+        )
         .await
         .unwrap_err();
     assert!(link_refused(&err, "user_unknown"), "{err:?}");
     // Only an admin key links.
     let err = app
-        .link_key_to_person(person.value.as_str(), person.key_id.into(), &name("alice"), Some("the person holds this key"))
+        .link_key_to_person(
+            person.value.as_str(),
+            person.key_id.into(),
+            &name("alice"),
+            Some("the person holds this key"),
+        )
         .await
         .unwrap_err();
     assert!(matches!(err, AppError::VerbCeiling { .. }), "{err:?}");
@@ -2437,7 +2462,12 @@ async fn a_linked_key_past_its_expiry_no_longer_acts_for_its_person() {
     assert!(matches!(err, AppError::ActingKeyNotLinked), "{err:?}");
     // An expired key is not linked again.
     let err = app
-        .link_key_to_person(Bearer::Session(&ops), key.key_id.into(), &name("alice"), Some("the person holds this key"))
+        .link_key_to_person(
+            Bearer::Session(&ops),
+            key.key_id.into(),
+            &name("alice"),
+            Some("the person holds this key"),
+        )
         .await
         .unwrap_err();
     assert!(link_refused(&err, "revoked"), "{err:?}");
@@ -2471,7 +2501,12 @@ async fn a_link_is_refused_for_a_disabled_person_a_session_key_a_service_key_a_l
         .expect("journal")
         .len();
     let err = app
-        .link_key_to_person(Bearer::Session(&ops), key.key_id.into(), &name("carol"), Some("the person holds this key"))
+        .link_key_to_person(
+            Bearer::Session(&ops),
+            key.key_id.into(),
+            &name("carol"),
+            Some("the person holds this key"),
+        )
         .await
         .unwrap_err();
     assert!(link_refused(&err, "user_disabled"), "{err:?}");
@@ -2483,7 +2518,8 @@ async fn a_link_is_refused_for_a_disabled_person_a_session_key_a_service_key_a_l
         .link_key_to_person(
             Bearer::Session(&ops),
             review.key().key_id.into(),
-            &name("alice"), Some("the person holds this key"),
+            &name("alice"),
+            Some("the person holds this key"),
         )
         .await
         .unwrap_err();
@@ -2502,7 +2538,12 @@ async fn a_link_is_refused_for_a_disabled_person_a_session_key_a_service_key_a_l
     // Its issuance, an admin act and its key.issued (ADR-0097 d2).
     let head = head + 2;
     let err = app
-        .link_key_to_person(Bearer::Session(&ops), service.key_id.into(), &name("bob"), Some("the person holds this key"))
+        .link_key_to_person(
+            Bearer::Session(&ops),
+            service.key_id.into(),
+            &name("bob"),
+            Some("the person holds this key"),
+        )
         .await
         .unwrap_err();
     assert!(link_refused(&err, "not_used_by_person"), "{err:?}");
@@ -2511,7 +2552,8 @@ async fn a_link_is_refused_for_a_disabled_person_a_session_key_a_service_key_a_l
         .link_key_to_person(
             Bearer::Session(&alice_admin),
             key.key_id.into(),
-            &name("alice"), Some("the person holds this key"),
+            &name("alice"),
+            Some("the person holds this key"),
         )
         .await
         .unwrap_err();
@@ -2519,12 +2561,18 @@ async fn a_link_is_refused_for_a_disabled_person_a_session_key_a_service_key_a_l
     app.link_key_to_person(
         Bearer::Session(&alice_admin),
         key.key_id.into(),
-        &name("bob"), Some("the person holds this key"),
+        &name("bob"),
+        Some("the person holds this key"),
     )
     .await
     .expect("linked, pending");
     let err = app
-        .link_key_to_person(Bearer::Session(&ops), key.key_id.into(), &name("alice"), Some("the person holds this key"))
+        .link_key_to_person(
+            Bearer::Session(&ops),
+            key.key_id.into(),
+            &name("alice"),
+            Some("the person holds this key"),
+        )
         .await
         .unwrap_err();
     assert!(link_refused(&err, "already_linked"), "{err:?}");
@@ -2624,9 +2672,14 @@ async fn a_linked_key_writes_into_its_persons_root_and_an_unlinked_one_is_refuse
         .await
         .unwrap_err();
     assert!(matches!(err, AppError::UserRootRefused), "{err:?}");
-    app.link_key_to_person(Bearer::Session(&ops), writer.key_id.into(), &name("alice"), Some("the person holds this key"))
-        .await
-        .expect("linked, pending");
+    app.link_key_to_person(
+        Bearer::Session(&ops),
+        writer.key_id.into(),
+        &name("alice"),
+        Some("the person holds this key"),
+    )
+    .await
+    .expect("linked, pending");
     // A contributor key's link waits on its person too: pending, the key
     // writes nothing into her root (the operator's decision of 2026-11-19).
     let err = app
@@ -2676,18 +2729,33 @@ async fn a_bearer_admin_key_links_nothing_and_a_console_admin_never_links_its_ow
         .expect("journal")
         .len();
     let err = app
-        .link_key_to_person(admin, key.key_id.into(), &name("alice"), Some("the person holds this key"))
+        .link_key_to_person(
+            admin,
+            key.key_id.into(),
+            &name("alice"),
+            Some("the person holds this key"),
+        )
         .await
         .unwrap_err();
     assert!(link_refused(&err, "session_admin_only"), "{err:?}");
     let err = app
-        .link_key_to_person(Bearer::Session(&ops), key.key_id.into(), &name("ops"), Some("the person holds this key"))
+        .link_key_to_person(
+            Bearer::Session(&ops),
+            key.key_id.into(),
+            &name("ops"),
+            Some("the person holds this key"),
+        )
         .await
         .unwrap_err();
     assert!(link_refused(&err, "self_link"), "{err:?}");
-    app.link_key_to_person(Bearer::Session(&ops), key.key_id.into(), &name("alice"), Some("the person holds this key"))
-        .await
-        .expect("linked, pending");
+    app.link_key_to_person(
+        Bearer::Session(&ops),
+        key.key_id.into(),
+        &name("alice"),
+        Some("the person holds this key"),
+    )
+    .await
+    .expect("linked, pending");
     let err = app
         .unlink_key_from_person(admin, key.key_id.into())
         .await
@@ -2785,9 +2853,14 @@ async fn team_with_alices_linked_writer(
         )
         .await
         .expect("alice's tenant writer key");
-    app.link_key_to_person(Bearer::Session(ops), writer.key_id.into(), &name("alice"), Some("the person holds this key"))
-        .await
-        .expect("linked, pending");
+    app.link_key_to_person(
+        Bearer::Session(ops),
+        writer.key_id.into(),
+        &name("alice"),
+        Some("the person holds this key"),
+    )
+    .await
+    .expect("linked, pending");
     let web = app
         .web_caller(&alice, Capacity::Web)
         .await
@@ -3761,7 +3834,7 @@ fn metered(probe: TestApp, tenant_id: Uuid, quotas: oml_app::domain::signup::Quo
         .with_signup(oml_app::types::SignupPolicy {
             mode: oml_app::domain::signup::SignupMode::Open,
             tenant_id,
-            issuer: name("root-admin"),
+            issuer: Some(name("root-admin")),
             terms_version: "2026-11-06".to_owned(),
             terms_url: "https://example.com/terms".to_owned(),
             privacy_url: "https://example.com/privacy".to_owned(),
@@ -6020,7 +6093,8 @@ async fn a_console_admin_links_an_admin_key_to_another_person_and_never_to_its_o
         .link_key_to_person(
             Bearer::Session(&ops),
             boot.admin_key.key_id.into(),
-            &name("ops"), Some("the person holds this key"),
+            &name("ops"),
+            Some("the person holds this key"),
         )
         .await
         .unwrap_err();
@@ -6029,7 +6103,8 @@ async fn a_console_admin_links_an_admin_key_to_another_person_and_never_to_its_o
         .link_key_to_person(
             Bearer::Session(&ops),
             boot.admin_key.key_id.into(),
-            &name("alice"), Some("the person holds this key"),
+            &name("alice"),
+            Some("the person holds this key"),
         )
         .await
         .expect("an admin key used by a person is linkable");
@@ -6054,7 +6129,8 @@ async fn an_admin_key_linked_to_another_person_takes_no_fix_until_that_person_ac
         .link_key_to_person(
             Bearer::Session(&r.ops),
             r.boot.admin_key.key_id.into(),
-            &name("bob"), Some("the person holds this key"),
+            &name("bob"),
+            Some("the person holds this key"),
         )
         .await
         .expect("linked, pending bob's acceptance");
@@ -6164,7 +6240,12 @@ async fn a_reviewer_key_whose_link_is_pending_settles_no_fix() {
     )
     .await;
     r.app
-        .link_key_to_person(Bearer::Session(&r.ops), second.key_id.into(), &name("bob"), Some("the person holds this key"))
+        .link_key_to_person(
+            Bearer::Session(&r.ops),
+            second.key_id.into(),
+            &name("bob"),
+            Some("the person holds this key"),
+        )
         .await
         .expect("linked, pending bob's acceptance");
     for settle in [true, false] {
@@ -6190,7 +6271,12 @@ async fn only_the_named_person_accepts_a_pending_link() {
     let admin = r.boot.admin_key.value.as_str();
     let key = person_tenant_key(&r.app, admin, "bob/desk", Vec::new()).await;
     r.app
-        .link_key_to_person(Bearer::Session(&r.ops), key.key_id.into(), &name("bob"), Some("the person holds this key"))
+        .link_key_to_person(
+            Bearer::Session(&r.ops),
+            key.key_id.into(),
+            &name("bob"),
+            Some("the person holds this key"),
+        )
         .await
         .expect("linked, pending");
     let head = r
@@ -6257,7 +6343,12 @@ async fn a_pending_link_is_listed_to_its_person_and_counted_until_accepted() {
     let admin = r.boot.admin_key.value.as_str();
     let key = person_tenant_key(&r.app, admin, "bob/desk", Vec::new()).await;
     r.app
-        .link_key_to_person(Bearer::Session(&r.ops), key.key_id.into(), &name("bob"), Some("the person holds this key"))
+        .link_key_to_person(
+            Bearer::Session(&r.ops),
+            key.key_id.into(),
+            &name("bob"),
+            Some("the person holds this key"),
+        )
         .await
         .expect("linked, pending");
     let bob = console_of(&r.app, &r.store, "bob").await;
@@ -6933,7 +7024,11 @@ async fn a_key_counts_as_its_issuers_person_at_issuance_when_it_settles_a_fix() 
         .await
         .expect("read")
         .expect("held");
-    assert_eq!(held.issuer_person, Some(name("alice")), "recorded at issuance");
+    assert_eq!(
+        held.issuer_person,
+        Some(name("alice")),
+        "recorded at issuance"
+    );
     let fix = r
         .app
         .admin_fix(admin, &fix_req(oml_app::types::FixAct::Demote, claim, None))

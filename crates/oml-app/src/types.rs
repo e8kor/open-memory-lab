@@ -610,6 +610,54 @@ pub enum KeyLimitsRefusal {
     AdminKeyRate,
 }
 
+/// Why `POST /v2/keys/self/convert` converts nothing (ADR-0097 d18), each
+/// refused by name as `request.validation` with `details.reason`: only an
+/// admin bearer key converts, itself, into a `maintenance` key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyConversionRefusal {
+    /// `to` names a role other than `maintenance`.
+    TargetRole,
+    /// The calling key is not an admin key.
+    NotAdmin,
+    /// A session key has no value and converts nothing.
+    SessionKey,
+}
+
+impl KeyConversionRefusal {
+    /// `details.field`.
+    #[must_use]
+    pub fn field(self) -> &'static str {
+        match self {
+            KeyConversionRefusal::TargetRole => "/to",
+            _ => "key",
+        }
+    }
+
+    /// `details.reason`.
+    #[must_use]
+    pub fn reason(self) -> &'static str {
+        match self {
+            KeyConversionRefusal::TargetRole => "not_maintenance",
+            KeyConversionRefusal::NotAdmin => "not_admin",
+            KeyConversionRefusal::SessionKey => "session_key",
+        }
+    }
+
+    /// The refusal's message.
+    #[must_use]
+    pub fn message(self) -> &'static str {
+        match self {
+            KeyConversionRefusal::TargetRole => {
+                "an admin key converts into a maintenance key only (ADR-0097 d18)"
+            }
+            KeyConversionRefusal::NotAdmin => "only an admin key converts itself (ADR-0097 d18)",
+            KeyConversionRefusal::SessionKey => {
+                "a session key has no value and converts nothing (ADR-0097 d18)"
+            }
+        }
+    }
+}
+
 /// Why a key takes no new value (ADR-0096 d13), each refused by name as
 /// `request.validation` with `details.reason`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4101,7 +4149,10 @@ impl<'a> From<&'a String> for Bearer<'a> {
 pub struct SignupPolicy {
     pub mode: oml_domain::signup::SignupMode,
     pub tenant_id: Uuid,
-    pub issuer: Name,
+    /// `signup.issuer` as configured: read and ignored for one release,
+    /// named by doctor's `signup.issuer_ignored`; the server issuer adds
+    /// a sign-up's entry (ADR-0097 d18).
+    pub issuer: Option<Name>,
     pub terms_version: String,
     pub terms_url: String,
     pub privacy_url: String,
@@ -4447,6 +4498,9 @@ pub enum AppError {
     /// A key that takes no new value, or a grace too long (ADR-0096 d13).
     #[error("{}", .0.message())]
     KeyRotation(KeyRotationRefusal),
+    /// `POST /v2/keys/self/convert` refused (ADR-0097 d18).
+    #[error("{}", .0.message())]
+    KeyConversion(KeyConversionRefusal),
     /// A key the revoke verb does not end (ADR-0097 d14).
     #[error("{}", .0.message())]
     KeyRevocation(KeyRevocationRefusal),

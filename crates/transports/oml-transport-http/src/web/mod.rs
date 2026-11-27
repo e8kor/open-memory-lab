@@ -187,7 +187,12 @@ impl WebPages {
     /// anyone (ADR-0045 d18; ADR-0054 d1).
     #[must_use]
     pub fn readyz(&self) -> Value {
-        json!({ "providers": self.provider_list().iter().map(|p| p.as_str()).collect::<Vec<_>>() })
+        let mut body = json!({ "providers": self.provider_list().iter().map(|p| p.as_str()).collect::<Vec<_>>() });
+        // A `signup.issuer` still set, read and ignored (ADR-0097 d18).
+        if self.signup_policy().is_some_and(|p| p.issuer.is_some()) {
+            body["signup_issuer_ignored"] = json!(true);
+        }
+        body
     }
 
     /// One exchange under the provider's cap on concurrent calls.

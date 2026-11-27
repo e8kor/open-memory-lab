@@ -474,7 +474,11 @@ async fn boot_investigation(rig: &Rig) -> uuid::Uuid {
         }
     };
     rig.app.web_ensure_keys(&ops).await.expect("session keys");
-    if let Ok(key) = rig.app.link_self(admin, &ops.user, Some("the person holds this key")).await {
+    if let Ok(key) = rig
+        .app
+        .link_self(admin, &ops.user, Some("the person holds this key"))
+        .await
+    {
         let token = rig
             .app
             .web_session_open(&ops, 3600, None)

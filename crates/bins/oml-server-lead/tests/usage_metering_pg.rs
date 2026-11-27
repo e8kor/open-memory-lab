@@ -130,7 +130,7 @@ fn policy(tenant_id: uuid::Uuid) -> SignupPolicy {
     SignupPolicy {
         mode: SignupMode::Open,
         tenant_id,
-        issuer: Name::parse("root-admin").expect("a name"),
+        issuer: Some(Name::parse("root-admin").expect("a name")),
         terms_version: TERMS.to_owned(),
         terms_url: "https://example.com/terms".to_owned(),
         privacy_url: "https://example.com/privacy".to_owned(),

@@ -320,6 +320,9 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "this admin act waits on a second admin person, and requires a reason",
         )
         .with_details(json!({ "field": "/reason", "reason": "required" })),
+        AppError::KeyConversion(refusal) => ApiError::validation(refusal.message()).with_details(
+            json!({ "field": refusal.field(), "reason": refusal.reason() }),
+        ),
         AppError::KeyRotation(refusal) => ApiError::validation(refusal.message()).with_details(
             json!({ "field": refusal.field(), "reason": refusal.reason() }),
         ),

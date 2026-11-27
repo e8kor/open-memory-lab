@@ -133,6 +133,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/keys/{key}/rotate"),
     ("POST", "/v2/keys/{key}/revoke"),
     ("POST", "/v2/keys/self/link"),
+    ("POST", "/v2/keys/self/convert"),
     ("POST", "/v2/keys/{key}/link"),
     ("POST", "/v2/keys/{key}/unlink"),
     ("POST", "/v2/keys/{key}/accept_link"),
@@ -417,6 +418,7 @@ where
             ("POST", "/v2/keys/{key}/rotate") => post(Self::rotate_key),
             ("POST", "/v2/keys/{key}/revoke") => post(Self::revoke_key_route),
             ("POST", "/v2/keys/self/link") => post(Self::link_self_route),
+            ("POST", "/v2/keys/self/convert") => post(Self::convert_self_route),
             ("POST", "/v2/keys/{key}/link") => post(Self::link_key),
             ("POST", "/v2/keys/{key}/unlink") => post(Self::unlink_key),
             ("POST", "/v2/keys/{key}/accept_link") => post(Self::accept_key_link),
@@ -5039,8 +5041,9 @@ fn parse_role(role: &str) -> Result<Role, ApiError> {
         "reviewer" => Ok(Role::Reviewer),
         "admin" => Ok(Role::Admin),
         "operator" => Ok(Role::Operator),
+        "maintenance" => Ok(Role::Maintenance),
         other => Err(ApiError::validation(format!(
-            "role must be one of reader, contributor, submitter, reviewer, admin, operator — not {other:?}"
+            "role must be one of reader, contributor, submitter, reviewer, admin, operator, maintenance — not {other:?}"
         ))),
     }
 }

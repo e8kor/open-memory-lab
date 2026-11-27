@@ -18,6 +18,7 @@ mod imports;
 mod investigations;
 mod key_limits;
 mod linked_keys;
+mod maintenance;
 mod metering;
 mod notices;
 mod pages;
@@ -759,6 +760,19 @@ fn default_grant_roles(role: Role) -> &'static [Role] {
 /// value inside its grace reads and writes memories as the key does and
 /// runs no other act (ADR-0096 d13, its review round's amendment of
 /// 2026-11-25).
+/// A `maintenance` key reaches only the counts its verbs list (ADR-0097
+/// d18): anywhere else it is refused `access.verb_ceiling`, verb
+/// `maintenance_counts_only`.
+fn refuse_maintenance(key: &KeyRecord, admitted: bool) -> Result<(), AppError> {
+    if key.role == Role::Maintenance && !admitted {
+        return Err(AppError::VerbCeiling {
+            role: Role::Maintenance,
+            verb: "maintenance_counts_only",
+        });
+    }
+    Ok(())
+}
+
 fn require_role(caller: &Caller, role: Role, verb: &'static str) -> Result<(), AppError> {
     if caller.key.role != role {
         return Err(AppError::VerbCeiling {
@@ -1054,6 +1068,11 @@ fn with_format(mut doc: Value, format: Option<&str>, title: Option<&str>) -> Val
 /// The name of a person's chat workspace under their user root (ADR-0063
 /// d8).
 pub const CHAT_WORKSPACE: &str = "chat";
+
+/// A `maintenance` key's request rate when its issuance sends none, and the
+/// rate a converted admin key takes: 60 a minute, a placeholder, chosen,
+/// not measured (ADR-0097 d18).
+pub const MAINTENANCE_REQUESTS_PER_MINUTE: u32 = 60;
 
 /// A request digest's document with `origin` when sent, and unchanged
 /// otherwise, so a request without one digests as it did before
@@ -2180,7 +2199,20 @@ where
     /// access: one hash lookup and one access read per request (workspaces.md
     /// effective access; ADR-0025 d1).
     async fn authenticate(&self, api_key: &str) -> Result<Caller, AppError> {
+        self.authenticate_admitting(api_key, false).await
+    }
+
+    /// [`Self::authenticate`], admitting a `maintenance` key only where
+    /// `maintenance` says the verb is one of the counts it reads (ADR-0097
+    /// d18): every other verb refuses it `access.verb_ceiling`, so a new
+    /// verb is closed to it until it is listed.
+    async fn authenticate_admitting(
+        &self,
+        api_key: &str,
+        maintenance: bool,
+    ) -> Result<Caller, AppError> {
         let (key, previous_value) = self.key_of_value_marked(api_key).await?;
+        refuse_maintenance(&key, maintenance)?;
         // A person of the sign-up tenant's key under its request rate
         // (ADR-0068 d5).
         self.admit_request(&key).await?;
@@ -2218,9 +2250,40 @@ where
     /// token resolved to, its grants and denials read again here: one key,
     /// one caller, whichever credential presented it (ADR-0031 d11).
     async fn authenticate_bearer(&self, bearer: Bearer<'_>) -> Result<Caller, AppError> {
+        self.authenticate_bearer_admitting(bearer, false).await
+    }
+
+    /// The caller a counts read runs as (ADR-0097 d18): an admin key, or a
+    /// `maintenance` key, presented by its current value.
+    pub async fn counts_caller(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        verb: &'static str,
+    ) -> Result<Caller, AppError> {
+        let caller = self
+            .authenticate_bearer_admitting(bearer.into(), true)
+            .await?;
+        if !matches!(caller.key.role, Role::Admin | Role::Maintenance) {
+            return Err(AppError::VerbCeiling {
+                role: caller.key.role,
+                verb,
+            });
+        }
+        caller.require_current_value(verb)?;
+        Ok(caller)
+    }
+
+    /// [`Self::authenticate_bearer`], a `maintenance` key admitted where
+    /// `maintenance` is set ([`Self::authenticate_admitting`]).
+    async fn authenticate_bearer_admitting(
+        &self,
+        bearer: Bearer<'_>,
+        maintenance: bool,
+    ) -> Result<Caller, AppError> {
         match bearer {
-            Bearer::Key(value) => self.authenticate(value).await,
+            Bearer::Key(value) => self.authenticate_admitting(value, maintenance).await,
             Bearer::Connection(caller) => {
+                refuse_maintenance(&caller.key, maintenance)?;
                 self.admit_request(&caller.key).await?;
                 let mut fresh = self.caller_of(caller.key.clone()).await?;
                 fresh.previous_value = caller.previous_value;
@@ -4452,9 +4515,11 @@ where
             .resolve_opt(&issuer, NamedKind::Crew, req.crew.as_ref())
             .await?;
         // Steps 1–3: the two-key rule, the issuer ceiling, admissibility.
+        // The server issuer issues the four session-key shapes alone, which
+        // its caller fixes, read as an admin's ceiling (ADR-0097 d18).
         let ceiling = match how {
-            Issuance::PersonsOwn(_) => Role::Admin,
-            Issuance::Plain(..) | Issuance::Session(_) => issuer.role,
+            Issuance::PersonsOwn(_) | Issuance::Session(_) => Role::Admin,
+            Issuance::Plain(..) => issuer.role,
         };
         // A curator is a reviewer key used by an agent, whose submitter grants
         // the reviewer's admissible set is read as if absent (ADR-0030 d8).
@@ -4589,7 +4654,7 @@ where
         // role other than admin or operator, `used_by` other than service,
         // and a deployment that sets `oauth.issuer` (ADR-0031 d7).
         let oauth = if req.connect_code {
-            if matches!(req.role, Role::Admin | Role::Operator) {
+            if matches!(req.role, Role::Admin | Role::Operator | Role::Maintenance) {
                 return Err(connect_refused(ConnectRefused::Role));
             }
             if req.used_by == Some(UsedBy::Service) {
@@ -4631,6 +4696,11 @@ where
         // relink of the issuer later moves nothing a fix's settlement reads
         // (ADR-0097, amendment of 2026-11-27, answer 17; #508 N1).
         record.issuer_person = self.counted_person_of(&issuer).await?;
+        // A maintenance key carries a request rate, its role's when the
+        // issuance sends none (ADR-0097 d18).
+        if record.role == Role::Maintenance && record.requests_per_minute.is_none() {
+            record.requests_per_minute = Some(MAINTENANCE_REQUESTS_PER_MINUTE);
+        }
         // A session key has no value and so no hash: nothing can present it
         // (ADR-0045 d6).
         if let Issuance::Session(session_user) = how {
@@ -5482,8 +5552,12 @@ where
         cursor: Option<&str>,
         limit: usize,
     ) -> Result<TreePage, AppError> {
-        let caller = self.authenticate_bearer(bearer.into()).await?;
-        let structure = caller.key.role == Role::Admin;
+        // A maintenance key reads the tree's structure as an admin key does
+        // (ADR-0097 d18): node names and counts, no claim.
+        let caller = self
+            .authenticate_bearer_admitting(bearer.into(), true)
+            .await?;
+        let structure = matches!(caller.key.role, Role::Admin | Role::Maintenance);
         if !structure {
             require_admissible(&caller.key, Role::Reader, "workspace_tree")?;
         }
@@ -6168,7 +6242,10 @@ where
     /// counts the key as no one: a user key with no issuer, an issuer the
     /// tenant does not hold, or a chain longer than [`COUNTED_PERSON_DEPTH`]
     /// (ADR-0089 and ADR-0085 d16, the operator's decision of 2026-11-20).
-    pub(crate) async fn counted_walk(&self, key: &KeyRecord) -> Result<Option<Vec<KeyRecord>>, AppError> {
+    pub(crate) async fn counted_walk(
+        &self,
+        key: &KeyRecord,
+    ) -> Result<Option<Vec<KeyRecord>>, AppError> {
         let mut walk = vec![key.clone()];
         for _ in 0..COUNTED_PERSON_DEPTH {
             let Some(key) = walk.last() else {
@@ -13377,8 +13454,23 @@ where
         after_seq: u64,
         limit: usize,
     ) -> Result<TailPage, AppError> {
-        let caller = self.authenticate_bearer(bearer.into()).await?;
+        let caller = self
+            .authenticate_bearer_admitting(bearer.into(), true)
+            .await?;
         let key = &caller.key;
+        // A maintenance key reads the head alone, never an event (ADR-0097
+        // d18).
+        if key.role == Role::Maintenance {
+            let scan = self
+                .journal
+                .events_with_subjects(key.tenant_id, 1, 0)
+                .await?;
+            return Ok(TailPage {
+                events: Vec::new(),
+                head_seq: scan.head_seq,
+                next_after_seq: after_seq.min(scan.head_seq),
+            });
+        }
         require_admissible(key, Role::Reader, "events_tail")?;
         let scope = self.target_workspace(key, workspace.as_ref()).await?;
         self.require_access(&caller, scope, Role::Reader, "events_tail")

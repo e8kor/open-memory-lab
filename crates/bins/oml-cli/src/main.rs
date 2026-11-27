@@ -455,6 +455,14 @@ enum KeysCommand {
         #[arg(long)]
         reason: Option<String>,
     },
+    /// Convert the calling admin key, in place, into a maintenance key that
+    /// reads counts only and takes the rescan; it keeps its value. Journals
+    /// key.converted.
+    ConvertSelf {
+        /// The role to convert into; maintenance is the one admitted.
+        #[arg(long, default_value = "maintenance")]
+        to: String,
+    },
     /// Link the calling admin key to a person, pending until that person
     /// accepts the link on the console's Keys page; journals
     /// key.linked_person. The one link a key makes to its own holder.
@@ -484,7 +492,7 @@ enum KeysCommand {
 struct KeysIssueArgs {
     /// Key name, unique in the tenant and never released; distinct from principal and label.
     key_name: String,
-    /// reader | contributor | submitter | reviewer | admin. A contributor
+    /// reader | contributor | submitter | reviewer | admin | maintenance. A contributor
     /// recalls and writes; a submitter writes without recall.
     #[arg(long)]
     role: String,
@@ -2049,6 +2057,23 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             Ok(ExitCode::SUCCESS)
         }
 
+        Command::Keys {
+            command: KeysCommand::ConvertSelf { to },
+        } => {
+            let client = resolve(cli, &stored)?;
+            let (_, response) =
+                client.post("/v2/keys/self/convert", &json!({ "to": to }), &write_opts())?;
+            if cli.json {
+                print_json(&response);
+            } else {
+                println!(
+                    "key {} is now a {} key: it reads counts only and takes the rescan",
+                    response["name"].as_str().unwrap_or("?"),
+                    response["role"].as_str().unwrap_or("?")
+                );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Keys {
             command: KeysCommand::LinkSelf { person, reason },
         } => {
@@ -6908,14 +6933,20 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
                 .as_ref()
                 .is_some_and(|(_, body)| body["web"].is_object());
             let is_admin = matches!(&me, Some(Ok(v)) if v["role"] == "admin");
+            // A maintenance key reads the same counts, and never a key
+            // list or an address (ADR-0097 d18): the admin entries' lines
+            // stay an admin's, run by a person.
+            let reads_counts = is_admin || matches!(&me, Some(Ok(v)) if v["role"] == "maintenance");
             if pages_on && is_admin {
                 admin_emails = count_admin_emails(&client);
+            }
+            if pages_on && reads_counts {
                 // Open sign-up's people and requests (ADR-0068 d11).
                 signup_overview = client.get("/v2/web/users").ok().map(|(_, v)| v);
             }
-            // The tenant's search default, read by an admin key (ADR-0049
-            // d8).
-            if is_admin {
+            // The tenant's search default, read by an admin or maintenance
+            // key (ADR-0049 d8; ADR-0097 d18).
+            if reads_counts {
                 (tree_nodes, tree_incomplete) = tree_pages(&client, "/v2/workspaces/universe/tree");
                 search_settings = client.get("/v2/search").ok().map(|(_, v)| v);
                 // The tenant's federation policy and its wide keys
@@ -8637,6 +8668,13 @@ fn web_doctor(
                 .to_owned(),
         );
     }
+    // `signup.issuer` is read and ignored for one release (ADR-0097 d18).
+    if body["web"]["signup_issuer_ignored"] == true {
+        lines.push(
+            "warn signup.issuer_ignored: signup.issuer is set and no longer read; the server issuer adds each sign-up's entry and issues its session keys, so remove the setting"
+                .to_owned(),
+        );
+    }
     // The failed exchanges are the metrics listener's (ADR-0054 d1).
     for provider in &providers {
         let Some(scrape) = scrape else { break };
@@ -9925,6 +9963,21 @@ mod tests {
         assert_eq!(
             web_doctor(Some(&set), None, None),
             vec!["on (google)".to_owned()]
+        );
+    }
+
+    #[test]
+    fn the_web_doctor_names_a_signup_issuer_that_is_read_and_ignored() {
+        let set = (
+            200,
+            json!({"web": {"providers": ["google"], "signup_issuer_ignored": true}, "web_client": "secret"}),
+        );
+        assert_eq!(
+            web_doctor(Some(&set), None, None),
+            vec![
+                "on (google)".to_owned(),
+                "warn signup.issuer_ignored: signup.issuer is set and no longer read; the server issuer adds each sign-up's entry and issues its session keys, so remove the setting".to_owned(),
+            ]
         );
     }
 

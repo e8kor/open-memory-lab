@@ -59,6 +59,8 @@ pub struct AsOfWorld<S: JournalStore> {
     pub clock: FixedClock,
     pub tenant: Uuid,
     pub admin: String,
+    /// The tenant's admin person's console session (ADR-0089 d16).
+    pub console: oml_app::types::WebSessionRecord,
     pub writer: IssuedKey,
     pub reviewer: IssuedKey,
     pub reader: IssuedKey,
@@ -84,21 +86,16 @@ impl<S: WebStore + ConnectionStore + Clone> AsOfWorld<S> {
             MarkerScanner::default(),
         )
         .with_search(SearchConfig::new(&pipelines, pipelines[0]).expect("a search config"));
-        // The admin key belongs to a person, as the fix act that demotes
-        // requires (ADR-0089, the operator's decision of 2026-11-19).
+        // The tenant's one admin person is the console admin `counted`
+        // adds, so it stays `sole_admin` and its issuances take effect at
+        // once (ADR-0097 d10); the fix act that demotes runs from that
+        // person's session (ADR-0089 d16).
         let boot = app
-            .bootstrap_tenant_for(
-                &BootstrapRequest {
-                    tenant_name: fresh("asof"),
-                    admin_key_name: fresh("asof-admin"),
-                    admin_principal: "asof-admin".to_owned(),
-                },
-                Some(&oml_app::types::BootstrapPerson {
-                    user: oml_app::domain::name::Name::parse("asof-person").expect("a name"),
-                    email: oml_app::domain::web::Email::parse("asof-person@example.com")
-                        .expect("an email"),
-                }),
-            )
+            .bootstrap_tenant(&BootstrapRequest {
+                tenant_name: fresh("asof"),
+                admin_key_name: fresh("asof-admin"),
+                admin_principal: "asof-admin".to_owned(),
+            })
             .await
             .expect("bootstrap");
         let admin = boot.admin_key.value.clone();
@@ -142,12 +139,14 @@ impl<S: WebStore + ConnectionStore + Clone> AsOfWorld<S> {
         .await;
         // The reviewer counts as a person, as an instruction verdict needs
         // (ADR-0097 d12).
-        crate::federation::counted(&app, admin.as_str(), boot.tenant_id, reviewer.key_id).await;
+        let console =
+            crate::federation::counted(&app, admin.as_str(), boot.tenant_id, reviewer.key_id).await;
         AsOfWorld {
             app,
             clock,
             tenant: boot.tenant_id,
             admin,
+            console,
             writer,
             reviewer,
             reader,
@@ -179,9 +178,14 @@ impl<S: WebStore + ConnectionStore + Clone> AsOfWorld<S> {
     /// Demotes `id` through the one surface that demotes, the admin fix act
     /// (ADR-0089 d16; #502): the fix record.
     pub async fn demote(&self, id: Uuid) -> oml_app::types::FixRecord {
+        let ops = self
+            .app
+            .web_caller(&self.console, oml_app::app::Capacity::Admin)
+            .await
+            .expect("the console admin");
         self.app
             .admin_fix(
-                self.admin.as_str(),
+                oml_app::types::Bearer::Session(&ops),
                 &oml_app::app::FixRequest {
                     act: oml_app::types::FixAct::Demote,
                     target: id,

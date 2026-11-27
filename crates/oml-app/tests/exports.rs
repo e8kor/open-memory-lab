@@ -947,7 +947,8 @@ async fn a_linked_key_exports_none_of_its_persons_other_keys_held_rows() {
     app.link_key_to_person(
         oml_app::types::Bearer::Session(&ops),
         bob.key_id.into(),
-        &name("alice"), Some("the person holds this key"),
+        &name("alice"),
+        Some("the person holds this key"),
     )
     .await
     .expect("linked, pending");

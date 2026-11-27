@@ -1066,7 +1066,14 @@ where
     /// and denials confer reviewer there, as `require_access` reads one key
     /// (ADR-0080 d16; #435). Counts only, never a key or a memory.
     pub async fn review_queue(&self, admin: &Caller) -> Result<Vec<QueueRow>, AppError> {
-        require_role(admin, Role::Admin, "review_queue")?;
+        // Counts per workspace, no content: an admin key's or a maintenance
+        // key's (ADR-0097 d18).
+        if !matches!(admin.key.role, Role::Admin | Role::Maintenance) {
+            return Err(AppError::VerbCeiling {
+                role: admin.key.role,
+                verb: "review_queue",
+            });
+        }
         let tenant_id = admin.key.tenant_id;
         let depths = self.journal.web_queue(tenant_id).await?;
         let reviewers: Vec<_> = if depths.is_empty() {

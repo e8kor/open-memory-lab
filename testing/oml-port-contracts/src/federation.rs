@@ -56,7 +56,7 @@ pub async fn counted<S: WebStore + ConnectionStore>(
     admin: &str,
     tenant: Uuid,
     key_id: Uuid,
-) {
+) -> oml_app::types::WebSessionRecord {
     use oml_app::app::Capacity;
     use oml_app::domain::web::Email;
     use oml_app::types::{Bearer, WebEmailRequest};
@@ -89,9 +89,14 @@ pub async fn counted<S: WebStore + ConnectionStore>(
         .web_caller(&sessions[0], Capacity::Admin)
         .await
         .expect("the console admin");
-    app.link_key_to_person(Bearer::Session(&ops), key_id.into(), &users[1], Some("the person holds this key"))
-        .await
-        .expect("linked");
+    app.link_key_to_person(
+        Bearer::Session(&ops),
+        key_id.into(),
+        &users[1],
+        Some("the person holds this key"),
+    )
+    .await
+    .expect("linked");
     let own = app
         .web_caller(&sessions[1], Capacity::Web)
         .await
@@ -99,6 +104,9 @@ pub async fn counted<S: WebStore + ConnectionStore>(
     app.accept_key_link(Bearer::Session(&own), key_id.into())
         .await
         .expect("accepted");
+    // The console admin's session, for a suite whose admin acts need a
+    // person (ADR-0089 d16).
+    sessions.swap_remove(0)
 }
 
 fn grant(node: Uuid, role: Role, deny: Vec<Uuid>) -> GrantRequest {
@@ -222,7 +230,7 @@ impl<S: WebStore + ConnectionStore + Clone> FedWorld<S> {
         .await;
         // The reviewer counts as a person, as a ladder ratification needs
         // (ADR-0097 d12, d17): linked to its person and accepted.
-        counted(&app, admin.as_str(), boot.tenant_id, reviewer.key_id).await;
+        let _ = counted(&app, admin.as_str(), boot.tenant_id, reviewer.key_id).await;
         let mut world = FedWorld {
             app,
             store,

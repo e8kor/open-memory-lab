@@ -33,7 +33,7 @@ info:
     resolved server-side by substituting the id before any check that reads state, so an unknown or
     unreadable name answers exactly what its id would; responses carry ids, and each of the four
     objects carries its name (docs/api/http-api.md, Names and ids). Authorization model: bearer API
-    keys carrying one role (reader, contributor, submitter, reviewer, admin, operator); tenant is derived server-side
+    keys carrying one role (reader, contributor, submitter, reviewer, admin, operator, maintenance); tenant is derived server-side
     from the key, never from the request. Roles do not nest. Read verbs require reader effective
     access on the named workspace; write verbs submitter; propose/review verbs reviewer (two capability
     classes, one role); admin and operator verbs require that key role itself — the per-operation
@@ -2091,6 +2091,48 @@ paths:
                   journal_seq: { type: integer }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/keys/self/convert:
+    post:
+      tags: [keys]
+      operationId: convertSelf
+      summary: Convert the calling admin key, in place, into a maintenance key that reads counts only.
+      description: 'Requires: an admin key presented by its own current bearer value; any other role is request.validation with details.field key and details.reason not_admin, and a session key details.reason session_key (ADR-0097 d18). to is maintenance; anything else is details.field /to and details.reason not_maintenance. The key keeps its id, name and hash, takes the maintenance role''s request rate, 60 a minute (a placeholder), and from then on reaches only the counts oml doctor reads: GET /v2/whoami, GET and POST /v2/admin/rescan, GET /v2/admin/usage/drift, GET /v2/search, GET /v2/federation with no key listed, GET /v2/workspaces/{workspace}/tree, GET /v2/review/queue, GET /v2/events with the head and no event, and GET /v2/web/users with no key listed and no deletion named; every other route refuses it access.verb_ceiling with details.verb maintenance_counts_only. Journalled as one sealed key.converted {key_id, from: admin, to: maintenance}, never a migration''s UPDATE. Since v0.8.6.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              to: maintenance
+            schema:
+              type: object
+              additionalProperties: false
+              required: [to]
+              properties:
+                to: { type: string, enum: [maintenance] }
+      responses:
+        '200':
+          description: The converted key.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [key_id, name, role, requests_per_minute]
+                properties:
+                  key_id: { type: string }
+                  name: { type: [string, 'null'] }
+                  role: { type: string, const: maintenance }
+                  requests_per_minute: { type: [integer, 'null'] }
+        '403': { $ref: '#/components/responses/Forbidden' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/keys/self/link:
@@ -4608,7 +4650,7 @@ components:
       scheme: bearer
       bearerFormat: OML API key
       description: >-
-        One key, one role (reader | contributor | submitter | reviewer | admin | operator), grants scoping it to
+        One key, one role (reader | contributor | submitter | reviewer | admin | operator | maintenance), grants scoping it to
         workspace subtrees. Tenant derives from the key server-side. Each operation's description
         states its ceiling; refusals are typed (access.verb_ceiling, access.grant_refused,
         access.not_found) per docs/api/errors.md. Key wire format: "oml_" followed by 43
@@ -5042,7 +5084,7 @@ components:
 
     Role:
       type: string
-      enum: [reader, contributor, submitter, reviewer, admin, operator]
+      enum: [reader, contributor, submitter, reviewer, admin, operator, maintenance]
 
     ErrorCode:
       type: string
