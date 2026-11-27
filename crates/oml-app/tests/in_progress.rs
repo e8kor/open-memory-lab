@@ -91,6 +91,7 @@ async fn key(
             guardrail_scope: None,
             expiry: None,
             requests_per_minute: None,
+            person: None,
         },
     )
     .await
@@ -1982,6 +1983,7 @@ async fn a_tip_key_at_an_in_progress_ancestor_is_offered_the_held_skill_below_it
                 guardrail_scope: Some(oml_app::domain::guardrail::GuardrailScope::Workspace),
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
             },
         )
         .await

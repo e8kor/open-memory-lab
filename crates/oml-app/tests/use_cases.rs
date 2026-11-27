@@ -179,6 +179,7 @@ fn issue_req(role: Role, principal: &str, grants: Vec<GrantRequest>) -> IssueKey
         guardrail_scope: None,
         expiry: None,
         requests_per_minute: None,
+        person: None,
     }
 }
 
@@ -191,9 +192,94 @@ async fn issue_with(
     principal: &str,
     grants: Vec<GrantRequest>,
 ) -> IssuedKey {
+    if role == Role::Admin {
+        return linked_admin_key(app, admin, principal).await;
+    }
     app.issue_key(admin, &issue_req(role, principal, grants))
         .await
         .expect("issue key")
+}
+
+/// The tenant's one admin person, with session keys: the bootstrap's
+/// person where it named one, else `ops`, so the tenant stays `sole_admin`;
+/// every fixture admin key belongs to them (ADR-0097 d10, d21).
+async fn ops_person(app: &TestApp, admin: &str) -> oml_app::types::WebEntry {
+    let email = oml_app::domain::web::Email::parse("ops@example.com").expect("an email");
+    if let Some(entry) = app
+        .list_web_emails(admin, None, 100)
+        .await
+        .expect("entries")
+        .into_iter()
+        .find(|e| e.admin && !e.pending)
+    {
+        app.web_ensure_keys(&entry)
+            .await
+            .expect("the person's keys");
+        return entry;
+    }
+    let (entry, _) = app
+        .allow_web_email(
+            admin,
+            &oml_app::types::WebEmailRequest {
+                email,
+                user: name("ops"),
+                admin: true,
+            },
+        )
+        .await
+        .expect("ops's admin entry");
+    app.web_ensure_keys(&entry).await.expect("ops's keys");
+    entry
+}
+
+/// `req` as an admin key of `ops`: `used_by: person`, `person: ops`.
+fn ops_admin(req: IssueKeyRequest) -> IssueKeyRequest {
+    IssueKeyRequest {
+        used_by: Some(UsedBy::Person),
+        person: Some(name("ops")),
+        ..req
+    }
+}
+
+/// An admin key belonging to `ops`, its link accepted from ops's own
+/// session: every admin key belongs to a person and authenticates once
+/// that person accepts its link (ADR-0097 d21).
+async fn linked_admin_key(app: &TestApp, admin: &str, principal: &str) -> IssuedKey {
+    linked_admin_key_as(app, admin, issue_req(Role::Admin, principal, Vec::new())).await
+}
+
+/// [`linked_admin_key`] for `req`.
+async fn linked_admin_key_as(app: &TestApp, admin: &str, req: IssueKeyRequest) -> IssuedKey {
+    let entry = ops_person(app, admin).await;
+    let issued = app
+        .issue_key_with_reason(
+            admin,
+            &IssueKeyRequest {
+                person: Some(entry.user.clone()),
+                ..ops_admin(req)
+            },
+            Some("a fixture admin key"),
+        )
+        .await
+        .expect("an admin key");
+    let token = app
+        .web_session_open(&entry, 3600, None)
+        .await
+        .expect("a session")
+        .token;
+    let session = app
+        .web_session(&token)
+        .await
+        .expect("a read")
+        .expect("a live session");
+    let web = app
+        .web_caller(&session, oml_app::app::Capacity::Web)
+        .await
+        .expect("ops-web");
+    app.accept_key_link(oml_app::types::Bearer::Session(&web), issued.key_id.into())
+        .await
+        .expect("ops accepts the link");
+    issued
 }
 
 /// The common fixture: a key whose one grant is its own role on `node`.
@@ -6042,16 +6128,15 @@ async fn a_global_denial_on_an_admin_key_is_refused_naming_key() {
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let second = app
-        .issue_key(
-            admin,
-            &IssueKeyRequest {
-                name: name("second-admin"),
-                ..issue_req(Role::Admin, "bob-admin", Vec::new())
-            },
-        )
-        .await
-        .expect("a second admin key");
+    let second = linked_admin_key_as(
+        &app,
+        admin,
+        IssueKeyRequest {
+            name: name("second-admin"),
+            ..issue_req(Role::Admin, "bob-admin", Vec::new())
+        },
+    )
+    .await;
     let head = journal(&store, boot.tenant_id).await.len();
     for key in [second.key_id.into(), by_name("second-admin")] {
         let err = app.deny_key(admin, key, by_name("crew")).await.unwrap_err();
@@ -6450,6 +6535,7 @@ async fn operator_key(store: &MemStore, tenant: Uuid) -> String {
         linked_user: None,
         link_pending: None,
         pending_act: None,
+        suspended: None,
     };
     seal_onto(
         store,
@@ -6648,15 +6734,16 @@ async fn an_admin_or_operator_role_is_refused_a_connect_code_by_its_reason() {
     let app = oauth_app_over(store.clone());
     let (boot, _) = tenant(&app).await;
     let operator = operator_key(&store, boot.tenant_id).await;
+    ops_person(&app, &boot.admin_key.value).await;
     let head = journal(&store, boot.tenant_id).await.len();
 
     let err = app
         .issue_key(
             &boot.admin_key.value,
-            &IssueKeyRequest {
+            &ops_admin(IssueKeyRequest {
                 connect_code: true,
                 ..issue_req(Role::Admin, "second-admin", Vec::new())
-            },
+            }),
         )
         .await
         .unwrap_err();
@@ -9600,10 +9687,7 @@ async fn no_key_extends_its_own_expiry_or_raises_its_own_rate() {
         before_admin,
         "a refused issuance journals nothing"
     );
-    let agent_admin = app
-        .issue_key(admin, &issue_req(Role::Admin, "agent-admin", Vec::new()))
-        .await
-        .expect("an admin key an agent holds, with no limit");
+    let agent_admin = linked_admin_key(&app, admin, "agent-admin").await;
     let head = journal(&store, boot.tenant_id).await.len();
 
     for agent in &agents {
@@ -9703,10 +9787,7 @@ async fn an_admin_key_is_issued_with_no_limit_and_given_none_by_another_admin_ke
     );
     assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
 
-    let second = app
-        .issue_key(first, &issue_req(Role::Admin, "second-admin", Vec::new()))
-        .await
-        .expect("a second admin key");
+    let second = linked_admin_key(&app, first, "second-admin").await;
     let head = journal(&store, boot.tenant_id).await.len();
     // Its second call, the clear, names an admin key and is refused.
     for change in [
@@ -18887,10 +18968,7 @@ async fn an_admin_read_without_an_investigation_is_refused() {
         "a refused read journals no admin read"
     );
     // Another admin key's open investigation is not this key's.
-    let other = app
-        .issue_key(admin, &issue_req(Role::Admin, "second-admin", Vec::new()))
-        .await
-        .expect("a second admin key");
+    let other = linked_admin_key(&app, admin, "second-admin").await;
     let theirs = app
         .open_investigation(other.value.as_str(), "their own case")
         .await
@@ -19089,28 +19167,19 @@ async fn an_admin_edit_serves_at_once_marked_admin_fix_and_unconfirmed() {
 }
 
 #[tokio::test]
-async fn a_fix_by_an_admin_key_not_used_by_a_person_is_refused_and_journals_nothing() {
-    use oml_app::types::FixAct;
-    let (store, app, boot, _writer, _reader, _v1, v2) = two_promoted_versions().await;
-    let service_admin = issue_with(
-        &app,
-        &boot.admin_key.value,
-        Role::Admin,
-        "svc-admin",
-        vec![],
-    )
-    .await;
+async fn an_admin_key_not_used_by_a_person_is_refused_at_issuance_and_journals_nothing() {
+    // Every admin key belongs to a person (ADR-0097 d21), so no admin key
+    // used by a service exists to take a fix.
+    let (store, app, boot, _writer, _reader, _v1, _v2) = two_promoted_versions().await;
     let head = journal(&store, boot.tenant_id).await.len();
     assert!(matches!(
-        app.admin_fix(
-            service_admin.value.as_str(),
-            &fix_req(FixAct::Demote, v2, None)
+        app.issue_key(
+            &boot.admin_key.value,
+            &issue_req(Role::Admin, "svc-admin", Vec::new()),
         )
         .await
         .unwrap_err(),
-        AppError::FixRequiresPerson {
-            reason: "not_used_by_person"
-        }
+        AppError::KeyPerson("admin_key_requires_person")
     ));
     assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
 }

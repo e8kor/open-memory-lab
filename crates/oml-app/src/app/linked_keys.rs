@@ -114,7 +114,18 @@ where
         bearer: impl Into<Bearer<'_>>,
         user: &Name,
     ) -> Result<KeyRecord, AppError> {
-        let caller = self.key_act_caller(bearer.into(), "link_self").await?;
+        // A key suspended as unlinked at the upgrade still reaches this
+        // route (ADR-0097 d22, the production migration).
+        let caller = match bearer.into() {
+            Bearer::Key(value) => {
+                let (key, previous_value) = self.key_of_value_admitting(value, true).await?;
+                let mut caller = self.caller_of(key).await?;
+                caller.previous_value = previous_value;
+                caller.require_current_value("link_self")?;
+                caller
+            }
+            other => self.key_act_caller(other, "link_self").await?,
+        };
         require_role(&caller, Role::Admin, "link_self")?;
         let caller = caller.key;
         if caller.credential != Credential::Bearer {
@@ -299,15 +310,42 @@ where
                 "accepted_by_key_id": caller.key_id.to_string(),
             }),
         )?;
-        self.commit(
+        let mut links = vec![(
             event,
             MetadataFold::KeyLinkAccepted {
                 key_id: target.key_id,
                 user_root: root_id,
             },
-            None,
-        )
-        .await?;
+        )];
+        // An admin key suspended as unlinked at the upgrade authenticates
+        // again once its link is accepted, in the acceptance's commit
+        // (ADR-0097 d22, the production migration).
+        if target
+            .suspended
+            .as_ref()
+            .is_some_and(|s| s.cause == crate::types::SuspensionCause::Unlinked)
+        {
+            let lifted = self.seal(
+                links.last().map(|(e, _)| e),
+                tenant_id,
+                event_types::KEY_SUSPENSION_LIFTED,
+                &caller.principal,
+                Some(caller.key_id),
+                json!({
+                    "key_id": target.key_id.to_string(),
+                    "cause": crate::types::SuspensionCause::Unlinked.as_str(),
+                    "act_id": null,
+                }),
+            )?;
+            links.push((
+                lifted,
+                MetadataFold::KeySuspensionLifted {
+                    key_id: target.key_id,
+                },
+            ));
+            target.suspended = None;
+        }
+        self.commit_chain(links).await?;
         Ok((target, root.name))
     }
 

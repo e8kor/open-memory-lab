@@ -266,7 +266,7 @@ async fn bootstrap(router: &Router) -> (String, Uuid) {
         "/v2/bootstrap/claim",
         None,
         json!({
-            "enrollment_token": ENROLLMENT,
+            "enrollment_token": ENROLLMENT, "person": "founder", "email": "founder@example.com",
             "name": "root-admin",
             "tenant_name": "import-tenant",
             "admin_principal": "platform/admin",

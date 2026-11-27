@@ -346,7 +346,7 @@ impl World {
             "/v2/bootstrap/claim",
             None,
             Some(json!({
-                "enrollment_token": ENROLLMENT, "name": "root-admin",
+                "enrollment_token": ENROLLMENT, "person": "founder", "email": "founder@example.com", "name": "root-admin",
                 "tenant_name": "approver", "admin_principal": "platform/admin",
             })),
         )

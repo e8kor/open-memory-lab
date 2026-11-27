@@ -829,6 +829,7 @@ mod tests {
                     guardrail_scope: None,
                     expiry: None,
                     requests_per_minute: None,
+                    person: None,
                 },
             )
             .await

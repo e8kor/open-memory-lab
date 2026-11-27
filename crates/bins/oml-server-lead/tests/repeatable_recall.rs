@@ -415,7 +415,7 @@ impl World {
             "/v2/bootstrap/claim",
             None,
             json!({
-                "enrollment_token": first.enrollment_token().await,
+                "enrollment_token": first.enrollment_token().await, "person": "founder", "email": "founder@example.com",
                 "name": "root-admin",
                 "tenant_name": "repeat",
                 "admin_principal": "platform/admin",

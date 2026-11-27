@@ -413,6 +413,7 @@ where
                 user,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
             };
             self.issue_key_by(&issuer, &req, Issuance::Session(&entry.user))
                 .await?;

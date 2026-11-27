@@ -818,6 +818,7 @@ pub fn key_record(tenant_id: Uuid, key_id: Uuid, role: Role, issued_by: Option<U
         linked_user: None,
         link_pending: None,
         pending_act: None,
+        suspended: None,
     }
 }
 
@@ -3123,6 +3124,7 @@ pub async fn journal_key_lookup_by_hash<S: JournalStore>(store: &S) {
         linked_user: None,
         link_pending: None,
         pending_act: None,
+        suspended: None,
     };
     rig.commit(
         store,

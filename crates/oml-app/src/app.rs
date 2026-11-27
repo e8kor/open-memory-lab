@@ -2200,7 +2200,10 @@ where
         &self,
         api_key: &str,
     ) -> Result<(KeyRecord, Option<KeyAccess>), AppError> {
-        let key = self.key_of_value(api_key).await?;
+        // `/v2/whoami`'s read: an admin key suspended as unlinked, or
+        // waiting on its link, still reaches it (ADR-0097 d21, the
+        // production migration).
+        let (key, _) = self.key_of_value_admitting(api_key, true).await?;
         let access = self.access_of(&key).await?;
         Ok((key, access))
     }
@@ -2215,6 +2218,19 @@ where
     /// [`Self::key_of_value`], and whether the value is the key's previous
     /// one, inside a rotation's grace (ADR-0096 d13).
     async fn key_of_value_marked(&self, api_key: &str) -> Result<(KeyRecord, bool), AppError> {
+        self.key_of_value_admitting(api_key, false).await
+    }
+
+    /// [`Self::key_of_value_marked`], admitting with `unlinked` an admin key
+    /// suspended as unlinked at the upgrade, or waiting on its person's
+    /// acceptance of its link: the one admission `/v2/whoami` and `POST
+    /// /v2/keys/self/link` make (ADR-0097 d21, d22, the production
+    /// migration).
+    pub(crate) async fn key_of_value_admitting(
+        &self,
+        api_key: &str,
+        unlinked: bool,
+    ) -> Result<(KeyRecord, bool), AppError> {
         let hash = sha256_digest_string(api_key.as_bytes());
         let mut key = self.journal.key_by_hash(&hash).await;
         let mut previous_value = false;
@@ -2233,7 +2249,7 @@ where
             self.observer.credential(found.as_ref(), None);
         }
         let key = key?.ok_or(AppError::Unauthorized)?;
-        self.require_unexpired(&key)?;
+        self.check_key(&key, unlinked)?;
         Ok((key, previous_value))
     }
 
@@ -3099,6 +3115,7 @@ where
             linked_user: None,
             link_pending: None,
             pending_act: None,
+            suspended: None,
         };
         (record, value)
     }
@@ -3258,6 +3275,56 @@ where
             .await
     }
 
+    /// The person an issuance's admin key belongs to (ADR-0097 d21): an
+    /// admin key an admin key issues requires `person` and `used_by:
+    /// person` (`admin_key_requires_person`), naming a user root of the
+    /// tenant (`user_unknown`, as a link's); `person` on any other role is
+    /// `person_admin_only`. A
+    /// session key's `<user>-admin` belongs to its user already. Nothing is
+    /// journalled here.
+    async fn admin_key_person(
+        &self,
+        issuer: &KeyRecord,
+        req: &IssueKeyRequest,
+        how: &Issuance<'_>,
+    ) -> Result<Option<NamedRef>, AppError> {
+        if req.role != Role::Admin {
+            return match req.person {
+                Some(_) => Err(AppError::KeyPerson("person_admin_only")),
+                None => Ok(None),
+            };
+        }
+        if !matches!(how, Issuance::Plain(_)) {
+            return Ok(None);
+        }
+        let Some(person) = req
+            .person
+            .as_ref()
+            .filter(|_| req.used_by == Some(UsedBy::Person))
+        else {
+            return Err(AppError::KeyPerson("admin_key_requires_person"));
+        };
+        let tenant_id = issuer.tenant_id;
+        let root = match self
+            .journal
+            .resolve_name(tenant_id, NamedKind::Workspace, person)
+            .await?
+        {
+            Some(id) => self.journal.workspace(tenant_id, id).await?,
+            None => None,
+        }
+        .filter(|w| w.user_root)
+        .ok_or(AppError::KeyLinkRefused {
+            reason: "user_unknown",
+        })?;
+        // A person who cannot sign in never accepts the link, so the key
+        // never authenticates (d7).
+        Ok(Some(NamedRef {
+            id: root.workspace_id,
+            name: person.clone(),
+        }))
+    }
+
     /// An admin key's issuance as one widening admin act (ADR-0097 d5,
     /// d10, d23): `admin.act`, `key.issued` naming the act, and, when the
     /// act takes effect at once under `sole_admin`, every `grant.issued` and
@@ -3277,6 +3344,7 @@ where
         prev: Option<&SignedEnvelope>,
         reason: Option<&str>,
         user: Option<&NamedRef>,
+        person: Option<&NamedRef>,
     ) -> Result<IssuedKey, AppError> {
         let tenant_id = issuer.tenant_id;
         let key_id = record.key_id;
@@ -3304,6 +3372,7 @@ where
             "principal": req.principal,
             "used_by": req.used_by.map(UsedBy::as_str),
             "user": user.map(|u| u.name.as_str()),
+            "person": person.map(|p| p.name.as_str()),
             "principal_names_person": principal_names_person,
         });
         let code = oauth.map(|oauth| self.new_connect_code(oauth, key_id, CONNECT_CODE_TTL_SECS));
@@ -3350,6 +3419,36 @@ where
         let issued_seq = event.envelope.seq;
         let mut last = event.clone();
         let mut links = vec![act.link(), (event, MetadataFold::KeyIssued(record))];
+        // An admin key's link to its person, pending until that person
+        // accepts it, in the issuance's chain (ADR-0097 d21, d7).
+        if let Some(person) = person {
+            let event = self.seal(
+                Some(&last),
+                tenant_id,
+                event_types::KEY_LINKED_PERSON,
+                &issuer.principal,
+                Some(issuer.key_id),
+                admin_acts::with_act_id(
+                    json!({
+                        "key_id": key_id.to_string(),
+                        "user": person.name.as_str(),
+                        "user_root_id": person.id.to_string(),
+                        "linked_by_key_id": issuer.key_id.to_string(),
+                        "accepted": false,
+                    }),
+                    act.act_id(),
+                ),
+            )?;
+            last = event.clone();
+            links.push((
+                event,
+                MetadataFold::KeyLinked {
+                    key_id,
+                    user_root: Some(person.id),
+                    accepted: false,
+                },
+            ));
+        }
         let mut stored = Vec::new();
         if !pending {
             for grant in grants {
@@ -3700,6 +3799,7 @@ where
             guardrail_scope: None,
             expiry: None,
             requests_per_minute: None,
+            person: None,
         };
         let (record, value) =
             self.mint_key(tenant_id, &issue, Some(root_workspace_id), None, None, None);
@@ -4084,6 +4184,10 @@ where
         let sent_roles: Vec<Role> = req.grants.iter().map(|g| g.role).collect();
         check_contributor_grants(req.role, &sent_roles).map_err(issuance_refusal)?;
 
+        // Every admin key belongs to a person, after the issuance's own
+        // refusals (ADR-0097 d21).
+        let admin_person = self.admin_key_person(&issuer, req, &how).await?;
+
         // Step 7: with `connect_code`, the key can hold a connection — a
         // role other than admin or operator, `used_by` other than service,
         // and a deployment that sets `oauth.issuer` (ADR-0031 d7).
@@ -4155,6 +4259,7 @@ where
                     prev.as_ref(),
                     reason,
                     user_ref.as_ref(),
+                    admin_person.as_ref(),
                 )
                 .await?;
             return Ok(IssuedKey {

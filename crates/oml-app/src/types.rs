@@ -150,7 +150,57 @@ pub struct KeyRecord {
     /// nothing on any path, and takes no added grant, limit change or
     /// connect code (ADR-0097 d5, d23). `None` for every other key.
     pub pending_act: Option<Uuid>,
+    /// Why the key authenticates nothing for now: an open act against its
+    /// person (ADR-0097 d8, d21), or no accepted link at the upgrade, when
+    /// it still reaches `/v2/whoami` and `POST /v2/keys/self/link` (d22,
+    /// the production migration). `None` for every other key.
+    pub suspended: Option<KeySuspension>,
 }
+
+/// Why and since when a key is suspended (ADR-0097 d8, d21).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeySuspension {
+    pub cause: SuspensionCause,
+    /// The act against an admin that suspended it; `None` for `unlinked`.
+    pub act_id: Option<Uuid>,
+    pub at: EventTime,
+}
+
+/// The two causes of a suspension (ADR-0097 d8, d21).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SuspensionCause {
+    /// An act against the key's admin person is open (d8, d21).
+    AgainstAdmin,
+    /// An admin key that stood with no accepted link at the first start of
+    /// v0.8.6 (the production migration).
+    Unlinked,
+}
+
+impl SuspensionCause {
+    /// The spelling of `key.suspended.cause` and of the column.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SuspensionCause::AgainstAdmin => "against_admin",
+            SuspensionCause::Unlinked => "unlinked",
+        }
+    }
+
+    /// The cause a spelling names; `None` for any other string.
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "against_admin" => Some(SuspensionCause::AgainstAdmin),
+            "unlinked" => Some(SuspensionCause::Unlinked),
+            _ => None,
+        }
+    }
+}
+
+/// How long an admin key suspended as unlinked at the upgrade keeps its one
+/// route before it is revoked: thirty days, a placeholder (ADR-0097, the
+/// production migration).
+pub const UNLINKED_ADMIN_KEY_WINDOW_SECS: i64 = 30 * 86_400;
 
 impl KeyRecord {
     /// Whether the key's expiry has come at `now`: a key lives while its
@@ -275,8 +325,6 @@ pub enum AdminActRefusal {
     /// The confirming admin person's flag was accepted less than seven
     /// days before the act.
     TooNew,
-    /// Only a `sole_admin` act or a pending one is declined.
-    NotDeclinable,
     /// The key waits on its own issuance's confirmation, and takes no added
     /// grant, limit change or connect code meanwhile (ADR-0097 d23).
     KeyPending,
@@ -292,7 +340,6 @@ impl AdminActRefusal {
             AdminActRefusal::OwnAct => "own_act",
             AdminActRefusal::NotAdminPerson => "not_admin_person",
             AdminActRefusal::TooNew => "too_new",
-            AdminActRefusal::NotDeclinable => "not_declinable",
             AdminActRefusal::KeyPending => "key_pending",
         }
     }
@@ -313,9 +360,6 @@ impl AdminActRefusal {
             }
             AdminActRefusal::TooNew => {
                 "an admin person counts only once their admin flag is seven days older than the act"
-            }
-            AdminActRefusal::NotDeclinable => {
-                "only a pending admin act, or one taken at once under sole_admin, is declined"
             }
             AdminActRefusal::KeyPending => {
                 "the key waits on a second admin person's confirmation of its issuance, and takes no grant, limit change or connect code until then"
@@ -1166,16 +1210,18 @@ pub struct KeyAccess {
     pub grants: Vec<GrantRecord>,
     /// The denials no `key.denial_lifted` has lifted: only these mask.
     pub denials: Vec<DenialRecord>,
-    /// The journal seq of each `key.denial_lifted` on the key. A lifted
-    /// denial masks nothing and its row stays as history; its lift still
-    /// moves the permission epoch (event-catalog.md `key.denial_lifted`).
+    /// The journal seq of each `key.denial_lifted` and `grant.revoked` on
+    /// the key. A lifted denial masks nothing and a revoked grant confers
+    /// nothing, each row staying as history; the lift or revocation still
+    /// moves the permission epoch (event-catalog.md `key.denial_lifted`,
+    /// `grant.revoked`).
     pub lift_epochs: Vec<u64>,
 }
 
 impl KeyAccess {
     /// The key's permission epoch over what is built: the latest of its
-    /// `key.issued`, `grant.issued`, `key.denied` and `key.denial_lifted`
-    /// seqs (workspaces.md permission epoch; ADR-0025 d14).
+    /// `key.issued`, `grant.issued`, `key.denied`, `key.denial_lifted` and
+    /// `grant.revoked` seqs (workspaces.md permission epoch; ADR-0025 d14).
     #[must_use]
     pub fn permission_epoch(&self) -> u64 {
         self.grants
@@ -2180,6 +2226,11 @@ pub struct IssueKeyRequest {
     /// [`KEY_REQUESTS_PER_MINUTE_MAX`]; `None` gives it none, and an admin
     /// key takes no other (ADR-0079 d4).
     pub requests_per_minute: Option<u32>,
+    /// The person an admin key belongs to, by the user's name: an admin
+    /// key is issued only with one, `used_by: person`, and a link to that
+    /// person pending until the person accepts it; it authenticates nothing
+    /// until then (ADR-0097 d21, d7). Refused on every other role.
+    pub person: Option<Name>,
 }
 
 /// One requested grant: a role over the subtree of `node`, less the
@@ -4132,6 +4183,23 @@ pub enum AppError {
     /// `details.reason: pending_confirmation`.
     #[error("this key waits on a second admin person's confirmation")]
     KeyPendingConfirmation,
+    /// A suspended key authenticates nothing (ADR-0097 d8, d21):
+    /// `auth.invalid` with `details.reason: suspended`.
+    #[error("this key is suspended")]
+    KeySuspended,
+    /// An admin key whose link to its person waits on that person's
+    /// acceptance authenticates nothing (ADR-0097 d21): `auth.invalid` with
+    /// `details.reason: link_pending`.
+    #[error("this admin key waits on its person's acceptance of its link")]
+    KeyLinkPending,
+    /// An issuance's `person` refused (ADR-0097 d21): an admin key without
+    /// one or not `used_by: person` (`admin_key_requires_person`), or a
+    /// `person` on a key that is not an admin key (`person_admin_only`).
+    #[error("{}", match *.0 {
+        "person_admin_only" => "person names the person an admin key belongs to, and is refused on any other role",
+        _ => "an admin key is issued only with a person, used_by person",
+    })]
+    KeyPerson(&'static str),
     /// An admin act that requires a reason was sent none (ADR-0097 d26).
     #[error("this admin act requires a reason")]
     AdminActReasonRequired,

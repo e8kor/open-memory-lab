@@ -50,12 +50,12 @@ use oml_app::types::{
     ClaimEdgeRecord, ClaimEdgeSelection, ClaimKeyState, ClientDescription, ClientKind, ConnectCode,
     ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord, Credential, CrewRecord,
     DenialRecord, DocumentCaching, FormatFields, GrantRecord, GuardrailFields, HIT_KINDS,
-    HeldFilter, HeldRow, INSTRUCTION_HIT_KINDS, KeyAccess, KeyRecord, KeyReferences, KindFields,
-    ListingFilter, ListingPosition, ListingScope, MemoryRecord, NamedRef, OAuthClientRecord,
-    PROVIDER_TENANT, PersonReviewer, PinOutcome, QueueDepth, RefreshFacts, RefreshOutcome,
-    ReviewLane, SourceCheck, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord,
-    TransitionState, UnnamedRows, VersionFinding, WebCredentialKey, WebCredentialRows, WebEntry,
-    WebSessionRecord, WorkspaceRecord, WorkspaceRef,
+    HeldFilter, HeldRow, INSTRUCTION_HIT_KINDS, KeyAccess, KeyRecord, KeyReferences, KeySuspension,
+    KindFields, ListingFilter, ListingPosition, ListingScope, MemoryRecord, NamedRef,
+    OAuthClientRecord, PROVIDER_TENANT, PersonReviewer, PinOutcome, QueueDepth, RefreshFacts,
+    RefreshOutcome, ReviewLane, SourceCheck, SuspensionCause, SweepReport, TenantRow, TokenPair,
+    TokenRecord, TransitionRecord, TransitionState, UnnamedRows, VersionFinding, WebCredentialKey,
+    WebCredentialRows, WebEntry, WebSessionRecord, WorkspaceRecord, WorkspaceRef,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions, PgRow};
@@ -2489,7 +2489,8 @@ async fn key_access_in(
     };
     let grants = sqlx::query(
         "SELECT id, role, workspace_node_id, deny, epoch, covers FROM grants \
-         WHERE tenant_id = $1 AND key_id = $2 ORDER BY epoch ASC, id ASC",
+         WHERE tenant_id = $1 AND key_id = $2 AND revoked_epoch IS NULL \
+         ORDER BY epoch ASC, id ASC",
     )
     .bind(tenant_id)
     .bind(key_id)
@@ -2510,7 +2511,10 @@ async fn key_access_in(
     let lifts = sqlx::query(
         "SELECT lifted_epoch FROM key_denials \
          WHERE tenant_id = $1 AND key_id = $2 AND lifted_epoch IS NOT NULL \
-         ORDER BY lifted_epoch ASC",
+         UNION ALL \
+         SELECT revoked_epoch FROM grants \
+         WHERE tenant_id = $1 AND key_id = $2 AND revoked_epoch IS NOT NULL \
+         ORDER BY 1 ASC",
     )
     .bind(tenant_id)
     .bind(key_id)
@@ -3298,6 +3302,9 @@ fn workspace_from_row(row: &PgRow) -> Result<WorkspaceRecord, StoreError> {
 const KEY_COLUMNS: &str = "id, tenant_id, role, principal, used_by, default_workspace_id, \
      issued_by, hash, credential, name, crew_id, user_root_id, session_for, guardrail_scope, \
      profile, requests_per_minute, linked_user_id, link_pending_user_id, pending_act_id, \
+     suspended_cause, suspended_act_id, \
+     to_char(suspended_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+     AS suspended_at_signed, \
      to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS revoked_at_signed, \
      to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
@@ -3418,6 +3425,28 @@ fn brief_edge_from_row(row: &PgRow) -> Result<BriefEdgeRecord, StoreError> {
 /// (postgres-schema.md api_keys): it resolves under the provider tenant, so
 /// its refusals are the use-cases' own, never a storage failure (ADR-0025
 /// d13).
+/// A key row's suspension (ADR-0097 d8, d21; 0073): `None` when no cause
+/// is stored.
+fn suspension_from_row(row: &PgRow) -> Result<Option<KeySuspension>, StoreError> {
+    let cause: Option<String> = row.try_get("suspended_cause").map_err(backend)?;
+    let Some(cause) = cause else {
+        return Ok(None);
+    };
+    let at: Option<String> = row.try_get("suspended_at_signed").map_err(backend)?;
+    Ok(Some(KeySuspension {
+        cause: SuspensionCause::parse(&cause).ok_or_else(|| {
+            StoreError::Backend(format!("api_keys.suspended_cause {cause:?} is not a cause"))
+        })?,
+        act_id: row.try_get("suspended_act_id").map_err(backend)?,
+        at: at
+            .as_deref()
+            .map(EventTime::parse)
+            .transpose()
+            .map_err(|e| StoreError::Backend(e.to_string()))?
+            .ok_or_else(|| StoreError::Backend("api_keys.suspended_at is null".to_owned()))?,
+    }))
+}
+
 fn key_from_row(row: &PgRow) -> Result<KeyRecord, StoreError> {
     let tenant_id: Option<Uuid> = row.try_get("tenant_id").map_err(backend)?;
     let role: String = row.try_get("role").map_err(backend)?;
@@ -3470,6 +3499,7 @@ fn key_from_row(row: &PgRow) -> Result<KeyRecord, StoreError> {
         linked_user: row.try_get("linked_user_id").map_err(backend)?,
         link_pending: row.try_get("link_pending_user_id").map_err(backend)?,
         pending_act: row.try_get("pending_act_id").map_err(backend)?,
+        suspended: suspension_from_row(row)?,
     })
 }
 
@@ -5491,6 +5521,86 @@ async fn apply_fold(
             .await
             .map_err(backend)?;
         }
+        MetadataFold::GrantRevoked { key_id, grant_id } => {
+            // The row stays as history, its revoked_epoch this commit's seq;
+            // the guard matches only a grant in force on this key of this
+            // tenant (0073_admin_act_undo.sql `grants.revoked_epoch`).
+            let revoked = sqlx::query(
+                "UPDATE grants SET revoked_epoch = $4 \
+                 WHERE tenant_id = $1 AND id = $2 AND key_id = $3 AND revoked_epoch IS NULL",
+            )
+            .bind(tenant_id)
+            .bind(grant_id)
+            .bind(key_id)
+            .bind(seq)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if revoked.rows_affected() != 1 {
+                return Err(StoreError::Backend(format!(
+                    "grant {grant_id} is not a grant in force on key {key_id} of this tenant"
+                )));
+            }
+        }
+        MetadataFold::ConnectCodeVoided { key_id, code_id } => {
+            let voided = sqlx::query(
+                "UPDATE connect_codes SET voided_seq = $4 \
+                 WHERE tenant_id = $1 AND id = $2 AND key_id = $3 \
+                   AND redeemed_at IS NULL AND voided_seq IS NULL",
+            )
+            .bind(tenant_id)
+            .bind(code_id)
+            .bind(key_id)
+            .bind(seq)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if voided.rows_affected() != 1 {
+                return Err(StoreError::Backend(format!(
+                    "code {code_id} is not an unredeemed live code of key {key_id}"
+                )));
+            }
+        }
+        MetadataFold::KeySuspended { key_id, suspension } => {
+            // Only a live key that is not suspended already is suspended
+            // (0073_admin_act_undo.sql); anything else aborts the commit.
+            let suspended = sqlx::query(
+                "UPDATE api_keys SET suspended_cause = $3, suspended_act_id = $4, \
+                        suspended_at = ($5)::timestamptz \
+                  WHERE tenant_id = $1 AND id = $2 AND revoked_at IS NULL \
+                    AND suspended_cause IS NULL",
+            )
+            .bind(tenant_id)
+            .bind(key_id)
+            .bind(suspension.cause.as_str())
+            .bind(suspension.act_id)
+            .bind(suspension.at.as_str())
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if suspended.rows_affected() != 1 {
+                return Err(StoreError::Backend(format!(
+                    "key {key_id} is not a live key of this tenant that is not suspended"
+                )));
+            }
+        }
+        MetadataFold::KeySuspensionLifted { key_id } => {
+            let lifted = sqlx::query(
+                "UPDATE api_keys SET suspended_cause = NULL, suspended_act_id = NULL, \
+                        suspended_at = NULL \
+                  WHERE tenant_id = $1 AND id = $2 AND suspended_cause IS NOT NULL",
+            )
+            .bind(tenant_id)
+            .bind(key_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if lifted.rows_affected() != 1 {
+                return Err(StoreError::Backend(format!(
+                    "key {key_id} is not a suspended key of this tenant"
+                )));
+            }
+        }
         MetadataFold::KeyDenialLifted { key_id, denial_id } => {
             // The row stays as history, its lifted_epoch this commit's seq;
             // the guard matches only a denial in force on this key of this
@@ -6616,6 +6726,9 @@ async fn meter_plan(
         | MetadataFold::WorkspaceModeSet { .. }
         | MetadataFold::NamesAssigned(_)
         | MetadataFold::GrantIssued { .. }
+        | MetadataFold::GrantRevoked { .. }
+        | MetadataFold::KeySuspended { .. }
+        | MetadataFold::KeySuspensionLifted { .. }
         | MetadataFold::KeyDenied { .. }
         | MetadataFold::KeyDenialLifted { .. }
         // An expired key stays on its account's keys meter: its date can
@@ -6625,6 +6738,7 @@ async fn meter_plan(
         | MetadataFold::KeyLinked { .. }
         | MetadataFold::KeyLinkAccepted { .. }
         | MetadataFold::ConnectCodeIssued { .. }
+        | MetadataFold::ConnectCodeVoided { .. }
         | MetadataFold::VerdictRecorded { .. }
         | MetadataFold::SourceChecked { .. }
         | MetadataFold::FindingsRecorded { .. }
@@ -13233,7 +13347,8 @@ impl WebStore for PgStore {
         let ids: Vec<Uuid> = keys.iter().map(|k| k.key_id).collect();
         let grants = sqlx::query(
             "SELECT key_id, id, role, workspace_node_id, deny, covers FROM grants \
-             WHERE tenant_id = $1 AND key_id = ANY($2) ORDER BY epoch ASC, id ASC",
+             WHERE tenant_id = $1 AND key_id = ANY($2) AND revoked_epoch IS NULL \
+             ORDER BY epoch ASC, id ASC",
         )
         .bind(tenant_id)
         .bind(&ids)

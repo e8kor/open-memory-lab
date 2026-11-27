@@ -92,7 +92,7 @@ async fn tenant(router: &Router) -> Tenant {
         "/v2/bootstrap/claim",
         None,
         None,
-        Some(&json!({"enrollment_token": ENROLLMENT, "name": "root-admin", "tenant_name": "gr-tenant"})),
+        Some(&json!({"enrollment_token": ENROLLMENT, "person": "founder", "email": "founder@example.com", "name": "root-admin", "tenant_name": "gr-tenant"})),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{boot}");

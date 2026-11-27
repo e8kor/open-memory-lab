@@ -46,6 +46,15 @@ impl BegunAct {
     }
 }
 
+/// What a decline's undo names: the declining admin key, its act, its
+/// person and its reason.
+struct Undo<'a> {
+    admin: &'a KeyRecord,
+    decline_id: Uuid,
+    actor_person: Option<String>,
+    reason: Option<&'a str>,
+}
+
 /// `payload` naming the admin act that caused it (ADR-0097 d2: the effect's
 /// own event names the `act_id`).
 pub(crate) fn with_act_id(mut payload: Value, act_id: Uuid) -> Value {
@@ -187,7 +196,10 @@ where
             cause: None,
             at: self.clock.now(),
             settled_at: None,
-            effect: if state == AdminActState::PendingConfirmation {
+            // A widening act keeps what it applies, pending or taken at once
+            // under `sole_admin`, so a confirmation applies it and a decline
+            // undoes it (d10, d23; the operator's decision of 2026-11-27).
+            effect: if act.class() == AdminActClass::Widening {
                 effect
             } else {
                 json!({})
@@ -292,15 +304,29 @@ where
         }
         Ok(acts)
     }
+}
 
-    /// `POST /v2/admin/acts/{act}/decline` (ADR-0097 d3, d10, d23): any
-    /// admin key declines a pending act, which then never takes effect, or
-    /// an act a `sole_admin` tenant took at once, which is then revoked; a
-    /// key the act issued is revoked in the same commit. Declining is
-    /// itself narrowing, journalled as its own `decline_act` act before the
-    /// declined act's envelope. Refused: an act that is neither
-    /// (`not_declinable`), one already settled (`not_pending`), one past its
-    /// life (`expired`, already final).
+impl<J, S, C, I, Sc> App<J, S, C, I, Sc>
+where
+    J: crate::ports::ConnectionStore + crate::ports::WebStore,
+    S: Signer,
+    C: Clock,
+    I: IdGen,
+    Sc: Scanner,
+{
+    /// `POST /v2/admin/acts/{act}/decline` (ADR-0097 d3, d10, d23; the
+    /// operator's decision of 2026-11-27): any admin key declines a pending
+    /// widening act, which then never takes effect, or one a `sole_admin`
+    /// tenant took at once, which the decline undoes in its own commit by
+    /// the matching narrowing effect: the key the act issued is revoked, the
+    /// grants it added are revoked, the connect code it minted is voided or
+    /// the connection it opened revoked, a raised limit is set back to the
+    /// limits the act found, and an admin flag is taken off its entry under
+    /// the last-admin guard (d25). A pending issuance's key is revoked too.
+    /// Declining is itself narrowing, journalled as its own `decline_act`
+    /// act before the declined act's envelope. Refused: an act that took
+    /// effect and is not widening under `sole_admin` (`not_pending`), one
+    /// past its life (`expired`, already final).
     ///
     /// # Errors
     /// The refusals above, an act the tenant does not hold, and the store's.
@@ -321,26 +347,15 @@ where
             .admin_act(tenant_id, act_id)
             .await?
             .ok_or(AppError::NotFound)?;
-        match act.state_at(&self.clock.now()) {
-            AdminActState::PendingConfirmation => {}
+        let undo = match act.state_at(&self.clock.now()) {
+            AdminActState::PendingConfirmation => false,
             AdminActState::Expired => return Err(AppError::AdminAct(AdminActRefusal::Expired)),
-            AdminActState::Effective if act.sole_admin => {}
-            AdminActState::Effective => {
-                return Err(AppError::AdminAct(AdminActRefusal::NotDeclinable));
+            AdminActState::Effective
+                if act.sole_admin && act.class() == AdminActClass::Widening =>
+            {
+                true
             }
             _ => return Err(AppError::AdminAct(AdminActRefusal::NotPending)),
-        }
-        // What a declined act undoes: the key it issued, the one revocable
-        // effect a widening act leaves; any other `sole_admin` act is not
-        // declinable until its revocation is built.
-        let revokes = match act.act {
-            AdminActKind::IssueKey => act
-                .target
-                .get("key_id")
-                .and_then(Value::as_str)
-                .and_then(|s| Uuid::parse_str(s).ok()),
-            _ if act.state == AdminActState::PendingConfirmation => None,
-            _ => return Err(AppError::AdminAct(AdminActRefusal::NotDeclinable)),
         };
         let prev = self.head_event(tenant_id).await?;
         let decline = self
@@ -368,30 +383,20 @@ where
             decline.link(),
             (event, MetadataFold::AdminAct(Box::new(act.clone()))),
         ];
-        if let Some(key_id) = revokes
-            && self
-                .journal
-                .key(tenant_id, key_id)
-                .await?
-                .is_some_and(|k| k.revoked_at.is_none())
-        {
-            let prev = links.last().map(|(e, _)| e.clone()).expect("a link");
-            let event = self.seal(
-                Some(&prev),
-                tenant_id,
-                event_types::KEY_REVOKED,
-                &admin.principal,
-                Some(admin.key_id),
-                json!({
-                    "key_id": key_id.to_string(),
-                    "revoked_by_key_id": admin.key_id.to_string(),
-                    "actor_person": decline.record.actor_person.as_ref().map(|p| p.as_str()),
-                    "reason": reason,
-                    "act_id": decline.act_id().to_string(),
-                    "cause": null,
-                }),
-            )?;
-            links.push((event, MetadataFold::KeyRevoked { key_id }));
+        let undo_ctx = Undo {
+            admin: &admin,
+            decline_id: decline.act_id(),
+            actor_person: decline
+                .record
+                .actor_person
+                .as_ref()
+                .map(|p| p.as_str().to_owned()),
+            reason,
+        };
+        // A pending issuance's key never authenticated; it is revoked so
+        // its value ends with the act (d23).
+        if act.act == AdminActKind::IssueKey || undo {
+            self.undo_effect(&undo_ctx, &act, undo, &mut links).await?;
         }
         let reqs = links
             .into_iter()
@@ -401,16 +406,226 @@ where
         act.settled_at = Some(at);
         Ok(act)
     }
-}
 
-impl<J, S, C, I, Sc> App<J, S, C, I, Sc>
-where
-    J: crate::ports::ConnectionStore + crate::ports::WebStore,
-    S: Signer,
-    C: Clock,
-    I: IdGen,
-    Sc: Scanner,
-{
+    /// The narrowing effect that undoes `act`, sealed after the last of
+    /// `links`, each event naming the decline's `act_id` (ADR-0097 d10, the
+    /// operator's decision of 2026-11-27). With `took_effect` false only a
+    /// pending issuance's key is revoked: nothing else applied.
+    async fn undo_effect(
+        &self,
+        undo: &Undo<'_>,
+        act: &AdminActRecord,
+        took_effect: bool,
+        links: &mut Vec<(SignedEnvelope, MetadataFold)>,
+    ) -> Result<(), AppError> {
+        let admin = undo.admin;
+        let tenant_id = admin.tenant_id;
+        let effect = &act.effect;
+        let uuid_at = |v: &Value, field: &str| {
+            v.get(field)
+                .and_then(Value::as_str)
+                .and_then(|s| Uuid::parse_str(s).ok())
+        };
+        let key_id = uuid_at(effect, "key_id").or_else(|| uuid_at(&act.target, "key_id"));
+        let key = match key_id {
+            Some(id) => self.journal.key(tenant_id, id).await?,
+            None => None,
+        };
+        let live = key.as_ref().filter(|k| k.revoked_at.is_none());
+        match act.act {
+            AdminActKind::IssueKey => {
+                if let Some(key) = live {
+                    let payload = json!({
+                        "key_id": key.key_id.to_string(),
+                        "revoked_by_key_id": admin.key_id.to_string(),
+                        "actor_person": undo.actor_person,
+                        "reason": undo.reason,
+                        "cause": null,
+                    });
+                    self.push_undo(undo, links, event_types::KEY_REVOKED, payload, |_| {
+                        MetadataFold::KeyRevoked { key_id: key.key_id }
+                    })?;
+                }
+            }
+            _ if !took_effect => {}
+            AdminActKind::AddGrant => {
+                let Some(key) = live else { return Ok(()) };
+                let held = self
+                    .journal
+                    .key_access(tenant_id, key.key_id)
+                    .await?
+                    .map(|a| a.grants)
+                    .unwrap_or_default();
+                for grant in effect
+                    .get("grants")
+                    .and_then(Value::as_array)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default()
+                {
+                    let grant = grant_from_json(grant)?;
+                    if !held.iter().any(|h| h.grant.grant_id == grant.grant_id) {
+                        continue;
+                    }
+                    let grant_id = grant.grant_id;
+                    let payload = json!({
+                        "key_id": key.key_id.to_string(),
+                        "grant_id": grant_id.to_string(),
+                        "revoked_by_key_id": admin.key_id.to_string(),
+                    });
+                    self.push_undo(undo, links, event_types::GRANT_REVOKED, payload, |_| {
+                        MetadataFold::GrantRevoked {
+                            key_id: key.key_id,
+                            grant_id,
+                        }
+                    })?;
+                }
+            }
+            AdminActKind::MintConnectCode => {
+                let Some(key) = live else { return Ok(()) };
+                let Some(code_id) = effect.get("code").and_then(|c| uuid_at(c, "code_id")) else {
+                    return Ok(());
+                };
+                let opened = self
+                    .journal
+                    .connections(tenant_id, key.key_id)
+                    .await?
+                    .into_iter()
+                    .find(|c| {
+                        c.code_id == code_id && c.state == oml_domain::oauth::ConnectionState::Open
+                    });
+                if let Some(connection) = opened {
+                    let connection_id = connection.connection_id;
+                    let payload = json!({
+                        "connection_id": connection_id.to_string(),
+                        "key_id": key.key_id.to_string(),
+                        "revoked_by_key_id": admin.key_id.to_string(),
+                        "cause": oml_domain::oauth::RevokedCause::Admin.as_str(),
+                        "reason_digest": undo.reason.map(|r| oml_domain::sha256_digest_string(r.as_bytes())),
+                    });
+                    self.push_undo(
+                        undo,
+                        links,
+                        event_types::CONNECTION_REVOKED,
+                        payload,
+                        |_| MetadataFold::ConnectionRevoked {
+                            connection_id,
+                            cause: oml_domain::oauth::RevokedCause::Admin,
+                        },
+                    )?;
+                } else if self
+                    .journal
+                    .connect_codes(tenant_id, key.key_id)
+                    .await?
+                    .iter()
+                    .any(|c| {
+                        c.code_id == code_id && c.redeemed_at.is_none() && c.voided_seq.is_none()
+                    })
+                {
+                    let payload = json!({
+                        "code_id": code_id.to_string(),
+                        "key_id": key.key_id.to_string(),
+                        "voided_by_key_id": admin.key_id.to_string(),
+                    });
+                    self.push_undo(
+                        undo,
+                        links,
+                        event_types::CONNECTION_CODE_VOIDED,
+                        payload,
+                        |_| MetadataFold::ConnectCodeVoided {
+                            key_id: key.key_id,
+                            code_id,
+                        },
+                    )?;
+                }
+            }
+            AdminActKind::RaiseLimits => {
+                let Some(key) = live else { return Ok(()) };
+                let before = effect.get("before").cloned().unwrap_or(Value::Null);
+                let expiry = before
+                    .get("expiry")
+                    .and_then(Value::as_str)
+                    .map(EventTime::parse)
+                    .transpose()
+                    .map_err(|e| AppError::StoredResponse(e.to_string()))?;
+                let requests_per_minute = before
+                    .get("requests_per_minute")
+                    .and_then(Value::as_u64)
+                    .map(u32::try_from)
+                    .transpose()
+                    .map_err(|e| AppError::StoredResponse(e.to_string()))?;
+                let payload = json!({
+                    "key_id": key.key_id.to_string(),
+                    "set_by_key_id": admin.key_id.to_string(),
+                    "expiry": expiry.as_ref().map(EventTime::as_str),
+                    "requests_per_minute": requests_per_minute,
+                });
+                self.push_undo(undo, links, event_types::KEY_LIMITS_SET, payload, |_| {
+                    MetadataFold::KeyLimitsSet {
+                        key_id: key.key_id,
+                        expiry,
+                        requests_per_minute,
+                    }
+                })?;
+            }
+            AdminActKind::AllowAdmin => {
+                let bad = || AppError::StoredResponse(format!("admin act {} entry", act.act_id));
+                let text = |field: &str| {
+                    effect
+                        .get(field)
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                        .ok_or_else(bad)
+                };
+                let email = oml_domain::web::Email::parse(&text("email")?).map_err(|_| bad())?;
+                // The entry as it stands now: a flag already off changes
+                // nothing; the flag comes off its user as the entry names
+                // it today, under the last-admin guard (d25).
+                let Some(entry) = self.journal.web_entry_by_email(&email.digest()).await? else {
+                    return Ok(());
+                };
+                if !entry.admin || entry.tenant_id != tenant_id {
+                    return Ok(());
+                }
+                let req = crate::types::WebEmailRequest {
+                    email,
+                    user: entry.user.clone(),
+                    admin: false,
+                };
+                if let Some((_, _, event_type, fold, payload)) =
+                    self.entry_change(admin, &req, true).await?
+                {
+                    self.push_undo(undo, links, event_type, payload, |_| fold)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Seals `payload` as `event_type` after the last of `links`, naming the
+    /// decline's `act_id`, and pushes it with its fold.
+    fn push_undo(
+        &self,
+        undo: &Undo<'_>,
+        links: &mut Vec<(SignedEnvelope, MetadataFold)>,
+        event_type: &str,
+        payload: Value,
+        fold: impl FnOnce(&SignedEnvelope) -> MetadataFold,
+    ) -> Result<(), AppError> {
+        let prev = links.last().map(|(e, _)| e.clone()).expect("a link");
+        let event = self.seal(
+            Some(&prev),
+            undo.admin.tenant_id,
+            event_type,
+            &undo.admin.principal,
+            Some(undo.admin.key_id),
+            with_act_id(payload, undo.decline_id),
+        )?;
+        let fold = fold(&event);
+        links.push((event, fold));
+        Ok(())
+    }
+
     /// `POST /v2/admin/acts/{act}/confirm` (ADR-0097 d5, d11, d23): a
     /// second admin person confirms a pending widening act, and its effect
     /// applies in this commit: a key's grants and connect code, a grant, a

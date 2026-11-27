@@ -239,6 +239,7 @@ async fn tenant_crew(app: &TestApp, name: &str, canary: &str, n: usize) -> Crew 
         guardrail_scope: None,
         expiry: None,
         requests_per_minute: None,
+        person: None,
     };
     let writer = app
         .issue_key(

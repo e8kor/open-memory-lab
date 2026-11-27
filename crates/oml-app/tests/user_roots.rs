@@ -111,6 +111,7 @@ fn user_req(role: Role, user: &str, principal: &str, grants: Vec<GrantRequest>) 
         guardrail_scope: None,
         expiry: None,
         requests_per_minute: None,
+        person: None,
     }
 }
 
@@ -5941,15 +5942,14 @@ async fn an_admin_key_linked_to_another_person_takes_no_fix_until_that_person_ac
         .expect("linked, pending bob's acceptance");
     assert_eq!(pending.linked_user, None);
     assert!(pending.link_pending.is_some());
+    // An admin key waiting on its link authenticates nothing (ADR-0097
+    // d21), so it takes no fix.
     let err = r
         .app
         .admin_fix(admin, &edit(r.claim, "The queue drains hourly."))
         .await
         .unwrap_err();
-    assert!(
-        matches!(err, AppError::FixRequiresPerson { reason: "unlinked" }),
-        "{err:?}"
-    );
+    assert!(matches!(err, AppError::KeyLinkPending), "{err:?}");
     accept_link(&r.app, &r.store, "bob", r.boot.admin_key.key_id).await;
     let fix = r
         .app
@@ -6677,12 +6677,14 @@ async fn a_key_issued_in_the_fix_admins_root_settles_as_the_admins_person_whoeve
             &IssueKeyRequest {
                 user: None,
                 used_by: Some(UsedBy::Person),
+                person: Some(name("bob")),
                 ..user_req(Role::Admin, "unused", "bob/admin", Vec::new())
             },
         )
         .await
         .expect("an admin key bob holds");
-    link_accepted(&r.app, &r.store, &r.ops, bobs_admin.key_id, "bob").await;
+    // Issued with its link to bob, which bob accepts (ADR-0097 d21).
+    accept_link(&r.app, &r.store, "bob", bobs_admin.key_id).await;
     let fix = r
         .app
         .admin_fix(
@@ -6817,12 +6819,14 @@ async fn a_key_issued_in_the_authors_root_reverts_a_fix_of_the_authors_claim_as_
             &IssueKeyRequest {
                 user: None,
                 used_by: Some(UsedBy::Person),
+                person: Some(name("bob")),
                 ..user_req(Role::Admin, "unused", "bob/admin", Vec::new())
             },
         )
         .await
         .expect("an admin key bob holds");
-    link_accepted(&r.app, &r.store, &r.ops, bobs_admin.key_id, "bob").await;
+    // Issued with its link to bob, which bob accepts (ADR-0097 d21).
+    accept_link(&r.app, &r.store, "bob", bobs_admin.key_id).await;
     let handed = user_reviewer(&r.app, bobs_admin.value.as_str(), "dora", "dora/handed").await;
     let settled = r
         .app
@@ -7045,14 +7049,20 @@ async fn a_pending_entry_a_second_admin_changes_shows_that_admin_as_its_adder() 
     let first = allowed(&r, address.as_str(), "bob").await;
     assert!(first.pending, "{first:?}");
     assert_eq!(first.added_by, r.boot.admin_key.key_id);
-    let second = tenant_key(
-        &r.app,
-        r.boot.admin_key.value.as_str(),
-        Role::Admin,
-        "second-admin",
-        Vec::new(),
-    )
-    .await;
+    let second = r
+        .app
+        .issue_key(
+            r.boot.admin_key.value.as_str(),
+            &IssueKeyRequest {
+                user: None,
+                used_by: Some(UsedBy::Person),
+                person: Some(name("ops")),
+                ..user_req(Role::Admin, "unused", "second-admin", Vec::new())
+            },
+        )
+        .await
+        .expect("a second admin key, ops's");
+    accept_link(&r.app, &r.store, "ops", second.key_id).await;
     let changed = r
         .app
         .allow_web_email(

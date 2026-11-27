@@ -151,7 +151,7 @@ async fn bootstrap(router: &Router) -> (String, Uuid) {
                 .header("content-type", "application/json")
                 .body(Body::from(
                     json!({
-                        "enrollment_token": ENROLLMENT,
+                        "enrollment_token": ENROLLMENT, "person": "founder", "email": "founder@example.com",
                         "name": "root-admin",
                         "tenant_name": "export-tenant",
                         "admin_principal": "platform/admin",

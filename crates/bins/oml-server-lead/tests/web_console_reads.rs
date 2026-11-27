@@ -772,6 +772,7 @@ async fn held_in_workspaces(rig: &Rig, n: usize) {
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
             },
         )
         .await
@@ -1131,6 +1132,7 @@ async fn the_catalog_pages_read_costs_the_gate_the_listing_and_on_the_first_page
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
             },
         )
         .await
@@ -1162,6 +1164,7 @@ async fn the_catalog_pages_read_costs_the_gate_the_listing_and_on_the_first_page
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
             },
         )
         .await

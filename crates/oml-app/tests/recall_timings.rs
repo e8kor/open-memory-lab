@@ -68,6 +68,7 @@ async fn reader_with_a_hit(timings: bool) -> (TestApp, String) {
                     guardrail_scope: None,
                     expiry: None,
                     requests_per_minute: None,
+                    person: None,
                 },
             )
             .await

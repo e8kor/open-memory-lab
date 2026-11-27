@@ -1326,6 +1326,7 @@ where
             linked_user: None,
             link_pending: None,
             pending_act: None,
+            suspended: None,
         }
     }
 

@@ -175,6 +175,8 @@ pub enum AdminActKind {
     LowerLimits,
     /// Declining a pending or `sole_admin` act (d3, d10).
     DeclineAct,
+    /// Lifting a denial (d3; the operator's decision of 2026-11-27).
+    LiftDenial,
     // Erase (d4).
     /// Erasing a claim: the demotion at once, the shred after a second
     /// admin person.
@@ -232,6 +234,7 @@ pub const ADMIN_ACT_KINDS: &[AdminActKind] = &[
     AdminActKind::CloseDeletion,
     AdminActKind::LowerLimits,
     AdminActKind::DeclineAct,
+    AdminActKind::LiftDenial,
     AdminActKind::Erase,
     AdminActKind::IssueKey,
     AdminActKind::AddGrant,
@@ -266,7 +269,8 @@ impl AdminActKind {
             | K::RemovePerson
             | K::CloseDeletion
             | K::LowerLimits
-            | K::DeclineAct => AdminActClass::Narrowing,
+            | K::DeclineAct
+            | K::LiftDenial => AdminActClass::Narrowing,
             K::Erase => AdminActClass::Erase,
             K::IssueKey | K::AddGrant | K::AllowAdmin | K::MintConnectCode | K::RaiseLimits => {
                 AdminActClass::Widening
@@ -299,6 +303,7 @@ impl AdminActKind {
             K::CloseDeletion => "close_deletion",
             K::LowerLimits => "lower_limits",
             K::DeclineAct => "decline_act",
+            K::LiftDenial => "lift_denial",
             K::Erase => "erase",
             K::IssueKey => "issue_key",
             K::AddGrant => "add_grant",

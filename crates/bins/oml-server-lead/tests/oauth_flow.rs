@@ -230,6 +230,7 @@ async fn run_flow(db: &str) -> Option<Flow> {
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
             },
         )
         .await

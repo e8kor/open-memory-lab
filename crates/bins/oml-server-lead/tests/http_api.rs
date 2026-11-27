@@ -326,7 +326,7 @@ async fn bootstrap(router: &Router) -> (String, Uuid, Uuid) {
 
 async fn bootstrap_claim(router: &Router, person: Option<&str>) -> (String, Uuid, Uuid) {
     let mut claim = json!({
-        "enrollment_token": ENROLLMENT,
+        "enrollment_token": ENROLLMENT, "person": "founder", "email": "founder@example.com",
         "name": "root-admin",
         "tenant_name": "test-tenant",
         "admin_principal": "platform/admin",
@@ -1891,7 +1891,7 @@ async fn a_bootstrap_claim_checks_the_token_before_the_name_and_a_refused_name_c
     let router = &rig.router;
     let claim = |token: &str| {
         Call::default().body(json!({
-            "enrollment_token": token,
+            "enrollment_token": token, "person": "founder", "email": "founder@example.com",
             "name": "root-admin",
             "tenant_name": "Test_Tenant",
         }))
@@ -1910,7 +1910,7 @@ async fn a_bootstrap_claim_checks_the_token_before_the_name_and_a_refused_name_c
     // claim with none, or with one the creation grammar refuses, is
     // `request.validation` naming `name` (ADR-0026 d9).
     for name in [Value::Null, json!("Root Admin")] {
-        let mut unnamed = json!({ "enrollment_token": ENROLLMENT, "tenant_name": "test-tenant" });
+        let mut unnamed = json!({ "enrollment_token": ENROLLMENT, "person": "founder", "email": "founder@example.com", "tenant_name": "test-tenant" });
         if !name.is_null() {
             unnamed["name"] = name;
         }
@@ -1971,7 +1971,7 @@ async fn a_failed_partition_creation_spends_no_enrollment_token() {
         &rig.router,
         "POST",
         "/v2/bootstrap/claim",
-        Call::default().body(json!({ "enrollment_token": ENROLLMENT, "name": "root-admin" })),
+        Call::default().body(json!({ "enrollment_token": ENROLLMENT, "person": "founder", "email": "founder@example.com", "name": "root-admin" })),
     )
     .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
@@ -10016,7 +10016,7 @@ async fn rerank_rig(floor: f32) -> Option<(Router, String, String)> {
         "POST",
         "/v2/bootstrap/claim",
         Call::default().body(json!({
-            "enrollment_token": started.enrollment_token.expect("an empty deployment"),
+            "enrollment_token": started.enrollment_token.expect("an empty deployment"), "person": "founder", "email": "founder@example.com",
             "name": "root-admin",
             "tenant_name": "test-tenant",
             "admin_principal": "platform/admin",
@@ -12719,27 +12719,36 @@ async fn the_bootstrap_claim_records_its_persons_email_accepted_and_takes_neithe
     drop_db(&rig.db_name).await;
 }
 
-/// A bootstrap claim that names no person leaves the first admin key
-/// unlinked, and its fix is refused by name (ADR-0089, the operator's
-/// decision of 2026-11-19).
+/// A bootstrap claim that names no person is refused naming `/person`,
+/// consumes no token and leaves no tenant: every admin key belongs to a
+/// person, the first one included (ADR-0097 d21).
 #[tokio::test]
-async fn an_unlinked_admin_keys_fix_answers_fix_requires_person_unlinked() {
+async fn a_bootstrap_claim_without_a_person_is_refused_and_leaves_no_tenant() {
     let Some(rig) = fresh_rig().await else {
         return;
     };
-    let (admin, _tenant, _root) = bootstrap(&rig.router).await;
-    let (status, _, fix) = send(
+    let (status, _, body) = send(
         &rig.router,
         "POST",
-        "/v2/admin/fixes",
-        Call::auth(&admin).body(json!({
-            "act": "demote", "target": Uuid::nil(), "reason": "ticket 45",
+        "/v2/bootstrap/claim",
+        Call::default().body(json!({
+            "enrollment_token": ENROLLMENT,
+            "name": "root-admin",
+            "tenant_name": "test-tenant",
         })),
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "{fix}");
-    assert_envelope(&fix, "admin.fix_requires_person");
-    assert_eq!(fix["error"]["details"]["reason"], "unlinked", "{fix}");
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["details"]["field"], "/person", "{body}");
+    assert!(
+        enumerate_tenants(rig.store.pool())
+            .await
+            .expect("tenants")
+            .is_empty(),
+        "no tenant is left"
+    );
+    // The token is still claimable.
+    let (_admin, _tenant, _root) = bootstrap(&rig.router).await;
     drop_db(&rig.db_name).await;
 }
 

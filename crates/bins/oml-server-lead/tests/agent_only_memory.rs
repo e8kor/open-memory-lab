@@ -216,7 +216,7 @@ async fn crew(router: &Router) -> Crew {
         "/v2/bootstrap/claim",
         None,
         None,
-        Some(&json!({"enrollment_token": ENROLLMENT, "name": "root-admin", "tenant_name": "aom-tenant"})),
+        Some(&json!({"enrollment_token": ENROLLMENT, "person": "founder", "email": "founder@example.com", "name": "root-admin", "tenant_name": "aom-tenant"})),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{boot}");

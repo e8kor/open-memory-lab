@@ -128,6 +128,7 @@ async fn issue(
             guardrail_scope: None,
             expiry: None,
             requests_per_minute: None,
+            person: None,
         },
     )
     .await
@@ -693,6 +694,7 @@ async fn a_crew_key_is_refused_export_as_person_only() {
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
             },
         )
         .await

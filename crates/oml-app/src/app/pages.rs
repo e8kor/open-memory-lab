@@ -585,6 +585,7 @@ where
             user: Some(user_name),
             expiry: shape.expiry.clone(),
             requests_per_minute: shape.requests_per_minute,
+            person: None,
         };
         self.issue_key_by(&web.key, &req, Issuance::PersonsOwn(head))
             .await
@@ -856,6 +857,7 @@ where
             user: None,
             expiry: None,
             requests_per_minute: None,
+            person: None,
         };
         let issued = self
             .issue_key_by(&admin.key, &req, Issuance::Session(user))

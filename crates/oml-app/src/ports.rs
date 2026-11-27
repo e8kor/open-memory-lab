@@ -257,6 +257,28 @@ pub enum MetadataFold {
         key_id: Uuid,
         grant: Grant,
     },
+    /// `grant.revoked`: the grant `grant_id` on `key_id` confers nothing
+    /// from this commit on, its row staying as history, and this commit's
+    /// seq moves the key's permission epoch. The store refuses a grant it
+    /// does not hold on that key, and one already revoked (ADR-0097 d10,
+    /// the operator's decision of 2026-11-27).
+    GrantRevoked {
+        key_id: Uuid,
+        grant_id: Uuid,
+    },
+    /// `key.suspended`: the live key authenticates nothing from this
+    /// commit on, `/v2/whoami` and `POST /v2/keys/self/link` aside for an
+    /// `unlinked` one. The store refuses a key it does not hold, a revoked
+    /// one, and one suspended already (ADR-0097 d8, d21).
+    KeySuspended {
+        key_id: Uuid,
+        suspension: crate::types::KeySuspension,
+    },
+    /// `key.suspension_lifted`: the suspended key authenticates again. The
+    /// store refuses a key that is not suspended (ADR-0097 d8, d22).
+    KeySuspensionLifted {
+        key_id: Uuid,
+    },
     /// `key.denied`: one global per-key denial row on `key_id`, journalled
     /// by `created_by`, its epoch this commit's seq. The store refuses a
     /// denial on a key or node it does not hold (postgres-schema.md
@@ -348,6 +370,15 @@ pub enum MetadataFold {
     ConnectCodeIssued {
         code: ConnectCode,
         voids: Option<Uuid>,
+    },
+    /// `connection.code_voided`: the unredeemed code `code_id` of `key_id`
+    /// redeems nothing from this commit on, its `voided_seq` this seq. The
+    /// store refuses a code it does not hold on that key, a redeemed one,
+    /// and one already voided (ADR-0097 d10, the operator's decision of
+    /// 2026-11-27).
+    ConnectCodeVoided {
+        key_id: Uuid,
+        code_id: Uuid,
     },
     /// `connection.opened`: the `authorized` connection opens, its
     /// `opened_seq` this commit's seq and its `auth_code_redeemed_at` this

@@ -262,6 +262,10 @@ async fn full_ceremony_through_the_cli() {
             "claim",
             "root-admin",
             "--token-stdin",
+            "--person",
+            "founder",
+            "--email",
+            "founder@example.com",
             "--tenant-name",
             "cli-tenant",
             "--principal",
@@ -297,7 +301,16 @@ async fn full_ceremony_through_the_cli() {
         &server,
         &creds,
         None,
-        &["bootstrap", "claim", "second-admin", "--token-stdin"],
+        &[
+            "bootstrap",
+            "claim",
+            "second-admin",
+            "--token-stdin",
+            "--person",
+            "founder",
+            "--email",
+            "founder@example.com",
+        ],
         ENROLLMENT,
     );
     assert_eq!(code, 1, "consumed token is a typed refusal: {log}");
@@ -551,6 +564,10 @@ impl Lab {
                 "claim",
                 "root-admin",
                 "--token-stdin",
+                "--person",
+                "founder",
+                "--email",
+                "founder@example.com",
                 "--principal",
                 "platform/admin",
             ],
@@ -4933,6 +4950,10 @@ async fn doctor_warns_when_a_user_key_does_not_read_universe() {
             "claim",
             "root-admin",
             "--token-stdin",
+            "--person",
+            "founder",
+            "--email",
+            "founder@example.com",
             "--tenant-name",
             "user-tenant",
             "--principal",
@@ -5344,7 +5365,15 @@ async fn bootstrap_claim_reads_the_secret_from_stdin_and_takes_no_token_flag() {
     let (server, seen, task) = canned_stub().await;
     let (dir, _) = stub_paths("token-stdin");
     let creds = dir.join("credentials");
-    let claim = ["bootstrap", "claim", "root-admin"];
+    let claim = [
+        "bootstrap",
+        "claim",
+        "root-admin",
+        "--person",
+        "founder",
+        "--email",
+        "founder@example.com",
+    ];
 
     // --token is gone with no alias: argv never carries the secret.
     let mut args = claim.to_vec();
@@ -5398,7 +5427,15 @@ async fn a_claim_without_token_stdin_is_refused_whether_or_not_its_stdin_is_read
         &server,
         &creds,
         None,
-        &["bootstrap", "claim", "root-admin"],
+        &[
+            "bootstrap",
+            "claim",
+            "root-admin",
+            "--person",
+            "founder",
+            "--email",
+            "founder@example.com",
+        ],
         &unread,
     );
     assert_eq!(code, 2, "{log}");

@@ -234,6 +234,12 @@ struct QuickstartArgs {
     /// Port on 127.0.0.1 for the lead.
     #[arg(long, default_value_t = 8080)]
     port: u16,
+    /// The person the quickstart's admin key belongs to, by user name.
+    #[arg(long)]
+    person: String,
+    /// That person's sign-in email for the console.
+    #[arg(long)]
+    email: String,
 }
 
 #[derive(Subcommand)]
@@ -353,16 +359,16 @@ enum BootstrapCommand {
         /// Principal for the first admin key.
         #[arg(long)]
         principal: Option<String>,
-        /// The person the first admin key acts for: the claim creates that
-        /// person's user root and links the key to it, so the key may take
-        /// an admin fix. Requires --email.
-        #[arg(long, requires = "email")]
-        person: Option<String>,
+        /// The person the first admin key belongs to: the claim creates that
+        /// person's user root and links the key to it. Required, since every
+        /// admin key belongs to a person.
+        #[arg(long)]
+        person: String,
         /// The person's sign-in email, recorded as accepted for the console:
         /// the one way the person --person names gets a first sign-in.
-        /// Requires --person.
-        #[arg(long, requires = "person")]
-        email: Option<String>,
+        /// Required.
+        #[arg(long)]
+        email: String,
     },
 }
 
@@ -497,6 +503,12 @@ struct KeysIssueArgs {
     /// workspace names resolve; the first key creates that root.
     #[arg(long)]
     user: Option<String>,
+    /// The person an admin key belongs to, by user name; required with
+    /// --role admin and refused on any other role. It implies --used-by
+    /// person, and the key authenticates nothing until that person accepts
+    /// its link on the console's Keys page.
+    #[arg(long)]
+    person: Option<String>,
     /// Principal the key acts as.
     #[arg(long)]
     principal: Option<String>,
@@ -1741,12 +1753,8 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             if let Some(p) = principal {
                 body["admin_principal"] = json!(p);
             }
-            if let Some(p) = person {
-                body["person"] = json!(p);
-            }
-            if let Some(e) = email {
-                body["email"] = json!(e);
-            }
+            body["person"] = json!(person);
+            body["email"] = json!(email);
             let (_, response) = client.post(
                 "/v2/bootstrap/claim",
                 &body,
@@ -1821,6 +1829,10 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             }
             if let Some(user) = &args.user {
                 body["user"] = json!(user);
+            }
+            if let Some(person) = &args.person {
+                body["person"] = json!(person);
+                body["used_by"] = json!("person");
             }
             if let Some(p) = &args.principal {
                 body["principal"] = json!(p);
@@ -5614,6 +5626,10 @@ fn run_quickstart(args: &QuickstartArgs) -> Result<ExitCode, CliError> {
             "quickstart",
             "--principal",
             "platform/admin",
+            "--person",
+            &args.person,
+            "--email",
+            &args.email,
         ],
         Some(token),
     )?;

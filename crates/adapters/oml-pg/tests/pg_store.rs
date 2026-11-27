@@ -3073,15 +3073,18 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // and requests_per_minute, null for every key it finds
             // (ADR-0079); 0050 adds linked_user_id and 0064
             // link_pending_user_id, null for every key they find (ADR-0085
-            // d16).
+            // d16); 0070 pending_act_id and 0073 the suspension, null for
+            // every key they find (ADR-0097 d8, d21, d23).
             (true, "api_keys") => {
                 "to_jsonb(t) - 'name' - 'crew_id' - 'credential' - 'user_root_id' \
                  - 'session_for' - 'guardrail_scope' - 'profile' - 'expires_at' \
-                 - 'requests_per_minute' - 'linked_user_id' - 'link_pending_user_id' - 'pending_act_id'"
+                 - 'requests_per_minute' - 'linked_user_id' - 'link_pending_user_id' - 'pending_act_id' \
+                 - 'suspended_cause' - 'suspended_act_id' - 'suspended_at'"
             }
             // 0014 adds covers, subtree for every grant it finds (ADR-0044
             // d12).
-            (true, "grants") => "to_jsonb(t) - 'covers'",
+            // 0073 revoked_epoch, null for every grant it finds (ADR-0097 d10).
+            (true, "grants") => "to_jsonb(t) - 'covers' - 'revoked_epoch'",
             // 0016 adds a guardrail's severity and rule, null on every other
             // kind (proposed ADR-0037 d10); 0020 adds the stored search
             // lexemes, generated from the claim (ADR-0049 d12); 0025 adds
@@ -6470,10 +6473,7 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(
-        applied, 70,
-        "every migration through 0069_key_previous_hashes"
-    );
+    assert_eq!(applied, 73, "every migration through 0073_admin_act_undo");
     drop(conn);
     drop_dbs(&created).await;
 }
@@ -6810,6 +6810,7 @@ async fn reviewer_pg(
             }],
             expiry: None,
             requests_per_minute: None,
+            person: None,
         },
     )
     .await
@@ -7932,10 +7933,7 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(
-        applied, 70,
-        "every migration through 0069_key_previous_hashes"
-    );
+    assert_eq!(applied, 73, "every migration through 0073_admin_act_undo");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -8939,10 +8937,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(
-        applied, 70,
-        "every migration through 0069_key_previous_hashes"
-    );
+    assert_eq!(applied, 73, "every migration through 0073_admin_act_undo");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -12138,6 +12133,7 @@ async fn writer_pg(app: &PgApp, admin: &str, node: Uuid) -> String {
             guardrail_scope: None,
             expiry: None,
             requests_per_minute: None,
+            person: None,
         },
     )
     .await
@@ -12397,6 +12393,7 @@ async fn migration_0052_releases_a_lane_claim_a_crew_key_took_before_the_lane() 
                 }],
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
             },
         )
         .await
@@ -13178,6 +13175,7 @@ async fn person_reviewer_pg(app: &PgApp, admin: &str, key_name: &str, node: Uuid
             }],
             expiry: None,
             requests_per_minute: None,
+            person: None,
         },
     )
     .await
@@ -13642,10 +13640,7 @@ async fn migrations_0059_and_0060_apply_over_0058_with_a_document_row_and_count_
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(
-        applied, 70,
-        "every migration through 0069_key_previous_hashes"
-    );
+    assert_eq!(applied, 73, "every migration through 0073_admin_act_undo");
     let (partitions, attached, valid, carries, validated): (i64, i64, bool, bool, bool) =
         sqlx::query_as(
             "SELECT (SELECT count(*) FROM pg_inherits WHERE inhparent = 'search_postings'::regclass), \

@@ -127,6 +127,7 @@ async fn key<S: JournalStore + Clone>(rig: &Rig<S>, key_name: &str, role: Role) 
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
             },
         )
         .await
@@ -355,6 +356,7 @@ async fn only_a_contributor_or_a_submitter_key_opens_an_upload<S: JournalStore +
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
             },
         )
         .await
@@ -700,6 +702,7 @@ async fn without_an_object_store_no_upload_opens<S: JournalStore + Clone>(store:
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
             },
         )
         .await

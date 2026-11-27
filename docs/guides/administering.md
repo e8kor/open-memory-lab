@@ -21,7 +21,7 @@ An unclaimed server that only the administrator can reach and the `oml` CLI ([in
        --person dana --email dana@example.com
    ```
 
-   `--person` and `--email` are optional and go together: the claim makes the administrator's own user root, links the admin key to it, which an admin fix requires, and records the address as their admin sign-in for the console. An address an admin adds for that person later waits until the person accepts it.
+   `--person` and `--email` are required: every admin key belongs to a person (ADR-0097 d21). The claim makes the administrator's own user root, links the admin key to it, and records the address as their admin sign-in for the console. A claim without them is refused and leaves no tenant. An address an admin adds for that person later waits until the person accepts it.
 
 3. **Check it** with `oml doctor`, which exits `1` on any failure.
 4. **Create a crew and a workspace for it.**

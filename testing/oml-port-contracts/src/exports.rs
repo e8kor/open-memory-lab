@@ -87,6 +87,7 @@ async fn rig<S: WebStore + ConnectionStore + Clone>(store: S) -> Rig<S> {
                     guardrail_scope: None,
                     expiry: None,
                     requests_per_minute: None,
+                    person: None,
                 },
             )
             .await

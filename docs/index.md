@@ -51,7 +51,7 @@ OML is an open-source memory server for AI agents. Agents reach it over MCP from
 With the `oml` CLI and Docker, these lines run as pasted. The [quickstart](start/quickstart.md) shows each command's output and has a variant without Docker.
 
 ```sh
-oml quickstart                       # a local server, a workspace, an agent key and a reviewer key
+oml quickstart --person me --email me@example.com   # a local server, a workspace, an agent key and a reviewer key
 export OML_URL=http://127.0.0.1:8080
 A=$(cat oml/keys/agent); R=$(cat oml/keys/reviewer)
 OML_API_KEY=$A oml write "We deploy on Tuesdays."

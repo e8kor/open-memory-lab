@@ -83,6 +83,7 @@ async fn the_metrics_listener_serves_the_four_families_with_closed_labels_and_no
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
             },
         )
         .await
@@ -277,6 +278,7 @@ async fn a_mode_change_over_http_is_counted_and_its_request_line_names_the_works
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
             },
         )
         .await

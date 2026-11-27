@@ -310,6 +310,10 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         AppError::AdminAct(refusal) => ApiError::validation(refusal.message())
             .with_details(json!({ "field": refusal.field(), "reason": refusal.reason() })),
         AppError::KeyPendingConfirmation => ApiError::auth_invalid("pending_confirmation"),
+        AppError::KeySuspended => ApiError::auth_invalid("suspended"),
+        AppError::KeyLinkPending => ApiError::auth_invalid("link_pending"),
+        AppError::KeyPerson(reason) => ApiError::validation(err.to_string())
+            .with_details(json!({ "field": "/person", "reason": reason })),
         AppError::AdminActReasonRequired => ApiError::validation(
             "this admin act waits on a second admin person, and requires a reason",
         )

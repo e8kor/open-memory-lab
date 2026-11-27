@@ -1301,6 +1301,7 @@ async fn tenant_reviewer_in(rig: &Rig, name: &str, user: &str) -> oml_app::types
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
             },
         )
         .await
@@ -5958,6 +5959,7 @@ async fn alice_key(
                 guardrail_scope: None,
                 expiry: expiry.map(|at| oml_app::domain::EventTime::parse(at).expect("an instant")),
                 requests_per_minute,
+                person: None,
             },
         )
         .await
@@ -6945,6 +6947,7 @@ async fn other_tenant_writes(rig: &Rig, body: &str) {
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
             },
         )
         .await
@@ -8419,6 +8422,7 @@ async fn held_in_a_nested_shared_workspace(rig: &Rig) -> (String, String, uuid::
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
             },
         )
         .await
@@ -8797,6 +8801,7 @@ async fn team_key(
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
             },
         )
         .await
@@ -12343,6 +12348,7 @@ async fn the_admin_console_rotates_a_tenant_key_and_offers_no_rotate_on_a_person
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
             },
         )
         .await

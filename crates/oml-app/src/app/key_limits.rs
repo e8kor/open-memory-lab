@@ -36,11 +36,34 @@ where
     /// [`AppError::KeyExpired`], which only a caller that presented the
     /// key's own credential is answered (ADR-0079 d2).
     pub fn require_unexpired(&self, key: &KeyRecord) -> Result<(), AppError> {
+        self.check_key(key, false)
+    }
+
+    /// [`Self::require_unexpired`], admitting with `unlinked` an admin key
+    /// suspended as unlinked at the upgrade, or waiting on its person's
+    /// acceptance of its link (ADR-0097 d21, d22).
+    pub(crate) fn check_key(&self, key: &KeyRecord, unlinked: bool) -> Result<(), AppError> {
         // A key whose widening act waits on a second admin person
         // authenticates nothing on any path, read from the row the lookup
         // already read (ADR-0097 d23).
         if key.pending_act.is_some() {
             return Err(AppError::KeyPendingConfirmation);
+        }
+        // A suspended key authenticates nothing; one suspended as unlinked
+        // at the upgrade still reaches its one route (d8, d21).
+        if let Some(suspension) = &key.suspended
+            && !(unlinked && suspension.cause == crate::types::SuspensionCause::Unlinked)
+        {
+            return Err(AppError::KeySuspended);
+        }
+        // An admin key authenticates nothing until its person accepts its
+        // link (d21, d7).
+        if key.role == Role::Admin
+            && key.credential == crate::types::Credential::Bearer
+            && key.link_pending.is_some()
+            && !unlinked
+        {
+            return Err(AppError::KeyLinkPending);
         }
         match &key.expiry {
             Some(expiry) if key.expired_at(&self.clock.now()) => Err(AppError::KeyExpired {
@@ -219,10 +242,17 @@ where
                     "requests_per_minute": target.requests_per_minute,
                 }),
                 reason,
+                // The limits the act found, which a decline of a raise
+                // taken at once under `sole_admin` sets back (ADR-0097 d10,
+                // the operator's decision of 2026-11-27).
                 json!({
                     "key_id": key_id.to_string(),
                     "expiry": target.expiry.as_ref().map(EventTime::as_str),
                     "requests_per_minute": target.requests_per_minute,
+                    "before": {
+                        "expiry": before.expiry.as_ref().map(EventTime::as_str),
+                        "requests_per_minute": before.requests_per_minute,
+                    },
                 }),
                 prev.as_ref(),
             )

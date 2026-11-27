@@ -2151,6 +2151,12 @@ where
             profile: parse_profile(req.profile.as_deref())?,
             expiry,
             requests_per_minute: req.requests_per_minute,
+            // The person an admin key belongs to (ADR-0097 d21).
+            person: req
+                .person
+                .as_deref()
+                .map(|p| creation_name("/person", p))
+                .transpose()?,
         };
         // A resubmission under the same key and body replays the answer
         // without the value or the connect code, which are shown once, and
@@ -3290,8 +3296,15 @@ where
             // ceremony records the email as accepted, the one way a person
             // the claim names gets a first sign-in (ADR-0045 d2's note, the
             // operator's decision of 2026-11-20).
+            // Every admin key belongs to a person, the first one included:
+            // a claim names both (ADR-0097 d21).
             let person = match (req.person.as_deref(), req.email.as_deref()) {
-                (None, None) => None,
+                (None, None) => {
+                    return Err(ApiError::validation(
+                        "/person is required: the person the tenant's first admin key belongs to",
+                    )
+                    .with_details(json!({ "field": "/person" })));
+                }
                 (Some(p), Some(e)) => Some(BootstrapPerson {
                     user: creation_name("/person", p)?,
                     email: oml_app::domain::web::Email::parse(e).map_err(|err| {
@@ -4361,6 +4374,11 @@ struct KeyIssueBody {
     /// naming a user creates its root (ADR-0044 d2).
     #[serde(default)]
     user: Option<String>,
+    /// The person an admin key belongs to, by the user's name; required on
+    /// an admin key, with `used_by: person`, and refused on every other role
+    /// (ADR-0097 d21).
+    #[serde(default)]
+    person: Option<String>,
     /// Parsed only to be refused while the first-admin-key path is unbuilt
     /// (ADR-0039 d9).
     tenant: Option<String>,

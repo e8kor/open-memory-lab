@@ -111,6 +111,7 @@ async fn rig<S: JournalStore + Clone>(store: S) -> Rig<S> {
         guardrail_scope: None,
         expiry: None,
         requests_per_minute: None,
+        person: None,
     };
     let writer = app
         .issue_key(admin.as_str(), &issue("ada", UsedBy::Person))
@@ -552,6 +553,7 @@ async fn the_upload_binds_once_and_its_key_is_nulled_at_the_end<S: JournalStore 
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
             },
         )
         .await

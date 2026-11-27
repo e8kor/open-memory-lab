@@ -119,15 +119,47 @@ impl Rig {
             .expect("session keys");
     }
 
+    /// A bearer admin key belonging to `user`, an admin person, its link
+    /// accepted from `user`'s own session (ADR-0097 d21).
+    async fn linked_admin_key(&self, user: &str) -> IssuedKey {
+        let issued = self
+            .app
+            .issue_key(
+                self.admin(),
+                &IssueKeyRequest {
+                    role: Role::Admin,
+                    grants: Vec::new(),
+                    used_by: Some(UsedBy::Person),
+                    person: Some(name(user)),
+                    ..agent_req()
+                },
+            )
+            .await
+            .expect("an admin key");
+        let web = self.person_session(user, Capacity::Web).await;
+        self.app
+            .accept_key_link(Bearer::Session(&web), issued.key_id.into())
+            .await
+            .expect("the link is accepted");
+        issued
+    }
+
     /// `<user>-admin`, from a session opened now.
     async fn admin_session(&self, user: &str) -> Caller {
+        self.person_session(user, Capacity::Admin).await
+    }
+
+    /// The session key of `capacity` for `user`, from a session opened now.
+    async fn person_session(&self, user: &str, capacity: Capacity) -> Caller {
         let entry = self
-            .app
-            .list_web_emails(self.admin(), None, 100)
+            .store
+            .web_entry_by_email(
+                &Email::parse(&format!("{user}@example.com"))
+                    .expect("an email")
+                    .digest(),
+            )
             .await
-            .expect("entries")
-            .into_iter()
-            .find(|e| e.user.as_str() == user)
+            .expect("a read")
             .expect("the entry");
         let token = self
             .app
@@ -142,9 +174,9 @@ impl Rig {
             .expect("a read")
             .expect("a live session");
         self.app
-            .web_caller(&session, Capacity::Admin)
+            .web_caller(&session, capacity)
             .await
-            .expect("the admin session key")
+            .expect("the session key")
     }
 }
 
@@ -176,6 +208,7 @@ fn agent_req() -> IssueKeyRequest {
         guardrail_scope: None,
         expiry: None,
         requests_per_minute: None,
+        person: None,
     }
 }
 
@@ -444,23 +477,13 @@ async fn a_tenant_that_had_two_admin_persons_never_returns_to_sole_admin_on_a_re
 
 /// One revoke ends one key on every path and nothing it issued: the key
 /// authenticates nothing afterwards, a key it issued keeps working, and an
-/// admin's revocation rides a narrowing `revoke_key` act.
+/// admin's revocation of another admin person's key rides a
+/// `revoke_admin_key` act against an admin.
 #[tokio::test]
 async fn one_revoke_verb_ends_any_key_and_cascades_to_none() {
     let r = rig().await;
-    let second_admin = r
-        .app
-        .issue_key(
-            r.admin(),
-            &IssueKeyRequest {
-                role: Role::Admin,
-                grants: Vec::new(),
-                used_by: Some(UsedBy::Person),
-                ..agent_req()
-            },
-        )
-        .await
-        .expect("an admin key");
+    r.admin_person("carol").await;
+    let second_admin = r.linked_admin_key("carol").await;
     let issued = r
         .app
         .issue_key(second_admin.value.as_str(), &agent_req())
@@ -488,8 +511,9 @@ async fn one_revoke_verb_ends_any_key_and_cascades_to_none() {
     );
     let act = &events[events.len() - 2].envelope;
     assert_eq!(act.event_type, event_types::ADMIN_ACT);
-    assert_eq!(act.payload["act"], "revoke_key");
-    assert_eq!(act.payload["class"], "narrowing");
+    // Another admin person's key: an act against an admin, final (d8).
+    assert_eq!(act.payload["act"], "revoke_admin_key");
+    assert_eq!(act.payload["class"], "against_admin");
 
     let err = r
         .app
@@ -676,22 +700,10 @@ async fn removing_the_last_live_admin_person_is_refused_on_every_surface() {
 async fn an_admin_key_links_to_its_holders_person_only_once_that_person_accepts() {
     let r = rig().await;
     r.admin_person("alice").await;
-    let cli = r
-        .app
-        .issue_key(
-            r.admin(),
-            &IssueKeyRequest {
-                role: Role::Admin,
-                grants: Vec::new(),
-                used_by: Some(UsedBy::Person),
-                ..agent_req()
-            },
-        )
-        .await
-        .expect("the CLI's admin key");
+    // The bootstrap key stands unlinked, as a key from before v0.8.6 does.
     let linked = r
         .app
-        .link_self(cli.value.as_str(), &name("alice"))
+        .link_self(r.admin(), &name("alice"))
         .await
         .expect("a pending self-link");
     assert!(linked.link_pending.is_some());
@@ -699,42 +711,103 @@ async fn an_admin_key_links_to_its_holders_person_only_once_that_person_accepts(
     let last = r.journal().await.pop().expect("an event").envelope;
     assert_eq!(last.event_type, event_types::KEY_LINKED_PERSON);
     assert_eq!(last.payload["actor"], "self");
-    let entry = r
-        .app
-        .list_web_emails(r.admin(), None, 100)
-        .await
-        .expect("entries")
-        .into_iter()
-        .find(|e| e.user.as_str() == "alice")
-        .expect("alice");
-    let token = r
-        .app
-        .web_session_open(&entry, 3600, None)
-        .await
-        .expect("a session")
-        .token;
-    let session = r
-        .app
-        .web_session(&token)
-        .await
-        .expect("read")
-        .expect("live");
-    let web = r
-        .app
-        .web_caller(&session, Capacity::Web)
-        .await
-        .expect("alice-web");
+    let err = r.app.admin_acts(r.admin(), None).await.unwrap_err();
+    assert!(matches!(err, AppError::KeyLinkPending), "{err:?}");
     r.app
-        .accept_key_link(Bearer::Session(&web), cli.key_id.into())
+        .whoami(r.admin())
+        .await
+        .expect("whoami still answers a key waiting on its link");
+    let web = r.person_session("alice", Capacity::Web).await;
+    r.app
+        .accept_key_link(Bearer::Session(&web), r.boot.admin_key.key_id.into())
         .await
         .expect("alice accepts");
     let key = r
         .store
-        .key(r.boot.tenant_id, cli.key_id)
+        .key(r.boot.tenant_id, r.boot.admin_key.key_id)
         .await
         .expect("read")
         .expect("held");
     assert!(key.linked_user.is_some());
+    r.app
+        .admin_acts(r.admin(), None)
+        .await
+        .expect("the linked key authenticates");
+}
+
+/// An admin key is issued only with a person, `used_by: person`; it comes
+/// with a link to that person in the issuance's chain and authenticates
+/// nothing until the person accepts it. A `person` on any other role is
+/// refused by name (ADR-0097 d21).
+#[tokio::test]
+async fn an_admin_key_is_refused_without_a_person() {
+    let r = rig().await;
+    r.admin_person("alice").await;
+    let admin_req = |person: Option<&str>, used_by: UsedBy| IssueKeyRequest {
+        role: Role::Admin,
+        grants: Vec::new(),
+        used_by: Some(used_by),
+        person: person.map(name),
+        ..agent_req()
+    };
+    for req in [
+        admin_req(None, UsedBy::Person),
+        admin_req(Some("alice"), UsedBy::Service),
+    ] {
+        let err = r.app.issue_key(r.admin(), &req).await.unwrap_err();
+        assert!(
+            matches!(err, AppError::KeyPerson("admin_key_requires_person")),
+            "{err:?}"
+        );
+    }
+    let err = r
+        .app
+        .issue_key(
+            r.admin(),
+            &IssueKeyRequest {
+                person: Some(name("alice")),
+                ..agent_req()
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::KeyPerson("person_admin_only")),
+        "{err:?}"
+    );
+    let before = r.journal().await.len();
+    let cli = r
+        .app
+        .issue_key(r.admin(), &admin_req(Some("alice"), UsedBy::Person))
+        .await
+        .expect("alice's admin key");
+    let added: Vec<String> = r.journal().await[before..]
+        .iter()
+        .map(|e| e.envelope.event_type.clone())
+        .collect();
+    assert_eq!(
+        added,
+        [
+            event_types::ADMIN_ACT,
+            event_types::KEY_ISSUED,
+            event_types::KEY_LINKED_PERSON
+        ]
+    );
+    let err = r
+        .app
+        .admin_acts(cli.value.as_str(), None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::KeyLinkPending), "{err:?}");
+    let web = r.person_session("alice", Capacity::Web).await;
+    r.app
+        .accept_key_link(Bearer::Session(&web), cli.key_id.into())
+        .await
+        .expect("alice accepts");
+    r.app
+        .admin_acts(cli.value.as_str(), None)
+        .await
+        .expect("the key authenticates once its person accepts");
 }
 
 // -- limits (ADR-0097 d15) and the admin flag (d5) ----------------------------
@@ -854,4 +927,163 @@ async fn a_new_admin_person_waits_on_a_second_admin_person() {
         .expect("read")
         .expect("carol's entry");
     assert!(held.admin);
+}
+
+// -- declining a sole_admin act undoes it (the operator, 2026-11-27) -------
+
+/// The admin act of `act` journalled last in the tenant.
+async fn last_act(r: &Rig, act: &str) -> oml_app::types::AdminActRecord {
+    r.store
+        .admin_acts(r.boot.tenant_id, None)
+        .await
+        .expect("acts")
+        .into_iter()
+        .rev()
+        .find(|a| a.act.as_str() == act)
+        .expect("the act")
+}
+
+/// The events journalled after `before`, by type, and the decline's act id
+/// each names.
+async fn undo_events(r: &Rig, before: usize) -> Vec<(String, String)> {
+    r.journal().await[before..]
+        .iter()
+        .map(|e| {
+            (
+                e.envelope.event_type.clone(),
+                e.envelope.payload["act_id"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            )
+        })
+        .collect()
+}
+
+/// In a `sole_admin` tenant a declined widening act is undone at once by
+/// the matching narrowing effect, each event naming the decline's act: the
+/// grant it added is revoked, the limit it raised is set back, the key it
+/// issued is revoked and the admin flag it set comes off.
+#[tokio::test]
+async fn a_declined_sole_admin_act_is_revoked_at_once() {
+    let r = rig().await;
+    // A person with no admin flag, and their web key's added reader grant.
+    let (dana, _) = r
+        .app
+        .allow_web_email(
+            r.admin(),
+            &WebEmailRequest {
+                email: Email::parse("dana@example.com").expect("an email"),
+                user: name("dana"),
+                admin: false,
+            },
+        )
+        .await
+        .expect("dana's entry");
+    r.app.web_ensure_keys(&dana).await.expect("dana's keys");
+    r.admin_person("alice").await;
+    let alice = r.admin_session("alice").await;
+    let granted = r
+        .app
+        .grant_read_capacity(&alice, &name("dana"), by_name("crew"))
+        .await
+        .expect("a sole_admin grant at once");
+    let grant_id = granted.grants_added[0].grant.grant_id;
+    let act = last_act(&r, "add_grant").await;
+    assert!(act.sole_admin);
+    let before = r.journal().await.len();
+    let declined = r
+        .app
+        .decline_admin_act(r.admin(), act.act_id, Some("not this reach"))
+        .await
+        .expect("declined");
+    assert_eq!(declined.state, AdminActState::Declined);
+    let events = undo_events(&r, before).await;
+    let decline_id = events[0].1.clone();
+    assert_eq!(events[0].0, event_types::ADMIN_ACT);
+    assert_eq!(events[2], ("grant.revoked".to_owned(), decline_id));
+    let access = r
+        .store
+        .key_access(r.boot.tenant_id, granted.key.key_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert!(
+        access.grants.iter().all(|g| g.grant.grant_id != grant_id),
+        "the revoked grant confers nothing"
+    );
+    assert_eq!(access.permission_epoch(), (before + 3) as u64);
+
+    // A raise taken at once is set back to the limits it found.
+    let issued = r
+        .app
+        .issue_key(
+            r.admin(),
+            &IssueKeyRequest {
+                requests_per_minute: Some(60),
+                ..agent_req()
+            },
+        )
+        .await
+        .expect("a key at 60 a minute");
+    let (raised, act) = r
+        .app
+        .set_key_limits_with_reason(
+            r.admin(),
+            issued.key_id.into(),
+            oml_app::types::KeyLimitsChange {
+                expiry: None,
+                requests_per_minute: Some(Some(600)),
+            },
+            None,
+        )
+        .await
+        .expect("a sole_admin raise at once");
+    assert_eq!(raised.requests_per_minute, Some(600));
+    r.app
+        .decline_admin_act(Bearer::Session(&alice), act.act_id, None)
+        .await
+        .expect("declined");
+    let held = r
+        .store
+        .key(r.boot.tenant_id, issued.key_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert_eq!(held.requests_per_minute, Some(60), "the raise is undone");
+
+    // The key a sole_admin issuance issued is revoked.
+    let issue = last_act(&r, "issue_key").await;
+    r.app
+        .decline_admin_act(Bearer::Session(&alice), issue.act_id, None)
+        .await
+        .expect("declined");
+    let err = r.app.whoami(&issued.value).await.unwrap_err();
+    assert!(matches!(err, AppError::Unauthorized), "{err:?}");
+
+    // An admin flag set at once comes off its entry.
+    r.app
+        .allow_web_email(
+            r.admin(),
+            &WebEmailRequest {
+                email: Email::parse("dana@example.com").expect("an email"),
+                user: name("dana"),
+                admin: true,
+            },
+        )
+        .await
+        .expect("a sole_admin flag at once");
+    let flag = last_act(&r, "allow_admin").await;
+    assert!(flag.sole_admin);
+    r.app
+        .decline_admin_act(Bearer::Session(&alice), flag.act_id, None)
+        .await
+        .expect("declined");
+    let entry = r
+        .store
+        .web_entry_by_email(&Email::parse("dana@example.com").expect("an email").digest())
+        .await
+        .expect("read")
+        .expect("dana's entry");
+    assert!(!entry.admin, "the flag is undone");
 }

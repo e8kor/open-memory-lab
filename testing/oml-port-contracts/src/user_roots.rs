@@ -148,6 +148,7 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
             guardrail_scope: None,
             expiry: None,
             requests_per_minute: None,
+            person: None,
         };
         let ada = app
             .issue_key(
@@ -424,6 +425,7 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
                     guardrail_scope: None,
                     expiry: None,
                     requests_per_minute: None,
+                    person: None,
                 },
             )
             .await
@@ -604,6 +606,7 @@ async fn tenant_key<S: JournalStore + Clone>(
             guardrail_scope: None,
             expiry: None,
             requests_per_minute: None,
+            person: None,
         },
     )
     .await

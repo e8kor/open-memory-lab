@@ -46,7 +46,8 @@ The result is a server, a workspace `crew`, an agent key, a second agent key cal
     TOKEN=$(grep -o 'enr_[0-9a-f]\{48\}' oml/server.log | tail -1)
     export OML_CLI_CREDENTIALS=$PWD/oml/credentials
     printf '%s\n' "$TOKEN" | oml --url http://127.0.0.1:8080 bootstrap claim admin \
-      --token-stdin --tenant-name demo --principal platform/admin
+      --token-stdin --tenant-name demo --principal platform/admin \
+      --person founder --email founder@example.com
     oml workspaces create universe crew
     oml keys issue-agent agent --principal crew/agent --workspace crew --out oml/keys/agent
     oml keys issue-agent colleague --principal crew/colleague --workspace crew --out oml/keys/colleague
@@ -73,7 +74,7 @@ The result is a server, a workspace `crew`, an agent key, a second agent key cal
     Docker with compose v2 is required. One command starts the database, the server and the web console, claims the server and issues the agent and reviewer keys.
 
     ```sh
-    oml quickstart
+    oml quickstart --person founder --email founder@example.com
     OML_CLI_CREDENTIALS=$PWD/oml/credentials \
       oml keys issue-agent colleague --principal crew/colleague --workspace crew --out oml/keys/colleague
     ```

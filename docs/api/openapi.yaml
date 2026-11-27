@@ -3762,8 +3762,8 @@ paths:
     post:
       tags: [admin]
       operationId: declineAdminAct
-      summary: Decline a pending admin act, which then never takes effect, or revoke a key a sole_admin tenant issued at once.
-      description: 'Requires: admin key role, the act''s own actor included. Declining is narrowing (ADR-0097 d3), journalled as an admin.act decline_act of its own before the declined act''s admin.act with state declined; a key the act issued is revoked in the same commit (key.revoked). Declined is final (ADR-0097 d23). Refused with request.validation, details.field act and details.reason: not_pending (already settled), expired, or not_declinable (an act that took effect at once outside sole_admin, or a sole_admin act other than a key''s issuance). reason is optional and scanned. Since v0.8.6.'
+      summary: Decline a pending admin act, which then never takes effect, or undo a widening act a sole_admin tenant took at once.
+      description: 'Requires: admin key role, the act''s own actor included. Declining is narrowing (ADR-0097 d3), journalled as an admin.act decline_act of its own before the declined act''s admin.act with state declined. In the same commit the decline undoes what the act applied, each event naming the decline''s act_id: a key the act issued is revoked (key.revoked, a pending issuance''s key included), grants it added are revoked (grant.revoked), a connect code it minted is voided (connection.code_voided) or the connection opened from it revoked (connection.revoked), a raised limit is set back to the limits the act found (key.limits_set), and an admin flag is taken off its entry (web.email_changed) under the last-admin guard (ADR-0097 d10, the operator''s decision of 2026-11-27). Declined is final (ADR-0097 d23). Refused with request.validation, details.field act and details.reason: not_pending (already settled, or took effect and is not widening under sole_admin) or expired. reason is optional and scanned. Since v0.8.6.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }

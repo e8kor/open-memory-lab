@@ -52,6 +52,16 @@ pub mod event_types {
     /// A key's revocation; journalled for a key whose issuance failed after
     /// its `key.issued` (ADR-0025 d2, reason `issuance_incomplete`).
     pub const KEY_REVOKED: &str = "key.revoked";
+    /// A grant an admin act added, revoked by the decline of that act
+    /// (ADR-0097 d10, the operator's decision of 2026-11-27).
+    pub const GRANT_REVOKED: &str = "grant.revoked";
+    /// A key authenticates nothing for now: an act against its admin
+    /// person is open, or it stood unlinked at the upgrade (ADR-0097 d8,
+    /// d21).
+    pub const KEY_SUSPENDED: &str = "key.suspended";
+    /// A suspension ends: the act against an admin was settled reversed, or
+    /// the unlinked key's link was accepted (ADR-0097 d8, d21, d22).
+    pub const KEY_SUSPENSION_LIFTED: &str = "key.suspension_lifted";
     /// An admin key set another key's expiry and request rate: both values
     /// as they stand after the change (ADR-0079 d5).
     pub const KEY_LIMITS_SET: &str = "key.limits_set";
@@ -122,6 +132,9 @@ pub mod event_types {
     pub const CONNECTION_CODE_ISSUED: &str = "connection.code_issued";
     /// A connection opens at the token exchange and replaces the key's
     /// earlier open connection in the same commit (ADR-0031 d7, d12).
+    /// A connect code voided by the decline of the admin act that minted
+    /// it (ADR-0097 d10, the operator's decision of 2026-11-27).
+    pub const CONNECTION_CODE_VOIDED: &str = "connection.code_voided";
     pub const CONNECTION_OPENED: &str = "connection.opened";
     /// A connection ends, by an admin or a reuse; the commit voids the
     /// key's codes from which no connection opened (ADR-0031 d8, d12).

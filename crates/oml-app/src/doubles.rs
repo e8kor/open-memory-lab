@@ -1174,6 +1174,7 @@ fn fold_poc_event(
                     linked_user: None,
                     link_pending: None,
                     pending_act: None,
+                    suspended: None,
                 },
             );
         }
@@ -2293,6 +2294,58 @@ fn apply_fold(
             };
             access.denials.remove(at);
             access.lift_epochs.push(seq);
+        }
+        // The revoked grant confers nothing and moves the epoch; one the
+        // key does not hold, an already revoked one included, is refused.
+        MetadataFold::GrantRevoked { key_id, grant_id } => {
+            let held = state.access.get_mut(&key_id).and_then(|access| {
+                let at = access
+                    .grants
+                    .iter()
+                    .position(|g| g.grant.grant_id == grant_id)?;
+                Some((access, at))
+            });
+            let Some((access, at)) = held else {
+                return Err(StoreError::Backend(format!(
+                    "grant {grant_id} is not a grant in force on key {key_id} of this tenant"
+                )));
+            };
+            access.grants.remove(at);
+            access.lift_epochs.push(seq);
+        }
+        MetadataFold::KeySuspended { key_id, suspension } => {
+            let Some(key) = state
+                .keys
+                .get_mut(&key_id)
+                .filter(|k| k.revoked_at.is_none() && k.suspended.is_none())
+            else {
+                return Err(StoreError::Backend(format!(
+                    "key {key_id} is not a live key of this tenant that is not suspended"
+                )));
+            };
+            key.suspended = Some(suspension);
+        }
+        MetadataFold::KeySuspensionLifted { key_id } => {
+            let Some(key) = state
+                .keys
+                .get_mut(&key_id)
+                .filter(|k| k.suspended.is_some())
+            else {
+                return Err(StoreError::Backend(format!(
+                    "key {key_id} is not a suspended key of this tenant"
+                )));
+            };
+            key.suspended = None;
+        }
+        MetadataFold::ConnectCodeVoided { key_id, code_id } => {
+            let Some(code) = state.connect_codes.get_mut(&code_id).filter(|c| {
+                c.key_id == key_id && c.redeemed_at.is_none() && c.voided_seq.is_none()
+            }) else {
+                return Err(StoreError::Backend(format!(
+                    "code {code_id} is not an unredeemed live code of key {key_id}"
+                )));
+            };
+            code.voided_seq = Some(seq);
         }
         // The row stays as history, stamped with the event's `at`, as the
         // store's guarded update stamps it; a key the tenant does not hold,

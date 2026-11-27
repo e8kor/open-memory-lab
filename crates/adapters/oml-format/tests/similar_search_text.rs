@@ -85,6 +85,7 @@ async fn writer(app: &TestApp) -> String {
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
             },
         )
         .await
@@ -147,6 +148,7 @@ async fn the_verdict_event_covers_the_format_the_version_was_signed_with() {
         guardrail_scope: None,
         expiry: None,
         requests_per_minute: None,
+        person: None,
     };
     let admin = &boot.admin_key.value;
     let w = app

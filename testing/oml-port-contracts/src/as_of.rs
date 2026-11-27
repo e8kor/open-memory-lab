@@ -436,6 +436,7 @@ async fn issue<S: JournalStore + Clone>(
             guardrail_scope: None,
             expiry: None,
             requests_per_minute: None,
+            person: None,
         },
     )
     .await
@@ -1375,6 +1376,7 @@ async fn user_key<S: JournalStore + Clone>(
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
             },
         )
         .await

@@ -140,6 +140,7 @@ impl<S: JournalStore + Clone> FedWorld<S> {
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
             };
             let app = &app;
             let admin = admin.clone();
@@ -273,6 +274,7 @@ impl<S: JournalStore + Clone> FedWorld<S> {
                     guardrail_scope: None,
                     expiry: None,
                     requests_per_minute: None,
+                    person: None,
                 },
             )
             .await
@@ -1996,6 +1998,7 @@ pub async fn the_policies_are_never_an_agents_act<S: JournalStore + Clone>(store
                         guardrail_scope: None,
                         expiry: None,
                         requests_per_minute: None,
+                        person: None,
                     },
                 )
                 .await
