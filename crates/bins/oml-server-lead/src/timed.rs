@@ -964,6 +964,40 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         )
     }
 
+    fn web_person_reviewers(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<PersonReviewer>, StoreError>> + Send {
+        timed(
+            "web_person_reviewers",
+            self.inner.web_person_reviewers(tenant_id),
+        )
+    }
+
+    fn notices(
+        &self,
+        tenant_id: Uuid,
+        recipient: &oml_app::domain::name::Name,
+        dismissed: bool,
+    ) -> impl Future<Output = Result<Vec<oml_app::types::NoticeRecord>, StoreError>> + Send {
+        timed(
+            "notices",
+            self.inner.notices(tenant_id, recipient, dismissed),
+        )
+    }
+
+    fn admin_read_counts(
+        &self,
+        tenant_id: Uuid,
+        person: &oml_app::domain::name::Name,
+    ) -> impl Future<Output = Result<Vec<oml_app::types::AdminReadCount>, StoreError>> + Send
+    {
+        timed(
+            "admin_read_counts",
+            self.inner.admin_read_counts(tenant_id, person),
+        )
+    }
+
     fn investigation(
         &self,
         tenant_id: Uuid,
@@ -1664,16 +1698,6 @@ impl<J: WebStore> WebStore for Timed<J> {
         tenant_id: Uuid,
     ) -> impl Future<Output = Result<Vec<QueueDepth>, StoreError>> + Send {
         timed("web_queue", self.inner.web_queue(tenant_id))
-    }
-
-    fn web_person_reviewers(
-        &self,
-        tenant_id: Uuid,
-    ) -> impl Future<Output = Result<Vec<PersonReviewer>, StoreError>> + Send {
-        timed(
-            "web_person_reviewers",
-            self.inner.web_person_reviewers(tenant_id),
-        )
     }
 
     fn web_admin_search(
