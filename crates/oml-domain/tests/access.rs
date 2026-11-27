@@ -334,6 +334,7 @@ fn an_admin_minting_an_operator_key_is_issuer_ceiling_naming_the_issuable_roles(
                 Role::Submitter,
                 Role::Reviewer,
                 Role::Admin,
+                Role::Maintenance,
             ],
             grant_index: None,
         })
@@ -367,6 +368,7 @@ fn the_key_role_ceiling_answers_before_grant_admissibility() {
                 Role::Submitter,
                 Role::Reviewer,
                 Role::Admin,
+                Role::Maintenance,
             ],
             grant_index: None,
         })

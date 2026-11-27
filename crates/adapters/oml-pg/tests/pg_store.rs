@@ -3077,12 +3077,13 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // (ADR-0079); 0050 adds linked_user_id and 0064
             // link_pending_user_id, null for every key they find (ADR-0085
             // d16); 0070 pending_act_id and 0073 the suspension, null for
-            // every key they find (ADR-0097 d8, d21, d23).
+            // every key they find (ADR-0097 d8, d21, d23); 0075
+            // issuer_person, null for every key it finds (#508 N1).
             (true, "api_keys") => {
                 "to_jsonb(t) - 'name' - 'crew_id' - 'credential' - 'user_root_id' \
                  - 'session_for' - 'guardrail_scope' - 'profile' - 'expires_at' \
                  - 'requests_per_minute' - 'linked_user_id' - 'link_pending_user_id' - 'pending_act_id' \
-                 - 'suspended_cause' - 'suspended_act_id' - 'suspended_at'"
+                 - 'suspended_cause' - 'suspended_act_id' - 'suspended_at' - 'issuer_person'"
             }
             // 0014 adds covers, subtree for every grant it finds (ADR-0044
             // d12); 0071 adds may_create, false for every grant it finds

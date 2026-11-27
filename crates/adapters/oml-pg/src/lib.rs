@@ -5539,8 +5539,8 @@ async fn apply_fold(
             let insert = if limited {
                 "INSERT INTO api_keys (id, tenant_id, hash, credential, role, principal, \
                  used_by, default_workspace_id, issued_by, issued_seq, name, crew_id, \
-                 user_root_id, session_for, guardrail_scope, profile, expires_at, \
-                 issuer_person, requests_per_minute) \
+                 user_root_id, session_for, guardrail_scope, profile, issuer_person, \
+                 expires_at, requests_per_minute) \
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, \
                  $17, ($18)::timestamptz, $19)"
             } else {

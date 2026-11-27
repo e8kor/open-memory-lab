@@ -3466,7 +3466,7 @@ async fn access_refusals_carry_their_recovery_details() {
     assert_envelope(&body, "access.issuer_ceiling");
     assert_eq!(
         body["error"]["details"],
-        json!({ "role": "operator", "admissible": ["reader", "contributor", "submitter", "reviewer", "admin"] })
+        json!({ "role": "operator", "admissible": ["reader", "contributor", "submitter", "reviewer", "admin", "maintenance"] })
     );
     // A deny outside its grant, and a default no grant covers.
     for (idem, body) in [
