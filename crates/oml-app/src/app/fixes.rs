@@ -32,7 +32,7 @@ use crate::ports::{
     Scanner, Signer, StoreError, WebStore,
 };
 use crate::types::{
-    AppError, Approval, Bearer, Credential, FixAct, FixRecord, FixState, FormatFields,
+    AdminActRecord, AppError, Approval, Bearer, Credential, FixAct, FixRecord, FixState, FormatFields,
     GuardrailFields, KeyRecord, KindFields, MemoryRecord, VersionRef,
 };
 use oml_domain::access::effective_roles;
@@ -351,6 +351,35 @@ pub struct FixRequest {
     pub title: Option<String>,
 }
 
+/// What an admin's fix act took (ADR-0089 d2; ADR-0097 d4): a fix and the
+/// admin act it rides, or, for an erase of a version that is not promoted
+/// outside `sole_admin`, the pending shred act alone, with no fix record
+/// (ADR-0097, amendment of 2026-11-27, answer 5).
+#[derive(Debug, Clone, PartialEq)]
+pub enum FixOutcome {
+    Fixed { fix: FixRecord, act: AdminActRecord },
+    ShredPending(AdminActRecord),
+}
+
+impl FixOutcome {
+    /// The fix record, where the act made one.
+    #[must_use]
+    pub fn fix(&self) -> Option<&FixRecord> {
+        match self {
+            FixOutcome::Fixed { fix, .. } => Some(fix),
+            FixOutcome::ShredPending(_) => None,
+        }
+    }
+
+    /// The admin act the fix rides.
+    #[must_use]
+    pub fn act(&self) -> &AdminActRecord {
+        match self {
+            FixOutcome::Fixed { act, .. } | FixOutcome::ShredPending(act) => act,
+        }
+    }
+}
+
 /// A fix as a person's reviewer key reads it (ADR-0089 d15): never the
 /// admin's key, principal or user, and whether this key may confirm or
 /// revert it.
@@ -414,7 +443,7 @@ where
         &self,
         bearer: impl Into<Bearer<'_>>,
         req: &FixRequest,
-    ) -> Result<FixRecord, AppError> {
+    ) -> Result<FixOutcome, AppError> {
         let admin = self.admin_caller(bearer.into(), "fix").await?.key;
         if admin.used_by != UsedBy::Person {
             return Err(AppError::FixRequiresPerson {
@@ -456,8 +485,8 @@ where
         let prev = self.head_event(admin.tenant_id).await?;
         // Every fix rides an admin act, first in its chain: a content fix
         // is narrowing and keeps ADR-0089's settlement; an erase is its own
-        // class (ADR-0097 d2, d3, d4; the split shred of d4 is not built,
-        // so the erase still shreds at once).
+        // class, whose shred waits on a second admin person outside
+        // `sole_admin` (ADR-0097 d2, d3, d4).
         let act = self
             .begin_admin_act(
                 &admin,
@@ -472,11 +501,13 @@ where
                     "target": req.target.to_string(),
                 }),
                 Some(reason),
-                json!({}),
+                json!({ "memory_id": req.target.to_string() }),
                 prev.as_ref(),
             )
             .await?;
         let act_id = act.act_id();
+        let shred_waits = act.pending();
+        let act_record = act.record.clone();
         let (act_event, act_fold) = act.link();
         let prev = Some(act_event.clone());
         let (links, fix) = match req.act {
@@ -490,6 +521,25 @@ where
                     reason,
                 )
                 .await?
+            }
+            FixAct::Erase if shred_waits => {
+                // The demotion half at once, the shred at the confirmation
+                // (ADR-0097 d4). A target that is not a promoted version has
+                // nothing to demote: the act waits on its shred alone, with
+                // no fix record (amendment of 2026-11-27, answer 5).
+                let named = self
+                    .journal
+                    .memory(admin.tenant_id, req.target)
+                    .await?
+                    .ok_or(AppError::NotFound)?;
+                transition(named.status, MemoryStatus::Erased)?;
+                if named.status != MemoryStatus::Promoted {
+                    self.commit_requests(vec![commit_request(act_event, act_fold, None)])
+                        .await?;
+                    return Ok(FixOutcome::ShredPending(act_record));
+                }
+                self.erase_demotion(&admin, admin_person, &named, prev.as_ref(), fix_id, reason)
+                    .await?
             }
             FixAct::Erase => {
                 let (event, fold, _, named) = self
@@ -572,7 +622,112 @@ where
         };
         self.observer
             .admin_fix(fix.act.as_str(), fix.loosens_guardrail);
-        Ok(fix)
+        Ok(FixOutcome::Fixed {
+            fix,
+            act: act_record,
+        })
+    }
+
+    /// An erase's demotion half (ADR-0097 d4): every promoted version of
+    /// `named`'s claim demoted in one chain, the earlier ones first and the
+    /// tip last, so none is restored and the claim serves nothing while its
+    /// shred waits; every byte is kept. A retirement is not demoted, as no
+    /// demotion takes one, and a vocabulary claim is
+    /// [`AppError::DemoteKindUnsupported`], as its demotion is (ADR-0089
+    /// d16, note of 2026-11-18).
+    async fn erase_demotion(
+        &self,
+        admin: &KeyRecord,
+        admin_person: &Name,
+        named: &MemoryRecord,
+        prev: Option<&SignedEnvelope>,
+        fix_id: Uuid,
+        reason: &str,
+    ) -> Result<(Vec<CommitRequest>, FixRecord), AppError> {
+        if matches!(
+            named.kind,
+            MemoryKind::Term | MemoryKind::TermMapping | MemoryKind::VocabRelease
+        ) {
+            return Err(AppError::DemoteKindUnsupported {
+                kind: named.kind,
+                retirement: named.retirement,
+            });
+        }
+        let mut promoted: Vec<MemoryRecord> = self
+            .journal
+            .claim_versions(admin.tenant_id, named.workspace_id, &named.claim_key)
+            .await?
+            .into_iter()
+            .filter(|v| v.status == MemoryStatus::Promoted && !v.retirement)
+            .collect();
+        promoted.sort_by_key(|v| (v.is_tip, v.version));
+        let mut links = Vec::new();
+        let mut last = prev.cloned();
+        for version in &promoted {
+            let event = self.demote_event(last.as_ref(), admin, version, None, None)?;
+            last = Some(event.clone());
+            links.push(commit_request(
+                event,
+                MetadataFold::MemoryDemoted {
+                    memory_id: version.memory_id,
+                    restored: None,
+                    reopened: None,
+                },
+                None,
+            ));
+        }
+        let first = links
+            .first()
+            .map(|l| l.event.envelope.clone())
+            .ok_or(AppError::FixTargetNotPromoted {
+                status: named.status,
+            })?;
+        let fix = FixRecord {
+            fix_id,
+            act: FixAct::Erase,
+            target_id: named.memory_id,
+            workspace_id: named.workspace_id,
+            claim_key: named.claim_key.clone(),
+            replaced_id: Some(named.memory_id),
+            served_id: None,
+            reason: reason.to_owned(),
+            loosens_guardrail: promoted.iter().any(|v| v.is_tip && instruction(v)),
+            admin_key_id: admin.key_id,
+            admin_person: admin_person.clone(),
+            lifecycle_event_id: first.event_id,
+            state: FixState::Unconfirmed,
+            fixed_at: first.at,
+            settled_by_key_id: None,
+            settled_same_user: None,
+            settled_at: None,
+            restored_id: None,
+            superseded_by: None,
+        };
+        Ok((links, fix))
+    }
+
+    /// The shred a confirmed erase applies (ADR-0097 d4): the claim's
+    /// erasure as it stands now, sealed on `prev` under the confirming
+    /// admin's key and naming the act.
+    pub(crate) async fn confirmed_shred(
+        &self,
+        admin: &KeyRecord,
+        memory_id: Uuid,
+        prev: &SignedEnvelope,
+        act_id: Uuid,
+    ) -> Result<(SignedEnvelope, MetadataFold), AppError> {
+        let (event, fold, _, _) = self
+            .plan_erasure(admin, memory_id, Some(Some(prev.clone())))
+            .await?;
+        let event = self.seal(
+            Some(prev),
+            admin.tenant_id,
+            event_types::LIFECYCLE_ERASE,
+            &admin.principal,
+            Some(admin.key_id),
+            super::admin_acts::with_act_id(event.envelope.payload.clone(), act_id),
+        )?;
+        Ok((event, fold))
     }
 
     /// A demotion as a fix: only an approved version (ADR-0089 d16). The
@@ -1632,6 +1787,12 @@ pub struct FixStats {
     /// in seconds (ADR-0097 doctor `admin.act_pending_confirmation`).
     pub acts_pending: u64,
     pub act_oldest_pending_seconds: u64,
+    /// Erases whose shred waits on a second admin person, their bytes
+    /// kept, and the oldest's age in seconds (ADR-0097 d4, doctor
+    /// `admin.erase_shred_pending`). Not counted in `acts_pending`, since a
+    /// pending shred never expires.
+    pub shreds_pending: u64,
+    pub shred_oldest_pending_seconds: u64,
     /// Acts taken at once under `sole_admin` (`admin.act_sole_admin`).
     pub acts_sole_admin: u64,
     /// Whether the tenant has never had two live admin persons.
@@ -1696,6 +1857,13 @@ where
             let age = u64::try_from((now.unix_micros() - act.at.unix_micros()).max(0) / 1_000_000)
                 .unwrap_or(0);
             match act.state_at(&now) {
+                oml_domain::admin_act::AdminActState::PendingConfirmation
+                    if act.class() == oml_domain::admin_act::AdminActClass::Erase =>
+                {
+                    stats.shreds_pending += 1;
+                    stats.shred_oldest_pending_seconds =
+                        stats.shred_oldest_pending_seconds.max(age);
+                }
                 oml_domain::admin_act::AdminActState::PendingConfirmation => {
                     stats.acts_pending += 1;
                     stats.act_oldest_pending_seconds = stats.act_oldest_pending_seconds.max(age);

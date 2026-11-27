@@ -171,7 +171,12 @@ where
         prev: Option<&SignedEnvelope>,
     ) -> Result<BegunAct, AppError> {
         let tenant_id = admin.tenant_id;
-        let (state, sole_admin) = if act.class() == AdminActClass::Widening {
+        // Widening, and an erase's shred, wait on a second admin person
+        // outside `sole_admin` (d4, d5, d10).
+        let (state, sole_admin) = if matches!(
+            act.class(),
+            AdminActClass::Widening | AdminActClass::Erase
+        ) {
             let standing = self.journal.admin_standing(tenant_id).await?;
             if standing.sole_admin && !self.act_against_admin_open(tenant_id).await? {
                 (AdminActState::Effective, true)
@@ -217,7 +222,7 @@ where
             // contest or a reversal restores (d8).
             effect: if matches!(
                 act.class(),
-                AdminActClass::Widening | AdminActClass::AgainstAdmin
+                AdminActClass::Widening | AdminActClass::AgainstAdmin | AdminActClass::Erase
             ) {
                 effect
             } else {
@@ -936,6 +941,23 @@ where
             }
             AdminActKind::WorkspacePublicSet => {
                 self.confirmed_public_set(admin, act, links).await?;
+            }
+            AdminActKind::Erase => {
+                let memory_id = effect
+                    .get("memory_id")
+                    .and_then(Value::as_str)
+                    .and_then(|s| Uuid::parse_str(s).ok())
+                    .ok_or_else(|| {
+                        AppError::StoredResponse(format!(
+                            "admin act {} names no claim",
+                            act.act_id
+                        ))
+                    })?;
+                let prev = last(links);
+                links.push(
+                    self.confirmed_shred(admin, memory_id, &prev, act.act_id)
+                        .await?,
+                );
             }
             AdminActKind::AllowAdmin => {
                 let bad = || AppError::StoredResponse(format!("admin act {} entry", act.act_id));

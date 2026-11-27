@@ -19166,7 +19166,10 @@ async fn an_admin_edit_serves_at_once_marked_admin_fix_and_unconfirmed() {
             ),
         )
         .await
-        .expect("an admin edit");
+        .expect("an admin edit")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     assert_eq!(fix.state, FixState::Unconfirmed);
     let served = fix.served_id.expect("an edit serves a version");
     let got = app
@@ -19250,7 +19253,10 @@ async fn a_demotion_fix_journals_the_demotion_then_admin_fix_and_marks_the_resto
     let fix = app
         .admin_fix(&boot.admin_key.value, &fix_req(FixAct::Demote, v2, None))
         .await
-        .expect("demote");
+        .expect("demote")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     assert_eq!(fix.served_id, Some(v1));
     let events = journal(&store, boot.tenant_id).await;
     assert_eq!(
@@ -19282,7 +19288,10 @@ async fn a_person_confirms_a_fix_and_the_served_version_reads_confirmed() {
             &fix_req(FixAct::Edit, v1, Some("the queue drains hourly")),
         )
         .await
-        .expect("edit");
+        .expect("edit")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     let listed = app.review_fixes(&reviewer.value).await.expect("list");
     assert_eq!(listed.len(), 1);
     assert!(listed[0].settles, "another person may confirm");
@@ -19336,7 +19345,10 @@ async fn a_revert_serves_the_earlier_text_as_a_server_authored_version_the_rever
             &fix_req(FixAct::Edit, v1, Some("the queue drains hourly")),
         )
         .await
-        .expect("edit");
+        .expect("edit")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     let head = journal(&store, boot.tenant_id).await.len();
     let reverted = app
         .revert_fix(&reviewer.value, fix.fix_id)
@@ -19408,7 +19420,10 @@ async fn an_erasure_is_confirmed_and_never_reverted() {
     let fix = app
         .admin_fix(&boot.admin_key.value, &fix_req(FixAct::Erase, v1, None))
         .await
-        .expect("erase");
+        .expect("erase")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     assert!(matches!(
         app.revert_fix(&reviewer.value, fix.fix_id)
             .await
@@ -19441,7 +19456,10 @@ async fn a_fix_whose_claim_moved_on_is_refused_revert_as_superseded() {
             &fix_req(FixAct::Edit, v1, Some("the queue drains hourly")),
         )
         .await
-        .expect("edit");
+        .expect("edit")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     // A second fix demotes the edit: the claim is served by v1 again, not
     // by the version the first fix made its tip.
     let served = fix.served_id.expect("served");
@@ -19450,7 +19468,10 @@ async fn a_fix_whose_claim_moved_on_is_refused_revert_as_superseded() {
         &fix_req(FixAct::Demote, served, None),
     )
     .await
-    .expect("a later demotion");
+    .expect("a later demotion")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     assert!(matches!(
         app.revert_fix(&reviewer.value, fix.fix_id)
             .await
@@ -19482,7 +19503,10 @@ async fn an_admin_edit_in_a_frozen_workspace_is_refused_and_a_demotion_is_admitt
     assert_frozen(&err, crew, FrozenOp::Write);
     app.admin_fix(admin, &fix_req(FixAct::Demote, v2, None))
         .await
-        .expect("a frozen workspace admits a demotion");
+        .expect("a frozen workspace admits a demotion")
+        .fix()
+        .cloned()
+        .expect("a fix record");
 }
 
 #[tokio::test]
@@ -19537,7 +19561,10 @@ async fn every_served_hit_satisfies_the_read_path_law() {
         ),
     )
     .await
-    .expect("edit");
+    .expect("edit")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     let v2 = app
         .supersede(
             &writer.value,
@@ -19552,7 +19579,10 @@ async fn every_served_hit_satisfies_the_read_path_law() {
         .expect("approve");
     app.admin_fix(&boot.admin_key.value, &fix_req(FixAct::Demote, v2, None))
         .await
-        .expect("demote");
+        .expect("demote")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     let events = journal(&store, boot.tenant_id).await;
     let hits = app
         .recall(&reader.value, &recall_req("canary"))

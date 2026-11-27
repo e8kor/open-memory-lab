@@ -8047,6 +8047,11 @@ fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
             "admin act(s) wait on a second admin person; each takes effect only once confirmed with oml admin confirm <act>, and expires as declined after 7 days",
         ),
         (
+            "admin_erase_shreds_pending",
+            "admin.erase_shred_pending",
+            "erase(s) demoted their claim and keep its bytes until a second admin person confirms the shred with oml admin confirm <act>, or declines it",
+        ),
+        (
             "admin_acts_sole_admin",
             "admin.act_sole_admin",
             "admin act(s) took effect at once because the tenant has only ever had one admin person; a second admin person reviews them with oml admin acts --state effective",
@@ -8122,6 +8127,13 @@ fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
                         .and_then(Value::as_u64)
                         .unwrap_or(0);
                     format!("warn {line}: {n} {what}; {left} days left before revocation")
+                }
+                Some(n) if *field == "admin_erase_shreds_pending" => {
+                    let oldest = report
+                        .get("admin_erase_shred_oldest_seconds")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    format!("warn {line}: {n} {what}; the oldest is {oldest} s old")
                 }
                 Some(n) if *field == "admin_acts_pending" => {
                     let oldest = report
@@ -9492,6 +9504,18 @@ mod tests {
         assert_eq!(
             lifecycle_doctor(Some(&Ok(json!({ "web_emails_pending": 0 })))),
             vec!["web.email_pending: 0".to_owned()]
+        );
+    }
+
+    #[test]
+    fn the_lifecycle_doctor_warns_of_erases_whose_shred_waits_with_the_oldest_age() {
+        let report = json!({
+            "admin_erase_shreds_pending": 1,
+            "admin_erase_shred_oldest_seconds": 7200,
+        });
+        assert_eq!(
+            lifecycle_doctor(Some(&Ok(report))),
+            vec!["warn admin.erase_shred_pending: 1 erase(s) demoted their claim and keep its bytes until a second admin person confirms the shred with oml admin confirm <act>, or declines it; the oldest is 7200 s old".to_owned()]
         );
     }
 

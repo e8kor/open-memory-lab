@@ -5538,7 +5538,10 @@ async fn an_admins_own_person_cannot_confirm_a_fix_in_a_shared_workspace() {
             &fix_req(FixAct::Edit, v1, Some("the runbook lives in the wiki")),
         )
         .await
-        .expect("alice-admin fixes");
+        .expect("alice-admin fixes")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     let listed = app
         .review_fixes(Bearer::Session(&alice_review))
         .await
@@ -5595,7 +5598,10 @@ async fn an_admins_own_person_confirms_a_fix_inside_their_own_root_marked_same_u
             &fix_req(FixAct::Edit, v1, Some("the cache holds an hour")),
         )
         .await
-        .expect("alice-admin fixes in her own root");
+        .expect("alice-admin fixes in her own root")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     let alice_review = app
         .web_caller(&alice, Capacity::Review)
         .await
@@ -5820,7 +5826,10 @@ async fn a_linked_admins_fix_in_a_shared_workspace_is_refused_to_its_own_persons
             &edit(r.claim, "The queue drains hourly."),
         )
         .await
-        .expect("a linked admin fixes");
+        .expect("a linked admin fixes")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     for settle in [true, false] {
         let err = if settle {
             r.app.confirm_fix(&r.alice_review.value, fix.fix_id).await
@@ -5848,7 +5857,10 @@ async fn another_persons_linked_key_confirms_a_linked_admins_fix() {
             &edit(r.claim, "The queue drains hourly."),
         )
         .await
-        .expect("fix");
+        .expect("fix")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     let confirmed = r
         .app
         .confirm_fix(&r.bob_review.value, fix.fix_id)
@@ -5898,7 +5910,10 @@ async fn a_reverter_is_refused_a_fix_of_a_claim_their_own_person_wrote_in_a_shar
         .app
         .admin_fix(admin, &edit(bobs, "The cache warms lazily."))
         .await
-        .expect("fix");
+        .expect("fix")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     let err = r
         .app
         .revert_fix(&r.bob_review.value, fix.fix_id)
@@ -5978,7 +5993,10 @@ async fn an_admin_key_linked_to_another_person_takes_no_fix_until_that_person_ac
         .app
         .admin_fix(admin, &edit(r.claim, "The queue drains hourly."))
         .await
-        .expect("the key acts for bob, who accepted");
+        .expect("the key acts for bob, who accepted")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     assert_eq!(fix.admin_person, name("bob"));
     let confirmed = r
         .app
@@ -6003,7 +6021,10 @@ async fn a_relink_after_the_fix_leaves_the_settlement_judged_against_the_recorde
             &edit(r.claim, "The queue drains hourly."),
         )
         .await
-        .expect("alice's fix");
+        .expect("alice's fix")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     assert_eq!(fix.admin_person, name("alice"));
     r.app
         .unlink_key_from_person(Bearer::Session(&r.ops), admin_key.into())
@@ -6048,7 +6069,10 @@ async fn a_reviewer_key_whose_link_is_pending_settles_no_fix() {
         .app
         .admin_fix(admin, &edit(r.claim, "The queue drains hourly."))
         .await
-        .expect("alice's fix");
+        .expect("alice's fix")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     let second = person_tenant_key(
         &r.app,
         admin,
@@ -6230,7 +6254,10 @@ async fn a_later_fix_that_re_marks_a_version_supersedes_the_earlier_fix() {
         body: None,
         title: None,
     };
-    let f1 = r.app.admin_fix(admin, &demote(v2)).await.expect("f1");
+    let f1 = r.app.admin_fix(admin, &demote(v2)).await.expect("f1")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     assert_eq!(f1.served_id, Some(r.claim));
     // v3 supersedes v1 by review; f2 demotes it, serving v1 again.
     let v3 = r
@@ -6247,7 +6274,10 @@ async fn a_later_fix_that_re_marks_a_version_supersedes_the_earlier_fix() {
         .post_verdict(&r.bob_review.value, v3, Verdict::Approve, None)
         .await
         .expect("bob approves v3");
-    let f2 = r.app.admin_fix(admin, &demote(v3)).await.expect("f2");
+    let f2 = r.app.admin_fix(admin, &demote(v3)).await.expect("f2")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     assert_eq!(f2.served_id, Some(r.claim));
     let earlier = r
         .store
@@ -6307,7 +6337,10 @@ async fn a_workspace_moved_to_protected_after_the_fix_is_judged_at_the_confirm()
             &edit(r.claim, "The queue drains hourly."),
         )
         .await
-        .expect("fix");
+        .expect("fix")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     let team = r
         .store
         .memory(r.boot.tenant_id, r.claim)
@@ -6657,7 +6690,10 @@ async fn a_key_an_admin_mints_in_another_persons_root_counts_as_the_admins_perso
         .app
         .admin_fix(admin, &fix_req(oml_app::types::FixAct::Demote, claim, None))
         .await
-        .expect("alice's admin key demotes carol's claim");
+        .expect("alice's admin key demotes carol's claim")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     assert_eq!(fix.admin_person, name("alice"));
     let forged = user_reviewer(&r.app, admin, "carol", "carol/forged").await;
     for settle in [true, false] {
@@ -6717,7 +6753,10 @@ async fn a_key_issued_in_the_fix_admins_root_settles_as_the_admins_person_whoeve
             &fix_req(oml_app::types::FixAct::Demote, claim, None),
         )
         .await
-        .expect("bob's admin key demotes the claim in bob's root");
+        .expect("bob's admin key demotes the claim in bob's root")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     assert_eq!(fix.admin_person, name("bob"));
     let forged = user_reviewer(&r.app, admin, "bob", "bob/forged").await;
     let settled = r
@@ -6747,7 +6786,10 @@ async fn a_key_the_fix_admins_key_issued_settles_as_the_admins_person_after_a_re
         .app
         .admin_fix(admin, &fix_req(oml_app::types::FixAct::Demote, claim, None))
         .await
-        .expect("alice's admin key demotes carol's claim");
+        .expect("alice's admin key demotes carol's claim")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     assert_eq!(fix.admin_person, name("alice"));
     r.app
         .unlink_key_from_person(Bearer::Session(&r.ops), r.boot.admin_key.key_id.into())
@@ -6783,7 +6825,10 @@ async fn a_reviewer_key_that_counts_as_no_one_is_no_other_person_in_the_fix_stat
         .app
         .admin_fix(admin, &edit(r.claim, "The queue drains hourly."))
         .await
-        .expect("alice's fix");
+        .expect("alice's fix")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     r.app
         .unlink_key_from_person(Bearer::Session(&r.ops), r.bob_review.key_id.into())
         .await
@@ -6838,7 +6883,10 @@ async fn a_key_issued_in_the_authors_root_reverts_a_fix_of_the_authors_claim_as_
         .app
         .admin_fix(admin, &fix_req(oml_app::types::FixAct::Demote, claim, None))
         .await
-        .expect("alice's admin key demotes dora's claim");
+        .expect("alice's admin key demotes dora's claim")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     let bobs_admin = r
         .app
         .issue_key(
