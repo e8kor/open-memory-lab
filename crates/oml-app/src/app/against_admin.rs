@@ -340,6 +340,22 @@ where
             .await
     }
 
+    /// The act a contest-only sign-in opened, for its page (ADR-0097 d8):
+    /// read under the grant the sign-in matched, so it names only the act
+    /// the grant names.
+    ///
+    /// # Errors
+    /// An act the tenant does not hold, and the store's.
+    pub async fn contest_act(
+        &self,
+        grant: &super::ContestGrant,
+    ) -> Result<AdminActRecord, AppError> {
+        self.journal
+            .admin_act(grant.tenant_id, grant.act_id)
+            .await?
+            .ok_or(AppError::NotFound)
+    }
+
     /// [`Self::contest_admin_act`] for `user`, whom the composition has
     /// identified: their own session, or the contest-only sign-in, whose
     /// provider identity matched the entry as it stood before the act

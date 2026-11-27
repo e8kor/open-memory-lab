@@ -782,7 +782,7 @@ where
                 // The contest-only sign-in opens its one form (ADR-0097 d8).
                 if let CallbackRefusal::Contest(grant) = &refusal {
                     sign_in_line(request_id, provider, "contest_only", None);
-                    let mut response = self.contest_page(grant);
+                    let mut response = self.contest_page(grant).await;
                     append_cookie(&mut response, &clear_cookie(SIGN_IN_COOKIE));
                     return Answer {
                         response,
