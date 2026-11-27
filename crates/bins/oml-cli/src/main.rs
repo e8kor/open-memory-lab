@@ -673,6 +673,10 @@ enum WorkspacesCommand {
         /// `on` lets federated recalls search it (the default); `off` declines.
         #[arg(value_parser = ["on", "off"])]
         accept: String,
+        /// Why: an admin's `on` waits on another admin person and requires
+        /// one, unless the tenant has only ever had one admin person.
+        #[arg(long)]
+        reason: Option<String>,
     },
     /// Mark a protected or frozen workspace public, so every reading key of
     /// the tenant reads its approved items and recalls them by default, or
@@ -1005,6 +1009,11 @@ enum SearchCommand {
         /// the most a sources list names, 0 to 64.
         #[arg(long)]
         max_sources: Option<u32>,
+        /// Why: a change that searches more waits on another admin person
+        /// and requires one, unless the tenant has only ever had one admin
+        /// person.
+        #[arg(long)]
+        reason: Option<String>,
     },
 }
 
@@ -2447,16 +2456,30 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         }
 
         Command::Workspaces {
-            command: WorkspacesCommand::Federation { workspace, accept },
+            command:
+                WorkspacesCommand::Federation {
+                    workspace,
+                    accept,
+                    reason,
+                },
         } => {
             let client = resolve(cli, &stored)?;
-            let (_, response) = client.post(
+            let mut body = json!({ "accept_federated": accept == "on" });
+            if let Some(reason) = reason {
+                body["reason"] = json!(reason);
+            }
+            let (status, response) = client.post(
                 &format!("/v2/workspaces/{}/federation", segment(workspace)?),
-                &json!({ "accept_federated": accept == "on" }),
+                &body,
                 &write_opts(),
             )?;
             if cli.json {
                 print_json(&response);
+            } else if status == 202 {
+                println!(
+                    "{}",
+                    federation_pending(&format!("workspace {workspace}"), &response)
+                );
             } else {
                 println!(
                     "workspace {workspace} {} federated reads",
@@ -3073,6 +3096,14 @@ fn node_suffix(grant: &Value) -> &'static str {
 /// `oml workspaces public set|clear`'s line (ADR-0098 d9): `effective`
 /// with the flag now held, or that the set waits on another admin person,
 /// with the act id either way.
+/// A federation widening that waits on another admin person (ADR-0097 d5).
+fn federation_pending(what: &str, act: &Value) -> String {
+    let id = act["act_id"].as_str().unwrap_or("?");
+    format!(
+        "{what}: the change waits on another admin person (act {id}); they confirm it with oml admin confirm {id}"
+    )
+}
+
 fn public_printed(workspace: &str, status: u16, response: &Value) -> String {
     let act = response["act_id"].as_str().unwrap_or("?");
     if status == 202 {
@@ -5329,6 +5360,7 @@ fn run_search(
             enabled,
             default_sources,
             max_sources,
+            reason,
         } => {
             let policy = if enabled.is_none() && default_sources.is_none() && max_sources.is_none()
             {
@@ -5344,9 +5376,20 @@ fn run_search(
                 if let Some(m) = max_sources {
                     body.insert("max_sources".to_owned(), Value::from(*m));
                 }
-                client
-                    .post("/v2/federation", &Value::Object(body), &write_opts())?
-                    .1
+                if let Some(reason) = reason {
+                    body.insert("reason".to_owned(), Value::from(reason.as_str()));
+                }
+                let (status, response) =
+                    client.post("/v2/federation", &Value::Object(body), &write_opts())?;
+                if status == 202 {
+                    if cli.json {
+                        print_json(&response);
+                    } else {
+                        println!("{}", federation_pending("the federation policy", &response));
+                    }
+                    return Ok(ExitCode::SUCCESS);
+                }
+                response
             };
             if cli.json {
                 print_json(&policy);
@@ -7990,7 +8033,7 @@ fn flagged_creates_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
 /// out. A server before a count does not report it, and its line is then
 /// absent; a count that is no unsigned integer is named, never read as zero.
 fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
-    const LINES: [(&str, &str, &str); 19] = [
+    const LINES: [(&str, &str, &str); 20] = [
         (
             "held_successors_stranded",
             "memory.held_successor_stranded",
@@ -9442,6 +9485,7 @@ mod tests {
                 "key.link_pending: not read; an admin key reads it".to_owned(),
                 "web.email_pending: not read; an admin key reads it".to_owned(),
                 "admin.act_pending_confirmation: not read; an admin key reads it".to_owned(),
+                "admin.erase_shred_pending: not read; an admin key reads it".to_owned(),
                 "admin.act_sole_admin: not read; an admin key reads it".to_owned(),
                 "admin.act_without_reason: not read; an admin key reads it".to_owned(),
                 "admin.act_expired: not read; an admin key reads it".to_owned(),

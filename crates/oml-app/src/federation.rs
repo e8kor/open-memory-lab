@@ -121,6 +121,15 @@ pub struct WidenSignalHealth {
     pub last_failure: Option<String>,
 }
 
+/// What an admin's federation act took (ADR-0097 d3, d5): the value as it
+/// now stands, and the admin act that waits on a second admin person, where
+/// it waits; nothing took effect then.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FederationActTaken<T> {
+    pub now: T,
+    pub pending: Option<crate::types::AdminActRecord>,
+}
+
 /// A workspace's federation field as its read serves it (d5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WorkspaceFederation {

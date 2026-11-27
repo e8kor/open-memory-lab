@@ -649,6 +649,47 @@ where
                     }
                 })?;
             }
+            AdminActKind::AcceptFederation => {
+                // The field set back off, while the node still accepts.
+                let Some(workspace_id) = uuid_at(effect, "workspace_id") else {
+                    return Ok(());
+                };
+                if self
+                    .journal
+                    .federation_declining(tenant_id, &[workspace_id])
+                    .await?
+                    .is_empty()
+                {
+                    let prev = links.last().map(|(e, _)| e.clone()).expect("a link");
+                    links.push(self.workspace_federation_event(
+                        Some(&prev),
+                        admin,
+                        workspace_id,
+                        false,
+                        Some(undo.decline_id),
+                    )?);
+                }
+            }
+            AdminActKind::WidenFederationPolicy => {
+                // Each field the change sent set back to the value the act
+                // found, over the policy as it stands now.
+                let now = self.journal.federation_policy(tenant_id).await?;
+                let change = effect.get("change").cloned().unwrap_or(Value::Null);
+                let from = effect.get("from").cloned().unwrap_or(Value::Null);
+                let mut back = serde_json::Map::new();
+                for field in ["enabled", "default_sources", "max_sources"] {
+                    if change.get(field).is_some_and(|v| !v.is_null())
+                        && let Some(v) = from.get(field)
+                    {
+                        back.insert(field.to_owned(), v.clone());
+                    }
+                }
+                let policy = super::federation::apply_change_json(now, &Value::Object(back));
+                if policy != now {
+                    let prev = links.last().map(|(e, _)| e.clone()).expect("a link");
+                    links.push(self.policy_event(&prev, admin, policy, now, undo.decline_id)?);
+                }
+            }
             AdminActKind::AllowAdmin => {
                 let bad = || AppError::StoredResponse(format!("admin act {} entry", act.act_id));
                 let text = |field: &str| {
@@ -948,6 +989,48 @@ where
             }
             AdminActKind::WorkspacePublicSet => {
                 self.confirmed_public_set(admin, act, links).await?;
+            }
+            AdminActKind::AcceptFederation => {
+                // The node as it stands at the confirmation: one that
+                // accepts already changes nothing (ADR-0097 d5).
+                let workspace_id = effect
+                    .get("workspace_id")
+                    .and_then(Value::as_str)
+                    .and_then(|s| Uuid::parse_str(s).ok())
+                    .ok_or_else(|| {
+                        AppError::StoredResponse(format!(
+                            "admin act {} names no workspace",
+                            act.act_id
+                        ))
+                    })?;
+                if !self
+                    .journal
+                    .federation_declining(tenant_id, &[workspace_id])
+                    .await?
+                    .is_empty()
+                {
+                    let prev = last(links);
+                    links.push(self.workspace_federation_event(
+                        Some(&prev),
+                        admin,
+                        workspace_id,
+                        true,
+                        Some(act.act_id),
+                    )?);
+                }
+            }
+            AdminActKind::WidenFederationPolicy => {
+                // The change over the policy as it stands at the
+                // confirmation (ADR-0097 d5).
+                let from = self.journal.federation_policy(tenant_id).await?;
+                let policy = super::federation::apply_change_json(
+                    from,
+                    effect.get("change").unwrap_or(&Value::Null),
+                );
+                if policy != from {
+                    let prev = last(links);
+                    links.push(self.policy_event(&prev, admin, policy, from, act.act_id)?);
+                }
             }
             AdminActKind::Erase => {
                 let memory_id = effect

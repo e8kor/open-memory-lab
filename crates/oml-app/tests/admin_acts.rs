@@ -2272,10 +2272,7 @@ async fn an_admins_federation_acceptance_waits_on_a_second_admin_person_and_appl
         .rev()
         .find(|e| e.envelope.event_type == event_types::WORKSPACE_FEDERATION_SET)
         .expect("the effect");
-    assert_eq!(
-        set.envelope.payload["act_id"],
-        narrowing.act_id.to_string()
-    );
+    assert_eq!(set.envelope.payload["act_id"], narrowing.act_id.to_string());
     let pending = r
         .app
         .set_workspace_federation_with_reason(
