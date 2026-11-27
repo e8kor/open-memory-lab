@@ -772,6 +772,67 @@ impl Lab {
             .expect("the founder accepts");
     }
 
+    /// The key whose value is `value` linked to `person`, a new person of
+    /// the tenant, by the founder's console admin session over the lab's
+    /// store, and accepted from `person`'s session, so it counts as that
+    /// person: an instruction verdict and a ratification need one (ADR-0097
+    /// d12, d17).
+    async fn counts_as(&self, value: &str, person: &str) {
+        use oml_app::app::Capacity;
+        use oml_app::ports::WebStore as _;
+        use oml_app::types::{Bearer, WebEmailRequest};
+        let app = oml_server_lead::lead_app(&self.store, self.signing.clone());
+        let key_id = app.whoami(value).await.expect("the key").key.key_id;
+        let email = oml_app::domain::web::Email::parse("founder@example.com").expect("an email");
+        let founder = self
+            .store
+            .web_entry_by_email(&email.digest())
+            .await
+            .expect("a read")
+            .expect("the founder's entry");
+        app.web_ensure_keys(&founder).await.expect("keys");
+        let session = |entry: oml_app::types::WebEntry, capacity: Capacity| {
+            let app = &app;
+            async move {
+                let token = app
+                    .web_session_open(&entry, 3600, None)
+                    .await
+                    .expect("a session")
+                    .token;
+                let session = app
+                    .web_session(&token)
+                    .await
+                    .expect("a read")
+                    .expect("a live session");
+                app.web_caller(&session, capacity)
+                    .await
+                    .expect("the session key")
+            }
+        };
+        let admin = session(founder, Capacity::Admin).await;
+        let user = oml_app::domain::name::Name::parse(person).expect("a name");
+        let (entry, _) = app
+            .allow_web_email(
+                Bearer::Session(&admin),
+                &WebEmailRequest {
+                    email: oml_app::domain::web::Email::parse(&format!("{person}@example.com"))
+                        .expect("an email"),
+                    user: user.clone(),
+                    admin: false,
+                },
+            )
+            .await
+            .expect("the person's entry");
+        app.web_ensure_keys(&entry).await.expect("keys");
+        app.link_key_to_person(Bearer::Session(&admin), key_id.into(), &user)
+            .await
+            .expect("linked");
+        let web = session(entry, Capacity::Web).await;
+        app.accept_key_link(Bearer::Session(&web), key_id.into())
+            .await
+            .expect("accepted");
+    }
+
     /// Every request the lead received since the last call, in order.
     fn take_requests(&self) -> Vec<Seen> {
         std::mem::take(&mut *self.seen.lock().expect("recorder lock"))
@@ -2803,6 +2864,8 @@ impl Crew {
             .as_str()
             .expect("reviewer value")
             .to_owned();
+        // The reviewer counts as a person (ADR-0097 d12).
+        lab.counts_as(&reviewer, "crew-reviewer").await;
         Some(Self {
             lab,
             wa,
@@ -6641,6 +6704,10 @@ async fn workspaces_status_propose_pending_and_ratify_drive_the_transition_route
     };
     let dora = crew.curator("dora");
     let dan = crew.curator("dan");
+    // Each counts as a person of their own, as a ratification needs
+    // (ADR-0097 d12, d17).
+    crew.lab.counts_as(&dora, "dora-person").await;
+    crew.lab.counts_as(&dan, "dan-person").await;
     crew.lab.take_requests();
 
     let (code, proposal, log) = crew.lab.json(
@@ -7610,6 +7677,8 @@ async fn a_skill_written_from_the_cli_is_held_and_lists_under_oml_skills_list_on
         .as_str()
         .expect("reviewer value")
         .to_owned();
+    // The reviewer counts as a person (ADR-0097 d12).
+    lab.counts_as(&reviewer, "tools-reviewer").await;
     let (code, accepted, log) = lab.json(
         Some(&writer),
         &[

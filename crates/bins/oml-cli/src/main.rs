@@ -9432,6 +9432,7 @@ mod tests {
                 "memory.held_successor_stranded: not read; an admin key reads it".to_owned(),
                 "lake.erased_key_live: not read; an admin key reads it".to_owned(),
                 "admin.investigation_open_long: not read; an admin key reads it".to_owned(),
+                "admin.investigation_pages: not read; an admin key reads it".to_owned(),
                 "admin.fix_unconfirmed: not read; an admin key reads it".to_owned(),
                 "admin.fix_loosens_guardrail: not read; an admin key reads it".to_owned(),
                 "admin.fix_without_person_reviewer: not read; an admin key reads it".to_owned(),
@@ -9445,6 +9446,7 @@ mod tests {
                 "admin.act_expired: not read; an admin key reads it".to_owned(),
                 "admin.narrowing_burst: not read; an admin key reads it".to_owned(),
                 "admin.offensive_narrowing: not read; an admin key reads it".to_owned(),
+                "admin.timebox_open: not read; an admin key reads it".to_owned(),
                 "admin.key_suspended: not read; an admin key reads it".to_owned(),
                 "admin.key_unlinked_suspended: not read; an admin key reads it".to_owned(),
                 "admin.dispute_open: not read; an admin key reads it".to_owned()
