@@ -20,11 +20,13 @@ use axum::Extension;
 use axum::extract::{Query, State};
 use axum::response::Response;
 use http::{StatusCode, Uri};
-use oml_page::web::{USER_KEYS_PATH, attr, hidden, shell, short, text};
+use oml_page::web::{ADMIN_KEYS_PATH, USER_KEYS_PATH, attr, hidden, shell, short, text};
 use oml_sdk::WorkspaceNode;
 use serde_json::{Value, json};
 
-use crate::keys::{NEW_KEY_PATH, denied, denied_notice, expiry_sent, rfc3339, unix_now};
+use crate::keys::{
+    ADMIN_NEW_KEY_PATH, NEW_KEY_PATH, denied, denied_notice, expiry_sent, rfc3339, unix_now,
+};
 use crate::pages::{Fields, refused};
 use crate::session::{PageCalls, Session};
 use crate::{Capacity, Web, acts, outcome};
@@ -66,6 +68,63 @@ const TEMPLATES: [(&str, &str, &str); 5] = [
     ),
 ];
 
+/// The admin builder's templates (ADR-0097 d29): the personal ones less
+/// the whole root, and a reviewer key.
+const ADMIN_TEMPLATES: [(&str, &str, &str); 6] = [
+    (
+        "one",
+        "One workspace",
+        "Recall and write on one workspace and below.",
+    ),
+    ("read", "Read only", "Recall on one workspace and below."),
+    (
+        "write",
+        "Write only",
+        "A submitter key: writes, and recalls nothing but its own writes.",
+    ),
+    (
+        "review",
+        "Reviewer",
+        "Reviews held memories on one workspace and below.",
+    ),
+    (
+        "new",
+        "With a new workspace",
+        "Creates a workspace in the same act and writes and recalls there.",
+    ),
+    (
+        "connector",
+        "Connector for Claude",
+        "A connector key: a connect code in place of a value.",
+    ),
+];
+
+/// Which builder a page is: the person's own, inside the own root
+/// (ADR-0096 d1), or the admin's, anywhere in the tenant (ADR-0097 d29).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Side {
+    Personal,
+    Admin,
+}
+
+impl Side {
+    /// The builder's own page.
+    pub(crate) fn path(self) -> &'static str {
+        match self {
+            Side::Personal => NEW_KEY_PATH,
+            Side::Admin => ADMIN_NEW_KEY_PATH,
+        }
+    }
+
+    /// The Keys page the builder posts to and leads back to.
+    pub(crate) fn keys_path(self) -> &'static str {
+        match self {
+            Side::Personal => USER_KEYS_PATH,
+            Side::Admin => ADMIN_KEYS_PATH,
+        }
+    }
+}
+
 /// One grant row of the form.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct GrantDraft {
@@ -73,6 +132,27 @@ pub(crate) struct GrantDraft {
     pub role: String,
     pub covers: String,
     pub deny: Vec<String>,
+    /// The key creates child workspaces where the grant reaches (ADR-0097
+    /// d31).
+    pub create: bool,
+}
+
+/// One "new workspace" row: the issuance creates `name` under `parent`
+/// and grants the key its role's default grants there (ADR-0097 d30).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct NewDraft {
+    pub parent: String,
+    pub name: String,
+}
+
+/// The admin builder's fields beside the personal ones (ADR-0097 d29).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct AdminDraft {
+    pub user: String,
+    pub used_by: String,
+    pub principal: String,
+    pub crew: String,
+    pub reason: String,
 }
 
 /// The form's fields as read from the query.
@@ -82,10 +162,12 @@ pub(crate) struct Draft {
     pub name: String,
     pub role: String,
     pub grants: Vec<GrantDraft>,
+    pub new_workspaces: Vec<NewDraft>,
     pub default_workspace: String,
     pub scope: String,
     pub expires: String,
     pub rate: String,
+    pub admin: AdminDraft,
 }
 
 /// One refusal the review step draws, with the control it names; `code`
@@ -105,7 +187,7 @@ impl Draft {
             workspace: workspace.to_owned(),
             role: role.to_owned(),
             covers: "subtree".to_owned(),
-            deny: Vec::new(),
+            ..GrantDraft::default()
         };
         let (role, grants) = match shape {
             "one" => (
@@ -114,16 +196,31 @@ impl Draft {
             ),
             "read" => ("reader", vec![grant(user, "reader")]),
             "write" => ("submitter", vec![grant(user, "submitter")]),
+            "review" => ("reviewer", vec![grant(user, "reviewer")]),
+            "new" => ("contributor", Vec::new()),
             _ => (
                 "contributor",
                 vec![grant(user, "submitter"), grant(user, "reader")],
             ),
         };
+        let new_workspaces = if shape == "new" {
+            vec![NewDraft {
+                parent: user.to_owned(),
+                name: String::new(),
+            }]
+        } else {
+            Vec::new()
+        };
         Self {
             connector: shape == "connector",
             role: role.to_owned(),
             grants,
+            new_workspaces,
             scope: "ancestors".to_owned(),
+            admin: AdminDraft {
+                used_by: "agent".to_owned(),
+                ..AdminDraft::default()
+            },
             ..Self::default()
         }
     }
@@ -163,6 +260,7 @@ impl Draft {
                     _ => "subtree".to_owned(),
                 },
                 deny: deny.remove(&i).unwrap_or_default(),
+                create: get(&format!("g{i}k")) == "1",
             });
         }
         if single.contains_key("add") {
@@ -172,14 +270,33 @@ impl Draft {
                 ..GrantDraft::default()
             });
         }
+        let created: usize = single
+            .get("m")
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(0)
+            .min(GRANTS_MAX + 1);
+        let mut new_workspaces = Vec::new();
+        for i in 0..created {
+            if single.contains_key(format!("y{i}").as_str()) {
+                continue;
+            }
+            new_workspaces.push(NewDraft {
+                parent: get(&format!("w{i}p")),
+                name: get(&format!("w{i}n")),
+            });
+        }
+        if single.contains_key("addw") {
+            new_workspaces.push(NewDraft::default());
+        }
         Ok(Self {
             connector: get("kind") == "connector",
             name: get("name"),
             role: match get("role").as_str() {
-                r @ ("reader" | "submitter") => r.to_owned(),
+                r @ ("reader" | "submitter" | "reviewer") => r.to_owned(),
                 _ => "contributor".to_owned(),
             },
             grants,
+            new_workspaces,
             default_workspace: get("dw"),
             scope: match get("gs").as_str() {
                 "workspace" => "workspace".to_owned(),
@@ -187,6 +304,16 @@ impl Draft {
             },
             expires: get("exp"),
             rate: get("rpm"),
+            admin: AdminDraft {
+                user: get("ku"),
+                used_by: match get("kb").as_str() {
+                    b @ ("person" | "service") => b.to_owned(),
+                    _ => "agent".to_owned(),
+                },
+                principal: get("kp"),
+                crew: get("kc"),
+                reason: get("why"),
+            },
         })
     }
 
@@ -208,11 +335,31 @@ impl Draft {
             for d in &g.deny {
                 out.push((format!("g{i}d"), d.clone()));
             }
+            if g.create {
+                out.push((format!("g{i}k"), "1".to_owned()));
+            }
+        }
+        out.push(("m".to_owned(), self.new_workspaces.len().to_string()));
+        for (i, w) in self.new_workspaces.iter().enumerate() {
+            out.push((format!("w{i}p"), w.parent.clone()));
+            out.push((format!("w{i}n"), w.name.clone()));
         }
         out.push(("dw".to_owned(), self.default_workspace.clone()));
         out.push(("gs".to_owned(), self.scope.clone()));
         out.push(("exp".to_owned(), self.expires.clone()));
         out.push(("rpm".to_owned(), self.rate.clone()));
+        let a = &self.admin;
+        for (name, value) in [
+            ("ku", &a.user),
+            ("kb", &a.used_by),
+            ("kp", &a.principal),
+            ("kc", &a.crew),
+            ("why", &a.reason),
+        ] {
+            if !value.is_empty() {
+                out.push((name.to_owned(), value.clone()));
+            }
+        }
         out
     }
 
@@ -237,9 +384,22 @@ impl Draft {
     /// The `POST /v2/keys` body this draft sends, `user` the person's
     /// name: the grants as sent, the date as the next UTC day's end, the
     /// rate as a number.
+    #[cfg(test)]
     pub(crate) fn body(&self, user: &str) -> Value {
+        self.body_as(Side::Personal, user)
+    }
+
+    /// The `POST /v2/keys` body of `side`'s builder: the personal one names
+    /// the key `<user>-<name>`; the admin one sends the name whole, with
+    /// the person, `used_by`, principal, crew and reason it was given
+    /// (ADR-0097 d29).
+    pub(crate) fn body_as(&self, side: Side, user: &str) -> Value {
+        let name = match side {
+            Side::Personal => format!("{user}-{}", self.name),
+            Side::Admin => self.name.clone(),
+        };
         let mut body = json!({
-            "name": format!("{user}-{}", self.name),
+            "name": name,
             "role": self.role,
             "connect_code": self.connector,
             "grants": self.grants.iter().map(|g| {
@@ -251,10 +411,34 @@ impl Draft {
                 if !g.deny.is_empty() {
                     grant["deny"] = g.deny.iter().map(|d| json!({"workspace": d})).collect();
                 }
+                if g.create {
+                    grant["create"] = json!(true);
+                }
                 grant
             }).collect::<Vec<_>>(),
             "guardrail_scope": self.scope,
         });
+        if !self.new_workspaces.is_empty() {
+            body["create_workspaces"] = self
+                .new_workspaces
+                .iter()
+                .map(|w| json!({ "parent": w.parent, "name": w.name }))
+                .collect();
+        }
+        if side == Side::Admin {
+            let a = &self.admin;
+            body["used_by"] = json!(a.used_by);
+            body["principal"] = json!(if a.principal.is_empty() {
+                &self.name
+            } else {
+                &a.principal
+            });
+            for (field, value) in [("user", &a.user), ("crew", &a.crew), ("reason", &a.reason)] {
+                if !value.is_empty() {
+                    body[field] = json!(value);
+                }
+            }
+        }
         if !self.default_workspace.is_empty() {
             body["default_workspace"] = json!(self.default_workspace);
         }
@@ -270,7 +454,21 @@ impl Draft {
     /// Every refusal the page can decide before **Issue key** (ADR-0096 d1;
     /// D12), in the order the server checks them; `tree` is the person's
     /// root as read, `now` this process's clock in Unix seconds.
+    #[cfg(test)]
     pub(crate) fn checks(&self, user: &str, tree: &[WorkspaceNode], now: i64) -> Vec<Check> {
+        self.checks_as(Side::Personal, user, tree, now)
+    }
+
+    /// [`Self::checks`] on `side`'s builder: the admin's reads the tenant's
+    /// tree, takes a reviewer key and requires a reason, since its issuance
+    /// is widening (ADR-0097 d26, d29).
+    pub(crate) fn checks_as(
+        &self,
+        side: Side,
+        user: &str,
+        tree: &[WorkspaceNode],
+        now: i64,
+    ) -> Vec<Check> {
         let mut out = Vec::new();
         let mut refuse = |code: &'static str, message: String, control: &str| {
             out.push(Check {
@@ -292,7 +490,7 @@ impl Draft {
                 "A name is lower-case letters, digits and hyphens after the prefix.".to_owned(),
                 "kn",
             );
-        } else if SESSION_SUFFIXES.contains(&self.name.as_str()) {
+        } else if side == Side::Personal && SESSION_SUFFIXES.contains(&self.name.as_str()) {
             refuse(
                 "request.validation",
                 format!(
@@ -309,28 +507,38 @@ impl Draft {
                 "gr-h",
             );
         }
+        if side == Side::Personal && self.role == "reviewer" {
+            refuse(
+                "access.issuer_ceiling",
+                "A key of the user's own is a contributor, a reader or a submitter.".to_owned(),
+                "kro",
+            );
+        }
         let path_of = |name: &str| tree.iter().find(|n| n.name == name).map(|n| n.path.clone());
         for (i, g) in self.grants.iter().enumerate() {
             let control = format!("g{i}w");
             let Some(path) = path_of(&g.workspace) else {
-                refuse(
-                    "access.issuer_ceiling",
-                    format!(
-                        "Grant {}: {} is not a workspace in {user}; a grant lies inside the root.",
-                        i + 1,
-                        if g.workspace.is_empty() {
-                            "no workspace"
-                        } else {
-                            g.workspace.as_str()
-                        }
+                let shown = if g.workspace.is_empty() {
+                    "no workspace"
+                } else {
+                    g.workspace.as_str()
+                };
+                let message = match side {
+                    Side::Personal => format!(
+                        "Grant {}: {shown} is not a workspace in {user}; a grant lies inside the root.",
+                        i + 1
                     ),
-                    &control,
-                );
+                    Side::Admin => {
+                        format!("Grant {}: {shown} is not a workspace of the tenant.", i + 1)
+                    }
+                };
+                refuse("access.issuer_ceiling", message, &control);
                 continue;
             };
             let admitted = match self.role.as_str() {
                 "reader" => g.role == "reader",
                 "submitter" => g.role == "submitter",
+                "reviewer" => g.role == "reviewer",
                 _ => matches!(g.role.as_str(), "reader" | "submitter"),
             };
             if !admitted {
@@ -376,7 +584,61 @@ impl Draft {
                 }
             }
         }
-        if self.role == "contributor" {
+        // A new workspace brings the role's default grants, a reader and a
+        // submitter grant for a contributor (ADR-0097 d30).
+        for (i, w) in self.new_workspaces.iter().enumerate() {
+            if path_of(&w.parent).is_none() {
+                refuse(
+                    "access.not_found",
+                    format!(
+                        "New workspace {}: {} is not a workspace {}.",
+                        i + 1,
+                        if w.parent.is_empty() {
+                            "no parent"
+                        } else {
+                            w.parent.as_str()
+                        },
+                        match side {
+                            Side::Personal => "in the root",
+                            Side::Admin => "of the tenant",
+                        }
+                    ),
+                    &format!("w{i}p"),
+                );
+            }
+            let name_ok = !w.name.is_empty()
+                && w.name
+                    .bytes()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+                && !w.name.starts_with('-')
+                && !w.name.ends_with('-');
+            if !name_ok {
+                refuse(
+                    "request.validation",
+                    format!(
+                        "New workspace {}: a name is lower-case letters, digits and hyphens.",
+                        i + 1
+                    ),
+                    &format!("w{i}n"),
+                );
+            }
+        }
+        if side == Side::Admin && self.grants.is_empty() && self.new_workspaces.is_empty() {
+            refuse(
+                "request.validation",
+                "A key takes a grant or a new workspace.".to_owned(),
+                "gr-h",
+            );
+        }
+        if side == Side::Admin && self.admin.reason.trim().is_empty() {
+            refuse(
+                "request.validation",
+                "A reason is required: the issuance waits on another admin, who reads it."
+                    .to_owned(),
+                "why",
+            );
+        }
+        if self.role == "contributor" && self.new_workspaces.is_empty() {
             let has = |r: &str| self.grants.iter().any(|g| g.role == r);
             if !(has("reader") && has("submitter")) {
                 refuse(
@@ -448,10 +710,10 @@ impl Draft {
     pub(crate) fn words(&self) -> Vec<String> {
         let mut out = Vec::new();
         for g in &self.grants {
-            let act = if g.role == "reader" {
-                "recalls"
-            } else {
-                "writes"
+            let act = match g.role.as_str() {
+                "reader" => "recalls",
+                "reviewer" => "reviews",
+                _ => "writes",
             };
             let reach = if g.covers == "node" {
                 format!("in <code>{}</code> only", short(&g.workspace))
@@ -470,7 +732,25 @@ impl Draft {
                         .join(", ")
                 )
             };
-            out.push(format!("{act} {reach}{except}"));
+            let create = if g.create {
+                ", and creates workspaces there"
+            } else {
+                ""
+            };
+            out.push(format!("{act} {reach}{except}{create}"));
+        }
+        for w in &self.new_workspaces {
+            let act = match self.role.as_str() {
+                "reader" => "recalls",
+                "reviewer" => "reviews",
+                "submitter" => "writes",
+                _ => "recalls and writes",
+            };
+            out.push(format!(
+                "creates <code>{}</code> under <code>{}</code>, and {act} in it and below",
+                short(&w.name),
+                short(&w.parent)
+            ));
         }
         if self.role == "submitter" {
             out.push("Reads nothing in <code>universe</code>.".to_owned());
@@ -580,26 +860,59 @@ pub async fn page(
     Extension(calls): Extension<Arc<PageCalls>>,
     uri: Uri,
 ) -> Response {
-    let Ok(Query(pairs)) = Query::<Vec<(String, String)>>::try_from_uri(&uri) else {
-        return acts::invalid("the query is not a page's", &calls);
-    };
-    let Some(user) = session.whoami.user.as_ref().map(|u| u.name.clone()) else {
+    view(&web, &session, &calls, &uri, Side::Personal).await
+}
+
+/// `GET /web/admin/keys/new`: the admin key builder, the personal one's
+/// steps over the tenant's tree with the admin's fields (ADR-0097 d29).
+/// Any session but an admin entry's answers `access.not_found`.
+pub async fn admin_page(
+    State(web): State<Web>,
+    Extension(session): Extension<Session>,
+    Extension(calls): Extension<Arc<PageCalls>>,
+    uri: Uri,
+) -> Response {
+    if !session.admin {
         return refused(
             StatusCode::NOT_FOUND,
             "access.not_found",
             "no such page here",
             &calls,
         );
+    }
+    view(&web, &session, &calls, &uri, Side::Admin).await
+}
+
+async fn view(web: &Web, session: &Session, calls: &PageCalls, uri: &Uri, side: Side) -> Response {
+    let Ok(Query(pairs)) = Query::<Vec<(String, String)>>::try_from_uri(uri) else {
+        return acts::invalid("the query is not a page's", calls);
     };
-    let bar = session.personal();
+    let user = match side {
+        Side::Personal => match session.whoami.user.as_ref().map(|u| u.name.clone()) {
+            Some(user) => user,
+            None => {
+                return refused(
+                    StatusCode::NOT_FOUND,
+                    "access.not_found",
+                    "no such page here",
+                    calls,
+                );
+            }
+        },
+        Side::Admin => String::new(),
+    };
+    let bar = match side {
+        Side::Personal => session.personal(),
+        Side::Admin => session.administration(),
+    };
     let draw = |title: &str, body: &str| {
         outcome::html(
             StatusCode::OK,
-            shell(title, &bar, USER_KEYS_PATH, None, body),
+            shell(title, &bar, side.keys_path(), None, body),
         )
     };
     // A restricted session issues nothing: the sentence, and no template.
-    if denied(&session) {
+    if side == Side::Personal && denied(session) {
         return draw(
             "New key",
             &format!(
@@ -613,33 +926,38 @@ pub async fn page(
         .find(|(n, _)| n == "shape")
         .map(|(_, v)| v.as_str());
     if pairs.is_empty() {
-        return draw("New key", &templates(&user));
+        return draw("New key", &templates(side, &user));
     }
     let draft = match shape {
         Some(shape) => Draft::template(shape, &user),
         None => match Draft::of_query(&pairs) {
             Ok(draft) => draft,
-            Err(message) => return acts::invalid(&message, &calls),
+            Err(message) => return acts::invalid(&message, calls),
         },
     };
-    let credential = session.credential(Capacity::Web);
-    let tree = match crate::pages::workspaces(&web, &credential, &calls, &user).await {
+    // The person's root, or for the admin the tenant's tree under
+    // `universe`, read as `<user>-admin` (ADR-0097 d29).
+    let (credential, root) = match side {
+        Side::Personal => (session.credential(Capacity::Web), user.clone()),
+        Side::Admin => (session.credential(Capacity::Admin), "universe".to_owned()),
+    };
+    let tree = match crate::pages::workspaces(web, &credential, calls, &root).await {
         Ok(tree) => tree,
         Err((request_id, Some(e))) => {
-            return outcome::page(&e, &calls, &format!("{NEW_KEY_PATH}?{request_id}"));
+            return outcome::page(&e, calls, &format!("{}?{request_id}", side.path()));
         }
         Err(_) => {
             return refused(
                 StatusCode::BAD_GATEWAY,
                 "unavailable",
                 "the workspace tree could not be read whole; try again",
-                &calls,
+                calls,
             );
         }
     };
     let review = pairs.iter().any(|(n, v)| n == "step" && v == "review");
     if review {
-        let checks = draft.checks(&user, &tree, unix_now());
+        let checks = draft.checks_as(side, &user, &tree, unix_now());
         if checks.is_empty() {
             let refused = pairs
                 .iter()
@@ -647,44 +965,58 @@ pub async fn page(
                 .map(|(_, v)| v.as_str());
             return draw(
                 "Review key",
-                &review_body(&draft, &user, &tree, &session.csrf(), refused),
+                &review_body_as(side, &draft, &user, &tree, &session.csrf(), refused),
             );
         }
         return draw(
             "New key",
-            &form_body(&draft, &user, &tree, &checks, shape.is_some(), false),
+            &form_body_as(side, &draft, &user, &tree, &checks, shape.is_some(), false),
         );
     }
+    let root_shape = side == Side::Personal && shape == Some("root");
     draw(
         "New key",
-        &form_body(
-            &draft,
-            &user,
-            &tree,
-            &[],
-            shape == Some("root"),
-            shape == Some("root"),
-        ),
+        &form_body_as(side, &draft, &user, &tree, &[], root_shape, root_shape),
     )
 }
 
 /// Step one: the templates as links.
-fn templates(user: &str) -> String {
+fn templates(side: Side, user: &str) -> String {
+    let lead = match side {
+        Side::Personal => format!("A key acting for <code>{}</code>.", short(user)),
+        // The admin's issuance is widening: it waits on a second admin
+        // person outside a one-admin tenant (ADR-0097 d5, d29).
+        Side::Admin => "A key anywhere in the tenant. Its issuance waits on another admin's confirmation, except in a tenant that has only ever had one admin.".to_owned(),
+    };
     let mut out = format!(
-        r#"<div class="oml-col"><header class="oml-section-head"><div class="top"><h1>New key</h1></div><p class="desc">A key acting for <code>{}</code>. Start from a shape; every field can be changed on the next step, and nothing is issued before the review.</p></header><ol class="oml-steps"><li aria-current="step">Start from</li><li>Shape</li><li>Review</li></ol>"#,
-        short(user)
+        r#"<div class="oml-col"><header class="oml-section-head"><div class="top"><h1>New key</h1></div><p class="desc">{lead} Start from a shape; every field can be changed on the next step, and nothing is issued before the review.</p></header><ol class="oml-steps"><li aria-current="step">Start from</li><li>Shape</li><li>Review</li></ol>"#
     );
-    for (shape, title, desc) in TEMPLATES {
+    let personal: Vec<(&str, &str, &str)> = TEMPLATES
+        .iter()
+        .copied()
+        .chain(std::iter::once((
+            "new",
+            "With a new workspace",
+            "Creates a workspace inside the root in the same act and writes and recalls there.",
+        )))
+        .collect();
+    let shapes: &[(&str, &str, &str)] = match side {
+        Side::Personal => &personal,
+        Side::Admin => &ADMIN_TEMPLATES,
+    };
+    let path = side.path();
+    for (shape, title, desc) in shapes {
         let _ = write!(
             out,
-            r#"<a class="oml-choice" href="{NEW_KEY_PATH}?shape={shape}"><strong>{}</strong><span class="desc">{}</span></a>"#,
+            r#"<a class="oml-choice" href="{path}?shape={shape}"><strong>{}</strong><span class="desc">{}</span></a>"#,
             text(title),
             text(desc)
         );
     }
     let _ = write!(
         out,
-        r#"<p><a href="{USER_KEYS_PATH}">Back to Keys</a></p></div>"#
+        r#"<p><a href="{}">Back to Keys</a></p></div>"#,
+        side.keys_path()
     );
     out
 }
@@ -721,6 +1053,7 @@ fn option(value: &str, shown: &str, chosen: &str) -> String {
 
 /// Step two: the form, with the error summary and each field's error where
 /// `checks` names them.
+#[cfg(test)]
 pub(crate) fn form_body(
     draft: &Draft,
     user: &str,
@@ -729,6 +1062,29 @@ pub(crate) fn form_body(
     focus_name: bool,
     fold_grants: bool,
 ) -> String {
+    form_body_as(
+        Side::Personal,
+        draft,
+        user,
+        tree,
+        checks,
+        focus_name,
+        fold_grants,
+    )
+}
+
+/// [`form_body`] on `side`'s builder: the admin's names the key whole and
+/// adds the person, `used_by`, principal, crew and reason (ADR-0097 d29).
+pub(crate) fn form_body_as(
+    side: Side,
+    draft: &Draft,
+    user: &str,
+    tree: &[WorkspaceNode],
+    checks: &[Check],
+    focus_name: bool,
+    fold_grants: bool,
+) -> String {
+    let path = side.path();
     let mut out = String::from(
         r#"<div class="oml-col"><header class="oml-section-head"><div class="top"><h1>New key</h1></div></header><ol class="oml-steps"><li>Start from</li><li aria-current="step">Shape</li><li>Review</li></ol>"#,
     );
@@ -759,25 +1115,46 @@ pub(crate) fn form_body(
     };
     let _ = write!(
         out,
-        r#"<form class="oml-form" method="get" action="{NEW_KEY_PATH}"><fieldset class="oml-radios"><legend>Kind</legend><label class="oml-check"><input type="radio" name="kind" value="agent"{}> Agent key: a value, shown once</label><label class="oml-check"><input type="radio" name="kind" value="connector"{}> Connector key: a connect code, shown once</label></fieldset>"#,
+        r#"<form class="oml-form" method="get" action="{path}"><fieldset class="oml-radios"><legend>Kind</legend><label class="oml-check"><input type="radio" name="kind" value="agent"{}> Agent key: a value, shown once</label><label class="oml-check"><input type="radio" name="kind" value="connector"{}> Connector key: a connect code, shown once</label></fieldset>"#,
         if draft.connector { "" } else { " checked" },
         if draft.connector { " checked" } else { "" },
     );
+    let prefix = match side {
+        Side::Personal => format!(r#"<span class="p">{}-</span>"#, short(user)),
+        Side::Admin => String::new(),
+    };
     let _ = write!(
         out,
-        r#"<label for="kn">Name</label><div class="oml-prefix"><span class="p">{}-</span><input class="oml-input" id="kn" name="name" value="{}" required{}{}></div>"#,
-        short(user),
+        r#"<label for="kn">Name</label><div class="oml-prefix">{prefix}<input class="oml-input" id="kn" name="name" value="{}" required{}{}></div>"#,
         attr(&draft.name),
         if focus_name { " autofocus" } else { "" },
         invalid("kn")
     );
+    let reviewer = match side {
+        Side::Personal => String::new(),
+        Side::Admin => option("reviewer", "reviewer: review held memories", &draft.role),
+    };
     let _ = write!(
         out,
-        r#"<label>Role<select class="oml-select" name="role">{}{}{}</select></label>"#,
+        r#"<label>Role<select class="oml-select" id="kro" name="role"{}>{}{}{}{reviewer}</select></label>"#,
+        invalid("kro"),
         option("contributor", "contributor: recall and write", &draft.role),
         option("reader", "reader: recall only", &draft.role),
         option("submitter", "submitter: write without recall", &draft.role),
     );
+    if side == Side::Admin {
+        let a = &draft.admin;
+        let _ = write!(
+            out,
+            r#"<div class="oml-filterrow top"><label>Acts for the user<input class="oml-input" name="ku" value="{}"><span class="desc">Empty: a tenant key that names no user. With a user, every grant lies in that user's root.</span></label><label>Held by<select class="oml-select" name="kb">{}{}{}</select></label></div><div class="oml-filterrow top"><label>Principal<input class="oml-input" name="kp" value="{}"><span class="desc">Empty: the key's name.</span></label><label>Crew<input class="oml-input" name="kc" value="{}"><span class="desc">Empty: no crew. Fixed for the key's life.</span></label></div>"#,
+            attr(&a.user),
+            option("agent", "an agent", &a.used_by),
+            option("person", "a person", &a.used_by),
+            option("service", "a service", &a.used_by),
+            attr(&a.principal),
+            attr(&a.crew),
+        );
+    }
     // The Whole root template's grants are folded: the template is the
     // key the console issued before v0.8.5, and its grants change only
     // when asked (ADR-0096 d1).
@@ -796,9 +1173,16 @@ pub(crate) fn form_body(
     }
     out.push_str(r#"<p class="desc">For a contributor, a submitter grant comes with a reader grant on the same workspace, as the command line issues it; remove the reader to write without recall there.</p>"#);
     for (i, g) in draft.grants.iter().enumerate() {
+        let reviewer = match side {
+            Side::Personal => String::new(),
+            Side::Admin => option("reviewer", "reviewer", &g.role),
+        };
+        // The create box: the key creates child workspaces where this grant
+        // reaches; granting it waits on another admin as the key does
+        // (ADR-0097 d31).
         let _ = write!(
             out,
-            r#"<fieldset class="oml-radios oml-grant{}"><legend>Grant {}</legend><div class="oml-filterrow top"><label>Workspace<select class="oml-select" id="g{i}w" name="g{i}w"{}>{}</select></label><label>Grant<select class="oml-select" name="g{i}r">{}{}</select></label><label>Covers<select class="oml-select" name="g{i}c">{}{}</select></label></div><label>Except<select class="oml-select" id="g{i}d" name="g{i}d" multiple{}>{}</select></label><label class="oml-check"><input type="checkbox" name="x{i}" value="1"> Remove this grant</label></fieldset>"#,
+            r#"<fieldset class="oml-radios oml-grant{}"><legend>Grant {}</legend><div class="oml-filterrow top"><label>Workspace<select class="oml-select" id="g{i}w" name="g{i}w"{}>{}</select></label><label>Grant<select class="oml-select" name="g{i}r">{}{}{reviewer}</select></label><label>Covers<select class="oml-select" name="g{i}c">{}{}</select></label></div><label>Except<select class="oml-select" id="g{i}d" name="g{i}d" multiple{}>{}</select></label><label class="oml-check"><input type="checkbox" name="g{i}k" value="1"{}> Creates child workspaces here</label><label class="oml-check"><input type="checkbox" name="x{i}" value="1"> Remove this grant</label></fieldset>"#,
             if err(&format!("g{i}w")) || err(&format!("g{i}d")) {
                 " is-invalid"
             } else {
@@ -813,6 +1197,7 @@ pub(crate) fn form_body(
             option("node", "this workspace only", &g.covers),
             invalid(&format!("g{i}d")),
             options(tree, &g.deny, None),
+            if g.create { " checked" } else { "" },
         );
         // Grant counts carry on through the redraw.
     }
@@ -824,6 +1209,30 @@ pub(crate) fn form_body(
     if fold_grants {
         out.push_str("</details>");
     }
+    // The "new workspace" rows: the issuance creates each in the same act
+    // and grants the key its role's default grants there (ADR-0097 d30).
+    out.push_str(r#"<h2 id="nw-h" tabindex="-1">New workspaces</h2><p class="desc">Created with the key, in one act, and granted to it by its role over the subtree. While the key waits on a confirmation, nothing is created.</p>"#);
+    for (i, w) in draft.new_workspaces.iter().enumerate() {
+        let _ = write!(
+            out,
+            r#"<fieldset class="oml-radios oml-grant{}"><legend>New workspace {}</legend><div class="oml-filterrow top"><label>Inside<select class="oml-select" id="w{i}p" name="w{i}p"{}>{}</select></label><label>Name<input class="oml-input" id="w{i}n" name="w{i}n" value="{}"{}></label></div><label class="oml-check"><input type="checkbox" name="y{i}" value="1"> Remove this workspace</label></fieldset>"#,
+            if err(&format!("w{i}p")) || err(&format!("w{i}n")) {
+                " is-invalid"
+            } else {
+                ""
+            },
+            i + 1,
+            invalid(&format!("w{i}p")),
+            options(tree, std::slice::from_ref(&w.parent), Some("choose")),
+            attr(&w.name),
+            invalid(&format!("w{i}n")),
+        );
+    }
+    let _ = write!(
+        out,
+        r#"<input type="hidden" name="m" value="{}"><p><button type="submit" name="addw" value="1">Add a new workspace</button></p>"#,
+        draft.new_workspaces.len()
+    );
     let _ = write!(
         out,
         r#"<label>Default workspace<select class="oml-select" id="kd" name="dw"{}>{}</select></label>"#,
@@ -859,7 +1268,7 @@ pub(crate) fn form_body(
         "Empty: no rate of its own. Under the account's quota, the lower of the two holds.";
     let _ = write!(
         out,
-        r#"<div class="oml-filterrow top"><label>Expires<input class="oml-input" type="date" id="ke" name="exp" value="{}"{}><span class="desc">{}</span></label><label>Requests a minute<input class="oml-input" id="kr" name="rpm" inputmode="numeric" value="{}"{}><span class="desc">{}</span></label></div><p class="desc">The key works through this date in every time zone. Only an admin changes the date or the rate after issue.</p><p><button class="primary" type="submit" name="step" value="review">Review</button> <a href="{USER_KEYS_PATH}">Cancel</a></p></form></div>"#,
+        r#"<div class="oml-filterrow top"><label>Expires<input class="oml-input" type="date" id="ke" name="exp" value="{}"{}><span class="desc">{}</span></label><label>Requests a minute<input class="oml-input" id="kr" name="rpm" inputmode="numeric" value="{}"{}><span class="desc">{}</span></label></div><p class="desc">The key works through this date in every time zone. Only an admin changes the date or the rate after issue.</p>"#,
         attr(&draft.expires),
         invalid("ke"),
         text(&sent),
@@ -867,10 +1276,26 @@ pub(crate) fn form_body(
         invalid("kr"),
         text(account),
     );
+    // Every widening act carries a reason, which the confirming admin
+    // reads (ADR-0097 d26).
+    if side == Side::Admin {
+        let _ = write!(
+            out,
+            r#"<label for="why">Reason</label><textarea class="oml-input" id="why" name="why" rows="2" required{}>{}</textarea><p class="desc">Shown to the admin who confirms the key, and kept with the act.</p>"#,
+            invalid("why"),
+            text(&draft.admin.reason),
+        );
+    }
+    let _ = write!(
+        out,
+        r#"<p><button class="primary" type="submit" name="step" value="review">Review</button> <a href="{}">Cancel</a></p></form></div>"#,
+        side.keys_path()
+    );
     out
 }
 
 /// Step three: the review, read-only, with **Issue key** the one post.
+#[cfg(test)]
 pub(crate) fn review_body(
     draft: &Draft,
     user: &str,
@@ -878,10 +1303,25 @@ pub(crate) fn review_body(
     csrf: &str,
     refused: Option<&str>,
 ) -> String {
+    review_body_as(Side::Personal, draft, user, tree, csrf, refused)
+}
+
+/// [`review_body`] on `side`'s builder: the admin's posts to the admin
+/// Keys page and says the key waits on another admin (ADR-0097 d29).
+pub(crate) fn review_body_as(
+    side: Side,
+    draft: &Draft,
+    user: &str,
+    tree: &[WorkspaceNode],
+    csrf: &str,
+    refused: Option<&str>,
+) -> String {
+    let shown_name = match side {
+        Side::Personal => format!("{}-{}", short(user), short(&draft.name)),
+        Side::Admin => short(&draft.name),
+    };
     let mut out = format!(
-        r#"<div class="oml-col"><header class="oml-section-head"><div class="top"><h1>Review key</h1></div><p class="desc"><code>{}-{}</code>, a {} {}.</p></header><ol class="oml-steps"><li>Start from</li><li>Shape</li><li aria-current="step">Review</li></ol>"#,
-        short(user),
-        short(&draft.name),
+        r#"<div class="oml-col"><header class="oml-section-head"><div class="top"><h1>Review key</h1></div><p class="desc"><code>{shown_name}</code>, a {} {}.</p></header><ol class="oml-steps"><li>Start from</li><li>Shape</li><li aria-current="step">Review</li></ol>"#,
         text(&draft.role),
         if draft.connector {
             "connector key"
@@ -942,7 +1382,7 @@ pub(crate) fn review_body(
         );
     }
     out.push_str("</ul></section>");
-    let body = draft.body(user);
+    let body = draft.body_as(side, user);
     let _ = write!(
         out,
         r#"<details><summary>The exact request</summary><pre>POST /v2/keys
@@ -968,6 +1408,22 @@ pub(crate) fn review_body(
             "value"
         }
     );
+    if side == Side::Admin {
+        let a = &draft.admin;
+        let mut facts = vec![format!("held by {}", text(&a.used_by))];
+        if !a.user.is_empty() {
+            facts.push(format!("acts for <code>{}</code>", short(&a.user)));
+        }
+        if !a.crew.is_empty() {
+            facts.push(format!("crew <code>{}</code>", short(&a.crew)));
+        }
+        let _ = write!(
+            out,
+            r#"<p class="desc">{}</p><p class="desc">Reason: {}</p><p class="oml-consequence">Waits on another admin: the key works nowhere, and no workspace is created, until a second admin confirms it, except in a tenant that has only ever had one admin, where it takes effect at once, marked.</p>"#,
+            facts.join(" · "),
+            text(&a.reason)
+        );
+    }
     let mut back: Vec<String> = draft
         .fields()
         .into_iter()
@@ -976,10 +1432,12 @@ pub(crate) fn review_body(
     back.retain(|p| !p.is_empty());
     let _ = write!(
         out,
-        r#"<form method="post" action="{USER_KEYS_PATH}"><input type="hidden" name="action" value="build_key"><input type="hidden" name="csrf_token" value="{}">{}{}<button class="primary" type="submit">Issue key</button></form><p><a href="{NEW_KEY_PATH}?{}">Change</a></p></div>"#,
+        r#"<form method="post" action="{}"><input type="hidden" name="action" value="build_key"><input type="hidden" name="csrf_token" value="{}">{}{}<button class="primary" type="submit">Issue key</button></form><p><a href="{}?{}">Change</a></p></div>"#,
+        side.keys_path(),
         attr(csrf),
         draft.hidden(),
         acts::nonce_field(),
+        side.path(),
         attr(&back.join("&"))
     );
     out
@@ -1030,10 +1488,24 @@ pub(crate) fn of_form(fields: &Fields) -> Result<Draft, String> {
 pub(crate) fn defined(name: &str) -> bool {
     matches!(
         name,
-        "kind" | "name" | "role" | "n" | "dw" | "gs" | "exp" | "rpm"
-    ) || ['w', 'r', 'c', 'd']
+        "kind" | "name" | "role" | "n" | "m" | "dw" | "gs" | "exp" | "rpm"
+    ) || ['w', 'r', 'c', 'd', 'k']
         .iter()
         .any(|s| grant_index(name, *s).is_some_and(|i| i <= GRANTS_MAX))
+        || ['p', 'n']
+            .iter()
+            .any(|s| new_index(name, *s).is_some_and(|i| i <= GRANTS_MAX))
+}
+
+/// Whether `name` is a field of the admin builder's `build_key` post: the
+/// personal ones and the admin's own (ADR-0097 d29).
+pub(crate) fn defined_admin(name: &str) -> bool {
+    defined(name) || matches!(name, "ku" | "kb" | "kp" | "kc" | "why")
+}
+
+/// `w<i><suffix>`'s index, a "new workspace" row's field.
+fn new_index(name: &str, suffix: char) -> Option<usize> {
+    name.strip_prefix('w')?.strip_suffix(suffix)?.parse().ok()
 }
 
 #[cfg(test)]
@@ -1281,5 +1753,65 @@ mod tests {
         };
         let fields = Fields::of_pairs(posted).unwrap();
         assert_eq!(of_form(&fields).unwrap(), draft);
+    }
+
+    #[test]
+    fn a_new_workspace_row_and_a_create_box_reach_the_request_and_read_back() {
+        let mut draft = Draft {
+            name: "bot".to_owned(),
+            ..Draft::template("new", "alice")
+        };
+        draft.new_workspaces[0].name = "proj2".to_owned();
+        draft.grants.push(GrantDraft {
+            workspace: "alice.proj".to_owned(),
+            role: "submitter".to_owned(),
+            covers: "node".to_owned(),
+            create: true,
+            ..GrantDraft::default()
+        });
+        assert!(
+            draft.checks("alice", &tree(), 0).is_empty(),
+            "{:?}",
+            draft.checks("alice", &tree(), 0)
+        );
+        let body = draft.body("alice");
+        assert_eq!(body["create_workspaces"][0]["parent"], "alice");
+        assert_eq!(body["create_workspaces"][0]["name"], "proj2");
+        assert_eq!(body["grants"][0]["create"], true);
+        assert_eq!(Draft::of_query(&draft.fields()).unwrap(), draft);
+        assert!(
+            draft
+                .words()
+                .iter()
+                .any(|w| w.contains("creates workspaces there"))
+        );
+    }
+
+    #[test]
+    fn the_admin_builder_sends_the_name_whole_and_requires_a_reason() {
+        let mut draft = Draft {
+            name: "ops-bot".to_owned(),
+            ..Draft::template("review", "alice")
+        };
+        let checks = draft.checks_as(Side::Admin, "", &tree(), 0);
+        assert_eq!(
+            checks
+                .iter()
+                .map(|c| c.control.as_str())
+                .collect::<Vec<_>>(),
+            ["why"]
+        );
+        draft.admin.reason = "triage".to_owned();
+        draft.admin.crew = "ops".to_owned();
+        assert!(draft.checks_as(Side::Admin, "", &tree(), 0).is_empty());
+        let body = draft.body_as(Side::Admin, "");
+        assert_eq!(body["name"], "ops-bot");
+        assert_eq!(body["role"], "reviewer");
+        assert_eq!(body["principal"], "ops-bot");
+        assert_eq!(body["reason"], "triage");
+        assert_eq!(body["crew"], "ops");
+        assert_eq!(body["used_by"], "agent");
+        // A person's own builder takes no reviewer key.
+        assert!(!draft.checks("alice", &tree(), 0).is_empty());
     }
 }

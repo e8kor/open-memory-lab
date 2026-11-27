@@ -1294,6 +1294,7 @@ async fn tenant_reviewer_in(rig: &Rig, name: &str, user: &str) -> oml_app::types
                         role,
                         deny: Vec::new(),
                         covers: oml_app::domain::access::Covers::Subtree,
+                        create: false,
                     })
                     .collect(),
                 connect_code: false,
@@ -1301,6 +1302,7 @@ async fn tenant_reviewer_in(rig: &Rig, name: &str, user: &str) -> oml_app::types
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -5939,6 +5941,7 @@ async fn alice_key(
             role,
             deny: Vec::new(),
             covers: oml_app::domain::access::Covers::Subtree,
+            create: false,
         })
         .collect();
     issuer
@@ -5958,6 +5961,7 @@ async fn alice_key(
                 guardrail_scope: None,
                 expiry: expiry.map(|at| oml_app::domain::EventTime::parse(at).expect("an instant")),
                 requests_per_minute,
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -6939,12 +6943,14 @@ async fn other_tenant_writes(rig: &Rig, body: &str) {
                     role: Role::Submitter,
                     deny: Vec::new(),
                     covers: oml_app::domain::access::Covers::Subtree,
+                    create: false,
                 }],
                 connect_code: false,
                 user: None,
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -8412,6 +8418,7 @@ async fn held_in_a_nested_shared_workspace(rig: &Rig) -> (String, String, uuid::
                         role,
                         deny: Vec::new(),
                         covers: oml_app::domain::access::Covers::Subtree,
+                        create: false,
                     })
                     .collect(),
                 connect_code: false,
@@ -8419,6 +8426,7 @@ async fn held_in_a_nested_shared_workspace(rig: &Rig) -> (String, String, uuid::
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -8790,6 +8798,7 @@ async fn team_key(
                         role: *role,
                         deny: Vec::new(),
                         covers: oml_app::domain::access::Covers::Subtree,
+                        create: false,
                     })
                     .collect(),
                 connect_code: false,
@@ -8797,6 +8806,7 @@ async fn team_key(
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -12337,12 +12347,14 @@ async fn the_admin_console_rotates_a_tenant_key_and_offers_no_rotate_on_a_person
                     role: Role::Reader,
                     deny: Vec::new(),
                     covers: oml_app::domain::access::Covers::Subtree,
+                    create: false,
                 }],
                 connect_code: false,
                 user: None,
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -12378,4 +12390,127 @@ async fn the_admin_console_rotates_a_tenant_key_and_offers_no_rotate_on_a_person
     let new = value_of(&shown);
     rig.app.whoami(&new).await.expect("the new value");
     assert!(rig.app.whoami(&old).await.is_err(), "the old value stopped");
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0097 d29 to d31: the admin console creates workspaces and issues keys
+// ---------------------------------------------------------------------------
+
+/// The admin Workspaces page creates a workspace anywhere in the tenant as
+/// `<user>-admin`, a blank parent meaning `universe`: the form posts once
+/// and answers a `303` back to the view (ADR-0097 d9, d29).
+#[tokio::test]
+async fn the_admin_workspaces_page_creates_a_workspace_under_universe() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (status, _, page) = send(&rig.router, get("/web/admin/workspaces", Some(&boss))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("<h2>New workspace</h2>"), "{page}");
+    assert!(page.contains("inside (blank: universe)"), "{page}");
+    assert!(page.contains("as <code>boss-admin</code>"), "{page}");
+    let hidden = hidden_fields(&page, "create_workspace");
+    let mut fields: Vec<(&str, &str)> = hidden
+        .iter()
+        .map(|(n, v)| (n.as_str(), v.as_str()))
+        .collect();
+    fields.push(("name", "ops-shared"));
+    fields.push(("parent", ""));
+    let (status, headers, body) = send(
+        &rig.router,
+        post("/web/admin/workspaces", &fields, Some(&boss)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    assert_eq!(location(&headers), "/web/admin/workspaces?done=created");
+    let created = rig
+        .store
+        .resolve_name(
+            rig.boot.tenant_id,
+            oml_app::domain::name::NamedKind::Workspace,
+            &Name::parse("ops-shared").expect("a name"),
+        )
+        .await
+        .expect("read")
+        .expect("created");
+    let node = rig
+        .store
+        .workspace(rig.boot.tenant_id, created)
+        .await
+        .expect("read")
+        .expect("held");
+    assert_eq!(node.parent_id, Some(rig.boot.root_workspace_id));
+}
+
+/// The admin key builder: the templates, a review that refuses a draft
+/// without a reason and restates a new workspace and a grant's create
+/// flag in the exact request, and Issue key, which shows the value once on
+/// the admin Keys page. A person who is no admin finds no such page
+/// (ADR-0097 d26, d29, d30, d31).
+#[tokio::test]
+async fn the_admin_key_builder_issues_a_key_with_a_new_workspace_and_a_create_grant() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (status, _, _) = send(&rig.router, get("/web/admin/keys/new", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _, start) = send(&rig.router, get("/web/admin/keys/new", Some(&boss))).await;
+    assert_eq!(status, StatusCode::OK, "{start}");
+    for shape in ["one", "read", "write", "review", "new", "connector"] {
+        assert!(
+            start.contains(&format!(r#"href="/web/admin/keys/new?shape={shape}""#)),
+            "{shape}: {start}"
+        );
+    }
+    assert!(!start.contains("<script"), "{start}");
+    let (_, _, form) = send(
+        &rig.router,
+        get("/web/admin/keys/new?shape=new", Some(&boss)),
+    )
+    .await;
+    assert!(form.contains("New workspace 1"), "{form}");
+    assert!(form.contains("Add a new workspace"), "{form}");
+    assert!(form.contains(r#"name="why""#), "{form}");
+    let draft = "/web/admin/keys/new?kind=agent&name=ops-bot&role=contributor&n=2&g0w=universe&g0r=submitter&g0c=subtree&g0k=1&g1w=universe&g1r=reader&g1c=subtree&m=1&w0p=universe&w0n=ops-space&dw=&gs=ancestors&exp=&rpm=&kb=agent";
+    let (_, _, refused) = send(
+        &rig.router,
+        get(&format!("{draft}&step=review"), Some(&boss)),
+    )
+    .await;
+    assert!(refused.contains(r##"<a href="#why">"##), "{refused}");
+    let (_, _, review) = send(
+        &rig.router,
+        get(
+            &format!("{draft}&why=the+ops+agent&step=review"),
+            Some(&boss),
+        ),
+    )
+    .await;
+    assert!(review.contains("<h1>Review key</h1>"), "{review}");
+    assert!(review.contains("&quot;create_workspaces&quot;"), "{review}");
+    assert!(review.contains("&quot;create&quot;: true"), "{review}");
+    assert!(review.contains("Waits on another admin"), "{review}");
+    assert!(review.contains(r#"action="/web/admin/keys""#), "{review}");
+    let fields = hidden_fields(&review, "build_key");
+    let fields: Vec<(&str, &str)> = fields
+        .iter()
+        .map(|(n, v)| (n.as_str(), v.as_str()))
+        .collect();
+    let (status, headers, body) =
+        send(&rig.router, post("/web/admin/keys", &fields, Some(&boss))).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    assert_eq!(location(&headers), "/web/admin/keys");
+    let (sealed, _) = set_cookie(&headers, ONCE_COOKIE).expect("the shown-once cookie");
+    let (_, _, shown) = send(
+        &rig.router,
+        get(
+            "/web/admin/keys",
+            Some(&format!("{boss}; {ONCE_COOKIE}={sealed}")),
+        ),
+    )
+    .await;
+    assert!(shown.contains("OML_API_KEY="), "{shown}");
+    assert!(shown.contains("Shown once"), "{shown}");
+    key_named(&rig, "ops-bot").await;
 }

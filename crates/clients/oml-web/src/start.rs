@@ -179,7 +179,12 @@ fn credential_card(client: Client, secret: &Secret, server: &str) -> String {
                 PREFERENCES_SNIPPET,
             ));
         }
-        (Client::ClaudeCode, Secret::Key { value, .. } | Secret::Rotated { value, .. }) => {
+        (
+            Client::ClaudeCode,
+            Secret::Key { value, .. }
+            | Secret::Rotated { value, .. }
+            | Secret::AdminIssued { shown: value, .. },
+        ) => {
             out.push_str(&copy_block("cred-key", "Key, shown once", value));
             if server.is_empty() {
                 let _ = write!(out, r#"<p class="desc">{}</p>"#, keys::NO_SERVER);
@@ -199,7 +204,12 @@ fn credential_card(client: Client, secret: &Secret, server: &str) -> String {
                 r#"<p class="dim">The install asks for the plugin's options: paste the key as <code>api_key</code> and {url}. Then run <code>/reload-plugins</code>.</p>"#
             );
         }
-        (_, Secret::Key { value, .. } | Secret::Rotated { value, .. }) => {
+        (
+            _,
+            Secret::Key { value, .. }
+            | Secret::Rotated { value, .. }
+            | Secret::AdminIssued { shown: value, .. },
+        ) => {
             if server.is_empty() {
                 let _ = write!(out, r#"<p class="desc">{}</p>"#, keys::NO_SERVER);
             } else {

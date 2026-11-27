@@ -828,9 +828,29 @@ async fn view(
         }
         Side::Admin => (session.administration(), {
             let user = short(session.whoami.user.as_ref().map_or("", |u| u.name.as_str()));
-            format!(
+            let mut body = format!(
                 r#"<h1>Workspaces</h1><p class="desc">Apply asks for a confirmation.</p><details class="help"><summary>?</summary>Status changes run as <code>{user}-admin</code> and need a second key to ratify; the drafts-visibility toggle runs as <code>{user}-review</code>.</details>{confirm}{table}"#
-            )
+            );
+            // The admin creates anywhere in the tenant, `universe`
+            // included: a neutral act, at once, with nothing to settle
+            // (ADR-0097 d9, d29).
+            body.push_str("<h2>New workspace</h2><p class=\"desc\">Created at once, in development, as <code>");
+            body.push_str(&user);
+            body.push_str("-admin</code>. A workspace is never deleted.</p>");
+            body.push_str(&form(
+                ADMIN_WORKSPACES_PATH,
+                "create_workspace",
+                &session.csrf(),
+                &format!(
+                    "{}{}{}",
+                    input("name", "name", "", true),
+                    input("parent", "inside (blank: universe)", "", false),
+                    hidden("nonce", &nonce())
+                ),
+                "Create",
+                true,
+            ));
+            body
         }),
     };
     outcome::html(
@@ -926,15 +946,6 @@ async fn act(
         );
     };
     calls.act(action);
-    // Creating a workspace is the user page's act alone.
-    if action == "create_workspace" && side == Side::Admin {
-        return refused(
-            StatusCode::BAD_REQUEST,
-            "request.validation",
-            "action is not one of this page's actions",
-            &calls,
-        );
-    }
     if let Some(name) = fields.outside(defined(action)) {
         return refused(
             StatusCode::BAD_REQUEST,
@@ -991,9 +1002,23 @@ async fn act(
     let ids = calls.next_ids();
     let (outcome, done) = match action {
         "create_workspace" => {
-            // A blank parent is the person's own root.
-            let parent = fields.get("parent").filter(|p| !p.is_empty());
-            let credential = session.credential(Capacity::Web);
+            // A blank parent is the person's own root on the user page and
+            // `universe` on the admin page, where `<user>-admin` creates
+            // anywhere in the tenant as a neutral admin act (ADR-0097 d9,
+            // d29).
+            let parent = match side {
+                Side::User => fields.get("parent").filter(|p| !p.is_empty()),
+                Side::Admin => Some(
+                    fields
+                        .get("parent")
+                        .filter(|p| !p.is_empty())
+                        .unwrap_or("universe"),
+                ),
+            };
+            let credential = match side {
+                Side::User => session.credential(Capacity::Web),
+                Side::Admin => session.credential(Capacity::Admin),
+            };
             (
                 web.api
                     .create_workspace(&call(&credential, &ids), &key, field("name"), parent)
