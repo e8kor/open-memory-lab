@@ -13,7 +13,7 @@ brief's recommendations, and this record re-derives every rule that rested on th
 recommendations (marked **re-derived** where it appears). The operator answered the five tensions
 those answers created, and three readings, the same day; each answer is recorded where it applies
 and marked **decided by the operator, 2026-11-25**. Readings this record takes beyond the answers
-are marked **reading, for the operator to confirm**.
+were marked **reading, for the operator to confirm**; the operator decided the last two on 2026-11-26.
 
 **Release:** v0.8.6, not built. Four pieces are built in v0.8.5 (d27).
 
@@ -172,7 +172,7 @@ Decided, not built.
   confirm screen names the root's person. A pending connect code is shown once at the mint, voids
   none of the person's own codes and redeems nothing until confirmed; the void that
   `mint_connect_code` performs today (`app.rs:11884-11890`) happens at confirmation, and ADR-0031
-  d8's ten-minute life runs from the confirmation (**reading, for the operator to confirm**: from
+  d8's ten-minute life runs from the confirmation (decided by the operator, 2026-11-26: from
   the mint, a code would nearly always expire before a second admin saw it). This reverses ADR-0044 d3 and d7, ADR-0045 d10
   and ADR-0031 d7 and d8 only as far as adding the second admin's confirmation: an admin still
   issues a reviewer user key in another person's root once confirmed, and no consent class covers
@@ -342,8 +342,8 @@ Decided, not built.
 - **d17 — Admins stay on the status ladder, and the ratifier must count as a person other than the
   proposer (Q12, re-derived).** ADR-0009 d3's two identities become two persons at ratification:
   the ratifier counts as a person (d12), and that person differs from the proposer's. Proposers
-  stay as ADR-0095 d5 has them: an admin, a reviewer, or an agent reviewer key over MCP. **Reading,
-  for the operator to confirm:** when the proposing key counts as no person, the ratifier must also
+  stay as ADR-0095 d5 has them: an admin, a reviewer, or an agent reviewer key over MCP. **Decided by
+  the operator, 2026-11-26:** when the proposing key counts as no person, the ratifier must also
   differ from the `actor_person` of the admin act that issued the proposing key, so one admin
   cannot propose through an agent key they issued and ratify through their own session. A ladder
   move is not an admin act: it keeps its own two-person flow whoever takes it, and ADR-0089 d2's
@@ -851,8 +851,8 @@ answered each on 2026-11-25. Each answer is recorded where it applies.
    revokes their own keys (d14); under `sole_admin` the founder can still invent a fix settler,
    marked (d11).
 
-Two readings stay open for the operator: the connect code's life running from the confirmation
-(d6) and the ratifier differing from the admin who issued an agent proposer (d17).
+7. **Readings decided on 2026-11-26:** the connect code's life runs from the confirmation (d6), and
+   the ratifier differs from the admin who issued an agent proposer (d17).
 
 ### Pages, API and issues
 
