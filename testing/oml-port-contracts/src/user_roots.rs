@@ -50,6 +50,7 @@ fn grant(node: Uuid, role: Role) -> GrantRequest {
         role,
         deny: Vec::new(),
         covers: Covers::Subtree,
+        create: false,
     }
 }
 
@@ -141,6 +142,7 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
                     role,
                     deny: Vec::new(),
                     covers: Covers::Subtree,
+                    create: false,
                 })
                 .collect(),
             connect_code: false,
@@ -149,6 +151,7 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
             expiry: None,
             requests_per_minute: None,
             person: None,
+            create_workspaces: Vec::new(),
         };
         let ada = app
             .issue_key(
@@ -418,6 +421,7 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
                         role,
                         deny: Vec::new(),
                         covers: Covers::Subtree,
+                        create: false,
                     })
                     .collect(),
                     connect_code: false,
@@ -426,6 +430,7 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
                     expiry: None,
                     requests_per_minute: None,
                     person: None,
+                    create_workspaces: Vec::new(),
                 },
             )
             .await
@@ -444,6 +449,7 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
                     role,
                     deny: Vec::new(),
                     covers: Covers::Subtree,
+                    create: false,
                 },
             )
             .await
@@ -607,6 +613,7 @@ async fn tenant_key<S: JournalStore + Clone>(
             expiry: None,
             requests_per_minute: None,
             person: None,
+            create_workspaces: Vec::new(),
         },
     )
     .await

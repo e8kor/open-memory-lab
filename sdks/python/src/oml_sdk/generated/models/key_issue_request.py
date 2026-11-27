@@ -14,6 +14,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.grant_request import GrantRequest
+    from ..models.new_workspace_request import NewWorkspaceRequest
 
 
 T = TypeVar("T", bound="KeyIssueRequest")
@@ -71,6 +72,17 @@ class KeyIssueRequest:
             admin.act. Required when the issuance waits on a second admin person: request.validation with details.field
             /reason and details.reason required; a missing one on an issuance that takes effect at once under sole_admin is
             journalled as null (ADR-0097 d26). Since v0.8.6.
+        create_workspaces (list[NewWorkspaceRequest] | Unset): Workspaces the issuance creates in the same act, each
+            journalled as workspace.create before key.issued and granted to the key by its role's default grants over the
+            subtree: a contributor reader and submitter, a submitter submitter, a reader reader, a reviewer reviewer. The
+            creations, the key and its grants commit together or not at all. An admin key creates anywhere, a person's web
+            session inside the own root; an operator key creates none (access.verb_ceiling). When the issuance waits on a
+            second admin person nothing is created until the confirmation, which creates the workspaces, writes the grants
+            and names the act in one commit; a name taken by then answers 409 name.taken, applies nothing, and the act waits
+            until it is declined or expires. A pending key whose default would be a workspace the act creates is issued with
+            no default. A creation below a user root counts on that account's workspaces meter. At most 16 per issuance,
+            else request.validation with details.field /create_workspaces and details.reason too_many (ADR-0097 d30). Since
+            v0.8.6.
     """
 
     role: Role
@@ -88,6 +100,7 @@ class KeyIssueRequest:
     expiry: datetime.datetime | Unset = UNSET
     requests_per_minute: int | Unset = UNSET
     reason: str | Unset = UNSET
+    create_workspaces: list[NewWorkspaceRequest] | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         role = self.role.value
@@ -141,6 +154,13 @@ class KeyIssueRequest:
 
         reason = self.reason
 
+        create_workspaces: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.create_workspaces, Unset):
+            create_workspaces = []
+            for create_workspaces_item_data in self.create_workspaces:
+                create_workspaces_item = create_workspaces_item_data.to_dict()
+                create_workspaces.append(create_workspaces_item)
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -175,12 +195,15 @@ class KeyIssueRequest:
             field_dict["requests_per_minute"] = requests_per_minute
         if reason is not UNSET:
             field_dict["reason"] = reason
+        if create_workspaces is not UNSET:
+            field_dict["create_workspaces"] = create_workspaces
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.grant_request import GrantRequest
+        from ..models.new_workspace_request import NewWorkspaceRequest
 
         d = dict(src_dict)
         role = Role(d.pop("role"))
@@ -250,6 +273,17 @@ class KeyIssueRequest:
 
         reason = d.pop("reason", UNSET)
 
+        _create_workspaces = d.pop("create_workspaces", UNSET)
+        create_workspaces: list[NewWorkspaceRequest] | Unset = UNSET
+        if _create_workspaces is not UNSET:
+            create_workspaces = []
+            for create_workspaces_item_data in _create_workspaces:
+                create_workspaces_item = NewWorkspaceRequest.from_dict(
+                    create_workspaces_item_data
+                )
+
+                create_workspaces.append(create_workspaces_item)
+
         key_issue_request = cls(
             role=role,
             name=name,
@@ -266,6 +300,7 @@ class KeyIssueRequest:
             expiry=expiry,
             requests_per_minute=requests_per_minute,
             reason=reason,
+            create_workspaces=create_workspaces,
         )
 
         return key_issue_request

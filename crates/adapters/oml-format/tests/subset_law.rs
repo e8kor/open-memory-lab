@@ -63,6 +63,7 @@ async fn writer(app: &TestApp) -> String {
         role,
         deny: Vec::new(),
         covers: Covers::Subtree,
+        create: false,
     };
     let issued = app
         .issue_key(
@@ -82,6 +83,7 @@ async fn writer(app: &TestApp) -> String {
                 expiry: None,
                 requests_per_minute: None,
                 person: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await

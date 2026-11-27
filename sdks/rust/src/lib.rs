@@ -1870,10 +1870,22 @@ pub struct KeyIssued {
     pub value: Option<String>,
     #[serde(default)]
     pub connect_code: Option<ConnectCode>,
+    /// The admin act an admin's issuance is, and its state:
+    /// `pending_confirmation` until a second admin person confirms it,
+    /// `effective` where it took effect at once (ADR-0097 d5, d10, d23).
+    #[serde(default)]
+    pub admin_act: Option<IssuedAct>,
     /// Whether the answer was a recorded outcome replayed, which carries no
     /// value or code; read off `Idempotency-Replay`, not the body.
     #[serde(skip)]
     replayed: bool,
+}
+
+/// The admin act of an admin's issuance (ADR-0097 d2).
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct IssuedAct {
+    pub act_id: String,
+    pub state: String,
 }
 
 impl KeyIssued {
@@ -1892,6 +1904,7 @@ impl KeyIssued {
             name,
             value,
             connect_code,
+            admin_act: None,
             replayed: false,
         }
     }
@@ -4281,6 +4294,7 @@ mod tests {
                 connector_url: "https://oml.example.com/mcp".to_owned(),
                 replayed: false,
             }),
+            admin_act: None,
             replayed: false,
         };
         let shown = format!("{issued:?}");

@@ -159,6 +159,8 @@ web:
       pathType: Exact
     - path: /web/admin/keys
       pathType: Exact
+    - path: /web/admin/keys/new
+      pathType: Exact
     - path: /web/memory
       pathType: Exact
     - path: /web/admin/memory

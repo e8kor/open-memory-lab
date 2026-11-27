@@ -104,6 +104,7 @@ async fn rig<S: JournalStore + Clone>(store: S) -> Rig<S> {
                 role,
                 deny: Vec::new(),
                 covers: Covers::Subtree,
+                create: false,
             })
             .collect(),
         connect_code: false,
@@ -112,6 +113,7 @@ async fn rig<S: JournalStore + Clone>(store: S) -> Rig<S> {
         expiry: None,
         requests_per_minute: None,
         person: None,
+        create_workspaces: Vec::new(),
     };
     let writer = app
         .issue_key(admin.as_str(), &issue("ada", UsedBy::Person))
@@ -547,6 +549,7 @@ async fn the_upload_binds_once_and_its_key_is_nulled_at_the_end<S: JournalStore 
                     role: Role::Submitter,
                     deny: Vec::new(),
                     covers: Covers::Subtree,
+                    create: false,
                 }],
                 connect_code: false,
                 user: Some(name("ada")),
@@ -554,6 +557,7 @@ async fn the_upload_binds_once_and_its_key_is_nulled_at_the_end<S: JournalStore 
                 expiry: None,
                 requests_per_minute: None,
                 person: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await

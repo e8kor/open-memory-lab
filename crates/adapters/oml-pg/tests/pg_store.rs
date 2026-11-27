@@ -1962,6 +1962,7 @@ async fn grants_of_another_tenant_are_invisible_under_rls() {
             role: Role::Reader,
             deny: Vec::new(),
             covers: Covers::Subtree,
+            create: false,
         },
     )
     .await
@@ -3082,9 +3083,10 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
                  - 'suspended_cause' - 'suspended_act_id' - 'suspended_at'"
             }
             // 0014 adds covers, subtree for every grant it finds (ADR-0044
-            // d12).
-            // 0073 revoked_epoch, null for every grant it finds (ADR-0097 d10).
-            (true, "grants") => "to_jsonb(t) - 'covers' - 'revoked_epoch'",
+            // d12); 0071 adds may_create, false for every grant it finds
+            // (ADR-0097 d31); 0073 revoked_epoch, null for every grant it
+            // finds (ADR-0097 d10).
+            (true, "grants") => "to_jsonb(t) - 'covers' - 'may_create' - 'revoked_epoch'",
             // 0016 adds a guardrail's severity and rule, null on every other
             // kind (proposed ADR-0037 d10); 0020 adds the stored search
             // lexemes, generated from the claim (ADR-0049 d12); 0025 adds
@@ -6807,10 +6809,12 @@ async fn reviewer_pg(
                 role: Role::Reviewer,
                 deny: Vec::new(),
                 covers: oml_app::domain::access::Covers::Subtree,
+                create: false,
             }],
             expiry: None,
             requests_per_minute: None,
             person: None,
+            create_workspaces: Vec::new(),
         },
     )
     .await
@@ -12126,6 +12130,7 @@ async fn writer_pg(app: &PgApp, admin: &str, node: Uuid) -> String {
                     role,
                     deny: Vec::new(),
                     covers: Covers::Subtree,
+                    create: false,
                 })
                 .collect(),
             connect_code: false,
@@ -12134,6 +12139,7 @@ async fn writer_pg(app: &PgApp, admin: &str, node: Uuid) -> String {
             expiry: None,
             requests_per_minute: None,
             person: None,
+            create_workspaces: Vec::new(),
         },
     )
     .await
@@ -12390,10 +12396,12 @@ async fn migration_0052_releases_a_lane_claim_a_crew_key_took_before_the_lane() 
                     role: Role::Reviewer,
                     deny: Vec::new(),
                     covers: oml_app::domain::access::Covers::Subtree,
+                    create: false,
                 }],
                 expiry: None,
                 requests_per_minute: None,
                 person: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -13172,10 +13180,12 @@ async fn person_reviewer_pg(app: &PgApp, admin: &str, key_name: &str, node: Uuid
                 role: Role::Reviewer,
                 deny: Vec::new(),
                 covers: Covers::Subtree,
+                create: false,
             }],
             expiry: None,
             requests_per_minute: None,
             person: None,
+            create_workspaces: Vec::new(),
         },
     )
     .await

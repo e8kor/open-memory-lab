@@ -55,6 +55,7 @@ fn grant(node: Uuid, role: Role, deny: Vec<Uuid>) -> GrantRequest {
         role,
         deny: deny.into_iter().map(Into::into).collect(),
         covers: Covers::Subtree,
+        create: false,
     }
 }
 
@@ -141,6 +142,7 @@ impl<S: JournalStore + Clone> FedWorld<S> {
                 expiry: None,
                 requests_per_minute: None,
                 person: None,
+                create_workspaces: Vec::new(),
             };
             let app = &app;
             let admin = admin.clone();
@@ -275,6 +277,7 @@ impl<S: JournalStore + Clone> FedWorld<S> {
                     expiry: None,
                     requests_per_minute: None,
                     person: None,
+                    create_workspaces: Vec::new(),
                 },
             )
             .await
@@ -1999,6 +2002,7 @@ pub async fn the_policies_are_never_an_agents_act<S: JournalStore + Clone>(store
                         expiry: None,
                         requests_per_minute: None,
                         person: None,
+                        create_workspaces: Vec::new(),
                     },
                 )
                 .await

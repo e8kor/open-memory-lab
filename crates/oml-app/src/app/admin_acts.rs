@@ -80,6 +80,7 @@ pub(crate) fn grant_json(grant: &Grant) -> Value {
         "role": grant.role.as_str(),
         "deny": grant.deny.iter().map(Uuid::to_string).collect::<Vec<_>>(),
         "covers": grant.covers.as_str(),
+        "create": grant.create,
     })
 }
 
@@ -119,6 +120,11 @@ fn grant_from_json(value: &Value) -> Result<Grant, AppError> {
         role,
         deny,
         covers,
+        // An effect recorded before the flag holds none (ADR-0097 d31).
+        create: value
+            .get("create")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     })
 }
 
@@ -734,23 +740,30 @@ where
         )?;
         let at = event.envelope.at.clone();
         let mut links = vec![(event, MetadataFold::AdminAct(Box::new(act.clone())))];
-        self.confirmed_effect(&admin, &act, &mut links).await?;
-        let reqs = links
+        let mut ceilings = Vec::new();
+        self.confirmed_effect(&admin, &act, &mut links, &mut ceilings)
+            .await?;
+        let mut reqs: Vec<_> = links
             .into_iter()
             .map(|(event, fold)| commit_request(event, fold, None))
             .collect();
+        for (index, ceiling) in ceilings {
+            reqs[index].ceiling = Some(ceiling);
+        }
         self.commit_requests(reqs).await?;
         act.settled_at = Some(at);
         Ok(act)
     }
 
     /// The effect a confirmed act applies, sealed after the last of `links`
-    /// (ADR-0097 d5, d6, d15, d23).
+    /// (ADR-0097 d5, d6, d15, d23), and the account ceiling each charged
+    /// link holds, by its index in `links`.
     async fn confirmed_effect(
         &self,
         admin: &KeyRecord,
         act: &AdminActRecord,
         links: &mut Vec<(SignedEnvelope, MetadataFold)>,
+        ceilings: &mut Vec<(usize, crate::ports::Ceiling)>,
     ) -> Result<(), AppError> {
         let tenant_id = admin.tenant_id;
         let effect = &act.effect;
@@ -769,6 +782,31 @@ where
                 let key_id = key_id.ok_or_else(|| {
                     AppError::StoredResponse(format!("admin act {} names no key", act.act_id))
                 })?;
+                // The workspaces the issuance creates, created now and before
+                // the grants on them: a name taken since answers
+                // `name.taken` and applies nothing, and the act waits
+                // (ADR-0097 d30).
+                for workspace in effect
+                    .get("workspaces")
+                    .and_then(Value::as_array)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default()
+                {
+                    let created = self.confirmed_workspace(admin, act, workspace).await?;
+                    let prev = last(links);
+                    let event = self.seal(
+                        Some(&prev),
+                        tenant_id,
+                        event_types::WORKSPACE_CREATE,
+                        &admin.principal,
+                        Some(admin.key_id),
+                        with_act_id(Self::workspace_create_payload(&created), act.act_id),
+                    )?;
+                    if let Some(ceiling) = self.ceiling_for(tenant_id, created.namespace).await? {
+                        ceilings.push((links.len(), ceiling));
+                    }
+                    links.push((event, MetadataFold::WorkspaceCreated(created)));
+                }
                 for grant in effect
                     .get("grants")
                     .and_then(Value::as_array)
@@ -877,6 +915,39 @@ where
             }
         }
         Ok(())
+    }
+
+    /// A workspace a pending issuance recorded, as its confirmation creates
+    /// it: its recorded id and name under its parent as the parent stands
+    /// now, checked as every create is (ADR-0097 d30).
+    async fn confirmed_workspace(
+        &self,
+        admin: &KeyRecord,
+        act: &AdminActRecord,
+        workspace: &Value,
+    ) -> Result<crate::types::WorkspaceRecord, AppError> {
+        let bad = || AppError::StoredResponse(format!("admin act {} workspace", act.act_id));
+        let id = |field: &str| {
+            workspace
+                .get(field)
+                .and_then(Value::as_str)
+                .and_then(|s| Uuid::parse_str(s).ok())
+                .ok_or_else(bad)
+        };
+        let name = workspace
+            .get("name")
+            .and_then(Value::as_str)
+            .and_then(|n| oml_domain::name::Name::parse(n).ok())
+            .ok_or_else(bad)?;
+        let parent_id = id("parent_id")?;
+        let ancestors = self
+            .journal
+            .workspace_ancestry(admin.tenant_id, parent_id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        let mut created = self.child_record(admin, &name, Some(parent_id), None, &ancestors)?;
+        created.workspace_id = id("workspace_id")?;
+        Ok(created)
     }
 
     /// A pending connect code's `connection.code_issued`, at confirmation:

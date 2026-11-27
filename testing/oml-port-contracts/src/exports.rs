@@ -80,6 +80,7 @@ async fn rig<S: WebStore + ConnectionStore + Clone>(store: S) -> Rig<S> {
                             role: r,
                             deny: Vec::new(),
                             covers: Covers::Subtree,
+                            create: false,
                         })
                         .collect(),
                     user: Some(name("ada")),
@@ -88,6 +89,7 @@ async fn rig<S: WebStore + ConnectionStore + Clone>(store: S) -> Rig<S> {
                     expiry: None,
                     requests_per_minute: None,
                     person: None,
+                    create_workspaces: Vec::new(),
                 },
             )
             .await

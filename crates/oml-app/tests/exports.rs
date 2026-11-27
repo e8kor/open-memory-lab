@@ -100,6 +100,7 @@ fn grant(node: &str, role: Role) -> GrantRequest {
         role,
         deny: Vec::new(),
         covers: Covers::Subtree,
+        create: false,
     }
 }
 
@@ -129,6 +130,7 @@ async fn issue(
             expiry: None,
             requests_per_minute: None,
             person: None,
+            create_workspaces: Vec::new(),
         },
     )
     .await
@@ -695,6 +697,7 @@ async fn a_crew_key_is_refused_export_as_person_only() {
                 expiry: None,
                 requests_per_minute: None,
                 person: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await

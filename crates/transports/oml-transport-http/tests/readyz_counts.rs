@@ -89,6 +89,7 @@ async fn unauthenticated_readyz_carries_no_per_pipeline_or_per_tenant_count() {
         role,
         deny: Vec::new(),
         covers: Covers::Subtree,
+        create: false,
     };
     let writer = app
         .issue_key(
@@ -108,6 +109,7 @@ async fn unauthenticated_readyz_carries_no_per_pipeline_or_per_tenant_count() {
                 expiry: None,
                 requests_per_minute: None,
                 person: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await

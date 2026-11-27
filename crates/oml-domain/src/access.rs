@@ -73,6 +73,9 @@ pub struct Grant {
     pub deny: Vec<Uuid>,
     /// The node's subtree, or the node alone (ADR-0044 d4).
     pub covers: Covers,
+    /// Whether the grant lets its key create child workspaces where it
+    /// reaches (ADR-0097 d31). Granting it is widening.
+    pub create: bool,
 }
 
 impl Grant {
@@ -291,6 +294,32 @@ fn globally_denied(denials: &[KeyDenial], ancestry: &[Uuid]) -> bool {
 /// (workspaces.md, per-grant attenuation).
 fn survives(grant: &Grant, ancestry: &[Uuid]) -> bool {
     grant.reaches(ancestry) && !grant.deny.iter().any(|d| ancestry.contains(d))
+}
+
+/// The grant carrying `create` that admits a child under the node whose
+/// ancestry, node to root, this is (ADR-0097 d31): a flagged grant that
+/// survives there, none where a global denial covers the node. A subtree
+/// grant is preferred, since it already covers the child and writes no
+/// grant on it; `None` where no flagged grant reaches.
+#[must_use]
+pub fn create_grant<'a>(
+    grants: &'a [Grant],
+    denials: &[KeyDenial],
+    ancestry: &[Uuid],
+) -> Option<&'a Grant> {
+    if globally_denied(denials, ancestry) {
+        return None;
+    }
+    let mut flagged = grants.iter().filter(|g| g.create && survives(g, ancestry));
+    let first = flagged.next()?;
+    if first.covers == Covers::Subtree {
+        return Some(first);
+    }
+    Some(
+        flagged
+            .find(|g| g.covers == Covers::Subtree)
+            .unwrap_or(first),
+    )
 }
 
 /// `effective_roles(N)` (workspaces.md, effective access; ADR-0025 d1):

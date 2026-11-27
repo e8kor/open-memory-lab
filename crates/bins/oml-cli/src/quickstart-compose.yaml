@@ -92,7 +92,7 @@ configs:
       	auto_https off
       }
       :8080 {
-      	@oml_web path /web/guardrails /web/workspace /web/workspace/new /web/workspace/edit /web/workspace/retire /web/admin/workspace /web/admin/fixes /web/workspaces /web/workspaces/import /web/admin/workspaces /web/memories /web/catalog /web/atlas /web/admin/memories /web/admin/atlas /web/data/memories /web/admin/data/memories /web/review /web/admin/review /web/todo /web/todo/judge /web/todo/fix /web/admin/todo /web/keys /web/keys/new /web/admin/keys /web/memory /web/admin/memory /web/admin/curate /web/admin/investigation /web/start /web/start/status /web/start/export /web/setup /web/admin/people /web/admin/users /web/render/* /web/assets/*
+      	@oml_web path /web/guardrails /web/workspace /web/workspace/new /web/workspace/edit /web/workspace/retire /web/admin/workspace /web/admin/fixes /web/workspaces /web/workspaces/import /web/admin/workspaces /web/memories /web/catalog /web/atlas /web/admin/memories /web/admin/atlas /web/data/memories /web/admin/data/memories /web/review /web/admin/review /web/todo /web/todo/judge /web/todo/fix /web/admin/todo /web/keys /web/keys/new /web/admin/keys /web/admin/keys/new /web/memory /web/admin/memory /web/admin/curate /web/admin/investigation /web/start /web/start/status /web/start/export /web/setup /web/admin/people /web/admin/users /web/render/* /web/assets/*
       	reverse_proxy @oml_web oml-web:8091
       	reverse_proxy oml-server:8080
       }

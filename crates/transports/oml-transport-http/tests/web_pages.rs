@@ -1295,6 +1295,7 @@ async fn the_allowlist_routes_take_an_admin_key_and_the_email_only_in_a_body() {
                     role: Role::Submitter,
                     deny: Vec::new(),
                     covers: Default::default(),
+                    create: false,
                 }],
                 connect_code: false,
                 user: None,
@@ -1302,6 +1303,7 @@ async fn the_allowlist_routes_take_an_admin_key_and_the_email_only_in_a_body() {
                 expiry: None,
                 requests_per_minute: None,
                 person: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -2226,6 +2228,7 @@ async fn stray_admin_under_alice(rig: &Rig) -> uuid::Uuid {
                 expiry: None,
                 requests_per_minute: None,
                 person: Some(Name::parse("alice").expect("a name")),
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -3641,28 +3644,31 @@ async fn the_admin_session_denies_a_key_on_a_workspace_and_the_web_session_on_un
     );
 }
 
-/// d4: admin issuance stays off the console: `POST /v2/keys` from
-/// `<user>-admin` is `access.verb_ceiling`, `session_capacity`.
+/// ADR-0097 d29: `<user>-admin` issues as an admin key does, its issuance
+/// one widening admin act; in a tenant that has only ever had one admin
+/// person it takes effect at once, marked `effective` (d10).
 #[tokio::test]
-async fn the_admin_session_still_issues_no_key() {
+async fn the_admin_session_issues_a_key_as_an_admin_act() {
     let rig = rig().await;
     rig.allow("boss@example.com", "boss", true).await;
     let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
-    let head = rig.head().await;
     let (status, answer) = as_web(
         &rig,
         &boss,
         "admin",
         "/v2/keys",
-        json!({"name": "boss-x", "role": "reader", "connect_code": false}),
+        json!({
+            "name": "boss-x",
+            "role": "reader",
+            "principal": "boss-x",
+            "connect_code": false,
+            "grants": [{ "workspace": "universe", "role": "reader" }],
+            "reason": "a reader for the dashboards",
+        }),
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
-    assert_eq!(
-        answer["error"]["details"]["reason"], "session_capacity",
-        "{answer}"
-    );
-    assert_eq!(rig.head().await, head);
+    assert_eq!(status, StatusCode::CREATED, "{answer}");
+    assert!(answer["admin_act"]["act_id"].is_string(), "{answer}");
 }
 
 /// d8: each listed grant carries its coverage, `node` for a node grant.

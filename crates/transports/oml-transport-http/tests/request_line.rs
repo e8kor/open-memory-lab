@@ -120,12 +120,14 @@ async fn key(app: &TestApp, boot: &BootstrapResult, name: &str, connector: bool)
                     role: Role::Submitter,
                     deny: Vec::new(),
                     covers: Covers::Subtree,
+                    create: false,
                 },
                 GrantRequest {
                     node: boot.root_workspace_id.into(),
                     role: Role::Reader,
                     deny: Vec::new(),
                     covers: Covers::Subtree,
+                    create: false,
                 },
             ],
             connect_code: connector,
@@ -134,6 +136,7 @@ async fn key(app: &TestApp, boot: &BootstrapResult, name: &str, connector: bool)
             expiry: None,
             requests_per_minute: None,
             person: None,
+            create_workspaces: Vec::new(),
         },
     )
     .await

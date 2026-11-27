@@ -87,7 +87,7 @@ recallable by others yet. The one exception is oml_write with withdraw, which ma
 of the key's own, made by mistake, withdrawn and keeps its text, never served.
 
 oml_write also creates a child workspace inside the person's own root that the key works in, \
-empty, in development and with no grant of its own, and proposes a workspace's next status or a \
+or under a workspace where a grant of the key carries create, empty and in development, and proposes a workspace's next status or a \
 reviewed claim for its brief. A proposal changes nothing until a different identity ratifies it. \
 Mode, crew, grants, export and every verdict are people's acts, outside this server's tools.
 

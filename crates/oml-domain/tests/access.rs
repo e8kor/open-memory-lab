@@ -29,6 +29,7 @@ fn grant(n: u128, node: Uuid, role: Role, deny: &[Uuid]) -> Grant {
         role,
         deny: deny.to_vec(),
         covers: Covers::Subtree,
+        create: false,
     }
 }
 
@@ -1093,6 +1094,7 @@ proptest! {
                 role: *role,
                 deny: deny.iter().map(|&d| node_id(d)).collect(),
                 covers: Covers::Subtree,
+                create: false,
             })
             .collect();
         let denials: Vec<KeyDenial> = denial_nodes

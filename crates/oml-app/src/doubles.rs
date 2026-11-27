@@ -1186,6 +1186,7 @@ fn fold_poc_event(
                 role: role_from_str(payload.get("role").and_then(Value::as_str).unwrap_or(""))?,
                 deny: Vec::new(),
                 covers: Covers::Subtree,
+                create: false,
             };
             if let Some(access) = state.access.get_mut(&key_id) {
                 access.grants.push(GrantRecord {

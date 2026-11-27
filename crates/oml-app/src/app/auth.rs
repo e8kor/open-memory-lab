@@ -417,6 +417,7 @@ where
             role,
             deny: Vec::new(),
             covers: Covers::Subtree,
+            create: false,
         };
         for capacity in needed {
             let name = key_name(&entry.user, capacity.suffix())?;
@@ -450,6 +451,7 @@ where
                 expiry: None,
                 requests_per_minute: None,
                 person: None,
+                create_workspaces: Vec::new(),
             };
             self.issue_key_by(&issuer, &req, Issuance::Session(&entry.user))
                 .await?;

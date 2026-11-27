@@ -84,6 +84,7 @@ async fn a_recall_answers_the_same_when_the_event_queue_is_full() {
         role,
         deny: Vec::new(),
         covers: Covers::Subtree,
+        create: false,
     };
     let writer = plain
         .issue_key(
@@ -103,6 +104,7 @@ async fn a_recall_answers_the_same_when_the_event_queue_is_full() {
                 expiry: None,
                 requests_per_minute: None,
                 person: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await

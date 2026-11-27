@@ -589,6 +589,7 @@ async fn issue_connector(rig: &Rig) -> String {
                     role: Role::Submitter,
                     deny: Vec::new(),
                     covers: Covers::Subtree,
+                    create: false,
                 }],
                 connect_code: true,
                 user: None,
@@ -596,6 +597,7 @@ async fn issue_connector(rig: &Rig) -> String {
                 expiry: None,
                 requests_per_minute: None,
                 person: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -1408,6 +1410,7 @@ async fn a_reviewer_code_is_minted_for_a_confined_key_and_named_on_the_key() {
             role: Role::Submitter,
             deny: Vec::new(),
             covers: Covers::Subtree,
+            create: false,
         }],
         connect_code: true,
         user: None,
@@ -1415,6 +1418,7 @@ async fn a_reviewer_code_is_minted_for_a_confined_key_and_named_on_the_key() {
         expiry: None,
         requests_per_minute: None,
         person: None,
+        create_workspaces: Vec::new(),
     };
     rig.app
         .issue_key(&admin, &connector("reviewer", demo.into()))

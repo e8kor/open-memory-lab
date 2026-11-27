@@ -79,6 +79,7 @@ fn grant(node: Reference, role: Role) -> GrantRequest {
         role,
         deny: Vec::new(),
         covers: Covers::Subtree,
+        create: false,
     }
 }
 
@@ -112,6 +113,7 @@ fn user_req(role: Role, user: &str, principal: &str, grants: Vec<GrantRequest>) 
         expiry: None,
         requests_per_minute: None,
         person: None,
+        create_workspaces: Vec::new(),
     }
 }
 

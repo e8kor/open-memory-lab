@@ -45,6 +45,7 @@ fn grant(node: Uuid, role: Role) -> GrantRequest {
         role,
         deny: Vec::new(),
         covers: Covers::Subtree,
+        create: false,
     }
 }
 
@@ -92,6 +93,7 @@ async fn key(
             expiry: None,
             requests_per_minute: None,
             person: None,
+            create_workspaces: Vec::new(),
         },
     )
     .await
@@ -1316,6 +1318,7 @@ async fn an_unscoped_edge_read_without_a_default_leaves_every_in_progress_subtre
                 role: Role::Reader,
                 deny: Vec::new(),
                 covers: Covers::Subtree,
+                create: false,
             },
         },
     )
@@ -1984,6 +1987,7 @@ async fn a_tip_key_at_an_in_progress_ancestor_is_offered_the_held_skill_below_it
                 expiry: None,
                 requests_per_minute: None,
                 person: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await

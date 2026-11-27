@@ -124,6 +124,7 @@ async fn issue(
                     role: *r,
                     deny: Vec::new(),
                     covers: Covers::Subtree,
+                    create: false,
                 })
                 .collect(),
             connect_code: false,
@@ -132,6 +133,7 @@ async fn issue(
             expiry: None,
             requests_per_minute: None,
             person: None,
+            create_workspaces: Vec::new(),
         },
     )
     .await
