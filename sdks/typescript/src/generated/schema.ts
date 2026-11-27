@@ -860,6 +860,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/keys/self/convert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Convert the calling admin key, in place, into a maintenance key that reads counts only.
+         * @description Requires: an admin key presented by its own current bearer value; any other role is request.validation with details.field key and details.reason not_admin, and a session key details.reason session_key (ADR-0097 d18). to is maintenance; anything else is details.field /to and details.reason not_maintenance. The key keeps its id, name and hash, takes the maintenance role's request rate, 60 a minute (a placeholder), and from then on reaches only the counts oml doctor reads: GET /v2/whoami, GET and POST /v2/admin/rescan, GET /v2/admin/usage/drift, GET /v2/search, GET /v2/federation with no key listed, GET /v2/workspaces/{workspace}/tree, GET /v2/review/queue, GET /v2/events with the head and no event, and GET /v2/web/users with no key listed and no deletion named; every other route refuses it access.verb_ceiling with details.verb maintenance_counts_only. Journalled as one sealed key.converted {key_id, from: admin, to: maintenance}, never a migration's UPDATE. Since v0.8.6.
+         */
+        post: operations["convertSelf"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/keys/self/link": {
         parameters: {
             query?: never;
@@ -871,7 +891,7 @@ export interface paths {
         put?: never;
         /**
          * Link the calling admin key to its holder's person, pending that person's acceptance.
-         * @description Requires: an admin key presented by its own bearer value (possession); a session key is request.validation with details.field key and details.reason bearer_only, and another role access.verb_ceiling (ADR-0097 d22, decided by the operator, 2026-11-25). user names a user of the tenant with a user root and a web entry that is not disabled; otherwise details.field /user and details.reason user_unknown or user_disabled. The key is a live tenant bearer key used_by person that holds no link and none pending; otherwise details.field key and details.reason revoked, already_linked, not_a_tenant_key or not_used_by_person. The one self-link the server admits: POST /v2/keys/{key}/link keeps refusing self_link. Journalled as key.linked_person with actor self and accepted false: the key acts for no one until that person accepts the link from their own console session with POST /v2/keys/{key}/accept_link. Since v0.8.6.
+         * @description Requires: an admin key presented by its own bearer value (possession); a session key is request.validation with details.field key and details.reason bearer_only, and another role access.verb_ceiling (ADR-0097 d22, decided by the operator, 2026-11-25). user names a user of the tenant with a user root and a web entry that is not disabled; otherwise details.field /user and details.reason user_unknown or user_disabled. The key is a live tenant bearer key used_by person that holds no link and none pending; otherwise details.field key and details.reason revoked, already_linked, not_a_tenant_key or not_used_by_person. The one self-link the server admits: POST /v2/keys/{key}/link keeps refusing self_link. Journalled as key.linked_person with actor self and accepted false: the key acts for no one until that person accepts the link from their own console session with POST /v2/keys/{key}/accept_link. A link is the link_key admin act, class consent, journalled first in the commit as admin.act with its reason, and key.linked_person names its act_id; reason is required and scanned, and a link without one is request.validation with details.field /reason and details.reason required (ADR-0097 d7, d26; amendment of 2026-11-27, answer 15). Since v0.8.6.
          */
         post: operations["linkSelf"];
         delete?: never;
@@ -891,7 +911,7 @@ export interface paths {
         put?: never;
         /**
          * Link a person's tenant key to the user who signs in, so the console acts with it in shared workspaces.
-         * @description Requires: a console admin session, <user>-admin through its capacity credential, in the key's own tenant; another role is access.verb_ceiling, a bearer admin key, which names no person, is request.validation with details.field key and details.reason session_admin_only, and no MCP tool or CLI command reaches the route (the operator, 2026-11-17: "Console only"). user names a user of the tenant with a user root and a web entry, none of it disabled, and never the calling admin's own person; otherwise request.validation with details.field /user and details.reason user_unknown, user_disabled or self_link. The key is a live tenant bearer key used_by person that holds no link, an admin key's included; otherwise request.validation with details.field key and details.reason revoked (a key past its expiry too), already_linked (unlink it first), not_a_tenant_key (a user key, a session key or a connector key) or not_used_by_person. Journalled as key.linked_person, with accepted false: the link is pending, and the key acts for no one, until that user accepts it from their own console session with POST /v2/keys/{key}/accept_link (the operator's decision of 2026-11-19). The key is refused already_linked while a link pends too. From the acceptance on, the key writes into that user's root as their key wherever its grants allow, and oml-web may name it in OML-Acting-Key beside that user's capacity credential on the console's acting routes (GET /v2/whoami, GET /v2/review/held, GET /v1/memories/{artifact_id}, POST /v2/review/verdicts/bulk): the request runs as the key, with its grants and verb ceilings. The header sent twice, on another route, without a capacity credential, or naming a key the link no longer admits answers auth.invalid with details.reason acting_key_not_linked and runs nothing (ADR-0085 d16, amended 2026-11-17). The Idempotency-Key is required and not replayed. Since v0.8.3.
+         * @description Requires: a console admin session, <user>-admin through its capacity credential, in the key's own tenant; another role is access.verb_ceiling, a bearer admin key, which names no person, is request.validation with details.field key and details.reason session_admin_only, and no MCP tool or CLI command reaches the route (the operator, 2026-11-17: "Console only"). user names a user of the tenant with a user root and a web entry, none of it disabled, and never the calling admin's own person; otherwise request.validation with details.field /user and details.reason user_unknown, user_disabled or self_link. The key is a live tenant bearer key used_by person that holds no link, an admin key's included; otherwise request.validation with details.field key and details.reason revoked (a key past its expiry too), already_linked (unlink it first), not_a_tenant_key (a user key, a session key or a connector key) or not_used_by_person. Journalled as key.linked_person, with accepted false: the link is pending, and the key acts for no one, until that user accepts it from their own console session with POST /v2/keys/{key}/accept_link (the operator's decision of 2026-11-19). The key is refused already_linked while a link pends too. From the acceptance on, the key writes into that user's root as their key wherever its grants allow, and oml-web may name it in OML-Acting-Key beside that user's capacity credential on the console's acting routes (GET /v2/whoami, GET /v2/review/held, GET /v1/memories/{artifact_id}, POST /v2/review/verdicts/bulk): the request runs as the key, with its grants and verb ceilings. The header sent twice, on another route, without a capacity credential, or naming a key the link no longer admits answers auth.invalid with details.reason acting_key_not_linked and runs nothing (ADR-0085 d16, amended 2026-11-17). The Idempotency-Key is required and not replayed. A link is the link_key admin act, class consent, journalled first in the commit as admin.act with its reason, and key.linked_person names its act_id; reason is required and scanned, and a link without one is request.validation with details.field /reason and details.reason required (ADR-0097 d7, d26; amendment of 2026-11-27, answer 15). Since v0.8.3.
          */
         post: operations["linkKey"];
         delete?: never;
@@ -1817,7 +1837,7 @@ export interface paths {
         put?: never;
         /**
          * A second admin person confirms a pending widening act, which takes effect in this commit.
-         * @description Requires: admin key role, a key that counts as a live admin person of the tenant: a <user>-admin session key, or an admin key linked to its person (ADR-0097 d5, d11). The act's effect applies in the confirmation's commit: a pending key's grants and connect code, a grant, a raised limit. Refused with request.validation, details.field act and details.reason: not_pending (the act took effect or was settled), expired (pending seven days; a late confirm never revives it), own_act (the key counts as the person who took the act), not_admin_person (the key counts as no live admin person) or too_new (that person's admin flag was accepted less than seven days before the act). An act the tenant does not hold is access.not_found. Journalled as admin.act with state confirmed and confirmed_by_person. Since v0.8.6.
+         * @description Requires: admin key role, a key that counts as a live admin person of the tenant: a <user>-admin session key, or an admin key linked to its person (ADR-0097 d5, d11). The act's effect applies in the confirmation's commit: a pending key's grants and connect code, a grant, a raised limit. Refused with request.validation, details.field act and details.reason: not_pending (the act took effect or was settled), expired (pending seven days; a late confirm never revives it), own_act (the key counts as the person who took the act), not_admin_person (the key counts as no live admin person) or too_new (that person's admin flag was accepted less than seven days before the act). reason is required and scanned, and the act keeps it as confirm_reason; a confirmation without one is refused request.validation with details.field /reason and details.reason required (ADR-0097 d26; amendment of 2026-11-27, answer 18). An act the tenant does not hold is access.not_found. Journalled as admin.act with state confirmed, confirmed_by_person and confirm_reason. Since v0.8.6.
          */
         post: operations["confirmAdminAct"];
         delete?: never;
@@ -2240,6 +2260,8 @@ export interface components {
             actor_key_id: string | null;
             actor_person: string | null;
             confirmed_by_person: string | null;
+            /** @description The reason the confirmation gave (ADR-0097 d26); null until confirmed. */
+            confirm_reason: string | null;
             sole_admin: boolean;
             /** @description upgrade, deactivation, settlement or recovery for an act no admin took; null otherwise. */
             cause: string | null;
@@ -2414,7 +2436,7 @@ export interface components {
         /** @description A tenant, by its id or its name, resolved in the deployment's namespace (ADR-0026 d4). */
         TenantRef: components["schemas"]["Id"] | components["schemas"]["NameRef"];
         /** @enum {string} */
-        Role: "reader" | "contributor" | "submitter" | "reviewer" | "admin" | "operator";
+        Role: "reader" | "contributor" | "submitter" | "reviewer" | "admin" | "operator" | "maintenance";
         /**
          * @description The closed error vocabulary; identical to docs/api/errors.md by construction. The oauth codes other than oauth.connect_refused and oauth.attach_refused travel inside RFC error bodies on the OAuth endpoints, at the start of error_description, or on the authorization page; oauth.connect_refused answers on /v2 in this envelope, and oauth.attach_refused, an /mcp tool result, is answered by no served tool since oml_attach left the catalog (ADR-0031, ADR-0039 d2, d9).
          * @enum {string}
@@ -3811,6 +3833,8 @@ export interface components {
         KeyLinkRequest: {
             /** @description The user the key acts for in the console, by name (ADR-0085 d16). */
             user: string;
+            /** @description Why the key is linked; required, scanned and journalled with the link's consent act (ADR-0097 d7, d26). */
+            reason: string;
         };
         /** @description An upload session to open (ADR-0004 d3, as amended 2026-11-17). */
         UploadOpenRequest: {
@@ -7688,6 +7712,55 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    convertSelf: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "to": "maintenance"
+                 *     }
+                 */
+                "application/json": {
+                    /** @enum {string} */
+                    to: "maintenance";
+                };
+            };
+        };
+        responses: {
+            /** @description The converted key. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        key_id: string;
+                        name: string | null;
+                        /** @constant */
+                        role: "maintenance";
+                        requests_per_minute: number | null;
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
     linkSelf: {
         parameters: {
             query?: never;
@@ -7706,11 +7779,13 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "user": "alice"
+                 *       "user": "alice",
+                 *       "reason": "the deployer's key, held by alice"
                  *     }
                  */
                 "application/json": {
                     user: string;
+                    reason: string;
                 };
             };
         };
@@ -7758,7 +7833,8 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "user": "alice"
+                 *       "user": "alice",
+                 *       "reason": "alice reviews with this key"
                  *     }
                  */
                 "application/json": components["schemas"]["KeyLinkRequest"];
@@ -10286,7 +10362,18 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "reason": "checked with the person who asked"
+                 *     }
+                 */
+                "application/json": {
+                    reason: string;
+                };
+            };
+        };
         responses: {
             /** @description The confirmed act. */
             200: {

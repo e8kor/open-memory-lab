@@ -88,7 +88,11 @@ def sync_detailed(
     already_linked, not_a_tenant_key or not_used_by_person. The one self-link the server admits: POST
     /v2/keys/{key}/link keeps refusing self_link. Journalled as key.linked_person with actor self and
     accepted false: the key acts for no one until that person accepts the link from their own console
-    session with POST /v2/keys/{key}/accept_link. Since v0.8.6.
+    session with POST /v2/keys/{key}/accept_link. A link is the link_key admin act, class consent,
+    journalled first in the commit as admin.act with its reason, and key.linked_person names its act_id;
+    reason is required and scanned, and a link without one is request.validation with details.field
+    /reason and details.reason required (ADR-0097 d7, d26; amendment of 2026-11-27, answer 15). Since
+    v0.8.6.
 
     Args:
         x_request_id (str | Unset):
@@ -137,7 +141,11 @@ def sync(
     already_linked, not_a_tenant_key or not_used_by_person. The one self-link the server admits: POST
     /v2/keys/{key}/link keeps refusing self_link. Journalled as key.linked_person with actor self and
     accepted false: the key acts for no one until that person accepts the link from their own console
-    session with POST /v2/keys/{key}/accept_link. Since v0.8.6.
+    session with POST /v2/keys/{key}/accept_link. A link is the link_key admin act, class consent,
+    journalled first in the commit as admin.act with its reason, and key.linked_person names its act_id;
+    reason is required and scanned, and a link without one is request.validation with details.field
+    /reason and details.reason required (ADR-0097 d7, d26; amendment of 2026-11-27, answer 15). Since
+    v0.8.6.
 
     Args:
         x_request_id (str | Unset):
@@ -181,7 +189,11 @@ async def asyncio_detailed(
     already_linked, not_a_tenant_key or not_used_by_person. The one self-link the server admits: POST
     /v2/keys/{key}/link keeps refusing self_link. Journalled as key.linked_person with actor self and
     accepted false: the key acts for no one until that person accepts the link from their own console
-    session with POST /v2/keys/{key}/accept_link. Since v0.8.6.
+    session with POST /v2/keys/{key}/accept_link. A link is the link_key admin act, class consent,
+    journalled first in the commit as admin.act with its reason, and key.linked_person names its act_id;
+    reason is required and scanned, and a link without one is request.validation with details.field
+    /reason and details.reason required (ADR-0097 d7, d26; amendment of 2026-11-27, answer 15). Since
+    v0.8.6.
 
     Args:
         x_request_id (str | Unset):
@@ -228,7 +240,11 @@ async def asyncio(
     already_linked, not_a_tenant_key or not_used_by_person. The one self-link the server admits: POST
     /v2/keys/{key}/link keeps refusing self_link. Journalled as key.linked_person with actor self and
     accepted false: the key acts for no one until that person accepts the link from their own console
-    session with POST /v2/keys/{key}/accept_link. Since v0.8.6.
+    session with POST /v2/keys/{key}/accept_link. A link is the link_key admin act, class consent,
+    journalled first in the commit as admin.act with its reason, and key.linked_person names its act_id;
+    reason is required and scanned, and a link without one is request.validation with details.field
+    /reason and details.reason required (ADR-0097 d7, d26; amendment of 2026-11-27, answer 15). Since
+    v0.8.6.
 
     Args:
         x_request_id (str | Unset):

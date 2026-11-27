@@ -13,18 +13,23 @@ class LinkSelfBody:
     """
     Attributes:
         user (str):
+        reason (str):
     """
 
     user: str
+    reason: str
 
     def to_dict(self) -> dict[str, Any]:
         user = self.user
+
+        reason = self.reason
 
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
             {
                 "user": user,
+                "reason": reason,
             }
         )
 
@@ -35,8 +40,11 @@ class LinkSelfBody:
         d = dict(src_dict)
         user = d.pop("user")
 
+        reason = d.pop("reason")
+
         link_self_body = cls(
             user=user,
+            reason=reason,
         )
 
         return link_self_body

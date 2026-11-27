@@ -36,6 +36,7 @@ class AdminAct:
             actor_key_id (None | UUID):
             actor_person (None | str):
             confirmed_by_person (None | str):
+            confirm_reason (None | str): The reason the confirmation gave (ADR-0097 d26); null until confirmed.
             sole_admin (bool):
             cause (None | str): upgrade, deactivation, settlement or recovery for an act no admin took; null otherwise.
             at (datetime.datetime):
@@ -58,6 +59,7 @@ class AdminAct:
     actor_key_id: None | UUID
     actor_person: None | str
     confirmed_by_person: None | str
+    confirm_reason: None | str
     sole_admin: bool
     cause: None | str
     at: datetime.datetime
@@ -97,6 +99,9 @@ class AdminAct:
         confirmed_by_person: None | str
         confirmed_by_person = self.confirmed_by_person
 
+        confirm_reason: None | str
+        confirm_reason = self.confirm_reason
+
         sole_admin = self.sole_admin
 
         cause: None | str
@@ -132,6 +137,7 @@ class AdminAct:
                 "actor_key_id": actor_key_id,
                 "actor_person": actor_person,
                 "confirmed_by_person": confirmed_by_person,
+                "confirm_reason": confirm_reason,
                 "sole_admin": sole_admin,
                 "cause": cause,
                 "at": at,
@@ -203,6 +209,13 @@ class AdminAct:
 
         confirmed_by_person = _parse_confirmed_by_person(d.pop("confirmed_by_person"))
 
+        def _parse_confirm_reason(data: object) -> None | str:
+            if data is None:
+                return data
+            return cast(None | str, data)
+
+        confirm_reason = _parse_confirm_reason(d.pop("confirm_reason"))
+
         sole_admin = d.pop("sole_admin")
 
         def _parse_cause(data: object) -> None | str:
@@ -257,6 +270,7 @@ class AdminAct:
             actor_key_id=actor_key_id,
             actor_person=actor_person,
             confirmed_by_person=confirmed_by_person,
+            confirm_reason=confirm_reason,
             sole_admin=sole_admin,
             cause=cause,
             at=at,

@@ -7,6 +7,7 @@ import httpx
 
 from ...client import AuthenticatedClient, Client
 from ...models.admin_act import AdminAct
+from ...models.confirm_admin_act_body import ConfirmAdminActBody
 from ...models.error_envelope import ErrorEnvelope
 from ...types import UNSET, Response, Unset
 
@@ -14,6 +15,7 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     act: UUID,
     *,
+    body: ConfirmAdminActBody,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -34,6 +36,10 @@ def _get_kwargs(
             act=quote(str(act), safe=""),
         ),
     }
+
+    _kwargs["json"] = body.to_dict()
+
+    headers["Content-Type"] = "application/json"
 
     _kwargs["headers"] = headers
     return _kwargs
@@ -82,6 +88,7 @@ def sync_detailed(
     act: UUID,
     *,
     client: AuthenticatedClient | Client,
+    body: ConfirmAdminActBody,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -94,15 +101,18 @@ def sync_detailed(
     with request.validation, details.field act and details.reason: not_pending (the act took effect or
     was settled), expired (pending seven days; a late confirm never revives it), own_act (the key counts
     as the person who took the act), not_admin_person (the key counts as no live admin person) or
-    too_new (that person's admin flag was accepted less than seven days before the act). An act the
-    tenant does not hold is access.not_found. Journalled as admin.act with state confirmed and
-    confirmed_by_person. Since v0.8.6.
+    too_new (that person's admin flag was accepted less than seven days before the act). reason is
+    required and scanned, and the act keeps it as confirm_reason; a confirmation without one is refused
+    request.validation with details.field /reason and details.reason required (ADR-0097 d26; amendment
+    of 2026-11-27, answer 18). An act the tenant does not hold is access.not_found. Journalled as
+    admin.act with state confirmed, confirmed_by_person and confirm_reason. Since v0.8.6.
 
     Args:
         act (UUID):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
+        body (ConfirmAdminActBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -114,6 +124,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         act=act,
+        body=body,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -130,6 +141,7 @@ def sync(
     act: UUID,
     *,
     client: AuthenticatedClient | Client,
+    body: ConfirmAdminActBody,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -142,15 +154,18 @@ def sync(
     with request.validation, details.field act and details.reason: not_pending (the act took effect or
     was settled), expired (pending seven days; a late confirm never revives it), own_act (the key counts
     as the person who took the act), not_admin_person (the key counts as no live admin person) or
-    too_new (that person's admin flag was accepted less than seven days before the act). An act the
-    tenant does not hold is access.not_found. Journalled as admin.act with state confirmed and
-    confirmed_by_person. Since v0.8.6.
+    too_new (that person's admin flag was accepted less than seven days before the act). reason is
+    required and scanned, and the act keeps it as confirm_reason; a confirmation without one is refused
+    request.validation with details.field /reason and details.reason required (ADR-0097 d26; amendment
+    of 2026-11-27, answer 18). An act the tenant does not hold is access.not_found. Journalled as
+    admin.act with state confirmed, confirmed_by_person and confirm_reason. Since v0.8.6.
 
     Args:
         act (UUID):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
+        body (ConfirmAdminActBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -163,6 +178,7 @@ def sync(
     return sync_detailed(
         act=act,
         client=client,
+        body=body,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -173,6 +189,7 @@ async def asyncio_detailed(
     act: UUID,
     *,
     client: AuthenticatedClient | Client,
+    body: ConfirmAdminActBody,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -185,15 +202,18 @@ async def asyncio_detailed(
     with request.validation, details.field act and details.reason: not_pending (the act took effect or
     was settled), expired (pending seven days; a late confirm never revives it), own_act (the key counts
     as the person who took the act), not_admin_person (the key counts as no live admin person) or
-    too_new (that person's admin flag was accepted less than seven days before the act). An act the
-    tenant does not hold is access.not_found. Journalled as admin.act with state confirmed and
-    confirmed_by_person. Since v0.8.6.
+    too_new (that person's admin flag was accepted less than seven days before the act). reason is
+    required and scanned, and the act keeps it as confirm_reason; a confirmation without one is refused
+    request.validation with details.field /reason and details.reason required (ADR-0097 d26; amendment
+    of 2026-11-27, answer 18). An act the tenant does not hold is access.not_found. Journalled as
+    admin.act with state confirmed, confirmed_by_person and confirm_reason. Since v0.8.6.
 
     Args:
         act (UUID):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
+        body (ConfirmAdminActBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -205,6 +225,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         act=act,
+        body=body,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -219,6 +240,7 @@ async def asyncio(
     act: UUID,
     *,
     client: AuthenticatedClient | Client,
+    body: ConfirmAdminActBody,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -231,15 +253,18 @@ async def asyncio(
     with request.validation, details.field act and details.reason: not_pending (the act took effect or
     was settled), expired (pending seven days; a late confirm never revives it), own_act (the key counts
     as the person who took the act), not_admin_person (the key counts as no live admin person) or
-    too_new (that person's admin flag was accepted less than seven days before the act). An act the
-    tenant does not hold is access.not_found. Journalled as admin.act with state confirmed and
-    confirmed_by_person. Since v0.8.6.
+    too_new (that person's admin flag was accepted less than seven days before the act). reason is
+    required and scanned, and the act keeps it as confirm_reason; a confirmation without one is refused
+    request.validation with details.field /reason and details.reason required (ADR-0097 d26; amendment
+    of 2026-11-27, answer 18). An act the tenant does not hold is access.not_found. Journalled as
+    admin.act with state confirmed, confirmed_by_person and confirm_reason. Since v0.8.6.
 
     Args:
         act (UUID):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
+        body (ConfirmAdminActBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -253,6 +278,7 @@ async def asyncio(
         await asyncio_detailed(
             act=act,
             client=client,
+            body=body,
             x_request_id=x_request_id,
             x_correlation_id=x_correlation_id,
             traceparent=traceparent,

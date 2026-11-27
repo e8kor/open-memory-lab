@@ -100,6 +100,7 @@ from .client_registration_request_token_endpoint_auth_method import (
 from .close_web_deletion_body import CloseWebDeletionBody
 from .close_web_deletion_body_outcome import CloseWebDeletionBodyOutcome
 from .close_web_deletion_response_200 import CloseWebDeletionResponse200
+from .confirm_admin_act_body import ConfirmAdminActBody
 from .connect_code import ConnectCode
 from .connection import Connection
 from .connection_client_kind import ConnectionClientKind
@@ -107,6 +108,9 @@ from .connection_revoked_cause_type_1 import ConnectionRevokedCauseType1
 from .connection_revoked_cause_type_2_type_1 import ConnectionRevokedCauseType2Type1
 from .connection_revoked_cause_type_3_type_1 import ConnectionRevokedCauseType3Type1
 from .connection_state import ConnectionState
+from .convert_self_body import ConvertSelfBody
+from .convert_self_body_to import ConvertSelfBodyTo
+from .convert_self_response_200 import ConvertSelfResponse200
 from .crew import Crew
 from .crew_create import CrewCreate
 from .crew_page import CrewPage
@@ -585,6 +589,7 @@ __all__ = (
     "CloseWebDeletionBody",
     "CloseWebDeletionBodyOutcome",
     "CloseWebDeletionResponse200",
+    "ConfirmAdminActBody",
     "ConnectCode",
     "Connection",
     "ConnectionClientKind",
@@ -592,6 +597,9 @@ __all__ = (
     "ConnectionRevokedCauseType2Type1",
     "ConnectionRevokedCauseType3Type1",
     "ConnectionState",
+    "ConvertSelfBody",
+    "ConvertSelfBodyTo",
+    "ConvertSelfResponse200",
     "Crew",
     "CrewCreate",
     "CrewPage",

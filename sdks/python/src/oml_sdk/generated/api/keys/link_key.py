@@ -118,7 +118,11 @@ def sync_detailed(
     request runs as the key, with its grants and verb ceilings. The header sent twice, on another route,
     without a capacity credential, or naming a key the link no longer admits answers auth.invalid with
     details.reason acting_key_not_linked and runs nothing (ADR-0085 d16, amended 2026-11-17). The
-    Idempotency-Key is required and not replayed. Since v0.8.3.
+    Idempotency-Key is required and not replayed. A link is the link_key admin act, class consent,
+    journalled first in the commit as admin.act with its reason, and key.linked_person names its act_id;
+    reason is required and scanned, and a link without one is request.validation with details.field
+    /reason and details.reason required (ADR-0097 d7, d26; amendment of 2026-11-27, answer 15). Since
+    v0.8.3.
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -185,7 +189,11 @@ def sync(
     request runs as the key, with its grants and verb ceilings. The header sent twice, on another route,
     without a capacity credential, or naming a key the link no longer admits answers auth.invalid with
     details.reason acting_key_not_linked and runs nothing (ADR-0085 d16, amended 2026-11-17). The
-    Idempotency-Key is required and not replayed. Since v0.8.3.
+    Idempotency-Key is required and not replayed. A link is the link_key admin act, class consent,
+    journalled first in the commit as admin.act with its reason, and key.linked_person names its act_id;
+    reason is required and scanned, and a link without one is request.validation with details.field
+    /reason and details.reason required (ADR-0097 d7, d26; amendment of 2026-11-27, answer 15). Since
+    v0.8.3.
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -247,7 +255,11 @@ async def asyncio_detailed(
     request runs as the key, with its grants and verb ceilings. The header sent twice, on another route,
     without a capacity credential, or naming a key the link no longer admits answers auth.invalid with
     details.reason acting_key_not_linked and runs nothing (ADR-0085 d16, amended 2026-11-17). The
-    Idempotency-Key is required and not replayed. Since v0.8.3.
+    Idempotency-Key is required and not replayed. A link is the link_key admin act, class consent,
+    journalled first in the commit as admin.act with its reason, and key.linked_person names its act_id;
+    reason is required and scanned, and a link without one is request.validation with details.field
+    /reason and details.reason required (ADR-0097 d7, d26; amendment of 2026-11-27, answer 15). Since
+    v0.8.3.
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -312,7 +324,11 @@ async def asyncio(
     request runs as the key, with its grants and verb ceilings. The header sent twice, on another route,
     without a capacity credential, or naming a key the link no longer admits answers auth.invalid with
     details.reason acting_key_not_linked and runs nothing (ADR-0085 d16, amended 2026-11-17). The
-    Idempotency-Key is required and not replayed. Since v0.8.3.
+    Idempotency-Key is required and not replayed. A link is the link_key admin act, class consent,
+    journalled first in the commit as admin.act with its reason, and key.linked_person names its act_id;
+    reason is required and scanned, and a link without one is request.validation with details.field
+    /reason and details.reason required (ADR-0097 d7, d26; amendment of 2026-11-27, answer 15). Since
+    v0.8.3.
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
