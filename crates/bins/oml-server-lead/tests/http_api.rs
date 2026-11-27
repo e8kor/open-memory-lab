@@ -13225,9 +13225,9 @@ async fn an_admin_keys_previous_value_in_its_grace_adds_no_web_email() {
 }
 
 /// The operator route admits only the tenant's token of this start, sent as
-/// `OML-Operator-Token` with no key: a bearer key beside it, no token, a
-/// wrong token and another tenant's token are `auth.invalid`, each naming
-/// why, and `/readyz` says the tokens were written (ADR-0097 d19; answer
+/// `OML-Operator-Token` with no key: a bearer key beside it, a wrong token
+/// and another tenant's token are `auth.invalid`, each naming why, no token
+/// is `auth.missing`, and `/readyz` says the tokens were written (ADR-0097 d19; answer
 /// 13).
 #[tokio::test]
 async fn the_operator_route_admits_only_the_tenants_token_of_this_start() {
@@ -13260,7 +13260,6 @@ async fn the_operator_route_admits_only_the_tenants_token_of_this_start() {
             Call::auth(&admin).header("oml-operator-token", "omlop_the-tenants-token"),
             "operator_route_takes_no_key",
         ),
-        (Call::default(), "operator_token"),
         (
             Call::default().header("oml-operator-token", "omlop_another"),
             "operator_token",
@@ -13271,6 +13270,9 @@ async fn the_operator_route_admits_only_the_tenants_token_of_this_start() {
         assert_envelope(&body, "auth.invalid");
         assert_eq!(reason(&body), why, "{body}");
     }
+    let (status, _, body) = send(&router, "POST", &path(tenant), settle(Call::default())).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_envelope(&body, "auth.missing");
     let (status, _, body) = send(
         &router,
         "POST",

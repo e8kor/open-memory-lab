@@ -107,7 +107,7 @@ def sync_detailed(
     each start the server writes one per tenant to <operator.token_dir>/<tenant>.token, mode 0600, and
     oml operator settle, run as root, reads it (ADR-0097 d19; the operator's answer 13 of 2026-11-27). A
     request that also sends Authorization is auth.invalid with details.reason
-    operator_route_takes_no_key; a missing token, or one that is not the tenant's of this start,
+    operator_route_takes_no_key; no token, auth.missing; a token that is not the tenant's of this start,
     auth.invalid with details.reason operator_token. The act must be an open act against an admin below
     three admin persons, a freeze, else request.validation with details.reason not_frozen; and open at
     least 24 hours, a placeholder, else details.reason freeze_too_recent. confirm revokes the target's
@@ -171,7 +171,7 @@ def sync(
     each start the server writes one per tenant to <operator.token_dir>/<tenant>.token, mode 0600, and
     oml operator settle, run as root, reads it (ADR-0097 d19; the operator's answer 13 of 2026-11-27). A
     request that also sends Authorization is auth.invalid with details.reason
-    operator_route_takes_no_key; a missing token, or one that is not the tenant's of this start,
+    operator_route_takes_no_key; no token, auth.missing; a token that is not the tenant's of this start,
     auth.invalid with details.reason operator_token. The act must be an open act against an admin below
     three admin persons, a freeze, else request.validation with details.reason not_frozen; and open at
     least 24 hours, a placeholder, else details.reason freeze_too_recent. confirm revokes the target's
@@ -230,7 +230,7 @@ async def asyncio_detailed(
     each start the server writes one per tenant to <operator.token_dir>/<tenant>.token, mode 0600, and
     oml operator settle, run as root, reads it (ADR-0097 d19; the operator's answer 13 of 2026-11-27). A
     request that also sends Authorization is auth.invalid with details.reason
-    operator_route_takes_no_key; a missing token, or one that is not the tenant's of this start,
+    operator_route_takes_no_key; no token, auth.missing; a token that is not the tenant's of this start,
     auth.invalid with details.reason operator_token. The act must be an open act against an admin below
     three admin persons, a freeze, else request.validation with details.reason not_frozen; and open at
     least 24 hours, a placeholder, else details.reason freeze_too_recent. confirm revokes the target's
@@ -292,7 +292,7 @@ async def asyncio(
     each start the server writes one per tenant to <operator.token_dir>/<tenant>.token, mode 0600, and
     oml operator settle, run as root, reads it (ADR-0097 d19; the operator's answer 13 of 2026-11-27). A
     request that also sends Authorization is auth.invalid with details.reason
-    operator_route_takes_no_key; a missing token, or one that is not the tenant's of this start,
+    operator_route_takes_no_key; no token, auth.missing; a token that is not the tenant's of this start,
     auth.invalid with details.reason operator_token. The act must be an open act against an admin below
     three admin persons, a freeze, else request.validation with details.reason not_frozen; and open at
     least 24 hours, a placeholder, else details.reason freeze_too_recent. confirm revokes the target's

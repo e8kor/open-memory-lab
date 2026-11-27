@@ -167,7 +167,7 @@ where
     /// `POST /v2/operator/tenants/{tenant}/acts/{act}/settle {outcome}`
     /// (ADR-0097 d19): the tenant's operator token in `OML-Operator-Token`
     /// and no `Authorization` header. A request that sends a key is
-    /// `auth.invalid` `operator_route_takes_no_key`; a missing token, or one
+    /// `auth.invalid` `operator_route_takes_no_key`; no token, `auth.missing`; a token
     /// that is not the tenant's of this start, `auth.invalid`
     /// `operator_token`. Then the settlement, and its email to the relay.
     pub(crate) async fn operator_settle_route(
@@ -181,11 +181,13 @@ where
             if headers.contains_key(header::AUTHORIZATION) {
                 return Err(refused("operator_route_takes_no_key"));
             }
-            let tenant = Uuid::parse_str(&tenant).map_err(|_| refused("operator_token"))?;
+            // No token is no credential at all, as on every other route.
             let token = headers
                 .get(OPERATOR_TOKEN_HEADER)
-                .and_then(|v| v.to_str().ok())
-                .ok_or_else(|| refused("operator_token"))?;
+                .ok_or_else(ApiError::auth_missing)?
+                .to_str()
+                .map_err(|_| refused("operator_token"))?;
+            let tenant = Uuid::parse_str(&tenant).map_err(|_| refused("operator_token"))?;
             if !st.operator.admits(tenant, token.trim()) {
                 return Err(refused("operator_token"));
             }
