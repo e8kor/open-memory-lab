@@ -136,6 +136,9 @@ fn notice(done: Option<&str>) -> Option<&'static str> {
         "fixed" => Some(
             "fixed: served at once, waiting for a person with reviewer on the workspace to confirm or revert it",
         ),
+        "erased" => Some(
+            "erased: out of service at once; the bytes are shredded once another admin person confirms the act under Admin acts to confirm, or at once where the tenant has only ever had one admin person",
+        ),
         _ => None,
     }
 }
@@ -287,6 +290,9 @@ pub async fn act(
         .admin_fix(&call(&credential, &ids), &key, &request)
         .await
     {
+        // An erase's shred waits on another admin person outside
+        // `sole_admin` (ADR-0097 d4).
+        Ok(_) if fix == "erase" => acts::see_other(&format!("{back}&done=erased"), &[]),
         Ok(_) => acts::see_other(&format!("{back}&done=fixed"), &[]),
         Err(e) => outcome::page(&e, &calls, &back),
     }
