@@ -171,6 +171,7 @@ pub async fn linked_admin_key(app: &TestApp, admin: &str, user: &str, name: &str
                 expiry: None,
                 requests_per_minute: None,
                 person: Some(user.clone()),
+                create_workspaces: Vec::new(),
             },
         )
         .await

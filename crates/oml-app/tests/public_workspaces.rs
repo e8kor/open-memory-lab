@@ -51,6 +51,7 @@ fn grant(node: &str, role: Role) -> GrantRequest {
         role,
         deny: Vec::new(),
         covers: Covers::Subtree,
+        create: false,
     }
 }
 
@@ -73,6 +74,8 @@ fn key_req(role: Role, principal: &str, grants: Vec<GrantRequest>) -> IssueKeyRe
         guardrail_scope: None,
         expiry: None,
         requests_per_minute: None,
+        person: None,
+        create_workspaces: Vec::new(),
     }
 }
 

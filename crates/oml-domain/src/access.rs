@@ -115,6 +115,8 @@ pub fn public_reach_grant(node: Uuid) -> Grant {
         role: Role::Reader,
         deny: Vec::new(),
         covers: Covers::Node,
+        // A public read never gives `create` (ADR-0098 d1).
+        create: false,
     }
 }
 

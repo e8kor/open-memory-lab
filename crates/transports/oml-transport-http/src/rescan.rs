@@ -24,7 +24,7 @@ fn report_json(
     public: &oml_app::app::PublicStats,
 ) -> Value {
     let action = |veto: bool| if veto { "veto" } else { "hold" };
-    json!({
+    let mut report = json!({
         "scanner_version": r.scanner_version,
         "scanned": r.scanned,
         "findings": r.hits.iter().map(|h| json!({
@@ -74,18 +74,31 @@ fn report_json(
         "admin_keys_unlinked_suspended": fixes.keys_unlinked_suspended,
         "admin_unlinked_days_left": fixes.unlinked_days_left,
         "admin_disputes_open": fixes.disputes_open,
-        // The doctor's `workspace.public` and `workspace.public_ineligible`
-        // (ADR-0098 d9).
-        "public_workspaces": public.public.iter().map(|w| json!({
-            "workspace_id": w.workspace_id,
-            "name": w.name,
-            "since": w.flag.since.as_ref().map(|at| at.as_str()),
-            "act_id": w.flag.act_id,
-            "sole_admin": w.flag.sole_admin,
-            "served_rows": w.served_rows,
-        })).collect::<Vec<_>>(),
-        "public_ineligible": public.ineligible,
-    })
+    });
+    // The doctor's `workspace.public` and `workspace.public_ineligible`
+    // (ADR-0098 d9), added apart so the one literal stays under the macro's
+    // recursion limit.
+    if let Some(obj) = report.as_object_mut() {
+        obj.insert(
+            "public_workspaces".to_owned(),
+            public
+                .public
+                .iter()
+                .map(|w| {
+                    json!({
+                        "workspace_id": w.workspace_id,
+                        "name": w.name,
+                        "since": w.flag.since.as_ref().map(|at| at.as_str()),
+                        "act_id": w.flag.act_id,
+                        "sole_admin": w.flag.sole_admin,
+                        "served_rows": w.served_rows,
+                    })
+                })
+                .collect(),
+        );
+        obj.insert("public_ineligible".to_owned(), json!(public.ineligible));
+    }
+    report
 }
 
 impl<J, S, C, I, Sc> ApiState<J, S, C, I, Sc>
