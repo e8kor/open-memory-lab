@@ -7564,6 +7564,7 @@ components:
         admin_acts_without_reason: { type: integer, minimum: 0, description: 'Admin acts journalled with no reason: doctor''s admin.act_without_reason (ADR-0097 d26).' }
         admin_acts_expired: { type: integer, minimum: 0, description: 'Pending admin acts that expired as declined in the last seven days: doctor''s admin.act_expired (ADR-0097 d23).' }
         admin_acts_offensive: { type: integer, minimum: 0, description: 'Offensive narrowing in the last 24 hours: doctor''s admin.offensive_narrowing (ADR-0097 d24).' }
+        admin_timeboxes_unsettled: { type: integer, minimum: 0, description: 'Time boxes no second admin person has settled, open or ended: doctor''s admin.timebox_open (ADR-0097 d13).' }
         admin_narrowing_burst: { type: integer, minimum: 0, description: 'The most narrowing acts one admin person took in the last 24 hours: doctor''s admin.narrowing_burst (ADR-0097 d24).' }
         admin_keys_suspended: { type: integer, minimum: 0, description: 'Admin keys suspended while an act against their person is open: doctor''s admin.key_suspended (ADR-0097 d8, d21). Since v0.8.6.' }
         admin_keys_unlinked_suspended: { type: integer, minimum: 0, description: 'Admin keys suspended as unlinked at the upgrade, which reach only /v2/whoami and POST /v2/keys/self/link: doctor''s admin.key_unlinked_suspended (ADR-0097 d21). Since v0.8.6.' }

@@ -7990,7 +7990,7 @@ fn flagged_creates_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
 /// out. A server before a count does not report it, and its line is then
 /// absent; a count that is no unsigned integer is named, never read as zero.
 fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
-    const LINES: [(&str, &str, &str); 20] = [
+    const LINES: [(&str, &str, &str); 21] = [
         (
             "held_successors_stranded",
             "memory.held_successor_stranded",
@@ -8075,6 +8075,11 @@ fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
             "admin_acts_offensive",
             "admin.offensive_narrowing",
             "offensive narrowing act(s) in the last 24 hours: a person's key revoked or a reviewer person's key denied; read each with oml admin acts --state effective",
+        ),
+        (
+            "admin_timeboxes_unsettled",
+            "admin.timebox_open",
+            "time box(es) no second admin person has settled; another admin person confirms or declines each with oml admin acts",
         ),
         (
             "admin_keys_suspended",

@@ -1671,6 +1671,9 @@ pub struct FixStats {
     /// Pending acts that expired as declined in the last seven days
     /// (`admin.act_expired`).
     pub acts_expired: u64,
+    /// Time boxes no second admin person settled yet: open or ended
+    /// (`admin.timebox_open`; ADR-0097 d13).
+    pub timeboxes_unsettled: u64,
     /// Offensive narrowing in the last 24 hours: revoking a person's key,
     /// denying a reviewer person's key (`admin.offensive_narrowing`,
     /// critical; ADR-0097 d24).
@@ -1749,6 +1752,9 @@ where
             }
             if act.sole_admin {
                 stats.acts_sole_admin += 1;
+            }
+            if act.timebox() && act.state == oml_domain::admin_act::AdminActState::Effective {
+                stats.timeboxes_unsettled += 1;
             }
             if act.reason.is_none() {
                 stats.acts_without_reason += 1;

@@ -70,6 +70,7 @@ fn report_json(
         "admin_acts_without_reason": fixes.acts_without_reason,
         "admin_acts_expired": fixes.acts_expired,
         "admin_acts_offensive": fixes.acts_offensive,
+        "admin_timeboxes_unsettled": fixes.timeboxes_unsettled,
         "admin_narrowing_burst": fixes.narrowing_burst,
         "admin_keys_suspended": fixes.keys_suspended,
         "admin_keys_unlinked_suspended": fixes.keys_unlinked_suspended,

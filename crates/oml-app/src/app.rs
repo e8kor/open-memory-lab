@@ -377,6 +377,10 @@ pub struct Caller {
     /// writes as the key does and runs none of the key acts (ADR-0096 d13,
     /// the operator's decision of 2026-11-25).
     previous_value: bool,
+    /// For a session key's caller, the session's opening and its entry's
+    /// email digest: an acceptance records the provider subject and the
+    /// session's age from them (ADR-0097 d7).
+    session: Option<(EventTime, Sha256Hash)>,
 }
 
 impl Caller {
@@ -396,6 +400,7 @@ impl Caller {
                 own_keys: Vec::new(),
                 gate_read: std::sync::Mutex::new(None),
                 previous_value: false,
+                session: None,
             };
         };
         let permission_epoch = access.permission_epoch();
@@ -425,6 +430,7 @@ impl Caller {
             own_keys: Vec::new(),
             gate_read: std::sync::Mutex::new(None),
             previous_value: false,
+            session: None,
         }
     }
 
@@ -2231,6 +2237,7 @@ where
                 };
                 fresh.own_keys.clone_from(&caller.own_keys);
                 fresh.previous_value = caller.previous_value;
+                fresh.session.clone_from(&caller.session);
                 Ok(fresh)
             }
         }

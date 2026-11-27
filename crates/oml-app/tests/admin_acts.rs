@@ -2703,3 +2703,42 @@ async fn a_time_box_is_refused_while_an_act_against_an_admin_is_open() {
         "{refused:?}"
     );
 }
+
+/// A link takes effect when the person it names accepts it, and the
+/// acceptance records the session's age and the provider subjects its entry pinned, as digests, so
+/// a forged acceptance can be told apart afterwards (ADR-0097 d7).
+#[tokio::test]
+async fn an_acceptance_records_the_provider_subject_and_the_sessions_age() {
+    let r = rig().await;
+    r.admin_person("alice").await;
+    let web = r.person_session("alice", Capacity::Web).await;
+    r.clock.advance(90);
+    let issued = r
+        .app
+        .issue_key(
+            r.admin(),
+            &IssueKeyRequest {
+                role: Role::Admin,
+                grants: Vec::new(),
+                used_by: Some(UsedBy::Person),
+                person: Some(name("alice")),
+                ..agent_req()
+            },
+        )
+        .await
+        .expect("an admin key");
+    r.app
+        .accept_key_link(Bearer::Session(&web), issued.key_id.into())
+        .await
+        .expect("alice accepts");
+    let accepted = r
+        .journal()
+        .await
+        .into_iter()
+        .rev()
+        .find(|e| e.envelope.event_type == event_types::KEY_LINK_ACCEPTED)
+        .expect("the acceptance");
+    let evidence = &accepted.envelope.payload["evidence"];
+    assert_eq!(evidence["session_age_seconds"], 90);
+    assert!(evidence["provider_subject_digests"].is_array());
+}
