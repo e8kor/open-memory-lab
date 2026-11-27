@@ -66,6 +66,10 @@ A value that does not parse stops the server at start and names the key. Per-ten
 | `search.sparse.model_dir` | `OML_SEARCH__SPARSE__MODEL_DIR` | `<state>/models/opensearch-neural-sparse-encoding-doc-v3-distill` | An absolute directory holding the sparse model's `config.json`, `tokenizer.json`, `model.safetensors` and `idf.json`. Read only when `search.enabled` names a sparse pipeline. |
 | `search.sparse.fetch` | `OML_SEARCH__SPARSE__FETCH` | `false` | `true` lets the server download missing sparse-model files at start and check each digest. |
 | `search.sparse.threads` | `OML_SEARCH__SPARSE__THREADS` | `2` | The threads of the sparse encoder's own pool. It writes each version's postings after the write commits, off the commit path. |
+| `operator.token_dir` | `OML_OPERATOR__TOKEN_DIR` | `oml-operator` | Where each start writes one operator token per tenant, `<tenant id>.token`, mode 0600 in a 0700 directory, for `oml operator settle` run as root on the host. A restart replaces every token. Point `oml operator settle --token-dir`, or `OML_OPERATOR__TOKEN_DIR`, at the same directory. |
+| `mail.host` | `OML_MAIL__HOST` | unset (no mail) | The host of the one local mail relay the recovery and settlement notices go to, over plain SMTP. The relay handles TLS and authentication, so the server holds no mail credential. Set it together with `mail.from`; one without the other stops the server at start. Unset, the notices are shown in-product only and doctor warns `notice.mail_unconfigured`. |
+| `mail.port` | `OML_MAIL__PORT` | `25` | The relay's port, from 1 to 65535. |
+| `mail.from` | `OML_MAIL__FROM` | unset | The sender address of the notice emails, such as `oml@memory.example.com`. |
 
 ## Limits counted per process
 

@@ -240,9 +240,32 @@ To give a key a new value and keep its grants instead, use `oml keys rotate <key
 
 ## A dispute between two admins is frozen, or a tenant's admins are dormant
 
-Use this when `oml doctor` raises `admin.dispute_open` (critical) or `operator.settlement_due`, or when no admin person of a tenant has signed in for 30 days. [ADR-0097](../adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) d19 gives the operator two host verbs for these cases. Both are designed, not built: the server, its events and its doctor lines do not exist yet. Their token is decided: at each start the server writes one operator token per tenant to a 0600 file only root reads, bound to the tenant id and that process start, and the verbs, run as root, read it and call an operator-only route; no admin key is involved (ADR-0097, the operator's answer 13 of 2026-11-27).
+Use this when `oml doctor` raises `admin.dispute_open` (critical) or `operator.settlement_due`, or when no admin person of a tenant has signed in for 30 days. [ADR-0097](../adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) d19 gives the operator two host verbs for these cases. `oml operator settle` is built in v0.8.6. `oml operator recover` is designed, not built: its dormancy check reads the request log, and where the server reads that log from is an open question.
 
-- `oml operator settle <tenant> <act> --confirm|--reverse` confirms or reverses the contested act of a freeze open for at least 24 hours, a placeholder. It issues no key and reads no content, notifies both parties and journals `operator.settlement`.
-- `oml operator recover <tenant> --person <name> --email <address>` runs only when no admin person has signed in, and no admin key has authenticated, for 30 days. A 72-hour waiting period follows, which any admin person's sign-in cancels; then every admin key of the tenant is revoked, the named admin person is created, and `operator.recovery` is journalled. The dormant admins keep their flags, so the new admin cannot widen alone until one of them returns, or, with one dormant admin, until the operator settles the new admin's un-flag of that admin.
+### Settle a freeze from the host
 
-Each verb writes its token to a 0600 root-only file bound to the tenant id and one process start, never to stdout or journald, and notifies every admin person in-product and by email. Until they are built, settle a freeze by asking a third admin person who counts to settle the act in the tenant (`oml admin settle <act>`), and do not edit the database by hand: the journal's tamper evidence is the control against the host.
+A freeze is an act against an admin person, an un-flag, removal, disable or entry change, left open in a tenant with fewer than three admin persons. Both parties lose widening until it is settled. Once it has been open 24 hours, a placeholder, doctor raises `operator.settlement_due`, and the operator settles it from the host.
+
+1. Read the act's id: an admin person of the tenant lists it with `oml admin acts --state effective`, and doctor counts it. Read the tenant's id from that person's `oml whoami`.
+2. On the server's host, as root, run:
+
+   ```sh
+   oml operator settle <tenant id> <act id> --confirm --token-dir <operator.token_dir> --url <server>
+   ```
+
+   Use `--reverse` in place of `--confirm` to reverse the act. `--token-dir` reads `OML_OPERATOR__TOKEN_DIR` when it is not given.
+3. Read the answer. `--confirm` revokes the target's suspended admin keys, `cause: settlement`. `--reverse` lifts the suspension and restores the entry. The answer names the persons notified and what the mail relay did: it took the email, no relay is configured, or it refused it, with the SMTP stage and code. The settlement stands in every case.
+
+The verb reads the tenant's token from `<operator.token_dir>/<tenant id>.token`. Each server start writes one token per tenant there, mode 0600 in a 0700 directory, so only root and the server's own user read it. A restart replaces every token, and a tenant created after the start has no token until the next start. The token is never printed, logged or journalled, and no admin key is involved (answer 13 of 2026-11-27). The route refuses a request that also sends a key (`auth.invalid`, `operator_route_takes_no_key`) and a token that is not the tenant's of the current start (`operator_token`). It refuses an act that is not a freeze (`not_frozen`) and a freeze younger than 24 hours (`freeze_too_recent`).
+
+One commit journals the settled `admin.act` with no settler, `operator.settlement`, the effect's events, and a `settlement` notice to every admin person and both parties. The settlement issues no key and reads no content.
+
+When `/readyz` reports `operator_tokens: failed`, doctor raises `operator.token_unwritten`. Read the start log's `operator_tokens_unwritten` line, fix `operator.token_dir` or its permissions, and restart the server.
+
+### Recover a dormant tenant (not built)
+
+`oml operator recover <tenant> --person <name> --email <address>` runs only when the request log shows no admin key of the tenant authenticated in the last 30 days. It fails closed with `log_too_short` when the log does not reach back 30 days. A 72-hour waiting period follows, which any admin person's sign-in cancels. A background sweep on the server then revokes every admin key of the tenant, creates the named admin person and journals `operator.recovery` (ADR-0097, answers 21 and 22 of 2026-11-27). The dormant admins keep their flags, so the new admin cannot widen alone until one of them returns, or, with one dormant admin, until the operator settles the new admin's un-flag of that admin. Until it is built, do not edit the database by hand: the journal's tamper evidence is the control against the host.
+
+### Notice email
+
+Recovery and settlement notices are emailed to every admin person, since a dormant admin sees nothing in-product (d20). Set `mail.host` and `mail.from`, and `mail.port` when the relay is not on 25 ([configuration](configuration.md)). The relay is a local one, such as Postfix on the host, which handles TLS and authentication. The server speaks plain SMTP to it and holds no mail credential (answer 14). With no relay set, doctor warns `notice.mail_unconfigured`. When the relay refuses or cannot be reached, doctor raises `notice.mail_delivery_failed` with the last reason, and the start log has a `notice_mail_failed` line. The count is the process's own, and a restart clears it.

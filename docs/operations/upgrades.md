@@ -1,7 +1,7 @@
 ---
 status: Stable
 verified: 2026-11-25
-answers: "how to upgrade an OML server: how migrations run, v0.8.6's migrations 0074 and 0075, the person a reviewer, ratifier or admin-read key needs, the deployer's admin keys converted to maintenance keys, the confirm and link reasons, the upgrade steps in order, what rollback does and does not mean, the upgrade from a pre-0.3.1 install, the v0.5.4 fix, how to move from v0.3, v0.8.5's migrations 0067, 0068 and 0069, the workspaces quota, the oml_write modes and the Python SDK that upgrades with the server, key rotation and what a previous value runs in its grace, the last admin entry kept on every surface and the read-only counts before v0.8.6, the v0.8.4 role rename that clients take in the server's window, with no key issued or listed until both run v0.8.4, what v0.8.4's migrations 0063, 0064 and 0066 cost, the admin key links, links and sign-in emails that wait on their person, and the reset of a database that ran a draft of 0063 or 0064, the v0.8.3 rename that clients take before the server, what the v0.8.3 migrations cost and what waits during them, and the storage.url to set before v0.8.3's uploads"
+answers: "how to upgrade an OML server: how migrations run, v0.8.6's migrations 0074 and 0075, the person a reviewer, ratifier or admin-read key needs, the deployer's admin keys converted to maintenance keys, the confirm and link reasons, the operator token directory and the mail relay, the upgrade steps in order, what rollback does and does not mean, the upgrade from a pre-0.3.1 install, the v0.5.4 fix, how to move from v0.3, v0.8.5's migrations 0067, 0068 and 0069, the workspaces quota, the oml_write modes and the Python SDK that upgrades with the server, key rotation and what a previous value runs in its grace, the last admin entry kept on every surface and the read-only counts before v0.8.6, the v0.8.4 role rename that clients take in the server's window, with no key issued or listed until both run v0.8.4, what v0.8.4's migrations 0063, 0064 and 0066 cost, the admin key links, links and sign-in emails that wait on their person, and the reset of a database that ran a draft of 0063 or 0064, the v0.8.3 rename that clients take before the server, what the v0.8.3 migrations cost and what waits during them, and the storage.url to set before v0.8.3's uploads"
 ---
 
 # Upgrade OML
@@ -138,7 +138,22 @@ Three changes that clients send ([ADR-0097](../adr/ADR-0097-every-admin-act-is-o
 - An older CLI or console that sends neither is refused `request.validation` with
   `details.field: /reason`, and nothing is journalled.
 
-Not in this release: the host verbs (d19) and the mail relay settings (d20).
+### The operator token, the host settlement and the mail relay
+
+From v0.8.6 each server start writes one operator token per tenant to `operator.token_dir`,
+`oml-operator` under the server's working directory by default, mode 0600 in a 0700 directory
+([ADR-0097](../adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) d19; answer 13). Before the upgrade, point it at a directory on the state volume that only
+root and the server's user reach, such as `/var/lib/oml/operator`, and set
+`OML_OPERATOR__TOKEN_DIR` to the same path in root's shell, so `oml operator settle` finds it.
+The server keeps no token across a restart, and needs no step of its own: the first start writes
+the files.
+
+Configure the mail relay for the settlement notice (d20; answer 14): set `mail.host`, `mail.from`
+and, when the relay is not on 25, `mail.port`. The relay is a local one that handles TLS and
+authentication; the server holds no mail credential. Without it, `oml doctor` warns
+`notice.mail_unconfigured`, and a settlement's notice reaches admins in-product only.
+
+Not in this release: `oml operator recover` and its completion sweep (d19; answers 21 and 22).
 
 ## Upgrading to v0.8.5
 
