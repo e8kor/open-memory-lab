@@ -136,9 +136,9 @@ pub async fn link_value<J, S, C, I, Sc>(
 /// [`link`] for the key whose value is `value`, acting as the bootstrap's
 /// founder (`founder@example.com`) through their `<founder>-admin` session,
 /// for a suite that keeps no admin key value at hand.
-pub async fn link_by_founder<J, S, C, I, Sc>(
+pub async fn link_by_founder<J, S, C, I, Sc, W>(
     app: &App<J, S, C, I, Sc>,
-    store: &J,
+    store: &W,
     value: &str,
     person: &str,
 ) where
@@ -147,6 +147,7 @@ pub async fn link_by_founder<J, S, C, I, Sc>(
     C: Clock,
     I: IdGen,
     Sc: Scanner,
+    W: WebStore,
 {
     let key_id = app.whoami(value).await.expect("the key").key.key_id;
     let founder = store
