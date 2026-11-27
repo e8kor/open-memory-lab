@@ -7792,3 +7792,99 @@ async fn keys_rotate_out_with_a_path_that_cannot_be_created_calls_no_server() {
     assert!(!path.exists());
     lab.stop().await;
 }
+
+// -- `oml keys issue --out` and a reader agent key (#528) --------------------
+
+/// `oml keys issue --out <file>` writes the value of a key of any role to a
+/// new owner-only file, and the value reaches neither stdout nor stderr;
+/// `--json` names the path and never the value.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn keys_issue_out_writes_the_value_to_a_0600_file_and_never_to_stdout_or_stderr() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let wa = lab.workspace("metals");
+    let dir = lab.dir.join("keys");
+    std::fs::create_dir_all(&dir).expect("key directory");
+    for (name, role, json) in [("blind-reader", "reader", false), ("blind-json", "reader", true)] {
+        let path = dir.join(name);
+        let shown = path.to_str().expect("a UTF-8 path");
+        let grant = format!("{wa}:{role}");
+        let mut args = vec![];
+        if json {
+            args.push("--json");
+        }
+        args.extend([
+            "keys", "issue", name, "--role", role, "--principal", name, "--grant", &grant,
+            "--out", shown,
+        ]);
+        let (code, stdout, stderr) = lab.text(&args);
+        assert_eq!(code, 0, "{stderr}");
+        let written = std::fs::read_to_string(&path).expect("the key file");
+        let value = written.strip_suffix('\n').expect("the value and one newline");
+        assert!(value.starts_with("oml_"), "{written:?}");
+        #[cfg(unix)]
+        assert_eq!(mode_of(&path), 0o600, "the key file is owner-only");
+        assert!(!stdout.contains(value), "no value on stdout: {stdout}");
+        assert!(!stderr.contains(value), "no value on stderr: {stderr}");
+        assert!(stdout.contains(shown), "the path is named: {stdout}");
+        if json {
+            let answer: Value = serde_json::from_str(&stdout).expect("JSON");
+            assert_eq!(answer["key_file"], shown, "{answer}");
+            assert!(answer.get("value").is_none(), "{answer}");
+        }
+    }
+    lab.stop().await;
+}
+
+/// `oml keys issue --out` refuses a file that already exists, before any
+/// request: nothing is issued and the file is left as it was.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn keys_issue_out_refuses_an_existing_file_and_issues_nothing() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let wa = lab.workspace("metals");
+    let path = lab.dir.join("existing-key");
+    std::fs::write(&path, "kept\n").expect("an existing file");
+    let shown = path.to_str().expect("a UTF-8 path");
+    lab.take_requests();
+    let grant = format!("{wa}:reader");
+    let (code, _stdout, stderr) = lab.text(&[
+        "keys", "issue", "never-issued", "--role", "reader", "--principal", "p", "--grant",
+        &grant, "--out", shown,
+    ]);
+    assert_ne!(code, 0, "{stderr}");
+    assert!(lab.take_requests().is_empty(), "nothing was sent");
+    assert_eq!(std::fs::read_to_string(&path).expect("kept"), "kept\n");
+    lab.stop().await;
+}
+
+/// `oml keys issue-agent --role reader` issues a key that only reads: one
+/// reader grant on the workspace, with the same plugin lines.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue_agent_accepts_reader_and_grants_reader_alone() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let wa = lab.workspace("metals");
+    lab.take_requests();
+    let (code, stdout, stderr) = lab.text(&[
+        "keys",
+        "issue-agent",
+        "blind-test",
+        "--principal",
+        "crew/blind-test",
+        "--workspace",
+        &wa,
+        "--role",
+        "reader",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.starts_with("export OML_URL="), "{stdout}");
+    let seen = lab.take_requests();
+    assert_eq!(routes(&seen), ["POST /v2/keys"]);
+    assert_eq!(seen[0].body["role"], "reader");
+    assert_eq!(seen[0].body["grants"], json!([grant(&wa, "reader")]));
+    lab.stop().await;
+}
