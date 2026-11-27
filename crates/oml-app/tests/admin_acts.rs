@@ -2240,3 +2240,178 @@ async fn under_sole_admin_an_erase_shreds_at_once_marked() {
     assert_eq!(status, MemoryStatus::Erased);
     assert!(body.is_empty());
 }
+
+// -- federation acts in the envelope (ADR-0097 d3, d5) ---------------------
+
+/// An admin's federation acts ride the admin act: declining federation on a
+/// workspace is narrowing and takes effect at once, accepting it again is
+/// widening and waits, applying only at a second admin person's
+/// confirmation.
+#[tokio::test]
+async fn an_admins_federation_acceptance_waits_on_a_second_admin_person_and_applies_at_confirmation()
+ {
+    let r = two_admins().await;
+    let alice = r.admin_session("alice").await;
+    let declined = r
+        .app
+        .set_workspace_federation_with_reason(
+            Bearer::Session(&alice),
+            by_name("crew"),
+            false,
+            Some("the crew holds drafts"),
+        )
+        .await
+        .expect("a decline at once");
+    assert!(!declined.now.accept_federated);
+    assert!(declined.pending.is_none());
+    let narrowing = last_act(&r, "decline_federation").await;
+    assert_eq!(narrowing.state, AdminActState::Effective);
+    let events = r.journal().await;
+    let set = events
+        .iter()
+        .rev()
+        .find(|e| e.envelope.event_type == event_types::WORKSPACE_FEDERATION_SET)
+        .expect("the effect");
+    assert_eq!(
+        set.envelope.payload["act_id"],
+        narrowing.act_id.to_string()
+    );
+    let pending = r
+        .app
+        .set_workspace_federation_with_reason(
+            Bearer::Session(&alice),
+            by_name("crew"),
+            true,
+            Some("the drafts are gone"),
+        )
+        .await
+        .expect("a pending acceptance");
+    assert!(!pending.now.accept_federated, "nothing took effect");
+    let act = pending.pending.expect("the act waits");
+    assert_eq!(act.act.as_str(), "accept_federation");
+    assert_eq!(act.state, AdminActState::PendingConfirmation);
+    r.app
+        .confirm_admin_act(Bearer::Session(&r.admin_session("bob").await), act.act_id)
+        .await
+        .expect("bob confirms");
+    let crew = r
+        .store
+        .resolve_name(r.boot.tenant_id, NamedKind::Workspace, &name("crew"))
+        .await
+        .expect("a read")
+        .expect("crew");
+    assert!(
+        r.store
+            .federation_declining(r.boot.tenant_id, &[crew])
+            .await
+            .expect("a read")
+            .is_empty(),
+        "accepted at the confirmation"
+    );
+}
+
+/// Widening the tenant's federation policy waits on a second admin person
+/// and applies its change at the confirmation; narrowing takes effect at
+/// once; a change that does both is refused, as two acts of two classes.
+#[tokio::test]
+async fn widening_the_federation_policy_waits_and_narrowing_it_takes_effect_at_once() {
+    use oml_app::federation::FederationPolicyChange;
+    let r = two_admins().await;
+    let alice = r.admin_session("alice").await;
+    let widen = FederationPolicyChange {
+        enabled: Some(true),
+        default_sources: None,
+        max_sources: Some(8),
+    };
+    let taken = r
+        .app
+        .set_federation_policy_with_reason(Bearer::Session(&alice), widen, Some("wider recall"))
+        .await
+        .expect("a pending widening");
+    assert!(!taken.now.0.policy.enabled, "nothing took effect");
+    let act = taken.pending.expect("the act waits");
+    assert_eq!(act.act.as_str(), "widen_federation_policy");
+    r.app
+        .confirm_admin_act(Bearer::Session(&r.admin_session("bob").await), act.act_id)
+        .await
+        .expect("bob confirms");
+    let policy = r
+        .store
+        .federation_policy(r.boot.tenant_id)
+        .await
+        .expect("the policy");
+    assert!(policy.enabled);
+    assert_eq!(policy.max_sources, 8);
+    let narrowed = r
+        .app
+        .set_federation_policy_with_reason(
+            Bearer::Session(&alice),
+            FederationPolicyChange {
+                enabled: None,
+                default_sources: None,
+                max_sources: Some(4),
+            },
+            None,
+        )
+        .await
+        .expect("a narrowing at once");
+    assert!(narrowed.pending.is_none());
+    assert_eq!(narrowed.now.0.policy.max_sources, 4);
+    assert_eq!(
+        last_act(&r, "narrow_federation_policy").await.state,
+        AdminActState::Effective
+    );
+    let mixed = r
+        .app
+        .set_federation_policy_with_reason(
+            Bearer::Session(&alice),
+            FederationPolicyChange {
+                enabled: Some(false),
+                default_sources: None,
+                max_sources: Some(16),
+            },
+            Some("both at once"),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(mixed, AppError::AdminField { .. }), "{mixed:?}");
+}
+
+/// In a `sole_admin` tenant a federation widening takes effect at once,
+/// marked, and its decline sets the field back.
+#[tokio::test]
+async fn a_declined_sole_admin_federation_acceptance_is_undone() {
+    let r = rig().await;
+    r.admin_person("alice").await;
+    let alice = r.admin_session("alice").await;
+    r.app
+        .set_workspace_federation_with_reason(Bearer::Session(&alice), by_name("crew"), false, None)
+        .await
+        .expect("declined at once");
+    let taken = r
+        .app
+        .set_workspace_federation_with_reason(Bearer::Session(&alice), by_name("crew"), true, None)
+        .await
+        .expect("accepted at once");
+    assert!(taken.now.accept_federated);
+    let act = last_act(&r, "accept_federation").await;
+    assert!(act.sole_admin);
+    r.app
+        .decline_admin_act(Bearer::Session(&alice), act.act_id, Some("too wide"))
+        .await
+        .expect("declined");
+    let crew = r
+        .store
+        .resolve_name(r.boot.tenant_id, NamedKind::Workspace, &name("crew"))
+        .await
+        .expect("a read")
+        .expect("crew");
+    assert_eq!(
+        r.store
+            .federation_declining(r.boot.tenant_id, &[crew])
+            .await
+            .expect("a read"),
+        vec![crew],
+        "the decline set the field back"
+    );
+}
