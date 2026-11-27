@@ -113,7 +113,7 @@ where
     /// accepted link is suspended, `key.suspended {cause: unlinked}`, signed
     /// by the server with no key acting, and still reaches `/v2/whoami`
     /// and `POST /v2/keys/self/link`; one suspended so for more than
-    /// [`UNLINKED_ADMIN_KEY_WINDOW_SECS`] is revoked, `key.revoked {cause:
+    /// [`UNLINKED_ADMIN_KEY_WINDOW_SECS`](crate::types::UNLINKED_ADMIN_KEY_WINDOW_SECS) is revoked, `key.revoked {cause:
     /// upgrade}`. One chain per tenant; a tenant with nothing to do
     /// journals nothing, so a later start journals nothing. Answers the
     /// count of keys suspended and revoked.

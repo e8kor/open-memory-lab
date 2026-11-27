@@ -106,7 +106,7 @@ done
 
 OML="$BIN/oml"
 "$OML" --url "$URL" --json bootstrap claim bench-admin --token-stdin \
-    --tenant-name bench --principal bench/admin <<<"$TOKEN" >/dev/null || fail "bootstrap claim"
+    --tenant-name bench --principal bench/admin --person bench --email bench@example.com <<<"$TOKEN" >/dev/null || fail "bootstrap claim"
 "$OML" --json workspaces create universe bench >/dev/null || fail "workspace bench"
 for wa in "$@"; do
     "$OML" --json workspaces create bench "$wa" >/dev/null || fail "workspace $wa"
