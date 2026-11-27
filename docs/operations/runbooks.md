@@ -220,25 +220,23 @@ Rotation does not heal the past. Anything the attacker signed still verifies und
 
 ## Revoke a key
 
-OML has no `revoke` or `rotate` command. To stop a key, deny it, then issue a new one.
+Use this when a key leaked, or its holder no longer needs it. `oml keys revoke` ends one key on every path: its value, its OAuth tokens and their refresh, and its connect codes. Nothing cascades, so the keys it issued keep working ([ADR-0097](../adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) d14). Revoking is narrowing and takes effect at once; revoking a person's key is loud, a notice to every admin person (d24).
 
-1. Deny the key across the whole tree.
-
-   ```bash
-   oml deny set <key> universe
-   ```
-
-2. Issue the replacement.
+1. Revoke the key, with the reason the journal keeps.
 
    ```bash
-   oml keys issue <key-name> --role <role> --grant <workspace>:<role>
+   oml keys revoke <key> --reason "<why>"
    ```
 
-3. Check the old key's denial.
+2. When the key's holder still needs access, issue a replacement. An issuance is widening: outside `sole_admin` it waits until a second admin person confirms it with `oml admin confirm <act> --reason "<why>"`.
 
    ```bash
-   oml keys show <old-key>
+   oml keys issue <key-name> --role <role> --grant <workspace>:<role> --reason "<why>"
    ```
+
+3. Check that the old key is revoked: `oml keys show <old-key>` names its revocation.
+
+To give a key a new value and keep its grants instead, use `oml keys rotate <key>`, with `--grace` (at most 24 hours) when its holder needs time to switch. A session key, the server's reserved key and a revoked key are refused by name.
 
 ## A dispute between two admins is frozen, or a tenant's admins are dormant
 
