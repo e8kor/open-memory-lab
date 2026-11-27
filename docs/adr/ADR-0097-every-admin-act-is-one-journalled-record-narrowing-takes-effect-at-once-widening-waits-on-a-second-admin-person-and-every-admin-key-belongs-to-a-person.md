@@ -132,9 +132,9 @@ Decided, not built.
   (ADR-0096 d4, kept); `cut_off`; `disable_user` of a non-admin person; `close_deletion`, where the
   person's request is the consent; key revocation of a non-admin key (d14); connection revocation;
   ending sessions; lowering a limit or quota (d15); narrowing a binding or the federation policy;
-  declining a pending or `sole_admin` act. Content fixes keep ADR-0089's settlement by another
-  person, unchanged; every other narrowing act is listed in the admin's To do as done and counted
-  by doctor. *Rejected:* a timer that reverts narrowing (model C), which re-serves a leaked key the
+  declining a pending or `sole_admin` act; lifting a denial (decided by the operator,
+  2026-11-27). Content fixes keep ADR-0089's settlement by another person, unchanged; every other
+  narrowing act is listed in the admin's To do as done and counted by doctor. *Rejected:* a timer that reverts narrowing (model C), which re-serves a leaked key the
   moment nobody ratifies its demotion.
 
 - **d4 — Erase demotes at once, and the shred waits on a second admin person (Q8).** Erase becomes
@@ -901,6 +901,33 @@ rule this record makes:
   person outside the own root, as a verdict's `same_person` does, or marks it under `sole_admin`.
 - **Rotation by an admin of another admin's key or a person's** waits on d6 and d8, as d14's note
   says; v0.8.5 refuses both by name.
+
+## Amendment of 2026-11-27: the core lane's questions (decided by the operator)
+
+Decided by the operator on 2026-11-27, answering the questions the v0.8.6 core lane (PR #524)
+left. Each answer is recorded here before the code that takes it.
+
+- **(a) Lifting a denial is narrowing (d3).** It takes effect at once and waits on no one, as the
+  denial it lifts did. The class table carries it as `lift_denial`; no admin verb lifts a denial
+  yet (the start's rule 5 lift of ADR-0026 d15 is the server's, not an admin act).
+- **(b) Declining a `sole_admin` widening act undoes it (d10, d23).** The decline is its own
+  narrowing act (`decline_act`), and in its commit it applies the matching narrowing effect, each
+  event naming the decline's `act_id`: an issued key is revoked (`key.revoked`); an added grant or
+  capacity is revoked (`grant.revoked`, new); a connect code is voided (`connection.code_voided`,
+  new) unless already redeemed, when the connection it opened is revoked; a raised limit is set
+  back to the limits recorded in the act's target at the act (`key.limits_set`); an admin flag is
+  taken off the entry (`web.email_changed` with `admin: false`), under the last-admin guard
+  (d25). `not_declinable` is gone: every widening act is declinable while pending or taken at once
+  under `sole_admin`.
+- **(c) The core lane's six readings are accepted:**
+  1. a state change re-journals `admin.act` with the same `act_id`, and the `admin_acts` row is
+     the one record of the act;
+  2. a decline is its own narrowing act, `decline_act`, journalled before the declined act's
+     envelope in one commit;
+  3. expiry is computed on read (`state_at`) and not journalled;
+  4. pending grants live in `admin_acts.effect`, the table of their own d23 asks for;
+  5. an admin's issuance (the act, the key, its grants and its connect code) is one atomic chain;
+  6. `<user>-curate` acts count as admin acts.
 
 ## Rejected alternatives
 
