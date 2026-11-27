@@ -5,6 +5,8 @@
 //! against the real router; every byte on the wire is the spec's shape
 //! (docs/api/openapi.yaml, docs/api/errors.md).
 
+mod counted;
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -4291,6 +4293,10 @@ async fn steering_rig() -> Option<(Rig, String, Uuid, Uuid, String, String)> {
     let quotes = create_workspace(&rig.router, &admin, crew, "quotes").await;
     let writer = issue_key(&rig.router, &admin, "submitter", "crew/agent-7", crew).await;
     let reviewer = issue_key(&rig.router, &admin, "reviewer", "crew/reviewer-3", crew).await;
+    // The reviewer counts as a person, as a steering verdict needs
+    // (ADR-0097 d12).
+    let app = oml_server_lead::lead_app(&rig.store, rig.signing.clone());
+    counted::link_value(&app, &admin, &reviewer, "crew-reviewer").await;
     Some((rig, admin, crew, quotes, writer, reviewer))
 }
 
@@ -4717,6 +4723,10 @@ async fn own_held_rig() -> Option<(Rig, String, Uuid, String, String, String)> {
     let rig = fresh_rig().await?;
     let (admin, _tenant, crew) = crew_tenant(&rig.router).await;
     let (agent, reviewer, reader) = supersession_keys(&rig.router, &admin, crew).await;
+    // The reviewer counts as a person, as a steering verdict needs
+    // (ADR-0097 d12).
+    let app = oml_server_lead::lead_app(&rig.store, rig.signing.clone());
+    counted::link_value(&app, &admin, &reviewer, "crew-reviewer").await;
     Some((rig, admin, crew, agent, reviewer, reader))
 }
 
@@ -9372,6 +9382,11 @@ async fn a_transition_proposed_and_ratified_over_http_moves_the_workspace_and_th
     let crew = create_workspace(router, &admin, root, "crew").await;
     let dora = reviewer_on(router, &admin, "dora", crew).await;
     let dan = reviewer_on(router, &admin, "dan", crew).await;
+    // Each reviewer counts as a person of their own, as a ratification
+    // needs (ADR-0097 d12, d17).
+    let app = oml_server_lead::lead_app(&rig.store, rig.signing.clone());
+    counted::link_value(&app, &admin, &dora, "dora-person").await;
+    counted::link_value(&app, &admin, &dan, "dan-person").await;
 
     let (status, _, proposal) = send(
         router,
@@ -9457,6 +9472,11 @@ async fn claim_and_brief_edges_are_proposed_listed_and_ratified_on_v2_edges_and_
     let writer = agent_on(router, &admin, "crew/writer", crew).await;
     let dora = reviewer_on(router, &admin, "dora", crew).await;
     let dan = reviewer_on(router, &admin, "dan", crew).await;
+    // Each reviewer counts as a person of their own, as a ratification
+    // needs (ADR-0097 d12, d17).
+    let app = oml_server_lead::lead_app(&rig.store, rig.signing.clone());
+    counted::link_value(&app, &admin, &dora, "dora-person").await;
+    counted::link_value(&app, &admin, &dan, "dan-person").await;
     let a = promoted_artifact_over_http(router, &writer, &dora, crew, "quote-a").await;
     let b = promoted_artifact_over_http(router, &writer, &dora, crew, "quote-b").await;
 
@@ -12264,6 +12284,11 @@ async fn the_widen_hint_is_the_same_over_http_and_mcp_once_the_lead_builds_its_s
         .to_owned();
     let dora = reviewer_on(router, &admin, "dora", root).await;
     let dan = reviewer_on(router, &admin, "dan", root).await;
+    // Each reviewer counts as a person of their own, as a ratification
+    // needs (ADR-0097 d12, d17).
+    let app = oml_server_lead::lead_app(&rig.store, rig.signing.clone());
+    counted::link_value(&app, &admin, &dora, "dora-person").await;
+    counted::link_value(&app, &admin, &dan, "dan-person").await;
     let mut n = 0;
     for (name, bodies) in [
         (

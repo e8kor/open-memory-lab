@@ -8695,30 +8695,24 @@ where
                 count += 1;
             }
         }
-        let effective = self
-            .journal
-            .admin_acts(tenant_id, Some(AdminActState::Effective))
-            .await?;
+        // The effective acts are read only for a person whose flag is seven
+        // days old: neither a `sole_admin` act nor a time box counts for a
+        // younger one (ADR-0097 d10, d11, d13).
         if counts_for_act(since, now.unix_micros()) {
-            count += effective
+            for a in self
+                .journal
+                .admin_acts(tenant_id, Some(AdminActState::Effective))
+                .await?
                 .iter()
-                .filter(|a| {
-                    a.sole_admin
-                        && a.class() == AdminActClass::Widening
-                        && a.actor_person.as_ref() != Some(&person)
-                })
-                .count() as u64;
+                .filter(|a| a.actor_person.as_ref() != Some(&person))
+            {
+                if (a.sole_admin && a.class() == AdminActClass::Widening)
+                    || (a.timebox() && counts_for_act(since, a.at.unix_micros()))
+                {
+                    count += 1;
+                }
+            }
         }
-        // Time boxes another admin person took, which this one settles
-        // under the same age rule as a confirmation (ADR-0097 d11, d13).
-        count += effective
-            .iter()
-            .filter(|a| {
-                a.timebox()
-                    && a.actor_person.as_ref() != Some(&person)
-                    && counts_for_act(since, a.at.unix_micros())
-            })
-            .count() as u64;
         Ok(count)
     }
 

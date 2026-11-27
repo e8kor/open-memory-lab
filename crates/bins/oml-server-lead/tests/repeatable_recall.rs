@@ -11,6 +11,8 @@
 //! (ADR-0054 d2). Nothing is sorted, parsed and re-serialised, or rounded
 //! before the comparison. Each test is named after the sentence it proves.
 
+mod counted;
+
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -469,6 +471,21 @@ impl World {
             &["reader"],
         )
         .await;
+        // The reviewer counts as a person, as a steering verdict needs
+        // (ADR-0097 d12): linked by an application over the lead's database
+        // and keyring, and accepted.
+        {
+            use oml_app::ports::KeyringStore as _;
+            let store = oml_pg::PgStore::connect(&serving_url(&db))
+                .await
+                .expect("the serving store");
+            let signing = oml_server_lead::FileKeyring::new(scratch.join("keyring"))
+                .load_or_create()
+                .await
+                .expect("the lead's keyring");
+            let app = oml_server_lead::lead_app(&store, signing);
+            counted::link_by_founder(&app, &store, &reviewer, "team-reviewer").await;
+        }
         let world = Self {
             db,
             scratch,
