@@ -233,6 +233,7 @@ export async function startServer(): Promise<OmlServer> {
     const boot = oml(
       "bootstrap", "claim", "sdk-admin", "--token-stdin",
       "--tenant-name", "sdk-tests", "--principal", "platform/admin",
+      "--person", "founder", "--email", "founder@example.com",
     );
     const root = String(boot.root_workspace_id);
     const workspace = String(oml("workspaces", "create", root, "sdk").id);

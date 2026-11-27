@@ -3505,7 +3505,9 @@ impl<T: Transport> Client<T> {
     }
 
     /// `POST /v2/web/emails`: adds an entry or changes one; with
-    /// `keep_an_admin` un-flagging the last admin is refused.
+    /// `keep_an_admin` un-flagging the last admin is refused. `reason` is
+    /// required for a new admin person outside `sole_admin` and for an act
+    /// against another admin person (ADR-0097 d8, d26).
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
@@ -3516,19 +3518,21 @@ impl<T: Transport> Client<T> {
         email: &str,
         user: &str,
         admin: bool,
+        reason: Option<&str>,
     ) -> Result<WebEmail, Error> {
-        self.post(
-            call,
-            "/v2/web/emails".to_owned(),
-            idempotency_key,
-            &serde_json::json!({
-                "email": email, "user": user, "admin": admin, "keep_an_admin": true,
-            }),
-        )
-        .await
+        let mut body = serde_json::json!({
+            "email": email, "user": user, "admin": admin, "keep_an_admin": true,
+        });
+        if let Some(reason) = reason {
+            body["reason"] = serde_json::json!(reason);
+        }
+        self.post(call, "/v2/web/emails".to_owned(), idempotency_key, &body)
+            .await
     }
 
-    /// `POST /v2/web/emails/remove`, refusing the last admin entry.
+    /// `POST /v2/web/emails/remove`, refusing the last admin entry;
+    /// `reason` is required to remove another admin person's entry
+    /// (ADR-0097 d8, d26).
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
@@ -3537,12 +3541,17 @@ impl<T: Transport> Client<T> {
         call: &Call<'_>,
         idempotency_key: &str,
         email: &str,
+        reason: Option<&str>,
     ) -> Result<Removed, Error> {
+        let mut body = serde_json::json!({ "email": email, "keep_an_admin": true });
+        if let Some(reason) = reason {
+            body["reason"] = serde_json::json!(reason);
+        }
         self.post(
             call,
             "/v2/web/emails/remove".to_owned(),
             idempotency_key,
-            &serde_json::json!({ "email": email, "keep_an_admin": true }),
+            &body,
         )
         .await
     }
@@ -4022,12 +4031,12 @@ mod tests {
             decodes(&client.list_web_emails(&CALL, 200, None).await),
             decodes(
                 &client
-                    .allow_web_email(&CALL, "idem-12", "a@example.com", "alice", false)
+                    .allow_web_email(&CALL, "idem-12", "a@example.com", "alice", false, None)
                     .await,
             ),
             decodes(
                 &client
-                    .remove_web_email(&CALL, "idem-13", "a@example.com")
+                    .remove_web_email(&CALL, "idem-13", "a@example.com", None)
                     .await,
             ),
             decodes(

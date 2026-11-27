@@ -17,6 +17,9 @@ class AllowWebEmailBody:
         email (str):
         user (str): A name under the creation grammar, at most 56 characters.
         admin (bool):
+        reason (str | Unset): Scanned and journalled on the admin act. Required for a new admin person outside
+            sole_admin and for an act against another admin person: an un-flag or a change of their entry (ADR-0097 d8,
+            d26). Since v0.8.6.
         keep_an_admin (bool | Unset): Read and ignored since v0.8.5, when the guard holds whatever is sent (ADR-0097
             d25, d27): un-flagging the tenant's last admin entry is refused, request.validation with details.field admin,
             and nothing changes; the store reads the admin entries under lock in the commit's own transaction (ADR-0045 d10;
@@ -26,6 +29,7 @@ class AllowWebEmailBody:
     email: str
     user: str
     admin: bool
+    reason: str | Unset = UNSET
     keep_an_admin: bool | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
@@ -34,6 +38,8 @@ class AllowWebEmailBody:
         user = self.user
 
         admin = self.admin
+
+        reason = self.reason
 
         keep_an_admin = self.keep_an_admin
 
@@ -46,6 +52,8 @@ class AllowWebEmailBody:
                 "admin": admin,
             }
         )
+        if reason is not UNSET:
+            field_dict["reason"] = reason
         if keep_an_admin is not UNSET:
             field_dict["keep_an_admin"] = keep_an_admin
 
@@ -60,12 +68,15 @@ class AllowWebEmailBody:
 
         admin = d.pop("admin")
 
+        reason = d.pop("reason", UNSET)
+
         keep_an_admin = d.pop("keep_an_admin", UNSET)
 
         allow_web_email_body = cls(
             email=email,
             user=user,
             admin=admin,
+            reason=reason,
             keep_an_admin=keep_an_admin,
         )
 

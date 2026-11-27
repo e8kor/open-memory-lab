@@ -100,11 +100,18 @@ fn state_of(location: &str) -> String {
 
 async fn tenant(store: &PgStore, key: &SigningKey, name: &str) -> BootstrapResult {
     lead_app(store, key.clone())
-        .bootstrap_tenant(&BootstrapRequest {
-            tenant_name: Name::parse(name).expect("a name"),
-            admin_key_name: Name::parse("root-admin").expect("a name"),
-            admin_principal: format!("{name}-admin"),
-        })
+        .bootstrap_tenant_for(
+            &BootstrapRequest {
+                tenant_name: Name::parse(name).expect("a name"),
+                admin_key_name: Name::parse("root-admin").expect("a name"),
+                admin_principal: format!("{name}-admin"),
+            },
+            Some(&oml_app::types::BootstrapPerson {
+                user: Name::parse("founder").expect("a name"),
+                email: oml_app::domain::web::Email::parse(&format!("founder@{name}.example"))
+                    .expect("an email"),
+            }),
+        )
         .await
         .expect("bootstrap")
 }

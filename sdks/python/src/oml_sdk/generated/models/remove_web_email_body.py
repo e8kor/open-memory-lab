@@ -15,6 +15,8 @@ class RemoveWebEmailBody:
     """
     Attributes:
         email (str):
+        reason (str | Unset): Scanned and journalled on the admin act. Required to remove another admin person's entry,
+            an act against an admin (ADR-0097 d8, d26). Since v0.8.6.
         keep_an_admin (bool | Unset): Read and ignored since v0.8.5, when the guard holds whatever is sent (ADR-0097
             d25, d27): removing the tenant's last admin entry is refused, request.validation with details.field admin, and
             nothing changes; the store reads the admin entries under lock in the commit's own transaction (ADR-0045 d10;
@@ -22,10 +24,13 @@ class RemoveWebEmailBody:
     """
 
     email: str
+    reason: str | Unset = UNSET
     keep_an_admin: bool | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         email = self.email
+
+        reason = self.reason
 
         keep_an_admin = self.keep_an_admin
 
@@ -36,6 +41,8 @@ class RemoveWebEmailBody:
                 "email": email,
             }
         )
+        if reason is not UNSET:
+            field_dict["reason"] = reason
         if keep_an_admin is not UNSET:
             field_dict["keep_an_admin"] = keep_an_admin
 
@@ -46,10 +53,13 @@ class RemoveWebEmailBody:
         d = dict(src_dict)
         email = d.pop("email")
 
+        reason = d.pop("reason", UNSET)
+
         keep_an_admin = d.pop("keep_an_admin", UNSET)
 
         remove_web_email_body = cls(
             email=email,
+            reason=reason,
             keep_an_admin=keep_an_admin,
         )
 

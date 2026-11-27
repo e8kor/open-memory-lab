@@ -206,6 +206,7 @@ def oml_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[OmlServer]:
         boot = oml(
             "bootstrap", "claim", "sdk-admin", "--token-stdin",
             "--tenant-name", "sdk-tests", "--principal", "platform/admin",
+            "--person", "founder", "--email", "founder@example.com",
             stdin=f"{token}\n",
         )  # fmt: skip
         root = boot["root_workspace_id"]

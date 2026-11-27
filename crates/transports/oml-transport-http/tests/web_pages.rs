@@ -2209,6 +2209,22 @@ async fn a_close_whose_closing_commit_loses_the_chain_race_journals_each_event_o
 /// direct row edit makes one (no verb issues an admin key under a user
 /// root): the fixture of #277.
 async fn stray_admin_under_alice(rig: &Rig) -> uuid::Uuid {
+    // Its person is an admin person, as an admin key's must be (ADR-0097
+    // d21); the row edit below is what points it at alice's root.
+    rig.allow("operator-2@example.com", "operator-2", true)
+        .await;
+    let entry = {
+        use oml_app::ports::WebStore as _;
+        rig.store
+            .web_entry_by_email(&Email::parse("operator-2@example.com").unwrap().digest())
+            .await
+            .expect("a read")
+            .expect("the entry")
+    };
+    rig.app
+        .web_ensure_keys(&entry)
+        .await
+        .expect("operator-2's root and keys");
     let stray = rig
         .app
         .issue_key(
@@ -2227,7 +2243,7 @@ async fn stray_admin_under_alice(rig: &Rig) -> uuid::Uuid {
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
-                person: Some(Name::parse("alice").expect("a name")),
+                person: Some(Name::parse("operator-2").expect("a name")),
                 create_workspaces: Vec::new(),
             },
         )

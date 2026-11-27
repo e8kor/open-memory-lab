@@ -1047,12 +1047,19 @@ enum WebCommand {
         /// Allow access to the admin page.
         #[arg(long)]
         admin: bool,
+        /// Why: required for a new admin person once the tenant has had two,
+        /// and for an act against another admin person.
+        #[arg(long)]
+        reason: Option<String>,
     },
     /// Remove an email, end its sessions, and journal web.email_removed; the
     /// user's agent keys keep working.
     Remove {
         /// Email address.
         email: String,
+        /// Why: required to remove another admin person's entry.
+        #[arg(long)]
+        reason: Option<String>,
     },
     /// List the tenant's allowed emails.
     List,
@@ -5517,8 +5524,16 @@ fn run_web(cli: &Cli, stored: &Credentials, command: &WebCommand) -> Result<Exit
         )
     };
     match command {
-        WebCommand::Allow { email, user, admin } => {
-            let body = json!({ "email": email, "user": user, "admin": admin });
+        WebCommand::Allow {
+            email,
+            user,
+            admin,
+            reason,
+        } => {
+            let mut body = json!({ "email": email, "user": user, "admin": admin });
+            if let Some(reason) = reason {
+                body["reason"] = json!(reason);
+            }
             let (_, entry) = client.post("/v2/web/emails", &body, &write_opts())?;
             if cli.json {
                 print_json(&entry);
@@ -5526,8 +5541,11 @@ fn run_web(cli: &Cli, stored: &Credentials, command: &WebCommand) -> Result<Exit
                 println!("allowed {}", entry_line(&entry));
             }
         }
-        WebCommand::Remove { email } => {
-            let body = json!({ "email": email });
+        WebCommand::Remove { email, reason } => {
+            let mut body = json!({ "email": email });
+            if let Some(reason) = reason {
+                body["reason"] = json!(reason);
+            }
             let (_, result) = client.post("/v2/web/emails/remove", &body, &write_opts())?;
             if cli.json {
                 print_json(&result);

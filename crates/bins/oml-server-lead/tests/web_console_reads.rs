@@ -1012,17 +1012,19 @@ async fn the_todo_counts_reads_cost_the_same_store_calls_at_6_and_48_workspaces(
         assert_eq!(admin.status, StatusCode::OK, "{}", admin.body);
         assert_eq!(
             admin.body,
-            serde_json::json!({"alerts": 0, "truncated": false})
+            serde_json::json!({"alerts": 0, "acts_to_confirm": 0, "truncated": false})
         );
         // Measured 2026-11-19 over the in-memory store: the gate's call and
         // the use case's own resolution of the admin key, which reads its
         // access afresh as every later resolution in a request does
         // (ADR-0070 d8, #297); and since v0.8.5 the fixes read the alerts
         // are counted from (ADR-0096 d7), one call whatever their number.
+        // Measured 2026-11-27: since v0.8.6 "Admin acts to confirm" adds
+        // two reads, whatever the number of workspaces (ADR-0097 d2, d11).
         assert_eq!(
             admin.store_calls(),
-            3,
-            "the gate's call, the key's resolution and the fixes read: {}",
+            5,
+            "the gate's call, the key's resolution, the fixes read and the two admin act reads: {}",
             admin.line
         );
     }

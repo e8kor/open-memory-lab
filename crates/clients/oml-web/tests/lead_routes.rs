@@ -38,6 +38,8 @@ const LEAD_WEB_ROUTES: &[(&str, &str, Serves)] = &[
     ("POST", "/web/sign-in", Serves::Auth),
     ("GET", "/web/callback/{provider}", Serves::Auth),
     ("POST", "/web/sign-up", Serves::Auth),
+    // The contest-only sign-in's one act (ADR-0097 d8).
+    ("POST", "/web/contest", Serves::Auth),
 ];
 
 /// The lead over the in-memory doubles with `oauth.issuer` and both sign-in

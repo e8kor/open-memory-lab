@@ -201,11 +201,17 @@ async fn run_flow(db: &str) -> Option<Flow> {
     // issuance route waits for ADR-0039.
     let app = lead_app(&store, signing_key.clone()).with_oauth_issuer(issuer.clone());
     let boot = app
-        .bootstrap_tenant(&BootstrapRequest {
-            tenant_name: Name::parse("acme").expect("a name"),
-            admin_key_name: Name::parse("root-admin").expect("a name"),
-            admin_principal: "alice-admin".to_owned(),
-        })
+        .bootstrap_tenant_for(
+            &BootstrapRequest {
+                tenant_name: Name::parse("acme").expect("a name"),
+                admin_key_name: Name::parse("root-admin").expect("a name"),
+                admin_principal: "alice-admin".to_owned(),
+            },
+            Some(&oml_app::types::BootstrapPerson {
+                user: Name::parse("founder").expect("a name"),
+                email: oml_app::domain::web::Email::parse("founder@example.com").expect("an email"),
+            }),
+        )
         .await
         .expect("bootstrap");
     let issued = app

@@ -127,8 +127,9 @@ impl Captured {
     }
 }
 
-/// A bearer admin key named `name`, belonging to `user`, a person with an
-/// entry and no admin flag, its link accepted from `user`'s own session:
+/// A bearer admin key named `name`, belonging to `user`, a person whose
+/// entry carries the admin flag an admin key's person must hold (ADR-0097
+/// d21, the operator's decision of 2026-11-27), its link accepted from `user`'s own session:
 /// every admin key belongs to a person and authenticates once that person
 /// accepts its link (ADR-0097 d21). Answers the key's value.
 #[allow(dead_code, reason = "not every test crate issues a second admin key")]
@@ -145,7 +146,7 @@ pub async fn linked_admin_key(app: &TestApp, admin: &str, user: &str, name: &str
             &WebEmailRequest {
                 email: Email::parse(&format!("{}@example.com", user.as_str())).expect("an email"),
                 user: user.clone(),
-                admin: false,
+                admin: true,
             },
         )
         .await

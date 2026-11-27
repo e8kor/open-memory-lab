@@ -732,6 +732,46 @@ impl Lab {
         issued
     }
 
+    /// The founder accepts the pending link of the admin key `issued`
+    /// names, from a console session opened over the lab's store, as an
+    /// admin key authenticates only once its admin person accepts it
+    /// (ADR-0097 d21, d7).
+    async fn founder_accepts(&self, issued: &Value) {
+        use oml_app::app::Capacity;
+        use oml_app::ports::WebStore as _;
+        use oml_app::types::Bearer;
+        let app = oml_server_lead::lead_app(&self.store, self.signing.clone());
+        let email = oml_app::domain::web::Email::parse("founder@example.com").expect("an email");
+        let entry = self
+            .store
+            .web_entry_by_email(&email.digest())
+            .await
+            .expect("a read")
+            .expect("the founder's entry");
+        app.web_ensure_keys(&entry)
+            .await
+            .expect("the founder's keys");
+        let token = app
+            .web_session_open(&entry, 3600, None)
+            .await
+            .expect("a session")
+            .token;
+        let session = app
+            .web_session(&token)
+            .await
+            .expect("a read")
+            .expect("a live session");
+        let web = app
+            .web_caller(&session, Capacity::Web)
+            .await
+            .expect("the founder's console");
+        let key_id =
+            uuid::Uuid::parse_str(issued["key_id"].as_str().expect("key id")).expect("a uuid");
+        app.accept_key_link(Bearer::Session(&web), key_id.into())
+            .await
+            .expect("the founder accepts");
+    }
+
     /// Every request the lead received since the last call, in order.
     fn take_requests(&self) -> Vec<Seen> {
         std::mem::take(&mut *self.seen.lock().expect("recorder lock"))
@@ -2064,7 +2104,10 @@ async fn keys_issue_and_keys_limit_refuse_a_limit_on_an_admin_key() {
     let (code, _, log) = lab.json(None, &["keys", "show", "limited-admin"]);
     assert_ne!(code, 0, "no such key was issued: {log}");
 
-    let second = lab.issue("second-admin", &["--role", "admin"]);
+    // An admin key belongs to an admin person, the founder, who accepts
+    // its link (ADR-0097 d21).
+    let second = lab.issue("second-admin", &["--role", "admin", "--person", "founder"]);
+    lab.founder_accepts(&second).await;
     assert_eq!(second["expiry"], Value::Null);
     assert_eq!(second["requests_per_minute"], Value::Null);
     let second_value = second["value"].as_str().expect("a value").to_owned();
@@ -2253,24 +2296,22 @@ async fn the_first_admin_email_is_added_by_the_cli_under_an_admin_key() {
         );
     }
     // The last admin entry is kept on every surface, the CLI's included
-    // (ADR-0097 d25, d27 item 4): removing it is refused naming admin.
-    let (code, refused, log) = lab.json(None, &["web", "remove", "alice@example.com"]);
-    assert_ne!(code, 0, "web remove: {log}");
-    assert_eq!(refused["error"]["details"]["field"], "admin", "{log}");
+    // (ADR-0097 d25, d27 item 4): with alice's removed, the founder's is the
+    // last, and its own removal is refused naming admin.
     let (code, _, log) = lab.json(
         None,
         &[
             "web",
-            "allow",
-            "ops@example.com",
-            "--user",
-            "ops",
-            "--admin",
+            "remove",
+            "alice@example.com",
+            "--reason",
+            "alice left",
         ],
     );
-    assert_eq!(code, 0, "web allow: {log}");
-    let (code, _, log) = lab.json(None, &["web", "remove", "alice@example.com"]);
     assert_eq!(code, 0, "web remove: {log}");
+    let (code, refused, log) = lab.json(None, &["web", "remove", "founder@example.com"]);
+    assert_ne!(code, 0, "web remove: {log}");
+    assert_eq!(refused["error"]["details"]["field"], "admin", "{log}");
     let (code, listed, log) = lab.json(None, &["web", "list"]);
     assert_eq!(code, 0, "{log}");
     assert_eq!(
@@ -2411,6 +2452,8 @@ async fn workspaces_tree_under_an_admin_context_lists_the_tree_by_name() {
         column("path"),
         [
             "universe",
+            // The claim's person's root (ADR-0097 d21).
+            "universe.founder",
             "universe.procurement",
             "universe.procurement.metals",
             "universe.procurement.metals.q1-2027",
@@ -2420,7 +2463,14 @@ async fn workspaces_tree_under_an_admin_context_lists_the_tree_by_name() {
     );
     assert_eq!(
         column("name"),
-        ["universe", "procurement", "metals", "q1-2027", "research"]
+        [
+            "universe",
+            "founder",
+            "procurement",
+            "metals",
+            "q1-2027",
+            "research"
+        ]
     );
     assert_eq!(
         column("status"),
@@ -2429,10 +2479,11 @@ async fn workspaces_tree_under_an_admin_context_lists_the_tree_by_name() {
             "development",
             "development",
             "development",
+            "development",
             "development"
         ]
     );
-    assert_eq!(nodes[2]["crew"], crew, "each node carries its crew record");
+    assert_eq!(nodes[3]["crew"], crew, "each node carries its crew record");
     assert_eq!(
         nodes[1].get("crew"),
         Some(&Value::Null),

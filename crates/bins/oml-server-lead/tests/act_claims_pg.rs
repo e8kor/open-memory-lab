@@ -97,11 +97,17 @@ fn set_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
 
 async fn tenant(store: &PgStore, key: &SigningKey) -> BootstrapResult {
     lead_app(store, key.clone())
-        .bootstrap_tenant(&BootstrapRequest {
-            tenant_name: Name::parse("oml").expect("a name"),
-            admin_key_name: Name::parse("root-admin").expect("a name"),
-            admin_principal: "oml-admin".to_owned(),
-        })
+        .bootstrap_tenant_for(
+            &BootstrapRequest {
+                tenant_name: Name::parse("oml").expect("a name"),
+                admin_key_name: Name::parse("root-admin").expect("a name"),
+                admin_principal: "oml-admin".to_owned(),
+            },
+            Some(&oml_app::types::BootstrapPerson {
+                user: Name::parse("founder").expect("a name"),
+                email: oml_app::domain::web::Email::parse("founder@example.com").expect("an email"),
+            }),
+        )
         .await
         .expect("bootstrap")
 }

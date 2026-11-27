@@ -1598,6 +1598,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/web/contest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Contest the act the contest-only sign-in opened, the one control it opens.
+         * @description ADR-0097 d8. A disabled or removed admin person's provider sign-in, matching their entry as the open act against them found it, answers the contest page under the sealed __Host-oml_contest cookie, which names the act and the person for ten minutes; a removed admin's act is found by the address's digest (the operator's decision of 2026-11-27). The same-origin check and that cookie; no body. Contests the act (POST /v2/admin/acts/{act}/contest's effect): the flag and sign-in come back, the admin keys stay suspended. Since v0.8.6.
+         */
+        post: operations["webContest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/admin/memories/search": {
         parameters: {
             query?: never;
@@ -8501,6 +8521,8 @@ export interface operations {
                     /** @description A name under the creation grammar, at most 56 characters. */
                     user: string;
                     admin: boolean;
+                    /** @description Scanned and journalled on the admin act. Required for a new admin person outside sole_admin and for an act against another admin person: an un-flag or a change of their entry (ADR-0097 d8, d26). Since v0.8.6. */
+                    reason?: string;
                     /** @description Read and ignored since v0.8.5, when the guard holds whatever is sent (ADR-0097 d25, d27): un-flagging the tenant's last admin entry is refused, request.validation with details.field admin, and nothing changes; the store reads the admin entries under lock in the commit's own transaction (ADR-0045 d10; ADR-0070 d5). Since v0.6.4. */
                     keep_an_admin?: boolean;
                 };
@@ -8549,6 +8571,8 @@ export interface operations {
                  */
                 "application/json": {
                     email: string;
+                    /** @description Scanned and journalled on the admin act. Required to remove another admin person's entry, an act against an admin (ADR-0097 d8, d26). Since v0.8.6. */
+                    reason?: string;
                     /** @description Read and ignored since v0.8.5, when the guard holds whatever is sent (ADR-0097 d25, d27): removing the tenant's last admin entry is refused, request.validation with details.field admin, and nothing changes; the store reads the admin entries under lock in the commit's own transaction (ADR-0045 d10; ADR-0070 d5). Since v0.6.4. */
                     keep_an_admin?: boolean;
                 };
@@ -9603,6 +9627,44 @@ export interface operations {
             };
             /** @description limit.rate, on a page. */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+        };
+    };
+    webContest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The contested page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description request.validation, the cookie missing, sealed by no one or older than ten minutes, on a page. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description A cross-origin request, on a page. */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

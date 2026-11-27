@@ -540,9 +540,10 @@ fn table(
             .collect();
         match &row.offers {
             Ok(offers) => {
+                let toggle = public_toggle(side, page, csrf, node, &offers.transitions.status);
                 let _ = write!(
                     out,
-                    r#"<tr>{named}<td>{}{}{pending}</td><td>{}</td><td>{}</td></tr>"#,
+                    r#"<tr>{named}<td>{}{}{pending}</td><td>{}</td><td>{}{toggle}</td></tr>"#,
                     text(&offers.transitions.status),
                     // Every reading key of the tenant reads it (ADR-0098 d9).
                     if node.public.value {
@@ -557,11 +558,7 @@ fn table(
                     } else {
                         "drafts visible to the writing key"
                     },
-                    format!(
-                        "{}{}",
-                        offers.dropdown(page, &node.id),
-                        public_toggle(side, page, csrf, node, &offers.transitions.status)
-                    )
+                    offers.dropdown(page, &node.id),
                 );
             }
             // A failed secondary read marks its row, with the request id

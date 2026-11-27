@@ -3620,6 +3620,9 @@ async fn the_last_admin_address_is_never_removed_or_unflagged_from_the_page() {
             ("action", "set_admin"),
             ("email", "carol@example.com"),
             ("admin", "no"),
+            // Carol is another admin person: the act carries a reason
+            // (ADR-0097 d8, d26).
+            ("reason", "carol moves teams"),
         ],
     )
     .await;
