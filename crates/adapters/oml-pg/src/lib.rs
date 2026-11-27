@@ -2521,6 +2521,15 @@ async fn key_access_in(
     .fetch_all(&mut **tx)
     .await
     .map_err(backend)?;
+    // The tenant's public nodes, from the partial index on them: the one
+    // read the public reach adds (ADR-0098 d1, the bottleneck register).
+    let public_nodes = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM workspaces WHERE tenant_id = $1 AND public ORDER BY id",
+    )
+    .bind(tenant_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(backend)?;
 
     let grants = grants
         .iter()
@@ -2564,6 +2573,7 @@ async fn key_access_in(
             .iter()
             .map(|row| seq_from_column(row, "lifted_epoch"))
             .collect::<Result<_, StoreError>>()?,
+        public_nodes,
     }))
 }
 
@@ -3259,8 +3269,8 @@ fn memory_kind_code(kind: &str) -> Option<i16> {
 
 /// The workspace columns every workspace read selects (unqualified: the
 /// recursive walks select them from their CTE).
-const WORKSPACE_COLUMNS: &str =
-    "id, tenant_id, parent_id, name, status, crew, crew_id, user_root, namespace_root_id, mode";
+const WORKSPACE_COLUMNS: &str = "id, tenant_id, parent_id, name, status, crew, crew_id, user_root, namespace_root_id, mode, \
+     public, public_act_id";
 
 /// A workspace row as the port's record. A row with no name yet predates
 /// names and is served to no one: the lead names every such row before it
@@ -3294,6 +3304,8 @@ fn workspace_from_row(row: &PgRow) -> Result<WorkspaceRecord, StoreError> {
         user_root: row.try_get("user_root").map_err(backend)?,
         namespace: row.try_get("namespace_root_id").map_err(backend)?,
         in_progress: row.try_get::<String, _>("mode").map_err(backend)? == "in_progress",
+        public: row.try_get("public").map_err(backend)?,
+        public_act_id: row.try_get("public_act_id").map_err(backend)?,
     })
 }
 
@@ -4955,6 +4967,28 @@ async fn apply_fold(
             .bind(tenant_id)
             .bind(workspace_id)
             .bind(accept_federated)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if updated.rows_affected() != 1 {
+                return Err(StoreError::Backend(format!(
+                    "workspace {workspace_id} is not held by this tenant"
+                )));
+            }
+        }
+        MetadataFold::WorkspacePublicSet {
+            workspace_id,
+            public,
+            act_id,
+        } => {
+            let updated = sqlx::query(
+                "UPDATE workspaces SET public = $3, public_act_id = $4 \
+                 WHERE tenant_id = $1 AND id = $2",
+            )
+            .bind(tenant_id)
+            .bind(workspace_id)
+            .bind(public)
+            .bind(act_id)
             .execute(&mut **tx)
             .await
             .map_err(backend)?;
@@ -6783,7 +6817,8 @@ async fn meter_plan(
         | MetadataFold::SearchDefaultSet { .. }
         | MetadataFold::TelemetrySettingsSet { .. }
         | MetadataFold::FederationPolicySet(_)
-        | MetadataFold::WorkspaceFederationSet { .. } => {}
+        | MetadataFold::WorkspaceFederationSet { .. }
+        | MetadataFold::WorkspacePublicSet { .. } => {}
         // The `exports` meter is a flow the fold counts itself, held under
         // no quota (ADR-0084 d10, d15).
         MetadataFold::WorkspaceExported { .. } => {}
@@ -11738,7 +11773,8 @@ impl JournalStore for PgStore {
                   WHERE tenant_id = $1 AND id = $2 \
                  UNION ALL \
                  SELECT w.id, w.tenant_id, w.parent_id, w.name, w.status, w.crew, w.crew_id, \
-                        w.user_root, w.namespace_root_id, w.mode, up.depth + 1 \
+                        w.user_root, w.namespace_root_id, w.mode, w.public, \
+                        w.public_act_id, up.depth + 1 \
                    FROM workspaces w JOIN up ON w.id = up.parent_id \
                   WHERE w.tenant_id = $1 \
              ) SELECT {WORKSPACE_COLUMNS} FROM up ORDER BY depth ASC"
@@ -11772,12 +11808,28 @@ impl JournalStore for PgStore {
                   WHERE tenant_id = $1 AND id = $2 \
                  UNION ALL \
                  SELECT w.id, w.tenant_id, w.parent_id, w.name, w.status, w.crew, w.crew_id, \
-                        w.user_root, w.namespace_root_id, w.mode, down.depth + 1 \
+                        w.user_root, w.namespace_root_id, w.mode, w.public, \
+                        w.public_act_id, down.depth + 1 \
                    FROM workspaces w JOIN down ON w.parent_id = down.id \
                   WHERE w.tenant_id = $1 \
              ) SELECT {WORKSPACE_COLUMNS} FROM down ORDER BY depth ASC, id ASC"
         );
         self.workspace_rows(tenant_id, workspace_id, &sql).await
+    }
+
+    async fn public_workspaces(&self, tenant_id: Uuid) -> Result<Vec<WorkspaceRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sqlx::query(&format!(
+            "SELECT {WORKSPACE_COLUMNS} FROM workspaces WHERE tenant_id = $1 AND public \
+             ORDER BY name COLLATE \"C\" ASC, id ASC"
+        ))
+        .bind(tenant_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter().map(workspace_from_row).collect()
     }
 
     async fn workspace_children(

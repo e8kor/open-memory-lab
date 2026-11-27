@@ -935,6 +935,67 @@ paths:
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
+  /v2/workspaces/{workspace}/public:
+    post:
+      tags: [workspaces]
+      operationId: setWorkspacePublic
+      summary: An admin person marks a protected or frozen workspace public, so every reading key of the tenant reads its approved items and recalls them by default, or clears the mark (ADR-0098).
+      description: 'Requires: an admin person, a linked admin key or <user>-admin; every other key, a reviewer key on the workspace included, is refused before any lookup with access.verb_ceiling, details.reason public_is_admin_only (ADR-0098 d6). A set is an admin act of class widening: it takes effect only when a second admin person confirms it with confirmAdminAct, and at once under sole_admin, marked; a reason is required. A clear is narrowing and takes effect at once, declining a set that waits. Refused workspace.public_refused with details.reason status (a development workspace), user_root (a user root or a workspace under one), pending (a set already waits; details.act_id names it), already_public, or not_public. The effect journals workspace.public_set in the commit where the act takes effect. The flag covers the node alone, never its children. Since v0.8.6.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { $ref: '#/components/parameters/WorkspaceId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              public: true
+              reason: every agent of the tenant reads the shared glossary
+            schema:
+              type: object
+              additionalProperties: false
+              required: [public]
+              properties:
+                public: { type: boolean, description: 'true sets the flag, false clears it.' }
+                reason: { type: [string, 'null'], description: 'Why; required for a set outside sole_admin, scanned as a verdict''s reason is and journalled with the admin act (ADR-0097 d26).' }
+      responses:
+        '200':
+          description: The act took effect, a clear or a set under sole_admin.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [workspace, public, act_id, state]
+                properties:
+                  workspace: { type: string, format: uuid }
+                  public: { type: boolean }
+                  act_id: { type: string, format: uuid }
+                  state: { type: string, enum: [effective] }
+        '202':
+          description: The set waits on a second admin person, and has no effect until one confirms it.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [workspace, act_id, state]
+                properties:
+                  workspace: { type: string, format: uuid }
+                  act_id: { type: string, format: uuid }
+                  state: { type: string, enum: [pending_confirmation] }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        default: { $ref: '#/components/responses/Error' }
+
   /v2/workspaces/{workspace}/exports:
     post:
       tags: [workspaces]
@@ -4803,6 +4864,7 @@ components:
         - workspace.in_progress_refused
         - workspace.held_remaining
         - workspace.admin_key_under_root
+        - workspace.public_refused
         - workspace.transition_refused
         - review.author_in_lineage
         - review.person_required
@@ -5327,7 +5389,7 @@ components:
               memory: { $ref: '#/components/schemas/Memory' }
               score: { type: number, description: 'The pipeline''s score, comparable within one answer only; ties break by artifact_id ascending.' }
               matched: { $ref: '#/components/schemas/RecallMatched' }
-              via: { type: string, enum: [scope, federated], description: 'Under sources wide or a list only: scope when the hit''s workspace is the recall''s scope or under it, federated when it is another workspace the key reads; memory.workspace_path names it (ADR-0072 d8).' }
+              via: { type: string, enum: [scope, federated, public], description: 'Under sources wide or a list, and under scope where a public workspace was searched: scope when the hit''s workspace is the recall''s scope or under it, federated when it is another workspace the key reads, public when it is a public workspace outside the scope (ADR-0072 d8; ADR-0098 d3); memory.workspace_path names it.' }
               passage: { $ref: '#/components/schemas/RecallPassage' }
               more_passages: { type: integer, minimum: 0, description: 'A document''s hit only: how many of the document''s other passages were in the fused list before the k cut, from any retriever. A lower bound, bounded by each list''s depth, never an exact count of the passages holding a query word (ADR-0081 d4, the build''s reading R3).' }
               uri: { type: string, description: 'A document''s hit only: the passage''s resource, oml://workspace/<workspace>/doc/<path>?passage=<fragment>, which MCP resources/read serves (ADR-0081 d4, d6).' }
@@ -5435,11 +5497,12 @@ components:
       type: object
       additionalProperties: false
       description: >-
-        Under sources wide or a list: what was searched and why (ADR-0072 d8). Every name and
-        number is of a workspace the key reads (d6).
+        Under sources wide or a list: what was searched and why (ADR-0072 d8); under scope, served
+        only where the recall also searched a public workspace outside the scope, which it then
+        lists (ADR-0098 d3). Every name and number is of a workspace the key reads (d6).
       required: [mode, considered, searched, cut]
       properties:
-        mode: { type: string, enum: [wide, list] }
+        mode: { type: string, enum: [scope, wide, list] }
         considered: { type: integer, minimum: 0, description: 'Under wide, the trusted workspaces the key reads outside the scope that accept federated reads; for a list, the names listed.' }
         searched:
           type: array
@@ -5451,7 +5514,7 @@ components:
             properties:
               workspace_id: { type: string, format: uuid }
               workspace_path: { type: string }
-              via: { type: string, enum: [scope, federated] }
+              via: { type: string, enum: [scope, federated, public] }
               estimate: { type: number, minimum: 0, description: 'The share of the matching rows it holds, weighted by each word''s rarity over every source searched or considered: the order selection reads above max_sources (d4.4).' }
               matched:
                 type: object
@@ -5881,7 +5944,20 @@ components:
             - { type: 'null' }
         user_root: { type: boolean, description: "Whether the node is a user root, universe.<user>, which only the issuance of the first key naming its user creates (ADR-0044 d1, d11)." }
         mode: { type: string, enum: [standard, in_progress], description: "in_progress when a person's key put the node in progress: readers inside recall unreviewed memories, labelled, and nothing inside reaches a read from outside until the commit (ADR-0030 d1, d2)." }
+        public: { $ref: '#/components/schemas/PublicFlag' }
         created_at: { type: string, format: date-time }
+
+    PublicFlag:
+      type: object
+      additionalProperties: false
+      description: "Whether every reader, contributor and reviewer key of the tenant reads the node's approved items without a grant, and every default recall searches it (ADR-0098 d1, d3, d9). It covers the node alone. Since v0.8.6."
+      required: [value, since, act_id, sole_admin]
+      properties:
+        value: { type: boolean }
+        since: { type: [string, 'null'], description: When the act that set it took effect; null when not public. }
+        act_id: { type: [string, 'null'], description: The admin act that set it; null when not public. }
+        sole_admin: { type: boolean, description: Whether that act took effect at once because the tenant has only ever had one admin person (ADR-0097 d10). }
+        pending_act_id: { type: string, description: 'To an admin key on the workspace read only: a set that waits on a second admin person.' }
 
     WorkspaceView:
       description: One node with the calling key's view of it; every value below is relative to that key, and children outside read access are absent (ADR-0025 d14).
@@ -6513,6 +6589,7 @@ components:
         revoked_at: { type: [string, 'null'], format: date-time }
         rotated_from: { type: [string, 'null'], description: 'The key_id this key succeeded by rotation, if any (key.rotated links the two).' }
         grants: { type: array, items: { $ref: '#/components/schemas/Grant' } }
+        public_reach: { type: array, items: { type: string, format: uuid }, description: "The public workspaces the key reads through the flag, apart from its grants, a global deny applied; empty for a key whose role does not read (ADR-0098 d1, d9). Since v0.8.6." }
         denials: { type: array, items: { $ref: '#/components/schemas/Denial' } }
         epoch: { type: integer }
         credential: { type: string, enum: [bearer, connection, session], description: "bearer: the key has a value presented as Authorization: Bearer. connection: a connector key with no value, reachable only through a connection at /mcp (ADR-0031 d7). session: a key the server holds for a person and acts with only from their web session, no value (ADR-0045 d6)." }
@@ -6910,6 +6987,7 @@ components:
               status: { type: string }
               user_root: { type: boolean }
               mode: { type: string, enum: [standard, in_progress] }
+              public: { type: boolean, description: "Whether every reading key of the tenant reads the node (ADR-0098 d9). Since v0.8.6." }
               counts:
                 type: object
                 required: [promoted, held, in_progress, other]
@@ -7208,6 +7286,21 @@ components:
       required: [scanner_version, scanned, findings, by_rule, next_after_seq, recorded, held_unrescanned, rescan_due]
       additionalProperties: false
       properties:
+        public_workspaces:
+          type: array
+          description: "The tenant's public workspaces, for doctor's workspace.public: each one's flag and served rows, the rows every default recall of the tenant also searches (ADR-0098 d9). Since v0.8.6."
+          items:
+            type: object
+            additionalProperties: false
+            required: [workspace_id, name, since, act_id, sole_admin, served_rows]
+            properties:
+              workspace_id: { type: string, format: uuid }
+              name: { type: string }
+              since: { type: [string, 'null'] }
+              act_id: { type: [string, 'null'] }
+              sole_admin: { type: boolean }
+              served_rows: { type: integer, minimum: 0 }
+        public_ineligible: { type: array, items: { type: string, format: uuid }, description: "Public workspaces that are development or inside a user root, which only a direct store edit produces: doctor's workspace.public_ineligible, critical (ADR-0098 d9). Since v0.8.6." }
         scanner_version: { type: [string, 'null'] }
         scanned: { type: integer, minimum: 0, description: 'Versions scanned in this window: every stored state but erased.' }
         findings:

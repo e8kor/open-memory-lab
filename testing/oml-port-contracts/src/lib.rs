@@ -764,6 +764,8 @@ pub fn workspace_record(
 ) -> WorkspaceRecord {
     WorkspaceRecord {
         in_progress: false,
+        public: false,
+        public_act_id: None,
         workspace_id,
         tenant_id,
         parent_id,
@@ -3837,6 +3839,7 @@ pub async fn grants_and_denials_round_trip_through_their_folds_and_key_access<S:
                 epoch: denied.seq,
             }],
             lift_epochs: Vec::new(),
+            public_nodes: Vec::new(),
         }),
     );
     assert_eq!(
@@ -3846,6 +3849,7 @@ pub async fn grants_and_denials_round_trip_through_their_folds_and_key_access<S:
             grants: Vec::new(),
             denials: Vec::new(),
             lift_epochs: Vec::new(),
+            public_nodes: Vec::new(),
         }),
         "a key with no grant reads back empty lists, never nothing"
     );
@@ -4055,6 +4059,7 @@ pub async fn a_grant_or_denial_the_schema_refuses_commits_nothing<S: JournalStor
         grants: Vec::new(),
         denials: Vec::new(),
         lift_epochs: Vec::new(),
+        public_nodes: Vec::new(),
     });
     assert_eq!(
         store.key_access(t, key.key_id).await.expect("read"),
@@ -4129,6 +4134,7 @@ pub async fn a_lifted_denial_masks_nothing_and_its_lift_moves_the_permission_epo
                 epoch: kept_at.seq,
             }],
             lift_epochs: vec![lift.seq],
+            public_nodes: Vec::new(),
         },
         "the lifted denial masks nothing; the other stays in force"
     );
@@ -10901,6 +10907,98 @@ pub async fn a_console_link_waits_on_its_persons_acceptance<S: JournalStore>(sto
 /// the key it issued, and a second move from a settled state commits
 /// nothing. Two live admin entries take the tenant out of `sole_admin` for
 /// good, and each admin person reads back with the acceptance of the flag.
+/// `workspace.public_set` folds the node's flag and the act that set it;
+/// every key's access read then names the tenant's public nodes, and the
+/// public listing serves them by name, another tenant's never (ADR-0098
+/// d1, d9, d10). A node the tenant does not hold is refused.
+pub async fn a_public_set_folds_the_flag_and_every_access_read_names_the_public_nodes<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(502);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let root = Uuid::from_u128(0x4C00);
+    let shared = Uuid::from_u128(0x4C01);
+    rig.create_workspace(store, workspace_record(t, root, None, "universe"))
+        .await;
+    rig.create_workspace(store, workspace_record(t, shared, Some(root), "shared"))
+        .await;
+    let key = key_record(t, Uuid::from_u128(0x4C02), Role::Reader, None);
+    rig.issue_key(store, key.clone()).await;
+    let read = store
+        .key_access(t, key.key_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert!(read.public_nodes.is_empty(), "no node starts public");
+    assert!(store.public_workspaces(t).await.expect("read").is_empty());
+    let act_id = Uuid::from_u128(0x4C03);
+    rig.commit(
+        store,
+        event_types::WORKSPACE_PUBLIC_SET,
+        json!({ "workspace_id": shared.to_string(), "value": true }),
+        MetadataFold::WorkspacePublicSet {
+            workspace_id: shared,
+            public: true,
+            act_id,
+        },
+        None,
+    )
+    .await
+    .expect("the flag folds");
+    let node = store
+        .workspace(t, shared)
+        .await
+        .expect("read")
+        .expect("held");
+    assert!(node.public);
+    assert_eq!(node.public_act_id, Some(act_id));
+    let read = store
+        .key_access(t, key.key_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert_eq!(read.public_nodes, vec![shared]);
+    assert_eq!(
+        store
+            .public_workspaces(t)
+            .await
+            .expect("read")
+            .iter()
+            .map(|w| w.workspace_id)
+            .collect::<Vec<_>>(),
+        vec![shared]
+    );
+    let mut other = ChainRig::new(503);
+    other.seed_chain(store, 0).await;
+    assert!(
+        store
+            .public_workspaces(other.tenant_id)
+            .await
+            .expect("read")
+            .is_empty()
+    );
+    let refused = rig
+        .commit(
+            store,
+            event_types::WORKSPACE_PUBLIC_SET,
+            json!({ "value": true }),
+            MetadataFold::WorkspacePublicSet {
+                workspace_id: Uuid::from_u128(0x4CFF),
+                public: true,
+                act_id,
+            },
+            None,
+        )
+        .await;
+    assert!(
+        matches!(refused, Err(StoreError::Backend(_))),
+        "{refused:?}"
+    );
+}
+
 pub async fn an_admin_act_moves_once_and_its_confirmation_lets_the_pending_key_in<
     S: JournalStore,
 >(
@@ -11070,6 +11168,12 @@ where
     .await;
     Box::pin(
         an_admin_act_moves_once_and_its_confirmation_lets_the_pending_key_in(&new_store().await),
+    )
+    .await;
+    Box::pin(
+        a_public_set_folds_the_flag_and_every_access_read_names_the_public_nodes(
+            &new_store().await,
+        ),
     )
     .await;
     Box::pin(no_version_is_a_release_member_until_releases_exist(

@@ -261,6 +261,7 @@ from .protected_resource_metadata_bearer_methods_supported_item import (
 from .protected_resource_metadata_scopes_supported_item import (
     ProtectedResourceMetadataScopesSupportedItem,
 )
+from .public_flag import PublicFlag
 from .ready import Ready
 from .ready_checks import ReadyChecks
 from .ready_scan_type_0 import ReadyScanType0
@@ -315,6 +316,7 @@ from .rescan_report_by_rule_item import RescanReportByRuleItem
 from .rescan_report_by_rule_item_action import RescanReportByRuleItemAction
 from .rescan_report_findings_item import RescanReportFindingsItem
 from .rescan_report_findings_item_action import RescanReportFindingsItemAction
+from .rescan_report_public_workspaces_item import RescanReportPublicWorkspacesItem
 from .rescan_report_scanned_by_origin import RescanReportScannedByOrigin
 from .review_held_needs import ReviewHeldNeeds
 from .review_list_fixes_response_200 import ReviewListFixesResponse200
@@ -357,6 +359,11 @@ from .set_usage_settings_body import SetUsageSettingsBody
 from .set_web_user_quota_body import SetWebUserQuotaBody
 from .set_workspace_federation_body import SetWorkspaceFederationBody
 from .set_workspace_federation_response_200 import SetWorkspaceFederationResponse200
+from .set_workspace_public_body import SetWorkspacePublicBody
+from .set_workspace_public_response_200 import SetWorkspacePublicResponse200
+from .set_workspace_public_response_200_state import SetWorkspacePublicResponse200State
+from .set_workspace_public_response_202 import SetWorkspacePublicResponse202
+from .set_workspace_public_response_202_state import SetWorkspacePublicResponse202State
 from .severity import Severity
 from .similar_item import SimilarItem
 from .similar_item_kind import SimilarItemKind
@@ -722,6 +729,7 @@ __all__ = (
     "ProtectedResourceMetadata",
     "ProtectedResourceMetadataBearerMethodsSupportedItem",
     "ProtectedResourceMetadataScopesSupportedItem",
+    "PublicFlag",
     "Ready",
     "ReadyChecks",
     "ReadyScanType0",
@@ -776,6 +784,7 @@ __all__ = (
     "RescanReportByRuleItemAction",
     "RescanReportFindingsItem",
     "RescanReportFindingsItemAction",
+    "RescanReportPublicWorkspacesItem",
     "RescanReportScannedByOrigin",
     "ReviewHeldNeeds",
     "ReviewListFixesResponse200",
@@ -812,6 +821,11 @@ __all__ = (
     "SetWebUserQuotaBody",
     "SetWorkspaceFederationBody",
     "SetWorkspaceFederationResponse200",
+    "SetWorkspacePublicBody",
+    "SetWorkspacePublicResponse200",
+    "SetWorkspacePublicResponse200State",
+    "SetWorkspacePublicResponse202",
+    "SetWorkspacePublicResponse202State",
     "Severity",
     "SimilarItem",
     "SimilarItemKind",

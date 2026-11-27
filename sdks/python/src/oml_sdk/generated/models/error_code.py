@@ -109,6 +109,7 @@ class ErrorCode(StrEnum):
     WORKSPACE_FROZEN = "workspace.frozen"
     WORKSPACE_HELD_REMAINING = "workspace.held_remaining"
     WORKSPACE_IN_PROGRESS_REFUSED = "workspace.in_progress_refused"
+    WORKSPACE_PUBLIC_REFUSED = "workspace.public_refused"
     WORKSPACE_TRANSITION_REFUSED = "workspace.transition_refused"
 
     def __str__(self) -> str:

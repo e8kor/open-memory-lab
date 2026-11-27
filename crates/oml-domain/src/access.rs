@@ -92,6 +92,32 @@ impl Grant {
     }
 }
 
+/// Whether a key of `key_role` reads the tenant's public nodes (ADR-0098
+/// d2): the roles that read, `reader`, `contributor` and `reviewer`, on
+/// tenant and user keys alike. A submitter recalls nothing but its own
+/// rows, and an admin or operator key reads no claim content.
+#[must_use]
+pub fn reads_public(key_role: Role) -> bool {
+    matches!(key_role, Role::Reader | Role::Contributor | Role::Reviewer)
+}
+
+/// The reach a public node adds to a reading key's effective access
+/// (ADR-0098 d1): a reader grant on the node alone that the key does not
+/// hold. It is computed per request and never written; its id is the
+/// node's own, so it names no grant row. It carries no deny entry, so a
+/// per-grant deny of another grant never removes it, and a global deny
+/// does, as it removes any grant.
+#[must_use]
+pub fn public_reach_grant(node: Uuid) -> Grant {
+    Grant {
+        grant_id: node,
+        node,
+        role: Role::Reader,
+        deny: Vec::new(),
+        covers: Covers::Node,
+    }
+}
+
 /// A global per-key denial: a subtree the key cannot reach whatever its
 /// grants say — deny-wins (workspaces.md).
 #[derive(Debug, Clone, PartialEq, Eq)]

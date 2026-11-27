@@ -209,6 +209,9 @@ pub mod event_types {
     /// A person's reviewer key or a tenant admin set a workspace's federation
     /// field, `accept_federated` (ADR-0072 d5).
     pub const WORKSPACE_FEDERATION_SET: &str = "workspace.federation_set";
+    /// The admin act that sets or clears a workspace's `public` flag took
+    /// effect (ADR-0098 d9): `{workspace_id, value, act_id, from}`.
+    pub const WORKSPACE_PUBLIC_SET: &str = "workspace.public_set";
     /// An admin key read the tenant's recall events: how many, how many
     /// carried query text, and the page's bounds (ADR-0054 d2, as amended).
     pub const TELEMETRY_EVENTS_READ: &str = "telemetry.events_read";

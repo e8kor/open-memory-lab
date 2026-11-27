@@ -3059,10 +3059,12 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // null for every workspace it finds (ADR-0044 d12); 0028 adds
             // mode, standard for every workspace it finds (ADR-0030 d14);
             // 0040 accept_federated, true for every workspace it finds
-            // (ADR-0072 d5).
+            // (ADR-0072 d5); 0072 public, false, and public_act_id, null,
+            // for every workspace it finds (ADR-0098 d10).
             (true, "workspaces") => {
                 "(to_jsonb(t) - 'name' - 'prior_name' - 'crew_id' - 'path' - 'user_root' \
-                 - 'namespace_root_id' - 'mode' - 'accept_federated') \
+                 - 'namespace_root_id' - 'mode' - 'accept_federated' - 'public' \
+                 - 'public_act_id') \
                  || jsonb_build_object('name', t.prior_name)"
             }
             // 0012 adds credential, folded as bearer for every key it finds

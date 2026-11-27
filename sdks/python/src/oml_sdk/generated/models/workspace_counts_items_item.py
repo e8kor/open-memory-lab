@@ -8,6 +8,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.workspace_counts_items_item_mode import WorkspaceCountsItemsItemMode
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.workspace_counts_items_item_counts import (
@@ -30,6 +31,7 @@ class WorkspaceCountsItemsItem:
         user_root (bool):
         mode (WorkspaceCountsItemsItemMode):
         counts (WorkspaceCountsItemsItemCounts):
+        public (bool | Unset): Whether every reading key of the tenant reads the node (ADR-0098 d9). Since v0.8.6.
     """
 
     id: UUID
@@ -40,6 +42,7 @@ class WorkspaceCountsItemsItem:
     user_root: bool
     mode: WorkspaceCountsItemsItemMode
     counts: WorkspaceCountsItemsItemCounts
+    public: bool | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -63,6 +66,8 @@ class WorkspaceCountsItemsItem:
 
         counts = self.counts.to_dict()
 
+        public = self.public
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -77,6 +82,8 @@ class WorkspaceCountsItemsItem:
                 "counts": counts,
             }
         )
+        if public is not UNSET:
+            field_dict["public"] = public
 
         return field_dict
 
@@ -116,6 +123,8 @@ class WorkspaceCountsItemsItem:
 
         counts = WorkspaceCountsItemsItemCounts.from_dict(d.pop("counts"))
 
+        public = d.pop("public", UNSET)
+
         workspace_counts_items_item = cls(
             id=id,
             name=name,
@@ -125,6 +134,7 @@ class WorkspaceCountsItemsItem:
             user_root=user_root,
             mode=mode,
             counts=counts,
+            public=public,
         )
 
         workspace_counts_items_item.additional_properties = d

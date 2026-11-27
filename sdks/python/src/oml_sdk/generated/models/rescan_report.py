@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
+from uuid import UUID
 
 from attrs import define as _attrs_define
 
@@ -10,6 +11,9 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.rescan_report_by_rule_item import RescanReportByRuleItem
     from ..models.rescan_report_findings_item import RescanReportFindingsItem
+    from ..models.rescan_report_public_workspaces_item import (
+        RescanReportPublicWorkspacesItem,
+    )
     from ..models.rescan_report_scanned_by_origin import RescanReportScannedByOrigin
 
 
@@ -33,6 +37,11 @@ class RescanReport:
             d28).
         rescan_due (int): After this call, every stored version, erased ones aside, last scanned under another rule set:
             doctor's scan_rescan_due (ADR-0074 d28).
+        public_workspaces (list[RescanReportPublicWorkspacesItem] | Unset): The tenant's public workspaces, for doctor's
+            workspace.public: each one's flag and served rows, the rows every default recall of the tenant also searches
+            (ADR-0098 d9). Since v0.8.6.
+        public_ineligible (list[UUID] | Unset): Public workspaces that are development or inside a user root, which only
+            a direct store edit produces: doctor's workspace.public_ineligible, critical (ADR-0098 d9). Since v0.8.6.
         scanned_by_origin (RescanReportScannedByOrigin | Unset): The versions scanned, counted by origin kind, none for
             a version stored without one: the denominators of the dry run's rates (ADR-0074 d18).
         findings_unlisted (int | Unset): After this call, held versions whose stored scan finding has no row in the
@@ -56,6 +65,8 @@ class RescanReport:
     recorded: int
     held_unrescanned: int
     rescan_due: int
+    public_workspaces: list[RescanReportPublicWorkspacesItem] | Unset = UNSET
+    public_ineligible: list[UUID] | Unset = UNSET
     scanned_by_origin: RescanReportScannedByOrigin | Unset = UNSET
     findings_unlisted: int | Unset = UNSET
     promoted_unapproved: int | Unset = UNSET
@@ -86,6 +97,20 @@ class RescanReport:
 
         rescan_due = self.rescan_due
 
+        public_workspaces: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.public_workspaces, Unset):
+            public_workspaces = []
+            for public_workspaces_item_data in self.public_workspaces:
+                public_workspaces_item = public_workspaces_item_data.to_dict()
+                public_workspaces.append(public_workspaces_item)
+
+        public_ineligible: list[str] | Unset = UNSET
+        if not isinstance(self.public_ineligible, Unset):
+            public_ineligible = []
+            for public_ineligible_item_data in self.public_ineligible:
+                public_ineligible_item = str(public_ineligible_item_data)
+                public_ineligible.append(public_ineligible_item)
+
         scanned_by_origin: dict[str, Any] | Unset = UNSET
         if not isinstance(self.scanned_by_origin, Unset):
             scanned_by_origin = self.scanned_by_origin.to_dict()
@@ -110,6 +135,10 @@ class RescanReport:
                 "rescan_due": rescan_due,
             }
         )
+        if public_workspaces is not UNSET:
+            field_dict["public_workspaces"] = public_workspaces
+        if public_ineligible is not UNSET:
+            field_dict["public_ineligible"] = public_ineligible
         if scanned_by_origin is not UNSET:
             field_dict["scanned_by_origin"] = scanned_by_origin
         if findings_unlisted is not UNSET:
@@ -127,6 +156,9 @@ class RescanReport:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.rescan_report_by_rule_item import RescanReportByRuleItem
         from ..models.rescan_report_findings_item import RescanReportFindingsItem
+        from ..models.rescan_report_public_workspaces_item import (
+            RescanReportPublicWorkspacesItem,
+        )
         from ..models.rescan_report_scanned_by_origin import RescanReportScannedByOrigin
 
         d = dict(src_dict)
@@ -167,6 +199,26 @@ class RescanReport:
 
         rescan_due = d.pop("rescan_due")
 
+        _public_workspaces = d.pop("public_workspaces", UNSET)
+        public_workspaces: list[RescanReportPublicWorkspacesItem] | Unset = UNSET
+        if _public_workspaces is not UNSET:
+            public_workspaces = []
+            for public_workspaces_item_data in _public_workspaces:
+                public_workspaces_item = RescanReportPublicWorkspacesItem.from_dict(
+                    public_workspaces_item_data
+                )
+
+                public_workspaces.append(public_workspaces_item)
+
+        _public_ineligible = d.pop("public_ineligible", UNSET)
+        public_ineligible: list[UUID] | Unset = UNSET
+        if _public_ineligible is not UNSET:
+            public_ineligible = []
+            for public_ineligible_item_data in _public_ineligible:
+                public_ineligible_item = UUID(public_ineligible_item_data)
+
+                public_ineligible.append(public_ineligible_item)
+
         _scanned_by_origin = d.pop("scanned_by_origin", UNSET)
         scanned_by_origin: RescanReportScannedByOrigin | Unset
         if isinstance(_scanned_by_origin, Unset):
@@ -193,6 +245,8 @@ class RescanReport:
             recorded=recorded,
             held_unrescanned=held_unrescanned,
             rescan_due=rescan_due,
+            public_workspaces=public_workspaces,
+            public_ineligible=public_ineligible,
             scanned_by_origin=scanned_by_origin,
             findings_unlisted=findings_unlisted,
             promoted_unapproved=promoted_unapproved,

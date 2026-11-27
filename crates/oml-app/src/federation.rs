@@ -237,6 +237,9 @@ pub struct Widen {
 pub enum Via {
     Scope,
     Federated,
+    /// A public node outside the scope, searched by every default recall
+    /// (ADR-0098 d3).
+    Public,
 }
 
 impl Via {
@@ -245,6 +248,7 @@ impl Via {
         match self {
             Via::Scope => "scope",
             Via::Federated => "federated",
+            Via::Public => "public",
         }
     }
 }
@@ -272,7 +276,8 @@ pub struct CutReport {
 /// `search.sources` under `wide` or a list (d8).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SourcesReport {
-    /// `wide` or `list`.
+    /// `wide` or `list`, or `scope` where a default recall searched a
+    /// public node (ADR-0098 d3).
     pub mode: &'static str,
     /// |C|, the trusted candidates the key reads outside the scope; for a
     /// list, the listed nodes.

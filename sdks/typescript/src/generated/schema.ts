@@ -348,6 +348,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/workspaces/{workspace}/public": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * An admin person marks a protected or frozen workspace public, so every reading key of the tenant reads its approved items and recalls them by default, or clears the mark (ADR-0098).
+         * @description Requires: an admin person, a linked admin key or <user>-admin; every other key, a reviewer key on the workspace included, is refused before any lookup with access.verb_ceiling, details.reason public_is_admin_only (ADR-0098 d6). A set is an admin act of class widening: it takes effect only when a second admin person confirms it with confirmAdminAct, and at once under sole_admin, marked; a reason is required. A clear is narrowing and takes effect at once, declining a set that waits. Refused workspace.public_refused with details.reason status (a development workspace), user_root (a user root or a workspace under one), pending (a set already waits; details.act_id names it), already_public, or not_public. The effect journals workspace.public_set in the commit where the act takes effect. The flag covers the node alone, never its children. Since v0.8.6.
+         */
+        post: operations["setWorkspacePublic"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/workspaces/{workspace}/exports": {
         parameters: {
             query?: never;
@@ -2259,7 +2279,7 @@ export interface components {
          * @description The closed error vocabulary; identical to docs/api/errors.md by construction. The oauth codes other than oauth.connect_refused and oauth.attach_refused travel inside RFC error bodies on the OAuth endpoints, at the start of error_description, or on the authorization page; oauth.connect_refused answers on /v2 in this envelope, and oauth.attach_refused, an /mcp tool result, is answered by no served tool since oml_attach left the catalog (ADR-0031, ADR-0039 d2, d9).
          * @enum {string}
          */
-        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "admin.investigation_required" | "admin.fix_requires_person" | "admin.fix_target_not_promoted" | "admin.fix_held_by_scan" | "admin.fix_superseded" | "admin.fix_not_revertible" | "admin.fix_settled" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workspace_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.format_invalid" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.version_conflict" | "submission.claim_key_conflict" | "submission.similar_exists" | "submission.universe_refused" | "submission.user_root_refused" | "workspace.frozen" | "workspace.in_progress_refused" | "workspace.held_remaining" | "workspace.admin_key_under_root" | "workspace.transition_refused" | "review.author_in_lineage" | "review.person_required" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "upload.expired" | "upload.too_large" | "upload.part_size" | "upload.part_number" | "upload.incomplete" | "upload.session_limit" | "upload.tenant_limit" | "upload.storage_failed" | "bundle.format_unknown" | "bundle.layout" | "bundle.path_unsafe" | "bundle.too_large" | "bundle.line_too_long" | "bundle.depth" | "bundle.duplicate" | "bundle.unreferenced_body" | "bundle.malformed" | "bundle.digest_mismatch" | "bundle.signature_invalid" | "bundle.signature_unexpected" | "bundle.unencrypted" | "bundle.decrypt_failed" | "bundle.io" | "import.target_not_in_progress" | "import.over_quota" | "import.bundle_older" | "import.since_mismatch" | "import.source_key_changed" | "import.busy" | "export.disabled" | "export.not_readable" | "export.busy" | "export.too_large" | "memory.not_held" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "proposal.pending" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
+        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "admin.investigation_required" | "admin.fix_requires_person" | "admin.fix_target_not_promoted" | "admin.fix_held_by_scan" | "admin.fix_superseded" | "admin.fix_not_revertible" | "admin.fix_settled" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workspace_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.format_invalid" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.version_conflict" | "submission.claim_key_conflict" | "submission.similar_exists" | "submission.universe_refused" | "submission.user_root_refused" | "workspace.frozen" | "workspace.in_progress_refused" | "workspace.held_remaining" | "workspace.admin_key_under_root" | "workspace.public_refused" | "workspace.transition_refused" | "review.author_in_lineage" | "review.person_required" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "upload.expired" | "upload.too_large" | "upload.part_size" | "upload.part_number" | "upload.incomplete" | "upload.session_limit" | "upload.tenant_limit" | "upload.storage_failed" | "bundle.format_unknown" | "bundle.layout" | "bundle.path_unsafe" | "bundle.too_large" | "bundle.line_too_long" | "bundle.depth" | "bundle.duplicate" | "bundle.unreferenced_body" | "bundle.malformed" | "bundle.digest_mismatch" | "bundle.signature_invalid" | "bundle.signature_unexpected" | "bundle.unencrypted" | "bundle.decrypt_failed" | "bundle.io" | "import.target_not_in_progress" | "import.over_quota" | "import.bundle_older" | "import.since_mismatch" | "import.source_key_changed" | "import.busy" | "export.disabled" | "export.not_readable" | "export.busy" | "export.too_large" | "memory.not_held" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "proposal.pending" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
         ExportRequest: {
             /**
              * @description history is the default in a user root; release is refused until releases are built.
@@ -2692,10 +2712,10 @@ export interface components {
                 score: number;
                 matched: components["schemas"]["RecallMatched"];
                 /**
-                 * @description Under sources wide or a list only: scope when the hit's workspace is the recall's scope or under it, federated when it is another workspace the key reads; memory.workspace_path names it (ADR-0072 d8).
+                 * @description Under sources wide or a list, and under scope where a public workspace was searched: scope when the hit's workspace is the recall's scope or under it, federated when it is another workspace the key reads, public when it is a public workspace outside the scope (ADR-0072 d8; ADR-0098 d3); memory.workspace_path names it.
                  * @enum {string}
                  */
-                via?: "scope" | "federated";
+                via?: "scope" | "federated" | "public";
                 passage?: components["schemas"]["RecallPassage"];
                 /** @description A document's hit only: how many of the document's other passages were in the fused list before the k cut, from any retriever. A lower bound, bounded by each list's depth, never an exact count of the passages holding a query word (ADR-0081 d4, the build's reading R3). */
                 more_passages?: number;
@@ -2805,10 +2825,10 @@ export interface components {
                 matches_at_least: number;
             };
         };
-        /** @description Under sources wide or a list: what was searched and why (ADR-0072 d8). Every name and number is of a workspace the key reads (d6). */
+        /** @description Under sources wide or a list: what was searched and why (ADR-0072 d8); under scope, served only where the recall also searched a public workspace outside the scope, which it then lists (ADR-0098 d3). Every name and number is of a workspace the key reads (d6). */
         RecallSources: {
             /** @enum {string} */
-            mode: "wide" | "list";
+            mode: "scope" | "wide" | "list";
             /** @description Under wide, the trusted workspaces the key reads outside the scope that accept federated reads; for a list, the names listed. */
             considered: number;
             /** @description The scope's nodes first, then the federated sources in selection order; for a list, the listed nodes in the order sent. */
@@ -2817,7 +2837,7 @@ export interface components {
                 workspace_id: string;
                 workspace_path: string;
                 /** @enum {string} */
-                via: "scope" | "federated";
+                via: "scope" | "federated" | "public";
                 /** @description The share of the matching rows it holds, weighted by each word's rarity over every source searched or considered: the order selection reads above max_sources (d4.4). */
                 estimate: number;
                 matched: {
@@ -3209,8 +3229,21 @@ export interface components {
              * @enum {string}
              */
             mode?: "standard" | "in_progress";
+            public?: components["schemas"]["PublicFlag"];
             /** Format: date-time */
             created_at?: string;
+        };
+        /** @description Whether every reader, contributor and reviewer key of the tenant reads the node's approved items without a grant, and every default recall searches it (ADR-0098 d1, d3, d9). It covers the node alone. Since v0.8.6. */
+        PublicFlag: {
+            value: boolean;
+            /** @description When the act that set it took effect; null when not public. */
+            since: string | null;
+            /** @description The admin act that set it; null when not public. */
+            act_id: string | null;
+            /** @description Whether that act took effect at once because the tenant has only ever had one admin person (ADR-0097 d10). */
+            sole_admin: boolean;
+            /** @description To an admin key on the workspace read only: a set that waits on a second admin person. */
+            pending_act_id?: string;
         };
         /** @description One node with the calling key's view of it; every value below is relative to that key, and children outside read access are absent (ADR-0025 d14). */
         WorkspaceView: components["schemas"]["Workspace"] & {
@@ -3790,6 +3823,8 @@ export interface components {
             /** @description The key_id this key succeeded by rotation, if any (key.rotated links the two). */
             rotated_from?: string | null;
             grants?: components["schemas"]["Grant"][];
+            /** @description The public workspaces the key reads through the flag, apart from its grants, a global deny applied; empty for a key whose role does not read (ADR-0098 d1, d9). Since v0.8.6. */
+            public_reach?: string[];
             denials?: components["schemas"]["Denial"][];
             epoch?: number;
             /**
@@ -4173,6 +4208,8 @@ export interface components {
                 user_root: boolean;
                 /** @enum {string} */
                 mode: "standard" | "in_progress";
+                /** @description Whether every reading key of the tenant reads the node (ADR-0098 d9). Since v0.8.6. */
+                public?: boolean;
                 counts: {
                     /** @description Promoted tips. */
                     promoted: number;
@@ -4433,6 +4470,18 @@ export interface components {
         };
         /** @description One rescan window (ADR-0065 d13). No field carries a version's text, claim key or anchor value. */
         RescanReport: {
+            /** @description The tenant's public workspaces, for doctor's workspace.public: each one's flag and served rows, the rows every default recall of the tenant also searches (ADR-0098 d9). Since v0.8.6. */
+            public_workspaces?: {
+                /** Format: uuid */
+                workspace_id: string;
+                name: string;
+                since: string | null;
+                act_id: string | null;
+                sole_admin: boolean;
+                served_rows: number;
+            }[];
+            /** @description Public workspaces that are development or inside a user root, which only a direct store edit produces: doctor's workspace.public_ineligible, critical (ADR-0098 d9). Since v0.8.6. */
+            public_ineligible?: string[];
             scanner_version: string | null;
             /** @description Versions scanned in this window: every stored state but erased. */
             scanned: number;
@@ -5804,6 +5853,82 @@ export interface operations {
                 content: {
                     "application/json": {
                         accept_federated: boolean;
+                    };
+                };
+            };
+            415: components["responses"]["UnsupportedMedia"];
+            default: components["responses"]["Error"];
+        };
+    };
+    setWorkspacePublic: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                workspace: components["parameters"]["WorkspaceId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "public": true,
+                 *       "reason": "every agent of the tenant reads the shared glossary"
+                 *     }
+                 */
+                "application/json": {
+                    /** @description true sets the flag, false clears it. */
+                    public: boolean;
+                    /** @description Why; required for a set outside sole_admin, scanned as a verdict's reason is and journalled with the admin act (ADR-0097 d26). */
+                    reason?: string | null;
+                };
+            };
+        };
+        responses: {
+            /** @description The act took effect, a clear or a set under sole_admin. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        workspace: string;
+                        public: boolean;
+                        /** Format: uuid */
+                        act_id: string;
+                        /** @enum {string} */
+                        state: "effective";
+                    };
+                };
+            };
+            /** @description The set waits on a second admin person, and has no effect until one confirms it. */
+            202: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        workspace: string;
+                        /** Format: uuid */
+                        act_id: string;
+                        /** @enum {string} */
+                        state: "pending_confirmation";
                     };
                 };
             };

@@ -2420,6 +2420,7 @@ async fn oml_workspace_without_an_argument_describes_the_default_workspace() {
             "name": "metals-crew",
             "path": "universe.metals-crew",
             "status": "development",
+            "public": { "value": false, "since": null, "act_id": null, "sole_admin": false },
             "crew": null,
             "parent": root,
             "children": [],

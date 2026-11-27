@@ -407,6 +407,24 @@ where
             }
             _ => return Err(AppError::AdminAct(AdminActRefusal::NotPending)),
         };
+        // A `sole_admin` set of `public` is undone by clearing the flag it
+        // set, while that set is still the node's (ADR-0098 d6; ADR-0097
+        // d10).
+        let mut unpublic = None;
+        if undo && act.act == AdminActKind::WorkspacePublicSet {
+            let node = match act
+                .target
+                .get("workspace_id")
+                .and_then(Value::as_str)
+                .and_then(|s| Uuid::parse_str(s).ok())
+            {
+                Some(id) => self.journal.workspace(tenant_id, id).await?,
+                None => None,
+            };
+            unpublic = node
+                .filter(|n| super::public::revokes_public(&act, n))
+                .map(|n| n.workspace_id);
+        }
         let prev = self.head_event(tenant_id).await?;
         let decline = self
             .begin_admin_act(
@@ -447,6 +465,17 @@ where
         // its value ends with the act (d23).
         if act.act == AdminActKind::IssueKey || undo {
             self.undo_effect(&undo_ctx, &act, undo, &mut links).await?;
+        }
+        if let Some(workspace_id) = unpublic {
+            let prev = links.last().map(|(e, _)| e.clone()).expect("a link");
+            links.push(self.public_set_link(
+                &admin,
+                &prev,
+                workspace_id,
+                false,
+                decline.act_id(),
+                true,
+            )?);
         }
         let reqs = links
             .into_iter()
@@ -873,6 +902,9 @@ where
                         requests_per_minute,
                     },
                 ));
+            }
+            AdminActKind::WorkspacePublicSet => {
+                self.confirmed_public_set(admin, act, links).await?;
             }
             AdminActKind::AllowAdmin => {
                 let bad = || AppError::StoredResponse(format!("admin act {} entry", act.act_id));

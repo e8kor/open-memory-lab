@@ -64,7 +64,7 @@ flowchart TD
     B --> BP
 ```
 
-- **A user key reaches its own root and the `universe` node, nothing else.** It reads memories placed on `universe` itself. It never reads another user's root or a shared workspace, except a [public workspace](#public-workspaces), read only (designed, not built).
+- **A user key reaches its own root and the `universe` node, nothing else.** It reads memories placed on `universe` itself. It never reads another user's root or a shared workspace, except a [public workspace](#public-workspaces), read only.
 - **Recall.** A recall inside the root also searches `universe`. A memory shown from `universe` carries no author and no source.
 - **Only the keys start a memory in the root.** A reviewer granted there reads, reviews and proposes edits and retirements. Its new memory is refused with `submission.user_root_refused`, and so is putting a retired memory back. The keys of the web session belong to the user: the `<user>-review` key puts the user's retired memory back, and in another person's root it is a granted reviewer like any other.
 - **Curation.** `universe` holds only memories that curators place there. A second identity reviews each one like any write. No user key writes to it directly.
@@ -86,7 +86,7 @@ Effective access is the union of the key's grants, minus anything a global deny 
 2. **Union.** The key's grants are combined. A subtree denied in grant A is still reachable if grant B covers it without a deny.
 3. **Global deny.** A key-wide deny names subtrees the key cannot reach, whatever the grants yield. Set one with `oml deny set <key> <workspace>`.
 
-Designed, not built: before the global deny, the union also takes every [public workspace](#public-workspaces) of the tenant when the key's role reads, as a reader grant on that node alone that the key does not hold. A per-grant deny does not remove it; a global deny does.
+Before the global deny, the union also takes every [public workspace](#public-workspaces) of the tenant when the key's role reads, as a reader grant on that node alone that the key does not hold. A per-grant deny does not remove it; a global deny does.
 
 On the example tree, grant A is reader on `research-crew` with a deny on `experiments`. Grant B is reader on `experiments`. A global deny names `run-grid`.
 
@@ -157,7 +157,7 @@ oml workspaces status ratify project <transition-id>
 | Reject a held memory | allowed | allowed | allowed |
 | Create a child workspace | allowed | allowed | **refused** |
 | Update the crew record | allowed | allowed | allowed |
-| Set or clear `public` (designed, not built) | refused | allowed | allowed |
+| Set or clear `public` | refused | allowed | allowed |
 | Read | by effective access | by effective access | by effective access |
 
 A frozen workspace keeps serving reads. Freezing is not archiving. A held memory left behind by a freeze can still be rejected.
@@ -168,7 +168,7 @@ A person can put a development workspace in progress, when every workspace below
 
 ## Public workspaces
 
-Designed, not built; it ships in v0.8.6 ([ADR-0098](../adr/ADR-0098-a-protected-or-frozen-workspace-can-be-marked-public-and-then-every-reading-key-in-the-tenant-reads-its-approved-items.md)). An admin marks a `protected` or `frozen` workspace outside every user root `public`, and then every key of the tenant whose role reads (`reader`, `contributor`, `reviewer`, user and session keys included) reads that workspace's approved items without a grant of its own.
+Built in v0.8.6 ([ADR-0098](../adr/ADR-0098-a-protected-or-frozen-workspace-can-be-marked-public-and-then-every-reading-key-in-the-tenant-reads-its-approved-items.md)). An admin marks a `protected` or `frozen` workspace outside every user root `public`, and then every key of the tenant whose role reads (`reader`, `contributor`, `reviewer`, user and session keys included) reads that workspace's approved items without a grant of its own.
 
 - **Read only.** The flag gives no write, review, curation, proposal or `create`. A submitter key still recalls nothing, and an admin key reads no content.
 - **In every default recall.** A recall at any scope also searches every public workspace the key reads, ranked in one order beside the scope's own hits, each such hit marked `via: "public"`. Its steering and guardrails apply only at scopes on its own chain. Federation is not needed.
@@ -187,7 +187,7 @@ A recall searches its workspace's subtree. An admin can turn federation on for t
 | Federation on the tenant: `enabled`, `default_sources`, `max_sources` | an admin key | off, `scope`, 8 | `oml search federation --enabled on` |
 | Whether recalls scoped elsewhere may search a workspace: `accept_federated` | a person's reviewer key on the workspace, or an admin key | on | `oml workspaces federation <workspace> off` |
 
-`accept_federated` grants nothing, and it does not remove a [public workspace](#public-workspaces) from default recall (designed, not built). Turned off, a key that reads the workspace still recalls there by naming it as the scope. A `development` workspace, and every workspace inside an in-progress subtree, is never searched by another scope's recall, whatever its setting. Each change is journalled, `federation.policy_set` and `workspace.federation_set`. The policy takes an admin key; `accept_federated` takes an admin key or a person-held reviewer key with reviewer on the workspace, and any other agent-held key is refused.
+`accept_federated` grants nothing, and it does not remove a [public workspace](#public-workspaces) from default recall. Turned off, a key that reads the workspace still recalls there by naming it as the scope. A `development` workspace, and every workspace inside an in-progress subtree, is never searched by another scope's recall, whatever its setting. Each change is journalled, `federation.policy_set` and `workspace.federation_set`. The policy takes an admin key; `accept_federated` takes an admin key or a person-held reviewer key with reviewer on the workspace, and any other agent-held key is refused.
 
 ### A directory workspace
 

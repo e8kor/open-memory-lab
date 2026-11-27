@@ -270,6 +270,40 @@ pub struct WorkspaceNode {
     /// names beneath it `<user>.<name>` (d5).
     #[serde(default)]
     pub user_root: bool,
+    /// The node's `public` flag (ADR-0098 d9); not public when a server
+    /// before the flag serves none.
+    #[serde(default)]
+    pub public: PublicFlag,
+}
+
+/// A workspace's `public` flag (openapi.yaml `PublicFlag`; ADR-0098 d9):
+/// whether every reading key of the tenant reads the node, since when, by
+/// which admin act, whether that act took effect under `sole_admin`, and,
+/// to an admin key on the workspace read, a set that waits.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+pub struct PublicFlag {
+    #[serde(default)]
+    pub value: bool,
+    #[serde(default)]
+    pub since: Option<String>,
+    #[serde(default)]
+    pub act_id: Option<String>,
+    #[serde(default)]
+    pub sole_admin: bool,
+    #[serde(default)]
+    pub pending_act_id: Option<String>,
+}
+
+/// `POST /v2/workspaces/{workspace}/public`'s answer: `effective`, or
+/// `pending_confirmation` while a set waits on a second admin person
+/// (ADR-0098 d9).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct PublicOutcome {
+    pub workspace: String,
+    #[serde(default)]
+    pub public: bool,
+    pub act_id: String,
+    pub state: String,
 }
 
 /// `GET /v2/workspaces/{workspace}/tree`: one page of nodes.
@@ -1390,6 +1424,9 @@ pub struct CountedNode {
     /// Whether the node is a person's root (ADR-0044 d1).
     #[serde(default)]
     pub user_root: bool,
+    /// Whether every reading key of the tenant reads the node (ADR-0098 d9).
+    #[serde(default)]
+    pub public: bool,
 }
 
 /// `GET /v2/workspaces/{workspace}/tree?counts=true`: the subtree, a parent
@@ -2404,6 +2441,28 @@ impl<T: Transport> Client<T> {
             format!("/v2/workspaces/{}/mode", encode(workspace)),
             idempotency_key,
             &serde_json::json!({ "mode": mode }),
+        )
+        .await
+    }
+
+    /// `POST /v2/workspaces/{workspace}/public`: an admin person sets or
+    /// clears the node's `public` flag with a reason (ADR-0098 d6, d9).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn set_workspace_public(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        workspace: &str,
+        public: bool,
+        reason: Option<&str>,
+    ) -> Result<PublicOutcome, Error> {
+        self.post(
+            call,
+            format!("/v2/workspaces/{}/public", encode(workspace)),
+            idempotency_key,
+            &serde_json::json!({ "public": public, "reason": reason }),
         )
         .await
     }

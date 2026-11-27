@@ -309,6 +309,83 @@ pub struct AdminStanding {
     pub persons: Vec<AdminPerson>,
 }
 
+/// Why setting or clearing a workspace's `public` flag is refused,
+/// `workspace.public_refused` with `details.reason` (ADR-0098 d5, d6, d9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublicRefusal {
+    /// The node is `development`, so it may sit in an in-progress subtree
+    /// and its rules are loose (d5).
+    Status,
+    /// The node is a user root or lies under one: a person's own work
+    /// never becomes public (d5).
+    UserRoot,
+    /// A set already waits on a second admin person (d6).
+    Pending,
+    /// The node is already public.
+    AlreadyPublic,
+    /// The node is not public and no set waits on it.
+    NotPublic,
+}
+
+impl PublicRefusal {
+    /// `details.reason`.
+    #[must_use]
+    pub fn reason(self) -> &'static str {
+        match self {
+            PublicRefusal::Status => "status",
+            PublicRefusal::UserRoot => "user_root",
+            PublicRefusal::Pending => "pending",
+            PublicRefusal::AlreadyPublic => "already_public",
+            PublicRefusal::NotPublic => "not_public",
+        }
+    }
+
+    /// The sentence the refusal answers.
+    #[must_use]
+    pub fn message(self) -> &'static str {
+        match self {
+            PublicRefusal::Status => {
+                "only a protected or frozen workspace is marked public; a development one is refused"
+            }
+            PublicRefusal::UserRoot => {
+                "a user root and every workspace under it stay private: a person's own work never becomes public"
+            }
+            PublicRefusal::Pending => {
+                "a set of public on this workspace already waits on a second admin person"
+            }
+            PublicRefusal::AlreadyPublic => "the workspace is already public",
+            PublicRefusal::NotPublic => {
+                "the workspace is not public and no set of public waits on it"
+            }
+        }
+    }
+}
+
+/// A workspace's `public` flag as the reads serve it (ADR-0098 d9): the
+/// value, since when and by which admin act, whether that act took effect
+/// under `sole_admin`, and, to an admin key on the workspace read, the act
+/// of a set that waits on a second admin person. A node not public serves
+/// `value: false` and no act.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PublicFlag {
+    pub value: bool,
+    pub since: Option<EventTime>,
+    pub act_id: Option<Uuid>,
+    pub sole_admin: bool,
+    pub pending_act_id: Option<Uuid>,
+}
+
+/// What a set or a clear of `public` answers (ADR-0098 d9): `effective`
+/// with the value now held, or `pending_confirmation` while a set waits on
+/// a second admin person.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublicOutcome {
+    pub workspace_id: Uuid,
+    pub public: bool,
+    pub act_id: Uuid,
+    pub state: oml_domain::admin_act::AdminActState,
+}
+
 /// Why a confirmation or a decline of an admin act is refused, each
 /// `request.validation` with `details.field: act` and `details.reason`
 /// (ADR-0097 d5, d10, d11, d23).
@@ -1249,6 +1326,11 @@ pub struct KeyAccess {
     /// moves the permission epoch (event-catalog.md `key.denial_lifted`,
     /// `grant.revoked`).
     pub lift_epochs: Vec<u64>,
+    /// The tenant's public nodes, read in the same snapshot from the
+    /// partial index on them: each joins the key's reach as a reader grant
+    /// on the node alone that the key does not hold, when its role reads
+    /// (ADR-0098 d1). Empty in a tenant with no public node.
+    pub public_nodes: Vec<Uuid>,
 }
 
 impl KeyAccess {
@@ -1313,6 +1395,13 @@ pub struct WorkspaceRecord {
     /// Whether a person's key put the node in progress (ADR-0030 d1):
     /// `workspaces.mode`, written by `workspace.mode_set` alone.
     pub in_progress: bool,
+    /// Whether every reading key of the tenant reads the node's approved
+    /// items without a grant (ADR-0098 d1): `workspaces.public`, written
+    /// by `workspace.public_set` alone.
+    pub public: bool,
+    /// The admin act whose effect last set or cleared `public`; `None` on
+    /// a node never marked (ADR-0098 d9).
+    pub public_act_id: Option<Uuid>,
 }
 
 impl WorkspaceRecord {
@@ -1506,6 +1595,9 @@ pub struct WorkspaceInfo {
     /// (ADR-0082 d8 item 7, d10). Counts name no content, so an admin key
     /// is served them too.
     pub approved_by_kind: Vec<(MemoryKind, u64)>,
+    /// The node's `public` flag, with, to an admin key, the act of a set
+    /// that waits on a second admin person (ADR-0098 d9).
+    pub public: PublicFlag,
 }
 
 /// One node of a workspace tree read, with its derived path and the crew
@@ -1516,6 +1608,8 @@ pub struct TreeNode {
     pub workspace: WorkspaceRecord,
     pub path: String,
     pub crew: Option<CrewRecord>,
+    /// The node's `public` flag as the reads serve it (ADR-0098 d9).
+    pub public: PublicFlag,
 }
 
 /// One page of a workspace tree read, in path order, and the cursor of the
@@ -3478,6 +3572,10 @@ pub struct KeyDetail {
     /// issuance without one folding as `ancestors` (proposed ADR-0037 d4).
     pub guardrail_scope: GuardrailScope,
     pub access: KeyAccess,
+    /// The public nodes the key reads through the flag, apart from its
+    /// grants, a global deny applied; empty for a key whose role does not
+    /// read (ADR-0098 d1, d9).
+    pub public_reach: Vec<Uuid>,
 }
 
 /// A row a key's record references, as `whoami` serves it: its id and its
@@ -4257,6 +4355,20 @@ pub enum AppError {
     /// An admin act that requires a reason was sent none (ADR-0097 d26).
     #[error("this admin act requires a reason")]
     AdminActReasonRequired,
+    /// A set or clear of a workspace's `public` flag refused for what the
+    /// node is or holds (ADR-0098 d5, d6): `workspace.public_refused`,
+    /// naming the pending act where one waits.
+    #[error("{}", .reason.message())]
+    WorkspacePublicRefused {
+        workspace_id: Uuid,
+        reason: PublicRefusal,
+        act_id: Option<Uuid>,
+    },
+    /// Only an admin person sets or clears `public`: a linked admin key or
+    /// `<user>-admin` (ADR-0098 d6): `access.verb_ceiling` with
+    /// `details.reason: public_is_admin_only`.
+    #[error("setting or clearing a workspace's public flag is an admin person's act")]
+    PublicIsAdminOnly { role: Role },
     #[error(
         "{verb} is outside the {role:?} verb ceiling (roles-and-keys.md permission matrix, R1)"
     )]

@@ -2074,6 +2074,8 @@ Kind: table.
 | `namespace_root_id` | `uuid` | null |  | The user root whose namespace holds this name; NULL in the shared namespace. |
 | `mode` | `text` | not null | `'standard'::text` |  |
 | `accept_federated` | `boolean` | not null | `true` | Whether recalls scoped elsewhere may search this node, folded from workspace.federation_set; grants nothing. |
+| `public` | `boolean` | not null | `false` | Whether every reading key of the tenant reads the node's approved items without a grant; written by workspace.public_set alone. |
+| `public_act_id` | `uuid` | null |  | The admin act whose effect last set or cleared public. |
 
 Checks:
 
