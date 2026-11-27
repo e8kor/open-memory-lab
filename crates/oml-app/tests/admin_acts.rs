@@ -2012,7 +2012,7 @@ async fn submitted(r: &Rig, writer: &IssuedKey, idem: &str, body: &str) -> Uuid 
         .memory_id
 }
 
-/// A successor of `target`, version `version`, by `writer`.
+/// A successor of `target`, version `version`, by the contributor key.
 async fn superseded(
     r: &Rig,
     writer: &IssuedKey,

@@ -429,8 +429,9 @@ Requires: a reviewer key used_by person with reviewer effective access on the no
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `accept_federated` | boolean | yes |  |
+| `reason` | string | no | An admin act's reason, scanned as a verdict's: an admin key's true is widening, and waits on a second admin person, which requires a reason, unless the tenant has only ever had one admin person. |
 
-**Responses.** `200` The field as it now is.; `415` 415 request.unsupported_media — the request body's media type is not the application/json the operation declares; not retryable as sent.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
+**Responses.** `200` The field as it now is.; `202` An admin key's acceptance in a tenant that has had two admin persons: it takes effect only once a second admin person confirms the act with POST /v2/admin/acts/{act}/confirm.; `415` 415 request.unsupported_media — the request body's media type is not the application/json the operation declares; not retryable as sent.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
 
 
 ### `POST /v2/workspaces/{workspace}/public`
@@ -1662,7 +1663,7 @@ Requires: admin key role and the key that opened it; another key's or an unknown
 
 Take a marked break-glass fix that serves at once and waits for a person to confirm or revert it.
 
-Requires: admin key role, used by a person and linked to that person (the operator's decision of 2026-11-19); another admin key answers admin.fix_requires_person, details.reason not_used_by_person or unlinked, every other role access.verb_ceiling. act is demote (an approved version; the claim's tip returns to its latest earlier approved version, or none), edit (body and optional title replace the served tip), retire (the served tip is retired, reason as its body) or erase (every version of the claim is crypto-shredded). reason is 1 to 1,024 bytes, stored in clear and scanned.
+Requires: admin key role, used by a person and linked to that person (the operator's decision of 2026-11-19); another admin key answers admin.fix_requires_person, details.reason not_used_by_person or unlinked, every other role access.verb_ceiling. act is demote (an approved version; the claim's tip returns to its latest earlier approved version, or none), edit (body and optional title replace the served tip), retire (the served tip is retired, reason as its body) or erase (every version of the claim is crypto-shredded: at once, marked sole_admin, in a tenant that has never had two live admin persons; otherwise every approved version of the claim is demoted at once as the fix, the bytes are kept, and the shred waits, unexpiring, on a second admin person's POST /v2/admin/acts/{act}/confirm, while a decline leaves the claim demoted.
 
 **Request body** (`application/json`)
 
@@ -1674,7 +1675,7 @@ Requires: admin key role, used by a person and linked to that person (the operat
 | `body` | string | no | An edit's new body; refused on every other act. |
 | `title` | string | no | An edit's new title, where its format takes one; refused on every other act. |
 
-**Responses.** `201` The fix, unconfirmed.; `403` A 403-class refusal naming its rule (access.*, review.*, simulation.audience_refused).; `404` access.not_found — absent or outside read scope, indistinguishable by design.; `409` A 409-class conflict (idempotency.*, submission.tip_conflict, workspace.frozen, review.serve_invalid, …).; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
+**Responses.** `201` The fix, unconfirmed.; `202` An erase of a version that is not approved, outside sole_admin: no fix, only the admin act whose shred waits on a second admin person (the operator's decision of 2026-11-27).; `403` A 403-class refusal naming its rule (access.*, review.*, simulation.audience_refused).; `404` access.not_found — absent or outside read scope, indistinguishable by design.; `409` A 409-class conflict (idempotency.*, submission.tip_conflict, workspace.frozen, review.serve_invalid, …).; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
 
 
 ### `GET /v2/admin/fixes`
@@ -1929,8 +1930,9 @@ Requires: admin key role. max_sources above 64 is request.validation at /max_sou
 | `enabled` | boolean | no |  |
 | `default_sources` | `scope` \| `wide` | no |  |
 | `max_sources` | integer | no |  |
+| `reason` | string | no | The admin act's reason, scanned as a verdict's; a widening that waits requires one. |
 
-**Responses.** `200` The policy as it now is.; `403` A 403-class refusal naming its rule (access.*, review.*, simulation.audience_refused).; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
+**Responses.** `200` The policy as it now is.; `202` A widening in a tenant that has had two admin persons: it takes effect only once a second admin person confirms the act.; `403` A 403-class refusal naming its rule (access.*, review.*, simulation.audience_refused).; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
 
 
 ## usage

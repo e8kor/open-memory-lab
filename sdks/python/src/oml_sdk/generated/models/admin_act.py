@@ -10,6 +10,7 @@ from attrs import field as _attrs_field
 
 from ..models.admin_act_class import AdminActClass
 from ..models.admin_act_state import AdminActState
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.admin_act_grants_item import AdminActGrantsItem
@@ -39,7 +40,12 @@ class AdminAct:
             cause (None | str): upgrade, deactivation, settlement or recovery for an act no admin took; null otherwise.
             at (datetime.datetime):
             settled_at (datetime.datetime | None):
-            expires_at (datetime.datetime | None): When a pending act expires as declined.
+            expires_at (datetime.datetime | None): When a pending act expires as declined; null for a pending shred, which
+                never expires (ADR-0097 d4).
+            to_confirm (bool | Unset): Served on GET /v2/admin/acts alone: whether the calling admin person may confirm or
+                review the act, as the To do count acts_to_confirm judges it: never their own act, a pending act taken at least
+                seven days after their admin flag was accepted, and a widening act a sole_admin tenant took at once once that
+                flag is seven days old (ADR-0097 d2, d10, d11). Since v0.8.6.
     """
 
     act_id: UUID
@@ -57,6 +63,7 @@ class AdminAct:
     at: datetime.datetime
     settled_at: datetime.datetime | None
     expires_at: datetime.datetime | None
+    to_confirm: bool | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -109,6 +116,8 @@ class AdminAct:
         else:
             expires_at = self.expires_at
 
+        to_confirm = self.to_confirm
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -130,6 +139,8 @@ class AdminAct:
                 "expires_at": expires_at,
             }
         )
+        if to_confirm is not UNSET:
+            field_dict["to_confirm"] = to_confirm
 
         return field_dict
 
@@ -233,6 +244,8 @@ class AdminAct:
 
         expires_at = _parse_expires_at(d.pop("expires_at"))
 
+        to_confirm = d.pop("to_confirm", UNSET)
+
         admin_act = cls(
             act_id=act_id,
             act=act,
@@ -249,6 +262,7 @@ class AdminAct:
             at=at,
             settled_at=settled_at,
             expires_at=expires_at,
+            to_confirm=to_confirm,
         )
 
         admin_act.additional_properties = d

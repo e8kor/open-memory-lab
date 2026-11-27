@@ -20,11 +20,14 @@ class SetFederationPolicyBody:
         enabled (bool | Unset):
         default_sources (SetFederationPolicyBodyDefaultSources | Unset):
         max_sources (int | Unset):
+        reason (str | Unset): The admin act's reason, scanned as a verdict's; a widening that waits requires one
+            (ADR-0097 d26). Since v0.8.6.
     """
 
     enabled: bool | Unset = UNSET
     default_sources: SetFederationPolicyBodyDefaultSources | Unset = UNSET
     max_sources: int | Unset = UNSET
+    reason: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         enabled = self.enabled
@@ -35,6 +38,8 @@ class SetFederationPolicyBody:
 
         max_sources = self.max_sources
 
+        reason = self.reason
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update({})
@@ -44,6 +49,8 @@ class SetFederationPolicyBody:
             field_dict["default_sources"] = default_sources
         if max_sources is not UNSET:
             field_dict["max_sources"] = max_sources
+        if reason is not UNSET:
+            field_dict["reason"] = reason
 
         return field_dict
 
@@ -61,10 +68,13 @@ class SetFederationPolicyBody:
 
         max_sources = d.pop("max_sources", UNSET)
 
+        reason = d.pop("reason", UNSET)
+
         set_federation_policy_body = cls(
             enabled=enabled,
             default_sources=default_sources,
             max_sources=max_sources,
+            reason=reason,
         )
 
         return set_federation_policy_body

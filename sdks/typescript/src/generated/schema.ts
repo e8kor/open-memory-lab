@@ -339,7 +339,7 @@ export interface paths {
         put?: never;
         /**
          * Whether recalls scoped elsewhere may search this workspace when they ask for wider sources (ADR-0072).
-         * @description Requires: a reviewer key used_by person with reviewer effective access on the node, or an admin key; every other key is refused before any lookup with access.verb_ceiling, details.reason federation_is_person_only (ADR-0072 d5). It grants nothing: off, a key that reads the node still recalls there by naming it as the scope. Setting the value the node holds journals nothing; otherwise journals workspace.federation_set. Since v0.7.0.
+         * @description Requires: a reviewer key used_by person with reviewer effective access on the node, or an admin key; every other key is refused before any lookup with access.verb_ceiling, details.reason federation_is_person_only (ADR-0072 d5). It grants nothing: off, a key that reads the node still recalls there by naming it as the scope. An admin key's change is an admin act (ADR-0097 d3, d5): false is narrowing and takes effect at once; true is widening, at once marked sole_admin in a tenant that has only ever had one admin person, and otherwise answers 202 with the pending act and applies at its confirmation. A person's reviewer key acts as the person, never as an admin act. Setting the value the node holds journals nothing; otherwise journals workspace.federation_set. Since v0.7.0.
          */
         post: operations["setWorkspaceFederation"];
         delete?: never;
@@ -951,7 +951,7 @@ export interface paths {
         put?: never;
         /**
          * Mint a fresh one-time connect code for a connector key; voids the key's earlier codes.
-         * @description A person's web session key mints a code for one of their own connector keys, by name, at the default lifetime; another person's key is access.not_found, and another capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9). The session key's access is read when the code is minted, and a session key that carries a denial, on any workspace, mints none: access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070 d2; since v0.7.3). Otherwise requires: admin key role. The key must be a connector key (issued with connect_code: true, no bearer value), neither revoked nor expired, on a deployment with oauth.issuer set; otherwise 422 oauth.connect_refused with details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here; the server keeps only its SHA-256 digest, and connection.code_issued journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids the key's earlier codes as docs/architecture/roles-and-keys.md (Connections) declares. The Idempotency-Key is claimed for the calling key before the code is minted: a resubmission under the same key and body answers the first 201 with Idempotency-Replay: true and mints nothing, without code, which the first answer alone carries; the same key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0). Lifetime: the oauth.connect_code_ttl setting, or ttl_seconds up to 30 days for a key confined to one workspace (ADR-0067 d3).
+         * @description A person's web session key mints a code for one of their own connector keys, by name, at the default lifetime; another person's key is access.not_found, and another capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9). The session key's access is read when the code is minted, and a session key that carries a denial, on any workspace, mints none: access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070 d2; since v0.7.3). Otherwise requires: admin key role. The key must be a connector key (issued with connect_code: true, no bearer value), neither revoked, expired nor cut off by a denial on universe, on a deployment with oauth.issuer set; otherwise 422 oauth.connect_refused with details.reason (bearer_key, revoked, expired, cut_off, not_configured; cut_off since v0.8.6, #353, refused again at a pending code's confirmation). The code is shown exactly once, here; the server keeps only its SHA-256 digest, and connection.code_issued journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids the key's earlier codes as docs/architecture/roles-and-keys.md (Connections) declares. The Idempotency-Key is claimed for the calling key before the code is minted: a resubmission under the same key and body answers the first 201 with Idempotency-Replay: true and mints nothing, without code, which the first answer alone carries; the same key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0). Lifetime: the oauth.connect_code_ttl setting, or ttl_seconds up to 30 days for a key confined to one workspace (ADR-0067 d3).
          */
         post: operations["mintConnectCode"];
         delete?: never;
@@ -1437,7 +1437,7 @@ export interface paths {
         put?: never;
         /**
          * Set the tenant's federation policy; each field sent replaces its value.
-         * @description Requires: admin key role (ADR-0072 d5). max_sources above 64 is request.validation at /max_sources, and a default_sources other than scope or wide at /default_sources. Journalled as federation.policy_set with the policy, the previous one and the admin key; a change that changes nothing journals nothing. Since v0.7.0.
+         * @description Requires: admin key role (ADR-0072 d5). max_sources above 64 is request.validation at /max_sources, and a default_sources other than scope or wide at /default_sources. Journalled as federation.policy_set with the policy, the previous one and the admin key; a change that changes nothing journals nothing. The change is an admin act (ADR-0097 d3, d5): one that searches less (enabled false, default_sources scope, fewer max_sources) is narrowing and takes effect at once; one that searches more is widening, at once marked sole_admin in a tenant that has only ever had one admin person, and otherwise answers 202 with the pending act, requires a reason, and applies over the policy as it stands at its confirmation; one that does both is request.validation at /, two acts of two classes. Since v0.7.0.
          */
         post: operations["setFederationPolicy"];
         delete?: never;
@@ -1717,7 +1717,7 @@ export interface paths {
         put?: never;
         /**
          * Take a marked break-glass fix that serves at once and waits for a person to confirm or revert it.
-         * @description Requires: admin key role, used by a person and linked to that person (ADR-0089 d1, the operator's decision of 2026-11-19); another admin key answers admin.fix_requires_person, details.reason not_used_by_person or unlinked, every other role access.verb_ceiling. act is demote (an approved version; the claim's tip returns to its latest earlier approved version, or none), edit (body and optional title replace the served tip), retire (the served tip is retired, reason as its body) or erase (every version of the claim is crypto-shredded). reason is 1 to 1,024 bytes, stored in clear and scanned. One commit journals the lifecycle event the act causes, then admin.fix naming it. An edit's body is scanned as its kind requires: a veto answers submission.scan_veto and a hold admin.fix_held_by_scan. In a frozen workspace an edit or retirement answers workspace.frozen. A demotion of a version that is not approved answers admin.fix_target_not_promoted. Not idempotent. Since v0.8.4.
+         * @description Requires: admin key role, used by a person and linked to that person (ADR-0089 d1, the operator's decision of 2026-11-19); another admin key answers admin.fix_requires_person, details.reason not_used_by_person or unlinked, every other role access.verb_ceiling. act is demote (an approved version; the claim's tip returns to its latest earlier approved version, or none), edit (body and optional title replace the served tip), retire (the served tip is retired, reason as its body) or erase (every version of the claim is crypto-shredded: at once, marked sole_admin, in a tenant that has never had two live admin persons; otherwise every approved version of the claim is demoted at once as the fix, the bytes are kept, and the shred waits, unexpiring, on a second admin person's POST /v2/admin/acts/{act}/confirm, while a decline leaves the claim demoted (ADR-0097 d4). An erase of a version that is not approved, outside sole_admin, has nothing to demote: it answers 202 with the pending shred act alone and makes no fix, the operator's decision of 2026-11-27). reason is 1 to 1,024 bytes, stored in clear and scanned. One commit journals the lifecycle event the act causes, then admin.fix naming it. An edit's body is scanned as its kind requires: a veto answers submission.scan_veto and a hold admin.fix_held_by_scan. In a frozen workspace an edit or retirement answers workspace.frozen. A demotion of a version that is not approved answers admin.fix_target_not_promoted. Not idempotent. Since v0.8.4.
          */
         post: operations["adminFix"];
         delete?: never;
@@ -2171,9 +2171,11 @@ export interface components {
             settled_at: string | null;
             /**
              * Format: date-time
-             * @description When a pending act expires as declined.
+             * @description When a pending act expires as declined; null for a pending shred, which never expires (ADR-0097 d4).
              */
             expires_at: string | null;
+            /** @description Served on GET /v2/admin/acts alone: whether the calling admin person may confirm or review the act, as the To do count acts_to_confirm judges it: never their own act, a pending act taken at least seven days after their admin flag was accepted, and a widening act a sole_admin tenant took at once once that flag is seven days old (ADR-0097 d2, d10, d11). Since v0.8.6. */
+            to_confirm?: boolean;
         };
         /** @description An admin's marked break-glass fix (ADR-0089 d3, d8, d15). admin_key_id and admin_person are served on the admin routes alone; a person's review read never names the admin. acts is served on GET /v2/review/fixes alone. Since v0.8.4. */
         Fix: {
@@ -4620,6 +4622,10 @@ export interface components {
             admin_acts_pending?: number;
             /** @description The oldest pending admin act's age in seconds, 0 with none. */
             admin_act_oldest_pending_seconds?: number;
+            /** @description Erases whose shred waits on a second admin person, their bytes kept: doctor's admin.erase_shred_pending (ADR-0097 d4). Not counted in admin_acts_pending, since a pending shred never expires. Since v0.8.6. */
+            admin_erase_shreds_pending?: number;
+            /** @description The oldest pending shred's age in seconds, 0 with none (ADR-0097 d4). Since v0.8.6. */
+            admin_erase_shred_oldest_seconds?: number;
             /** @description Widening acts taken at once under sole_admin: doctor's admin.act_sole_admin (ADR-0097 d10). */
             admin_acts_sole_admin?: number;
             /** @description Whether the tenant has never had two live admin persons (ADR-0097 d10). */
@@ -5953,6 +5959,8 @@ export interface operations {
                  */
                 "application/json": {
                     accept_federated: boolean;
+                    /** @description An admin act's reason, scanned as a verdict's (ADR-0097 d26): an admin key's true is widening, and waits on a second admin person, which requires a reason, unless the tenant has only ever had one admin person. Since v0.8.6. */
+                    reason?: string;
                 };
             };
         };
@@ -5968,6 +5976,17 @@ export interface operations {
                     "application/json": {
                         accept_federated: boolean;
                     };
+                };
+            };
+            /** @description An admin key's acceptance in a tenant that has had two admin persons: it takes effect only once a second admin person confirms the act with POST /v2/admin/acts/{act}/confirm (ADR-0097 d5). Since v0.8.6. */
+            202: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminAct"];
                 };
             };
             415: components["responses"]["UnsupportedMedia"];
@@ -9212,6 +9231,8 @@ export interface operations {
                     /** @enum {string} */
                     default_sources?: "scope" | "wide";
                     max_sources?: number;
+                    /** @description The admin act's reason, scanned as a verdict's; a widening that waits requires one (ADR-0097 d26). Since v0.8.6. */
+                    reason?: string;
                 };
             };
         };
@@ -9225,6 +9246,17 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FederationSettings"];
+                };
+            };
+            /** @description A widening in a tenant that has had two admin persons: it takes effect only once a second admin person confirms the act (ADR-0097 d5). Since v0.8.6. */
+            202: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminAct"];
                 };
             };
             403: components["responses"]["Forbidden"];
@@ -9986,6 +10018,17 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Fix"];
+                };
+            };
+            /** @description An erase of a version that is not approved, outside sole_admin: no fix, only the admin act whose shred waits on a second admin person (ADR-0097 d4, the operator's decision of 2026-11-27). Since v0.8.6. */
+            202: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminAct"];
                 };
             };
             403: components["responses"]["Forbidden"];
