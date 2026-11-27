@@ -41,7 +41,7 @@ Much of this is designed and not built. Each figure draws a built element solid 
 </figure>
 
 - **Vertical.** Held items of every kind move only inside an in-progress subtree and up its ancestor chain to `tip` keys (ADR-0080 d16). Skills are offered down as well: a `tip` key at an in-progress root, inside it or at one of its ancestors is offered the subtree's skills below its scope node; on a name clash the nearer skill by tree distance wins, an ancestor winning a tie. Never a held retirement, never a version the scan held or has not scanned. Held guardrails and steering below a key's scope node reach it as listed and recalled rows only: the guardrail set and the steering list read up the key's chain, and offering them down is designed, not built (ADR-0080 d4, d10; #458).
-- **Horizontal.** Siblings, other branches, federation and wide sources read promoted rows of protected or frozen workspaces, or a published release. Held work never crosses.
+- **Horizontal.** Siblings, other branches, federation and wide sources read promoted rows of protected or frozen workspaces, or a published release. A protected or frozen workspace marked public serves its promoted rows to every reading key of the tenant, in every default recall (designed, not built; [ADR-0098](../adr/ADR-0098-a-protected-or-frozen-workspace-can-be-marked-public-and-then-every-reading-key-in-the-tenant-reads-its-approved-items.md)). Held work never crosses.
 - **Binding wins.** A key bound to `latest` or a pin reads the release wherever it sits, and never a held item.
 
 The built mechanics are on [workspaces](workspaces.md#in-progress-workspaces) and in the [serving view](views.md#logical-one-agent-key-and-everything-it-is-served).
