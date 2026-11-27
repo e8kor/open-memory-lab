@@ -3788,6 +3788,7 @@ pub async fn grants_and_denials_round_trip_through_their_folds_and_key_access<S:
         role: Role::Submitter,
         deny: vec![masked, masked_too],
         covers: Covers::Subtree,
+        create: false,
     };
     let reader_grant = Grant {
         grant_id: Uuid::from_u128(0xF10),
@@ -3795,6 +3796,7 @@ pub async fn grants_and_denials_round_trip_through_their_folds_and_key_access<S:
         role: Role::Reader,
         deny: Vec::new(),
         covers: Covers::Subtree,
+        create: false,
     };
     let first = rig
         .issue_grant(store, agent.key_id, writer_grant.clone())
@@ -3897,6 +3899,7 @@ pub async fn a_grant_epoch_is_its_event_seq<S: JournalStore>(store: &S) {
                 role: Role::Reader,
                 deny: Vec::new(),
                 covers: Covers::Subtree,
+                create: false,
             },
         )
         .await
@@ -3975,6 +3978,7 @@ pub async fn a_grant_or_denial_the_schema_refuses_commits_nothing<S: JournalStor
         role,
         deny: Vec::new(),
         covers: Covers::Subtree,
+        create: false,
     };
     let denial = |id, node| KeyDenial {
         denial_id: Uuid::from_u128(id),
@@ -7384,6 +7388,7 @@ pub async fn workspace_names_are_unique_per_namespace_and_resolve_in_their_own<S
         role: Role::Reader,
         deny: Vec::new(),
         covers: Covers::Node,
+        create: false,
     };
     rig.issue_grant(store, key.key_id, node.clone())
         .await
@@ -7397,6 +7402,46 @@ pub async fn workspace_names_are_unique_per_namespace_and_resolve_in_their_own<S
         access.grants.iter().map(|g| &g.grant).collect::<Vec<_>>(),
         vec![&node]
     );
+}
+
+/// A grant's `create` flag is stored with it and read back on the key's
+/// access, and an unflagged grant reads `false` (ADR-0097 d31; migration
+/// 0071).
+pub async fn a_grants_create_flag_is_stored_and_read_back<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(31);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let universe = workspace_record(t, Uuid::from_u128(0xB3A0), None, "universe");
+    rig.create_workspace(store, universe.clone()).await;
+    let key = key_record(t, Uuid::from_u128(0xD3A0), Role::Contributor, None);
+    rig.issue_key(store, key.clone()).await;
+    let flagged = Grant {
+        grant_id: Uuid::from_u128(0xF3A0),
+        node: universe.workspace_id,
+        role: Role::Submitter,
+        deny: Vec::new(),
+        covers: Covers::Node,
+        create: true,
+    };
+    let plain = Grant {
+        grant_id: Uuid::from_u128(0xF3A1),
+        role: Role::Reader,
+        create: false,
+        ..flagged.clone()
+    };
+    for grant in [flagged.clone(), plain.clone()] {
+        rig.issue_grant(store, key.key_id, grant)
+            .await
+            .expect("a grant");
+    }
+    let access = store
+        .key_access(t, key.key_id)
+        .await
+        .expect("read")
+        .expect("access");
+    let mut read: Vec<&Grant> = access.grants.iter().map(|g| &g.grant).collect();
+    read.sort_by_key(|g| g.grant_id);
+    assert_eq!(read, vec![&flagged, &plain]);
 }
 
 /// A workspace's name is unique in its tenant across the whole tree: a
@@ -11284,6 +11329,10 @@ where
     )
     .await;
     Box::pin(two_workspaces_in_one_tenant_cannot_share_a_name(
+        &new_store().await,
+    ))
+    .await;
+    Box::pin(a_grants_create_flag_is_stored_and_read_back(
         &new_store().await,
     ))
     .await;

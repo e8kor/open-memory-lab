@@ -47,6 +47,7 @@ fn grant(node: Uuid, role: Role) -> GrantRequest {
         role,
         deny: Vec::new(),
         covers: Covers::Subtree,
+        create: false,
     }
 }
 
@@ -436,6 +437,7 @@ async fn issue<S: JournalStore + Clone>(
             guardrail_scope: None,
             expiry: None,
             requests_per_minute: None,
+            create_workspaces: Vec::new(),
         },
     )
     .await
@@ -1368,6 +1370,7 @@ async fn user_key<S: JournalStore + Clone>(
                         role: *r,
                         deny: Vec::new(),
                         covers: Covers::Subtree,
+                        create: false,
                     })
                     .collect(),
                 connect_code: false,
@@ -1375,6 +1378,7 @@ async fn user_key<S: JournalStore + Clone>(
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await

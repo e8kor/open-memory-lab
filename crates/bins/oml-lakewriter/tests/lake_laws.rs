@@ -233,12 +233,14 @@ async fn tenant_crew(app: &TestApp, name: &str, canary: &str, n: usize) -> Crew 
             role,
             deny: Vec::new(),
             covers: oml_app::domain::access::Covers::Subtree,
+            create: false,
         }],
         connect_code: false,
         user: None,
         guardrail_scope: None,
         expiry: None,
         requests_per_minute: None,
+        create_workspaces: Vec::new(),
     };
     let writer = app
         .issue_key(

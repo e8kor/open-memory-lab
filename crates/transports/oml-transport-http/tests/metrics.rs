@@ -77,12 +77,14 @@ async fn the_metrics_listener_serves_the_four_families_with_closed_labels_and_no
                     role: Role::Submitter,
                     deny: Vec::new(),
                     covers: Covers::Subtree,
+                    create: false,
                 }],
                 connect_code: false,
                 user: None,
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -270,6 +272,7 @@ async fn a_mode_change_over_http_is_counted_and_its_request_line_names_the_works
                         role,
                         deny: Vec::new(),
                         covers: Covers::Subtree,
+                        create: false,
                     })
                     .to_vec(),
                 connect_code: false,
@@ -277,6 +280,7 @@ async fn a_mode_change_over_http_is_counted_and_its_request_line_names_the_works
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await

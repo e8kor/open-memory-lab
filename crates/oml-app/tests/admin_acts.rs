@@ -16,7 +16,7 @@ use oml_app::ports::JournalStore as _;
 use oml_app::ports::WebStore as _;
 use oml_app::types::{
     AdminActRefusal, AppError, Bearer, BootstrapRequest, BootstrapResult, GrantRequest,
-    IssueKeyRequest, IssuedKey, WebEmailRequest,
+    IssueKeyRequest, IssuedKey, NewWorkspace, WebEmailRequest,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
@@ -163,12 +163,14 @@ fn agent_req() -> IssueKeyRequest {
                 role: Role::Reader,
                 deny: Vec::new(),
                 covers: Covers::Subtree,
+                create: false,
             },
             GrantRequest {
                 node: by_name("crew"),
                 role: Role::Submitter,
                 deny: Vec::new(),
                 covers: Covers::Subtree,
+                create: false,
             },
         ],
         user: None,
@@ -176,6 +178,7 @@ fn agent_req() -> IssueKeyRequest {
         guardrail_scope: None,
         expiry: None,
         requests_per_minute: None,
+        create_workspaces: Vec::new(),
     }
 }
 
@@ -596,6 +599,7 @@ async fn a_persons_web_session_revokes_the_persons_own_keys() {
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -854,4 +858,347 @@ async fn a_new_admin_person_waits_on_a_second_admin_person() {
         .expect("read")
         .expect("carol's entry");
     assert!(held.admin);
+}
+
+/// A workspace an issuance creates, `name` under `parent` (ADR-0097 d30).
+fn new_workspace(parent: &str, child: &str) -> NewWorkspace {
+    NewWorkspace {
+        parent: by_name(parent),
+        name: name(child),
+    }
+}
+
+/// [`agent_req`] with no grant of its own, creating `child` under `crew`.
+fn creating_req(child: &str) -> IssueKeyRequest {
+    IssueKeyRequest {
+        grants: Vec::new(),
+        create_workspaces: vec![new_workspace("crew", child)],
+        ..agent_req()
+    }
+}
+
+/// [`agent_req`] whose submitter grant on `crew` carries `create` and
+/// covers `covers` (ADR-0097 d31).
+fn flagged_req(covers: Covers) -> IssueKeyRequest {
+    let mut req = agent_req();
+    for grant in &mut req.grants {
+        grant.covers = covers;
+    }
+    req.grants[1].create = true;
+    req
+}
+
+/// The event types the journal gained since `before`.
+async fn added_since(r: &Rig, before: usize) -> Vec<String> {
+    r.journal().await[before..]
+        .iter()
+        .map(|e| e.envelope.event_type.clone())
+        .collect()
+}
+
+/// An issuance that creates a workspace commits the creation, the key and
+/// the key's role's default grants on it in one chain, the creation first,
+/// each naming the act; the key's default is the new workspace. A second
+/// issuance naming the same workspace is `name.taken` and journals nothing,
+/// its key included (ADR-0097 d30).
+#[tokio::test]
+async fn an_issuance_with_new_workspaces_creates_them_and_grants_the_key_in_one_commit_or_not_at_all()
+ {
+    let r = rig().await;
+    let before = r.journal().await.len();
+    let issued = r
+        .app
+        .issue_key(r.admin(), &creating_req("alpha"))
+        .await
+        .expect("issued with its workspace");
+    assert_eq!(
+        added_since(&r, before).await,
+        [
+            event_types::ADMIN_ACT,
+            event_types::WORKSPACE_CREATE,
+            event_types::KEY_ISSUED,
+            event_types::GRANT_ISSUED,
+            event_types::GRANT_ISSUED,
+        ]
+    );
+    let events = r.journal().await;
+    let act_id = events[before].envelope.payload["act_id"].clone();
+    for effect in &events[before + 1..] {
+        assert_eq!(effect.envelope.payload["act_id"], act_id);
+    }
+    let alpha = Uuid::parse_str(
+        events[before + 1].envelope.payload["workspace_id"]
+            .as_str()
+            .expect("an id"),
+    )
+    .expect("a uuid");
+    assert_eq!(issued.default_workspace, Some(alpha));
+    let roles: Vec<Role> = issued
+        .access
+        .grants
+        .iter()
+        .inspect(|g| assert_eq!(g.grant.node, alpha))
+        .map(|g| g.grant.role)
+        .collect();
+    assert_eq!(roles, [Role::Reader, Role::Submitter]);
+
+    let before = r.journal().await.len();
+    let refused = r
+        .app
+        .issue_key(r.admin(), &creating_req("alpha"))
+        .await
+        .unwrap_err();
+    assert!(matches!(refused, AppError::NameTaken { .. }), "{refused:?}");
+    assert_eq!(r.journal().await.len(), before, "nothing of the act lands");
+}
+
+/// A pending issuance creates nothing and reserves no name: the workspace
+/// is absent until a second admin person confirms, and the confirmation
+/// creates it and writes the key's grants on it in one commit (ADR-0097
+/// d30, d23).
+#[tokio::test]
+async fn a_pending_issuance_creates_no_workspace_until_it_is_confirmed() {
+    let r = two_admins().await;
+    let issued = r
+        .app
+        .issue_key_with_reason(r.admin(), &creating_req("beta"), Some("beta's agent"))
+        .await
+        .expect("a pending issuance");
+    let act_id = issued.pending_act.expect("pending");
+    let absent = r
+        .app
+        .workspace_info(r.admin(), Some(by_name("beta")))
+        .await
+        .unwrap_err();
+    assert!(matches!(absent, AppError::NotFound), "{absent:?}");
+
+    let before = r.journal().await.len();
+    let alice = r.admin_session("alice").await;
+    r.app
+        .confirm_admin_act(Bearer::Session(&alice), act_id)
+        .await
+        .expect("alice confirms");
+    assert_eq!(
+        added_since(&r, before).await,
+        [
+            event_types::ADMIN_ACT,
+            event_types::WORKSPACE_CREATE,
+            event_types::GRANT_ISSUED,
+            event_types::GRANT_ISSUED,
+        ]
+    );
+    let beta = r
+        .app
+        .workspace_info(r.admin(), Some(by_name("beta")))
+        .await
+        .expect("created at the confirmation")
+        .workspace
+        .workspace_id;
+    let access = r
+        .store
+        .key_access(r.boot.tenant_id, issued.key_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert!(access.grants.iter().all(|g| g.grant.node == beta));
+    assert_eq!(access.grants.len(), 2);
+}
+
+/// The admin's session key creates a workspace directly under `universe`,
+/// a neutral admin act: at once, journalled as `admin.act` with nothing to
+/// settle (ADR-0097 d9, d29).
+#[tokio::test]
+async fn the_admin_session_creates_a_workspace_under_universe_as_a_neutral_act() {
+    let r = two_admins().await;
+    let alice = r.admin_session("alice").await;
+    let before = r.journal().await.len();
+    r.app
+        .create_workspace(
+            Bearer::Session(&alice),
+            &name("projects"),
+            Some(by_name("universe")),
+            None,
+        )
+        .await
+        .expect("created at once");
+    let events = r.journal().await;
+    let act = &events[before].envelope.payload;
+    assert_eq!(act["act"], "create_workspace");
+    assert_eq!(act["class"], "neutral");
+    assert_eq!(act["state"], "effective");
+    assert_eq!(
+        events[before + 1].envelope.event_type,
+        event_types::WORKSPACE_CREATE
+    );
+}
+
+/// A key creates a child only where a grant carrying `create` reaches: an
+/// unflagged key is refused by its role, and a flagged subtree grant admits
+/// the child, already covered, so no grant is written (ADR-0097 d31).
+#[tokio::test]
+async fn a_key_creates_a_child_only_under_a_grant_that_carries_create() {
+    let r = rig().await;
+    let plain = r
+        .app
+        .issue_key(r.admin(), &agent_req())
+        .await
+        .expect("issued");
+    let refused = r
+        .app
+        .create_workspace(
+            plain.value.as_str(),
+            &name("c1"),
+            Some(by_name("crew")),
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(refused, AppError::VerbCeiling { .. }),
+        "{refused:?}"
+    );
+
+    let flagged = r
+        .app
+        .issue_key(r.admin(), &flagged_req(Covers::Subtree))
+        .await
+        .expect("issued");
+    assert!(flagged.access.grants.iter().any(|g| g.grant.create));
+    let before = r.journal().await.len();
+    r.app
+        .create_workspace(
+            flagged.value.as_str(),
+            &name("c2"),
+            Some(by_name("crew")),
+            None,
+        )
+        .await
+        .expect("the flag admits the child");
+    assert_eq!(
+        added_since(&r, before).await,
+        [event_types::WORKSPACE_CREATE]
+    );
+}
+
+/// Under a node grant carrying `create`, the child gets the same grant,
+/// role, coverage and flag, journalled in the create's commit, and no wider
+/// role (ADR-0097 d31).
+#[tokio::test]
+async fn a_child_under_a_node_grant_carries_the_same_grant_and_no_wider_role() {
+    let r = rig().await;
+    let flagged = r
+        .app
+        .issue_key(r.admin(), &flagged_req(Covers::Node))
+        .await
+        .expect("issued");
+    let before = r.journal().await.len();
+    let child = r
+        .app
+        .create_workspace(
+            flagged.value.as_str(),
+            &name("c3"),
+            Some(by_name("crew")),
+            None,
+        )
+        .await
+        .expect("created");
+    assert_eq!(
+        added_since(&r, before).await,
+        [event_types::WORKSPACE_CREATE, event_types::GRANT_ISSUED]
+    );
+    let grant = &r.journal().await[before + 1].envelope.payload;
+    assert_eq!(grant["role"], "submitter");
+    assert_eq!(grant["covers"], "node");
+    assert_eq!(grant["create"], true);
+    assert_eq!(
+        grant["workspace_node_id"],
+        child.workspace.workspace_id.to_string()
+    );
+    let access = r
+        .store
+        .key_access(r.boot.tenant_id, flagged.key_id)
+        .await
+        .expect("read")
+        .expect("held");
+    let on_child: Vec<Role> = access
+        .grants
+        .iter()
+        .filter(|g| g.grant.node == child.workspace.workspace_id)
+        .map(|g| g.grant.role)
+        .collect();
+    assert_eq!(
+        on_child,
+        [Role::Submitter],
+        "no wider role than the parent's"
+    );
+}
+
+/// `oml_write`'s create reaches a shared parent only through the flag: a
+/// tenant key without it is `create_is_own_root_only`, and one whose grant
+/// carries it creates there (ADR-0097 d31; ADR-0095 d3).
+#[tokio::test]
+async fn oml_write_create_workspace_reaches_a_shared_parent_only_through_the_create_flag() {
+    let r = rig().await;
+    let plain = r
+        .app
+        .issue_key(r.admin(), &agent_req())
+        .await
+        .expect("issued");
+    let refused = r
+        .app
+        .create_own_workspace(
+            plain.value.as_str(),
+            &name("m1"),
+            Some(by_name("crew")),
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(refused, AppError::CreateIsOwnRootOnly { .. }),
+        "{refused:?}"
+    );
+    let flagged = r
+        .app
+        .issue_key(r.admin(), &flagged_req(Covers::Subtree))
+        .await
+        .expect("issued");
+    r.app
+        .create_own_workspace(
+            flagged.value.as_str(),
+            &name("m2"),
+            Some(by_name("crew")),
+            None,
+        )
+        .await
+        .expect("the flag admits the shared parent");
+}
+
+/// Granting `create` is widening: with two admin persons a flagged key
+/// waits on the second one's confirmation, and the flag is in force only
+/// after it (ADR-0097 d31, d5).
+#[tokio::test]
+async fn granting_create_waits_on_a_second_admin_person() {
+    let r = two_admins().await;
+    let issued = r
+        .app
+        .issue_key_with_reason(r.admin(), &flagged_req(Covers::Subtree), Some("a builder"))
+        .await
+        .expect("a pending issuance");
+    let act_id = issued.pending_act.expect("pending");
+    let alice = r.admin_session("alice").await;
+    r.app
+        .confirm_admin_act(Bearer::Session(&alice), act_id)
+        .await
+        .expect("alice confirms");
+    let access = r
+        .store
+        .key_access(r.boot.tenant_id, issued.key_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert!(
+        access.grants.iter().any(|g| g.grant.create),
+        "the confirmed effect keeps the flag"
+    );
 }

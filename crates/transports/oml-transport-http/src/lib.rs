@@ -87,7 +87,7 @@ use oml_app::types::{
 use oml_app::types::{
     BulkItem, BulkVerdictRequest, HELD_PAGE_DEFAULT, HeldListingRequest, HeldPage, ReviewLane,
 };
-use oml_app::types::{Preview, PreviewRequest};
+use oml_app::types::{NewWorkspace, Preview, PreviewRequest};
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
 use crate::time::{parse_date_time, system_event_time, system_event_time_plus};
@@ -2096,7 +2096,11 @@ where
         let name = required_creation_name("/name", req.name.as_deref())?;
         // A session key issues only as the person's own issuance, bounded
         // to their root (ADR-0070 d2, d5; ADR-0045 d9, d16).
-        if let Some(caller) = session::session_caller() {
+        // `<user>-admin` issues as an admin key does, through the admin
+        // builder (ADR-0097 d29).
+        if let Some(caller) = session::session_caller()
+            && !console::is_admin_session(&caller)
+        {
             return Self::issue_key_as_session(st, caller, &req, &name, &idem, body).await;
         }
         // The key's expiry, an RFC 3339 instant, and its own rate; the use
@@ -2151,6 +2155,7 @@ where
             profile: parse_profile(req.profile.as_deref())?,
             expiry,
             requests_per_minute: req.requests_per_minute,
+            create_workspaces: new_workspaces(&req.create_workspaces)?,
         };
         // A resubmission under the same key and body replays the answer
         // without the value or the connect code, which are shown once, and
@@ -4333,6 +4338,19 @@ struct GrantBody {
     /// `subtree`, the default, or `node` (ADR-0044 d4).
     #[serde(default)]
     covers: Option<String>,
+    /// The grant lets its key create child workspaces where it reaches;
+    /// granting it is widening (ADR-0097 d31).
+    #[serde(default)]
+    create: bool,
+}
+
+/// One workspace an issuance creates in its own act: `name` under
+/// `parent`, each by id or name (ADR-0097 d30).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NewWorkspaceBody {
+    parent: String,
+    name: String,
 }
 
 #[derive(Deserialize)]
@@ -4380,6 +4398,28 @@ struct KeyIssueBody {
     /// person (ADR-0097 d26).
     #[serde(default)]
     reason: Option<String>,
+    /// The workspaces the issuance creates in the same act, the key's role's
+    /// default grants on each (ADR-0097 d30).
+    #[serde(default)]
+    create_workspaces: Vec<NewWorkspaceBody>,
+}
+
+/// `create_workspaces[]` as the issuance takes it, each refusal naming its
+/// JSON Pointer (ADR-0097 d30).
+pub(crate) fn new_workspaces(sent: &[NewWorkspaceBody]) -> Result<Vec<NewWorkspace>, ApiError> {
+    sent.iter()
+        .enumerate()
+        .map(|(i, w)| {
+            Ok(NewWorkspace {
+                parent: reference(&format!("/create_workspaces/{i}/parent"), &w.parent)?,
+                name: Name::parse(&w.name).map_err(|refusal| {
+                    let field = format!("/create_workspaces/{i}/name");
+                    ApiError::validation(format!("{field} {:?}: {refusal}", w.name))
+                        .with_details(json!({ "field": field }))
+                })?,
+            })
+        })
+        .collect()
 }
 
 /// The body of `POST /v2/keys/{key}/connect-codes`, closed; absent, the code
@@ -4902,6 +4942,7 @@ fn grant_requests(grants: &[GrantBody]) -> Result<Vec<GrantRequest>, ApiError> {
                         reference(&format!("/grants/{i}/deny/{j}/workspace"), &d.workspace)
                     })
                     .collect::<Result<_, _>>()?,
+                create: g.create,
             })
         })
         .collect()
@@ -5038,6 +5079,7 @@ fn grant_json(g: &GrantRecord) -> Value {
         "workspace_node_id": g.grant.node,
         "role": g.grant.role.as_str(),
         "covers": g.grant.covers.as_str(),
+        "create": g.grant.create,
         "deny": g
             .grant
             .deny
@@ -5245,6 +5287,7 @@ fn whoami_grant_json(g: &GrantRecord) -> Value {
         "workspace_node_id": g.grant.node,
         "role": g.grant.role.as_str(),
         "covers": g.grant.covers.as_str(),
+        "create": g.grant.create,
         "epoch": g.epoch,
     })
 }
@@ -6569,6 +6612,7 @@ mod tests {
                 role: Role::Submitter,
                 deny: vec![sealed],
                 covers: Covers::Subtree,
+                create: false,
             },
             epoch: 41,
         };

@@ -96,6 +96,12 @@ pub(crate) fn act_digest(user: &str, body: &Bytes) -> String {
     oml_app::domain::Sha256Hash::digest(&bytes).to_prefixed()
 }
 
+/// Whether `caller` is a person's `<user>-admin` session key, which issues
+/// keys as an admin key does (ADR-0097 d29).
+pub(crate) fn is_admin_session(caller: &Caller) -> bool {
+    is_admin_session_key(caller)
+}
+
 /// Whether `caller` is a person's `<user>-admin` session key (ADR-0083
 /// d11).
 fn is_admin_session_key(caller: &Caller) -> bool {
@@ -148,6 +154,7 @@ fn grant_json(grant: &GrantRecord) -> Value {
         "workspace_node_id": grant.grant.node,
         "role": grant.grant.role.as_str(),
         "covers": grant.grant.covers.as_str(),
+        "create": grant.grant.create,
         "epoch": grant.epoch,
     })
 }
@@ -706,6 +713,7 @@ where
                     "path": path,
                     // Read off the grant row already read (ADR-0096 d8).
                     "covers": g.grant.covers.as_str(),
+                    "create": g.grant.create,
                 }));
             }
             items.push(json!({
@@ -1558,6 +1566,7 @@ where
             guardrail_scope: parse_guardrail_scope(req.guardrail_scope.as_deref())?,
             expiry,
             requests_per_minute: req.requests_per_minute,
+            create_workspaces: crate::new_workspaces(&req.create_workspaces)?,
         };
         let user = caller
             .key()

@@ -34,12 +34,19 @@ class GrantRequest:
             /grants/<i>/deny).
         covers (GrantRequestCovers | Unset): subtree covers the node and every descendant; node covers the node alone
             (ADR-0044 d4). Default: GrantRequestCovers.SUBTREE.
+        create (bool | Unset): The key creates child workspaces where this grant reaches, a shared tree included: under
+            a node grant each child gets the same grant, create included, and under a subtree grant the child is already
+            covered. Each child counts on the workspaces meter; a frozen parent refuses it (access.verb_ceiling,
+            details.reason parent_frozen). Granting it is widening: an admin's issuance waits on a second admin person
+            outside sole_admin, and a person's own issuance sets it only inside the own root (ADR-0097 d31). Since v0.8.6.
+            Default: False.
     """
 
     workspace: str
     role: GrantRequestRole
     deny: list[GrantRequestDenyItem] | Unset = UNSET
     covers: GrantRequestCovers | Unset = GrantRequestCovers.SUBTREE
+    create: bool | Unset = False
 
     def to_dict(self) -> dict[str, Any]:
         workspace: str
@@ -58,6 +65,8 @@ class GrantRequest:
         if not isinstance(self.covers, Unset):
             covers = self.covers.value
 
+        create = self.create
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -70,6 +79,8 @@ class GrantRequest:
             field_dict["deny"] = deny
         if covers is not UNSET:
             field_dict["covers"] = covers
+        if create is not UNSET:
+            field_dict["create"] = create
 
         return field_dict
 
@@ -102,11 +113,14 @@ class GrantRequest:
         else:
             covers = GrantRequestCovers(_covers)
 
+        create = d.pop("create", UNSET)
+
         grant_request = cls(
             workspace=workspace,
             role=role,
             deny=deny,
             covers=covers,
+            create=create,
         )
 
         return grant_request

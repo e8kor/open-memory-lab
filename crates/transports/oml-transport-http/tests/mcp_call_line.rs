@@ -38,6 +38,7 @@ async fn agent() -> (Router, String) {
         role,
         deny: Vec::new(),
         covers: Covers::Subtree,
+        create: false,
     });
     let key = app
         .issue_key(
@@ -56,6 +57,7 @@ async fn agent() -> (Router, String) {
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await

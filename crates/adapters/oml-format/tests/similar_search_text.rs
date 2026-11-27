@@ -67,6 +67,7 @@ async fn writer(app: &TestApp) -> String {
         role,
         deny: Vec::new(),
         covers: Covers::Subtree,
+        create: false,
     };
     let issued = app
         .issue_key(
@@ -85,6 +86,7 @@ async fn writer(app: &TestApp) -> String {
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -132,6 +134,7 @@ async fn the_verdict_event_covers_the_format_the_version_was_signed_with() {
         role,
         deny: Vec::new(),
         covers: Covers::Subtree,
+        create: false,
     };
     let issue = |name: &'static str, role, grants| IssueKeyRequest {
         profile: None,
@@ -147,6 +150,7 @@ async fn the_verdict_event_covers_the_format_the_version_was_signed_with() {
         guardrail_scope: None,
         expiry: None,
         requests_per_minute: None,
+        create_workspaces: Vec::new(),
     };
     let admin = &boot.admin_key.value;
     let w = app

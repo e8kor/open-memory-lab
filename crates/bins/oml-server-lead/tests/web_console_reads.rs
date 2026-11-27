@@ -766,12 +766,14 @@ async fn held_in_workspaces(rig: &Rig, n: usize) {
                     role: Role::Submitter,
                     deny: Vec::new(),
                     covers: Covers::Subtree,
+                    create: false,
                 }],
                 connect_code: false,
                 user: Some(Name::parse("alice").expect("a name")),
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -1125,12 +1127,14 @@ async fn the_catalog_pages_read_costs_the_gate_the_listing_and_on_the_first_page
                     role: Role::Submitter,
                     deny: Vec::new(),
                     covers: Covers::Subtree,
+                    create: false,
                 }],
                 connect_code: false,
                 user: Some(Name::parse("alice").expect("a name")),
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -1155,6 +1159,7 @@ async fn the_catalog_pages_read_costs_the_gate_the_listing_and_on_the_first_page
                         role,
                         deny: Vec::new(),
                         covers: Covers::Subtree,
+                        create: false,
                     })
                     .collect(),
                 connect_code: false,
@@ -1162,6 +1167,7 @@ async fn the_catalog_pages_read_costs_the_gate_the_listing_and_on_the_first_page
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await

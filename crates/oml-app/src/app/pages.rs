@@ -108,6 +108,9 @@ pub struct OwnKeyShape {
     pub guardrail_scope: Option<oml_domain::guardrail::GuardrailScope>,
     pub expiry: Option<EventTime>,
     pub requests_per_minute: Option<u32>,
+    /// The workspaces the issuance creates inside the person's root, each
+    /// granted to the key by its role's default grants (ADR-0097 d30).
+    pub create_workspaces: Vec<crate::types::NewWorkspace>,
 }
 
 /// One workspace's queue with its path (ADR-0045 d10).
@@ -554,6 +557,7 @@ where
             role,
             deny: Vec::new(),
             covers: Covers::Subtree,
+            create: false,
         };
         let whole_root = match role {
             Role::Contributor => vec![grant(Role::Submitter), grant(Role::Reader)],
@@ -566,7 +570,9 @@ where
                 ));
             }
         };
-        let grants = if shape.grants.is_empty() {
+        // The whole root only for a key sent with neither grants nor new
+        // workspaces (ADR-0096 d1; ADR-0097 d30).
+        let grants = if shape.grants.is_empty() && shape.create_workspaces.is_empty() {
             whole_root
         } else {
             shape.grants.clone()
@@ -585,6 +591,7 @@ where
             user: Some(user_name),
             expiry: shape.expiry.clone(),
             requests_per_minute: shape.requests_per_minute,
+            create_workspaces: shape.create_workspaces.clone(),
         };
         self.issue_key_by(&web.key, &req, Issuance::PersonsOwn(head))
             .await
@@ -765,6 +772,7 @@ where
             role,
             deny: Vec::new(),
             covers: Covers::Subtree,
+            create: false,
         });
         let added = self.add_grants(&admin.key, &review, &grants).await?;
         Ok(CapacityGranted {
@@ -794,6 +802,7 @@ where
             role: Role::Reader,
             deny: Vec::new(),
             covers: Covers::Subtree,
+            create: false,
         };
         let added = self.add_grants(&admin.key, &web, &[reader]).await?;
         Ok(CapacityGranted {
@@ -820,6 +829,7 @@ where
             role: Role::Reader,
             deny: Vec::new(),
             covers: Covers::Subtree,
+            create: false,
         };
         if let Some(curate) = self
             .session_key_of(tenant_id, user, Capacity::Curate)
@@ -849,6 +859,7 @@ where
                     role: Role::Submitter,
                     deny: Vec::new(),
                     covers: Covers::Node,
+                    create: false,
                 },
                 reader,
             ],
@@ -856,6 +867,7 @@ where
             user: None,
             expiry: None,
             requests_per_minute: None,
+            create_workspaces: Vec::new(),
         };
         let issued = self
             .issue_key_by(&admin.key, &req, Issuance::Session(user))
@@ -920,6 +932,8 @@ where
                 role: g.role,
                 deny: Vec::new(),
                 covers: g.covers,
+                // A capacity grant carries no create flag (ADR-0097 d31).
+                create: false,
             });
         }
         // Step 3 applies to added grants; a contributor's shape was checked

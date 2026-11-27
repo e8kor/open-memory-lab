@@ -134,6 +134,7 @@ fn grant(node: Uuid, role: Role) -> GrantRequest {
         role,
         deny: Vec::new(),
         covers: Covers::Subtree,
+        create: false,
     }
 }
 
@@ -179,6 +180,7 @@ fn issue_req(role: Role, principal: &str, grants: Vec<GrantRequest>) -> IssueKey
         guardrail_scope: None,
         expiry: None,
         requests_per_minute: None,
+        create_workspaces: Vec::new(),
     }
 }
 
@@ -1449,6 +1451,7 @@ async fn a_reviewer_is_served_only_held_rows_inside_its_reviewer_grants() {
                 role: Role::Reviewer,
                 deny: vec![masked.into()],
                 covers: Covers::Subtree,
+                create: false,
             },
             grant(other, Role::Reader),
         ],
@@ -2106,6 +2109,7 @@ async fn a_default_no_grant_covers_is_refused() {
         role: Role::Submitter,
         deny: vec![masked.into()],
         covers: Covers::Subtree,
+        create: false,
     };
     for default in [sibling, masked, boot.root_workspace_id] {
         let err = app
@@ -2258,6 +2262,7 @@ async fn issuance_refuses_in_the_issuance_order_and_journals_nothing() {
             role: Role::Submitter,
             deny: vec![Uuid::from_u128(0xDEAD).into()],
             covers: Covers::Subtree,
+            create: false,
         },
     ] {
         let err = app
@@ -2280,6 +2285,7 @@ async fn issuance_refuses_in_the_issuance_order_and_journals_nothing() {
                         role: Role::Submitter,
                         deny: vec![sibling.into()],
                         covers: Covers::Subtree,
+                        create: false,
                     },
                 ],
             ),
@@ -2349,6 +2355,7 @@ async fn issuance_journals_the_key_then_each_grant_with_its_own_seq_as_its_epoch
                 role: Role::Submitter,
                 deny: vec![sub.into()],
                 covers: Covers::Subtree,
+                create: false,
             },
             grant(crew, Role::Reader),
         ],
@@ -2598,6 +2605,7 @@ async fn workspace_info_lists_only_readable_children() {
             role: Role::Reader,
             deny: vec![sealed.into()],
             covers: Covers::Subtree,
+            create: false,
         }],
     )
     .await;
@@ -9374,6 +9382,7 @@ async fn a_key_of_an_account_under_a_quota_is_held_to_both_rates_and_the_lower_r
                             role: Role::Submitter,
                             deny: Vec::new(),
                             covers: Covers::Subtree,
+                            create: false,
                         }],
                     )
                 },
@@ -15476,6 +15485,7 @@ async fn a_connections_whoami_costs_one_request_of_its_keys_rate() {
                             role: Role::Submitter,
                             deny: Vec::new(),
                             covers: Covers::Subtree,
+                            create: false,
                         }],
                     )
                 },
@@ -15541,6 +15551,7 @@ async fn account_keys(app: &TestApp, admin: &str) -> (IssuedKey, IssuedKey) {
         role,
         deny: Vec::new(),
         covers: Covers::Subtree,
+        create: false,
     };
     let writer = app
         .issue_key(
@@ -20551,4 +20562,53 @@ async fn a_rotation_takes_its_instant_and_its_grace_from_the_envelope() {
     assert_eq!(rotated.rotated_at, at);
     let until = rotated.previous_valid_until.expect("a grace");
     assert_eq!(until.unix_micros(), at.unix_micros() + 60_000_000);
+}
+
+/// A grant carrying `create` admits no child under a `frozen` parent: the
+/// create is `access.verb_ceiling` with `details.reason: parent_frozen`,
+/// and nothing is journalled (ADR-0097 d31; ADR-0009 d5).
+#[tokio::test]
+async fn creating_a_child_under_a_frozen_parent_is_refused() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let ratifier = issue(&app, admin, Role::Reviewer, "dora", crew).await;
+    let cold = workspace(&app, admin, "cold", boot.root_workspace_id).await;
+    let mut submit = grant(cold, Role::Submitter);
+    submit.create = true;
+    let flagged = app
+        .issue_key(
+            admin.as_str(),
+            &issue_req(
+                Role::Contributor,
+                "agent-cold",
+                vec![grant(cold, Role::Reader), submit],
+            ),
+        )
+        .await
+        .expect("a flagged key");
+    climb(
+        &app,
+        &store,
+        (boot.tenant_id, admin, ratifier.key_id),
+        cold,
+        WorkspaceStatus::Frozen,
+    )
+    .await;
+    let before = journal(&store, boot.tenant_id).await.len();
+    let refused = app
+        .create_workspace(
+            flagged.value.as_str(),
+            &name("thaw"),
+            Some(cold.into()),
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(refused, AppError::ParentFrozen { workspace_id } if workspace_id == cold),
+        "{refused:?}"
+    );
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
 }

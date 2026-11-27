@@ -885,6 +885,7 @@ Issue a key under the issuer ceiling; the value appears exactly once, here.
 | `expiry` | string | no | The instant from which the key authenticates nothing: RFC 3339 with its offset, later than the server's clock. |
 | `requests_per_minute` | integer | no | The requests the key may make in one UTC minute, its own rate beside any quota of its account; the request past it is 429 limit.rate. |
 | `reason` | string | no | The issuing admin's reason, scanned as a verdict's reason and journalled in the issuance's admin.act. |
+| `create_workspaces` | array of object | no | Workspaces the issuance creates in the same act, each journalled as workspace.create before key.issued and granted to the key by its role's default grants over the subtree: a contributor reader and submitter, a submitter submitter, a reader reader, a reviewer reviewer. |
 
 **Responses.** `201` The key, value shown once.; `403` A 403-class refusal naming its rule (access.*, review.*, simulation.audience_refused).; `415` 415 request.unsupported_media — the request body's media type is not the application/json the operation declares; not retryable as sent.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
 

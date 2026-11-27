@@ -246,6 +246,7 @@ from .memory_summary_replaces_type_0 import MemorySummaryReplacesType0
 from .memory_summary_severity import MemorySummarySeverity
 from .memory_summary_state import MemorySummaryState
 from .mint_connect_code_body import MintConnectCodeBody
+from .new_workspace_request import NewWorkspaceRequest
 from .o_auth_error import OAuthError
 from .o_auth_error_error import OAuthErrorError
 from .origin import Origin
@@ -710,6 +711,7 @@ __all__ = (
     "MemorySummarySeverity",
     "MemorySummaryState",
     "MintConnectCodeBody",
+    "NewWorkspaceRequest",
     "OAuthError",
     "OAuthErrorError",
     "Origin",

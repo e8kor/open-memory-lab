@@ -102,11 +102,17 @@ def sync_detailed(
     recorded creation with Idempotency-Replay: true and creates nothing again; the same key with another
     body is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.7.0). A person's web session key
     (<user>-web, through its capacity credential) creates under its own root, as the web console's
-    Workspaces view does (ADR-0070 d5). A node below a user root counts on that account's workspaces
-    meter, whoever creates it; past the account's limit the create is 429 limit.quota with details.quota
-    workspaces, and nothing is journalled (ADR-0095 d4; since v0.8.5). MCP's oml_write create_workspace
-    rides this operation for a contributor key that names a user alone; every other key is
-    access.verb_ceiling with details.reason create_is_own_root_only there (ADR-0095 d3).
+    Workspaces view does (ADR-0070 d5); a person's admin session key (<user>-admin) creates anywhere in
+    the tenant, under universe included, as the admin Workspaces page does, a neutral admin act
+    (ADR-0097 d9, d29; since v0.8.6). Any key whose effective access at the parent comes from a grant
+    carrying create creates there, a shared parent included; under a node grant the child gets the same
+    grant in the create's commit, and a frozen parent refuses it with access.verb_ceiling,
+    details.reason parent_frozen (ADR-0097 d31; since v0.8.6). A node below a user root counts on that
+    account's workspaces meter, whoever creates it; past the account's limit the create is 429
+    limit.quota with details.quota workspaces, and nothing is journalled (ADR-0095 d4; since v0.8.5).
+    MCP's oml_write create_workspace rides this operation for a contributor key that names a user, and
+    for a key a grant carrying create admits at the parent; every other key is access.verb_ceiling with
+    details.reason create_is_own_root_only there (ADR-0095 d3; ADR-0097 d31).
 
     Args:
         x_request_id (str | Unset):
@@ -158,11 +164,17 @@ def sync(
     recorded creation with Idempotency-Replay: true and creates nothing again; the same key with another
     body is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.7.0). A person's web session key
     (<user>-web, through its capacity credential) creates under its own root, as the web console's
-    Workspaces view does (ADR-0070 d5). A node below a user root counts on that account's workspaces
-    meter, whoever creates it; past the account's limit the create is 429 limit.quota with details.quota
-    workspaces, and nothing is journalled (ADR-0095 d4; since v0.8.5). MCP's oml_write create_workspace
-    rides this operation for a contributor key that names a user alone; every other key is
-    access.verb_ceiling with details.reason create_is_own_root_only there (ADR-0095 d3).
+    Workspaces view does (ADR-0070 d5); a person's admin session key (<user>-admin) creates anywhere in
+    the tenant, under universe included, as the admin Workspaces page does, a neutral admin act
+    (ADR-0097 d9, d29; since v0.8.6). Any key whose effective access at the parent comes from a grant
+    carrying create creates there, a shared parent included; under a node grant the child gets the same
+    grant in the create's commit, and a frozen parent refuses it with access.verb_ceiling,
+    details.reason parent_frozen (ADR-0097 d31; since v0.8.6). A node below a user root counts on that
+    account's workspaces meter, whoever creates it; past the account's limit the create is 429
+    limit.quota with details.quota workspaces, and nothing is journalled (ADR-0095 d4; since v0.8.5).
+    MCP's oml_write create_workspace rides this operation for a contributor key that names a user, and
+    for a key a grant carrying create admits at the parent; every other key is access.verb_ceiling with
+    details.reason create_is_own_root_only there (ADR-0095 d3; ADR-0097 d31).
 
     Args:
         x_request_id (str | Unset):
@@ -209,11 +221,17 @@ async def asyncio_detailed(
     recorded creation with Idempotency-Replay: true and creates nothing again; the same key with another
     body is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.7.0). A person's web session key
     (<user>-web, through its capacity credential) creates under its own root, as the web console's
-    Workspaces view does (ADR-0070 d5). A node below a user root counts on that account's workspaces
-    meter, whoever creates it; past the account's limit the create is 429 limit.quota with details.quota
-    workspaces, and nothing is journalled (ADR-0095 d4; since v0.8.5). MCP's oml_write create_workspace
-    rides this operation for a contributor key that names a user alone; every other key is
-    access.verb_ceiling with details.reason create_is_own_root_only there (ADR-0095 d3).
+    Workspaces view does (ADR-0070 d5); a person's admin session key (<user>-admin) creates anywhere in
+    the tenant, under universe included, as the admin Workspaces page does, a neutral admin act
+    (ADR-0097 d9, d29; since v0.8.6). Any key whose effective access at the parent comes from a grant
+    carrying create creates there, a shared parent included; under a node grant the child gets the same
+    grant in the create's commit, and a frozen parent refuses it with access.verb_ceiling,
+    details.reason parent_frozen (ADR-0097 d31; since v0.8.6). A node below a user root counts on that
+    account's workspaces meter, whoever creates it; past the account's limit the create is 429
+    limit.quota with details.quota workspaces, and nothing is journalled (ADR-0095 d4; since v0.8.5).
+    MCP's oml_write create_workspace rides this operation for a contributor key that names a user, and
+    for a key a grant carrying create admits at the parent; every other key is access.verb_ceiling with
+    details.reason create_is_own_root_only there (ADR-0095 d3; ADR-0097 d31).
 
     Args:
         x_request_id (str | Unset):
@@ -263,11 +281,17 @@ async def asyncio(
     recorded creation with Idempotency-Replay: true and creates nothing again; the same key with another
     body is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.7.0). A person's web session key
     (<user>-web, through its capacity credential) creates under its own root, as the web console's
-    Workspaces view does (ADR-0070 d5). A node below a user root counts on that account's workspaces
-    meter, whoever creates it; past the account's limit the create is 429 limit.quota with details.quota
-    workspaces, and nothing is journalled (ADR-0095 d4; since v0.8.5). MCP's oml_write create_workspace
-    rides this operation for a contributor key that names a user alone; every other key is
-    access.verb_ceiling with details.reason create_is_own_root_only there (ADR-0095 d3).
+    Workspaces view does (ADR-0070 d5); a person's admin session key (<user>-admin) creates anywhere in
+    the tenant, under universe included, as the admin Workspaces page does, a neutral admin act
+    (ADR-0097 d9, d29; since v0.8.6). Any key whose effective access at the parent comes from a grant
+    carrying create creates there, a shared parent included; under a node grant the child gets the same
+    grant in the create's commit, and a frozen parent refuses it with access.verb_ceiling,
+    details.reason parent_frozen (ADR-0097 d31; since v0.8.6). A node below a user root counts on that
+    account's workspaces meter, whoever creates it; past the account's limit the create is 429
+    limit.quota with details.quota workspaces, and nothing is journalled (ADR-0095 d4; since v0.8.5).
+    MCP's oml_write create_workspace rides this operation for a contributor key that names a user, and
+    for a key a grant carrying create admits at the parent; every other key is access.verb_ceiling with
+    details.reason create_is_own_root_only there (ADR-0095 d3; ADR-0097 d31).
 
     Args:
         x_request_id (str | Unset):

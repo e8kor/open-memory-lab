@@ -89,6 +89,7 @@ fn plain(n: u128, node: Uuid, role: Role, deny: &[Uuid]) -> Grant {
         role,
         deny: deny.to_vec(),
         covers: Covers::Subtree,
+        create: false,
     }
 }
 

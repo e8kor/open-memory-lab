@@ -530,6 +530,17 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "role": role.as_str(),
             "reason": "create_is_own_root_only",
         })),
+        AppError::ParentFrozen { workspace_id } => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "access.verb_ceiling",
+            "A grant carrying create admits a child under an unfrozen parent only; a frozen node never acquires a descendant (ADR-0097 d31; ADR-0009 d5).",
+            "create_workspace under a frozen parent is refused",
+        )
+        .with_details(json!({
+            "verb": "create_workspace",
+            "workspace_id": workspace_id.to_string(),
+            "reason": "parent_frozen",
+        })),
         AppError::TransitionPending { transition_id } => ApiError::new(
             StatusCode::CONFLICT,
             "proposal.pending",

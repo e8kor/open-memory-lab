@@ -487,9 +487,16 @@ struct KeysIssueArgs {
     default_workspace: Option<String>,
     /// Grant <workspace>:<role>, or <workspace>:<role>:node for one node; workspace
     /// may be id or name. Repeatable. For a contributor key, each submitter grant
-    /// brings a reader grant on the same workspace.
+    /// brings a reader grant on the same workspace. :create after the role lets
+    /// the key create child workspaces there; granting it waits on a second admin
+    /// person.
     #[arg(long = "grant", value_parser = parse_grant)]
     grants: Vec<(String, String)>,
+    /// Create the workspace <parent>/<name> in the same act and grant the key its
+    /// role's default grants on it, covering the subtree. Repeatable. Nothing is
+    /// created while the issuance waits on a second admin person.
+    #[arg(long = "create-workspace", value_name = "PARENT/NAME", value_parser = parse_new_workspace)]
+    create_workspaces: Vec<(String, String)>,
     /// Crew record (id or name), fixed for the key's life.
     #[arg(long)]
     crew: Option<String>,
@@ -582,6 +589,11 @@ struct IssueAgentArgs {
     /// ancestors also loads every readable ancestor. Defaults to ancestors.
     #[arg(long, value_parser = ["workspace", "ancestors"])]
     guardrail_scope: Option<String>,
+    /// Create the workspace <parent>/<name> in the same act and grant the key its
+    /// role's default grants on it, covering the subtree. Repeatable. Nothing is
+    /// created while the issuance waits on a second admin person.
+    #[arg(long = "create-workspace", value_name = "PARENT/NAME", value_parser = parse_new_workspace)]
+    create_workspaces: Vec<(String, String)>,
     #[command(flatten)]
     limits: KeyLimitArgs,
 }
@@ -1426,12 +1438,38 @@ fn parse_grant(s: &str) -> Result<(String, String), String> {
     let (node, role) = s
         .split_once(':')
         .ok_or_else(|| format!("{s:?} is not <workspace>:<role>"))?;
-    match role.split_once(':') {
-        None | Some((_, "node")) => Ok((node.to_owned(), role.to_owned())),
-        Some(_) => Err(format!(
-            "{s:?} is not <workspace>:<role> or <workspace>:<role>:node"
-        )),
+    // After the role, `node` (ADR-0044 d4) and `create` (ADR-0097 d31), each
+    // at most once, in either order.
+    let flags: Vec<&str> = role.split(':').skip(1).collect();
+    let known = flags.iter().all(|f| matches!(*f, "node" | "create"));
+    let once = flags.iter().filter(|f| **f == "node").count() <= 1
+        && flags.iter().filter(|f| **f == "create").count() <= 1;
+    if known && once {
+        Ok((node.to_owned(), role.to_owned()))
+    } else {
+        Err(format!(
+            "{s:?} is not <workspace>:<role>, with :node, :create or both after the role"
+        ))
     }
+}
+
+/// `--create-workspace <parent>/<name>`: the parent by id or name and the
+/// new workspace's name (ADR-0097 d30).
+fn parse_new_workspace(s: &str) -> Result<(String, String), String> {
+    match s.rsplit_once('/') {
+        Some((parent, name)) if !parent.is_empty() && !name.is_empty() => {
+            Ok((parent.to_owned(), name.to_owned()))
+        }
+        _ => Err(format!("{s:?} is not <parent>/<name>")),
+    }
+}
+
+/// The issuance body's `create_workspaces` (ADR-0097 d30).
+fn new_workspaces_json(created: &[(String, String)]) -> Vec<Value> {
+    created
+        .iter()
+        .map(|(parent, name)| json!({ "parent": parent, "name": name }))
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -1813,6 +1851,9 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 "used_by": args.used_by,
                 "grants": grants_json(&grants),
             });
+            if !args.create_workspaces.is_empty() {
+                body["create_workspaces"] = json!(new_workspaces_json(&args.create_workspaces));
+            }
             if let Some(wa) = &args.default_workspace {
                 body["default_workspace"] = json!(wa);
             }
@@ -2953,10 +2994,19 @@ fn crew_line(crew: &Value) -> String {
 fn grants_json(grants: &[(String, String)]) -> Vec<Value> {
     grants
         .iter()
-        .map(|(node, role)| match role.split_once(':') {
-            // A `:node` suffix is a grant on the node alone (ADR-0044 d4).
-            Some((role, covers)) => json!({ "workspace": node, "role": role, "covers": covers }),
-            None => json!({ "workspace": node, "role": role }),
+        .map(|(node, role)| {
+            let mut parts = role.split(':');
+            let mut grant = json!({ "workspace": node, "role": parts.next().unwrap_or_default() });
+            for flag in parts {
+                match flag {
+                    // A `:node` suffix is a grant on the node alone (ADR-0044 d4).
+                    "node" => grant["covers"] = json!("node"),
+                    // `:create` lets the key create children there (ADR-0097 d31).
+                    "create" => grant["create"] = json!(true),
+                    _ => {}
+                }
+            }
+            grant
         })
         .collect()
 }
@@ -4298,6 +4348,9 @@ fn run_issue_agent(
         "default_workspace": workspace,
         "grants": grants_json(&grants),
     });
+    if !args.create_workspaces.is_empty() {
+        body["create_workspaces"] = json!(new_workspaces_json(&args.create_workspaces));
+    }
     if let Some(crew) = &args.crew {
         body["crew"] = json!(crew);
     }
@@ -4394,10 +4447,11 @@ fn run_issue_agent(
                 .iter()
                 .map(|g| {
                     format!(
-                        "{}:{}{}",
+                        "{}:{}{}{}",
                         field(g, "workspace_node_id"),
                         field(g, "role"),
-                        if g["covers"] == "node" { ":node" } else { "" }
+                        if g["covers"] == "node" { ":node" } else { "" },
+                        if g["create"] == true { ":create" } else { "" }
                     )
                 })
                 .collect()
@@ -8493,6 +8547,28 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn a_grant_takes_node_and_create_after_its_role_and_a_new_workspace_is_parent_slash_name() {
+        let (node, role) = parse_grant("crew:submitter:create").expect("a grant");
+        assert_eq!(
+            grants_json(&[(node, role)]),
+            [json!({ "workspace": "crew", "role": "submitter", "create": true })]
+        );
+        let both = parse_grant("crew:reader:create:node").expect("a grant");
+        assert_eq!(
+            grants_json(&[both]),
+            [json!({ "workspace": "crew", "role": "reader", "covers": "node", "create": true })]
+        );
+        assert!(parse_grant("crew:reader:create:create").is_err());
+        assert!(parse_grant("crew:reader:everything").is_err());
+        assert_eq!(
+            parse_new_workspace("universe.crew/alpha"),
+            Ok(("universe.crew".to_owned(), "alpha".to_owned()))
+        );
+        assert!(parse_new_workspace("alpha").is_err());
+        assert!(parse_new_workspace("crew/").is_err());
+    }
 
     #[test]
     fn doctor_warns_a_reviewer_key_that_is_not_a_persons_that_instructions_need_a_person() {

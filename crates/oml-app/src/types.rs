@@ -2180,6 +2180,9 @@ pub struct IssueKeyRequest {
     /// [`KEY_REQUESTS_PER_MINUTE_MAX`]; `None` gives it none, and an admin
     /// key takes no other (ADR-0079 d4).
     pub requests_per_minute: Option<u32>,
+    /// The workspaces this issuance creates in the same act, each granted
+    /// to the key by its role's default grants (ADR-0097 d30).
+    pub create_workspaces: Vec<NewWorkspace>,
 }
 
 /// One requested grant: a role over the subtree of `node`, less the
@@ -2192,6 +2195,19 @@ pub struct GrantRequest {
     pub deny: Vec<Reference>,
     /// The node's subtree, the default, or the node alone (ADR-0044 d4).
     pub covers: Covers,
+    /// The grant lets the key create child workspaces where it reaches
+    /// (ADR-0097 d31); granting it is widening.
+    pub create: bool,
+}
+
+/// A workspace an issuance creates in its own act, named `name` under
+/// `parent` (by id or name, in the key's user root's namespace for a user
+/// key), on which the key gets the grants its role takes by default,
+/// covering the subtree (ADR-0097 d30).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewWorkspace {
+    pub parent: Reference,
+    pub name: Name,
 }
 
 /// `POST /v2/crews` (http-api.md crews; ADR-0026 d8): every field but the
@@ -4538,6 +4554,11 @@ pub enum AppError {
     /// `create_is_own_root_only`; ADR-0095 d3).
     #[error("an agent creates a workspace only inside its own person's root (ADR-0095 d3)")]
     CreateIsOwnRootOnly { role: Role },
+    /// A create admitted by a grant carrying `create` under a `frozen`
+    /// parent (`access.verb_ceiling`, `details.reason: parent_frozen`;
+    /// ADR-0097 d31).
+    #[error("workspace {workspace_id} is frozen: no child is created under it (ADR-0097 d31)")]
+    ParentFrozen { workspace_id: Uuid },
     /// A workspace already holds a live proposal to this status
     /// (`proposal.pending`, `details.transition_id`; ADR-0095 d5, #515).
     #[error("a live proposal to this status is pending (ADR-0095 d5)")]

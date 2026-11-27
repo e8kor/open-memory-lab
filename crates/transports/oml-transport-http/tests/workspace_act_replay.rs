@@ -113,6 +113,7 @@ async fn world() -> World {
                 role,
                 deny: Vec::new(),
                 covers: Covers::Subtree,
+                create: false,
             })
         })
         .collect();
@@ -133,6 +134,7 @@ async fn world() -> World {
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -328,6 +330,7 @@ async fn world_at_one_request_a_minute() -> World {
         guardrail_scope: None,
         expiry: None,
         requests_per_minute: None,
+        create_workspaces: Vec::new(),
     };
     // The first key naming ann creates her root (ADR-0044 d3).
     let first = app
@@ -358,6 +361,7 @@ async fn world_at_one_request_a_minute() -> World {
                 role,
                 deny: Vec::new(),
                 covers: Covers::Subtree,
+                create: false,
             })
         })
         .collect();

@@ -28,6 +28,8 @@ class Grant:
         epoch (int): The journal seq of this grant's grant.issued event.
         deny (list[GrantDenyItem] | Unset):
         covers (GrantCovers | Unset): The node's subtree, or the node alone (ADR-0044 d4).
+        create (bool | Unset): Whether the grant lets its key create child workspaces where it reaches (ADR-0097 d31).
+            Since v0.8.6.
     """
 
     grant_id: str
@@ -36,6 +38,7 @@ class Grant:
     epoch: int
     deny: list[GrantDenyItem] | Unset = UNSET
     covers: GrantCovers | Unset = UNSET
+    create: bool | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -58,6 +61,8 @@ class Grant:
         if not isinstance(self.covers, Unset):
             covers = self.covers.value
 
+        create = self.create
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -72,6 +77,8 @@ class Grant:
             field_dict["deny"] = deny
         if covers is not UNSET:
             field_dict["covers"] = covers
+        if create is not UNSET:
+            field_dict["create"] = create
 
         return field_dict
 
@@ -104,6 +111,8 @@ class Grant:
         else:
             covers = GrantCovers(_covers)
 
+        create = d.pop("create", UNSET)
+
         grant = cls(
             grant_id=grant_id,
             workspace_node_id=workspace_node_id,
@@ -111,6 +120,7 @@ class Grant:
             epoch=epoch,
             deny=deny,
             covers=covers,
+            create=create,
         )
 
         grant.additional_properties = d

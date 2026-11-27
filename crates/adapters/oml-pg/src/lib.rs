@@ -2488,7 +2488,7 @@ async fn key_access_in(
         return Ok(None);
     };
     let grants = sqlx::query(
-        "SELECT id, role, workspace_node_id, deny, epoch, covers FROM grants \
+        "SELECT id, role, workspace_node_id, deny, epoch, covers, may_create FROM grants \
          WHERE tenant_id = $1 AND key_id = $2 ORDER BY epoch ASC, id ASC",
     )
     .bind(tenant_id)
@@ -2533,6 +2533,7 @@ async fn key_access_in(
                     covers: Covers::parse(&covers).ok_or_else(|| {
                         StoreError::Backend(format!("grants.covers {covers:?} is not a coverage"))
                     })?,
+                    create: row.try_get("may_create").map_err(backend)?,
                 },
                 epoch: seq_from_column(row, "epoch")?,
             })
@@ -5458,7 +5459,7 @@ async fn apply_fold(
         MetadataFold::GrantIssued { key_id, grant } => {
             sqlx::query(
                 "INSERT INTO grants (id, tenant_id, key_id, role, workspace_node_id, deny, epoch, \
-                 covers) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                 covers, may_create) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
             )
             .bind(grant.grant_id)
             .bind(tenant_id)
@@ -5468,6 +5469,7 @@ async fn apply_fold(
             .bind(deny_to_json(&grant.deny))
             .bind(seq)
             .bind(grant.covers.as_str())
+            .bind(grant.create)
             .execute(&mut **tx)
             .await
             .map_err(backend)?;
@@ -13232,7 +13234,7 @@ impl WebStore for PgStore {
         .collect::<Result<Vec<_>, _>>()?;
         let ids: Vec<Uuid> = keys.iter().map(|k| k.key_id).collect();
         let grants = sqlx::query(
-            "SELECT key_id, id, role, workspace_node_id, deny, covers FROM grants \
+            "SELECT key_id, id, role, workspace_node_id, deny, covers, may_create FROM grants \
              WHERE tenant_id = $1 AND key_id = ANY($2) ORDER BY epoch ASC, id ASC",
         )
         .bind(tenant_id)
@@ -13271,6 +13273,7 @@ impl WebStore for PgStore {
                 covers: Covers::parse(&covers).ok_or_else(|| {
                     StoreError::Backend(format!("grants.covers {covers:?} is not a coverage"))
                 })?,
+                create: row.try_get("may_create").map_err(backend)?,
             };
             let key_id: Uuid = row.try_get("key_id").map_err(backend)?;
             if let Some(r) = out.iter_mut().find(|r| r.key.key_id == key_id) {
