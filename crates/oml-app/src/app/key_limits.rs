@@ -51,8 +51,13 @@ where
         }
         // A suspended key authenticates nothing; one suspended as unlinked
         // at the upgrade still reaches its one route (d8, d21).
+        // The unlinked key's one route lasts the upgrade window's thirty
+        // days, read off the row (the production migration).
         if let Some(suspension) = &key.suspended
-            && !(unlinked && suspension.cause == crate::types::SuspensionCause::Unlinked)
+            && !(unlinked
+                && suspension.cause == crate::types::SuspensionCause::Unlinked
+                && self.clock.now().unix_micros() - suspension.at.unix_micros()
+                    < crate::types::UNLINKED_ADMIN_KEY_WINDOW_SECS * 1_000_000)
         {
             return Err(AppError::KeySuspended);
         }

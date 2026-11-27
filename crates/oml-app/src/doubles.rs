@@ -2036,6 +2036,11 @@ fn apply_fold(
                 .web_sessions
                 .retain(|_, s| !ended.contains(&s.email_hash));
         }
+        MetadataFold::UserEnabled { user } => {
+            for entry in state.web_entries.values_mut().filter(|e| e.user == user) {
+                entry.disabled_at = None;
+            }
+        }
         MetadataFold::DeletionRequested { user } => {
             let pending = state
                 .deletion_requests
@@ -6499,6 +6504,15 @@ impl WebStore for MemStore {
     ) -> Result<Vec<KeyRecord>, StoreError> {
         Ok(self.tenant_keys(tenant_id, |k| {
             k.linked_user == Some(user_root) || k.link_pending == Some(user_root)
+        }))
+    }
+
+    async fn web_unlinked_admin_keys(&self, tenant_id: Uuid) -> Result<Vec<KeyRecord>, StoreError> {
+        Ok(self.tenant_keys(tenant_id, |k| {
+            k.revoked_at.is_none()
+                && k.role == Role::Admin
+                && k.credential == Credential::Bearer
+                && k.linked_user.is_none()
         }))
     }
 

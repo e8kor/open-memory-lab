@@ -51,6 +51,8 @@ struct World {
     tenant: uuid::Uuid,
     admin: String,
     admin_name: &'static str,
+    /// A second admin key, bob's (ADR-0097 d21).
+    second: String,
 }
 
 async fn world() -> World {
@@ -72,8 +74,11 @@ async fn world() -> World {
         })
         .await
         .expect("bootstrap");
+    let second =
+        support::linked_admin_key(&app, &boot.admin_key.value, "bob", "second-admin").await;
     World {
         router: state(&store, app).into_router(),
+        second,
         clock,
         tenant: boot.tenant_id,
         admin: boot.admin_key.value,
@@ -716,16 +721,11 @@ async fn an_admin_key_is_issued_with_no_limit_and_given_none_by_another_admin_ke
     }
     assert_eq!(w.head_seq().await, head, "nothing journalled");
 
-    let (status, _, second) = w
-        .post(
-            "/v2/keys",
-            &w.admin,
-            &admin_key_body("second-admin", &json!({})),
-        )
-        .await;
-    assert_eq!(status, StatusCode::CREATED, "{second}");
+    // The second admin key, bob's (ADR-0097 d21), carries no limit.
+    let (_, _, second) = w.get("/v2/keys/second-admin", &w.admin).await;
     assert_eq!(second["expiry"], Value::Null);
     assert_eq!(second["requests_per_minute"], Value::Null);
+    let second = json!({ "value": w.second });
     let head = w.head_seq().await;
     for (caller, target, change) in [
         // The second key clears the first's limits.

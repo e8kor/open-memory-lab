@@ -756,6 +756,19 @@ where
         user: &Name,
         workspace: Reference,
     ) -> Result<CapacityGranted, AppError> {
+        self.grant_review_capacity_with_reason(admin, user, workspace, None)
+            .await
+    }
+
+    /// [`Self::grant_review_capacity`] with the admin's reason, which a grant that waits on
+    /// a second admin person requires (ADR-0097 d5, d26).
+    pub async fn grant_review_capacity_with_reason(
+        &self,
+        admin: &Caller,
+        user: &Name,
+        workspace: Reference,
+        reason: Option<&str>,
+    ) -> Result<CapacityGranted, AppError> {
         require_role(admin, Role::Admin, "grant_review")?;
         let review = self
             .session_key_of(admin.key.tenant_id, user, Capacity::Review)
@@ -767,7 +780,9 @@ where
             deny: Vec::new(),
             covers: Covers::Subtree,
         });
-        let added = self.add_grants(&admin.key, &review, &grants).await?;
+        let added = self
+            .add_grants(&admin.key, &review, &grants, reason)
+            .await?;
         Ok(CapacityGranted {
             key: review,
             grants_added: added,
@@ -785,6 +800,19 @@ where
         user: &Name,
         workspace: Reference,
     ) -> Result<CapacityGranted, AppError> {
+        self.grant_read_capacity_with_reason(admin, user, workspace, None)
+            .await
+    }
+
+    /// [`Self::grant_read_capacity`] with the admin's reason, which a grant that waits on
+    /// a second admin person requires (ADR-0097 d5, d26).
+    pub async fn grant_read_capacity_with_reason(
+        &self,
+        admin: &Caller,
+        user: &Name,
+        workspace: Reference,
+        reason: Option<&str>,
+    ) -> Result<CapacityGranted, AppError> {
         require_role(admin, Role::Admin, "grant_read")?;
         let web = self
             .session_key_of(admin.key.tenant_id, user, Capacity::Web)
@@ -796,7 +824,7 @@ where
             deny: Vec::new(),
             covers: Covers::Subtree,
         };
-        let added = self.add_grants(&admin.key, &web, &[reader]).await?;
+        let added = self.add_grants(&admin.key, &web, &[reader], reason).await?;
         Ok(CapacityGranted {
             key: web,
             grants_added: added,
@@ -814,6 +842,19 @@ where
         user: &Name,
         workspace: Reference,
     ) -> Result<CapacityGranted, AppError> {
+        self.grant_curation_capacity_with_reason(admin, user, workspace, None)
+            .await
+    }
+
+    /// [`Self::grant_curation_capacity`] with the admin's reason, which a grant that waits on
+    /// a second admin person requires (ADR-0097 d5, d26).
+    pub async fn grant_curation_capacity_with_reason(
+        &self,
+        admin: &Caller,
+        user: &Name,
+        workspace: Reference,
+        reason: Option<&str>,
+    ) -> Result<CapacityGranted, AppError> {
         require_role(admin, Role::Admin, "grant_curation")?;
         let tenant_id = admin.key.tenant_id;
         let reader = GrantRequest {
@@ -826,7 +867,9 @@ where
             .session_key_of(tenant_id, user, Capacity::Curate)
             .await?
         {
-            let added = self.add_grants(&admin.key, &curate, &[reader]).await?;
+            let added = self
+                .add_grants(&admin.key, &curate, &[reader], reason)
+                .await?;
             return Ok(CapacityGranted {
                 key: curate,
                 grants_added: added,
@@ -897,6 +940,7 @@ where
         admin: &KeyRecord,
         key: &KeyRecord,
         grants: &[GrantRequest],
+        reason: Option<&str>,
     ) -> Result<Vec<GrantRecord>, AppError> {
         let tenant_id = admin.tenant_id;
         let held = self
@@ -949,7 +993,7 @@ where
                     "role": key.role.as_str(),
                     "principal": key.principal,
                 }),
-                None,
+                reason,
                 serde_json::json!({
                     "key_id": key.key_id.to_string(),
                     "grants": resolved.iter().map(super::admin_acts::grant_json).collect::<Vec<_>>(),

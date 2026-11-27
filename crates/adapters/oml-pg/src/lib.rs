@@ -5278,6 +5278,16 @@ async fn apply_fold(
             .await
             .map_err(backend)?;
         }
+        MetadataFold::UserEnabled { user } => {
+            sqlx::query(
+                "UPDATE web_emails SET disabled_at = NULL WHERE tenant_id = $1 AND user_name = $2",
+            )
+            .bind(tenant_id)
+            .bind(user.as_str())
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+        }
         MetadataFold::DeletionRequested { user } => {
             sqlx::query(
                 "INSERT INTO web_deletion_requests (tenant_id, user_name, requested_at) \
@@ -6759,6 +6769,7 @@ async fn meter_plan(
         | MetadataFold::QuotaSet { .. }
         | MetadataFold::AccountProfileSet { .. }
         | MetadataFold::UserDisabled { .. }
+        | MetadataFold::UserEnabled { .. }
         | MetadataFold::DeletionRequested { .. }
         | MetadataFold::DeletionClosed { .. }
         | MetadataFold::TransitionProposed(_)
@@ -13245,6 +13256,16 @@ impl WebStore for PgStore {
             tenant_id,
             "(linked_user_id = $2 OR link_pending_user_id = $2)",
             |q| q.bind(user_root),
+        )
+        .await
+    }
+
+    async fn web_unlinked_admin_keys(&self, tenant_id: Uuid) -> Result<Vec<KeyRecord>, StoreError> {
+        self.keys_where(
+            tenant_id,
+            "revoked_at IS NULL AND role = 'admin' AND credential = 'bearer' \
+             AND linked_user_id IS NULL",
+            |q| q,
         )
         .await
     }

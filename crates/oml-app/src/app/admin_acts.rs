@@ -123,7 +123,7 @@ fn grant_from_json(value: &Value) -> Result<Grant, AppError> {
 }
 
 /// The `admin.act` payload of `record` (ADR-0097 d2).
-fn act_payload(record: &AdminActRecord) -> Value {
+pub(crate) fn act_payload(record: &AdminActRecord) -> Value {
     json!({
         "act_id": record.act_id.to_string(),
         "act": record.act.as_str(),
@@ -178,6 +178,14 @@ where
         if reason.is_none() && act.requires_reason() && !sole_admin {
             return Err(AppError::AdminActReasonRequired);
         }
+        // During a freeze both parties lose widening and the initiator acts
+        // against an admin (ADR-0097 d8).
+        self.check_freeze(
+            tenant_id,
+            self.counted_person_of(admin).await?.as_ref(),
+            act,
+        )
+        .await?;
         if let Some(reason) = reason {
             self.scan_veto_only(tenant_id, "reason", reason)?;
         }
@@ -199,7 +207,12 @@ where
             // A widening act keeps what it applies, pending or taken at once
             // under `sole_admin`, so a confirmation applies it and a decline
             // undoes it (d10, d23; the operator's decision of 2026-11-27).
-            effect: if act.class() == AdminActClass::Widening {
+            // An act against an admin keeps the entry it found, which a
+            // contest or a reversal restores (d8).
+            effect: if matches!(
+                act.class(),
+                AdminActClass::Widening | AdminActClass::AgainstAdmin
+            ) {
                 effect
             } else {
                 json!({})
@@ -238,6 +251,37 @@ where
         ))
     }
 
+    /// One effect event under an admin act of `kind` taken at once, in one
+    /// chain led by the act's envelope, the effect naming its `act_id`; with
+    /// no admin act where `caller` is no admin key (ADR-0097 d2). For the
+    /// acts whose class is narrowing or neutral: crews, a workspace's crew,
+    /// a rotation, a rescan, a connection's revocation (d3, d9).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn commit_as_act(
+        &self,
+        caller: &KeyRecord,
+        kind: AdminActKind,
+        target: Value,
+        reason: Option<&str>,
+        event_type: &str,
+        payload: Value,
+        fold: MetadataFold,
+    ) -> Result<crate::ports::CommitReceipt, AppError> {
+        let prev = self.head_event(caller.tenant_id).await?;
+        let act = self
+            .admin_act_of(caller, kind, target, reason, prev.as_ref())
+            .await?;
+        let event = self.seal(
+            act.as_ref().map(|a| &a.event).or(prev.as_ref()),
+            caller.tenant_id,
+            event_type,
+            &caller.principal,
+            Some(caller.key_id),
+            named(payload, act.as_ref()),
+        )?;
+        self.commit_with_act(act, vec![(event, fold)]).await
+    }
+
     /// Commits `links`, led by `act`'s envelope where there is one, as one
     /// chain (ADR-0097 d2).
     pub(crate) async fn commit_with_act(
@@ -267,7 +311,7 @@ where
                 .admin_acts(tenant_id, Some(state))
                 .await?
                 .iter()
-                .any(|a| a.class() == AdminActClass::AgainstAdmin)
+                .any(|a| a.act.contestable())
             {
                 return Ok(true);
             }

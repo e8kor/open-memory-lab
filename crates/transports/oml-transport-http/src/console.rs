@@ -157,6 +157,11 @@ fn grant_json(grant: &GrantRecord) -> Value {
 struct CapacitiesBody {
     capacity: String,
     workspaces: Vec<String>,
+    /// The admin's reason, scanned and journalled in each grant's
+    /// `admin.act`; required when the grant waits on a second admin person
+    /// (ADR-0097 d5, d26).
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -186,7 +191,12 @@ where
 /// refused, never dropped.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DisableBody {}
+struct DisableBody {
+    /// The admin's reason, which disabling another admin person requires
+    /// (ADR-0097 d8, d26).
+    #[serde(default)]
+    reason: Option<String>,
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -887,7 +897,11 @@ where
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(
             StatusCode::OK,
-            &json!({ "alerts": counts.alerts, "truncated": counts.truncated }),
+            &json!({
+                "alerts": counts.alerts,
+                "acts_to_confirm": counts.acts_to_confirm,
+                "truncated": counts.truncated,
+            }),
         ))
     }
 
@@ -1030,26 +1044,43 @@ where
             .map(|(i, w)| reference(&format!("/workspaces/{i}"), w))
             .collect::<Result<_, _>>()?;
         let st = st.clone();
+        let reason = req.reason.clone();
         claim
             .run(async move {
                 let mut key = None;
                 let mut added = Vec::new();
+                let reason = reason.as_deref();
                 for workspace in workspaces {
                     let granted = retry_chain(|| async {
                         match capacity {
                             "curate" => {
                                 st.app
-                                    .grant_curation_capacity(&caller, &user, workspace.clone())
+                                    .grant_curation_capacity_with_reason(
+                                        &caller,
+                                        &user,
+                                        workspace.clone(),
+                                        reason,
+                                    )
                                     .await
                             }
                             "read" => {
                                 st.app
-                                    .grant_read_capacity(&caller, &user, workspace.clone())
+                                    .grant_read_capacity_with_reason(
+                                        &caller,
+                                        &user,
+                                        workspace.clone(),
+                                        reason,
+                                    )
                                     .await
                             }
                             _ => {
                                 st.app
-                                    .grant_review_capacity(&caller, &user, workspace.clone())
+                                    .grant_review_capacity_with_reason(
+                                        &caller,
+                                        &user,
+                                        workspace.clone(),
+                                        reason,
+                                    )
                                     .await
                             }
                         }
@@ -1417,15 +1448,21 @@ where
             Claimed::Act(claim) => claim,
         };
         let user = user_param(user)?;
-        if !body.is_empty() {
-            let _: DisableBody = parse_json(headers, body)?;
-        }
+        let reason = if body.is_empty() {
+            None
+        } else {
+            let req: DisableBody = parse_json(headers, body)?;
+            req.reason
+        };
         let st = st.clone();
         claim
             .run(async move {
-                let done = retry_chain(|| st.app.disable_web_user(&caller, &user))
-                    .await
-                    .map_err(|e| ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
+                let done = retry_chain(|| {
+                    st.app
+                        .disable_web_user_with_reason(&caller, &user, reason.as_deref())
+                })
+                .await
+                .map_err(|e| ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
                 Ok(Acted::new(
                     StatusCode::OK,
                     json!({ "keys_cut_off": done.keys_cut_off, "journal_seq": done.journal_seq }),

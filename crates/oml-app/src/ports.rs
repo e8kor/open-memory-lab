@@ -647,6 +647,12 @@ pub enum MetadataFold {
     UserDisabled {
         user: Name,
     },
+    /// `web.user_enabled`: every entry naming `user` signs in again from
+    /// this commit on; the keys a disable cut off stay cut off (ADR-0097
+    /// d8: a contest restores the flag and sign-in only).
+    UserEnabled {
+        user: Name,
+    },
     /// `web.deletion_requested`: the person's pending request, at the
     /// commit's time; a second request while one is pending changes nothing
     /// (ADR-0068 d6).
@@ -2303,6 +2309,14 @@ pub trait WebStore: JournalStore {
         &self,
         tenant_id: Uuid,
         user_root: Uuid,
+    ) -> impl Future<Output = Result<Vec<KeyRecord>, StoreError>> + Send;
+
+    /// The tenant's live bearer admin keys with no accepted link, in name
+    /// order: the keys the upgrade window suspends (ADR-0097 d21, the
+    /// production migration).
+    fn web_unlinked_admin_keys(
+        &self,
+        tenant_id: Uuid,
     ) -> impl Future<Output = Result<Vec<KeyRecord>, StoreError>> + Send;
 
     /// The tenant's live keys whose link waits on its person's acceptance,

@@ -73,7 +73,7 @@ pub const OPERATIONS: [&str; 47] = [
     "listWebEmails GET /v2/web/emails query:limit,cursor resp:WebEmailPage",
     "allowWebEmail POST /v2/web/emails body:email,user,admin,keep_an_admin resp:WebEmail",
     "removeWebEmail POST /v2/web/emails/remove body:email,keep_an_admin resp:Removed",
-    "grantWebCapacities POST /v2/web/users/{user}/capacities body:capacity,workspaces resp:CapacityGranted",
+    "grantWebCapacities POST /v2/web/users/{user}/capacities body:capacity,workspaces,reason resp:CapacityGranted",
     "listWebUsers GET /v2/web/users resp:WebUsers",
     "setWebUserQuota POST /v2/web/users/{user}/quota body:memories,keys,connections,requests_per_minute resp:WebUser",
     "disableWebUser POST /v2/web/users/{user}/disable resp:Disabled",
@@ -3532,12 +3532,19 @@ impl<T: Transport> Client<T> {
         user: &str,
         capacity: &str,
         workspace: &str,
+        reason: Option<&str>,
     ) -> Result<CapacityGranted, Error> {
+        let mut body = serde_json::json!({ "capacity": capacity, "workspaces": [workspace] });
+        // The admin's reason, which a grant waiting on a second admin
+        // person requires (ADR-0097 d5, d26).
+        if let Some(reason) = reason {
+            body["reason"] = serde_json::json!(reason);
+        }
         self.post(
             call,
             format!("/v2/web/users/{}/capacities", encode(user)),
             idempotency_key,
-            &serde_json::json!({ "capacity": capacity, "workspaces": [workspace] }),
+            &body,
         )
         .await
     }
@@ -3953,7 +3960,7 @@ mod tests {
             ),
             decodes(
                 &client
-                    .grant_web_capacity(&CALL, "idem-14", "alice", "review", "alice")
+                    .grant_web_capacity(&CALL, "idem-14", "alice", "review", "alice", None)
                     .await,
             ),
             decodes(&client.list_web_users(&CALL).await),

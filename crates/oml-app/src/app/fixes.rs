@@ -454,6 +454,31 @@ where
         self.scan_veto_only(admin.tenant_id, "reason", reason)?;
         let fix_id = self.ids.new_id();
         let prev = self.head_event(admin.tenant_id).await?;
+        // Every fix rides an admin act, first in its chain: a content fix
+        // is narrowing and keeps ADR-0089's settlement; an erase is its own
+        // class (ADR-0097 d2, d3, d4; the split shred of d4 is not built,
+        // so the erase still shreds at once).
+        let act = self
+            .begin_admin_act(
+                &admin,
+                if req.act == FixAct::Erase {
+                    oml_domain::admin_act::AdminActKind::Erase
+                } else {
+                    oml_domain::admin_act::AdminActKind::Fix
+                },
+                json!({
+                    "fix_id": fix_id.to_string(),
+                    "act": req.act.as_str(),
+                    "target": req.target.to_string(),
+                }),
+                Some(reason),
+                json!({}),
+                prev.as_ref(),
+            )
+            .await?;
+        let act_id = act.act_id();
+        let (act_event, act_fold) = act.link();
+        let prev = Some(act_event.clone());
         let (links, fix) = match req.act {
             FixAct::Demote => {
                 self.demote_fix(
@@ -506,6 +531,7 @@ where
             &admin.principal,
             Some(admin.key_id),
             json!({
+                "act_id": act_id.to_string(),
                 "fix_id": fix.fix_id.to_string(),
                 "act": fix.act.as_str(),
                 "targets": [fix.target_id.to_string()],
@@ -523,7 +549,9 @@ where
             fixed_at: fix_event.envelope.at.clone(),
             ..fix
         };
-        let mut links = links;
+        let mut links = std::iter::once(commit_request(act_event, act_fold, None))
+            .chain(links)
+            .collect::<Vec<_>>();
         links.push(commit_request(
             fix_event,
             MetadataFold::AdminFixRecorded(Box::new(fix.clone())),
@@ -1621,6 +1649,16 @@ pub struct FixStats {
     /// (`admin.narrowing_burst`, flagged past 20, a placeholder; ADR-0097
     /// d24).
     pub narrowing_burst: u64,
+    /// Admin keys suspended while an act against their person is open
+    /// (`admin.key_suspended`, ADR-0097 d8, d21).
+    pub keys_suspended: u64,
+    /// Admin keys suspended as unlinked at the upgrade, and the fewest
+    /// days left of their window (`admin.key_unlinked_suspended`).
+    pub keys_unlinked_suspended: u64,
+    pub unlinked_days_left: u64,
+    /// Open acts against an admin below three admin persons: a freeze
+    /// (`admin.dispute_open`, critical, ADR-0097 d8).
+    pub disputes_open: u64,
 }
 
 impl<J, S, C, I, Sc> App<J, S, C, I, Sc>
@@ -1687,6 +1725,43 @@ where
             }
         }
         stats.narrowing_burst = burst.into_values().max().unwrap_or(0);
+        // The suspensions (ADR-0097 d8, d21) and the freeze (d8).
+        let window = crate::types::UNLINKED_ADMIN_KEY_WINDOW_SECS * 1_000_000;
+        let mut days_left: Option<u64> = None;
+        for key in self.journal.web_unlinked_admin_keys(tenant_id).await? {
+            if let Some(s) = key
+                .suspended
+                .as_ref()
+                .filter(|s| s.cause == crate::types::SuspensionCause::Unlinked)
+            {
+                stats.keys_unlinked_suspended += 1;
+                let left =
+                    (window - (now.unix_micros() - s.at.unix_micros())).max(0) / 86_400_000_000;
+                let left = u64::try_from(left).unwrap_or(0);
+                days_left = Some(days_left.map_or(left, |d| d.min(left)));
+            }
+        }
+        stats.unlinked_days_left = days_left.unwrap_or(0);
+        for act in self.open_disputes(tenant_id).await? {
+            if let Some(user) = act
+                .target
+                .get("user")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|u| oml_domain::name::Name::parse(u).ok())
+            {
+                stats.keys_suspended += self
+                    .admin_keys_of(tenant_id, &user)
+                    .await?
+                    .iter()
+                    .filter(|k| {
+                        k.suspended
+                            .as_ref()
+                            .is_some_and(|s| s.act_id == Some(act.act_id))
+                    })
+                    .count() as u64;
+            }
+        }
+        stats.disputes_open = u64::from(self.freeze(tenant_id).await?.is_some());
         if all.is_empty() {
             return Ok(stats);
         }

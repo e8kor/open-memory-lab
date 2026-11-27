@@ -164,6 +164,9 @@ pub mod event_types {
     /// An admin disabled a person: their entries and sessions end and
     /// their agent keys are cut off (ADR-0068 d8).
     pub const WEB_USER_DISABLED: &str = "web.user_disabled";
+    /// A disabled person's entries sign in again: the contest of an act
+    /// against an admin that disabled them, or its reversal (ADR-0097 d8).
+    pub const WEB_USER_ENABLED: &str = "web.user_enabled";
     /// A person asked for their account to be deleted (ADR-0068 d6).
     pub const WEB_DELETION_REQUESTED: &str = "web.deletion_requested";
     /// An admin closed a deletion request by disabling the person; the

@@ -307,45 +307,63 @@ where
             .flatten();
         let recorded_n = recorded.len() as u64;
         if !recorded.is_empty() {
+            // The rescan that records is a neutral admin act: it triggers
+            // the server's scanner and takes no finding as input (ADR-0097
+            // d9).
             let prev = self.head_event(tenant_id).await?;
+            let act = self
+                .admin_act_of(
+                    &admin,
+                    oml_domain::admin_act::AdminActKind::Rescan,
+                    json!({ "after_seq": after_seq, "recorded": recorded.len() }),
+                    None,
+                    prev.as_ref(),
+                )
+                .await?;
+            let prev = act.as_ref().map(|a| a.event.clone()).or(prev);
             let event = self.seal(
                 prev.as_ref(),
                 tenant_id,
                 event_types::SCAN_FINDINGS_RECORDED,
                 &admin.principal,
                 Some(admin.key_id),
-                json!({
-                    "scanned_under": current,
-                    "versions": recorded.iter().map(|(id, found)| json!({
-                        "artifact_id": id.to_string(),
-                        "findings": found.iter().map(|(_, f)| json!({
-                            "class": f.class,
-                            "rule": f.rule,
-                            "action": if f.veto { "veto" } else { "hold" },
-                            "at": f.at,
+                super::admin_acts::named(
+                    json!({
+                        "scanned_under": current,
+                        "versions": recorded.iter().map(|(id, found)| json!({
+                            "artifact_id": id.to_string(),
+                            "findings": found.iter().map(|(_, f)| json!({
+                                "class": f.class,
+                                "rule": f.rule,
+                                "action": if f.veto { "veto" } else { "hold" },
+                                "at": f.at,
+                            })).collect::<Vec<_>>(),
                         })).collect::<Vec<_>>(),
-                    })).collect::<Vec<_>>(),
-                }),
+                    }),
+                    act.as_ref(),
+                ),
             )?;
-            self.commit(
-                event,
-                MetadataFold::FindingsRecorded {
-                    scanned_under: current.map(str::to_owned),
-                    versions: recorded
-                        .iter()
-                        .map(|(id, found)| RecordedVersion {
-                            memory_id: *id,
-                            summary: finding_reason(found),
-                            findings: found
-                                .iter()
-                                .map(|(field, f)| {
-                                    version_finding(f, field.clone(), current, FoundBy::Rescan)
-                                })
-                                .collect::<Vec<VersionFinding>>(),
-                        })
-                        .collect(),
-                },
-                None,
+            self.commit_with_act(
+                act,
+                vec![(
+                    event,
+                    MetadataFold::FindingsRecorded {
+                        scanned_under: current.map(str::to_owned),
+                        versions: recorded
+                            .iter()
+                            .map(|(id, found)| RecordedVersion {
+                                memory_id: *id,
+                                summary: finding_reason(found),
+                                findings: found
+                                    .iter()
+                                    .map(|(field, f)| {
+                                        version_finding(f, field.clone(), current, FoundBy::Rescan)
+                                    })
+                                    .collect::<Vec<VersionFinding>>(),
+                            })
+                            .collect(),
+                    },
+                )],
             )
             .await?;
         }

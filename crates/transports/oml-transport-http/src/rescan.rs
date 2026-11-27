@@ -66,6 +66,10 @@ fn report_json(r: &RescanReport, fixes: &oml_app::app::FixStats) -> Value {
         "admin_acts_expired": fixes.acts_expired,
         "admin_acts_offensive": fixes.acts_offensive,
         "admin_narrowing_burst": fixes.narrowing_burst,
+        "admin_keys_suspended": fixes.keys_suspended,
+        "admin_keys_unlinked_suspended": fixes.keys_unlinked_suspended,
+        "admin_unlinked_days_left": fixes.unlinked_days_left,
+        "admin_disputes_open": fixes.disputes_open,
     })
 }
 

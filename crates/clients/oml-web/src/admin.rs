@@ -222,9 +222,13 @@ pub async fn people_page(
             action,
             &csrf,
             &format!(
-                "{}{}{}",
+                "{}{}{}{}",
                 input("user", "user", "", true),
                 input("workspace", label, "", true),
+                // The reason a grant that waits on another admin requires
+                // (ADR-0097 d5, d26); a tenant that has only ever had one
+                // admin person takes it empty.
+                input("reason", "reason (waits on another admin)", "", false),
                 acts::nonce_field()
             ),
             button,
@@ -421,6 +425,10 @@ pub async fn people_act(
                     fields.given("user").unwrap_or_default().trim(),
                     capacity,
                     fields.given("workspace").unwrap_or_default().trim(),
+                    fields
+                        .given("reason")
+                        .map(str::trim)
+                        .filter(|r| !r.is_empty()),
                 )
                 .await
                 .map(|_| "granted")

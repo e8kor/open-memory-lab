@@ -890,15 +890,29 @@ enum AdminCommand {
         /// The act's id, listed by `oml admin acts`.
         act: String,
     },
-    /// Decline a pending admin act, which then never takes effect, or revoke
-    /// a key issued at once in a tenant with one admin person. Journals
-    /// admin.act.
+    /// Decline a pending admin act, which then never takes effect, or undo
+    /// a widening act taken at once in a tenant with one admin person: the
+    /// key, grant, code, limit or admin flag it applied. Journals admin.act.
     Decline {
         /// The act's id, listed by `oml admin acts`.
         act: String,
         /// Why; scanned and journalled.
         #[arg(long)]
         reason: Option<String>,
+    },
+    /// Settle an open act against another admin person as a third admin
+    /// person: --confirm revokes the target's suspended admin keys, --reverse
+    /// lifts the suspension and restores the entry. Below three admin
+    /// persons the operator settles from the host. Journals admin.act.
+    Settle {
+        /// The act's id, listed by `oml admin acts --state effective`.
+        act: String,
+        /// Confirm the act.
+        #[arg(long, conflicts_with = "reverse", required_unless_present = "reverse")]
+        confirm: bool,
+        /// Reverse the act.
+        #[arg(long)]
+        reverse: bool,
     },
     /// List the tenant's admin fixes no person has confirmed or reverted,
     /// or with --all every fix.
@@ -5044,6 +5058,21 @@ fn run_admin(
             }
             return Ok(ExitCode::SUCCESS);
         }
+        AdminCommand::Settle {
+            act,
+            confirm,
+            reverse: _,
+        } => {
+            let path = format!("/v2/admin/acts/{}/settle", segment(act)?);
+            let body = json!({ "outcome": if *confirm { "confirm" } else { "reverse" } });
+            let settled = client.post(&path, &body, &write_opts())?.1;
+            if cli.json {
+                print_json(&settled);
+            } else {
+                println!("{}", admin_act_line(&settled));
+            }
+            return Ok(ExitCode::SUCCESS);
+        }
         AdminCommand::Fixes { all } => {
             let state = if *all { "all" } else { "unconfirmed" };
             let fixes = client.get(&format!("/v2/admin/fixes?state={state}"))?.1;
@@ -7711,7 +7740,7 @@ fn withdrawn_queue_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
 /// out. A server before a count does not report it, and its line is then
 /// absent; a count that is no unsigned integer is named, never read as zero.
 fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
-    const LINES: [(&str, &str, &str); 16] = [
+    const LINES: [(&str, &str, &str); 19] = [
         (
             "held_successors_stranded",
             "memory.held_successor_stranded",
@@ -7792,6 +7821,21 @@ fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
             "admin.offensive_narrowing",
             "offensive narrowing act(s) in the last 24 hours: a person's key revoked or a reviewer person's key denied; read each with oml admin acts --state effective",
         ),
+        (
+            "admin_keys_suspended",
+            "admin.key_suspended",
+            "admin key(s) suspended while an act against their person is open; settling the act revokes them or lifts the suspension",
+        ),
+        (
+            "admin_keys_unlinked_suspended",
+            "admin.key_unlinked_suspended",
+            "admin key(s) suspended as unlinked at the upgrade; each links itself with oml keys link-self --person <name> and its person accepts on the console's Keys page",
+        ),
+        (
+            "admin_disputes_open",
+            "admin.dispute_open",
+            "act(s) against an admin open below three admin persons: both parties take no widening act until the operator settles it from the host",
+        ),
     ];
     let report = match read {
         None => {
@@ -7819,8 +7863,15 @@ fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
                 // ordinary: a placeholder (ADR-0097 d24).
                 Some(n) if *field == "admin_narrowing_burst" && n <= 20 => format!("{line}: {n}"),
                 // Critical: offensive narrowing is loud (ADR-0097 d24).
-                Some(n) if *field == "admin_acts_offensive" => {
+                Some(n) if *field == "admin_acts_offensive" || *field == "admin_disputes_open" => {
                     format!("fail {line}: {n} {what}")
+                }
+                Some(n) if *field == "admin_keys_unlinked_suspended" => {
+                    let left = report
+                        .get("admin_unlinked_days_left")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    format!("warn {line}: {n} {what}; {left} days left before revocation")
                 }
                 Some(n) if *field == "admin_acts_pending" => {
                     let oldest = report
@@ -9111,7 +9162,10 @@ mod tests {
                 "admin.act_without_reason: not read; an admin key reads it".to_owned(),
                 "admin.act_expired: not read; an admin key reads it".to_owned(),
                 "admin.narrowing_burst: not read; an admin key reads it".to_owned(),
-                "admin.offensive_narrowing: not read; an admin key reads it".to_owned()
+                "admin.offensive_narrowing: not read; an admin key reads it".to_owned(),
+                "admin.key_suspended: not read; an admin key reads it".to_owned(),
+                "admin.key_unlinked_suspended: not read; an admin key reads it".to_owned(),
+                "admin.dispute_open: not read; an admin key reads it".to_owned()
             ]
         );
         assert_eq!(

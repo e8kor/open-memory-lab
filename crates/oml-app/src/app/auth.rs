@@ -106,6 +106,20 @@ pub enum CallbackRefusal {
     Unlisted(ProviderIdentity),
     Provider(ProviderFailure),
     Store(String),
+    /// The contest-only sign-in (ADR-0097 d8): a disabled admin person,
+    /// whose provider identity matches their entry as the act against them
+    /// found it, while that act is open and uncontested. It opens nothing
+    /// but the act's contest.
+    Contest(ContestGrant),
+}
+
+/// What the contest-only sign-in admits (ADR-0097 d8): the act, and the
+/// person it is against.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContestGrant {
+    pub tenant_id: Uuid,
+    pub user: oml_domain::name::Name,
+    pub act_id: Uuid,
 }
 
 impl<J, S, C, I, Sc> App<J, S, C, I, Sc>
@@ -195,8 +209,30 @@ where
                 },
             );
         };
-        // A disabled person signs in to nothing (ADR-0068 d8).
+        // A disabled person signs in to nothing (ADR-0068 d8), save the
+        // contest of an open act against them (ADR-0097 d8).
         if entry.disabled_at.is_some() {
+            let pinned = entry.subject(identity.provider);
+            if pinned.is_none_or(|s| s == identity.subject) {
+                let open = self
+                    .open_disputes(entry.tenant_id)
+                    .await
+                    .map_err(|e| CallbackRefusal::Store(e.to_string()))?
+                    .into_iter()
+                    .find(|a| {
+                        a.act == oml_domain::admin_act::AdminActKind::DisableAdmin
+                            && a.state == oml_domain::admin_act::AdminActState::Effective
+                            && a.target.get("user").and_then(serde_json::Value::as_str)
+                                == Some(entry.user.as_str())
+                    });
+                if let Some(act) = open {
+                    return Err(CallbackRefusal::Contest(ContestGrant {
+                        tenant_id: entry.tenant_id,
+                        user: entry.user.clone(),
+                        act_id: act.act_id,
+                    }));
+                }
+            }
             return Err(refused(SignInRefusal::Disabled));
         }
         // Nor does an entry that waits on its person, and its provider

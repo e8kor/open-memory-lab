@@ -177,6 +177,15 @@ pub enum AdminActKind {
     DeclineAct,
     /// Lifting a denial (d3; the operator's decision of 2026-11-27).
     LiftDenial,
+    /// An admin person taking their own admin flag off: their admin keys
+    /// are revoked at once (d21).
+    UnflagOwn,
+    /// An admin person removing their own entry: their admin keys are
+    /// revoked at once (d21).
+    RemoveOwn,
+    /// A content fix: a demotion, an edit or a retirement (ADR-0089), which
+    /// keeps its settlement by another person (d3).
+    Fix,
     // Erase (d4).
     /// Erasing a claim: the demotion at once, the shred after a second
     /// admin person.
@@ -205,6 +214,8 @@ pub enum AdminActKind {
     RemoveAdmin,
     /// Disabling another admin person.
     DisableAdmin,
+    /// Changing the user of another admin person's entry.
+    ChangeAdmin,
     // Neutral (d9).
     /// Creating a shared workspace (d9, d29).
     CreateWorkspace,
@@ -235,6 +246,9 @@ pub const ADMIN_ACT_KINDS: &[AdminActKind] = &[
     AdminActKind::LowerLimits,
     AdminActKind::DeclineAct,
     AdminActKind::LiftDenial,
+    AdminActKind::UnflagOwn,
+    AdminActKind::RemoveOwn,
+    AdminActKind::Fix,
     AdminActKind::Erase,
     AdminActKind::IssueKey,
     AdminActKind::AddGrant,
@@ -246,6 +260,7 @@ pub const ADMIN_ACT_KINDS: &[AdminActKind] = &[
     AdminActKind::UnflagAdmin,
     AdminActKind::RemoveAdmin,
     AdminActKind::DisableAdmin,
+    AdminActKind::ChangeAdmin,
     AdminActKind::CreateWorkspace,
     AdminActKind::CreateCrew,
     AdminActKind::UpdateCrew,
@@ -270,15 +285,20 @@ impl AdminActKind {
             | K::CloseDeletion
             | K::LowerLimits
             | K::DeclineAct
-            | K::LiftDenial => AdminActClass::Narrowing,
+            | K::LiftDenial
+            | K::UnflagOwn
+            | K::RemoveOwn
+            | K::Fix => AdminActClass::Narrowing,
             K::Erase => AdminActClass::Erase,
             K::IssueKey | K::AddGrant | K::AllowAdmin | K::MintConnectCode | K::RaiseLimits => {
                 AdminActClass::Widening
             }
             K::LinkKey => AdminActClass::Consent,
-            K::RevokeAdminKey | K::UnflagAdmin | K::RemoveAdmin | K::DisableAdmin => {
-                AdminActClass::AgainstAdmin
-            }
+            K::RevokeAdminKey
+            | K::UnflagAdmin
+            | K::RemoveAdmin
+            | K::DisableAdmin
+            | K::ChangeAdmin => AdminActClass::AgainstAdmin,
             K::CreateWorkspace
             | K::CreateCrew
             | K::UpdateCrew
@@ -304,6 +324,9 @@ impl AdminActKind {
             K::LowerLimits => "lower_limits",
             K::DeclineAct => "decline_act",
             K::LiftDenial => "lift_denial",
+            K::UnflagOwn => "unflag_own",
+            K::RemoveOwn => "remove_own",
+            K::Fix => "fix",
             K::Erase => "erase",
             K::IssueKey => "issue_key",
             K::AddGrant => "add_grant",
@@ -315,6 +338,7 @@ impl AdminActKind {
             K::UnflagAdmin => "unflag_admin",
             K::RemoveAdmin => "remove_admin",
             K::DisableAdmin => "disable_admin",
+            K::ChangeAdmin => "change_admin",
             K::CreateWorkspace => "create_workspace",
             K::CreateCrew => "create_crew",
             K::UpdateCrew => "update_crew",
@@ -330,6 +354,20 @@ impl AdminActKind {
     #[must_use]
     pub fn parse(s: &str) -> Option<Self> {
         ADMIN_ACT_KINDS.iter().copied().find(|k| k.as_str() == s)
+    }
+
+    /// Whether the act is contestable (d8): an un-flag, removal, disable or
+    /// change of another admin person's entry. Revoking another admin
+    /// person's key is final, so it is not.
+    #[must_use]
+    pub fn contestable(self) -> bool {
+        matches!(
+            self,
+            AdminActKind::UnflagAdmin
+                | AdminActKind::RemoveAdmin
+                | AdminActKind::DisableAdmin
+                | AdminActKind::ChangeAdmin
+        )
     }
 
     /// Whether the act requires a reason on the wire (ADR-0097 d26):

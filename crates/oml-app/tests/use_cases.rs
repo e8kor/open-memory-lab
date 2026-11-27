@@ -19891,6 +19891,8 @@ async fn link_keys(app: &TestApp, admin: &str, keys: &[Uuid], person: &str) {
 /// reader with no person, each on the crew workspace.
 struct PeopleRig {
     app: TestApp,
+    store: MemStore,
+    boot: BootstrapResult,
     crew: Uuid,
     alice_a: IssuedKey,
     alice_b: IssuedKey,
@@ -19900,7 +19902,8 @@ struct PeopleRig {
 }
 
 async fn people_rig() -> PeopleRig {
-    let app = app();
+    let store = MemStore::new();
+    let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = boot.admin_key.value.clone();
     let alice_a = curator(&app, &admin, "alice/a", crew).await;
@@ -19912,6 +19915,8 @@ async fn people_rig() -> PeopleRig {
     link_keys(&app, &admin, &[bob.key_id], "bob").await;
     PeopleRig {
         app,
+        store,
+        boot,
         crew,
         alice_a,
         alice_b,
@@ -20035,6 +20040,77 @@ async fn a_pending_brief_edge_names_its_proposer_to_a_key_of_the_same_person() {
         .expect("bob ratifies");
     let ratified = listed(&r.alice_b).await;
     assert_eq!((ratified.proposed_at, ratified.proposed_by), (None, None));
+}
+
+/// A brief proposal one key of a person made is ratified by another key of
+/// that person outside the person's own root only in a `sole_admin`
+/// tenant, marked; once the tenant has had two admin persons it is
+/// `review.author_in_lineage` with `same_person`, as a verdict is (ADR-0097
+/// build notes and d17).
+#[tokio::test]
+async fn a_same_person_brief_ratification_outside_the_own_root_is_refused_or_marked_sole_admin() {
+    let r = people_rig().await;
+    let claim = promoted(
+        &r.app,
+        &r.writer.value,
+        &r.bob.value,
+        &submit_into("pb2", "the canary drains first", r.crew),
+    )
+    .await;
+    let proposal = r
+        .app
+        .propose_brief_edge(&r.alice_a.value, &brief_req(claim, r.crew), None)
+        .await
+        .expect("a proposal")
+        .proposal;
+    let marked = r
+        .app
+        .ratify_brief_edge(&r.alice_b.value, proposal.edge_id, None)
+        .await
+        .expect("admitted under sole_admin");
+    let event = journal(&r.store, r.boot.tenant_id)
+        .await
+        .into_iter()
+        .rev()
+        .find(|e| e.envelope.event_type == event_types::REVIEW_RATIFY)
+        .expect("the ratification");
+    assert_eq!(event.envelope.payload["sole_admin"], true);
+    assert!(marked.journal_seq.is_some());
+
+    // Two admin persons take the tenant out of sole_admin for good.
+    for user in ["adm1", "adm2"] {
+        r.app
+            .allow_web_email(
+                &r.boot.admin_key.value,
+                &oml_app::types::WebEmailRequest {
+                    email: oml_app::domain::web::Email::parse(&format!("{user}@example.com"))
+                        .expect("an email"),
+                    user: name(user),
+                    admin: true,
+                },
+            )
+            .await
+            .expect("an admin entry");
+    }
+    let claim = promoted(
+        &r.app,
+        &r.writer.value,
+        &r.bob.value,
+        &submit_into("pb3", "the canary drains last", r.crew),
+    )
+    .await;
+    let proposal = r
+        .app
+        .propose_brief_edge(&r.alice_a.value, &brief_req(claim, r.crew), None)
+        .await
+        .expect("a proposal")
+        .proposal;
+    let err = r
+        .app
+        .ratify_brief_edge(&r.alice_b.value, proposal.edge_id, None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::SamePerson), "{err:?}");
 }
 
 /// ADR-0097 d27 item 2: a denial's reason is scanned and journalled in

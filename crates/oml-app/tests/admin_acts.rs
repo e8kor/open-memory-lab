@@ -1087,3 +1087,282 @@ async fn a_declined_sole_admin_act_is_revoked_at_once() {
         .expect("dana's entry");
     assert!(!entry.admin, "the flag is undone");
 }
+
+/// The administration To do counts "Admin acts to confirm": a pending act
+/// is counted for every admin person who may confirm it and never for the
+/// person who took it (ADR-0097 d2, d11).
+#[tokio::test]
+async fn admin_acts_to_confirm_counts_what_another_admin_person_may_confirm() {
+    let r = two_admins().await;
+    let alice = r.admin_session("alice").await;
+    let bob = r.admin_session("bob").await;
+    r.app
+        .issue_key_with_reason(Bearer::Session(&alice), &agent_req(), Some("an agent"))
+        .await
+        .expect("a pending issuance");
+    let bobs = r
+        .app
+        .admin_todo_counts(Bearer::Session(&bob))
+        .await
+        .expect("bob's counts");
+    assert_eq!(bobs.acts_to_confirm, 1);
+    let alices = r
+        .app
+        .admin_todo_counts(Bearer::Session(&alice))
+        .await
+        .expect("alice's counts");
+    assert_eq!(alices.acts_to_confirm, 0, "never the person's own act");
+    r.clock.advance(7 * DAY);
+    let bobs = r
+        .app
+        .admin_todo_counts(Bearer::Session(&r.admin_session("bob").await))
+        .await
+        .expect("bob's counts");
+    assert_eq!(bobs.acts_to_confirm, 0, "an expired act is not counted");
+}
+
+// -- acts on an admin person's standing (ADR-0097 d8, d21) -----------------
+
+/// Alice, bob and carol, admin persons accepted eight days ago, and carol's
+/// linked bearer admin key.
+async fn three_admins() -> (Rig, IssuedKey) {
+    let r = rig().await;
+    // Carol's key is issued while she is the one admin person, so it takes
+    // effect at once (ADR-0097 d10).
+    r.admin_person("carol").await;
+    let carols = r.linked_admin_key("carol").await;
+    for user in ["alice", "bob"] {
+        r.admin_person(user).await;
+    }
+    r.clock.advance(8 * DAY);
+    (r, carols)
+}
+
+fn entry_of(user: &str, admin: bool) -> WebEmailRequest {
+    WebEmailRequest {
+        email: Email::parse(&format!("{user}@example.com")).expect("an email"),
+        user: name(user),
+        admin,
+    }
+}
+
+/// An admin person's own un-flag revokes their admin keys at once, `cause:
+/// deactivation`, in the act's commit (ADR-0097 d21).
+#[tokio::test]
+async fn an_admin_persons_own_deactivation_revokes_their_admin_keys() {
+    let (r, carols) = three_admins().await;
+    let carol = r.admin_session("carol").await;
+    r.app
+        .allow_web_email(Bearer::Session(&carol), &entry_of("carol", false))
+        .await
+        .expect("carol takes her own flag off");
+    let act = last_act(&r, "unflag_own").await;
+    assert_eq!(act.class().as_str(), "narrowing");
+    let key = r
+        .store
+        .key(r.boot.tenant_id, carols.key_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert!(key.revoked_at.is_some(), "her admin key is revoked at once");
+    let revoked = r
+        .journal()
+        .await
+        .into_iter()
+        .rev()
+        .find(|e| e.envelope.event_type == event_types::KEY_REVOKED)
+        .expect("the revocation");
+    assert_eq!(revoked.envelope.payload["cause"], "deactivation");
+    assert_eq!(revoked.envelope.payload["act_id"], act.act_id.to_string());
+}
+
+/// Another admin's un-flag takes effect at once and suspends the target's
+/// admin keys; with three admin persons a third settles it, and confirmed
+/// the keys are revoked (ADR-0097 d8, d21).
+#[tokio::test]
+async fn an_act_against_another_admin_suspends_the_targets_admin_keys_until_settled() {
+    let (r, carols) = three_admins().await;
+    let alice = r.admin_session("alice").await;
+    let err = r
+        .app
+        .allow_web_email(Bearer::Session(&alice), &entry_of("carol", false))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::AdminActReasonRequired), "{err:?}");
+    r.app
+        .allow_web_email_with_reason(
+            Bearer::Session(&alice),
+            &entry_of("carol", false),
+            true,
+            Some("carol's laptop was stolen"),
+        )
+        .await
+        .expect("alice un-flags carol");
+    let act = last_act(&r, "unflag_admin").await;
+    assert_eq!(act.class().as_str(), "against_admin");
+    let err = r
+        .app
+        .admin_acts(carols.value.as_str(), None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::KeySuspended), "{err:?}");
+    // Neither party settles.
+    let err = r
+        .app
+        .settle_admin_act(Bearer::Session(&alice), act.act_id, true)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::AdminAct(AdminActRefusal::NotSettler)),
+        "{err:?}"
+    );
+    let bob = r.admin_session("bob").await;
+    let settled = r
+        .app
+        .settle_admin_act(Bearer::Session(&bob), act.act_id, true)
+        .await
+        .expect("bob confirms");
+    assert_eq!(settled.state, AdminActState::Settled);
+    assert_eq!(settled.confirmed_by_person, Some(name("bob")));
+    let key = r
+        .store
+        .key(r.boot.tenant_id, carols.key_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert!(
+        key.revoked_at.is_some(),
+        "confirmed: carol's key is revoked"
+    );
+}
+
+/// A contest restores the flag and sign-in only: the target's admin keys
+/// stay suspended until a reversal lifts the suspension (ADR-0097 d8).
+#[tokio::test]
+async fn a_contest_never_restores_a_revoked_key() {
+    let (r, carols) = three_admins().await;
+    let alice = r.admin_session("alice").await;
+    r.app
+        .allow_web_email_with_reason(
+            Bearer::Session(&alice),
+            &entry_of("carol", false),
+            true,
+            Some("a dispute"),
+        )
+        .await
+        .expect("alice un-flags carol");
+    let act = last_act(&r, "unflag_admin").await;
+    let carol_web = r.person_session("carol", Capacity::Web).await;
+    let contested = r
+        .app
+        .contest_admin_act(Bearer::Session(&carol_web), act.act_id)
+        .await
+        .expect("carol contests");
+    assert_eq!(contested.state, AdminActState::Contested);
+    let entry = r
+        .store
+        .web_entry_by_email(&entry_of("carol", true).email.digest())
+        .await
+        .expect("read")
+        .expect("carol's entry");
+    assert!(entry.admin, "the flag comes back");
+    let err = r
+        .app
+        .admin_acts(carols.value.as_str(), None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::KeySuspended),
+        "a contest does not lift the suspension: {err:?}"
+    );
+    let bob = r.admin_session("bob").await;
+    r.app
+        .settle_admin_act(Bearer::Session(&bob), act.act_id, false)
+        .await
+        .expect("bob reverses");
+    r.app
+        .admin_acts(carols.value.as_str(), None)
+        .await
+        .expect("reversed: the suspension lifts");
+}
+
+/// Below three admin persons an act against an admin freezes both sides:
+/// neither takes a widening act, and the tenant cannot settle it; the
+/// operator does from the host (ADR-0097 d8, d19).
+#[tokio::test]
+async fn below_three_admins_an_act_against_an_admin_freezes_both_sides() {
+    let r = two_admins().await;
+    let alice = r.admin_session("alice").await;
+    r.app
+        .allow_web_email_with_reason(
+            Bearer::Session(&alice),
+            &entry_of("bob", false),
+            true,
+            Some("a dispute"),
+        )
+        .await
+        .expect("alice un-flags bob");
+    let act = last_act(&r, "unflag_admin").await;
+    let freeze = r
+        .app
+        .freeze(r.boot.tenant_id)
+        .await
+        .expect("read")
+        .expect("a freeze");
+    assert_eq!(freeze.act_id, act.act_id);
+    let err = r
+        .app
+        .issue_key_with_reason(Bearer::Session(&alice), &agent_req(), Some("an agent"))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::AdminAct(AdminActRefusal::Frozen)),
+        "{err:?}"
+    );
+    let err = r
+        .app
+        .settle_admin_act(r.admin(), act.act_id, true)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::AdminAct(AdminActRefusal::FewerThanThree)),
+        "{err:?}"
+    );
+}
+
+/// The upgrade window: an admin key with no accepted link is suspended at
+/// the start, still reaches whoami and its self-link, and authenticates
+/// again once its person accepts the link (ADR-0097 d21, d22).
+#[tokio::test]
+async fn a_suspended_unlinked_admin_key_still_links_itself() {
+    let r = rig().await;
+    r.admin_person("alice").await;
+    let (suspended, revoked) = r
+        .app
+        .suspend_unlinked_admin_keys(&[r.boot.tenant_id])
+        .await
+        .expect("the upgrade window");
+    assert_eq!((suspended, revoked), (1, 0));
+    let again = r
+        .app
+        .suspend_unlinked_admin_keys(&[r.boot.tenant_id])
+        .await
+        .expect("a second start");
+    assert_eq!(again, (0, 0), "a later start journals nothing");
+    let err = r.app.admin_acts(r.admin(), None).await.unwrap_err();
+    assert!(matches!(err, AppError::KeySuspended), "{err:?}");
+    r.app.whoami(r.admin()).await.expect("whoami still answers");
+    r.app
+        .link_self(r.admin(), &name("alice"))
+        .await
+        .expect("it links itself");
+    let web = r.person_session("alice", Capacity::Web).await;
+    r.app
+        .accept_key_link(Bearer::Session(&web), r.boot.admin_key.key_id.into())
+        .await
+        .expect("alice accepts");
+    r.app
+        .admin_acts(r.admin(), None)
+        .await
+        .expect("linked, it authenticates again");
+}

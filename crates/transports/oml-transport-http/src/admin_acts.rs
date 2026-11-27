@@ -1,6 +1,7 @@
 //! The admin acts a second admin person settles (ADR-0097 d2, d5, d11,
 //! d23): `GET /v2/admin/acts`, `POST /v2/admin/acts/{act}/confirm` and
-//! `POST /v2/admin/acts/{act}/decline`.
+//! `POST /v2/admin/acts/{act}/decline`; and the contest and settlement of
+//! an act against an admin (d8).
 
 use std::collections::HashMap;
 
@@ -25,6 +26,13 @@ use crate::{ApiState, acting, finish, json_response, parse_json, retry_chain};
 #[serde(deny_unknown_fields)]
 struct DeclineBody {
     reason: Option<String>,
+}
+
+/// The body of `POST /v2/admin/acts/{act}/settle` (ADR-0097 d8).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SettleBody {
+    outcome: String,
 }
 
 /// The body of `POST /v2/keys/self/link`: the person the calling admin key
@@ -132,6 +140,58 @@ where
             let acting = acting(&headers, None)?;
             let id = act_id(&act)?;
             let act = retry_chain(|| st.app.confirm_admin_act(acting.bearer(), id))
+                .await
+                .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+            Ok(json_response(StatusCode::OK, &admin_act_json(&act)))
+        };
+        finish(&rid, inner.await)
+    }
+
+    /// `POST /v2/admin/acts/{act}/contest` (ADR-0097 d8): the admin person
+    /// an open act against an admin targets contests it from their own
+    /// session; the flag and sign-in come back, the suspension stays.
+    pub(crate) async fn admin_act_contest_route(
+        State(st): State<Self>,
+        rid: Rid,
+        Path(act): Path<String>,
+        headers: HeaderMap,
+    ) -> Response {
+        let inner = async {
+            st.require_writes_open()?;
+            let acting = acting(&headers, None)?;
+            let id = act_id(&act)?;
+            let act = retry_chain(|| st.app.contest_admin_act(acting.bearer(), id))
+                .await
+                .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+            Ok(json_response(StatusCode::OK, &admin_act_json(&act)))
+        };
+        finish(&rid, inner.await)
+    }
+
+    /// `POST /v2/admin/acts/{act}/settle {outcome}` (ADR-0097 d8): with
+    /// three or more admin persons, a third admin person who counts settles
+    /// an open act against an admin, `confirm` or `reverse`.
+    pub(crate) async fn admin_act_settle_route(
+        State(st): State<Self>,
+        rid: Rid,
+        Path(act): Path<String>,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
+        let inner = async {
+            st.require_writes_open()?;
+            let acting = acting(&headers, None)?;
+            let id = act_id(&act)?;
+            let sent: SettleBody = parse_json(&headers, &body)?;
+            let confirm = match sent.outcome.as_str() {
+                "confirm" => true,
+                "reverse" => false,
+                _ => {
+                    return Err(ApiError::validation("outcome is confirm or reverse")
+                        .with_details(json!({ "field": "/outcome" })));
+                }
+            };
+            let act = retry_chain(|| st.app.settle_admin_act(acting.bearer(), id, confirm))
                 .await
                 .map_err(|e| map_app_error(e, ErrorContext::Write))?;
             Ok(json_response(StatusCode::OK, &admin_act_json(&act)))

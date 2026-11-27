@@ -344,8 +344,8 @@ async fn the_lead_serves_exactly_web_routes() {
     }
     assert_eq!(
         WEB_ROUTES.len(),
-        6,
-        "a new route is a new decision amending ADR-0045; ADR-0068 d10 added seven, ADR-0070 d4 GET /web/sign-in, ADR-0070 d7 (b) moved the two JSON routes, the onboarding page with its poll and export, and the users page to oml-web, and v0.7.1 deleted GET and POST /web/admin (ADR-0070, \"The old URLs deleted\")"
+        7,
+        "a new route is a new decision amending ADR-0045; ADR-0068 d10 added seven, ADR-0070 d4 GET /web/sign-in, ADR-0070 d7 (b) moved the two JSON routes, the onboarding page with its poll and export, and the users page to oml-web, v0.7.1 deleted GET and POST /web/admin (ADR-0070, \"The old URLs deleted\"), and ADR-0097 d8 added POST /web/contest"
     );
     assert_eq!(USER_ACTIONS, ["sign_out"]);
     // An unknown provider in the path is an unknown page.
@@ -1386,7 +1386,9 @@ async fn the_allowlist_routes_take_an_admin_key_and_the_email_only_in_a_body() {
         json_post(
             "/v2/web/emails/remove",
             &admin,
-            json!({"email": "BOB@example.com"}),
+            // Another admin person's entry: an act against an admin, which
+            // requires a reason (ADR-0097 d8, d26).
+            json!({"email": "BOB@example.com", "reason": "bob moved on"}),
         ),
     )
     .await;
@@ -1401,7 +1403,12 @@ async fn the_journal_holds_an_email_digest_and_never_the_address() {
     // The last admin entry is kept (ADR-0097 d25), so a second admin first.
     rig.allow("ops@example.com", "ops", true).await;
     rig.app
-        .remove_web_email(&rig.boot.admin_key.value, &Email::parse(EMAIL).unwrap())
+        .remove_web_email_with_reason(
+            &rig.boot.admin_key.value,
+            &Email::parse(EMAIL).unwrap(),
+            true,
+            Some("alice moved on"),
+        )
         .await
         .expect("removed");
     let events = rig
@@ -2218,7 +2225,7 @@ async fn stray_admin_under_alice(rig: &Rig) -> uuid::Uuid {
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
-                person: None,
+                person: Some(Name::parse("alice").expect("a name")),
             },
         )
         .await

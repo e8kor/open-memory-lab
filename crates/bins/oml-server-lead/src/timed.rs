@@ -1585,6 +1585,16 @@ impl<J: WebStore> WebStore for Timed<J> {
         )
     }
 
+    fn web_unlinked_admin_keys(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<KeyRecord>, StoreError>> + Send {
+        timed(
+            "web_unlinked_admin_keys",
+            self.inner.web_unlinked_admin_keys(tenant_id),
+        )
+    }
+
     fn web_pending_links(
         &self,
         tenant_id: Uuid,

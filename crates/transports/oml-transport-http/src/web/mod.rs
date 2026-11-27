@@ -62,6 +62,8 @@ pub const WEB_ROUTES: &[(&str, &str)] = &[
     ("GET", "/web/callback/{provider}"),
     // Open sign-up (ADR-0068 d2); onboarding is oml-web's (ADR-0070 d7 (b)).
     ("POST", "/web/sign-up"),
+    // The contest-only sign-in's one act (ADR-0097 d8).
+    ("POST", "/web/contest"),
 ];
 
 /// The closed `action` set of `POST /web`: sign-out alone, the one act
@@ -285,6 +287,7 @@ where
             ("POST", "/web/sign-in") => post(Self::sign_in),
             ("GET", "/web/callback/{provider}") => get(Self::callback),
             ("POST", "/web/sign-up") => post(Self::sign_up),
+            ("POST", "/web/contest") => post(Self::contest),
             _ => panic!("{method} {path} is in WEB_ROUTES with no handler"),
         }
     }
@@ -776,8 +779,21 @@ where
                         line,
                     };
                 }
+                // The contest-only sign-in opens its one form (ADR-0097 d8).
+                if let CallbackRefusal::Contest(grant) = &refusal {
+                    sign_in_line(request_id, provider, "contest_only", None);
+                    let mut response = self.contest_page(grant);
+                    append_cookie(&mut response, &clear_cookie(SIGN_IN_COOKIE));
+                    return Answer {
+                        response,
+                        error_code: None,
+                        line,
+                    };
+                }
                 let (error, outcome) = match refusal {
-                    CallbackRefusal::Unlisted(_) => unreachable!("answered above"),
+                    CallbackRefusal::Unlisted(_) | CallbackRefusal::Contest(_) => {
+                        unreachable!("answered above")
+                    }
                     CallbackRefusal::Refused(r) => (
                         map_app_error(AppError::WebSignIn(r), ErrorContext::Write),
                         r.reason(),

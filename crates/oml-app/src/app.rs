@@ -6,8 +6,10 @@
 //! (ADR-0025 d1).
 
 mod admin_acts;
+mod against_admin;
 mod auth;
 pub mod busy;
+pub use against_admin::Freeze;
 mod emails;
 mod exports;
 mod federation;
@@ -27,7 +29,7 @@ mod sparse;
 mod uploads;
 mod usage;
 mod widen;
-pub use auth::{Callback, CallbackRefusal, WEB_SESSION_TTL_SECS};
+pub use auth::{Callback, CallbackRefusal, ContestGrant, WEB_SESSION_TTL_SECS};
 pub use exports::{ExportCounts, ExportRequest, Exported};
 pub use federation::WideKey;
 pub use fixes::{
@@ -5011,13 +5013,13 @@ where
             charter_uri: req.charter_uri.clone(),
             external_manager: req.external_manager.clone(),
         };
-        let prev = self.head_event(key.tenant_id).await?;
-        let event = self.seal(
-            prev.as_ref(),
-            key.tenant_id,
+        // Creating a crew is a neutral admin act (ADR-0097 d9).
+        self.commit_as_act(
+            &key,
+            oml_domain::admin_act::AdminActKind::CreateCrew,
+            json!({ "crew_id": crew.crew_id.to_string(), "name": crew.name.as_str() }),
+            None,
             event_types::CREW_CREATED,
-            &key.principal,
-            Some(key.key_id),
             json!({
                 "crew_id": crew.crew_id.to_string(),
                 "name": crew.name.as_str(),
@@ -5025,9 +5027,9 @@ where
                 "external_manager": crew.external_manager,
                 "created_by_key_id": key.key_id.to_string(),
             }),
-        )?;
-        self.commit(event, MetadataFold::CrewCreated(crew.clone()), None)
-            .await?;
+            MetadataFold::CrewCreated(crew.clone()),
+        )
+        .await?;
         Ok(crew)
     }
 
@@ -5301,22 +5303,23 @@ where
             external_manager: update.external_manager.clone().or(current.external_manager),
             ..current
         };
-        let prev = self.head_event(key.tenant_id).await?;
-        let event = self.seal(
-            prev.as_ref(),
-            key.tenant_id,
+        // Crew metadata is a neutral admin act, the manager included while
+        // no served check reads it (ADR-0097 d9).
+        self.commit_as_act(
+            &key,
+            oml_domain::admin_act::AdminActKind::UpdateCrew,
+            json!({ "crew_id": updated.crew_id.to_string(), "name": updated.name.as_str() }),
+            None,
             event_types::CREW_UPDATED,
-            &key.principal,
-            Some(key.key_id),
             json!({
                 "crew_id": updated.crew_id.to_string(),
                 "charter_uri": updated.charter_uri,
                 "external_manager": updated.external_manager,
                 "updated_by_key_id": key.key_id.to_string(),
             }),
-        )?;
-        self.commit(event, MetadataFold::CrewUpdated(updated.clone()), None)
-            .await?;
+            MetadataFold::CrewUpdated(updated.clone()),
+        )
+        .await?;
         Ok(updated)
     }
 
@@ -5498,25 +5501,21 @@ where
         if self.journal.crew(key.tenant_id, crew_id).await?.is_none() {
             return Err(AppError::NotFound);
         }
-        let prev = self.head_event(key.tenant_id).await?;
-        let event = self.seal(
-            prev.as_ref(),
-            key.tenant_id,
+        // Setting a workspace's crew is a neutral admin act (ADR-0097 d9).
+        self.commit_as_act(
+            &key,
+            oml_domain::admin_act::AdminActKind::SetWorkspaceCrew,
+            json!({ "workspace_id": workspace_id.to_string(), "crew_id": crew_id.to_string() }),
+            None,
             event_types::WORKSPACE_CREW_UPDATED,
-            &key.principal,
-            Some(key.key_id),
             json!({
                 "workspace_id": workspace_id.to_string(),
                 "crew_id": crew_id.to_string(),
             }),
-        )?;
-        self.commit(
-            event,
             MetadataFold::WorkspaceCrewUpdated {
                 workspace_id,
                 crew_id,
             },
-            None,
         )
         .await?;
         Ok(WorkspaceRecord {
@@ -7910,10 +7909,61 @@ where
             .iter()
             .filter(|f| f.loosens_guardrail)
             .count() as u64;
+        let acts = self.acts_to_confirm(&caller.key).await?;
         Ok(AdminTodoCounts {
             alerts: alerts.min(TODO_COUNT_CAP),
-            truncated: alerts > TODO_COUNT_CAP,
+            acts_to_confirm: acts.min(TODO_COUNT_CAP),
+            truncated: alerts > TODO_COUNT_CAP || acts > TODO_COUNT_CAP,
         })
+    }
+
+    /// "Admin acts to confirm" for `admin`'s person (ADR-0097 d2, d10,
+    /// d11), read by `(tenant, state)` within the counts budget (the
+    /// bottleneck register): two indexed reads, pending and effective, and
+    /// the tenant's admin standing.
+    async fn acts_to_confirm(&self, admin: &KeyRecord) -> Result<u64, AppError> {
+        use oml_domain::admin_act::{AdminActClass, AdminActState, counts_for_act};
+        let tenant_id = admin.tenant_id;
+        let Some(person) = self.counted_person_of(admin).await? else {
+            return Ok(0);
+        };
+        let standing = self.journal.admin_standing(tenant_id).await?;
+        let Some(me) = standing
+            .persons
+            .iter()
+            .find(|p| p.user == person && !p.disabled)
+        else {
+            return Ok(0);
+        };
+        let now = self.clock.now();
+        let since = me.admin_since.unix_micros();
+        let mut count = 0_u64;
+        for act in self
+            .journal
+            .admin_acts(tenant_id, Some(AdminActState::PendingConfirmation))
+            .await?
+        {
+            if act.state_at(&now) == AdminActState::PendingConfirmation
+                && act.actor_person.as_ref() != Some(&person)
+                && counts_for_act(since, act.at.unix_micros())
+            {
+                count += 1;
+            }
+        }
+        if counts_for_act(since, now.unix_micros()) {
+            count += self
+                .journal
+                .admin_acts(tenant_id, Some(AdminActState::Effective))
+                .await?
+                .iter()
+                .filter(|a| {
+                    a.sole_admin
+                        && a.class() == AdminActClass::Widening
+                        && a.actor_person.as_ref() != Some(&person)
+                })
+                .count() as u64;
+        }
+        Ok(count)
     }
 
     /// `GET /v2/review/briefs` (ADR-0096 d7): the pending brief edges on
@@ -7975,11 +8025,13 @@ where
         let mut items = Vec::with_capacity(edges.len());
         for edge in edges {
             let claim = self.journal.memory(tenant_id, edge.artifact_id).await?;
+            // The proposing key's name only where `proposed_by` names it:
+            // the reader's own key or another key of the reader's person
+            // (ADR-0097 build notes; ADR-0095, amendment of 2026-11-24).
             let proposer = self
-                .journal
-                .key(tenant_id, edge.proposer_key_id)
+                .proposed_by(key, edge.proposer_key_id)
                 .await?
-                .and_then(|k| k.name);
+                .and_then(|p| p.name);
             let workspace = self
                 .journal
                 .workspace(tenant_id, edge.workspace_id)
@@ -11895,7 +11947,11 @@ where
     /// present and its workspace within the key's reviewer effective access
     /// (`access.not_found` outside read access), R2 against the proposer's
     /// key and principal (`review.ratifier_is_proposer`), then the edge's
-    /// state (`review.serve_invalid`, `consumed`).
+    /// state (`review.serve_invalid`, `consumed`), then R2 by person: a key
+    /// acting for the proposer's person outside that person's own root is
+    /// `review.author_in_lineage` with `same_person`, save under
+    /// `sole_admin`, where the ratification is admitted and marked
+    /// (ADR-0097 build notes, d17).
     pub async fn ratify_brief_edge(
         &self,
         bearer: impl Into<Bearer<'_>>,
@@ -11949,23 +12005,42 @@ where
         if edge.state != EdgeState::Pending {
             return Err(AppError::EdgeConsumed { edge_id });
         }
+        // R2 by person, as a verdict reads it: outside the person's own
+        // root, a key acting for the proposer's person ratifies nothing,
+        // save in a `sole_admin` tenant, where it is admitted and marked
+        // (ADR-0097 build notes and d17; ADR-0001 d5; ADR-0082 d7).
+        let same_user = self
+            .same_person(key.tenant_id, edge.proposer_key_id, key)
+            .await?;
+        let sole_admin = if same_user && !self.in_own_root(key, edge.workspace_id).await? {
+            if !self.journal.admin_standing(key.tenant_id).await?.sole_admin {
+                return Err(AppError::SamePerson);
+            }
+            true
+        } else {
+            false
+        };
+        let mut payload = json!({
+            "subject_kind": "brief_edge",
+            "artifact_id": edge.artifact_id.to_string(),
+            "version": Value::Null,
+            "edge_id": edge_id.to_string(),
+            "workspace_id": edge.workspace_id.to_string(),
+            "verdict_event_ids": [],
+            "ratifier_key_id": key.key_id.to_string(),
+            "same_user": same_user,
+            "policy_snapshot": review_policy(),
+        });
+        if sole_admin && let Some(obj) = payload.as_object_mut() {
+            obj.insert("sole_admin".to_owned(), json!(true));
+        }
         let event = self.seal(
             prev.as_ref(),
             key.tenant_id,
             event_types::REVIEW_RATIFY,
             &key.principal,
             Some(key.key_id),
-            json!({
-                "subject_kind": "brief_edge",
-                "artifact_id": edge.artifact_id.to_string(),
-                "version": Value::Null,
-                "edge_id": edge_id.to_string(),
-                "workspace_id": edge.workspace_id.to_string(),
-                "verdict_event_ids": [],
-                "ratifier_key_id": key.key_id.to_string(),
-                "same_user": self.same_person(key.tenant_id, edge.proposer_key_id, key).await?,
-                "policy_snapshot": review_policy(),
-            }),
+            payload,
         )?;
         let seq = event.envelope.seq;
         let ratified = BriefEdgeView::from(&BriefEdgeRecord {
@@ -12941,29 +13016,28 @@ where
             .await?
             .filter(|c| c.key_id == key_id && c.state == ConnectionState::Open)
             .ok_or(AppError::NotFound)?;
-        let prev = self.head_event(tenant_id).await?;
-        let event = self.seal(
-            prev.as_ref(),
-            tenant_id,
-            event_types::CONNECTION_REVOKED,
-            &admin.principal,
-            Some(admin.key_id),
-            json!({
-                "connection_id": connection_id.to_string(),
-                "key_id": key_id.to_string(),
-                "revoked_by_key_id": admin.key_id.to_string(),
-                "cause": RevokedCause::Admin.as_str(),
-                "reason_digest": reason.map(|r| sha256_digest_string(r.as_bytes())),
-            }),
-        )?;
+        // Revoking a connection is a narrowing admin act (ADR-0097 d3).
         let receipt = self
-            .commit(
-                event,
+            .commit_as_act(
+                &admin,
+                oml_domain::admin_act::AdminActKind::RevokeConnection,
+                json!({
+                    "connection_id": connection_id.to_string(),
+                    "key_id": key_id.to_string(),
+                }),
+                reason,
+                event_types::CONNECTION_REVOKED,
+                json!({
+                    "connection_id": connection_id.to_string(),
+                    "key_id": key_id.to_string(),
+                    "revoked_by_key_id": admin.key_id.to_string(),
+                    "cause": RevokedCause::Admin.as_str(),
+                    "reason_digest": reason.map(|r| sha256_digest_string(r.as_bytes())),
+                }),
                 MetadataFold::ConnectionRevoked {
                     connection_id,
                     cause: RevokedCause::Admin,
                 },
-                None,
             )
             .await?;
         Ok(ConnectionRecord {

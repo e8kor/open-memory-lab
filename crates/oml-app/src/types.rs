@@ -328,6 +328,21 @@ pub enum AdminActRefusal {
     /// The key waits on its own issuance's confirmation, and takes no added
     /// grant, limit change or connect code meanwhile (ADR-0097 d23).
     KeyPending,
+    /// A party to a frozen dispute takes no widening act, and its initiator
+    /// no act against an admin (ADR-0097 d8).
+    Frozen,
+    /// Only an open un-flag, removal, disable or change of an admin
+    /// person's entry is contested or settled (d8).
+    NotContestable,
+    /// Only the act's target contests it (d8).
+    NotTarget,
+    /// A settler counts as a third admin person: neither party, and a
+    /// live admin person whose flag is seven days older than the act (d8,
+    /// d11).
+    NotSettler,
+    /// Below three admin persons the act is settled by the operator from
+    /// the host, not in the tenant (d8, d19).
+    FewerThanThree,
 }
 
 impl AdminActRefusal {
@@ -341,6 +356,11 @@ impl AdminActRefusal {
             AdminActRefusal::NotAdminPerson => "not_admin_person",
             AdminActRefusal::TooNew => "too_new",
             AdminActRefusal::KeyPending => "key_pending",
+            AdminActRefusal::Frozen => "frozen",
+            AdminActRefusal::NotContestable => "not_contestable",
+            AdminActRefusal::NotTarget => "not_target",
+            AdminActRefusal::NotSettler => "not_settler",
+            AdminActRefusal::FewerThanThree => "fewer_than_three",
         }
     }
 
@@ -363,6 +383,19 @@ impl AdminActRefusal {
             }
             AdminActRefusal::KeyPending => {
                 "the key waits on a second admin person's confirmation of its issuance, and takes no grant, limit change or connect code until then"
+            }
+            AdminActRefusal::Frozen => {
+                "a dispute between two admin persons is open below three admins: both take no widening act, and its initiator no act against an admin"
+            }
+            AdminActRefusal::NotContestable => {
+                "only an open un-flag, removal, disable or change of an admin person's entry is contested or settled"
+            }
+            AdminActRefusal::NotTarget => "only the admin person the act is against contests it",
+            AdminActRefusal::NotSettler => {
+                "a third admin person settles: neither party, and an admin person whose flag is seven days older than the act"
+            }
+            AdminActRefusal::FewerThanThree => {
+                "below three admin persons the operator settles the act from the host"
             }
         }
     }
@@ -2611,6 +2644,11 @@ pub struct AdminTodoCounts {
     /// The guardrail-loosening alerts: the tenant's unconfirmed fixes that
     /// loosen a guardrail (ADR-0096 d7).
     pub alerts: u64,
+    /// "Admin acts to confirm" (ADR-0097 d2, d10, d11): the tenant's
+    /// widening acts this admin person may settle, not their own: pending
+    /// acts unexpired whose age rule the person meets, and acts taken at
+    /// once under `sole_admin` once the person's flag is seven days old.
+    pub acts_to_confirm: u64,
     /// Whether a count passed [`TODO_COUNT_CAP`].
     pub truncated: bool,
 }
