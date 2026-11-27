@@ -64,7 +64,7 @@ flowchart TD
     B --> BP
 ```
 
-- **A user key reaches its own root and the `universe` node, nothing else.** It reads memories placed on `universe` itself. It never reads another user's root or a shared workspace, except a [public workspace](#public-workspaces), read only.
+- **A user key reaches its own root and the `universe` node, nothing else.** It reads memories placed on `universe` itself. It never reads another user's root or a shared workspace, except a [public workspace](#public-workspaces), read only. A bare name it sends resolves in its own root first, then to a public shared node of that name; a private shared name stays `access.not_found`, so it is not disclosed ([ADR-0098](../adr/ADR-0098-a-protected-or-frozen-workspace-can-be-marked-public-and-then-every-reading-key-in-the-tenant-reads-its-approved-items.md), the operator's decision of 2026-11-27).
 - **Recall.** A recall inside the root also searches `universe`. A memory shown from `universe` carries no author and no source.
 - **Only the keys start a memory in the root.** A reviewer granted there reads, reviews and proposes edits and retirements. Its new memory is refused with `submission.user_root_refused`, and so is putting a retired memory back. The keys of the web session belong to the user: the `<user>-review` key puts the user's retired memory back, and in another person's root it is a granted reviewer like any other.
 - **Curation.** `universe` holds only memories that curators place there. A second identity reviews each one like any write. No user key writes to it directly.

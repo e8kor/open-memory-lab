@@ -2400,12 +2400,20 @@ where
                 {
                     Some(id) => Some(id),
                     // Of the shared namespace a user key resolves only
-                    // `universe` and its own root (ADR-0044 d5).
-                    None => self
-                        .journal
-                        .resolve_name(tenant_id, kind, name)
-                        .await?
-                        .filter(|&id| id == root || name.as_str() == UNIVERSE),
+                    // `universe`, its own root (ADR-0044 d5) and a public
+                    // node (ADR-0098 d2, the operator's decision of
+                    // 2026-11-27); a private shared name stays unresolved,
+                    // so it is not disclosed.
+                    None => match self.journal.resolve_name(tenant_id, kind, name).await? {
+                        Some(id) if id == root || name.as_str() == UNIVERSE => Some(id),
+                        Some(id) => self
+                            .journal
+                            .workspace(tenant_id, id)
+                            .await?
+                            .filter(|w| w.public)
+                            .map(|w| w.workspace_id),
+                        None => None,
+                    },
                 }
             }
             _ => self.journal.resolve_name(tenant_id, kind, name).await?,
@@ -3403,6 +3411,11 @@ where
         .ok_or(AppError::KeyLinkRefused {
             reason: "user_unknown",
         })?;
+        // The person must hold a live admin flag (d21, the operator's
+        // decision of 2026-11-27).
+        if !self.is_admin_person(tenant_id, Some(person)).await? {
+            return Err(AppError::KeyPerson("admin_key_requires_admin_person"));
+        }
         // A person who cannot sign in never accepts the link, so the key
         // never authenticates (d7).
         Ok(Some(NamedRef {
@@ -3472,8 +3485,15 @@ where
                 .collect::<Vec<_>>(),
         });
         let code = oauth.map(|oauth| self.new_connect_code(oauth, key_id, CONNECT_CODE_TTL_SECS));
+        // A default the issuance creates: a pending issuance names none
+        // until its confirmation sets it with `key.default_set` (ADR-0097
+        // d30, the operator's decision of 2026-11-27).
+        let created_default = record
+            .default_workspace
+            .filter(|d| creations.iter().any(|w| w.workspace_id == *d));
         let effect = json!({
             "key_id": key_id.to_string(),
+            "default_workspace_id": created_default.map(|d| d.to_string()),
             "grants": grants.iter().map(admin_acts::grant_json).collect::<Vec<_>>(),
             "workspaces": creations.iter().map(|w| json!({
                 "workspace_id": w.workspace_id.to_string(),
@@ -3500,12 +3520,9 @@ where
         if pending {
             record.pending_act = Some(act.act_id());
             // A pending issuance creates nothing, so its key names no
-            // default it creates; the key is read with no default until one
-            // is named on a call (ADR-0097 d30; a reading).
-            if record
-                .default_workspace
-                .is_some_and(|d| creations.iter().any(|w| w.workspace_id == d))
-            {
+            // default it creates until the confirmation sets it (ADR-0097
+            // d30, the operator's decision of 2026-11-27).
+            if created_default.is_some() {
                 record.default_workspace = None;
             }
         }
@@ -4932,6 +4949,19 @@ where
         let ceiling = self.ceiling_for(key.tenant_id, namespace).await?;
         let mut payload = Self::workspace_create_payload(&workspace);
         with_reason(self, key.tenant_id, &mut payload, reason)?;
+        // A flagged child in the shared tree is charged to no account, so
+        // its event names the grant that admitted it, which doctor's
+        // `workspace.flagged_creates` counts (ADR-0097 d31, the operator's
+        // decision of 2026-11-27).
+        if let Some((_, grant)) = &flagged
+            && namespace.is_none()
+            && let Some(obj) = payload.as_object_mut()
+        {
+            obj.insert(
+                "create_grant_id".to_owned(),
+                json!(grant.grant_id.to_string()),
+            );
+        }
         // An admin's create is a neutral admin act (ADR-0097 d9).
         let act = if key.role == Role::Admin {
             self.admin_act_of(

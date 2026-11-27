@@ -6861,6 +6861,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let withdrawals_warn = withdrawals.iter().any(|line| line.starts_with("warn"));
     let mut lifecycle = lifecycle_doctor(rescan_read.as_ref());
     lifecycle.extend(public_doctor(rescan_read.as_ref()));
+    lifecycle.extend(flagged_creates_doctor(rescan_read.as_ref()));
     let lifecycle_warn = lifecycle.iter().any(|line| line.starts_with("warn"));
     let lifecycle_fail = lifecycle.iter().any(|line| line.starts_with("fail"));
     let telemetry_warn = telemetry.iter().any(|line| line.starts_with("warn"));
@@ -7930,6 +7931,34 @@ fn public_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
             ineligible.len()
         )
     });
+    lines
+}
+
+/// Doctor's `workspace.flagged_creates` (ADR-0097 d31, the operator's
+/// decision of 2026-11-27), an info line from the same admin rescan window:
+/// the workspaces keys created in the shared tree under a grant carrying
+/// `create`, per creating key. No account's `workspaces` meter counts them,
+/// so a tenant agent key with the flag is bounded only by its request rate.
+/// A server before the flag reports none, and the line is then absent.
+fn flagged_creates_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
+    let Some(Ok(report)) = read else {
+        return Vec::new();
+    };
+    let Some(keys) = report.get("flagged_creates").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let total: u64 = keys.iter().filter_map(|k| k["workspaces"].as_u64()).sum();
+    let mut lines = vec![format!(
+        "workspace.flagged_creates: {total} workspace(s) created in the shared tree under a create grant, by {} key(s); no meter counts them, only each key's request rate bounds them",
+        keys.len()
+    )];
+    for k in keys {
+        lines.push(format!(
+            "workspace.flagged_creates: key {} created {}",
+            k["key_id"].as_str().unwrap_or("?"),
+            k["workspaces"].as_u64().unwrap_or(0)
+        ));
+    }
     lines
 }
 

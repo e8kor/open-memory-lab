@@ -316,6 +316,7 @@ from .rescan_report_by_rule_item import RescanReportByRuleItem
 from .rescan_report_by_rule_item_action import RescanReportByRuleItemAction
 from .rescan_report_findings_item import RescanReportFindingsItem
 from .rescan_report_findings_item_action import RescanReportFindingsItemAction
+from .rescan_report_flagged_creates_item import RescanReportFlaggedCreatesItem
 from .rescan_report_public_workspaces_item import RescanReportPublicWorkspacesItem
 from .rescan_report_scanned_by_origin import RescanReportScannedByOrigin
 from .review_held_needs import ReviewHeldNeeds
@@ -364,6 +365,8 @@ from .set_workspace_public_response_200 import SetWorkspacePublicResponse200
 from .set_workspace_public_response_200_state import SetWorkspacePublicResponse200State
 from .set_workspace_public_response_202 import SetWorkspacePublicResponse202
 from .set_workspace_public_response_202_state import SetWorkspacePublicResponse202State
+from .settle_admin_act_body import SettleAdminActBody
+from .settle_admin_act_body_outcome import SettleAdminActBodyOutcome
 from .severity import Severity
 from .similar_item import SimilarItem
 from .similar_item_kind import SimilarItemKind
@@ -784,6 +787,7 @@ __all__ = (
     "RescanReportByRuleItemAction",
     "RescanReportFindingsItem",
     "RescanReportFindingsItemAction",
+    "RescanReportFlaggedCreatesItem",
     "RescanReportPublicWorkspacesItem",
     "RescanReportScannedByOrigin",
     "ReviewHeldNeeds",
@@ -826,6 +830,8 @@ __all__ = (
     "SetWorkspacePublicResponse200State",
     "SetWorkspacePublicResponse202",
     "SetWorkspacePublicResponse202State",
+    "SettleAdminActBody",
+    "SettleAdminActBodyOutcome",
     "Severity",
     "SimilarItem",
     "SimilarItemKind",

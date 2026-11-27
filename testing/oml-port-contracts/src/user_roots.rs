@@ -1359,6 +1359,57 @@ where
     a_pending_email_signs_in_to_nothing_until_its_person_accepts_it(make().await).await;
     the_last_admin_entry_is_refused_a_change_that_leaves_it_pending(make().await).await;
     an_accept_whose_admin_flag_the_entry_no_longer_carries_commits_nothing(make().await).await;
+    a_removed_admins_open_removal_is_found_by_the_addresss_digest_before_any_tenant(make().await)
+        .await;
+}
+
+/// On either store, before any tenant is known: the open `remove_admin`
+/// act whose target names an address's digest is found by that digest
+/// alone, with its tenant and the entry as it stood, and a contested one
+/// is not (ADR-0097 d8, the operator's decision of 2026-11-27; migration
+/// 0073's lookup policy).
+pub async fn a_removed_admins_open_removal_is_found_by_the_addresss_digest_before_any_tenant<
+    S: WebStore + ConnectionStore + Clone,
+>(
+    store: S,
+) {
+    let w = RootsWorld::new(store).await;
+    w.signed_in("ann", true).await;
+    w.signed_in("bob", true).await;
+    let address = Email::parse("bob@example.com").expect("an email");
+    let digest = address.digest();
+    assert!(
+        w.store
+            .removed_admin_act(&digest)
+            .await
+            .expect("a lookup")
+            .is_none()
+    );
+    w.app
+        .remove_web_email_with_reason(w.admin.as_str(), &address, true, Some("bob left"))
+        .await
+        .expect("bob's entry is removed");
+    let (tenant, act) = w
+        .store
+        .removed_admin_act(&digest)
+        .await
+        .expect("a lookup")
+        .expect("the open removal");
+    assert_eq!(tenant, w.tenant);
+    assert_eq!(act.act.as_str(), "remove_admin");
+    assert_eq!(act.effect["before"]["user"], "bob");
+    w.app
+        .contest_admin_act_as(tenant, &Name::parse("bob").expect("a name"), act.act_id)
+        .await
+        .expect("bob contests");
+    assert!(
+        w.store
+            .removed_admin_act(&digest)
+            .await
+            .expect("a lookup")
+            .is_none(),
+        "a contested removal opens no second contest"
+    );
 }
 
 /// F3 of the fourth review of #498, on either store: the tenant's last live
@@ -1533,10 +1584,11 @@ pub async fn a_pending_email_signs_in_to_nothing_until_its_person_accepts_it<
         "a pending entry opens no session"
     );
     // ann's own admin entry is the tenant's last live one: the pending one
-    // keeps no admin.
+    // keeps no admin. An act against an admin carries a reason (ADR-0097
+    // d26), so the last-admin guard is what refuses it.
     let err = w
         .app
-        .allow_web_email_keeping(
+        .allow_web_email_with_reason(
             w.admin.as_str(),
             &WebEmailRequest {
                 email: Email::parse("ann@example.com").expect("an email"),
@@ -1544,6 +1596,7 @@ pub async fn a_pending_email_signs_in_to_nothing_until_its_person_accepts_it<
                 admin: false,
             },
             true,
+            Some("a test"),
         )
         .await
         .unwrap_err();

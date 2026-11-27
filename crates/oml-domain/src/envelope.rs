@@ -65,6 +65,10 @@ pub mod event_types {
     /// An admin key set another key's expiry and request rate: both values
     /// as they stand after the change (ADR-0079 d5).
     pub const KEY_LIMITS_SET: &str = "key.limits_set";
+    /// A key's default workspace is set: a pending issuance's confirmation
+    /// names the workspace it creates as the key's default (ADR-0097 d30,
+    /// the operator's decision of 2026-11-27).
+    pub const KEY_DEFAULT_SET: &str = "key.default_set";
     /// A key got a new value; the previous one works until
     /// `previous_valid_until`, or stopped at once (ADR-0096 d13).
     pub const KEY_ROTATED: &str = "key.rotated";

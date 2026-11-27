@@ -3209,6 +3209,60 @@ pub async fn a_revoked_key_no_longer_resolves_by_its_hash<S: JournalStore>(store
     );
 }
 
+/// `key.default_set` sets a live key's default to a node of its tenant,
+/// and reads back; a revoked key, or a node the tenant does not hold, is
+/// refused and commits nothing (event-catalog.md `key.default_set`;
+/// ADR-0097 d30, the operator's decision of 2026-11-27).
+pub async fn key_default_set_sets_a_live_keys_default_and_refuses_anything_else<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(5100);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let root = Uuid::from_u128(0xD5_0001);
+    rig.commit(
+        store,
+        event_types::WORKSPACE_CREATE,
+        json!({ "workspace_id": root.to_string() }),
+        MetadataFold::WorkspaceCreated(workspace_record(t, root, None, "universe")),
+        None,
+    )
+    .await
+    .expect("a node");
+    let key = key_record(t, Uuid::from_u128(0xD5_0002), Role::Reader, None);
+    rig.issue_key(store, key.clone()).await;
+    let set = |key_id, default_workspace| {
+        (
+            event_types::KEY_DEFAULT_SET,
+            json!({ "key_id": key_id }),
+            MetadataFold::KeyDefaultSet {
+                key_id,
+                default_workspace,
+            },
+        )
+    };
+    let (event_type, payload, fold) = set(key.key_id, root);
+    rig.commit(store, event_type, payload, fold, None)
+        .await
+        .expect("the default is set");
+    let stored = store.key(t, key.key_id).await.expect("read").expect("held");
+    assert_eq!(stored.default_workspace, Some(root));
+    let head = store.chain_head(t).await.expect("head");
+    let (event_type, payload, fold) = set(key.key_id, Uuid::from_u128(0xD5_0003));
+    let refused = rig.commit(store, event_type, payload, fold, None).await;
+    assert!(matches!(refused, Err(StoreError::Backend(_))), "{refused:?}");
+    let (event_type, payload, fold) = set(Uuid::from_u128(0xD5_0004), root);
+    let refused = rig.commit(store, event_type, payload, fold, None).await;
+    assert!(matches!(refused, Err(StoreError::Backend(_))), "{refused:?}");
+    assert_eq!(
+        store.chain_head(t).await.expect("head"),
+        head,
+        "a refused default commits nothing"
+    );
+}
+
 /// A key's expiry and its requests per minute fold in with `key.issued`
 /// and read back exactly; `key.limits_set` replaces both, `None` clearing
 /// one. A key past its expiry still resolves by its hash, since the use
@@ -11286,6 +11340,10 @@ where
     .await;
     Box::pin(
         a_keys_limits_fold_with_its_issuance_and_are_replaced_by_key_limits_set(&new_store().await),
+    )
+    .await;
+    Box::pin(
+        key_default_set_sets_a_live_keys_default_and_refuses_anything_else(&new_store().await),
     )
     .await;
     Box::pin(

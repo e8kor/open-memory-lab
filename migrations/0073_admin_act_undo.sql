@@ -22,11 +22,22 @@
 -- reads them from the row the lookup already reads, so it adds no store
 -- call (the bottleneck register's "Authenticate" row).
 --
+-- admin_acts gains a second policy, SELECT only: before any tenant is
+-- known, the contest-only sign-in reads the open remove_admin act whose
+-- target names the signing-in address's digest, matched on
+-- oml.api_key_hash as the web_emails lookup is (0015), so a removed admin,
+-- whose entry is gone, can still contest (d8; the operator's decision of
+-- 2026-11-27). The partial index serves that one lookup.
+--
 -- What it costs a live database: four nullable columns with no default,
--- catalog changes that rewrite no row. ALTER TABLE takes ACCESS EXCLUSIVE
--- on grants and api_keys until the commit, so key lookups wait for it.
+-- catalog changes that rewrite no row, and a policy and a partial index on
+-- admin_acts, a table 0070 creates in the same release, so the index builds
+-- over no live row. ALTER TABLE takes ACCESS EXCLUSIVE on grants and
+-- api_keys until the commit, so key lookups wait for it.
 
 SET LOCAL lock_timeout = '5s';
+-- lint:allow column-check api_keys holds one row per key, tens to hundreds a tenant, and every new column is NULL on each, so validating the inline check scans a small table once under the lock
+-- lint:allow constraint api_keys_suspension holds on every row the moment it is added, each new column being NULL, and api_keys is small, so one scan under the held lock is cheaper than a second, no-transaction migration
 
 ALTER TABLE grants ADD COLUMN revoked_epoch bigint;
 COMMENT ON COLUMN grants.revoked_epoch IS
@@ -43,3 +54,9 @@ ALTER TABLE api_keys
             AND suspended_at IS NOT NULL));
 COMMENT ON COLUMN api_keys.suspended_cause IS
     'Why the key authenticates nothing for now: an open act against its person, or unlinked at the upgrade (ADR-0097 d8, d21).';
+
+CREATE POLICY contest_lookup ON admin_acts FOR SELECT
+    USING (target->>'email_digest'
+           = 'sha256:' || NULLIF(current_setting('oml.api_key_hash', true), ''));
+CREATE INDEX admin_acts_removed_admin_email ON admin_acts ((target->>'email_digest'))
+    WHERE act = 'remove_admin';

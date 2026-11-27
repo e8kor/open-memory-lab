@@ -1746,6 +1746,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/admin/acts/{act}/contest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The admin person an open act against an admin targets contests it from their own session; the flag and sign-in come back and the suspension stays.
+         * @description Requires: a console session key of the act's target (ADR-0097 d8). The act is an un-flag, removal, disable or change of another admin person's entry, effective and uncontested. The act moves to contested and, in the same commit, the entry's flag and sign-in come back: an un-flagged or changed entry is flagged again, a removed one added again, a disabled person enabled. The target's admin keys stay suspended, and nothing revoked comes back. A disabled or removed target contests from the contest-only sign-in instead (POST /web/contest). Refused with request.validation, details.field act and details.reason: not_contestable or not_target. Journalled as admin.act with state contested. Since v0.8.6.
+         */
+        post: operations["contestAdminAct"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/admin/acts/{act}/settle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * With three or more admin persons, a third admin person settles an open act against an admin, confirm or reverse.
+         * @description Requires: admin key role, a key that counts as a live admin person who is neither party and whose flag was accepted at least seven days before the act (ADR-0097 d8, d11). Three or more admin persons count the live ones and every open act's target (the operator's decision of 2026-11-27). confirm revokes the target's suspended admin keys, cause settlement, and undoes a contest's restoration; reverse lifts the suspension and restores the entry where no contest did. Below three: details.reason fewer_than_three, and the operator settles from the host. Refused with request.validation, details.field act and details.reason: not_contestable, fewer_than_three or not_settler. Journalled as admin.act with state settled. Since v0.8.6.
+         */
+        post: operations["settleAdminAct"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/admin/acts/{act}/decline": {
         parameters: {
             query?: never;
@@ -1756,8 +1796,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Decline a pending admin act, which then never takes effect, or revoke a key a sole_admin tenant issued at once.
-         * @description Requires: admin key role, the act's own actor included. Declining is narrowing (ADR-0097 d3), journalled as an admin.act decline_act of its own before the declined act's admin.act with state declined; a key the act issued is revoked in the same commit (key.revoked). Declined is final (ADR-0097 d23). Refused with request.validation, details.field act and details.reason: not_pending (already settled), expired, or not_declinable (an act that took effect at once outside sole_admin, or a sole_admin act other than a key's issuance). reason is optional and scanned. Since v0.8.6.
+         * Decline a pending admin act, which then never takes effect, or undo a widening act a sole_admin tenant took at once.
+         * @description Requires: admin key role, the act's own actor included. Declining is narrowing (ADR-0097 d3), journalled as an admin.act decline_act of its own before the declined act's admin.act with state declined. In the same commit the decline undoes what the act applied, each event naming the decline's act_id: a key the act issued is revoked (key.revoked, a pending issuance's key included), grants it added are revoked (grant.revoked), a connect code it minted is voided (connection.code_voided) or the connection opened from it revoked (connection.revoked), a raised limit is set back to the limits the act found (key.limits_set), and an admin flag is taken off its entry (web.email_changed) under the last-admin guard (ADR-0097 d10, the operator's decision of 2026-11-27). Declined is final (ADR-0097 d23). Refused with request.validation, details.field act and details.reason: not_pending (already settled, or took effect and is not widening under sole_admin) or expired. reason is optional and scanned. Since v0.8.6.
          */
         post: operations["declineAdminAct"];
         delete?: never;
@@ -4482,6 +4522,12 @@ export interface components {
             }[];
             /** @description Public workspaces that are development or inside a user root, which only a direct store edit produces: doctor's workspace.public_ineligible, critical (ADR-0098 d9). Since v0.8.6. */
             public_ineligible?: string[];
+            /** @description Per creating key, the workspaces it created in the shared tree under a grant carrying create, which no account's workspaces meter counts: doctor's workspace.flagged_creates, info (ADR-0097 d31, the operator's decision of 2026-11-27). Since v0.8.6. */
+            flagged_creates?: {
+                /** Format: uuid */
+                key_id: string;
+                workspaces: number;
+            }[];
             scanner_version: string | null;
             /** @description Versions scanned in this window: every stored state but erased. */
             scanned: number;
@@ -4526,6 +4572,54 @@ export interface components {
             promoted_unapproved?: number;
             /** @description After this call, served instruction-class versions (promoted steering, guardrail and skill tips, retirements aside) whose approving key was not a person's reviewer key, or that carry no approval: approved before an instruction became a person's to approve. A person reviews one again by superseding it; the replaced version is then no tip and not counted. Read off the row's approver_used_by, so a person's key that had a crew is not counted. Doctor's instruction_approvals (ADR-0080 d16, #436). Since v0.8.3. */
             instructions_without_person_approval?: number;
+            /** @description After this call, withdrawn versions still in a review queue, which a withdrawal's own transaction rules out: doctor's memory.withdrawn_in_queue (ADR-0083 d13). */
+            withdrawn_in_queue?: number;
+            /** @description Held successors of a version that is no longer its claim's promoted tip, so no verdict can approve them: doctor's memory.held_successor_stranded (ADR-0089 d16). */
+            held_successors_stranded?: number;
+            /** @description Erased versions whose data key is still live, which the erase's own transaction and the lake writer's fold rule out: doctor's lake.erased_key_live (ADR-0005 d2). */
+            erased_keys_live?: number;
+            /** @description Admin investigations open for more than seven days: doctor's admin.investigation_open_long (ADR-0089 d10). */
+            investigations_open_long?: number;
+            /** @description Admin fixes no person has confirmed or reverted (ADR-0089 d15). */
+            fixes_unconfirmed?: number;
+            /** @description The oldest unconfirmed fix's age in seconds, 0 with none. */
+            fix_oldest_unconfirmed_seconds?: number;
+            /** @description Unconfirmed fixes that loosen a guardrail (ADR-0089 d15). */
+            fixes_loosening_guardrail?: number;
+            /** @description Unconfirmed fixes on a workspace where no live person's reviewer key holds reviewer. */
+            fixes_without_person_reviewer?: number;
+            /** @description Unconfirmed fixes only the fixing admin's own person could settle. */
+            fixes_admin_person_only?: number;
+            /** @description Fixes a person reverted. */
+            fixes_reverted?: number;
+            /** @description Live keys whose link to a person waits on that person's acceptance (ADR-0085 d16). */
+            key_links_pending?: number;
+            /** @description Allowlist entries that wait on their person's acceptance. */
+            web_emails_pending?: number;
+            /** @description Admin acts that wait on a second admin person: doctor's admin.act_pending_confirmation (ADR-0097 d5). */
+            admin_acts_pending?: number;
+            /** @description The oldest pending admin act's age in seconds, 0 with none. */
+            admin_act_oldest_pending_seconds?: number;
+            /** @description Widening acts taken at once under sole_admin: doctor's admin.act_sole_admin (ADR-0097 d10). */
+            admin_acts_sole_admin?: number;
+            /** @description Whether the tenant has never had two live admin persons (ADR-0097 d10). */
+            sole_admin?: boolean;
+            /** @description Admin acts journalled with no reason: doctor's admin.act_without_reason (ADR-0097 d26). */
+            admin_acts_without_reason?: number;
+            /** @description Pending admin acts that expired as declined in the last seven days: doctor's admin.act_expired (ADR-0097 d23). */
+            admin_acts_expired?: number;
+            /** @description Offensive narrowing in the last 24 hours: doctor's admin.offensive_narrowing (ADR-0097 d24). */
+            admin_acts_offensive?: number;
+            /** @description The most narrowing acts one admin person took in the last 24 hours: doctor's admin.narrowing_burst (ADR-0097 d24). */
+            admin_narrowing_burst?: number;
+            /** @description Admin keys suspended while an act against their person is open: doctor's admin.key_suspended (ADR-0097 d8, d21). Since v0.8.6. */
+            admin_keys_suspended?: number;
+            /** @description Admin keys suspended as unlinked at the upgrade, which reach only /v2/whoami and POST /v2/keys/self/link: doctor's admin.key_unlinked_suspended (ADR-0097 d21). Since v0.8.6. */
+            admin_keys_unlinked_suspended?: number;
+            /** @description The fewest days an unlinked admin key has left before it is revoked, 0 with none. Since v0.8.6. */
+            admin_unlinked_days_left?: number;
+            /** @description Open acts against an admin below three admin persons, a freeze the operator settles: doctor's admin.dispute_open, critical (ADR-0097 d8). Since v0.8.6. */
+            admin_disputes_open?: number;
         };
         /** @description The build that answered (http-api.md "Health"). Times are UTC, YYYY-MM-DDTHH:MM:SSZ; a field nothing could supply is the string unknown. */
         Build: {
@@ -6796,12 +6890,15 @@ export interface operations {
                     /**
                      * @example {
                      *       "alerts": 0,
+                     *       "acts_to_confirm": 0,
                      *       "truncated": false
                      *     }
                      */
                     "application/json": {
                         /** @description The guardrail-loosening alerts: unconfirmed fixes that loosen a guardrail (ADR-0096 d7). Since v0.8.5. */
                         alerts: number;
+                        /** @description Admin acts to confirm (ADR-0097 d2, d10, d11): the tenant's widening acts the calling admin person may settle, never their own: pending acts unexpired, taken at least seven days after the person's admin flag was accepted, and acts taken at once under sole_admin once that flag is seven days old. Since v0.8.6. */
+                        acts_to_confirm: number;
                         truncated: boolean;
                     };
                 };
@@ -8647,6 +8744,8 @@ export interface operations {
                     capacity: "review" | "curate" | "read";
                     /** @description Each by id or name. */
                     workspaces: string[];
+                    /** @description Why the capacity is given; scanned and journalled in each grant's admin.act. Required when the grant waits on a second admin person, outside sole_admin (ADR-0097 d5, d26). Since v0.8.6. */
+                    reason?: string;
                 };
             };
         };
@@ -9887,6 +9986,88 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description The confirmed act. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminAct"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            default: components["responses"]["Error"];
+        };
+    };
+    contestAdminAct: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path: {
+                act: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The act in its new state. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminAct"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            default: components["responses"]["Error"];
+        };
+    };
+    settleAdminAct: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path: {
+                act: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "outcome": "confirm"
+                 *     }
+                 */
+                "application/json": {
+                    /** @enum {string} */
+                    outcome: "confirm" | "reverse";
+                };
+            };
+        };
+        responses: {
+            /** @description The act in its new state. */
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];

@@ -1179,3 +1179,24 @@ async fn a_public_universe_serves_its_claims_without_their_source() {
         .expect("a tenant key reads a public universe");
     assert!(served.anonymous, "universe keeps its no-author serving");
 }
+
+/// A user key resolves a bare name to a shared node when that node is
+/// public, so a recall scoped by the name reaches it; a private shared
+/// name stays unresolved, `access.not_found`, and is not disclosed
+/// (ADR-0098 d2, d9; the operator's decision of 2026-11-27).
+#[tokio::test]
+async fn a_user_key_resolves_a_public_shared_node_by_its_bare_name() {
+    let r = rig().await;
+    let ula = user_writer(&r, "ula").await;
+    let err = r
+        .app
+        .recall(ula.value.as_str(), &recall("glossary", Some("shared")))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::NotFound), "{err:?}");
+    r.alice_marks("shared").await;
+    let ids = r
+        .recalled(ula.value.as_str(), &recall("glossary", Some("shared")))
+        .await;
+    assert_eq!(ids, vec![r.approved]);
+}

@@ -8,7 +8,7 @@ use oml_app::app::Caller;
 use oml_app::app::Capacity;
 use oml_app::domain::access::Covers;
 use oml_app::domain::admin_act::AdminActState;
-use oml_app::domain::name::{Name, Reference};
+use oml_app::domain::name::{Name, NamedKind, Reference};
 use oml_app::domain::web::Email;
 use oml_app::domain::{Role, SignedEnvelope, UsedBy, event_types};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
@@ -1517,8 +1517,9 @@ async fn an_issuance_with_new_workspaces_creates_them_and_grants_the_key_in_one_
 
 /// A pending issuance creates nothing and reserves no name: the workspace
 /// is absent until a second admin person confirms, and the confirmation
-/// creates it and writes the key's grants on it in one commit (ADR-0097
-/// d30, d23).
+/// creates it, writes the key's grants on it and sets it as the key's
+/// default with `key.default_set`, in one commit (ADR-0097 d30, d23; the
+/// operator's decision of 2026-11-27).
 #[tokio::test]
 async fn a_pending_issuance_creates_no_workspace_until_it_is_confirmed() {
     let r = two_admins().await;
@@ -1528,6 +1529,13 @@ async fn a_pending_issuance_creates_no_workspace_until_it_is_confirmed() {
         .await
         .expect("a pending issuance");
     let act_id = issued.pending_act.expect("pending");
+    let waiting = r
+        .store
+        .key(r.boot.tenant_id, issued.key_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert_eq!(waiting.default_workspace, None, "nothing created yet");
     let absent = r
         .app
         .workspace_info(r.admin(), Some(by_name("beta")))
@@ -1548,8 +1556,11 @@ async fn a_pending_issuance_creates_no_workspace_until_it_is_confirmed() {
             event_types::WORKSPACE_CREATE,
             event_types::GRANT_ISSUED,
             event_types::GRANT_ISSUED,
+            event_types::KEY_DEFAULT_SET,
         ]
     );
+    let set = r.journal().await.pop().expect("key.default_set").envelope;
+    assert_eq!(set.payload["act_id"], act_id.to_string());
     let beta = r
         .app
         .workspace_info(r.admin(), Some(by_name("beta")))
@@ -1565,6 +1576,14 @@ async fn a_pending_issuance_creates_no_workspace_until_it_is_confirmed() {
         .expect("held");
     assert!(access.grants.iter().all(|g| g.grant.node == beta));
     assert_eq!(access.grants.len(), 2);
+    assert_eq!(set.payload["default_workspace_id"], beta.to_string());
+    let key = r
+        .store
+        .key(r.boot.tenant_id, issued.key_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert_eq!(key.default_workspace, Some(beta), "the default is set");
 }
 
 /// The admin's session key creates a workspace directly under `universe`,
@@ -1764,4 +1783,168 @@ async fn granting_create_waits_on_a_second_admin_person() {
         access.grants.iter().any(|g| g.grant.create),
         "the confirmed effect keeps the flag"
     );
+}
+
+/// A flagged child in the shared tree is charged to no account: the
+/// `workspaces` meter of the admin person whose act granted the flag does
+/// not move, the create's event names the grant that admitted it, and the
+/// store counts it per creating key for doctor's `workspace.flagged_creates`
+/// (ADR-0097 d31, the operator's decision of 2026-11-27).
+#[tokio::test]
+async fn a_flagged_child_in_the_shared_tree_is_charged_to_no_account() {
+    use oml_app::domain::usage::Meter;
+    let r = rig().await;
+    r.admin_person("alice").await;
+    let alice = r.admin_session("alice").await;
+    let flagged = r
+        .app
+        .issue_key(Bearer::Session(&alice), &flagged_req(Covers::Subtree))
+        .await
+        .expect("issued at once under sole_admin");
+    let root = r
+        .store
+        .resolve_name(r.boot.tenant_id, NamedKind::Workspace, &name("alice"))
+        .await
+        .expect("read")
+        .expect("alice's root");
+    let used = |usage: oml_app::types::AccountUsage| {
+        usage
+            .meters
+            .iter()
+            .find(|m| m.meter == Meter::Workspaces)
+            .map_or(0, |m| m.used)
+    };
+    let before = used(
+        r.app
+            .usage_of(r.boot.tenant_id, root)
+            .await
+            .expect("usage"),
+    );
+    r.app
+        .create_workspace(
+            flagged.value.as_str(),
+            &name("c9"),
+            Some(by_name("crew")),
+            None,
+        )
+        .await
+        .expect("the flag admits the child");
+    let event = r.journal().await.pop().expect("workspace.create").envelope;
+    assert_eq!(event.event_type, event_types::WORKSPACE_CREATE);
+    let grant = flagged
+        .access
+        .grants
+        .iter()
+        .find(|g| g.grant.create)
+        .expect("the flagged grant");
+    assert_eq!(
+        event.payload["create_grant_id"],
+        grant.grant.grant_id.to_string()
+    );
+    assert_eq!(
+        used(
+            r.app
+                .usage_of(r.boot.tenant_id, root)
+                .await
+                .expect("usage")
+        ),
+        before,
+        "no account is charged for the shared tree"
+    );
+    assert_eq!(
+        r.store
+            .flagged_creates(r.boot.tenant_id)
+            .await
+            .expect("the count"),
+        [(flagged.key_id, 1)]
+    );
+}
+
+/// The person on an admin key holds a live admin flag (ADR-0097 d21, the
+/// operator's decision of 2026-11-27): an issuance naming a person with no
+/// flag is refused `admin_key_requires_admin_person` and journals nothing,
+/// and a link to an admin key is refused at its acceptance by a person
+/// whose flag came off before they accepted it.
+#[tokio::test]
+async fn an_admin_keys_person_must_hold_an_admin_flag() {
+    let r = rig().await;
+    r.admin_person("carol").await;
+    let (dana, _) = r
+        .app
+        .allow_web_email(r.admin(), &entry_of("dana", false))
+        .await
+        .expect("dana's entry");
+    r.app.web_ensure_keys(&dana).await.expect("dana's keys");
+    let admin_req = |person: &str| IssueKeyRequest {
+        role: Role::Admin,
+        grants: Vec::new(),
+        used_by: Some(UsedBy::Person),
+        person: Some(name(person)),
+        ..agent_req()
+    };
+    let before = r.journal().await.len();
+    let err = r
+        .app
+        .issue_key(r.admin(), &admin_req("dana"))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::KeyPerson("admin_key_requires_admin_person")),
+        "{err:?}"
+    );
+    assert_eq!(r.journal().await.len(), before, "nothing is journalled");
+
+    // Carol's key is issued while she holds the flag; she loses it before
+    // she accepts the link.
+    let issued = r
+        .app
+        .issue_key(r.admin(), &admin_req("carol"))
+        .await
+        .expect("carol's admin key");
+    r.admin_person("erin").await;
+    let erin = r.admin_session("erin").await;
+    let web = r.person_session("carol", Capacity::Web).await;
+    r.app
+        .allow_web_email_with_reason(
+            Bearer::Session(&erin),
+            &entry_of("carol", false),
+            true,
+            Some("carol moves teams"),
+        )
+        .await
+        .expect("carol's flag comes off");
+    let err = r
+        .app
+        .accept_key_link(Bearer::Session(&web), issued.key_id.into())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AppError::KeyLinkRefused {
+                reason: "not_admin_person"
+            }
+        ),
+        "{err:?}"
+    );
+}
+
+/// Every `create_workspaces[]` parent already exists: a creation under
+/// another creation of the same request is refused as an unknown
+/// workspace, and nothing of the issuance is journalled (ADR-0097 d30, the
+/// operator's decision of 2026-11-27).
+#[tokio::test]
+async fn no_creation_nests_under_another_creation_of_the_same_issuance() {
+    let r = rig().await;
+    let before = r.journal().await.len();
+    let req = IssueKeyRequest {
+        create_workspaces: vec![
+            new_workspace("crew", "outer"),
+            new_workspace("outer", "inner"),
+        ],
+        ..creating_req("unused")
+    };
+    let err = r.app.issue_key(r.admin(), &req).await.unwrap_err();
+    assert!(matches!(err, AppError::NotFound), "{err:?}");
+    assert_eq!(r.journal().await.len(), before, "nothing is journalled");
 }

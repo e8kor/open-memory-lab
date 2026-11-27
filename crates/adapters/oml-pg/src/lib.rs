@@ -5782,6 +5782,30 @@ async fn apply_fold(
                 )));
             }
         }
+        MetadataFold::KeyDefaultSet {
+            key_id,
+            default_workspace,
+        } => {
+            // The guard matches only a live key of this tenant and a node
+            // it holds, so a default on anything else aborts the commit
+            // (ADR-0097 d30, the operator's decision of 2026-11-27).
+            let set = sqlx::query(
+                "UPDATE api_keys SET default_workspace_id = $3 \
+                 WHERE tenant_id = $1 AND id = $2 AND revoked_at IS NULL \
+                 AND EXISTS (SELECT 1 FROM workspaces WHERE tenant_id = $1 AND id = $3)",
+            )
+            .bind(tenant_id)
+            .bind(key_id)
+            .bind(default_workspace)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if set.rows_affected() != 1 {
+                return Err(StoreError::Backend(format!(
+                    "key {key_id} is not a live key of this tenant, or {default_workspace} is not its node"
+                )));
+            }
+        }
         MetadataFold::KeyLinked {
             key_id,
             user_root,
@@ -6780,6 +6804,7 @@ async fn meter_plan(
         // An expired key stays on its account's keys meter: its date can
         // be moved later (ADR-0079 d3).
         | MetadataFold::KeyLimitsSet { .. }
+        | MetadataFold::KeyDefaultSet { .. }
         | MetadataFold::KeyRotated { .. }
         | MetadataFold::KeyLinked { .. }
         | MetadataFold::KeyLinkAccepted { .. }
@@ -9297,6 +9322,29 @@ impl JournalStore for PgStore {
         .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
         Ok(uploads.len() as u64)
+    }
+
+    async fn flagged_creates(&self, tenant_id: Uuid) -> Result<Vec<(Uuid, u64)>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        // A scan of the tenant's `workspace.create` events, read by the
+        // admin rescan window alone (the bottleneck register's "Flagged
+        // creates" row; ADR-0097 d31, the operator's decision of
+        // 2026-11-27).
+        let rows: Vec<(Uuid, i64)> = sqlx::query_as(
+            "SELECT j.api_key_id, count(*) FROM journal j \
+              WHERE j.tenant_id = $1 AND j.event_type = 'workspace.create' \
+                AND j.payload ? 'create_grant_id' AND j.api_key_id IS NOT NULL \
+              GROUP BY j.api_key_id ORDER BY j.api_key_id",
+        )
+        .bind(tenant_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.into_iter()
+            .map(|(key, n)| Ok((key, u64::try_from(n).map_err(backend)?)))
+            .collect()
     }
 
     async fn workspace_creator_if_empty(
@@ -12941,6 +12989,37 @@ impl PgStore {
 /// each in a transaction of its own under `oml.tenant_id`, the digest
 /// lookups under 0015's `key_resolution` policies.
 impl WebStore for PgStore {
+    async fn removed_admin_act(
+        &self,
+        email_hash: &Sha256Hash,
+    ) -> Result<Option<(Uuid, oml_app::types::AdminActRecord)>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_lookup_digest(&mut tx, email_hash).await?;
+        // Before any tenant is known, the contest lookup policy admits the
+        // admin act rows whose target names this digest, SELECT only
+        // (migration 0073; ADR-0097 d8, the operator's decision of
+        // 2026-11-27).
+        let found: Option<(Uuid, Uuid)> = sqlx::query_as(
+            "SELECT tenant_id, id FROM admin_acts \
+              WHERE act = 'remove_admin' AND state = 'effective' \
+                AND target->>'email_digest' = $1 \
+              ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(email_hash.to_prefixed())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        let Some((tenant_id, act_id)) = found else {
+            return Ok(None);
+        };
+        Ok(self
+            .read_admin_acts(tenant_id, Some(act_id), None)
+            .await?
+            .pop()
+            .map(|act| (tenant_id, act)))
+    }
+
     async fn web_entry_by_email(
         &self,
         email_hash: &Sha256Hash,

@@ -3822,6 +3822,68 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         default: { $ref: '#/components/responses/Error' }
 
+  /v2/admin/acts/{act}/contest:
+    post:
+      tags: [admin]
+      operationId: contestAdminAct
+      summary: The admin person an open act against an admin targets contests it from their own session; the flag and sign-in come back and the suspension stays.
+      description: 'Requires: a console session key of the act''s target (ADR-0097 d8). The act is an un-flag, removal, disable or change of another admin person''s entry, effective and uncontested. The act moves to contested and, in the same commit, the entry''s flag and sign-in come back: an un-flagged or changed entry is flagged again, a removed one added again, a disabled person enabled. The target''s admin keys stay suspended, and nothing revoked comes back. A disabled or removed target contests from the contest-only sign-in instead (POST /web/contest). Refused with request.validation, details.field act and details.reason: not_contestable or not_target. Journalled as admin.act with state contested. Since v0.8.6.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: act, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The act in its new state.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminAct' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/admin/acts/{act}/settle:
+    post:
+      tags: [admin]
+      operationId: settleAdminAct
+      summary: With three or more admin persons, a third admin person settles an open act against an admin, confirm or reverse.
+      description: 'Requires: admin key role, a key that counts as a live admin person who is neither party and whose flag was accepted at least seven days before the act (ADR-0097 d8, d11). Three or more admin persons count the live ones and every open act''s target (the operator''s decision of 2026-11-27). confirm revokes the target''s suspended admin keys, cause settlement, and undoes a contest''s restoration; reverse lifts the suspension and restores the entry where no contest did. Below three: details.reason fewer_than_three, and the operator settles from the host. Refused with request.validation, details.field act and details.reason: not_contestable, fewer_than_three or not_settler. Journalled as admin.act with state settled. Since v0.8.6.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: act, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              outcome: confirm
+            schema:
+              type: object
+              required: [outcome]
+              additionalProperties: false
+              properties:
+                outcome: { type: string, enum: [confirm, reverse] }
+      responses:
+        '200':
+          description: The act in its new state.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminAct' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        default: { $ref: '#/components/responses/Error' }
+
   /v2/admin/acts/{act}/decline:
     post:
       tags: [admin]
@@ -7301,6 +7363,16 @@ components:
               sole_admin: { type: boolean }
               served_rows: { type: integer, minimum: 0 }
         public_ineligible: { type: array, items: { type: string, format: uuid }, description: "Public workspaces that are development or inside a user root, which only a direct store edit produces: doctor's workspace.public_ineligible, critical (ADR-0098 d9). Since v0.8.6." }
+        flagged_creates:
+          type: array
+          description: "Per creating key, the workspaces it created in the shared tree under a grant carrying create, which no account's workspaces meter counts: doctor's workspace.flagged_creates, info (ADR-0097 d31, the operator's decision of 2026-11-27). Since v0.8.6."
+          items:
+            type: object
+            required: [key_id, workspaces]
+            additionalProperties: false
+            properties:
+              key_id: { type: string, format: uuid }
+              workspaces: { type: integer, minimum: 1 }
         scanner_version: { type: [string, 'null'] }
         scanned: { type: integer, minimum: 0, description: 'Versions scanned in this window: every stored state but erased.' }
         findings:

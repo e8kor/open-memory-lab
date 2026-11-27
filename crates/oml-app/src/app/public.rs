@@ -385,6 +385,22 @@ where
         self.public_stats(admin.tenant_id).await
     }
 
+    /// Doctor's `workspace.flagged_creates` (ADR-0097 d31, the operator's
+    /// decision of 2026-11-27): per creating key, the workspaces it created
+    /// in the shared tree under a grant carrying `create`, which no meter
+    /// counts, for the admin key `bearer` names, as the admin rescan window
+    /// serves it.
+    ///
+    /// # Errors
+    /// The caller's authentication and role, and the store's.
+    pub async fn admin_flagged_creates(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+    ) -> Result<Vec<(Uuid, u64)>, AppError> {
+        let admin = self.admin_caller(bearer.into(), "rescan").await?.key;
+        Ok(self.journal.flagged_creates(admin.tenant_id).await?)
+    }
+
     /// The public nodes `key` reads through the flag, apart from its grants,
     /// a global deny applied (ADR-0098 d9, the one-key read).
     pub(crate) async fn public_reach_of(

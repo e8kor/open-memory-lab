@@ -178,10 +178,26 @@ where
                 .admin_public_stats(&token)
                 .await
                 .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-            Ok(json_response(
-                StatusCode::OK,
-                &report_json(&report, &fixes, &public),
-            ))
+            let flagged = st
+                .app
+                .admin_flagged_creates(&token)
+                .await
+                .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+            let mut body = report_json(&report, &fixes, &public);
+            // Doctor's `workspace.flagged_creates` (ADR-0097 d31, the
+            // operator's decision of 2026-11-27).
+            if let Some(obj) = body.as_object_mut() {
+                obj.insert(
+                    "flagged_creates".to_owned(),
+                    flagged
+                        .iter()
+                        .map(|(key_id, workspaces)| {
+                            json!({ "key_id": key_id, "workspaces": workspaces })
+                        })
+                        .collect(),
+                );
+            }
+            Ok(json_response(StatusCode::OK, &body))
         }
         .await;
         finish(rid, result)

@@ -851,6 +851,37 @@ where
                 if let Some(code) = effect.get("code").filter(|c| !c.is_null()) {
                     self.confirmed_code(admin, act, key_id, code, links).await?;
                 }
+                // The default the issuance asked for among the workspaces it
+                // creates, set now that they exist (ADR-0097 d30, the
+                // operator's decision of 2026-11-27).
+                if let Some(default_workspace) = effect
+                    .get("default_workspace_id")
+                    .and_then(Value::as_str)
+                    .and_then(|s| Uuid::parse_str(s).ok())
+                {
+                    let prev = last(links);
+                    let event = self.seal(
+                        Some(&prev),
+                        tenant_id,
+                        event_types::KEY_DEFAULT_SET,
+                        &admin.principal,
+                        Some(admin.key_id),
+                        with_act_id(
+                            json!({
+                                "key_id": key_id.to_string(),
+                                "default_workspace_id": default_workspace.to_string(),
+                            }),
+                            act.act_id,
+                        ),
+                    )?;
+                    links.push((
+                        event,
+                        MetadataFold::KeyDefaultSet {
+                            key_id,
+                            default_workspace,
+                        },
+                    ));
+                }
             }
             AdminActKind::MintConnectCode => {
                 let key_id = key_id.ok_or_else(|| {

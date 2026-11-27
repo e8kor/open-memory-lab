@@ -303,9 +303,14 @@ where
         let act = match act {
             Some(act) if kind.class() == AdminActClass::AgainstAdmin => {
                 let mut act = act;
+                // The entry as it was, its pinned subjects included, so the
+                // contest-only sign-in matches a removed admin as their entry
+                // stood (ADR-0097 d8, the operator's decision of 2026-11-27).
                 act.record.effect = json!({
                     "before": { "email": email.as_str(), "user": entry.user.as_str(),
-                                "admin": entry.admin, "disabled": entry.disabled_at.is_some() },
+                                "admin": entry.admin, "disabled": entry.disabled_at.is_some(),
+                                "google_subject": entry.google_subject,
+                                "github_subject": entry.github_subject },
                 });
                 Some(act)
             }

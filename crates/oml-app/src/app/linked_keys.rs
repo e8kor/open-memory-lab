@@ -294,6 +294,16 @@ where
                 reason: "not_used_by_person",
             });
         }
+        // An admin key's person holds a live admin flag, at its acceptance
+        // as at its issuance (ADR-0097 d21, the operator's decision of
+        // 2026-11-27).
+        if target.role == Role::Admin
+            && !self.is_admin_person(tenant_id, Some(session_user)).await?
+        {
+            return Err(AppError::KeyLinkRefused {
+                reason: "not_admin_person",
+            });
+        }
         target.linked_user = Some(root_id);
         target.link_pending = None;
         let prev = self.head_event(tenant_id).await?;

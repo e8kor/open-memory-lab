@@ -959,7 +959,7 @@ issue lane (PR #526) left. Each answer is recorded here before the code that tak
    whose web entry is live and carries the admin flag; any other person is refused
    `request.validation` with `details.reason: admin_key_requires_admin_person`, naming the person.
    This holds at issuance and at the link's acceptance: a person whose flag came off before they
-   accept the link cannot accept it.
+   accept the link cannot accept it, refused as a link is, `details.reason: not_admin_person`.
 7. **A pending key whose default is a workspace the act creates gets the default at confirmation
    (d30).** The pending issuance names no default it creates (the key is read with no default
    while it waits). The confirmation's commit journals a new effect, `key.default_set {key_id,
@@ -976,8 +976,9 @@ issue lane (PR #526) left. Each answer is recorded here before the code that tak
    workspaces created in the shared tree under a `create` grant, so an admin sees the growth the
    meter does not.
 9. **Every `create_workspaces[]` parent must already exist (d30).** No creation in one request
-   nests under another creation of the same request; a parent the tenant does not hold is
-   `request.validation` naming the entry, before anything is journalled.
+   nests under another creation of the same request; a parent the tenant does not hold, a
+   creation of the same request among them, is refused as any unknown workspace is
+   (`access.not_found`), before anything is journalled.
 
 ## Rejected alternatives
 

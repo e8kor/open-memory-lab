@@ -325,6 +325,15 @@ pub enum MetadataFold {
         expiry: Option<EventTime>,
         requests_per_minute: Option<u32>,
     },
+    /// `key.default_set`: the live key's default workspace becomes
+    /// `default_workspace`, a node of its tenant, from this commit on. The
+    /// store refuses a key it does not hold, a revoked key, and a node it
+    /// does not hold (event-catalog.md `key.default_set`; ADR-0097 d30, the
+    /// operator's decision of 2026-11-27).
+    KeyDefaultSet {
+        key_id: Uuid,
+        default_workspace: Uuid,
+    },
     /// `key.rotated`: the live bearer key's hash becomes `key_hash` from
     /// this commit on; its previous hash, where `previous` names one, still
     /// resolves through [`JournalStore::key_by_previous_hash`] with the end
@@ -1251,6 +1260,16 @@ pub trait JournalStore: Retriever + Send + Sync {
         tenant_id: Uuid,
         workspace_id: Uuid,
     ) -> impl Future<Output = Result<Option<Uuid>, StoreError>> + Send;
+
+    /// The workspaces keys created in the shared tree under a grant
+    /// carrying `create`, counted per creating key, in key id order: the
+    /// `workspace.create` events whose payload names `create_grant_id`.
+    /// No meter counts them (ADR-0097 d31, the operator's decision of
+    /// 2026-11-27); doctor's `workspace.flagged_creates` reads this.
+    fn flagged_creates(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<(Uuid, u64)>, StoreError>> + Send;
 
     /// Records one version the import wrote and sets the row's
     /// `import_provenance`; recording it again changes nothing (ADR-0084
@@ -2230,6 +2249,16 @@ pub trait WebStore: JournalStore {
         &self,
         email_hash: &Sha256Hash,
     ) -> impl Future<Output = Result<Option<WebEntry>, StoreError>> + Send;
+
+    /// The open, uncontested `remove_admin` act whose target names the
+    /// email's digest, in whichever tenant holds it, latest first: the
+    /// contest-only sign-in's lookup for a removed admin, whose entry no
+    /// longer exists (ADR-0097 d8, the operator's decision of 2026-11-27).
+    /// `None` when no such act is `effective`.
+    fn removed_admin_act(
+        &self,
+        email_hash: &Sha256Hash,
+    ) -> impl Future<Output = Result<Option<(Uuid, crate::types::AdminActRecord)>, StoreError>> + Send;
 
     /// The tenant's entries in the order of their email's digest, after
     /// the digest `after`, at most `limit`; a cursor that is a digest keeps

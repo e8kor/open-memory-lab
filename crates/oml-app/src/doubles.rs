@@ -2271,6 +2271,26 @@ fn apply_fold(
             key.expiry = expiry;
             key.requests_per_minute = requests_per_minute;
         }
+        MetadataFold::KeyDefaultSet {
+            key_id,
+            default_workspace,
+        } => {
+            if !state.workspaces.contains_key(&default_workspace) {
+                return Err(StoreError::Backend(format!(
+                    "workspace {default_workspace} is not a node of this tenant"
+                )));
+            }
+            let Some(key) = state
+                .keys
+                .get_mut(&key_id)
+                .filter(|k| k.revoked_at.is_none())
+            else {
+                return Err(StoreError::Backend(format!(
+                    "key {key_id} is not a live key of this tenant"
+                )));
+            };
+            key.default_workspace = Some(default_workspace);
+        }
         MetadataFold::GrantIssued { key_id, grant } => {
             require_held(state, key_id, grant.node)?;
             if !matches!(grant.role, Role::Reader | Role::Submitter | Role::Reviewer) {
@@ -3973,6 +3993,24 @@ impl JournalStore for MemStore {
             }
         }
         Ok(uploads.len() as u64)
+    }
+
+    async fn flagged_creates(&self, tenant_id: Uuid) -> Result<Vec<(Uuid, u64)>, StoreError> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = state.lock().expect("tenant lock");
+        let mut counts: BTreeMap<Uuid, u64> = BTreeMap::new();
+        for event in &state.events {
+            let envelope = &event.envelope;
+            if envelope.event_type == oml_domain::envelope::event_types::WORKSPACE_CREATE
+                && envelope.payload.get("create_grant_id").is_some()
+                && let Some(key_id) = envelope.api_key_id
+            {
+                *counts.entry(key_id).or_default() += 1;
+            }
+        }
+        Ok(counts.into_iter().collect())
     }
 
     async fn workspace_creator_if_empty(
@@ -6401,6 +6439,28 @@ impl WebStore for MemStore {
         Ok(self
             .find_in_tenants(|state| state.web_entries.get(&email_hash.0).cloned())
             .map(|found| found.row))
+    }
+
+    async fn removed_admin_act(
+        &self,
+        email_hash: &Sha256Hash,
+    ) -> Result<Option<(Uuid, crate::types::AdminActRecord)>, StoreError> {
+        let digest = email_hash.to_prefixed();
+        Ok(self
+            .find_in_tenants(|state| {
+                state
+                    .admin_acts
+                    .values()
+                    .filter(|a| {
+                        a.act == oml_domain::admin_act::AdminActKind::RemoveAdmin
+                            && a.state == oml_domain::admin_act::AdminActState::Effective
+                            && a.target.get("email_digest").and_then(Value::as_str)
+                                == Some(digest.as_str())
+                    })
+                    .max_by_key(|a| a.at.unix_micros())
+                    .cloned()
+            })
+            .map(|found| (found.tenant_id, found.row)))
     }
 
     async fn web_entries(

@@ -4079,3 +4079,34 @@ async fn the_read_grant_gives_the_web_key_no_reviewer_verb() {
         "{status} {answer}"
     );
 }
+
+/// A removed admin's provider sign-in opens the contest of the removal and
+/// nothing else: no entry matches, so the open `remove_admin` act is found
+/// by the address's digest and the subject the entry had pinned; another
+/// account at the same address is refused as an unlisted one (ADR-0097 d8,
+/// the operator's decision of 2026-11-27).
+#[tokio::test]
+async fn a_removed_admins_sign_in_opens_only_the_contest_of_the_removal() {
+    let rig = rig().await;
+    rig.allow(EMAIL, "alice", true).await;
+    rig.allow("bob@example.com", "bob", true).await;
+    let (status, _, _) = sign_in_google(&rig, "sub-1", EMAIL).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "alice pins sub-1");
+    rig.app
+        .remove_web_email_with_reason(
+            &rig.boot.admin_key.value,
+            &Email::parse(EMAIL).unwrap(),
+            true,
+            Some("alice's laptop was stolen"),
+        )
+        .await
+        .expect("alice's entry is removed");
+    let (status, token, body) = sign_in_google(&rig, "sub-1", EMAIL).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.contains("Contest the act"), "{body}");
+    assert_eq!(token, None, "no session opens");
+    let (status, token, body) = sign_in_google(&rig, "sub-2", EMAIL).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(body.contains("not on the list"), "{body}");
+    assert_eq!(token, None);
+}

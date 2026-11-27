@@ -265,6 +265,13 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         )
     }
 
+    fn flagged_creates(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<(Uuid, u64)>, StoreError>> + Send {
+        timed("flagged_creates", self.inner.flagged_creates(tenant_id))
+    }
+
     fn workspace_creator_if_empty(
         &self,
         tenant_id: Uuid,
@@ -1502,6 +1509,17 @@ impl<J: WebStore> WebStore for Timed<J> {
         timed(
             "web_entry_by_email",
             self.inner.web_entry_by_email(email_hash),
+        )
+    }
+
+    fn removed_admin_act(
+        &self,
+        email_hash: &Sha256Hash,
+    ) -> impl Future<Output = Result<Option<(Uuid, oml_app::types::AdminActRecord)>, StoreError>> + Send
+    {
+        timed(
+            "removed_admin_act",
+            self.inner.removed_admin_act(email_hash),
         )
     }
 

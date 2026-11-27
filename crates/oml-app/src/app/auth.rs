@@ -196,6 +196,39 @@ where
             .await
             .map_err(store)?
         else {
+            // A removed admin has no entry: the open removal's effect keeps
+            // the entry as it stood, and its provider sign-in opens the
+            // contest of that act alone (ADR-0097 d8, the operator's
+            // decision of 2026-11-27).
+            if let Some((tenant_id, act)) = self
+                .journal
+                .removed_admin_act(&email_hash)
+                .await
+                .map_err(store)?
+            {
+                let before = act.effect.get("before");
+                let pinned = before
+                    .and_then(|b| {
+                        b.get(match identity.provider {
+                            Provider::Google => "google_subject",
+                            Provider::GitHub => "github_subject",
+                        })
+                    })
+                    .and_then(serde_json::Value::as_str);
+                let user = before
+                    .and_then(|b| b.get("user"))
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(|u| oml_domain::name::Name::parse(u).ok());
+                if let Some(user) = user
+                    && pinned.is_none_or(|s| s == identity.subject)
+                {
+                    return Err(CallbackRefusal::Contest(ContestGrant {
+                        tenant_id,
+                        user,
+                        act_id: act.act_id,
+                    }));
+                }
+            }
             // Open mode takes an unlisted, verified identity to the terms
             // page (ADR-0068 d2); allowlist mode refuses it as before.
             return Err(
