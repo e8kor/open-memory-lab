@@ -285,8 +285,7 @@ impl AdminActRecord {
     /// confirms or declines it (d4).
     fn expires(&self) -> bool {
         use oml_domain::admin_act::{AdminActClass, AdminActState};
-        self.state == AdminActState::PendingConfirmation
-            && self.class() != AdminActClass::Erase
+        self.state == AdminActState::PendingConfirmation && self.class() != AdminActClass::Erase
     }
 
     /// The end of a pending act's life (ADR-0097 d23).

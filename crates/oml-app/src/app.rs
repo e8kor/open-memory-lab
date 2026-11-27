@@ -34,8 +34,7 @@ pub use auth::{Callback, CallbackRefusal, ContestGrant, WEB_SESSION_TTL_SECS};
 pub use exports::{ExportCounts, ExportRequest, Exported};
 pub use federation::WideKey;
 pub use fixes::{
-    Demotion, Erasure, FIX_REASON_MAX_BYTES, FixOutcome, FixRequest, FixStats, ReviewedFix,
-    SERVER_KEY_PRINCIPAL,
+    FIX_REASON_MAX_BYTES, FixOutcome, FixRequest, FixStats, ReviewedFix, SERVER_KEY_PRINCIPAL,
 };
 pub use imports::{
     ImportAnswer, ImportFinished, ImportJob, ImportPlan, ImportRequest, ImportStart,

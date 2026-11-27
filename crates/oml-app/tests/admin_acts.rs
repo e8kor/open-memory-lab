@@ -2013,7 +2013,14 @@ async fn submitted(r: &Rig, writer: &IssuedKey, idem: &str, body: &str) -> Uuid 
 }
 
 /// A successor of `target`, version `version`, by `writer`.
-async fn superseded(r: &Rig, writer: &IssuedKey, idem: &str, target: Uuid, version: u32, body: &str) -> Uuid {
+async fn superseded(
+    r: &Rig,
+    writer: &IssuedKey,
+    idem: &str,
+    target: Uuid,
+    version: u32,
+    body: &str,
+) -> Uuid {
     r.app
         .supersede(
             writer.value.as_str(),
@@ -2139,7 +2146,10 @@ async fn erase_demotes_at_once_and_shreds_only_after_a_second_admin_person() {
         .iter()
         .map(|e| e.envelope.event_type.as_str())
         .collect();
-    assert_eq!(added, [event_types::ADMIN_ACT, event_types::LIFECYCLE_ERASE]);
+    assert_eq!(
+        added,
+        [event_types::ADMIN_ACT, event_types::LIFECYCLE_ERASE]
+    );
     assert_eq!(
         events[before + 1].envelope.payload["act_id"],
         act.act_id.to_string()

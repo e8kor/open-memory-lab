@@ -84,12 +84,21 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
             MarkerScanner::default(),
         )
         .with_search(SearchConfig::new(&pipelines, pipelines[0]).expect("a search config"));
+        // The admin key belongs to a person, as the fix act that demotes
+        // requires (ADR-0089, the operator's decision of 2026-11-19).
         let boot = app
-            .bootstrap_tenant(&BootstrapRequest {
-                tenant_name: fresh("asof"),
-                admin_key_name: fresh("asof-admin"),
-                admin_principal: "asof-admin".to_owned(),
-            })
+            .bootstrap_tenant_for(
+                &BootstrapRequest {
+                    tenant_name: fresh("asof"),
+                    admin_key_name: fresh("asof-admin"),
+                    admin_principal: "asof-admin".to_owned(),
+                },
+                Some(&oml_app::types::BootstrapPerson {
+                    user: oml_app::domain::name::Name::parse("asof-person").expect("a name"),
+                    email: oml_app::domain::web::Email::parse("asof-person@example.com")
+                        .expect("an email"),
+                }),
+            )
             .await
             .expect("bootstrap");
         let admin = boot.admin_key.value.clone();
@@ -162,6 +171,27 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
     #[must_use]
     pub fn instant(&self) -> EventTime {
         self.clock.now()
+    }
+
+    /// Demotes `id` through the one surface that demotes, the admin fix act
+    /// (ADR-0089 d16; #502): the fix record.
+    pub async fn demote(&self, id: Uuid) -> oml_app::types::FixRecord {
+        self.app
+            .admin_fix(
+                self.admin.as_str(),
+                &oml_app::app::FixRequest {
+                    act: oml_app::types::FixAct::Demote,
+                    target: id,
+                    reason: "the version is wrong".to_owned(),
+                    body: None,
+                    title: None,
+                },
+            )
+            .await
+            .expect("demote")
+            .fix()
+            .cloned()
+            .expect("a demotion is a fix")
     }
 
     /// One claim `claim_key` of `kind` on `node` by the writer, left held.
@@ -654,10 +684,7 @@ pub async fn an_as_of_read_skips_a_demoted_version_and_serves_the_version_below_
     let t3 = w.instant();
     // A version below the tip goes: the instants it was the tip serve v1,
     // and today's tip stays (the probe, not the short cut, answers t2).
-    w.app
-        .demote_version(w.admin.as_str(), v2)
-        .await
-        .expect("demote v2, below the tip");
+    w.demote(v2).await;
     for &search in &w.searches {
         let at = |t| w.hits(&w.reader, "runbook lives", search, t, false);
         assert_eq!(
@@ -687,12 +714,8 @@ pub async fn an_as_of_read_skips_a_demoted_version_and_serves_the_version_below_
     assert!(w.get(&w.reader, v2, None).await.is_err());
     // The tip goes: v1, the greatest promoted version below it that is not
     // demoted, is the tip again and stands in at every instant.
-    let demotion = w
-        .app
-        .demote_version(w.admin.as_str(), v3)
-        .await
-        .expect("demote the tip");
-    assert_eq!(demotion.restored.map(|r| r.artifact_id), Some(v1));
+    let demotion = w.demote(v3).await;
+    assert_eq!(demotion.served_id, Some(v1));
     for &search in &w.searches {
         let at = |t| w.hits(&w.reader, "runbook lives", search, t, false);
         assert_eq!(
@@ -703,10 +726,7 @@ pub async fn an_as_of_read_skips_a_demoted_version_and_serves_the_version_below_
         assert_eq!(at(Some(&t2)).await, one(v1), "{search}: and for v2 at t2");
         assert_eq!(at(None).await, one(v1), "{search}: v1 is today's tip");
     }
-    w.app
-        .demote_version(w.admin.as_str(), v1)
-        .await
-        .expect("demote the last");
+    w.demote(v1).await;
     for &search in &w.searches {
         let at = |t| w.hits(&w.reader, "runbook lives", search, t, false);
         for t in [&t1, &t2, &t3] {
@@ -753,12 +773,8 @@ pub async fn a_demotion_restores_the_end_the_version_had_before_its_supersession
         );
     }
     let t = w.instant();
-    let demotion = w
-        .app
-        .demote_version(w.admin.as_str(), v2)
-        .await
-        .expect("demote the tip");
-    assert_eq!(demotion.restored.map(|r| r.artifact_id), Some(v1));
+    let demotion = w.demote(v2).await;
+    assert_eq!(demotion.served_id, Some(v1));
     for &search in &w.searches {
         let at = |t| w.hits(&w.reader, "lease renews", search, t, false);
         assert_eq!(at(None).await, one(v1), "{search}: v1 serves today");
@@ -812,12 +828,8 @@ pub async fn demoting_a_version_below_the_tip_restores_the_end_its_ratification_
     let v3 = w
         .supersede(v2, 2, "the rota rotates every month", false)
         .await;
-    let demotion = w
-        .app
-        .demote_version(w.admin.as_str(), v2)
-        .await
-        .expect("demote v2, below the tip");
-    assert_eq!(demotion.restored, None, "the tip does not move");
+    let demotion = w.demote(v2).await;
+    assert_eq!(demotion.served_id, None, "the tip does not move");
     for &search in &w.searches {
         let at = |t| w.hits(&w.reader, "rota rotates", search, t, false);
         assert_eq!(
@@ -849,21 +861,19 @@ async fn demote_and_check_the_event<S: JournalStore + Clone>(
         Some(r) => store.memory(w.tenant, r).await.expect("read"),
         None => None,
     };
-    let demotion = w
-        .app
-        .demote_version(w.admin.as_str(), id)
-        .await
-        .expect("demote");
+    let demotion = w.demote(id).await;
     let event = store
-        .events_range(w.tenant, demotion.journal_seq, 1)
+        .events_range(w.tenant, 1, 100_000)
         .await
         .expect("range")
-        .remove(0)
+        .into_iter()
+        .find(|e| e.envelope.event_id == demotion.lifecycle_event_id)
+        .expect("the fix's demotion")
         .envelope;
     assert_eq!(event.event_type, "lifecycle.demote");
     let p = &event.payload;
     assert_eq!(p["artifact_id"], id.to_string());
-    let restored = demotion.restored.map(|r| r.artifact_id);
+    let restored = demotion.served_id;
     assert_eq!(
         p["restored_artifact_id"].as_str(),
         restored.map(|r| r.to_string()).as_deref(),
@@ -1473,10 +1483,7 @@ pub async fn a_claim_whose_approved_versions_are_all_demoted_takes_a_new_version
     approve(v2).await;
     assert_eq!(memories().await, 1, "one chain, one memory");
     for id in [v2, v1] {
-        w.app
-            .demote_version(w.admin.as_str(), id)
-            .await
-            .expect("demote");
+        w.demote(id).await;
     }
     assert_eq!(memories().await, 1, "a demoted chain still counts");
     let v3 = w

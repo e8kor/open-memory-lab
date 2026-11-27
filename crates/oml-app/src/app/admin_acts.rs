@@ -173,19 +173,17 @@ where
         let tenant_id = admin.tenant_id;
         // Widening, and an erase's shred, wait on a second admin person
         // outside `sole_admin` (d4, d5, d10).
-        let (state, sole_admin) = if matches!(
-            act.class(),
-            AdminActClass::Widening | AdminActClass::Erase
-        ) {
-            let standing = self.journal.admin_standing(tenant_id).await?;
-            if standing.sole_admin && !self.act_against_admin_open(tenant_id).await? {
-                (AdminActState::Effective, true)
+        let (state, sole_admin) =
+            if matches!(act.class(), AdminActClass::Widening | AdminActClass::Erase) {
+                let standing = self.journal.admin_standing(tenant_id).await?;
+                if standing.sole_admin && !self.act_against_admin_open(tenant_id).await? {
+                    (AdminActState::Effective, true)
+                } else {
+                    (AdminActState::PendingConfirmation, false)
+                }
             } else {
-                (AdminActState::PendingConfirmation, false)
-            }
-        } else {
-            (AdminActState::Effective, false)
-        };
+                (AdminActState::Effective, false)
+            };
         if reason.is_none() && act.requires_reason() && !sole_admin {
             return Err(AppError::AdminActReasonRequired);
         }
@@ -948,10 +946,7 @@ where
                     .and_then(Value::as_str)
                     .and_then(|s| Uuid::parse_str(s).ok())
                     .ok_or_else(|| {
-                        AppError::StoredResponse(format!(
-                            "admin act {} names no claim",
-                            act.act_id
-                        ))
+                        AppError::StoredResponse(format!("admin act {} names no claim", act.act_id))
                     })?;
                 let prev = last(links);
                 links.push(

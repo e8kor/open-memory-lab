@@ -7,8 +7,8 @@
 //!
 //! No transport routes either: the one surface is the fix act,
 //! `POST /v2/admin/fixes` (ADR-0089 d15, d16), which journals `admin.fix`
-//! and calls these in the same transaction. Until it lands they are reached
-//! in process alone, by an admin key.
+//! and plans these in the same transaction; no other entry reaches them
+//! (#502).
 
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -32,8 +32,8 @@ use crate::ports::{
     Scanner, Signer, StoreError, WebStore,
 };
 use crate::types::{
-    AdminActRecord, AppError, Approval, Bearer, Credential, FixAct, FixRecord, FixState, FormatFields,
-    GuardrailFields, KeyRecord, KindFields, MemoryRecord, VersionRef,
+    AdminActRecord, AppError, Approval, Bearer, Credential, FixAct, FixRecord, FixState,
+    FormatFields, GuardrailFields, KeyRecord, KindFields, MemoryRecord, VersionRef,
 };
 use oml_domain::access::effective_roles;
 use oml_domain::guardrail::GuardrailScope;
@@ -49,30 +49,12 @@ const ERASE_COPY_CLASSES: [&str; 5] = [
     "silver.body",
 ];
 
-/// A demotion as committed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Demotion {
-    pub demoted: VersionRef,
-    /// The version served as the tip again, when the demoted one was the
-    /// tip and a promoted, non-demoted version lies below it.
-    pub restored: Option<VersionRef>,
-    pub journal_seq: u64,
-}
-
 /// A demotion read and sealed, not yet committed.
 struct PlannedDemotion {
     event: SignedEnvelope,
     fold: MetadataFold,
-    demotion: Demotion,
     memory: MemoryRecord,
     restored: Option<MemoryRecord>,
-}
-
-/// An erasure as committed: every version of the claim, by version.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Erasure {
-    pub erased: Vec<VersionRef>,
-    pub journal_seq: u64,
 }
 
 fn version_ref(m: &MemoryRecord) -> VersionRef {
@@ -90,39 +72,14 @@ where
     I: IdGen,
     Sc: Scanner,
 {
-    /// Demotes `memory_id`, any promoted version (ADR-0089 d16): it is
-    /// served by no read at any instant, and when it was the tip the latest
-    /// earlier promoted, non-demoted version of its claim is the tip again,
-    /// or none is. Journals `lifecycle.demote` under the admin's key. A
-    /// version that is not promoted is [`AppError::Transition`]; a
-    /// retirement or a `term`, `term_mapping` or `vocab_release` version is
-    /// [`AppError::DemoteKindUnsupported`]; one the
-    /// tenant does not hold is [`AppError::NotFound`]; a version or claim
-    /// that changed since it was read is [`crate::ports::StoreError::TipMoved`].
-    ///
-    /// # Errors
-    /// The refusals above, a key that is not an admin's, and the store's.
-    pub async fn demote_version(
-        &self,
-        bearer: impl Into<Bearer<'_>>,
-        memory_id: Uuid,
-    ) -> Result<Demotion, AppError> {
-        let admin = self.admin_caller(bearer.into(), "demote").await?.key;
-        let planned = self.plan_demotion(&admin, memory_id, None).await?;
-        self.commit_requests(vec![commit_request(planned.event, planned.fold, None)])
-            .await?;
-        Ok(planned.demotion)
-    }
-
     /// A demotion of `memory_id` read and sealed, not committed:
-    /// [`Self::demote_version`] commits it alone, sealed on the head read
-    /// after its reads (`prev` `None`), and the fix act commits it with its
-    /// `admin.fix`, sealed on the head it read first (ADR-0089 d16).
+    /// The fix act commits it with its `admin.fix`, sealed on `prev`, the
+    /// head it read first (ADR-0089 d16).
     async fn plan_demotion(
         &self,
         admin: &KeyRecord,
         memory_id: Uuid,
-        prev: Option<Option<SignedEnvelope>>,
+        prev: Option<&SignedEnvelope>,
     ) -> Result<PlannedDemotion, AppError> {
         let tenant_id = admin.tenant_id;
         let memory = self
@@ -175,22 +132,8 @@ where
             }
             _ => None,
         };
-        let prev = match prev {
-            Some(prev) => prev,
-            None => self.head_event(tenant_id).await?,
-        };
-        let event = self.demote_event(
-            prev.as_ref(),
-            admin,
-            &memory,
-            restored.as_ref(),
-            reopened.as_ref(),
-        )?;
-        let demotion = Demotion {
-            demoted: version_ref(&memory),
-            restored: restored.as_ref().map(version_ref),
-            journal_seq: event.envelope.seq,
-        };
+        let event =
+            self.demote_event(prev, admin, &memory, restored.as_ref(), reopened.as_ref())?;
         let fold = MetadataFold::MemoryDemoted {
             memory_id,
             restored: restored.as_ref().map(|r| r.memory_id),
@@ -199,46 +142,21 @@ where
         Ok(PlannedDemotion {
             event,
             fold,
-            demotion,
             memory,
             restored,
         })
     }
 
-    /// Erases the claim `memory_id` is a version of: every version of its
-    /// `claim_key` in its workspace, whatever its state (ADR-0089 d16;
-    /// ADR-0005 d2, amended 2026-11-17). One `lifecycle.erase` names them
-    /// all, and in its transaction each row's body and what derives from it
-    /// are emptied, its passages and telemetry erased and its data key
-    /// destroyed; the digest, title, attribution and lineage stay. It
-    /// commits through `commit_requests`, so the tenant's widen
-    /// signals drop with it (ADR-0005 d4). A claim already erased is
-    /// [`AppError::Transition`]; a version the tenant does not hold is
-    /// [`AppError::NotFound`]; a claim that gained a version since it was
-    /// read is [`crate::ports::StoreError::TipMoved`].
-    ///
-    /// # Errors
-    /// The refusals above, a key that is not an admin's, and the store's.
-    pub async fn erase_claim(
-        &self,
-        bearer: impl Into<Bearer<'_>>,
-        memory_id: Uuid,
-    ) -> Result<Erasure, AppError> {
-        let admin = self.admin_caller(bearer.into(), "erase").await?.key;
-        let (event, fold, erasure, _) = self.plan_erasure(&admin, memory_id, None).await?;
-        self.commit_requests(vec![commit_request(event, fold, None)])
-            .await?;
-        Ok(erasure)
-    }
-
-    /// An erasure of the claim `memory_id` is a version of, read and sealed,
-    /// not committed; `prev` as [`Self::plan_demotion`]'s (ADR-0089 d16).
+    /// An erasure of the claim `memory_id` is a version of, read and sealed
+    /// on `prev`, not committed (ADR-0089 d16), naming `act_id` where a
+    /// confirmed shred applies it (ADR-0097 d4).
     async fn plan_erasure(
         &self,
         admin: &KeyRecord,
         memory_id: Uuid,
-        prev: Option<Option<SignedEnvelope>>,
-    ) -> Result<(SignedEnvelope, MetadataFold, Erasure, MemoryRecord), AppError> {
+        prev: Option<&SignedEnvelope>,
+        act_id: Option<Uuid>,
+    ) -> Result<(SignedEnvelope, MetadataFold, MemoryRecord), AppError> {
         let tenant_id = admin.tenant_id;
         let named = self
             .journal
@@ -251,19 +169,11 @@ where
             .await?;
         // An erase takes every version, so a claim is erased once.
         transition(named.status, MemoryStatus::Erased)?;
-        let prev = match prev {
-            Some(prev) => prev,
-            None => self.head_event(tenant_id).await?,
-        };
-        let event = self.erase_event(prev.as_ref(), admin, &named, &versions)?;
-        let erasure = Erasure {
-            erased: versions.iter().map(version_ref).collect(),
-            journal_seq: event.envelope.seq,
-        };
+        let event = self.erase_event(prev, admin, &named, &versions, act_id)?;
         let fold = MetadataFold::ClaimErased {
             memory_ids: versions.iter().map(|v| v.memory_id).collect(),
         };
-        Ok((event, fold, erasure, named))
+        Ok((event, fold, named))
     }
 
     /// `lifecycle.demote` of `memory`, returning `restored` (ADR-0089 d16;
@@ -306,14 +216,9 @@ where
         admin: &KeyRecord,
         named: &MemoryRecord,
         versions: &[MemoryRecord],
+        act_id: Option<Uuid>,
     ) -> Result<SignedEnvelope, AppError> {
-        self.seal(
-            prev,
-            admin.tenant_id,
-            event_types::LIFECYCLE_ERASE,
-            &admin.principal,
-            Some(admin.key_id),
-            json!({
+        let payload = json!({
                 "artifact_id": named.memory_id.to_string(),
                 "version": named.version,
                 "workspace_id": named.workspace_id.to_string(),
@@ -325,7 +230,17 @@ where
                 "dek_destroyed": true,
                 "copy_classes": ERASE_COPY_CLASSES,
                 "erased_by_key_id": admin.key_id.to_string(),
-            }),
+        });
+        self.seal(
+            prev,
+            admin.tenant_id,
+            event_types::LIFECYCLE_ERASE,
+            &admin.principal,
+            Some(admin.key_id),
+            match act_id {
+                Some(act_id) => super::admin_acts::with_act_id(payload, act_id),
+                None => payload,
+            },
         )
     }
 }
@@ -542,8 +457,8 @@ where
                     .await?
             }
             FixAct::Erase => {
-                let (event, fold, _, named) = self
-                    .plan_erasure(&admin, req.target, Some(prev.clone()))
+                let (event, fold, named) = self
+                    .plan_erasure(&admin, req.target, prev.as_ref(), None)
                     .await?;
                 let fix = FixRecord {
                     fix_id,
@@ -676,12 +591,11 @@ where
                 None,
             ));
         }
-        let first = links
-            .first()
-            .map(|l| l.event.envelope.clone())
-            .ok_or(AppError::FixTargetNotPromoted {
+        let first = links.first().map(|l| l.event.envelope.clone()).ok_or(
+            AppError::FixTargetNotPromoted {
                 status: named.status,
-            })?;
+            },
+        )?;
         let fix = FixRecord {
             fix_id,
             act: FixAct::Erase,
@@ -716,17 +630,9 @@ where
         prev: &SignedEnvelope,
         act_id: Uuid,
     ) -> Result<(SignedEnvelope, MetadataFold), AppError> {
-        let (event, fold, _, _) = self
-            .plan_erasure(admin, memory_id, Some(Some(prev.clone())))
+        let (event, fold, _) = self
+            .plan_erasure(admin, memory_id, Some(prev), Some(act_id))
             .await?;
-        let event = self.seal(
-            Some(prev),
-            admin.tenant_id,
-            event_types::LIFECYCLE_ERASE,
-            &admin.principal,
-            Some(admin.key_id),
-            super::admin_acts::with_act_id(event.envelope.payload.clone(), act_id),
-        )?;
         Ok((event, fold))
     }
 
@@ -752,9 +658,7 @@ where
                 status: memory.status,
             });
         }
-        let planned = self
-            .plan_demotion(admin, target, Some(prev.cloned()))
-            .await?;
+        let planned = self.plan_demotion(admin, target, prev).await?;
         let m = &planned.memory;
         let fix = FixRecord {
             fix_id,

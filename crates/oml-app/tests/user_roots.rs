@@ -6254,7 +6254,11 @@ async fn a_later_fix_that_re_marks_a_version_supersedes_the_earlier_fix() {
         body: None,
         title: None,
     };
-    let f1 = r.app.admin_fix(admin, &demote(v2)).await.expect("f1")
+    let f1 = r
+        .app
+        .admin_fix(admin, &demote(v2))
+        .await
+        .expect("f1")
         .fix()
         .cloned()
         .expect("a fix record");
@@ -6274,7 +6278,11 @@ async fn a_later_fix_that_re_marks_a_version_supersedes_the_earlier_fix() {
         .post_verdict(&r.bob_review.value, v3, Verdict::Approve, None)
         .await
         .expect("bob approves v3");
-    let f2 = r.app.admin_fix(admin, &demote(v3)).await.expect("f2")
+    let f2 = r
+        .app
+        .admin_fix(admin, &demote(v3))
+        .await
+        .expect("f2")
         .fix()
         .cloned()
         .expect("a fix record");
