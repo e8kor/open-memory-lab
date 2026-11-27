@@ -2505,6 +2505,7 @@ async fn get_v2_keys_by_name_answers_the_key() {
             "revoked_at": null,
             "rotated_from": null,
             "grants": issued["grants"],
+            "public_reach": [],
             "denials": [{
                 "denial_id": denial["denial_id"],
                 "workspace_node_id": quarter,
@@ -2909,6 +2910,7 @@ async fn post_v2_workspaces_crew_points_a_workspace_at_a_crew_record_by_name() {
             "crew": record,
             "user_root": false,
             "mode": "standard",
+            "public": { "value": false, "since": null, "act_id": null, "sole_admin": false },
         })
     );
     let (status, _, view) = send(
@@ -2959,6 +2961,7 @@ async fn an_admin_keys_workspace_read_lists_every_child_with_my_effective_verbs_
                 "crew": null,
                 "user_root": false,
                 "mode": "standard",
+                "public": { "value": false, "since": null, "act_id": null, "sole_admin": false },
                 "children": [
                     { "id": metals, "path_leaf": "metals-crew", "status": "development" },
                     { "id": redline, "path_leaf": "redline", "status": "development" },
@@ -6175,6 +6178,7 @@ async fn crew_given_at_create_is_persisted_and_returned() {
             "crew": crew_record,
             "user_root": false,
             "mode": "standard",
+            "public": { "value": false, "since": null, "act_id": null, "sole_admin": false },
             "children": [{ "id": quarter, "path_leaf": "q1-2027", "status": "development" }],
             "edges": [],
             "my_effective_verbs": [
@@ -6338,6 +6342,7 @@ async fn get_v2_workspaces_tree_by_name_answers_an_admin_key_the_whole_subtree_p
                     "crew": null,
                     "user_root": false,
                     "mode": "standard",
+                    "public": { "value": false, "since": null, "act_id": null, "sole_admin": false },
                 },
                 {
                     "id": metals["id"],
@@ -6348,6 +6353,7 @@ async fn get_v2_workspaces_tree_by_name_answers_an_admin_key_the_whole_subtree_p
                     "crew": crew,
                     "user_root": false,
                     "mode": "standard",
+                    "public": { "value": false, "since": null, "act_id": null, "sole_admin": false },
                 },
                 {
                     "id": q1["id"],
@@ -6358,6 +6364,7 @@ async fn get_v2_workspaces_tree_by_name_answers_an_admin_key_the_whole_subtree_p
                     "crew": null,
                     "user_root": false,
                     "mode": "standard",
+                    "public": { "value": false, "since": null, "act_id": null, "sole_admin": false },
                 },
                 {
                     "id": q2["id"],
@@ -6368,6 +6375,7 @@ async fn get_v2_workspaces_tree_by_name_answers_an_admin_key_the_whole_subtree_p
                     "crew": null,
                     "user_root": false,
                     "mode": "standard",
+                    "public": { "value": false, "since": null, "act_id": null, "sole_admin": false },
                 },
                 {
                     "id": review["id"],
@@ -6378,6 +6386,7 @@ async fn get_v2_workspaces_tree_by_name_answers_an_admin_key_the_whole_subtree_p
                     "crew": null,
                     "user_root": false,
                     "mode": "standard",
+                    "public": { "value": false, "since": null, "act_id": null, "sole_admin": false },
                 },
             ],
             "next_cursor": null,
