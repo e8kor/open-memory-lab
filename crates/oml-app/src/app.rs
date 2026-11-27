@@ -8351,6 +8351,13 @@ where
         let now = self.clock.now();
         let mut count = 0_u64;
         for state in [AdminActState::PendingConfirmation, AdminActState::Effective] {
+            // An effective act is one to review only once the person's flag
+            // is seven days old: the read is skipped before then (d11).
+            if state == AdminActState::Effective
+                && !oml_domain::admin_act::counts_for_act(view.since, now.unix_micros())
+            {
+                continue;
+            }
             count += self
                 .journal
                 .admin_acts(admin.tenant_id, Some(state))

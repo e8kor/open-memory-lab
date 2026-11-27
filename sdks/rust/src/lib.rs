@@ -3072,14 +3072,12 @@ impl<T: Transport> Client<T> {
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
-    pub async fn admin_acts(&self, call: &Call<'_>, state: &str) -> Result<Vec<AdminAct>, Error> {
-        let answer: AdminActList = self
-            .get(
-                Some(call),
-                format!("/v2/admin/acts?state={}", encode(state)),
-            )
-            .await?;
-        Ok(answer.items)
+    pub async fn admin_acts(&self, call: &Call<'_>, state: &str) -> Result<AdminActList, Error> {
+        self.get(
+            Some(call),
+            format!("/v2/admin/acts?state={}", encode(state)),
+        )
+        .await
     }
 
     /// `POST /v2/admin/acts/{act}/confirm`: a second admin person confirms
@@ -4073,6 +4071,13 @@ mod tests {
             decodes(&client.review_queue(&CALL).await),
             decodes(&client.todo_counts(&CALL, Some("alice")).await),
             decodes(&client.admin_todo_counts(&CALL).await),
+            decodes(&client.admin_acts(&CALL, "all").await),
+            decodes(&client.confirm_admin_act(&CALL, "idem-a1", "act-1").await),
+            decodes(
+                &client
+                    .decline_admin_act(&CALL, "idem-a2", "act-1", "not this agent")
+                    .await,
+            ),
             decodes(
                 &client
                     .issue_key(&CALL, "idem-7", "alice-laptop", "contributor", false, None)
@@ -4232,11 +4237,19 @@ mod tests {
             std::str::from_utf8(seen[15].body()).unwrap(),
             r#"{"name":"proj","parent":"alice"}"#
         );
+        // The admin acts: the list's state in the query, a confirm with an
+        // empty body, and a decline's reason (ADR-0097 d23).
+        assert_eq!(seen[24].uri(), "/v2/admin/acts?state=all");
+        assert_eq!(seen[25].uri(), "/v2/admin/acts/act-1/confirm");
+        assert_eq!(
+            std::str::from_utf8(seen[26].body()).unwrap(),
+            r#"{"reason":"not this agent"}"#
+        );
         assert_eq!(seen[14].uri(), "/v2/keys?limit=200&user=alice");
         assert_eq!(seen[18].uri(), "/v2/review/held?limit=50&workspace=alice");
         assert_eq!(seen[19].uri(), "/v2/review/held?ids=a,b");
         assert_eq!(
-            std::str::from_utf8(seen[24].body()).unwrap(),
+            std::str::from_utf8(seen[27].body()).unwrap(),
             r#"{"connect_code":false,"name":"alice-laptop","role":"contributor"}"#
         );
     }

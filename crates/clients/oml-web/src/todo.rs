@@ -1527,7 +1527,7 @@ pub async fn admin_page(
         Err(e) => return outcome::page(&e, &calls, ADMIN_TODO_PATH),
     };
     let admin_acts = match admin_acts {
-        Ok(listed) => listed,
+        Ok(listed) => listed.items,
         Err(e) => return outcome::page(&e, &calls, ADMIN_TODO_PATH),
     };
     // Admin acts to confirm (ADR-0097 d2, d10, d11, d23): the acts the API

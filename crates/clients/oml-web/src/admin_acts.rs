@@ -215,7 +215,7 @@ pub async fn page(
     let credential = session.credential(Capacity::Admin);
     let ids = calls.next_ids();
     let listed = match web.api.admin_acts(&call(&credential, &ids), "all").await {
-        Ok(listed) => listed,
+        Ok(listed) => listed.items,
         Err(e) => return outcome::page(&e, &calls, ACTS_PATH),
     };
     let body = match fields.given("act") {

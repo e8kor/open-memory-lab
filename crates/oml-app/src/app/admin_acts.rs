@@ -379,7 +379,7 @@ where
 
     /// [`Self::admin_acts`], each act with whether the calling admin person
     /// may confirm or review it, as the To do count judges it
-    /// ([`to_confirm`]; ADR-0097 d2, d10, d11).
+    /// (one predicate for both; ADR-0097 d2, d10, d11).
     ///
     /// # Errors
     /// The caller's authentication and role, and the store's.

@@ -272,7 +272,10 @@ pub struct FixRequest {
 /// (ADR-0097, amendment of 2026-11-27, answer 5).
 #[derive(Debug, Clone, PartialEq)]
 pub enum FixOutcome {
-    Fixed { fix: FixRecord, act: AdminActRecord },
+    Fixed {
+        fix: Box<FixRecord>,
+        act: AdminActRecord,
+    },
     ShredPending(AdminActRecord),
 }
 
@@ -281,7 +284,7 @@ impl FixOutcome {
     #[must_use]
     pub fn fix(&self) -> Option<&FixRecord> {
         match self {
-            FixOutcome::Fixed { fix, .. } => Some(fix),
+            FixOutcome::Fixed { fix, .. } => Some(&**fix),
             FixOutcome::ShredPending(_) => None,
         }
     }
@@ -538,7 +541,7 @@ where
         self.observer
             .admin_fix(fix.act.as_str(), fix.loosens_guardrail);
         Ok(FixOutcome::Fixed {
-            fix,
+            fix: Box::new(fix),
             act: act_record,
         })
     }
