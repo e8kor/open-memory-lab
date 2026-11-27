@@ -1803,6 +1803,8 @@ async fn a_persons_own_issuance_takes_an_expiry_and_refuses_a_rate_out_of_bound(
 #[tokio::test]
 async fn the_admin_read_serves_text_and_attribution_and_journals_the_read() {
     let rig = rig().await;
+    // The admin read needs a person-linked admin key (ADR-0097 d16).
+    support::admin_counts(&rig.app, &rig.boot.admin_key.value).await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     let page = issued(&rig, &cookie, "laptop").await;
     let value = value_of(&page);
