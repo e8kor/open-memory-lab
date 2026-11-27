@@ -855,7 +855,7 @@ async fn marking_a_workspace_public_waits_on_a_second_admin_person() {
     );
     let bob = r.admin_session("bob").await;
     r.app
-        .confirm_admin_act(Bearer::Session(&bob), outcome.act_id)
+        .confirm_admin_act(Bearer::Session(&bob), outcome.act_id, Some("confirmed"))
         .await
         .expect("bob confirms");
     r.app
@@ -914,7 +914,7 @@ async fn clearing_public_takes_effect_at_once_and_declines_a_pending_set() {
     let bob = r.admin_session("bob").await;
     assert!(
         r.app
-            .confirm_admin_act(Bearer::Session(&bob), pending.act_id)
+            .confirm_admin_act(Bearer::Session(&bob), pending.act_id, Some("confirmed"))
             .await
             .is_err(),
         "a declined set is final"

@@ -249,6 +249,10 @@ pub struct AdminActRecord {
     pub confirmed_by_person: Option<Name>,
     /// The admin key that confirmed or declined the act.
     pub settled_by_key_id: Option<Uuid>,
+    /// The reason a confirmation required, scanned as any act's (ADR-0097
+    /// d26; amendment of 2026-11-27, answer 18); a decline's reason is its
+    /// own `decline_act`'s.
+    pub confirm_reason: Option<String>,
     /// Taken at once in a tenant that never had two live admin persons
     /// (ADR-0097 d10).
     pub sole_admin: bool,

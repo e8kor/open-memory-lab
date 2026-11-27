@@ -918,6 +918,9 @@ enum AdminCommand {
     Confirm {
         /// The act's id, listed by `oml admin acts`.
         act: String,
+        /// Why; required, scanned and kept with the act.
+        #[arg(long)]
+        reason: Option<String>,
     },
     /// Decline a pending admin act, which then never takes effect, or undo
     /// a widening act taken at once in a tenant with one admin person: the
@@ -5276,9 +5279,13 @@ fn run_admin(
             }
             return Ok(ExitCode::SUCCESS);
         }
-        AdminCommand::Confirm { act } => {
+        AdminCommand::Confirm { act, reason } => {
             let path = format!("/v2/admin/acts/{}/confirm", segment(act)?);
-            let settled = client.post(&path, &json!({}), &write_opts())?.1;
+            let body = match reason {
+                Some(reason) => json!({ "reason": reason }),
+                None => json!({}),
+            };
+            let settled = client.post(&path, &body, &write_opts())?.1;
             if cli.json {
                 print_json(&settled);
             } else {

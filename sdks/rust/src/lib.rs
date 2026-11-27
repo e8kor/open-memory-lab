@@ -1628,6 +1628,9 @@ pub struct AdminAct {
     pub actor_person: Option<String>,
     #[serde(default)]
     pub confirmed_by_person: Option<String>,
+    /// The reason the confirmation gave (ADR-0097 d26).
+    #[serde(default)]
+    pub confirm_reason: Option<String>,
     pub sole_admin: bool,
     #[serde(default)]
     pub cause: Option<String>,
@@ -3080,8 +3083,9 @@ impl<T: Transport> Client<T> {
         .await
     }
 
-    /// `POST /v2/admin/acts/{act}/confirm`: a second admin person confirms
-    /// a pending act, which takes effect in that commit (ADR-0097 d5, d11).
+    /// `POST /v2/admin/acts/{act}/confirm {reason}`: a second admin person
+    /// confirms a pending act, which takes effect in that commit, with the
+    /// reason the act keeps (ADR-0097 d5, d11, d26).
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
@@ -3090,12 +3094,13 @@ impl<T: Transport> Client<T> {
         call: &Call<'_>,
         idempotency_key: &str,
         act: &str,
+        reason: &str,
     ) -> Result<AdminAct, Error> {
         self.post(
             call,
             format!("/v2/admin/acts/{}/confirm", encode(act)),
             idempotency_key,
-            &serde_json::json!({}),
+            &serde_json::json!({ "reason": reason }),
         )
         .await
     }
@@ -4072,7 +4077,7 @@ mod tests {
             decodes(&client.todo_counts(&CALL, Some("alice")).await),
             decodes(&client.admin_todo_counts(&CALL).await),
             decodes(&client.admin_acts(&CALL, "all").await),
-            decodes(&client.confirm_admin_act(&CALL, "idem-a1", "act-1").await),
+            decodes(&client.confirm_admin_act(&CALL, "idem-a1", "act-1", "checked").await),
             decodes(
                 &client
                     .decline_admin_act(&CALL, "idem-a2", "act-1", "not this agent")

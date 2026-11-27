@@ -1749,6 +1749,7 @@ fn apply_fold(
                     held.state = act.state;
                     held.confirmed_by_person = act.confirmed_by_person;
                     held.settled_by_key_id = act.settled_by_key_id;
+                    held.confirm_reason = act.confirm_reason;
                     held.settled_at = Some(at.clone());
                     if act.state == St::Confirmed {
                         let act_id = act.act_id;

@@ -12636,6 +12636,23 @@ async fn admin_acts_to_confirm_open_a_confirm_screen_whose_confirmation_applies_
         assert!(!screen.to_lowercase().contains(word), "{word}");
     }
     let csrf = csrf_of(&screen);
+    // A confirmation carries a reason (ADR-0097 d26; amendment of
+    // 2026-11-27, answer 18): one sent without is refused before any call.
+    let (status, _, body) = send(
+        &rig.router,
+        post(
+            "/web/admin/acts",
+            &[
+                ("csrf_token", csrf.as_str()),
+                ("action", "confirm"),
+                ("act", act.as_str()),
+            ],
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.contains("a confirmation carries a reason"), "{body}");
     let (status, headers, body) = send(
         &rig.router,
         post(
@@ -12644,6 +12661,7 @@ async fn admin_acts_to_confirm_open_a_confirm_screen_whose_confirmation_applies_
                 ("csrf_token", csrf.as_str()),
                 ("action", "confirm"),
                 ("act", act.as_str()),
+                ("reason", "the digest is wanted"),
             ],
             Some(&cookie),
         ),
@@ -12657,6 +12675,7 @@ async fn admin_acts_to_confirm_open_a_confirm_screen_whose_confirmation_applies_
     let (_, _, after) = send(&rig.router, get(location, Some(&cookie))).await;
     assert!(after.contains("confirmed: the act took effect"), "{after}");
     assert!(after.contains("Confirmed by"), "{after}");
+    assert!(after.contains("the digest is wanted"), "{after}");
     assert!(
         !after.contains(r#"value="confirm""#),
         "no form once settled"

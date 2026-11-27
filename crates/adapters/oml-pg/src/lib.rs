@@ -12873,7 +12873,7 @@ async fn fold_admin_act(
     let from: Vec<String> = from.iter().map(|s| (*s).to_owned()).collect();
     let moved = sqlx::query(
         "UPDATE admin_acts SET state = $3, confirmed_by_person = $4, settled_by_key_id = $5, \
-                settled_at = ($6)::timestamptz \
+                settled_at = ($6)::timestamptz, confirm_reason = $8 \
           WHERE tenant_id = $1 AND id = $2 AND state = ANY($7) \
             AND ($3 <> 'declined' OR state = 'pending_confirmation' OR sole_admin \
                  OR target ->> 'timebox' = 'true') \
@@ -12887,6 +12887,7 @@ async fn fold_admin_act(
     .bind(act.settled_by_key_id)
     .bind(at.as_str())
     .bind(&from)
+    .bind(act.confirm_reason.as_deref())
     .execute(&mut **tx)
     .await
     .map_err(backend)?;
@@ -13034,7 +13035,7 @@ impl PgStore {
         let rows = sqlx::query(
             "SELECT id, act, target, reason, actor_key_id, actor_person::text AS actor_person, \
                     state, confirmed_by_person::text AS confirmed_by_person, settled_by_key_id, \
-                    sole_admin, cause, effect, \
+                    confirm_reason, sole_admin, cause, effect, \
                     to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
                     AS created_at_s, \
                     to_char(settled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
@@ -13079,6 +13080,7 @@ impl PgStore {
                         row.try_get("confirmed_by_person").map_err(backend)?,
                     )?,
                     settled_by_key_id: row.try_get("settled_by_key_id").map_err(backend)?,
+                    confirm_reason: row.try_get("confirm_reason").map_err(backend)?,
                     sole_admin: row.try_get("sole_admin").map_err(backend)?,
                     cause: cause
                         .as_deref()

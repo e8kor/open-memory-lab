@@ -2,8 +2,8 @@
 //! of the tenant's acts, and one act's confirm screen, which shows what a
 //! confirmation would apply (the key's role, grants, `used_by`, principal,
 //! the root's person, the person who took the act and its reason) and
-//! confirms or declines it. A decline carries a reason; a confirmation is
-//! refused by the API to the act's own person and to an admin person whose
+//! confirms or declines it. A confirmation and a decline each carry a
+//! reason (d26); a confirmation is refused by the API to the act's own person and to an admin person whose
 //! flag is under seven days older than the act (d11).
 
 use std::fmt::Write as _;
@@ -33,8 +33,7 @@ const LIST_MAX: usize = 200;
 
 fn defined(action: &str, name: &str) -> bool {
     match action {
-        "confirm" => name == "act",
-        "decline" => matches!(name, "act" | "reason"),
+        "confirm" | "decline" => matches!(name, "act" | "reason"),
         _ => false,
     }
 }
@@ -148,6 +147,9 @@ fn facts(act: &AdminAct) -> String {
             "Confirmed by".to_owned(),
             format!(r#"<span class="mono">{}</span>"#, text(by)),
         ));
+    }
+    if let Some(why) = &act.confirm_reason {
+        rows.push(("Reason for the confirmation".to_owned(), text(why)));
     }
     let mut out = String::from(r#"<dl class="oml-facts">"#);
     for (label, value) in rows {
@@ -285,7 +287,11 @@ fn screen(session: &Session, act: &AdminAct) -> String {
             ACTS_PATH,
             "confirm",
             &csrf,
-            &format!("{id}{}", acts::nonce_field()),
+            &format!(
+                "{id}{}{}",
+                input("reason", "Reason for the confirmation", "", true),
+                acts::nonce_field()
+            ),
             "Confirm",
             true,
         ));
@@ -309,8 +315,8 @@ fn screen(session: &Session, act: &AdminAct) -> String {
     body
 }
 
-/// `POST /web/admin/acts`: confirm or decline one act; a decline requires
-/// a reason. A success answers `303` back to the act's screen.
+/// `POST /web/admin/acts`: confirm or decline one act; each requires a
+/// reason. A success answers `303` back to the act's screen.
 pub async fn act(
     State(web): State<Web>,
     Extension(session): Extension<Session>,
@@ -328,9 +334,18 @@ pub async fn act(
         return acts::invalid("act is an admin act's id", &calls);
     };
     let reason = fields.given("reason");
-    if action == "decline" && reason.is_none() {
-        return acts::invalid("a decline carries a reason", &calls);
-    }
+    // A confirmation and a decline each carry a reason (ADR-0097 d26;
+    // amendment of 2026-11-27, answer 18).
+    let Some(reason) = reason else {
+        return acts::invalid(
+            if action == "decline" {
+                "a decline carries a reason"
+            } else {
+                "a confirmation carries a reason"
+            },
+            &calls,
+        );
+    };
     let key = match acts::key(&session, &fields, &calls) {
         Ok(key) => key,
         Err(refusal) => return *refusal,
@@ -341,7 +356,7 @@ pub async fn act(
     let back = format!("{ACTS_PATH}?act={}", encode(act_id));
     let answer = if action == "confirm" {
         web.api
-            .confirm_admin_act(&call(&credential, &ids), &key, act_id)
+            .confirm_admin_act(&call(&credential, &ids), &key, act_id, reason)
             .await
             .map(|_| "confirmed")
     } else {
@@ -350,7 +365,7 @@ pub async fn act(
                 &call(&credential, &ids),
                 &key,
                 act_id,
-                reason.unwrap_or_default(),
+                reason,
             )
             .await
             .map(|_| "declined")

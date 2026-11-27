@@ -3945,12 +3945,24 @@ paths:
       tags: [admin]
       operationId: confirmAdminAct
       summary: A second admin person confirms a pending widening act, which takes effect in this commit.
-      description: 'Requires: admin key role, a key that counts as a live admin person of the tenant: a <user>-admin session key, or an admin key linked to its person (ADR-0097 d5, d11). The act''s effect applies in the confirmation''s commit: a pending key''s grants and connect code, a grant, a raised limit. Refused with request.validation, details.field act and details.reason: not_pending (the act took effect or was settled), expired (pending seven days; a late confirm never revives it), own_act (the key counts as the person who took the act), not_admin_person (the key counts as no live admin person) or too_new (that person''s admin flag was accepted less than seven days before the act). An act the tenant does not hold is access.not_found. Journalled as admin.act with state confirmed and confirmed_by_person. Since v0.8.6.'
+      description: 'Requires: admin key role, a key that counts as a live admin person of the tenant: a <user>-admin session key, or an admin key linked to its person (ADR-0097 d5, d11). The act''s effect applies in the confirmation''s commit: a pending key''s grants and connect code, a grant, a raised limit. Refused with request.validation, details.field act and details.reason: not_pending (the act took effect or was settled), expired (pending seven days; a late confirm never revives it), own_act (the key counts as the person who took the act), not_admin_person (the key counts as no live admin person) or too_new (that person''s admin flag was accepted less than seven days before the act). reason is required and scanned, and the act keeps it as confirm_reason; a confirmation without one is refused request.validation with details.field /reason and details.reason required (ADR-0097 d26; amendment of 2026-11-27, answer 18). An act the tenant does not hold is access.not_found. Journalled as admin.act with state confirmed, confirmed_by_person and confirm_reason. Since v0.8.6.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
         - { $ref: '#/components/parameters/Traceparent' }
         - { name: act, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              reason: checked with the person who asked
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason: { type: string }
       responses:
         '200':
           description: The confirmed act.
@@ -4822,7 +4834,7 @@ components:
     AdminAct:
       type: object
       description: "One admin act (ADR-0097 d2): the confirm screen of d23 reads target (the key's role, principal, used_by, the root's person as user, and principal_names_person where the principal spells a person's name) and grants. Since v0.8.6."
-      required: [act_id, act, class, state, target, grants, reason, actor_key_id, actor_person, confirmed_by_person, sole_admin, cause, at, settled_at, expires_at]
+      required: [act_id, act, class, state, target, grants, reason, actor_key_id, actor_person, confirmed_by_person, confirm_reason, sole_admin, cause, at, settled_at, expires_at]
       properties:
         act_id: { type: string, format: uuid }
         act: { type: string }
@@ -4834,6 +4846,7 @@ components:
         actor_key_id: { type: [string, 'null'], format: uuid }
         actor_person: { type: [string, 'null'] }
         confirmed_by_person: { type: [string, 'null'] }
+        confirm_reason: { type: [string, 'null'], description: 'The reason the confirmation gave (ADR-0097 d26); null until confirmed.' }
         sole_admin: { type: boolean }
         cause: { type: [string, 'null'], description: "upgrade, deactivation, settlement or recovery for an act no admin took; null otherwise." }
         at: { type: string, format: date-time }

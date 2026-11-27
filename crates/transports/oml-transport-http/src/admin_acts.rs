@@ -22,6 +22,7 @@ use crate::error::{ApiError, ErrorContext, map_app_error};
 use crate::traffic::Rid;
 use crate::{ApiState, acting, finish, json_response, parse_json, retry_chain};
 
+/// The body of a confirm or a decline: the reason (ADR-0097 d26).
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct DeclineBody {
@@ -79,6 +80,7 @@ pub(crate) fn admin_act_json(a: &AdminActRecord) -> Value {
         "actor_key_id": a.actor_key_id,
         "actor_person": a.actor_person.as_ref().map(|p| p.as_str()),
         "confirmed_by_person": a.confirmed_by_person.as_ref().map(|p| p.as_str()),
+        "confirm_reason": a.confirm_reason,
         "sole_admin": a.sole_admin,
         "cause": a.cause.map(oml_app::domain::admin_act::AdminActCause::as_str),
         "at": a.at.as_str(),
@@ -233,19 +235,30 @@ where
         finish(&rid, inner.await)
     }
 
-    /// `POST /v2/admin/acts/{act}/confirm`: a second admin person confirms
-    /// a pending widening act, which takes effect in this commit.
+    /// `POST /v2/admin/acts/{act}/confirm {reason}`: a second admin person
+    /// confirms a pending widening act, which takes effect in this commit;
+    /// the reason is required and kept with the act (ADR-0097 d26;
+    /// amendment of 2026-11-27, answer 18).
     pub(crate) async fn admin_act_confirm_route(
         State(st): State<Self>,
         rid: Rid,
         Path(act): Path<String>,
         headers: HeaderMap,
+        body: Bytes,
     ) -> Response {
         let inner = async {
             st.require_writes_open()?;
             let acting = acting(&headers, None)?;
             let id = act_id(&act)?;
-            let act = retry_chain(|| st.app.confirm_admin_act(acting.bearer(), id))
+            let sent: DeclineBody = if body.is_empty() {
+                DeclineBody::default()
+            } else {
+                parse_json(&headers, &body)?
+            };
+            let act = retry_chain(|| {
+                st.app
+                    .confirm_admin_act(acting.bearer(), id, sent.reason.as_deref())
+            })
                 .await
                 .map_err(|e| map_app_error(e, ErrorContext::Write))?;
             Ok(json_response(StatusCode::OK, &admin_act_json(&act)))

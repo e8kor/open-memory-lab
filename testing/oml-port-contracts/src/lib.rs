@@ -11135,6 +11135,7 @@ pub async fn an_admin_act_moves_once_and_its_confirmation_lets_the_pending_key_i
         state: AdminActState::PendingConfirmation,
         confirmed_by_person: None,
         settled_by_key_id: None,
+        confirm_reason: None,
         sole_admin: false,
         cause: None,
         at: ChainRig::at(1),
@@ -11172,6 +11173,7 @@ pub async fn an_admin_act_moves_once_and_its_confirmation_lets_the_pending_key_i
         state: AdminActState::Confirmed,
         confirmed_by_person: Some(Name::parse("bob").expect("a name")),
         settled_by_key_id: Some(Uuid::from_u128(0x4B13)),
+        confirm_reason: Some("checked with ops".to_owned()),
         ..act.clone()
     };
     rig.commit(
@@ -11192,6 +11194,10 @@ pub async fn an_admin_act_moves_once_and_its_confirmation_lets_the_pending_key_i
         .expect("act");
     assert_eq!(stored.state, AdminActState::Confirmed);
     assert_eq!(stored.confirmed_by_person, confirmed.confirmed_by_person);
+    assert_eq!(
+        stored.confirm_reason, confirmed.confirm_reason,
+        "the store keeps the reason the confirmation required"
+    );
     let head = store.chain_head(t).await.expect("head");
     let declined = AdminActRecord {
         state: AdminActState::Declined,

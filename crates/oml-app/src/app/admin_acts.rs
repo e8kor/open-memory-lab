@@ -171,6 +171,7 @@ pub(crate) fn act_payload(record: &AdminActRecord) -> Value {
         "actor_person": record.actor_person.as_ref().map(|p| p.as_str()),
         "state": record.state.as_str(),
         "confirmed_by_person": record.confirmed_by_person.as_ref().map(|p| p.as_str()),
+        "confirm_reason": record.confirm_reason,
         "sole_admin": record.sole_admin,
         "cause": record.cause.map(oml_domain::admin_act::AdminActCause::as_str),
     })
@@ -262,6 +263,7 @@ where
             state,
             confirmed_by_person: None,
             settled_by_key_id: None,
+            confirm_reason: None,
             sole_admin,
             cause: None,
             at: self.clock.now(),
@@ -859,6 +861,7 @@ where
         &self,
         bearer: impl Into<Bearer<'_>>,
         act_id: Uuid,
+        reason: Option<&str>,
     ) -> Result<AdminActRecord, AppError> {
         let admin = self
             .key_act_caller(bearer.into(), "confirm_admin_act")
@@ -866,6 +869,13 @@ where
         require_role(&admin, Role::Admin, "confirm_admin_act")?;
         let admin = admin.key;
         let tenant_id = admin.tenant_id;
+        // A confirmation requires a reason, stored with the act (ADR-0097
+        // d26; amendment of 2026-11-27, answer 18).
+        let reason = reason
+            .map(str::trim)
+            .filter(|r| !r.is_empty())
+            .ok_or(AppError::AdminActReasonRequired)?;
+        self.scan_veto_only(tenant_id, "reason", reason)?;
         let mut act = self
             .journal
             .admin_act(tenant_id, act_id)
@@ -898,6 +908,7 @@ where
         }
         act.state = AdminActState::Confirmed;
         act.confirmed_by_person = Some(person);
+        act.confirm_reason = Some(reason.to_owned());
         act.settled_by_key_id = Some(admin.key_id);
         let prev = self.head_event(tenant_id).await?;
         let event = self.seal(

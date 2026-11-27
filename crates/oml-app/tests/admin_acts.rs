@@ -142,7 +142,7 @@ impl Rig {
                     .clone();
                 let session = self.admin_session(confirmer.as_str()).await;
                 self.app
-                    .confirm_admin_act(Bearer::Session(&session), act.act_id)
+                    .confirm_admin_act(Bearer::Session(&session), act.act_id, Some("confirmed"))
                     .await
                     .expect("the flag is confirmed");
                 self.store
@@ -350,7 +350,7 @@ async fn a_widening_act_takes_effect_only_after_a_second_admin_person_confirms_i
     let alice = r.admin_session("alice").await;
     let confirmed = r
         .app
-        .confirm_admin_act(Bearer::Session(&alice), act_id)
+        .confirm_admin_act(Bearer::Session(&alice), act_id, Some("confirmed"))
         .await
         .expect("alice confirms");
     assert_eq!(confirmed.state, AdminActState::Confirmed);
@@ -366,6 +366,44 @@ async fn a_widening_act_takes_effect_only_after_a_second_admin_person_confirms_i
         .expect("read")
         .expect("held");
     assert_eq!(access.grants.len(), 2);
+}
+
+/// A confirmation requires a reason, refused by name without one before
+/// anything is journalled, and the act keeps the reason it was confirmed
+/// with (ADR-0097 d26; amendment of 2026-11-27, answer 18).
+#[tokio::test]
+async fn a_confirmation_requires_a_reason_and_the_act_keeps_it() {
+    let r = two_admins().await;
+    let issued = pending_key(&r).await;
+    let act_id = issued.pending_act.expect("pending");
+    let alice = r.admin_session("alice").await;
+    let before = r.journal().await.len();
+    for blank in [None, Some("  ")] {
+        let err = r
+            .app
+            .confirm_admin_act(Bearer::Session(&alice), act_id, blank)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::AdminActReasonRequired), "{err:?}");
+    }
+    assert_eq!(r.journal().await.len(), before, "nothing is journalled");
+    let confirmed = r
+        .app
+        .confirm_admin_act(Bearer::Session(&alice), act_id, Some("checked with ops"))
+        .await
+        .expect("alice confirms with a reason");
+    assert_eq!(confirmed.confirm_reason.as_deref(), Some("checked with ops"));
+    let held = r
+        .store
+        .admin_act(r.boot.tenant_id, act_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert_eq!(held.confirm_reason.as_deref(), Some("checked with ops"));
+    let events = r.journal().await;
+    let act = &events[before].envelope.payload;
+    assert_eq!(act["state"], "confirmed");
+    assert_eq!(act["confirm_reason"], "checked with ops");
 }
 
 /// A pending key authenticates on no path: not by its value, and a
@@ -391,7 +429,7 @@ async fn an_admin_person_accepted_less_than_seven_days_ago_confirms_nothing() {
         .app
         .confirm_admin_act(
             Bearer::Session(&alice),
-            issued.pending_act.expect("pending"),
+            issued.pending_act.expect("pending"), Some("confirmed"),
         )
         .await
         .unwrap_err();
@@ -412,7 +450,7 @@ async fn an_admin_person_accepted_less_than_seven_days_ago_confirms_nothing() {
         .app
         .confirm_admin_act(
             Bearer::Session(&alice),
-            issued.pending_act.expect("pending"),
+            issued.pending_act.expect("pending"), Some("confirmed"),
         )
         .await
         .unwrap_err();
@@ -422,7 +460,7 @@ async fn an_admin_person_accepted_less_than_seven_days_ago_confirms_nothing() {
     );
     let bob = r.admin_session("bob").await;
     r.app
-        .confirm_admin_act(Bearer::Session(&bob), issued.pending_act.expect("pending"))
+        .confirm_admin_act(Bearer::Session(&bob), issued.pending_act.expect("pending"), Some("confirmed"))
         .await
         .expect("bob confirms alice's act");
 }
@@ -452,7 +490,7 @@ async fn a_declined_or_expired_widening_never_takes_effect() {
     let alice = r.admin_session("alice").await;
     let err = r
         .app
-        .confirm_admin_act(Bearer::Session(&alice), act_id)
+        .confirm_admin_act(Bearer::Session(&alice), act_id, Some("confirmed"))
         .await
         .unwrap_err();
     assert!(
@@ -477,7 +515,7 @@ async fn a_declined_or_expired_widening_never_takes_effect() {
     let alice = r.admin_session("alice").await;
     let err = r
         .app
-        .confirm_admin_act(Bearer::Session(&alice), act_id)
+        .confirm_admin_act(Bearer::Session(&alice), act_id, Some("confirmed"))
         .await
         .unwrap_err();
     assert!(
@@ -903,7 +941,7 @@ async fn raising_a_limit_waits_on_a_second_admin_and_lowering_it_takes_effect_at
     assert_eq!(key.requests_per_minute, Some(60), "nothing changes yet");
     let alice = r.admin_session("alice").await;
     r.app
-        .confirm_admin_act(Bearer::Session(&alice), act.act_id)
+        .confirm_admin_act(Bearer::Session(&alice), act.act_id, Some("confirmed"))
         .await
         .expect("alice confirms");
     let held = r
@@ -972,7 +1010,7 @@ async fn a_new_admin_person_waits_on_a_second_admin_person() {
         .expect("the act");
     let bob = r.admin_session("bob").await;
     r.app
-        .confirm_admin_act(Bearer::Session(&bob), act.act_id)
+        .confirm_admin_act(Bearer::Session(&bob), act.act_id, Some("confirmed"))
         .await
         .expect("bob confirms");
     let held = r
@@ -1551,7 +1589,7 @@ async fn a_pending_issuance_creates_no_workspace_until_it_is_confirmed() {
     let before = r.journal().await.len();
     let alice = r.admin_session("alice").await;
     r.app
-        .confirm_admin_act(Bearer::Session(&alice), act_id)
+        .confirm_admin_act(Bearer::Session(&alice), act_id, Some("confirmed"))
         .await
         .expect("alice confirms");
     assert_eq!(
@@ -1775,7 +1813,7 @@ async fn granting_create_waits_on_a_second_admin_person() {
     let act_id = issued.pending_act.expect("pending");
     let alice = r.admin_session("alice").await;
     r.app
-        .confirm_admin_act(Bearer::Session(&alice), act_id)
+        .confirm_admin_act(Bearer::Session(&alice), act_id, Some("confirmed"))
         .await
         .expect("alice confirms");
     let access = r
@@ -2115,7 +2153,7 @@ async fn a_ladder_ratifier_must_count_as_a_person_other_than_the_proposer() {
         .expect("a pending reviewer");
     let bob = r.admin_session("bob").await;
     r.app
-        .confirm_admin_act(Bearer::Session(&bob), minted.pending_act.expect("pending"))
+        .confirm_admin_act(Bearer::Session(&bob), minted.pending_act.expect("pending"), Some("confirmed"))
         .await
         .expect("bob confirms");
     let proposal = r
@@ -2191,7 +2229,7 @@ async fn an_admin_cannot_ratify_a_proposal_from_an_agent_key_they_issued() {
         .expect("a pending agent key");
     let bob = r.admin_session("bob").await;
     r.app
-        .confirm_admin_act(Bearer::Session(&bob), agent.pending_act.expect("pending"))
+        .confirm_admin_act(Bearer::Session(&bob), agent.pending_act.expect("pending"), Some("confirmed"))
         .await
         .expect("bob confirms");
     let proposal = r
@@ -2613,7 +2651,7 @@ async fn a_time_box_admits_reader_and_submitter_grants_in_shared_workspaces_for_
         .expect("the first box");
     let settled = r
         .app
-        .confirm_admin_act(Bearer::Session(&bob), first_act.act_id)
+        .confirm_admin_act(Bearer::Session(&bob), first_act.act_id, Some("confirmed"))
         .await
         .expect("bob settles the first box");
     assert_eq!(settled.state, AdminActState::Confirmed);
@@ -2933,7 +2971,7 @@ async fn erase_demotes_at_once_and_shreds_only_after_a_second_admin_person() {
     r.clock.advance(8 * DAY);
     assert!(matches!(
         r.app
-            .confirm_admin_act(Bearer::Session(&r.admin_session("alice").await), act.act_id)
+            .confirm_admin_act(Bearer::Session(&r.admin_session("alice").await), act.act_id, Some("confirmed"))
             .await
             .unwrap_err(),
         AppError::AdminAct(AdminActRefusal::OwnAct)
@@ -2941,7 +2979,7 @@ async fn erase_demotes_at_once_and_shreds_only_after_a_second_admin_person() {
     let before = r.journal().await.len();
     let confirmed = r
         .app
-        .confirm_admin_act(Bearer::Session(&r.admin_session("bob").await), act.act_id)
+        .confirm_admin_act(Bearer::Session(&r.admin_session("bob").await), act.act_id, Some("confirmed"))
         .await
         .expect("bob confirms the shred");
     assert_eq!(confirmed.state, AdminActState::Confirmed);
@@ -3092,7 +3130,7 @@ async fn an_admins_federation_acceptance_waits_on_a_second_admin_person_and_appl
     assert_eq!(act.act.as_str(), "accept_federation");
     assert_eq!(act.state, AdminActState::PendingConfirmation);
     r.app
-        .confirm_admin_act(Bearer::Session(&r.admin_session("bob").await), act.act_id)
+        .confirm_admin_act(Bearer::Session(&r.admin_session("bob").await), act.act_id, Some("confirmed"))
         .await
         .expect("bob confirms");
     let crew = r
@@ -3133,7 +3171,7 @@ async fn widening_the_federation_policy_waits_and_narrowing_it_takes_effect_at_o
     let act = taken.pending.expect("the act waits");
     assert_eq!(act.act.as_str(), "widen_federation_policy");
     r.app
-        .confirm_admin_act(Bearer::Session(&r.admin_session("bob").await), act.act_id)
+        .confirm_admin_act(Bearer::Session(&r.admin_session("bob").await), act.act_id, Some("confirmed"))
         .await
         .expect("bob confirms");
     let policy = r
