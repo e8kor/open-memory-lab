@@ -307,6 +307,8 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         .with_details(json!({ "reason": "expired", "expiry": expiry.as_str() })),
         AppError::KeyRevocation(refusal) => ApiError::validation(refusal.message())
             .with_details(json!({ "field": "key", "reason": refusal.reason() })),
+        AppError::Timebox(refusal) => ApiError::validation(refusal.message())
+            .with_details(json!({ "field": "/timebox", "reason": refusal.reason() })),
         AppError::AdminAct(refusal) => ApiError::validation(refusal.message())
             .with_details(json!({ "field": refusal.field(), "reason": refusal.reason() })),
         AppError::KeyPendingConfirmation => ApiError::auth_invalid("pending_confirmation"),
@@ -1011,6 +1013,29 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "R2: the reviewer is never the author — enforced against the full lineage closure.",
             "the ratifying key or principal is in an endpoint's lineage closure",
         ),
+        AppError::CountsAsNoPerson { act } => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "review.person_required",
+            "An instruction verdict, a fix settlement and a ladder ratification each need a key that counts as a person (ADR-0097 d12).",
+            format!("this key counts as no person, so it takes no {act}"),
+        )
+        .with_details(json!({ "reason": "counts_as_no_person", "act": act })),
+        AppError::RatifierSamePerson { issued_the_proposer } => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "review.ratifier_is_proposer",
+            "The ratifier counts as a person other than the proposer's, and other than the admin who issued an agent proposer (ADR-0097 d17).",
+            "the ratifying key counts as the proposer's person",
+        )
+        .with_details(json!({
+            "reason": if issued_the_proposer { "issued_the_proposer" } else { "same_person" },
+        })),
+        AppError::AdminReadRequiresPerson => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "admin.read_requires_person",
+            "The admin read needs a person-linked admin key or a session, and counts its reads per person (ADR-0097 d16).",
+            "this admin key counts as no person",
+        )
+        .with_details(json!({ "reason": "counts_as_no_person" })),
         AppError::SamePerson => ApiError::new(
             StatusCode::FORBIDDEN,
             "review.author_in_lineage",

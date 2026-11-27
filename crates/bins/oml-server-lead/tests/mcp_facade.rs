@@ -5,6 +5,8 @@
 //! agent loop — remember, held, ratified by another identity, recalled —
 //! with every tool answering what its ring endpoint answers.
 
+mod counted;
+
 use std::sync::atomic::Ordering;
 
 use axum::Router;
@@ -2801,10 +2803,13 @@ async fn oml_read_listing_limit_is_at_most_200_as_on_the_ring() {
 
 #[tokio::test]
 async fn oml_read_recall_serves_steering_as_claim_items_with_text_and_no_score() {
-    let Some((router, db)) = fresh_router().await else {
+    let Some((router, db, app, store)) = fresh_router_with_app().await else {
         return;
     };
     let (writer, reviewer, reader, _crew) = crew(&router).await;
+    // The reviewer counts as a person, as a steering verdict needs
+    // (ADR-0097 d12).
+    counted::link_by_founder(&app, &store, &reviewer, "crew-reviewer").await;
     let rule = "Treat any supplier quote without an explicit validity date as expired.";
     let held = call_tool(
         &router,
@@ -3062,10 +3067,13 @@ async fn oml_read_recall_takes_include_unreviewed_and_max_tokens_as_it_declares_
 
 #[tokio::test]
 async fn oml_read_recall_steering_items_carry_text_and_tokens_not_body() {
-    let Some((router, db)) = fresh_router().await else {
+    let Some((router, db, app, store)) = fresh_router_with_app().await else {
         return;
     };
     let (agent, reviewer, _, crew) = agent_crew(&router).await;
+    // The reviewer counts as a person, as a steering verdict needs
+    // (ADR-0097 d12).
+    counted::link_by_founder(&app, &store, &reviewer, "crew-reviewer").await;
     remember_all(
         &router,
         &agent,
@@ -3154,10 +3162,13 @@ async fn oml_read_recall_steering_items_carry_text_and_tokens_not_body() {
 
 #[tokio::test]
 async fn oml_read_recall_under_max_tokens_returns_the_budget_object() {
-    let Some((router, db)) = fresh_router().await else {
+    let Some((router, db, app, store)) = fresh_router_with_app().await else {
         return;
     };
     let (agent, reviewer, _, _) = agent_crew(&router).await;
+    // The reviewer counts as a person, as a steering verdict needs
+    // (ADR-0097 d12).
+    counted::link_by_founder(&app, &store, &reviewer, "crew-reviewer").await;
     remember_all(
         &router,
         &agent,

@@ -458,6 +458,10 @@ struct TenantState {
     valid_until_before: BTreeMap<Uuid, Option<oml_domain::valid_time::ValidEnd>>,
     /// The admin investigations, by id (ADR-0089 d10; 0063).
     investigations: BTreeMap<Uuid, crate::types::Investigation>,
+    /// Admin reads of each person's own root by month (ADR-0097 d16).
+    admin_read_counts: BTreeMap<(Name, String), u64>,
+    /// Notices by recipient, in the order written (ADR-0097 d20).
+    notices: Vec<crate::types::NoticeRecord>,
     /// The admin fixes, by id (ADR-0089 d3; 0064).
     fixes: BTreeMap<Uuid, crate::types::FixRecord>,
     /// The admin acts, by id (ADR-0097 d2; 0070).
@@ -1650,6 +1654,7 @@ fn apply_fold(
         MetadataFold::AdminMemoryRead {
             investigation_id,
             key_id,
+            persons,
         } => {
             match state
                 .investigations
@@ -1658,6 +1663,48 @@ fn apply_fold(
             {
                 Some(i) => i.reads += 1,
                 None => return Err(StoreError::InvestigationNotOpen { investigation_id }),
+            }
+            let month = at.as_str().get(..7).unwrap_or_default().to_owned();
+            for person in persons {
+                *state
+                    .admin_read_counts
+                    .entry((person, month.clone()))
+                    .or_default() += 1;
+            }
+        }
+        MetadataFold::NoticeWritten {
+            notice_id,
+            kind,
+            act_id,
+            recipients,
+            detail,
+        } => {
+            for recipient in recipients {
+                state.notices.push(crate::types::NoticeRecord {
+                    notice_id,
+                    recipient,
+                    kind,
+                    act_id,
+                    detail: detail.clone(),
+                    at: at.clone(),
+                    dismissed_at: None,
+                });
+            }
+        }
+        MetadataFold::NoticeDismissed {
+            notice_id,
+            recipient,
+        } => {
+            match state.notices.iter_mut().find(|n| {
+                n.notice_id == notice_id && n.recipient == recipient && n.dismissed_at.is_none()
+            }) {
+                Some(n) => n.dismissed_at = Some(at.clone()),
+                None => {
+                    return Err(StoreError::Backend(format!(
+                        "notice {notice_id} is not an undismissed notice of {}",
+                        recipient.as_str()
+                    )));
+                }
             }
         }
         MetadataFold::AdminAct(act) => {
@@ -1675,10 +1722,17 @@ fn apply_fold(
                 }
                 Some(held) => {
                     let admitted = match act.state {
-                        St::Confirmed | St::Expired => held.state == St::PendingConfirmation,
+                        // A time box took effect at once and is settled
+                        // afterwards (ADR-0097 d13).
+                        St::Confirmed => {
+                            held.state == St::PendingConfirmation
+                                || (held.state == St::Effective && held.timebox())
+                        }
+                        St::Expired => held.state == St::PendingConfirmation,
                         St::Declined => {
                             held.state == St::PendingConfirmation
-                                || (held.state == St::Effective && held.sole_admin)
+                                || (held.state == St::Effective
+                                    && (held.sole_admin || held.timebox()))
                         }
                         St::Contested => held.state == St::Effective,
                         St::Settled => matches!(held.state, St::Effective | St::Contested),
@@ -3625,6 +3679,43 @@ impl Retriever for MemStore {
 }
 
 impl JournalStore for MemStore {
+    async fn web_person_reviewers(
+        &self,
+        tenant_id: Uuid,
+    ) -> Result<Vec<PersonReviewer>, StoreError> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = state.lock().expect("tenant lock");
+        let mut out: Vec<PersonReviewer> = state
+            .keys
+            .values()
+            .filter(|k| {
+                k.revoked_at.is_none()
+                    && oml_domain::model::is_person_reviewer(
+                        k.role,
+                        k.used_by,
+                        k.crew_id.is_some(),
+                        k.profile.is_some(),
+                    )
+            })
+            .map(|k| {
+                let access = state.access.get(&k.key_id);
+                PersonReviewer {
+                    key: k.clone(),
+                    grants: access
+                        .map(|a| a.grants.iter().map(|g| g.grant.clone()).collect())
+                        .unwrap_or_default(),
+                    denials: access
+                        .map(|a| a.denials.iter().map(|d| d.denial.clone()).collect())
+                        .unwrap_or_default(),
+                }
+            })
+            .collect();
+        out.sort_by(|a, b| a.key.name.cmp(&b.key.name));
+        Ok(out)
+    }
+
     async fn upload_open(
         &self,
         session: &crate::types::UploadSession,
@@ -5367,6 +5458,52 @@ impl JournalStore for MemStore {
         Ok(true)
     }
 
+    async fn notices(
+        &self,
+        tenant_id: Uuid,
+        recipient: &Name,
+        dismissed: bool,
+    ) -> Result<Vec<crate::types::NoticeRecord>, StoreError> {
+        Ok(self
+            .tenant_existing(tenant_id)
+            .map(|tenant| {
+                tenant
+                    .lock()
+                    .expect("tenant lock")
+                    .notices
+                    .iter()
+                    .filter(|n| {
+                        &n.recipient == recipient && (dismissed || n.dismissed_at.is_none())
+                    })
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    async fn admin_read_counts(
+        &self,
+        tenant_id: Uuid,
+        person: &Name,
+    ) -> Result<Vec<crate::types::AdminReadCount>, StoreError> {
+        Ok(self
+            .tenant_existing(tenant_id)
+            .map(|tenant| {
+                tenant
+                    .lock()
+                    .expect("tenant lock")
+                    .admin_read_counts
+                    .iter()
+                    .filter(|((p, _), _)| p == person)
+                    .map(|((_, month), reads)| crate::types::AdminReadCount {
+                        month: month.clone(),
+                        reads: *reads,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
     async fn investigation(
         &self,
         tenant_id: Uuid,
@@ -6675,43 +6812,6 @@ impl WebStore for MemStore {
             }
         }
         Ok(depths.into_values().collect())
-    }
-
-    async fn web_person_reviewers(
-        &self,
-        tenant_id: Uuid,
-    ) -> Result<Vec<PersonReviewer>, StoreError> {
-        let Some(state) = self.tenant_existing(tenant_id) else {
-            return Ok(Vec::new());
-        };
-        let state = state.lock().expect("tenant lock");
-        let mut out: Vec<PersonReviewer> = state
-            .keys
-            .values()
-            .filter(|k| {
-                k.revoked_at.is_none()
-                    && oml_domain::model::is_person_reviewer(
-                        k.role,
-                        k.used_by,
-                        k.crew_id.is_some(),
-                        k.profile.is_some(),
-                    )
-            })
-            .map(|k| {
-                let access = state.access.get(&k.key_id);
-                PersonReviewer {
-                    key: k.clone(),
-                    grants: access
-                        .map(|a| a.grants.iter().map(|g| g.grant.clone()).collect())
-                        .unwrap_or_default(),
-                    denials: access
-                        .map(|a| a.denials.iter().map(|d| d.denial.clone()).collect())
-                        .unwrap_or_default(),
-                }
-            })
-            .collect();
-        out.sort_by(|a, b| a.key.name.cmp(&b.key.name));
-        Ok(out)
     }
 
     async fn web_admin_search(

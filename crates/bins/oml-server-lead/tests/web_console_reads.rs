@@ -236,6 +236,32 @@ async fn whoami_without_the_person_block_reads_the_session_keys_access_once() {
 async fn a_session_keys_read_resolves_its_caller_on_the_gates_access_once_and_a_request_with_a_body_reads_it_again()
  {
     let rig = rig().await;
+    // The admin read needs a person-linked admin key (ADR-0097 d16): the
+    // bootstrap key links itself to alice, who accepts.
+    {
+        use oml_app::app::Capacity;
+        use oml_app::types::Bearer;
+        let linked = rig
+            .app
+            .link_self(rig.admin.as_str(), &Name::parse("alice").expect("a name"))
+            .await
+            .expect("the self-link");
+        let session = rig
+            .app
+            .web_session(&rig.alice)
+            .await
+            .expect("a read")
+            .expect("alice's session");
+        let web = rig
+            .app
+            .web_caller(&session, Capacity::Web)
+            .await
+            .expect("alice's console");
+        rig.app
+            .accept_key_link(Bearer::Session(&web), linked.key_id.into())
+            .await
+            .expect("alice accepts");
+    }
     let admin = web(&rig.alice, "admin");
     let tree = get(
         &rig.router,
@@ -304,8 +330,11 @@ async fn a_session_keys_read_resolves_its_caller_on_the_gates_access_once_and_a_
     .await;
     assert_eq!(by_value.status, StatusCode::OK, "{}", by_value.body);
     assert_eq!(by_session.status, StatusCode::OK, "{}", by_session.body);
+    // The admin read's person gate reads a linked key's person off its
+    // user root, one call, and a session's off its user, none (ADR-0097
+    // d16).
     assert_eq!(
-        by_session.store_calls(),
+        by_session.store_calls() + 1,
         by_value.store_calls(),
         "{} / {}",
         by_session.line,

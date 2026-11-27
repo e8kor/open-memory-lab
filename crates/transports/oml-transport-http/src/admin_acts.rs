@@ -51,6 +51,18 @@ struct RevokeBody {
     reason: Option<String>,
 }
 
+/// A notice as the API serves it (ADR-0097 d20).
+fn notice_json(n: &oml_app::types::NoticeRecord) -> Value {
+    json!({
+        "notice_id": n.notice_id.to_string(),
+        "kind": n.kind.as_str(),
+        "act_id": n.act_id.map(|a| a.to_string()),
+        "detail": n.detail,
+        "at": n.at.as_str(),
+        "dismissed_at": n.dismissed_at.as_ref().map(EventTime::as_str),
+    })
+}
+
 /// An admin act as served (openapi.yaml `AdminAct`): what the confirm
 /// screen shows, the act's role, grants, `used_by`, principal, the root's
 /// person, the issuing person and the reason among it (ADR-0097 d23).
@@ -89,6 +101,93 @@ where
 {
     /// `GET /v2/admin/acts?state=`: the tenant's admin acts, oldest first;
     /// `pending_confirmation` by default, `all` for every one.
+    /// `GET /v2/web/admin-reads` (ADR-0097 d16): the count of admin reads
+    /// of the calling person's own root, by month.
+    pub(crate) async fn own_admin_reads_route(
+        State(st): State<Self>,
+        rid: Rid,
+        headers: HeaderMap,
+    ) -> Response {
+        let inner = async {
+            let acting = acting(&headers, None)?;
+            let (person, months) = st
+                .app
+                .own_admin_reads(acting.bearer())
+                .await
+                .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+            Ok(json_response(
+                StatusCode::OK,
+                &json!({
+                    "person": person.as_str(),
+                    "months": months
+                        .iter()
+                        .map(|m| json!({ "month": m.month, "reads": m.reads }))
+                        .collect::<Vec<_>>(),
+                }),
+            ))
+        };
+        finish(&rid, inner.await)
+    }
+
+    /// `GET /v2/web/notices` (ADR-0097 d20): the calling person's notices,
+    /// the dismissed ones too with `dismissed=true`.
+    pub(crate) async fn notices_route(
+        State(st): State<Self>,
+        rid: Rid,
+        Query(params): Query<HashMap<String, String>>,
+        headers: HeaderMap,
+    ) -> Response {
+        let inner = async {
+            let acting = acting(&headers, None)?;
+            if let Some(other) = params.keys().find(|k| k.as_str() != "dismissed") {
+                return Err(
+                    ApiError::validation(format!("unknown query parameter {other}"))
+                        .with_details(json!({ "field": other })),
+                );
+            }
+            let dismissed = match params.get("dismissed").map(String::as_str) {
+                None | Some("false") => false,
+                Some("true") => true,
+                Some(_) => {
+                    return Err(ApiError::validation("dismissed is true or false")
+                        .with_details(json!({ "field": "dismissed" })));
+                }
+            };
+            let notices = st
+                .app
+                .notices(acting.bearer(), dismissed)
+                .await
+                .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+            Ok(json_response(
+                StatusCode::OK,
+                &json!({ "items": notices.iter().map(notice_json).collect::<Vec<_>>() }),
+            ))
+        };
+        finish(&rid, inner.await)
+    }
+
+    /// `POST /v2/web/notices/{notice}/dismiss` (ADR-0097 d20).
+    pub(crate) async fn notice_dismiss_route(
+        State(st): State<Self>,
+        rid: Rid,
+        Path(notice): Path<String>,
+        headers: HeaderMap,
+    ) -> Response {
+        let inner = async {
+            st.require_writes_open()?;
+            let acting = acting(&headers, None)?;
+            let notice_id = Uuid::parse_str(&notice).map_err(|_| {
+                ApiError::validation("notice is a notice id")
+                    .with_details(json!({ "field": "notice" }))
+            })?;
+            let notice = retry_chain(|| st.app.dismiss_notice(acting.bearer(), notice_id))
+                .await
+                .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+            Ok(json_response(StatusCode::OK, &notice_json(&notice)))
+        };
+        finish(&rid, inner.await)
+    }
+
     pub(crate) async fn admin_acts_route(
         State(st): State<Self>,
         rid: Rid,

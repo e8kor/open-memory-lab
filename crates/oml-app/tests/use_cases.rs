@@ -197,9 +197,93 @@ async fn issue_with(
     if role == Role::Admin {
         return linked_admin_key(app, admin, principal).await;
     }
-    app.issue_key(admin, &issue_req(role, principal, grants))
+    let issued = app
+        .issue_key(admin, &issue_req(role, principal, grants))
         .await
-        .expect("issue key")
+        .expect("issue key");
+    if role == Role::Reviewer {
+        counted_as(app, admin, &issued, principal).await;
+    }
+    issued
+}
+
+/// A session of `capacity` for `entry`, opened now.
+async fn session_of(
+    app: &TestApp,
+    entry: &oml_app::types::WebEntry,
+    capacity: oml_app::app::Capacity,
+) -> oml_app::app::Caller {
+    let token = app
+        .web_session_open(entry, 3600, None)
+        .await
+        .expect("a session")
+        .token;
+    let session = app
+        .web_session(&token)
+        .await
+        .expect("a read")
+        .expect("a live session");
+    app.web_caller(&session, capacity)
+        .await
+        .expect("the session key")
+}
+
+/// `issued`, a person's reviewer key, linked to the person its principal
+/// names and accepted from that person's session, so it counts as a
+/// person: an instruction verdict and a ladder ratification need one
+/// (ADR-0097 d12, d17).
+async fn counted_as(app: &TestApp, admin: &str, issued: &IssuedKey, principal: &str) {
+    let principal: String = principal
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let principal = principal.as_str();
+    let ops = ops_person(app, admin).await;
+    let email =
+        oml_app::domain::web::Email::parse(&format!("{principal}@example.com")).expect("an email");
+    let entry = match app
+        .list_web_emails(admin, None, 500)
+        .await
+        .expect("entries")
+        .into_iter()
+        .find(|e| e.user.as_str() == principal)
+    {
+        Some(entry) => entry,
+        None => {
+            app.allow_web_email(
+                admin,
+                &oml_app::types::WebEmailRequest {
+                    email,
+                    user: name(principal),
+                    admin: false,
+                },
+            )
+            .await
+            .expect("the person's entry")
+            .0
+        }
+    };
+    app.web_ensure_keys(&entry)
+        .await
+        .expect("the person's keys");
+    let linker = session_of(app, &ops, oml_app::app::Capacity::Admin).await;
+    app.link_key_to_person(
+        oml_app::types::Bearer::Session(&linker),
+        issued.key_id.into(),
+        &name(principal),
+    )
+    .await
+    .expect("the key is linked");
+    let web = session_of(app, &entry, oml_app::app::Capacity::Web).await;
+    app.accept_key_link(oml_app::types::Bearer::Session(&web), issued.key_id.into())
+        .await
+        .expect("the person accepts the link");
 }
 
 /// The tenant's one admin person, with session keys: the bootstrap's
@@ -534,9 +618,13 @@ async fn happy_path_end_to_end() {
     // The whole chain verifies: genesis, root, admin key, crew, three keys
     // of one grant each (an admin.act, a key.issued and a grant.issued
     // apiece; ADR-0097 d2), the crew's create with its admin act, submit,
-    // approve, promote, the successor's submission = 18 events.
+    // approve, promote, the successor's submission = 18 events; and 23 more
+    // that make the reviewer key count as a person, as an instruction
+    // verdict and a ladder ratification need (ADR-0097 d12): the admin
+    // person's and the reviewer's entries with their session keys, the
+    // link and its acceptance.
     let head = app.verify_chain(admin).await.expect("verify chain");
-    assert_eq!(head.seq, 18);
+    assert_eq!(head.seq, 41);
     assert_eq!(head.tenant_id, boot.tenant_id);
 
     // The reader's tail serves only what it may see, ascending, with
@@ -559,7 +647,7 @@ async fn happy_path_end_to_end() {
             event_types::LIFECYCLE_PROMOTE
         ]
     );
-    assert_eq!((tail.head_seq, tail.next_after_seq), (18, 18));
+    assert_eq!((tail.head_seq, tail.next_after_seq), (41, 41));
     let promote = &tail.events[1];
     assert!(!promote.names_actor, "the tail names no reviewer");
     assert!(
@@ -19115,6 +19203,11 @@ async fn link_person(app: &TestApp, admin: &str, key_id: Uuid, person: &str) {
         .web_caller(&sessions[0], Capacity::Admin)
         .await
         .expect("the console admin");
+    // A fixture reviewer key comes linked to its principal's person
+    // (`counted_as`); the link moves to `person`.
+    let _ = app
+        .unlink_key_from_person(Bearer::Session(&ops), key_id.into())
+        .await;
     app.link_key_to_person(Bearer::Session(&ops), key_id.into(), &name(person))
         .await
         .expect("linked, pending");
@@ -19913,6 +20006,11 @@ async fn link_keys(app: &TestApp, admin: &str, keys: &[Uuid], person: &str) {
         .await
         .expect("the person's console");
     for key_id in keys {
+        // A fixture reviewer key comes linked to its principal's person
+        // (`counted_as`); the link moves to `person`.
+        let _ = app
+            .unlink_key_from_person(Bearer::Session(&ops), (*key_id).into())
+            .await;
         app.link_key_to_person(Bearer::Session(&ops), (*key_id).into(), &name(person))
             .await
             .expect("linked, pending");

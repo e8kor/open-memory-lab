@@ -19,6 +19,7 @@ mod investigations;
 mod key_limits;
 mod linked_keys;
 mod metering;
+mod notices;
 mod pages;
 mod public;
 mod rescan;
@@ -163,7 +164,7 @@ use crate::types::{
     VerdictRequest, VersionRef, WebEntry, Whoami, WithdrawReceipt, WithdrawRequest, WorkspaceInfo,
     WorkspaceRecord, WorkspaceStatusView,
 };
-use crate::types::{CatalogMark, KindCount};
+use crate::types::{CatalogMark, KindCount, TimeboxRefusal};
 use crate::types::{Preview, PreviewFacts, PreviewRequest, SkillShadow};
 use crate::types::{ServedSkill, SkillBody, SkillRead, SkillRequest, SkillSet};
 use oml_domain::skills::{SKILL_PAGE, SkillCandidate, offer, skill_uri};
@@ -376,6 +377,10 @@ pub struct Caller {
     /// writes as the key does and runs none of the key acts (ADR-0096 d13,
     /// the operator's decision of 2026-11-25).
     previous_value: bool,
+    /// For a session key's caller, the session's opening and its entry's
+    /// email digest: an acceptance records the provider subject and the
+    /// session's age from them (ADR-0097 d7).
+    session: Option<(EventTime, Sha256Hash)>,
 }
 
 impl Caller {
@@ -395,6 +400,7 @@ impl Caller {
                 own_keys: Vec::new(),
                 gate_read: std::sync::Mutex::new(None),
                 previous_value: false,
+                session: None,
             };
         };
         let permission_epoch = access.permission_epoch();
@@ -424,6 +430,7 @@ impl Caller {
             own_keys: Vec::new(),
             gate_read: std::sync::Mutex::new(None),
             previous_value: false,
+            session: None,
         }
     }
 
@@ -694,13 +701,21 @@ const HELD_GUARDRAILS_MAX: usize = 50;
 pub(crate) enum Issuance<'a> {
     /// An admin or operator key's issuance of a bearer or connector key,
     /// with the admin's reason: an admin's is a widening admin act
-    /// (ADR-0097 d5).
-    Plain(Option<&'a str>),
+    /// (ADR-0097 d5); with a time box, taken at once (d13).
+    Plain(Option<&'a str>, Option<&'a Timebox>),
     /// A session key for the allowlist user named: no value.
     Session(&'a Name),
     /// A person's `<user>-web` issuing a key in its own root, sealed on the
     /// chain head read before that key's access ([`Head::BeforeAccess`]).
     PersonsOwn(&'a Option<SignedEnvelope>),
+}
+
+/// A time box an issuance carries (ADR-0097 d13): the workspaces its
+/// grants name, and whether it renews an earlier box there.
+#[derive(Debug)]
+pub(crate) struct Timebox {
+    pub nodes: Vec<String>,
+    pub renewal: bool,
 }
 
 /// The chain head an act seals its commit on.
@@ -2222,6 +2237,7 @@ where
                 };
                 fresh.own_keys.clone_from(&caller.own_keys);
                 fresh.previous_value = caller.previous_value;
+                fresh.session.clone_from(&caller.session);
                 Ok(fresh)
             }
         }
@@ -3388,7 +3404,7 @@ where
                 None => Ok(None),
             };
         }
-        if !matches!(how, Issuance::Plain(_)) {
+        if !matches!(how, Issuance::Plain(..)) {
             return Ok(None);
         }
         let Some(person) = req
@@ -3442,7 +3458,7 @@ where
         creations: &[WorkspaceRecord],
         oauth: Option<&Issuer>,
         prev: Option<&SignedEnvelope>,
-        reason: Option<&str>,
+        (reason, timebox): (Option<&str>, Option<&Timebox>),
         user: Option<&NamedRef>,
         person: Option<&NamedRef>,
     ) -> Result<IssuedKey, AppError> {
@@ -3472,8 +3488,15 @@ where
             "principal": req.principal,
             "used_by": req.used_by.map(UsedBy::as_str),
             "user": user.map(|u| u.name.as_str()),
+            // The root's person the confirm screen names (ADR-0097 d6).
+            "root_person": user.map(|u| u.name.as_str()),
             "person": person.map(|p| p.name.as_str()),
             "principal_names_person": principal_names_person,
+            // A time box, taken at once until its expiry (ADR-0097 d13).
+            "timebox": timebox.is_some(),
+            "until": timebox.and(record.expiry.as_ref()).map(EventTime::as_str),
+            "timebox_nodes": timebox.map(|t| t.nodes.clone()),
+            "renewal": timebox.is_some_and(|t| t.renewal),
             // The workspaces the issuance creates, which the confirm screen
             // names (ADR-0097 d30).
             "create_workspaces": creations
@@ -3507,13 +3530,14 @@ where
             })),
         });
         let act = self
-            .begin_admin_act(
+            .begin_admin_act_boxed(
                 issuer,
                 oml_domain::admin_act::AdminActKind::IssueKey,
                 target,
                 reason,
                 effect,
                 prev,
+                timebox.is_some(),
             )
             .await?;
         let pending = act.pending();
@@ -3655,6 +3679,9 @@ where
         for (req, ceiling) in reqs.iter_mut().zip(ceilings) {
             req.ceiling = ceiling;
         }
+        // A key issued at once under `sole_admin` into another person's
+        // root notifies that person (ADR-0097 d6, d20).
+        self.with_notice(&act.record, &mut reqs).await?;
         self.commit_requests(reqs).await?;
         Ok(IssuedKey {
             key_id,
@@ -4157,7 +4184,8 @@ where
                 verb: "issue_key",
             });
         }
-        self.issue_key_by(&issuer, req, Issuance::Plain(None)).await
+        self.issue_key_by(&issuer, req, Issuance::Plain(None, None))
+            .await
     }
 
     /// [`App::issue_key`] with the admin's reason, scanned and journalled in
@@ -4183,7 +4211,144 @@ where
                 verb: "issue_key",
             });
         }
-        self.issue_key_by(&issuer, req, Issuance::Plain(reason))
+        self.issue_key_by(&issuer, req, Issuance::Plain(reason, None))
+            .await
+    }
+
+    /// A time box (ADR-0097 d13): an admin person issues, at once and in any
+    /// tenant, a reader, submitter or contributor key whose grants are
+    /// reader and submitter grants in shared workspaces, never into a user
+    /// root or an in-progress subtree, with an expiry at most 24 hours away
+    /// that everything issued under it inherits; the key issues nothing. It
+    /// is a widening `issue_key` act marked `timebox`, effective at once and
+    /// settled afterwards by a second admin person who counts (d11): a
+    /// confirmation settles it, a decline revokes the key. One open box per
+    /// actor person per workspace, and one renewal, after which a box on the
+    /// workspace is refused until a second admin person settles the first.
+    /// Refused while an act against an admin is open and during a freeze.
+    /// It requires a reason (d26).
+    ///
+    /// # Errors
+    /// [`AppError::Timebox`] naming the rule, [`AppError::AdminActReasonRequired`],
+    /// and [`App::issue_key`]'s.
+    pub async fn issue_timeboxed_key(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        req: &IssueKeyRequest,
+        reason: Option<&str>,
+    ) -> Result<IssuedKey, AppError> {
+        use oml_domain::admin_act::{AdminActKind, AdminActState, TIMEBOX_MAX_SECS};
+        let issuer = self.key_act_caller(bearer.into(), "issue_key").await?.key;
+        if issuer.role != Role::Admin {
+            return Err(AppError::VerbCeiling {
+                role: issuer.role,
+                verb: "issue_key",
+            });
+        }
+        let tenant_id = issuer.tenant_id;
+        let refused = |r| Err(AppError::Timebox(r));
+        let Some(person) = self.counted_person_of(&issuer).await? else {
+            return refused(TimeboxRefusal::NotAdminPerson);
+        };
+        if !self.is_admin_person(tenant_id, Some(&person)).await? {
+            return refused(TimeboxRefusal::NotAdminPerson);
+        }
+        if !matches!(req.role, Role::Reader | Role::Submitter | Role::Contributor)
+            || req.grants.is_empty()
+            || req
+                .grants
+                .iter()
+                .any(|g| !matches!(g.role, Role::Reader | Role::Submitter) || g.create)
+            || req.connect_code
+            || req.user.is_some()
+            || req.person.is_some()
+            || !req.create_workspaces.is_empty()
+        {
+            return refused(TimeboxRefusal::Shape);
+        }
+        let now = self.clock.now();
+        match &req.expiry {
+            Some(until)
+                if until.unix_micros() > now.unix_micros()
+                    && until.unix_micros() - now.unix_micros() <= TIMEBOX_MAX_SECS * 1_000_000 => {}
+            _ => return refused(TimeboxRefusal::Until),
+        }
+        if reason.is_none() {
+            return Err(AppError::AdminActReasonRequired);
+        }
+        if self.act_against_admin_open(tenant_id).await? || self.freeze(tenant_id).await?.is_some()
+        {
+            return refused(TimeboxRefusal::AgainstAdminOpen);
+        }
+        // Shared workspaces only: no user root, no in-progress subtree, and
+        // under a subtree grant no in-progress node below.
+        let mut nodes = BTreeSet::new();
+        for g in &req.grants {
+            let node = self.resolve(&issuer, NamedKind::Workspace, &g.node).await?;
+            if self.root_person_of(tenant_id, node).await?.is_some()
+                || self
+                    .journal
+                    .workspace(tenant_id, node)
+                    .await?
+                    .is_some_and(|w| w.user_root)
+                || self.in_progress_root(tenant_id, node).await?.is_some()
+                || (g.covers == oml_domain::access::Covers::Subtree
+                    && self
+                        .subtree_roots(tenant_id, node)
+                        .await?
+                        .values()
+                        .any(Option::is_some))
+            {
+                return refused(TimeboxRefusal::NotShared);
+            }
+            nodes.insert(node.to_string());
+        }
+        // One open box per actor person per workspace, and one renewal
+        // while the first is unsettled.
+        let mut renewal = false;
+        for act in self
+            .journal
+            .admin_acts(tenant_id, Some(AdminActState::Effective))
+            .await?
+            .iter()
+            .filter(|a| {
+                a.act == AdminActKind::IssueKey
+                    && a.timebox()
+                    && a.actor_person.as_ref() == Some(&person)
+            })
+        {
+            let boxed: BTreeSet<String> = act
+                .target
+                .get("timebox_nodes")
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect();
+            if boxed.is_disjoint(&nodes) {
+                continue;
+            }
+            let open = act
+                .target
+                .get("until")
+                .and_then(Value::as_str)
+                .and_then(|u| EventTime::parse(u).ok())
+                .is_some_and(|u| u.unix_micros() > now.unix_micros());
+            if open {
+                return refused(TimeboxRefusal::Open);
+            }
+            // A first box and its one renewal wait unsettled at most.
+            if renewal {
+                return refused(TimeboxRefusal::RenewalsExhausted);
+            }
+            renewal = true;
+        }
+        let timebox = Timebox {
+            nodes: nodes.into_iter().collect(),
+            renewal,
+        };
+        self.issue_key_by(&issuer, req, Issuance::Plain(reason, Some(&timebox)))
             .await
     }
 
@@ -4237,7 +4402,7 @@ where
         if !req.create_workspaces.is_empty() {
             let admitted = match how {
                 Issuance::PersonsOwn(_) => true,
-                Issuance::Plain(_) => issuer.role == Role::Admin,
+                Issuance::Plain(..) => issuer.role == Role::Admin,
                 Issuance::Session(_) => false,
             };
             if !admitted {
@@ -4284,7 +4449,7 @@ where
         // Steps 1–3: the two-key rule, the issuer ceiling, admissibility.
         let ceiling = match how {
             Issuance::PersonsOwn(_) => Role::Admin,
-            Issuance::Plain(_) | Issuance::Session(_) => issuer.role,
+            Issuance::Plain(..) | Issuance::Session(_) => issuer.role,
         };
         // A curator is a reviewer key used by an agent, whose submitter grants
         // the reviewer's admissible set is read as if absent (ADR-0030 d8).
@@ -4469,11 +4634,11 @@ where
         let guardrail_scope = record.guardrail_scope;
         let prev = match how {
             Issuance::PersonsOwn(head) => head.clone(),
-            Issuance::Plain(_) | Issuance::Session(_) => self.head_event(tenant_id).await?,
+            Issuance::Plain(..) | Issuance::Session(_) => self.head_event(tenant_id).await?,
         };
         // A key that could read, write, approve or ratify, by an admin key:
         // a widening act (ADR-0097 d5).
-        if let Issuance::Plain(reason) = how
+        if let Issuance::Plain(reason, timebox) = how
             && issuer.role == Role::Admin
         {
             let issued = self
@@ -4485,7 +4650,7 @@ where
                     &creations,
                     oauth,
                     prev.as_ref(),
-                    reason,
+                    (reason, timebox),
                     user_ref.as_ref(),
                     admin_person.as_ref(),
                 )
@@ -6031,6 +6196,42 @@ where
             .is_none_or(|walk| walk.iter().any(|k| k.key_id == through)))
     }
 
+    /// The name of the user root `key` was issued in, if any (ADR-0097 d6).
+    pub(crate) async fn person_root_name(&self, key: &KeyRecord) -> Result<Option<Name>, AppError> {
+        match key.user {
+            Some(root) => Ok(self
+                .journal
+                .workspace(key.tenant_id, root)
+                .await?
+                .filter(|w| w.user_root)
+                .map(|w| w.name)),
+            None => Ok(None),
+        }
+    }
+
+    /// The person whose own root holds `workspace`, or `None` for a node
+    /// of the shared tree (ADR-0097 d16).
+    pub(crate) async fn root_person_of(
+        &self,
+        tenant_id: Uuid,
+        workspace: Uuid,
+    ) -> Result<Option<Name>, AppError> {
+        let Some(root) = self
+            .journal
+            .workspace(tenant_id, workspace)
+            .await?
+            .and_then(|w| w.user())
+        else {
+            return Ok(None);
+        };
+        Ok(self
+            .journal
+            .workspace(tenant_id, root)
+            .await?
+            .filter(|w| w.user_root)
+            .map(|w| w.name))
+    }
+
     /// Whether `workspace` sits inside the user root named `person`
     /// (ADR-0082 d7): the root a settlement compares against the person a
     /// key counts as, never the root the key was issued in (the operator's
@@ -6621,6 +6822,23 @@ where
                 "same_user": self.same_person(key.tenant_id, proposal.proposer_key_id, key).await?,
             }),
         )?;
+        // A `sole_admin` ratification by the proposer's own person is
+        // marked on the transition (ADR-0097 d17).
+        let event = if self.ratifier_person_rule(key, &proposal).await? {
+            let env = event.envelope;
+            let mut payload = env.payload;
+            payload["sole_admin"] = Value::Bool(true);
+            self.seal(
+                prev.as_ref(),
+                env.tenant_id,
+                &env.event_type,
+                &env.principal,
+                env.api_key_id,
+                payload,
+            )?
+        } else {
+            event
+        };
         self.commit(
             event,
             MetadataFold::TransitionRatified {
@@ -6705,7 +6923,86 @@ where
         // takes).
         ratify_check(proposal.from, ladder, node.status, proposal.to, &children)
             .map_err(refused)?;
+        self.ratifier_person_rule(key, &proposal).await?;
         Ok((proposal, node))
+    }
+
+    /// The ladder's two identities as two persons (ADR-0097 d12, d17): the
+    /// ratifier counts as a person, that person is not the proposer's, and,
+    /// where the proposing key counts as no person, not the person of the
+    /// admin who issued it, so one admin cannot propose through an agent
+    /// key they issued and ratify through their own session. Under
+    /// `sole_admin` a ratification by the proposer's own person, or by the
+    /// issuing admin's, is admitted, and the answer is `true`: the
+    /// transition is marked `sole_admin`. Refused: a ratifier that counts as
+    /// no person ([`AppError::CountsAsNoPerson`]) and the same person
+    /// ([`AppError::RatifierSamePerson`]).
+    pub(crate) async fn ratifier_person_rule(
+        &self,
+        key: &KeyRecord,
+        proposal: &TransitionRecord,
+    ) -> Result<bool, AppError> {
+        let Some(ratifier) = self.counted_person_of(key).await? else {
+            return Err(AppError::CountsAsNoPerson {
+                act: "ladder ratification",
+            });
+        };
+        let proposer = self
+            .journal
+            .key(key.tenant_id, proposal.proposer_key_id)
+            .await?;
+        let proposer_person = match &proposer {
+            Some(p) => self.counted_person_of(p).await?,
+            None => None,
+        };
+        let same = if proposer_person.as_ref() == Some(&ratifier) {
+            Some(false)
+        } else if proposer_person.is_none() {
+            // The admin act that issued the proposing key names its person;
+            // a key issued before admin acts were journalled is read off
+            // its issuer as it counts now.
+            let issuing = match proposer.as_ref() {
+                Some(p) => self.issuing_person(p).await?,
+                None => None,
+            };
+            (issuing.as_ref() == Some(&ratifier)).then_some(true)
+        } else {
+            None
+        };
+        match same {
+            None => Ok(false),
+            Some(_) if self.journal.admin_standing(key.tenant_id).await?.sole_admin => Ok(true),
+            Some(issued_the_proposer) => Err(AppError::RatifierSamePerson {
+                issued_the_proposer,
+            }),
+        }
+    }
+
+    /// The person of the admin who issued `key`: the `actor_person` of the
+    /// `issue_key` act that names it, and for a key issued before admin
+    /// acts were journalled, the person its issuer counts as (ADR-0097 d17).
+    async fn issuing_person(&self, key: &KeyRecord) -> Result<Option<Name>, AppError> {
+        let id = key.key_id.to_string();
+        if let Some(act) = self
+            .journal
+            .admin_acts(key.tenant_id, None)
+            .await?
+            .into_iter()
+            .find(|a| {
+                a.act == oml_domain::admin_act::AdminActKind::IssueKey
+                    && (a.effect.get("key_id").and_then(Value::as_str) == Some(id.as_str())
+                        || a.target.get("key_id").and_then(Value::as_str) == Some(id.as_str()))
+            })
+        {
+            return Ok(act.actor_person);
+        }
+        match key.issued_by {
+            Some(issuer) => match self.journal.key(key.tenant_id, issuer).await? {
+                Some(issuer) => self.counted_person_of(&issuer).await,
+                None => Ok(None),
+            },
+            None => Ok(None),
+        }
     }
 
     /// The lead's start on the names schema, before it serves: each chain of
@@ -8183,6 +8480,28 @@ where
                 verb: "todo_counts",
             });
         }
+        // The Notices group: the person's notices not dismissed, whatever
+        // the workspace named (ADR-0097 d20).
+        let notices = match &caller.key.session_user {
+            Some(person) => self
+                .journal
+                .notices(caller.key.tenant_id, person, false)
+                .await?
+                .len() as u64,
+            None => 0,
+        };
+        let mut counts = self.todo_review_counts(&caller, workspace).await?;
+        counts.notices = notices.min(TODO_COUNT_CAP);
+        counts.truncated |= notices > TODO_COUNT_CAP;
+        Ok(counts)
+    }
+
+    /// [`Self::todo_counts`]'s To review and Brief proposals groups.
+    async fn todo_review_counts(
+        &self,
+        caller: &Caller,
+        workspace: Option<&Reference>,
+    ) -> Result<TodoCounts, AppError> {
         let none = TodoCounts::default();
         let Some(reviewer) = self
             .sibling_session_caller(&caller.key, Capacity::Review)
@@ -8262,6 +8581,7 @@ where
                     return Ok(TodoCounts {
                         review,
                         briefs,
+                        notices: 0,
                         truncated: true,
                     });
                 }
@@ -8283,6 +8603,7 @@ where
                         return Ok(TodoCounts {
                             review: TODO_COUNT_CAP,
                             briefs,
+                            notices: 0,
                             truncated: true,
                         });
                     }
@@ -8301,6 +8622,7 @@ where
         Ok(TodoCounts {
             review,
             briefs,
+            notices: 0,
             truncated: briefs_truncated,
         })
     }
@@ -8373,18 +8695,23 @@ where
                 count += 1;
             }
         }
+        // The effective acts are read only for a person whose flag is seven
+        // days old: neither a `sole_admin` act nor a time box counts for a
+        // younger one (ADR-0097 d10, d11, d13).
         if counts_for_act(since, now.unix_micros()) {
-            count += self
+            for a in self
                 .journal
                 .admin_acts(tenant_id, Some(AdminActState::Effective))
                 .await?
                 .iter()
-                .filter(|a| {
-                    a.sole_admin
-                        && a.class() == AdminActClass::Widening
-                        && a.actor_person.as_ref() != Some(&person)
-                })
-                .count() as u64;
+                .filter(|a| a.actor_person.as_ref() != Some(&person))
+            {
+                if (a.sole_admin && a.class() == AdminActClass::Widening)
+                    || (a.timebox() && counts_for_act(since, a.at.unix_micros()))
+                {
+                    count += 1;
+                }
+            }
         }
         Ok(count)
     }
@@ -8784,6 +9111,19 @@ where
                 key.crew_id.is_some(),
                 key.profile.is_some(),
             )?;
+        }
+        // An instruction verdict needs a key that counts as a person, not
+        // only a person's reviewer key: a minted `used_by: person` key that
+        // counts as no one approves no instruction (ADR-0097 d12). A
+        // knowledge verdict keeps key-level R2.
+        if verdict == Verdict::Approve
+            && (memory.kind.class().needs_person()
+                || replaced_kind.is_some_and(|k| k.class().needs_person()))
+            && self.counted_person_of(key).await?.is_none()
+        {
+            return Err(AppError::CountsAsNoPerson {
+                act: "instruction verdict",
+            });
         }
 
         let verdict_event = self.seal(
@@ -13286,6 +13626,10 @@ where
                         "name": target.name.as_ref().map(Name::as_str),
                         "role": target.role.as_str(),
                         "principal": target.principal,
+                        // The root's person the confirm screen names, and
+                        // whom a mint at once under `sole_admin` notifies
+                        // (ADR-0097 d6).
+                        "root_person": self.person_root_name(&target).await?.as_ref().map(Name::as_str),
                     }),
                     reason,
                     json!({

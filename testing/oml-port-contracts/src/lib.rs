@@ -5848,9 +5848,11 @@ pub async fn an_investigation_counts_its_reads_and_closes_once<S: JournalStore>(
     )
     .await
     .expect("open");
+    let alice = Name::parse("alice").expect("a name");
     let read = |investigation_id, key_id| MetadataFold::AdminMemoryRead {
         investigation_id,
         key_id,
+        persons: vec![alice.clone()],
     };
     for _ in 0..2 {
         rig.commit(
@@ -5889,6 +5891,22 @@ pub async fn an_investigation_counts_its_reads_and_closes_once<S: JournalStore>(
         .expect("read")
         .expect("held");
     assert_eq!((found.key_id, found.reads), (key, 2));
+    // Each read counted once against the person whose root it read, by
+    // month; a refused read counted nothing (ADR-0097 d16).
+    let counts = store
+        .admin_read_counts(tenant, &alice)
+        .await
+        .expect("counts");
+    assert_eq!(counts.len(), 1);
+    assert_eq!(counts[0].reads, 2);
+    assert_eq!(counts[0].month.len(), 7);
+    assert!(
+        store
+            .admin_read_counts(tenant, &Name::parse("bob").expect("a name"))
+            .await
+            .expect("counts")
+            .is_empty()
+    );
     assert_eq!(found.reason, "ticket 9");
     assert!(found.closed_at.is_none());
     let close = |key_id| MetadataFold::InvestigationClosed {

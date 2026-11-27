@@ -58,6 +58,7 @@ pub mod keys;
 pub mod ladder;
 pub mod model;
 pub mod name;
+pub mod notice;
 pub mod oauth;
 pub mod origin;
 pub mod signup;

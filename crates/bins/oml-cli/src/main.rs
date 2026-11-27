@@ -7990,7 +7990,7 @@ fn flagged_creates_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
 /// out. A server before a count does not report it, and its line is then
 /// absent; a count that is no unsigned integer is named, never read as zero.
 fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
-    const LINES: [(&str, &str, &str); 19] = [
+    const LINES: [(&str, &str, &str); 21] = [
         (
             "held_successors_stranded",
             "memory.held_successor_stranded",
@@ -8005,6 +8005,11 @@ fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
             "investigations_open_long",
             "admin.investigation_open_long",
             "admin investigation(s) open for more than 7 days; the key that opened each closes it with oml admin investigate --close <id>",
+        ),
+        (
+            "investigations_past_pages",
+            "admin.investigation_pages",
+            "open admin investigation(s) read more than 50 pages; the person who opened each closes it with oml admin investigate --close <id> once the investigation is done",
         ),
         (
             "fixes_unconfirmed",
@@ -8070,6 +8075,11 @@ fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
             "admin_acts_offensive",
             "admin.offensive_narrowing",
             "offensive narrowing act(s) in the last 24 hours: a person's key revoked or a reviewer person's key denied; read each with oml admin acts --state effective",
+        ),
+        (
+            "admin_timeboxes_unsettled",
+            "admin.timebox_open",
+            "time box(es) no second admin person has settled; another admin person confirms or declines each with oml admin acts",
         ),
         (
             "admin_keys_suspended",
@@ -9422,6 +9432,7 @@ mod tests {
                 "memory.held_successor_stranded: not read; an admin key reads it".to_owned(),
                 "lake.erased_key_live: not read; an admin key reads it".to_owned(),
                 "admin.investigation_open_long: not read; an admin key reads it".to_owned(),
+                "admin.investigation_pages: not read; an admin key reads it".to_owned(),
                 "admin.fix_unconfirmed: not read; an admin key reads it".to_owned(),
                 "admin.fix_loosens_guardrail: not read; an admin key reads it".to_owned(),
                 "admin.fix_without_person_reviewer: not read; an admin key reads it".to_owned(),
@@ -9435,6 +9446,7 @@ mod tests {
                 "admin.act_expired: not read; an admin key reads it".to_owned(),
                 "admin.narrowing_burst: not read; an admin key reads it".to_owned(),
                 "admin.offensive_narrowing: not read; an admin key reads it".to_owned(),
+                "admin.timebox_open: not read; an admin key reads it".to_owned(),
                 "admin.key_suspended: not read; an admin key reads it".to_owned(),
                 "admin.key_unlinked_suspended: not read; an admin key reads it".to_owned(),
                 "admin.dispute_open: not read; an admin key reads it".to_owned()

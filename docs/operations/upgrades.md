@@ -1,7 +1,7 @@
 ---
 status: Stable
 verified: 2026-11-25
-answers: "how to upgrade an OML server: how migrations run, the upgrade steps in order, what rollback does and does not mean, the upgrade from a pre-0.3.1 install, the v0.5.4 fix, how to move from v0.3, v0.8.5's migrations 0067, 0068 and 0069, the workspaces quota, the oml_write modes and the Python SDK that upgrades with the server, key rotation and what a previous value runs in its grace, the last admin entry kept on every surface and the read-only counts before v0.8.6, the v0.8.4 role rename that clients take in the server's window, with no key issued or listed until both run v0.8.4, what v0.8.4's migrations 0063, 0064 and 0066 cost, the admin key links, links and sign-in emails that wait on their person, and the reset of a database that ran a draft of 0063 or 0064, the v0.8.3 rename that clients take before the server, what the v0.8.3 migrations cost and what waits during them, and the storage.url to set before v0.8.3's uploads"
+answers: "how to upgrade an OML server: how migrations run, v0.8.6's migration 0074 and the person a reviewer, ratifier or admin-read key needs, the upgrade steps in order, what rollback does and does not mean, the upgrade from a pre-0.3.1 install, the v0.5.4 fix, how to move from v0.3, v0.8.5's migrations 0067, 0068 and 0069, the workspaces quota, the oml_write modes and the Python SDK that upgrades with the server, key rotation and what a previous value runs in its grace, the last admin entry kept on every surface and the read-only counts before v0.8.6, the v0.8.4 role rename that clients take in the server's window, with no key issued or listed until both run v0.8.4, what v0.8.4's migrations 0063, 0064 and 0066 cost, the admin key links, links and sign-in emails that wait on their person, and the reset of a database that ran a draft of 0063 or 0064, the v0.8.3 rename that clients take before the server, what the v0.8.3 migrations cost and what waits during them, and the storage.url to set before v0.8.3's uploads"
 ---
 
 # Upgrade OML
@@ -82,6 +82,36 @@ spellings that a new server refuses, and each refusal names the new spelling.
 
 Update the plugin with `claude plugin update oml@open-memory-lab`. Then set its `url` and `api_key` with
 `/plugin configure oml@open-memory-lab`. The plugin serves no tools until both are set.
+
+## Upgrading to v0.8.6
+
+### Migration 0074, counted persons and the CLI admin key's link
+
+Migration 0074 adds two empty tables, `admin_read_counts` and `notices`, each with its key and
+tenant policy; it reads and rewrites no existing row, so it takes its locks only for the catalog
+change. The fold fills them from new events: each admin-read page counts against the persons whose
+roots it read, and an act against an admin, offensive narrowing or a reach into a person's root
+under `sole_admin` writes its notices in its own commit ([ADR-0097](../adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) d6, d16, d20, d24).
+
+Three rules start at the upgrade and need a person behind a key ([ADR-0097](../adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) d12, d16, d17):
+
+- An instruction verdict and a status ratification need a key that counts as a person. A tenant
+  reviewer key `used_by: person` that no person accepted a link for now approves knowledge only;
+  link it to its person from the admin console's Keys page, and that person accepts it, before
+  the upgrade, or its next instruction approval answers `review.person_required`,
+  `details.reason: counts_as_no_person`.
+- A ratifier must be another person than the proposer's. A tenant where one person proposes and
+  ratifies through two keys needs a second person to ratify, except in a `sole_admin` tenant.
+- The admin read needs a person-linked admin key or a session. Before the upgrade, link the CLI
+  admin key that opens investigations: with a second admin person, their console links it and the
+  operator accepts; in a one-admin tenant, after v0.8.6 starts, run
+  `oml keys link-self --person <operator>` under that key and accept the link from the console
+  (d22). Until then `oml admin read` answers `admin.read_requires_person` and the console's admin
+  pages read as usual through `<user>-admin`.
+
+Not in this release: the `maintenance` role and the deployer's `maintenance-key` post-step (d18),
+the host verbs (d19) and the mail relay settings (d20). The deployer files keep their admin keys
+until the release that ships d18.
 
 ## Upgrading to v0.8.5
 

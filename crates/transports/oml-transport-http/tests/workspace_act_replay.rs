@@ -139,8 +139,12 @@ async fn world() -> World {
             },
         )
         .await
-        .expect("ann's key")
-        .value;
+        .expect("ann's key");
+    // Ann's key counts as the person annie and the admin key as ops, as a
+    // ratification needs (ADR-0097 d12, d17).
+    support::admin_counts(&app, &admin).await;
+    support::counts_as(&app, &admin, ann.key_id, "annie").await;
+    let ann = ann.value;
     World {
         router: state(&store, app).into_router(),
         tenant: boot.tenant_id,

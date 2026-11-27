@@ -2,7 +2,7 @@
 //! (ADR-0045 d2, d10): adding, changing and removing an entry, and the
 //! listing. Signing in against it is the auth context's (`auth.rs`).
 
-use serde_json::json;
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use oml_domain::admin_act::{AdminActClass, AdminActKind};
@@ -371,7 +371,8 @@ where
         email: &Email,
         admin: bool,
     ) -> Result<WebEntry, AppError> {
-        let (caller, mut entry) = self.pending_entry_of_caller(bearer.into(), email).await?;
+        let (caller, mut entry, evidence) =
+            self.pending_entry_of_caller(bearer.into(), email).await?;
         if entry.admin != admin {
             return Err(AppError::WebEmailRefused { reason: "changed" });
         }
@@ -388,6 +389,9 @@ where
                 "user": entry.user.as_str(),
                 "admin": entry.admin,
                 "accepted_by_key_id": caller.key_id.to_string(),
+                // The provider subject and the session's age, so a forged
+                // acceptance can be told apart afterwards (ADR-0097 d7).
+                "evidence": evidence,
             }),
         )?;
         self.commit(
@@ -415,7 +419,7 @@ where
         bearer: impl Into<Bearer<'_>>,
         email: &Email,
     ) -> Result<WebEntry, AppError> {
-        let (caller, entry) = self.pending_entry_of_caller(bearer.into(), email).await?;
+        let (caller, entry, _) = self.pending_entry_of_caller(bearer.into(), email).await?;
         let email_hash = email.digest();
         let prev = self.head_event(caller.tenant_id).await?;
         let event = self.seal(
@@ -451,8 +455,10 @@ where
         &self,
         bearer: Bearer<'_>,
         email: &Email,
-    ) -> Result<(KeyRecord, WebEntry), AppError> {
-        let caller = self.authenticate_bearer(bearer).await?.key;
+    ) -> Result<(KeyRecord, WebEntry, Value), AppError> {
+        let session = self.authenticate_bearer(bearer).await?;
+        let evidence = self.acceptance_evidence(&session).await?;
+        let caller = session.key;
         let Some(session_user) = caller
             .session_user
             .clone()
@@ -478,7 +484,7 @@ where
                 reason: "not_named_person",
             });
         }
-        Ok((caller, entry))
+        Ok((caller, entry, evidence))
     }
 
     /// Whether `user` is an existing person: an entry of the tenant names

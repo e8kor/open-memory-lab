@@ -3,6 +3,8 @@
 //! in-memory doubles. Each test is named after the sentence of ADR-0044 d15
 //! it proves.
 
+mod counted;
+
 use oml_app::App;
 use oml_app::app::Capacity;
 use oml_app::domain::EventTime;
@@ -183,7 +185,7 @@ async fn curator(app: &TestApp, admin: &str, reads: &[&str]) -> IssuedKey {
 /// A tenant reviewer on the `universe` node: the second identity curation
 /// needs (ADR-0044 d7).
 async fn universe_reviewer(app: &TestApp, admin: &str, principal: &str) -> IssuedKey {
-    tenant_key(
+    let key = tenant_key(
         app,
         admin,
         Role::Reviewer,
@@ -193,7 +195,11 @@ async fn universe_reviewer(app: &TestApp, admin: &str, principal: &str) -> Issue
             node_grant(by_name("universe"), Role::Reader),
         ],
     )
-    .await
+    .await;
+    // It counts as the person its principal names, as an instruction
+    // verdict needs (ADR-0097 d12).
+    counted::link_to(app, admin, key.key_id, principal).await;
+    key
 }
 
 fn submit(idem: &str, body: &str, workspace: Option<&str>) -> SubmitRequest {
@@ -1276,6 +1282,9 @@ async fn a_user_key_with_scope_ancestors_loads_universes_guardrails_through_its_
     let (app, _) = rig();
     let boot = bootstrap(&app).await;
     let admin = &boot.admin_key.value;
+    // The admin key counts as a person, so the reviewer keys it issues
+    // do, as an instruction verdict needs (ADR-0097 d12).
+    counted::admin_counts(&app, admin).await;
     let alice = user_writer(&app, admin, "alice", "alice/laptop").await;
     let alice_review = user_reviewer(&app, admin, "alice", "alice/review").await;
     let own = written(
@@ -1330,6 +1339,9 @@ async fn no_guardrail_of_another_users_root_is_ever_served() {
     let (app, _) = rig();
     let boot = bootstrap(&app).await;
     let admin = &boot.admin_key.value;
+    // The admin key counts as a person, so the reviewer keys it issues
+    // do, as an instruction verdict needs (ADR-0097 d12).
+    counted::admin_counts(&app, admin).await;
     let bob = user_writer(&app, admin, "bob", "bob/laptop").await;
     let bob_review = user_reviewer(&app, admin, "bob", "bob/review").await;
     let bobs = written(&app, &bob.value, &guardrail("b-g", "Bob's own rule.", None)).await;
@@ -1391,6 +1403,9 @@ async fn the_users_reviewer_key_ratifies_a_guardrail_its_agents_propose_in_its_r
     let (app, _) = rig();
     let boot = bootstrap(&app).await;
     let admin = &boot.admin_key.value;
+    // The admin key counts as a person, so the reviewer keys it issues
+    // do, as an instruction verdict needs (ADR-0097 d12).
+    counted::admin_counts(&app, admin).await;
     let alice = user_writer(&app, admin, "alice", "alice/laptop").await;
     let alice_review = user_reviewer(&app, admin, "alice", "alice/review").await;
     let id = written(
@@ -1719,6 +1734,8 @@ async fn a_ratification_by_a_tenant_key_in_a_shared_workspace_is_journalled_not_
     };
     let proposer = tenant_key(&app, admin, Role::Reviewer, "team-first", grants()).await;
     let ratifier = tenant_key(&app, admin, Role::Reviewer, "team-second", grants()).await;
+    // The ratifier counts as a person (ADR-0097 d12, d17).
+    counted::link_to(&app, admin, ratifier.key_id, "team-second").await;
     let proposal = app
         .propose_transition(
             &proposer.value,
@@ -4783,6 +4800,9 @@ async fn a_skill_preview_never_names_a_skill_the_key_cannot_read() {
         ],
     )
     .await;
+    // A person's reviewer key counts as that person, as an instruction
+    // verdict needs (ADR-0097 d12).
+    counted::link_to(&app, admin, reviewer.key_id, "carol").await;
     let skill = |idem: &str, workspace: &str| SubmitRequest {
         kind: MemoryKind::Skill,
         claim_key: None,
@@ -5142,6 +5162,8 @@ async fn the_admin_search_serves_only_the_kinds_its_kind_list_names() {
         },
     )
     .await;
+    // The admin read needs a person-linked admin key (ADR-0097 d16).
+    counted::admin_counts(&app, admin).await;
     let investigation = app
         .open_investigation(admin, "the kinds filter")
         .await

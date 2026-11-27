@@ -193,6 +193,11 @@ pub mod event_types {
     /// `sole_admin` and `cause`, journalled in the commit of its effect and
     /// again, with the same `act_id`, at each change of its state.
     pub const ADMIN_ACT: &str = "admin.act";
+    /// A notice written to the persons an act concerns, in the act's own
+    /// commit (ADR-0097 d20).
+    pub const NOTICE_WRITTEN: &str = "notice.written";
+    /// A person dismissed a notice of their own (ADR-0097 d20).
+    pub const NOTICE_DISMISSED: &str = "notice.dismissed";
     /// A person confirmed an admin's fix (ADR-0089 d8).
     pub const ADMIN_FIX_CONFIRMED: &str = "admin.fix_confirmed";
     /// A person reverted an admin's fix (ADR-0089 d8).

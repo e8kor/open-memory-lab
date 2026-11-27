@@ -258,7 +258,79 @@ pub struct AdminActRecord {
     pub effect: Value,
 }
 
+/// Why a time-boxed issuance is refused, `request.validation` with
+/// `details.field: /timebox` and `details.reason` (ADR-0097 d13).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimeboxRefusal {
+    /// The issuer counts as no live admin person.
+    NotAdminPerson,
+    /// The key is not a reader, submitter or contributor key whose grants
+    /// are reader and submitter grants on shared workspaces, with no
+    /// create flag, connect code, user, person or new workspace.
+    Shape,
+    /// A grant reaches a user root or an in-progress subtree.
+    NotShared,
+    /// The box names no `expiry`, or one more than 24 hours away.
+    Until,
+    /// The actor person already holds an open box on the workspace.
+    Open,
+    /// One renewal is taken; a second admin person settles the first box
+    /// before another.
+    RenewalsExhausted,
+    /// An act against an admin is open, or a freeze holds.
+    AgainstAdminOpen,
+}
+
+impl TimeboxRefusal {
+    /// `details.reason`.
+    #[must_use]
+    pub fn reason(self) -> &'static str {
+        match self {
+            TimeboxRefusal::NotAdminPerson => "not_admin_person",
+            TimeboxRefusal::Shape => "shape",
+            TimeboxRefusal::NotShared => "not_shared",
+            TimeboxRefusal::Until => "until",
+            TimeboxRefusal::Open => "open",
+            TimeboxRefusal::RenewalsExhausted => "renewals_exhausted",
+            TimeboxRefusal::AgainstAdminOpen => "against_admin_open",
+        }
+    }
+
+    /// The sentence the refusal answers.
+    #[must_use]
+    pub fn message(self) -> &'static str {
+        match self {
+            TimeboxRefusal::NotAdminPerson => "a time box is an admin person's act",
+            TimeboxRefusal::Shape => {
+                "a time box issues a reader, submitter or contributor key whose grants are reader and submitter grants, with no create flag, connect code, user, person or new workspace"
+            }
+            TimeboxRefusal::NotShared => {
+                "a time box grants in shared workspaces only, never into a user root or an in-progress subtree"
+            }
+            TimeboxRefusal::Until => {
+                "a time box takes an expiry no more than 24 hours away, which everything issued under it inherits"
+            }
+            TimeboxRefusal::Open => {
+                "this admin person already holds an open time box on this workspace"
+            }
+            TimeboxRefusal::RenewalsExhausted => {
+                "one renewal is taken: a second admin person settles the first time box before another"
+            }
+            TimeboxRefusal::AgainstAdminOpen => {
+                "no time box is taken while an act against an admin is open or a freeze holds"
+            }
+        }
+    }
+}
+
 impl AdminActRecord {
+    /// Whether the act is a time-boxed issuance, taken at once and settled
+    /// afterwards by a second admin person (ADR-0097 d13).
+    #[must_use]
+    pub fn timebox(&self) -> bool {
+        self.target.get("timebox") == Some(&Value::Bool(true))
+    }
+
     /// The act's class, fixed by its act (ADR-0097 d2).
     #[must_use]
     pub fn class(&self) -> oml_domain::admin_act::AdminActClass {
@@ -2742,6 +2814,9 @@ pub struct TodoCounts {
     /// The Brief proposals group: the pending brief edges the person's
     /// reviewer key may ratify (ADR-0096 d7).
     pub briefs: u64,
+    /// The Notices group: the person's notices not dismissed (ADR-0097
+    /// d20).
+    pub notices: u64,
     /// Whether a count passed [`TODO_COUNT_CAP`].
     pub truncated: bool,
 }
@@ -4278,6 +4353,35 @@ pub struct FixRecord {
     pub superseded_by: Option<Uuid>,
 }
 
+/// One notice to one person (ADR-0097 d20): what it tells about, the admin
+/// act it names, when it was written, and whether the person dismissed it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoticeRecord {
+    pub notice_id: Uuid,
+    pub recipient: Name,
+    pub kind: oml_domain::notice::NoticeKind,
+    pub act_id: Option<Uuid>,
+    /// What the notice names besides the act: the act's kind, its target's
+    /// key, person or workspace.
+    pub detail: Value,
+    pub at: EventTime,
+    pub dismissed_at: Option<EventTime>,
+}
+
+/// The admin reads of one person's own root in one month (ADR-0097 d16):
+/// one per page an admin read that served a row of that root.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdminReadCount {
+    /// `YYYY-MM`, UTC.
+    pub month: String,
+    pub reads: u64,
+}
+
+/// How many pages one investigation may read before `oml doctor` names it
+/// (`admin.investigation_pages`): fifty, a placeholder, chosen, not
+/// measured (ADR-0097 d16).
+pub const INVESTIGATION_PAGES_WARN: u64 = 50;
+
 /// An admin key's investigation: the reason its reads of claim text are
 /// made under, open until the key closes it (ADR-0089 d10, d15).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4652,6 +4756,28 @@ pub enum AppError {
         "a key acting for the author's person judges no version outside that person's root (review.author_in_lineage)"
     )]
     SamePerson,
+    /// A time-boxed issuance refused (ADR-0097 d13).
+    #[error("{}", .0.message())]
+    Timebox(TimeboxRefusal),
+    /// The admin read from a key that counts as no person: it needs a
+    /// person-linked admin key or a session (ADR-0097 d16;
+    /// `admin.read_requires_person`).
+    #[error("the admin read needs a person-linked admin key or a session (ADR-0097 d16)")]
+    AdminReadRequiresPerson,
+    /// An instruction verdict, a fix settlement or a ladder ratification
+    /// from a key that counts as no person (ADR-0097 d12): none of the
+    /// three is taken by such a key. `review.person_required` with
+    /// `details.reason: counts_as_no_person`.
+    #[error("a key that counts as no person takes no {act} (ADR-0097 d12; review.person_required)")]
+    CountsAsNoPerson { act: &'static str },
+    /// A ladder ratification by the proposer's person, or, where the
+    /// proposing key counts as no person, by the person of the admin who
+    /// issued it (ADR-0097 d17). `review.ratifier_is_proposer` with
+    /// `details.reason` `same_person` or `issued_the_proposer`.
+    #[error(
+        "the ratifier counts as the proposer's person (ADR-0097 d17; review.ratifier_is_proposer)"
+    )]
+    RatifierSamePerson { issued_the_proposer: bool },
     /// The edge is decided: ratified before this call, or by a commit that
     /// won the store's compare-and-set. Nothing was journalled.
     // reading: errors.md declares no edge-specific code; a verdict on a

@@ -434,6 +434,58 @@ async fn signed_in(rig: &Rig, subject: &str, email: &str) -> String {
 /// An open investigation of the tenant's boot admin key, for the tests'
 /// own admin reads through the application (ADR-0089 d10).
 async fn boot_investigation(rig: &Rig) -> uuid::Uuid {
+    // The admin read needs a person-linked admin key (ADR-0097 d16): the
+    // boot key links itself to the tenant's admin person, who accepts.
+    let admin = rig.boot.admin_key.value.as_str();
+    let ops = match rig
+        .app
+        .list_web_emails(admin, None, 500)
+        .await
+        .expect("entries")
+        .into_iter()
+        .find(|e| e.admin && !e.pending)
+    {
+        Some(entry) => entry,
+        None => {
+            rig.app
+                .allow_web_email(
+                    admin,
+                    &oml_app::types::WebEmailRequest {
+                        email: oml_app::domain::web::Email::parse("ops-boot@example.com")
+                            .expect("an email"),
+                        user: oml_app::domain::name::Name::parse("ops-boot").expect("a name"),
+                        admin: true,
+                    },
+                )
+                .await
+                .expect("an admin entry")
+                .0
+        }
+    };
+    rig.app.web_ensure_keys(&ops).await.expect("session keys");
+    if let Ok(key) = rig.app.link_self(admin, &ops.user).await {
+        let token = rig
+            .app
+            .web_session_open(&ops, 3600, None)
+            .await
+            .expect("a session")
+            .token;
+        let session = rig
+            .app
+            .web_session(&token)
+            .await
+            .expect("a read")
+            .expect("a live session");
+        let web = rig
+            .app
+            .web_caller(&session, oml_app::app::Capacity::Web)
+            .await
+            .expect("the console");
+        rig.app
+            .accept_key_link(oml_app::types::Bearer::Session(&web), key.key_id.into())
+            .await
+            .expect("the link is accepted");
+    }
     rig.app
         .open_investigation(rig.boot.admin_key.value.as_str(), "the console tests")
         .await

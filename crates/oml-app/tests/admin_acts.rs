@@ -547,14 +547,19 @@ async fn one_revoke_verb_ends_any_key_and_cascades_to_none() {
         .await
         .expect("no cascade: a key it issued keeps working");
     let events = r.journal().await;
-    let last = &events[events.len() - 1].envelope;
+    // An act against an admin is loud: its notice closes the commit
+    // (ADR-0097 d20).
+    let notice = &events[events.len() - 1].envelope;
+    assert_eq!(notice.event_type, event_types::NOTICE_WRITTEN);
+    assert_eq!(notice.payload["kind"], "act_against_admin");
+    let last = &events[events.len() - 2].envelope;
     assert_eq!(last.event_type, event_types::KEY_REVOKED);
     assert_eq!(last.payload["reason"], "leaked");
     assert_eq!(
         last.payload["act_id"],
         revoked.act_id.expect("an act").to_string()
     );
-    let act = &events[events.len() - 2].envelope;
+    let act = &events[events.len() - 3].envelope;
     assert_eq!(act.event_type, event_types::ADMIN_ACT);
     // Another admin person's key: an act against an admin, final (d8).
     assert_eq!(act.payload["act"], "revoke_admin_key");
@@ -1937,4 +1942,803 @@ async fn no_creation_nests_under_another_creation_of_the_same_issuance() {
     let err = r.app.issue_key(r.admin(), &req).await.unwrap_err();
     assert!(matches!(err, AppError::NotFound), "{err:?}");
     assert_eq!(r.journal().await.len(), before, "nothing is journalled");
+}
+
+fn grant_on(node: &str, role: Role) -> GrantRequest {
+    GrantRequest {
+        node: by_name(node),
+        role,
+        deny: Vec::new(),
+        covers: Covers::Subtree,
+        create: false,
+    }
+}
+
+fn person_reviewer_req(principal: &str) -> IssueKeyRequest {
+    IssueKeyRequest {
+        role: Role::Reviewer,
+        principal: principal.to_owned(),
+        used_by: Some(UsedBy::Person),
+        grants: vec![grant_on("crew", Role::Reviewer)],
+        ..agent_req()
+    }
+}
+
+fn submit_req(idem: &str, kind: oml_app::domain::MemoryKind) -> oml_app::types::SubmitRequest {
+    oml_app::types::SubmitRequest {
+        on_similar: Default::default(),
+        anchor: None,
+        origin: None,
+        idempotency_key: idem.to_owned(),
+        claim_key: Some(format!("claim-{idem}")),
+        verb: None,
+        kind,
+        body: format!("the body of {idem}"),
+        workspace: Some(by_name("crew")),
+        derives_from: Vec::new(),
+        severity: None,
+        rule: None,
+        kind_fields: None,
+        valid_from: None,
+        valid_until: None,
+        format: None,
+        title: None,
+    }
+}
+
+async fn held(r: &Rig, writer: &IssuedKey, idem: &str, kind: oml_app::domain::MemoryKind) -> Uuid {
+    r.app
+        .submit_memory(writer.value.as_str(), &submit_req(idem, kind))
+        .await
+        .expect("submitted")
+        .receipt
+        .memory_id
+}
+
+/// A minted `used_by: person` reviewer key that counts as no person approves
+/// no instruction: d12 closes the minted-pair attack at the verdict, while a
+/// knowledge verdict keeps key-level R2 and the same key approves a fact.
+#[tokio::test]
+async fn an_instruction_verdict_from_a_key_that_counts_as_no_person_is_refused() {
+    let r = rig().await;
+    let writer = r
+        .app
+        .issue_key(r.admin(), &agent_req())
+        .await
+        .expect("a writer");
+    let minted = r
+        .app
+        .issue_key(r.admin(), &person_reviewer_req("minted"))
+        .await
+        .expect("a minted reviewer");
+    let steering = held(&r, &writer, "steer", oml_app::domain::MemoryKind::Steering).await;
+    let refused = r
+        .app
+        .post_verdict(
+            minted.value.as_str(),
+            steering,
+            oml_app::types::Verdict::Approve,
+            None,
+        )
+        .await
+        .expect_err("a key that counts as no person approves no instruction");
+    assert!(
+        matches!(refused, AppError::CountsAsNoPerson { .. }),
+        "{refused:?}"
+    );
+    let fact = held(&r, &writer, "fact", oml_app::domain::MemoryKind::Memory).await;
+    r.app
+        .post_verdict(
+            minted.value.as_str(),
+            fact,
+            oml_app::types::Verdict::Approve,
+            None,
+        )
+        .await
+        .expect("a knowledge verdict keeps key-level R2");
+}
+
+/// A crew's agent reviewer key still approves knowledge in production
+/// (ADR-0001 d5, "Agents approve knowledge", kept by ADR-0097 d12).
+#[tokio::test]
+async fn a_crew_agent_reviewer_key_still_approves_knowledge_in_production() {
+    let r = rig().await;
+    let writer = r
+        .app
+        .issue_key(r.admin(), &agent_req())
+        .await
+        .expect("a writer");
+    let agent = r
+        .app
+        .issue_key(
+            r.admin(),
+            &IssueKeyRequest {
+                role: Role::Reviewer,
+                principal: "crew-reviewer".to_owned(),
+                grants: vec![grant_on("crew", Role::Reviewer)],
+                ..agent_req()
+            },
+        )
+        .await
+        .expect("an agent reviewer");
+    let proposal = r
+        .app
+        .propose_transition(
+            r.admin(),
+            by_name("crew"),
+            oml_app::domain::WorkspaceStatus::Protected,
+        )
+        .await
+        .expect("a proposal");
+    r.admin_person("alice").await;
+    let admin = r.admin_session("alice").await;
+    r.app
+        .ratify_transition(
+            Bearer::Session(&admin),
+            by_name("crew"),
+            proposal.transition_id,
+        )
+        .await
+        .expect("a person ratifies the move to protected");
+    let fact = held(&r, &writer, "fact", oml_app::domain::MemoryKind::Memory).await;
+    r.app
+        .post_verdict(
+            agent.value.as_str(),
+            fact,
+            oml_app::types::Verdict::Approve,
+            None,
+        )
+        .await
+        .expect("an agent reviewer approves knowledge in a protected workspace");
+}
+
+/// The ladder's ratifier counts as a person (d12) other than the
+/// proposer's (d17): a key that counts as no one is refused, the
+/// proposer's own person is refused outside `sole_admin`, and another
+/// admin person ratifies.
+#[tokio::test]
+async fn a_ladder_ratifier_must_count_as_a_person_other_than_the_proposer() {
+    let r = rig().await;
+    r.admin_person("alice").await;
+    // Alice's own bearer key, linked while she is the only admin person.
+    let alice = r.linked_admin_key("alice").await;
+    r.admin_person("bob").await;
+    r.clock.advance(8 * DAY);
+    let minted = r
+        .app
+        .issue_key_with_reason(
+            r.admin(),
+            &person_reviewer_req("minted"),
+            Some("a reviewer"),
+        )
+        .await
+        .expect("a pending reviewer");
+    let bob = r.admin_session("bob").await;
+    r.app
+        .confirm_admin_act(Bearer::Session(&bob), minted.pending_act.expect("pending"))
+        .await
+        .expect("bob confirms");
+    let proposal = r
+        .app
+        .propose_transition(
+            alice.value.as_str(),
+            by_name("crew"),
+            oml_app::domain::WorkspaceStatus::Protected,
+        )
+        .await
+        .expect("alice proposes");
+    let none = r
+        .app
+        .ratify_transition(
+            minted.value.as_str(),
+            by_name("crew"),
+            proposal.transition_id,
+        )
+        .await
+        .expect_err("a key that counts as no person ratifies nothing");
+    assert!(
+        matches!(none, AppError::CountsAsNoPerson { .. }),
+        "{none:?}"
+    );
+    let alice_review = r.admin_session("alice").await;
+    let same = r
+        .app
+        .ratify_transition(
+            Bearer::Session(&alice_review),
+            by_name("crew"),
+            proposal.transition_id,
+        )
+        .await
+        .expect_err("the proposer's own person ratifies nothing");
+    assert!(
+        matches!(
+            same,
+            AppError::RatifierSamePerson {
+                issued_the_proposer: false
+            }
+        ),
+        "{same:?}"
+    );
+    r.app
+        .ratify_transition(
+            Bearer::Session(&bob),
+            by_name("crew"),
+            proposal.transition_id,
+        )
+        .await
+        .expect("another admin person ratifies");
+}
+
+/// One admin cannot propose through an agent key they issued and ratify
+/// through their own session (d17, the operator's decision of 2026-11-26).
+#[tokio::test]
+async fn an_admin_cannot_ratify_a_proposal_from_an_agent_key_they_issued() {
+    let r = two_admins().await;
+    let alice = r.admin_session("alice").await;
+    let agent = r
+        .app
+        .issue_key_with_reason(
+            Bearer::Session(&alice),
+            &IssueKeyRequest {
+                role: Role::Reviewer,
+                principal: "alice-agent".to_owned(),
+                grants: vec![grant_on("crew", Role::Reviewer)],
+                ..agent_req()
+            },
+            Some("an agent reviewer"),
+        )
+        .await
+        .expect("a pending agent key");
+    let bob = r.admin_session("bob").await;
+    r.app
+        .confirm_admin_act(Bearer::Session(&bob), agent.pending_act.expect("pending"))
+        .await
+        .expect("bob confirms");
+    let proposal = r
+        .app
+        .propose_transition(
+            agent.value.as_str(),
+            by_name("crew"),
+            oml_app::domain::WorkspaceStatus::Protected,
+        )
+        .await
+        .expect("the agent proposes");
+    let refused = r
+        .app
+        .ratify_transition(
+            Bearer::Session(&alice),
+            by_name("crew"),
+            proposal.transition_id,
+        )
+        .await
+        .expect_err("the issuing admin ratifies nothing");
+    assert!(
+        matches!(
+            refused,
+            AppError::RatifierSamePerson {
+                issued_the_proposer: true
+            }
+        ),
+        "{refused:?}"
+    );
+    r.app
+        .ratify_transition(
+            Bearer::Session(&bob),
+            by_name("crew"),
+            proposal.transition_id,
+        )
+        .await
+        .expect("another admin person ratifies");
+}
+
+/// Under `sole_admin` a one-person tenant still moves the ladder: the
+/// proposer's own person ratifies, and the transition is marked (d17).
+#[tokio::test]
+async fn a_sole_admin_ratification_by_the_proposers_own_person_is_admitted_and_marked() {
+    let r = rig().await;
+    r.admin_person("alice").await;
+    let alice = r.linked_admin_key("alice").await;
+    let proposal = r
+        .app
+        .propose_transition(
+            alice.value.as_str(),
+            by_name("crew"),
+            oml_app::domain::WorkspaceStatus::Protected,
+        )
+        .await
+        .expect("alice proposes");
+    let again = r.admin_session("alice").await;
+    r.app
+        .ratify_transition(
+            Bearer::Session(&again),
+            by_name("crew"),
+            proposal.transition_id,
+        )
+        .await
+        .expect("a sole_admin ratification by the proposer's person");
+    let events = r.journal().await;
+    let ratified = events
+        .iter()
+        .rev()
+        .find(|e| e.envelope.event_type == event_types::WORKSPACE_STATUS_TRANSITION)
+        .expect("the transition");
+    assert_eq!(ratified.envelope.payload["sole_admin"], true);
+}
+
+/// The admin read needs a person-linked admin key or a session: a key that
+/// counts as no person opens no investigation. Each page it serves counts
+/// once against the person whose own root it read, by month, and that
+/// person reads the count; a read of the shared tree counts against no one
+/// (ADR-0097 d16).
+#[tokio::test]
+async fn the_admin_read_needs_a_person_and_is_counted_per_person() {
+    let r = rig().await;
+    let refused = r
+        .app
+        .open_investigation(r.admin(), "ticket 1")
+        .await
+        .expect_err("an unlinked admin key opens no investigation");
+    assert!(
+        matches!(refused, AppError::AdminReadRequiresPerson),
+        "{refused:?}"
+    );
+    r.admin_person("alice").await;
+    let carol = r
+        .app
+        .allow_web_email(r.admin(), &entry_of("carol", false))
+        .await
+        .expect("carol's entry")
+        .0;
+    r.app.web_ensure_keys(&carol).await.expect("carol's keys");
+    let carols = r
+        .app
+        .issue_key(
+            r.admin(),
+            &IssueKeyRequest {
+                user: Some(name("carol")),
+                grants: vec![
+                    grant_on("carol", Role::Reader),
+                    grant_on("carol", Role::Submitter),
+                ],
+                ..agent_req()
+            },
+        )
+        .await
+        .expect("a key in carol's root");
+    let own = r
+        .app
+        .submit_memory(
+            carols.value.as_str(),
+            &oml_app::types::SubmitRequest {
+                workspace: Some(by_name("carol")),
+                ..submit_req("mine", oml_app::domain::MemoryKind::Memory)
+            },
+        )
+        .await
+        .expect("carol writes")
+        .receipt
+        .memory_id;
+    let writer = r
+        .app
+        .issue_key(r.admin(), &agent_req())
+        .await
+        .expect("a writer");
+    let shared = held(&r, &writer, "shared", oml_app::domain::MemoryKind::Memory).await;
+    let alice = r.admin_session("alice").await;
+    let investigation = r
+        .app
+        .open_investigation(Bearer::Session(&alice), "ticket 2")
+        .await
+        .expect("a person's session opens an investigation")
+        .investigation_id;
+    for id in [own, own, shared] {
+        r.app
+            .admin_read(Bearer::Session(&alice), id, Some(investigation))
+            .await
+            .expect("an admin read");
+    }
+    let session = r.person_session("carol", Capacity::Web).await;
+    let (person, counts) = r
+        .app
+        .own_admin_reads(Bearer::Session(&session))
+        .await
+        .expect("carol reads her count");
+    assert_eq!(person.as_str(), "carol");
+    assert_eq!(counts.len(), 1);
+    assert_eq!(counts[0].reads, 2);
+    let (alice_person, alice_counts) = r
+        .app
+        .own_admin_reads(Bearer::Session(&alice))
+        .await
+        .expect("alice reads hers");
+    assert_eq!(alice_person.as_str(), "alice");
+    assert!(
+        alice_counts.is_empty(),
+        "a shared read counts against no one"
+    );
+}
+
+/// Under `sole_admin` an admin's key in another person's root takes effect
+/// at once, marked, and that person is told in-product in the issuance's
+/// own commit: a notice in their To do, which they dismiss (ADR-0097 d6,
+/// d20).
+#[tokio::test]
+async fn a_reach_into_a_persons_root_under_sole_admin_takes_effect_at_once_and_notifies_the_person()
+{
+    let r = rig().await;
+    r.admin_person("alice").await;
+    let carol = r
+        .app
+        .allow_web_email(r.admin(), &entry_of("carol", false))
+        .await
+        .expect("carol's entry")
+        .0;
+    r.app.web_ensure_keys(&carol).await.expect("carol's keys");
+    let alice = r.admin_session("alice").await;
+    let before = r.journal().await.len();
+    let issued = r
+        .app
+        .issue_key(
+            Bearer::Session(&alice),
+            &IssueKeyRequest {
+                user: Some(name("carol")),
+                grants: vec![
+                    grant_on("carol", Role::Reader),
+                    grant_on("carol", Role::Submitter),
+                ],
+                ..agent_req()
+            },
+        )
+        .await
+        .expect("a key in carol's root");
+    assert_eq!(issued.pending_act, None, "at once under sole_admin");
+    let added: Vec<String> = r.journal().await[before..]
+        .iter()
+        .map(|e| e.envelope.event_type.clone())
+        .collect();
+    assert_eq!(
+        added.last().map(String::as_str),
+        Some(event_types::NOTICE_WRITTEN)
+    );
+    let web = r.person_session("carol", Capacity::Web).await;
+    let notices = r
+        .app
+        .notices(Bearer::Session(&web), false)
+        .await
+        .expect("carol's notices");
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].kind.as_str(), "root_reach");
+    assert_eq!(
+        r.app
+            .todo_counts(Bearer::Session(&web), None)
+            .await
+            .expect("counts")
+            .notices,
+        1
+    );
+    assert!(
+        r.app
+            .notices(Bearer::Session(&alice), false)
+            .await
+            .expect("alice's notices")
+            .is_empty(),
+        "the actor is not told of their own reach"
+    );
+    r.app
+        .dismiss_notice(Bearer::Session(&web), notices[0].notice_id)
+        .await
+        .expect("carol dismisses it");
+    assert_eq!(
+        r.app
+            .todo_counts(Bearer::Session(&web), None)
+            .await
+            .expect("counts")
+            .notices,
+        0
+    );
+    let again = r
+        .app
+        .dismiss_notice(Bearer::Session(&web), notices[0].notice_id)
+        .await
+        .expect_err("a dismissed notice is gone");
+    assert!(matches!(again, AppError::NotFound), "{again:?}");
+}
+
+/// Offensive narrowing is loud: denying a reviewer person's key writes, in
+/// the denial's own commit, a notice to every admin person and to every
+/// reviewer person of the workspace concerned (ADR-0097 d20, d24).
+#[tokio::test]
+async fn offensive_narrowing_notifies_every_admin_person_and_the_workspaces_reviewer_persons() {
+    let r = rig().await;
+    r.admin_person("alice").await;
+    let rhea = r
+        .app
+        .issue_key(r.admin(), &person_reviewer_req("rhea"))
+        .await
+        .expect("rhea's reviewer key");
+    let alice = r.admin_session("alice").await;
+    let rhea_entry = r
+        .app
+        .allow_web_email(r.admin(), &entry_of("rhea", false))
+        .await
+        .expect("rhea's entry")
+        .0;
+    r.app.web_ensure_keys(&rhea_entry).await.expect("keys");
+    r.app
+        .link_key_to_person(Bearer::Session(&alice), rhea.key_id.into(), &name("rhea"))
+        .await
+        .expect("linked");
+    let rhea_web = r.person_session("rhea", Capacity::Web).await;
+    r.app
+        .accept_key_link(Bearer::Session(&rhea_web), rhea.key_id.into())
+        .await
+        .expect("accepted");
+    let other = r
+        .app
+        .issue_key(r.admin(), &person_reviewer_req("other"))
+        .await
+        .expect("another reviewer key");
+    r.app
+        .deny_key(
+            Bearer::Session(&alice),
+            other.key_id.into(),
+            by_name("crew"),
+        )
+        .await
+        .expect("the denial takes effect at once");
+    let to_rhea = r
+        .app
+        .notices(Bearer::Session(&rhea_web), false)
+        .await
+        .expect("rhea's notices");
+    assert_eq!(to_rhea.len(), 1, "a reviewer person of crew is told");
+    assert_eq!(to_rhea[0].kind.as_str(), "offensive_narrowing");
+    let to_alice = r
+        .app
+        .notices(Bearer::Session(&alice), false)
+        .await
+        .expect("alice's notices");
+    assert_eq!(
+        to_alice.len(),
+        1,
+        "every admin person is told, the actor too"
+    );
+}
+
+fn boxed_req(hours: u64, r: &Rig) -> IssueKeyRequest {
+    let now = r.app.now().unix_micros();
+    let until = oml_app::domain::EventTime::from_unix_micros(
+        now + i64::try_from(hours * 3_600_000_000).expect("micros"),
+    )
+    .expect("an instant");
+    IssueKeyRequest {
+        expiry: Some(until),
+        ..agent_req()
+    }
+}
+
+/// A narrow time box: in a tenant with two admin persons, an admin person
+/// issues a reader and submitter key on a shared workspace at once, for at
+/// most a day; it is refused past a day, into a user root, and while a box
+/// of theirs is open there; one renewal is admitted, a third box waits
+/// until a second admin person settles the first; a decline revokes the
+/// key (ADR-0097 d13).
+#[tokio::test]
+async fn a_time_box_admits_reader_and_submitter_grants_in_shared_workspaces_for_at_most_a_day() {
+    let r = two_admins().await;
+    let alice = r.admin_session("alice").await;
+    let bob = r.admin_session("bob").await;
+    let too_long = r
+        .app
+        .issue_timeboxed_key(
+            Bearer::Session(&alice),
+            &boxed_req(25, &r),
+            Some("incident 4"),
+        )
+        .await
+        .expect_err("a box lasts at most a day");
+    assert!(
+        matches!(
+            too_long,
+            AppError::Timebox(oml_app::types::TimeboxRefusal::Until)
+        ),
+        "{too_long:?}"
+    );
+    let first = r
+        .app
+        .issue_timeboxed_key(
+            Bearer::Session(&alice),
+            &boxed_req(2, &r),
+            Some("incident 4"),
+        )
+        .await
+        .expect("a box takes effect at once");
+    assert_eq!(first.pending_act, None);
+    r.app
+        .whoami(&first.value)
+        .await
+        .expect("the boxed key authenticates at once");
+    let open = r
+        .app
+        .issue_timeboxed_key(
+            Bearer::Session(&alice),
+            &boxed_req(2, &r),
+            Some("incident 4"),
+        )
+        .await
+        .expect_err("one open box per person per workspace");
+    assert!(
+        matches!(
+            open,
+            AppError::Timebox(oml_app::types::TimeboxRefusal::Open)
+        ),
+        "{open:?}"
+    );
+    r.clock.advance(3 * 3_600);
+    let err = r.app.whoami(&first.value).await.expect_err("the box ended");
+    assert!(matches!(err, AppError::KeyExpired { .. }), "{err:?}");
+    let renewal = r
+        .app
+        .issue_timeboxed_key(
+            Bearer::Session(&alice),
+            &boxed_req(2, &r),
+            Some("incident 4"),
+        )
+        .await
+        .expect("one renewal");
+    r.clock.advance(3 * 3_600);
+    let third = r
+        .app
+        .issue_timeboxed_key(
+            Bearer::Session(&alice),
+            &boxed_req(2, &r),
+            Some("incident 4"),
+        )
+        .await
+        .expect_err("a third box waits on a settlement");
+    assert!(
+        matches!(
+            third,
+            AppError::Timebox(oml_app::types::TimeboxRefusal::RenewalsExhausted)
+        ),
+        "{third:?}"
+    );
+    let first_act = r
+        .store
+        .admin_acts(r.boot.tenant_id, Some(AdminActState::Effective))
+        .await
+        .expect("acts")
+        .into_iter()
+        .find(|a| a.timebox() && a.target["key_id"] == first.key_id.to_string())
+        .expect("the first box");
+    let settled = r
+        .app
+        .confirm_admin_act(Bearer::Session(&bob), first_act.act_id)
+        .await
+        .expect("bob settles the first box");
+    assert_eq!(settled.state, AdminActState::Confirmed);
+    let after = r
+        .app
+        .issue_timeboxed_key(
+            Bearer::Session(&alice),
+            &boxed_req(2, &r),
+            Some("incident 4"),
+        )
+        .await
+        .expect("a box again once the first is settled");
+    let renewal_act = r
+        .store
+        .admin_acts(r.boot.tenant_id, Some(AdminActState::Effective))
+        .await
+        .expect("acts")
+        .into_iter()
+        .find(|a| a.timebox() && a.target["key_id"] == after.key_id.to_string())
+        .expect("the latest box");
+    r.app
+        .decline_admin_act(
+            Bearer::Session(&bob),
+            renewal_act.act_id,
+            Some("not needed"),
+        )
+        .await
+        .expect("bob declines it");
+    let err = r
+        .app
+        .whoami(&after.value)
+        .await
+        .expect_err("declined, revoked");
+    assert!(matches!(err, AppError::Unauthorized), "{err:?}");
+    let _ = renewal;
+    let root = r
+        .app
+        .issue_timeboxed_key(
+            Bearer::Session(&alice),
+            &IssueKeyRequest {
+                grants: vec![grant_on("alice", Role::Reader)],
+                ..boxed_req(2, &r)
+            },
+            Some("incident 5"),
+        )
+        .await
+        .expect_err("never into a user root");
+    assert!(
+        matches!(
+            root,
+            AppError::Timebox(
+                oml_app::types::TimeboxRefusal::NotShared | oml_app::types::TimeboxRefusal::Shape
+            )
+        ),
+        "{root:?}"
+    );
+}
+
+/// No time box while an act against an admin is open (ADR-0097 d13).
+#[tokio::test]
+async fn a_time_box_is_refused_while_an_act_against_an_admin_is_open() {
+    let r = two_admins().await;
+    let alice = r.admin_session("alice").await;
+    r.app
+        .allow_web_email_with_reason(
+            Bearer::Session(&alice),
+            &entry_of("bob", false),
+            true,
+            Some("bob left"),
+        )
+        .await
+        .expect("alice un-flags bob, an act against an admin");
+    let refused = r
+        .app
+        .issue_timeboxed_key(
+            Bearer::Session(&alice),
+            &boxed_req(2, &r),
+            Some("incident 6"),
+        )
+        .await
+        .expect_err("refused while the act is open");
+    assert!(
+        matches!(
+            refused,
+            AppError::Timebox(oml_app::types::TimeboxRefusal::AgainstAdminOpen)
+        ),
+        "{refused:?}"
+    );
+}
+
+/// A link takes effect when the person it names accepts it, and the
+/// acceptance records the session's age and the provider subjects its entry pinned, as digests, so
+/// a forged acceptance can be told apart afterwards (ADR-0097 d7).
+#[tokio::test]
+async fn an_acceptance_records_the_provider_subject_and_the_sessions_age() {
+    let r = rig().await;
+    r.admin_person("alice").await;
+    let web = r.person_session("alice", Capacity::Web).await;
+    r.clock.advance(90);
+    let issued = r
+        .app
+        .issue_key(
+            r.admin(),
+            &IssueKeyRequest {
+                role: Role::Admin,
+                grants: Vec::new(),
+                used_by: Some(UsedBy::Person),
+                person: Some(name("alice")),
+                ..agent_req()
+            },
+        )
+        .await
+        .expect("an admin key");
+    r.app
+        .accept_key_link(Bearer::Session(&web), issued.key_id.into())
+        .await
+        .expect("alice accepts");
+    let accepted = r
+        .journal()
+        .await
+        .into_iter()
+        .rev()
+        .find(|e| e.envelope.event_type == event_types::KEY_LINK_ACCEPTED)
+        .expect("the acceptance");
+    let evidence = &accepted.envelope.payload["evidence"];
+    assert_eq!(evidence["session_age_seconds"], 90);
+    assert!(evidence["provider_subject_digests"].is_array());
 }

@@ -174,6 +174,9 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/web/users/{user}/deletion/close"),
     ("POST", "/v2/web/session/end"),
     ("GET", "/v2/web/export"),
+    ("GET", "/v2/web/admin-reads"),
+    ("GET", "/v2/web/notices"),
+    ("POST", "/v2/web/notices/{notice}/dismiss"),
     ("POST", "/v2/web/deletion-requests"),
     ("POST", "/v2/admin/memories/search"),
     ("GET", "/v2/admin/memories/{artifact_id}"),
@@ -458,6 +461,9 @@ where
             ("POST", "/v2/web/users/{user}/deletion/close") => post(Self::close_deletion),
             ("POST", "/v2/web/session/end") => post(Self::end_session),
             ("GET", "/v2/web/export") => get(Self::export_web_person),
+            ("GET", "/v2/web/admin-reads") => get(Self::own_admin_reads_route),
+            ("GET", "/v2/web/notices") => get(Self::notices_route),
+            ("POST", "/v2/web/notices/{notice}/dismiss") => post(Self::notice_dismiss_route),
             ("POST", "/v2/web/deletion-requests") => post(Self::request_deletion),
             ("POST", "/v2/admin/memories/search") => post(Self::admin_search_route),
             ("GET", "/v2/admin/memories/{artifact_id}") => get(Self::admin_read_route),
@@ -2186,12 +2192,20 @@ where
         };
         let label = req.label.clone();
         let reason = req.reason.clone();
+        let timebox = req.timebox;
         let st = st.clone();
         claim
             .run(async move {
-                let issued = retry_chain(|| {
-                    st.app
-                        .issue_key_with_reason(acting.bearer(), &issue, reason.as_deref())
+                let issued = retry_chain(|| async {
+                    if timebox {
+                        st.app
+                            .issue_timeboxed_key(acting.bearer(), &issue, reason.as_deref())
+                            .await
+                    } else {
+                        st.app
+                            .issue_key_with_reason(acting.bearer(), &issue, reason.as_deref())
+                            .await
+                    }
                 })
                 .await
                 .map_err(|e| console::ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
@@ -4415,6 +4429,10 @@ struct KeyIssueBody {
     /// (ADR-0097 d21).
     #[serde(default)]
     person: Option<String>,
+    /// A time box: issued at once for at most a day, settled afterwards
+    /// by a second admin person (ADR-0097 d13).
+    #[serde(default)]
+    timebox: bool,
     /// Parsed only to be refused while the first-admin-key path is unbuilt
     /// (ADR-0039 d9).
     tenant: Option<String>,

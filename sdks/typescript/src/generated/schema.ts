@@ -1342,6 +1342,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/web/notices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The calling person's in-product notices.
+         * @description Requires: a key that counts as a person, the person's session keys among them; one that counts as no person answers access.not_found. A notice is written in the commit of the act it tells about: an act against an admin, to every admin person; offensive narrowing (a production fix that loosens a guardrail, disabling a person, revoking a person's key, denying a reviewer person's key), to every admin person and every reviewer person of the workspace concerned; a reach into a person's own root taken at once under sole_admin, to that person (ADR-0097 d6, d20, d24). Oldest first; the dismissed ones too with dismissed=true. Journals nothing. Since v0.8.6.
+         */
+        get: operations["listNotices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/web/notices/{notice}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The person dismisses a notice of their own.
+         * @description Requires: a key that counts as the notice's recipient. Journals notice.dismissed; it is the person's own act, not an admin act. A notice that is not the person's, or is already dismissed, answers access.not_found (ADR-0097 d20). No body. Since v0.8.6.
+         */
+        post: operations["dismissNotice"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/web/admin-reads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The count of admin reads of the calling person's own root, by month.
+         * @description Requires: a key that counts as a person, the person's session keys among them; one that counts as no person answers access.not_found. Each admin-read page that served a row of the person's own root counts once, for the month of the read (UTC). Reads through keys or connect codes a second admin confirmed in the root are the root's own reads and are not counted (ADR-0097 d6, d16). Journals nothing. Since v0.8.6.
+         */
+        get: operations["ownAdminReads"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/web/export": {
         parameters: {
             query?: never;
@@ -2141,6 +2201,24 @@ export interface components {
             /** Format: date-time */
             closed_at: string | null;
         };
+        /** @description One in-product notice to one person (ADR-0097 d20). */
+        Notice: {
+            /** Format: uuid */
+            notice_id: string;
+            /** @enum {string} */
+            kind: "act_against_admin" | "offensive_narrowing" | "root_reach" | "recovery" | "settlement";
+            /**
+             * Format: uuid
+             * @description The admin act the notice tells about.
+             */
+            act_id: string | null;
+            /** @description The act's kind, its target and the person the acting key counted as. */
+            detail: Record<string, never>;
+            /** Format: date-time */
+            at: string;
+            /** Format: date-time */
+            dismissed_at: string | null;
+        };
         /** @description One admin act (ADR-0097 d2): the confirm screen of d23 reads target (the key's role, principal, used_by, the root's person as user, and principal_names_person where the principal spells a person's name) and grants. Since v0.8.6. */
         AdminAct: {
             /** Format: uuid */
@@ -2339,7 +2417,7 @@ export interface components {
          * @description The closed error vocabulary; identical to docs/api/errors.md by construction. The oauth codes other than oauth.connect_refused and oauth.attach_refused travel inside RFC error bodies on the OAuth endpoints, at the start of error_description, or on the authorization page; oauth.connect_refused answers on /v2 in this envelope, and oauth.attach_refused, an /mcp tool result, is answered by no served tool since oml_attach left the catalog (ADR-0031, ADR-0039 d2, d9).
          * @enum {string}
          */
-        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "admin.investigation_required" | "admin.fix_requires_person" | "admin.fix_target_not_promoted" | "admin.fix_held_by_scan" | "admin.fix_superseded" | "admin.fix_not_revertible" | "admin.fix_settled" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workspace_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.format_invalid" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.version_conflict" | "submission.claim_key_conflict" | "submission.similar_exists" | "submission.universe_refused" | "submission.user_root_refused" | "workspace.frozen" | "workspace.in_progress_refused" | "workspace.held_remaining" | "workspace.admin_key_under_root" | "workspace.public_refused" | "workspace.transition_refused" | "review.author_in_lineage" | "review.person_required" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "upload.expired" | "upload.too_large" | "upload.part_size" | "upload.part_number" | "upload.incomplete" | "upload.session_limit" | "upload.tenant_limit" | "upload.storage_failed" | "bundle.format_unknown" | "bundle.layout" | "bundle.path_unsafe" | "bundle.too_large" | "bundle.line_too_long" | "bundle.depth" | "bundle.duplicate" | "bundle.unreferenced_body" | "bundle.malformed" | "bundle.digest_mismatch" | "bundle.signature_invalid" | "bundle.signature_unexpected" | "bundle.unencrypted" | "bundle.decrypt_failed" | "bundle.io" | "import.target_not_in_progress" | "import.over_quota" | "import.bundle_older" | "import.since_mismatch" | "import.source_key_changed" | "import.busy" | "export.disabled" | "export.not_readable" | "export.busy" | "export.too_large" | "memory.not_held" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "proposal.pending" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
+        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "admin.investigation_required" | "admin.read_requires_person" | "admin.fix_requires_person" | "admin.fix_target_not_promoted" | "admin.fix_held_by_scan" | "admin.fix_superseded" | "admin.fix_not_revertible" | "admin.fix_settled" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workspace_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.format_invalid" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.version_conflict" | "submission.claim_key_conflict" | "submission.similar_exists" | "submission.universe_refused" | "submission.user_root_refused" | "workspace.frozen" | "workspace.in_progress_refused" | "workspace.held_remaining" | "workspace.admin_key_under_root" | "workspace.public_refused" | "workspace.transition_refused" | "review.author_in_lineage" | "review.person_required" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "upload.expired" | "upload.too_large" | "upload.part_size" | "upload.part_number" | "upload.incomplete" | "upload.session_limit" | "upload.tenant_limit" | "upload.storage_failed" | "bundle.format_unknown" | "bundle.layout" | "bundle.path_unsafe" | "bundle.too_large" | "bundle.line_too_long" | "bundle.depth" | "bundle.duplicate" | "bundle.unreferenced_body" | "bundle.malformed" | "bundle.digest_mismatch" | "bundle.signature_invalid" | "bundle.signature_unexpected" | "bundle.unencrypted" | "bundle.decrypt_failed" | "bundle.io" | "import.target_not_in_progress" | "import.over_quota" | "import.bundle_older" | "import.since_mismatch" | "import.source_key_changed" | "import.busy" | "export.disabled" | "export.not_readable" | "export.busy" | "export.too_large" | "memory.not_held" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "proposal.pending" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
         ExportRequest: {
             /**
              * @description history is the default in a user root; release is refused until releases are built.
@@ -3678,6 +3756,11 @@ export interface components {
              */
             profile?: "curator";
             /**
+             * @description A time box (ADR-0097 d13): an admin person's issuance that takes effect at once in any tenant, for a reader, submitter or contributor key whose grants are reader and submitter grants in shared workspaces, never into a user root or an in-progress subtree, with an expiry no more than 24 hours away that everything issued under it inherits. It requires reason, and is an issue_key admin act marked timebox, which a second admin person settles afterwards with confirmAdminAct or declineAdminAct (a decline revokes the key). One open box per admin person per workspace, and one renewal while the first is unsettled; refused while an act against an admin is open or a freeze holds. Each refusal is request.validation with details.field /timebox and details.reason not_admin_person, shape, not_shared, until, open, renewals_exhausted or against_admin_open. Since v0.8.6.
+             * @default false
+             */
+            timebox?: boolean;
+            /**
              * @description Issue a connector key (ADR-0031 d7): no bearer value is minted, and the 201 carries connect_code in place of value. Refused with 422 oauth.connect_refused for an admin or operator role (role), used_by service (used_by_service), or a deployment without oauth.issuer (not_configured).
              * @default false
              */
@@ -4600,6 +4683,8 @@ export interface components {
             erased_keys_live?: number;
             /** @description Admin investigations open for more than seven days: doctor's admin.investigation_open_long (ADR-0089 d10). */
             investigations_open_long?: number;
+            /** @description Open admin investigations past 50 pages, a placeholder: doctor's admin.investigation_pages (ADR-0097 d16). */
+            investigations_past_pages?: number;
             /** @description Admin fixes no person has confirmed or reverted (ADR-0089 d15). */
             fixes_unconfirmed?: number;
             /** @description The oldest unconfirmed fix's age in seconds, 0 with none. */
@@ -4630,6 +4715,8 @@ export interface components {
             admin_acts_expired?: number;
             /** @description Offensive narrowing in the last 24 hours: doctor's admin.offensive_narrowing (ADR-0097 d24). */
             admin_acts_offensive?: number;
+            /** @description Time boxes no second admin person has settled, open or ended: doctor's admin.timebox_open (ADR-0097 d13). */
+            admin_timeboxes_unsettled?: number;
             /** @description The most narrowing acts one admin person took in the last 24 hours: doctor's admin.narrowing_burst (ADR-0097 d24). */
             admin_narrowing_burst?: number;
             /** @description Admin keys suspended while an act against their person is open: doctor's admin.key_suspended (ADR-0097 d8, d21). Since v0.8.6. */
@@ -6866,6 +6953,7 @@ export interface operations {
                      * @example {
                      *       "review": 3,
                      *       "briefs": 1,
+                     *       "notices": 0,
                      *       "truncated": false
                      *     }
                      */
@@ -6874,6 +6962,8 @@ export interface operations {
                         review: number;
                         /** @description The Brief proposals group's length: the pending brief edges GET /v2/review/briefs would list the person's reviewer key, at workspace and below or everywhere, never one it or its principal proposed; counted up to 1,000 and sharing truncated (ADR-0096 d7). Since v0.8.5. */
                         briefs: number;
+                        /** @description The Notices group's length: the person's notices not dismissed, as GET /v2/web/notices lists them, whatever the workspace (ADR-0097 d20). Since v0.8.6. */
+                        notices: number;
                         /** @description Whether a count passed 1,000 and answers 1,000, or stopped after reading 2,000 held rows and answers what it counted. */
                         truncated: boolean;
                     };
@@ -8975,6 +9065,114 @@ export interface operations {
                 content?: never;
             };
             403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    listNotices: {
+        parameters: {
+            query?: {
+                dismissed?: boolean;
+            };
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The notices. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Notice"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    dismissNotice: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path: {
+                notice: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The notice, dismissed. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Notice"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    ownAdminReads: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The person and the months with any admin read, oldest first. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        person: string;
+                        months: {
+                            month: string;
+                            reads: number;
+                        }[];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
             default: components["responses"]["Error"];
         };
     };

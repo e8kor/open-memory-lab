@@ -4,6 +4,8 @@
 //! the mode; the commit needs zero held; no ranking reads a verdict; R3
 //! holds everywhere else; a curator narrows inside and never widens.
 
+mod counted;
+
 use oml_app::App;
 use oml_app::domain::access::Covers;
 use oml_app::domain::access::Grant;
@@ -152,6 +154,9 @@ async fn world() -> World {
     )
     .await
     .expect("person");
+    // Pat's reviewer key counts as pat, as an instruction verdict and a
+    // ladder ratification need (ADR-0097 d12, d17).
+    counted::link_to(&app, &admin, person.key_id, "pat").await;
     let curator = key(
         &app,
         &admin,
@@ -966,7 +971,7 @@ async fn seal_onto(w: &World, event_type: &str, payload: Value, fold: MetadataFo
 impl World {
     /// A second person's reviewer key, another principal, for two-identity acts.
     async fn second_person(&self) -> IssuedKey {
-        key(
+        let quinn = key(
             &self.app,
             &self.boot.admin_key.value,
             Role::Reviewer,
@@ -979,7 +984,9 @@ impl World {
             ],
         )
         .await
-        .expect("second person")
+        .expect("second person");
+        counted::link_to(&self.app, &self.boot.admin_key.value, quinn.key_id, "quinn").await;
+        quinn
     }
 
     async fn promoted(&self, key: &IssuedKey, idem: &str, body: &str, node: Uuid) -> Uuid {

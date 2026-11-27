@@ -1581,13 +1581,15 @@ paths:
               example:
                 review: 3
                 briefs: 1
+                notices: 0
                 truncated: false
               schema:
                 type: object
-                required: [review, briefs, truncated]
+                required: [review, briefs, notices, truncated]
                 properties:
                   review: { type: integer, minimum: 0, maximum: 1000, description: "The To review group's length: the held rows the person's reviewer key may judge." }
                   briefs: { type: integer, minimum: 0, maximum: 1000, description: "The Brief proposals group's length: the pending brief edges GET /v2/review/briefs would list the person's reviewer key, at workspace and below or everywhere, never one it or its principal proposed; counted up to 1,000 and sharing truncated (ADR-0096 d7). Since v0.8.5." }
+                  notices: { type: integer, minimum: 0, maximum: 1000, description: "The Notices group's length: the person's notices not dismissed, as GET /v2/web/notices lists them, whatever the workspace (ADR-0097 d20). Since v0.8.6." }
                   truncated: { type: boolean, description: "Whether a count passed 1,000 and answers 1,000, or stopped after reading 2,000 held rows and answers what it counted." }
         '403': { $ref: '#/components/responses/Forbidden' }
         default: { $ref: '#/components/responses/Error' }
@@ -3065,6 +3067,95 @@ paths:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
             X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/web/notices:
+    get:
+      tags: [web]
+      operationId: listNotices
+      summary: The calling person's in-product notices.
+      description: 'Requires: a key that counts as a person, the person''s session keys among them; one that counts as no person answers access.not_found. A notice is written in the commit of the act it tells about: an act against an admin, to every admin person; offensive narrowing (a production fix that loosens a guardrail, disabling a person, revoking a person''s key, denying a reviewer person''s key), to every admin person and every reviewer person of the workspace concerned; a reach into a person''s own root taken at once under sole_admin, to that person (ADR-0097 d6, d20, d24). Oldest first; the dismissed ones too with dismissed=true. Journals nothing. Since v0.8.6.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: dismissed, in: query, required: false, schema: { type: boolean, default: false } }
+      responses:
+        '200':
+          description: The notices.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Notice' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/web/notices/{notice}/dismiss:
+    post:
+      tags: [web]
+      operationId: dismissNotice
+      summary: The person dismisses a notice of their own.
+      description: 'Requires: a key that counts as the notice''s recipient. Journals notice.dismissed; it is the person''s own act, not an admin act. A notice that is not the person''s, or is already dismissed, answers access.not_found (ADR-0097 d20). No body. Since v0.8.6.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: notice, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The notice, dismissed.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Notice' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/web/admin-reads:
+    get:
+      tags: [web]
+      operationId: ownAdminReads
+      summary: The count of admin reads of the calling person's own root, by month.
+      description: 'Requires: a key that counts as a person, the person''s session keys among them; one that counts as no person answers access.not_found. Each admin-read page that served a row of the person''s own root counts once, for the month of the read (UTC). Reads through keys or connect codes a second admin confirmed in the root are the root''s own reads and are not counted (ADR-0097 d6, d16). Journals nothing. Since v0.8.6.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+      responses:
+        '200':
+          description: The person and the months with any admin read, oldest first.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [person, months]
+                properties:
+                  person: { type: string }
+                  months:
+                    type: array
+                    items:
+                      type: object
+                      required: [month, reads]
+                      properties:
+                        month: { type: string, pattern: '^[0-9]{4}-[0-9]{2}$' }
+                        reads: { type: integer, minimum: 1 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/web/export:
@@ -4691,6 +4782,17 @@ components:
         age_seconds: { type: integer, minimum: 0 }
         state: { type: string, enum: [open, closed] }
         closed_at: { type: [string, 'null'], format: date-time }
+    Notice:
+      type: object
+      description: One in-product notice to one person (ADR-0097 d20).
+      required: [notice_id, kind, act_id, detail, at, dismissed_at]
+      properties:
+        notice_id: { type: string, format: uuid }
+        kind: { type: string, enum: [act_against_admin, offensive_narrowing, root_reach, recovery, settlement] }
+        act_id: { type: [string, 'null'], format: uuid, description: The admin act the notice tells about. }
+        detail: { type: object, description: 'The act''s kind, its target and the person the acting key counted as.' }
+        at: { type: string, format: date-time }
+        dismissed_at: { type: [string, 'null'], format: date-time }
     AdminAct:
       type: object
       description: "One admin act (ADR-0097 d2): the confirm screen of d23 reads target (the key's role, principal, used_by, the root's person as user, and principal_names_person where the principal spells a person's name) and grants. Since v0.8.6."
@@ -4907,6 +5009,7 @@ components:
         - auth.invalid
         - access.verb_ceiling
         - admin.investigation_required
+        - admin.read_requires_person
         - admin.fix_requires_person
         - admin.fix_target_not_promoted
         - admin.fix_held_by_scan
@@ -6450,6 +6553,7 @@ components:
         principal: { type: string, description: 'Who acts — the attribution identity, shared across one identity''s keys; free text.' }
         guardrail_scope: { $ref: '#/components/schemas/GuardrailScope' }
         profile: { type: string, enum: [curator], description: "curator: a reviewer key used by an agent that may reject, propose retirements and summaries, and flag contradictions inside an in-progress workspace only, and never approves; any other role or used_by is request.validation, details.field /profile (ADR-0030 d8, d9)." }
+        timebox: { type: boolean, default: false, description: "A time box (ADR-0097 d13): an admin person's issuance that takes effect at once in any tenant, for a reader, submitter or contributor key whose grants are reader and submitter grants in shared workspaces, never into a user root or an in-progress subtree, with an expiry no more than 24 hours away that everything issued under it inherits. It requires reason, and is an issue_key admin act marked timebox, which a second admin person settles afterwards with confirmAdminAct or declineAdminAct (a decline revokes the key). One open box per admin person per workspace, and one renewal while the first is unsettled; refused while an act against an admin is open or a freeze holds. Each refusal is request.validation with details.field /timebox and details.reason not_admin_person, shape, not_shared, until, open, renewals_exhausted or against_admin_open. Since v0.8.6." }
         connect_code: { type: boolean, default: false, description: "Issue a connector key (ADR-0031 d7): no bearer value is minted, and the 201 carries connect_code in place of value. Refused with 422 oauth.connect_refused for an admin or operator role (role), used_by service (used_by_service), or a deployment without oauth.issuer (not_configured)." }
         expiry: { type: string, format: date-time, description: "The instant from which the key authenticates nothing: RFC 3339 with its offset, later than the server's clock. Omitted, the key does not expire. A connector key's expiry is its connection's. Refused for role admin (ADR-0079 d1, d2; since v0.7.3)." }
         requests_per_minute: { type: integer, minimum: 1, maximum: 1000000, description: "The requests the key may make in one UTC minute, its own rate beside any quota of its account; the request past it is 429 limit.rate. Omitted, the key has none of its own. Refused for role admin (ADR-0079 d1, d4; since v0.7.3)." }
@@ -7444,6 +7548,7 @@ components:
         held_successors_stranded: { type: integer, minimum: 0, description: 'Held successors of a version that is no longer its claim''s promoted tip, so no verdict can approve them: doctor''s memory.held_successor_stranded (ADR-0089 d16).' }
         erased_keys_live: { type: integer, minimum: 0, description: 'Erased versions whose data key is still live, which the erase''s own transaction and the lake writer''s fold rule out: doctor''s lake.erased_key_live (ADR-0005 d2).' }
         investigations_open_long: { type: integer, minimum: 0, description: 'Admin investigations open for more than seven days: doctor''s admin.investigation_open_long (ADR-0089 d10).' }
+        investigations_past_pages: { type: integer, minimum: 0, description: 'Open admin investigations past 50 pages, a placeholder: doctor''s admin.investigation_pages (ADR-0097 d16).' }
         fixes_unconfirmed: { type: integer, minimum: 0, description: 'Admin fixes no person has confirmed or reverted (ADR-0089 d15).' }
         fix_oldest_unconfirmed_seconds: { type: integer, minimum: 0, description: 'The oldest unconfirmed fix''s age in seconds, 0 with none.' }
         fixes_loosening_guardrail: { type: integer, minimum: 0, description: 'Unconfirmed fixes that loosen a guardrail (ADR-0089 d15).' }
@@ -7459,6 +7564,7 @@ components:
         admin_acts_without_reason: { type: integer, minimum: 0, description: 'Admin acts journalled with no reason: doctor''s admin.act_without_reason (ADR-0097 d26).' }
         admin_acts_expired: { type: integer, minimum: 0, description: 'Pending admin acts that expired as declined in the last seven days: doctor''s admin.act_expired (ADR-0097 d23).' }
         admin_acts_offensive: { type: integer, minimum: 0, description: 'Offensive narrowing in the last 24 hours: doctor''s admin.offensive_narrowing (ADR-0097 d24).' }
+        admin_timeboxes_unsettled: { type: integer, minimum: 0, description: 'Time boxes no second admin person has settled, open or ended: doctor''s admin.timebox_open (ADR-0097 d13).' }
         admin_narrowing_burst: { type: integer, minimum: 0, description: 'The most narrowing acts one admin person took in the last 24 hours: doctor''s admin.narrowing_burst (ADR-0097 d24).' }
         admin_keys_suspended: { type: integer, minimum: 0, description: 'Admin keys suspended while an act against their person is open: doctor''s admin.key_suspended (ADR-0097 d8, d21). Since v0.8.6.' }
         admin_keys_unlinked_suspended: { type: integer, minimum: 0, description: 'Admin keys suspended as unlinked at the upgrade, which reach only /v2/whoami and POST /v2/keys/self/link: doctor''s admin.key_unlinked_suspended (ADR-0097 d21). Since v0.8.6.' }

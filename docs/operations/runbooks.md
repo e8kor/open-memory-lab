@@ -239,3 +239,12 @@ OML has no `revoke` or `rotate` command. To stop a key, deny it, then issue a ne
    ```bash
    oml keys show <old-key>
    ```
+
+## A dispute between two admins is frozen, or a tenant's admins are dormant
+
+Use this when `oml doctor` raises `admin.dispute_open` (critical) or `operator.settlement_due`, or when no admin person of a tenant has signed in for 30 days. [ADR-0097](../adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) d19 gives the operator two host verbs for these cases. Both are designed, not built: the server, its events and its doctor lines do not exist yet, and the token they use waits on a decision.
+
+- `oml operator settle <tenant> <act> --confirm|--reverse` confirms or reverses the contested act of a freeze open for at least 24 hours, a placeholder. It issues no key and reads no content, notifies both parties and journals `operator.settlement`.
+- `oml operator recover <tenant> --person <name> --email <address>` runs only when no admin person has signed in, and no admin key has authenticated, for 30 days. A 72-hour waiting period follows, which any admin person's sign-in cancels; then every admin key of the tenant is revoked, the named admin person is created, and `operator.recovery` is journalled. The dormant admins keep their flags, so the new admin cannot widen alone until one of them returns, or, with one dormant admin, until the operator settles the new admin's un-flag of that admin.
+
+Each verb writes its token to a 0600 root-only file bound to the tenant id and one process start, never to stdout or journald, and notifies every admin person in-product and by email. Until they are built, settle a freeze by asking a third admin person who counts to settle the act in the tenant (`oml admin settle <act>`), and do not edit the database by hand: the journal's tamper evidence is the control against the host.

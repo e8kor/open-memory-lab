@@ -3,6 +3,8 @@
 //! MCP `prompts` and `resources` methods that serve the offered set. The
 //! lead's router over in-memory doubles, as `guardrails_http.rs` builds it.
 
+mod counted;
+
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
@@ -19,6 +21,7 @@ fn doubles_router() -> Router {
 fn doubles_router_over(store: oml_app::doubles::MemStore) -> Router {
     use oml_app::App;
     use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, SeqIdGen};
+    counted::remember(&store, [7; 32]);
     let app = App::new(
         store.clone(),
         MemSigner::new([7; 32]),
@@ -127,7 +130,16 @@ async fn tenant(router: &Router) -> Tenant {
         json!({"role": "reviewer", "name": "reviewer", "principal": "crew/reviewer", "used_by": "person",
                "grants": [{"workspace": crew, "role": "reviewer"}, {"workspace": crew, "role": "reader"}]}),
     )
-    .await["value"]
+    .await;
+    // The reviewer counts as a person, as an instruction verdict needs
+    // (ADR-0097 d12).
+    counted::link_in_router(
+        &admin,
+        reviewer["key_id"].as_str().expect("key id"),
+        "crew-reviewer",
+    )
+    .await;
+    let reviewer = reviewer["value"]
         .as_str()
         .expect("reviewer value")
         .to_owned();

@@ -3,6 +3,8 @@
 //! tenant without a grant and searched by every default recall; marking it
 //! is an admin person's widening act, clearing it is narrowing.
 
+mod counted;
+
 use oml_app::App;
 use oml_app::app::{Caller, Capacity};
 use oml_app::domain::access::Covers;
@@ -212,14 +214,21 @@ impl Rig {
     }
 
     async fn key(&self, role: Role, principal: &str, grants: Vec<GrantRequest>) -> IssuedKey {
-        self.app
+        let issued = self
+            .app
             .issue_key_with_reason(
                 self.admin(),
                 &key_req(role, principal, grants),
                 Some("a key"),
             )
             .await
-            .expect("issued")
+            .expect("issued");
+        // A reviewer counts as the person its principal names (ADR-0097
+        // d12, d17).
+        if role == Role::Reviewer {
+            counted::link_to(&self.app, self.admin(), issued.key_id, principal).await;
+        }
+        issued
     }
 
     async fn workspace(&self, node: &str, parent: &str) {
@@ -357,6 +366,11 @@ async fn rig_over(store: MemStore) -> Rig {
     )
     .await;
     let reader = issue(Role::Reader, "ruth", vec![grant("team", Role::Reader)]).await;
+    // The reviewer counts as the person rhea, linked by alice, the one
+    // admin person: an instruction verdict and a ladder ratification need
+    // a counted person (ADR-0097 d12, d17).
+    counted::entry_of(&app, admin.as_str(), "alice", true).await;
+    counted::link_to(&app, admin.as_str(), reviewer.key_id, "rhea").await;
     let mut r = Rig {
         app,
         store,
@@ -385,7 +399,6 @@ async fn rig_over(store: MemStore) -> Rig {
         )
         .await;
     r.climb("shared", WorkspaceStatus::Protected).await;
-    r.admin_person("alice").await;
     r
 }
 

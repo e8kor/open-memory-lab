@@ -17,7 +17,7 @@ use oml_domain::admin_act::{AdminActClass, AdminActKind, AdminActState, counts_f
 use oml_domain::{EventTime, Role, Sha256Hash, SignedEnvelope, event_types};
 
 use super::{App, code_issued_payload, commit_request, require_role};
-use crate::ports::{Clock, IdGen, JournalStore, MetadataFold, Scanner, Signer};
+use crate::ports::{Clock, CommitReceipt, IdGen, JournalStore, MetadataFold, Scanner, Signer};
 use crate::types::{AdminActRecord, AdminActRefusal, AppError, Bearer, ConnectCode, KeyRecord};
 
 /// An admin act sealed and not yet committed: its envelope, first in the
@@ -170,11 +170,31 @@ where
         effect: Value,
         prev: Option<&SignedEnvelope>,
     ) -> Result<BegunAct, AppError> {
+        self.begin_admin_act_boxed(admin, act, target, reason, effect, prev, false)
+            .await
+    }
+
+    /// [`Self::begin_admin_act`], and with `timebox` a widening act taken at
+    /// once in any tenant, for at most a day, which a second admin person
+    /// settles afterwards (ADR-0097 d13); its caller has checked the box.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn begin_admin_act_boxed(
+        &self,
+        admin: &KeyRecord,
+        act: AdminActKind,
+        target: Value,
+        reason: Option<&str>,
+        effect: Value,
+        prev: Option<&SignedEnvelope>,
+        timebox: bool,
+    ) -> Result<BegunAct, AppError> {
         let tenant_id = admin.tenant_id;
         let (state, sole_admin) = if act.class() == AdminActClass::Widening {
             let standing = self.journal.admin_standing(tenant_id).await?;
             if standing.sole_admin && !self.act_against_admin_open(tenant_id).await? {
                 (AdminActState::Effective, true)
+            } else if timebox {
+                (AdminActState::Effective, false)
             } else {
                 (AdminActState::PendingConfirmation, false)
             }
@@ -295,7 +315,7 @@ where
         act: Option<BegunAct>,
         links: Vec<(SignedEnvelope, MetadataFold)>,
     ) -> Result<crate::ports::CommitReceipt, AppError> {
-        let mut reqs = Vec::with_capacity(links.len() + 1);
+        let mut reqs = Vec::with_capacity(links.len() + 2);
         if let Some(act) = &act {
             let (event, fold) = act.link();
             reqs.push(commit_request(event, fold, None));
@@ -305,7 +325,22 @@ where
                 .into_iter()
                 .map(|(event, fold)| commit_request(event, fold, None)),
         );
-        Ok(self.commit_requests(reqs).await?)
+        // The notice a loud act writes, in its own commit (ADR-0097 d20),
+        // after the effect; the receipt still names the effect's last
+        // event, as the callers read it.
+        let effect = reqs.last().map(|r| CommitReceipt {
+            seq: r.event.envelope.seq,
+            hash: r.event.hash,
+        });
+        let before = reqs.len();
+        if let Some(act) = &act {
+            self.with_notice(&act.record, &mut reqs).await?;
+        }
+        let receipt = self.commit_requests(reqs).await?;
+        Ok(match effect {
+            Some(effect) if before > 0 && effect.seq < receipt.seq => effect,
+            _ => receipt,
+        })
     }
 
     /// Whether an act against an admin is open in the tenant: then widening
@@ -401,7 +436,7 @@ where
             AdminActState::PendingConfirmation => false,
             AdminActState::Expired => return Err(AppError::AdminAct(AdminActRefusal::Expired)),
             AdminActState::Effective
-                if act.sole_admin && act.class() == AdminActClass::Widening =>
+                if (act.sole_admin || act.timebox()) && act.class() == AdminActClass::Widening =>
             {
                 true
             }
@@ -733,11 +768,14 @@ where
             .admin_act(tenant_id, act_id)
             .await?
             .ok_or(AppError::NotFound)?;
-        match act.state_at(&self.clock.now()) {
-            AdminActState::PendingConfirmation => {}
+        // A time box took effect at once; its confirmation settles it and
+        // applies nothing more (ADR-0097 d13).
+        let settles_box = match act.state_at(&self.clock.now()) {
+            AdminActState::PendingConfirmation => false,
+            AdminActState::Effective if act.timebox() => true,
             AdminActState::Expired => return Err(AppError::AdminAct(AdminActRefusal::Expired)),
             _ => return Err(AppError::AdminAct(AdminActRefusal::NotPending)),
-        }
+        };
         let Some(person) = self.counted_person_of(&admin).await? else {
             return Err(AppError::AdminAct(AdminActRefusal::NotAdminPerson));
         };
@@ -770,8 +808,10 @@ where
         let at = event.envelope.at.clone();
         let mut links = vec![(event, MetadataFold::AdminAct(Box::new(act.clone())))];
         let mut ceilings = Vec::new();
-        self.confirmed_effect(&admin, &act, &mut links, &mut ceilings)
-            .await?;
+        if !settles_box {
+            self.confirmed_effect(&admin, &act, &mut links, &mut ceilings)
+                .await?;
+        }
         let mut reqs: Vec<_> = links
             .into_iter()
             .map(|(event, fold)| commit_request(event, fold, None))

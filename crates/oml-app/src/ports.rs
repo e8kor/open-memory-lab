@@ -584,9 +584,29 @@ pub enum MetadataFold {
     /// its open investigations, whose read count moves; the store refuses
     /// an investigation that is not open or not the key's with
     /// [`StoreError::InvestigationNotOpen`] (ADR-0045 d21; ADR-0089 d10).
+    /// `notice.written`: one row per recipient of the notice (ADR-0097
+    /// d20).
+    NoticeWritten {
+        notice_id: Uuid,
+        kind: oml_domain::notice::NoticeKind,
+        act_id: Option<Uuid>,
+        recipients: Vec<oml_domain::name::Name>,
+        detail: serde_json::Value,
+    },
+    /// `notice.dismissed`: the recipient's row is dismissed; a row that
+    /// is not the recipient's, or one already dismissed, is refused with
+    /// [`StoreError::Backend`], which the use case's own check rules out.
+    NoticeDismissed {
+        notice_id: Uuid,
+        recipient: oml_domain::name::Name,
+    },
+    /// `persons` are the persons whose own roots the page read: each one's
+    /// count of admin reads for the month of the event moves by one
+    /// (ADR-0097 d16).
     AdminMemoryRead {
         investigation_id: Uuid,
         key_id: Uuid,
+        persons: Vec<oml_domain::name::Name>,
     },
     /// `admin.fix`: the fix's row, unconfirmed, and the mark on the
     /// version it made the served tip (`served_id`), in the commit that
@@ -1117,6 +1137,15 @@ pub trait Retriever: Send + Sync {
 /// on another store, as an embedder's index would be, gets its own (ADR-0049
 /// d2).
 pub trait JournalStore: Retriever + Send + Sync {
+    /// The tenant's live person's reviewer keys, each with its grants and
+    /// the denials in force, in name order: keys only, never a memory
+    /// (ADR-0080 d16; #435). Notices read it for the reviewer
+    /// persons of a workspace (ADR-0097 d24).
+    fn web_person_reviewers(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<PersonReviewer>, StoreError>> + Send;
+
     /// Inserts an open upload session, in one transaction with the count
     /// of the key's open and unbound sessions and the sum of the tenant's
     /// declared bytes: the session's key holding `per_key` of them already
@@ -1819,6 +1848,23 @@ pub trait JournalStore: Retriever + Send + Sync {
         memory_id: Uuid,
     ) -> impl Future<Output = Result<bool, StoreError>> + Send;
 
+    /// `recipient`'s notices, oldest first, the dismissed ones only when
+    /// `dismissed` (ADR-0097 d20).
+    fn notices(
+        &self,
+        tenant_id: Uuid,
+        recipient: &oml_domain::name::Name,
+        dismissed: bool,
+    ) -> impl Future<Output = Result<Vec<crate::types::NoticeRecord>, StoreError>> + Send;
+
+    /// The admin reads of `person`'s own root, one count per month
+    /// (`YYYY-MM`, UTC) with any, oldest first (ADR-0097 d16).
+    fn admin_read_counts(
+        &self,
+        tenant_id: Uuid,
+        person: &oml_domain::name::Name,
+    ) -> impl Future<Output = Result<Vec<crate::types::AdminReadCount>, StoreError>> + Send;
+
     /// One investigation of the tenant, open or closed (ADR-0089 d10).
     fn investigation(
         &self,
@@ -2391,14 +2437,6 @@ pub trait WebStore: JournalStore {
         &self,
         tenant_id: Uuid,
     ) -> impl Future<Output = Result<Vec<QueueDepth>, StoreError>> + Send;
-
-    /// The tenant's live person's reviewer keys, each with its grants and
-    /// the denials in force, in name order: keys only, never a memory
-    /// (ADR-0080 d16; #435).
-    fn web_person_reviewers(
-        &self,
-        tenant_id: Uuid,
-    ) -> impl Future<Output = Result<Vec<PersonReviewer>, StoreError>> + Send;
 
     /// Every memory of the tenant the search names, any state, newest
     /// first (ADR-0045 d21).

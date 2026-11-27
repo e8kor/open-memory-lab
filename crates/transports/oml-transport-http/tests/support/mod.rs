@@ -196,3 +196,107 @@ pub async fn linked_admin_key(app: &TestApp, admin: &str, user: &str, name: &str
         .expect("the person accepts the link");
     issued.value
 }
+
+/// A session of `capacity` for `entry`, opened now.
+#[allow(dead_code, reason = "not every test crate links a key")]
+pub async fn session_of(
+    app: &TestApp,
+    entry: &oml_app::types::WebEntry,
+    capacity: oml_app::app::Capacity,
+) -> oml_app::app::Caller {
+    let token = app
+        .web_session_open(entry, 3600, None)
+        .await
+        .expect("a session")
+        .token;
+    let session = app
+        .web_session(&token)
+        .await
+        .expect("a read")
+        .expect("a live session");
+    app.web_caller(&session, capacity)
+        .await
+        .expect("the session key")
+}
+
+/// The entry of `user` under `admin`, added where the tenant holds none,
+/// with its session keys.
+#[allow(dead_code, reason = "not every test crate links a key")]
+pub async fn entry_of(
+    app: &TestApp,
+    admin: &str,
+    user: &str,
+    is_admin: bool,
+) -> oml_app::types::WebEntry {
+    use oml_app::domain::name::Name;
+    use oml_app::domain::web::Email;
+    use oml_app::types::WebEmailRequest;
+    let held = app
+        .list_web_emails(admin, None, 500)
+        .await
+        .expect("entries")
+        .into_iter()
+        .find(|e| e.user.as_str() == user);
+    let entry = match held {
+        Some(entry) => entry,
+        None => {
+            app.allow_web_email(
+                admin,
+                &WebEmailRequest {
+                    email: Email::parse(&format!("{user}@example.com")).expect("an email"),
+                    user: Name::parse(user).expect("a user name"),
+                    admin: is_admin,
+                },
+            )
+            .await
+            .expect("the entry")
+            .0
+        }
+    };
+    app.web_ensure_keys(&entry).await.expect("session keys");
+    entry
+}
+
+/// The bootstrap admin key `admin` linked to the admin person `ops` by
+/// possession and accepted from ops's session, so it, and the keys it
+/// issues, count as ops (ADR-0097 d12, d16, d22).
+#[allow(dead_code, reason = "not every test crate links a key")]
+pub async fn admin_counts(app: &TestApp, admin: &str) {
+    use oml_app::app::Capacity;
+    use oml_app::domain::name::Name;
+    use oml_app::types::Bearer;
+    let ops = entry_of(app, admin, "ops", true).await;
+    if let Ok(key) = app
+        .link_self(admin, &Name::parse("ops").expect("a name"))
+        .await
+    {
+        let web = session_of(app, &ops, Capacity::Web).await;
+        app.accept_key_link(Bearer::Session(&web), key.key_id.into())
+            .await
+            .expect("ops accepts the link");
+    }
+}
+
+/// The tenant key `key_id` linked to the person `person`, by the admin
+/// person `ops`, and accepted from `person`'s session, so it counts as
+/// `person` (ADR-0085 d16; ADR-0097 d12).
+#[allow(dead_code, reason = "not every test crate links a key")]
+pub async fn counts_as(app: &TestApp, admin: &str, key_id: uuid::Uuid, person: &str) {
+    use oml_app::app::Capacity;
+    use oml_app::domain::name::Name;
+    use oml_app::types::Bearer;
+    let ops = entry_of(app, admin, "ops", true).await;
+    let entry = entry_of(app, admin, person, false).await;
+    let by = session_of(app, &ops, Capacity::Admin).await;
+    app.link_key_to_person(
+        Bearer::Session(&by),
+        key_id.into(),
+        &Name::parse(person).expect("a name"),
+    )
+    .await
+    .expect("the key is linked");
+    let web = session_of(app, &entry, Capacity::Web).await;
+    app.accept_key_link(Bearer::Session(&web), key_id.into())
+        .await
+        .expect("the person accepts the link");
+}

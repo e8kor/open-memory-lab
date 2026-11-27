@@ -4,7 +4,7 @@
 //! decision of 2026-11-19), and from then on the key acts for them and the
 //! console acts with it through the session.
 
-use serde_json::json;
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use oml_domain::name::{Name, NamedKind, Reference};
@@ -22,6 +22,33 @@ where
     I: IdGen,
     Sc: Scanner,
 {
+    /// What an acceptance records of the session that gave it (ADR-0097
+    /// d7): a digest of each provider subject its entry pinned, and the
+    /// session's age in seconds; `null` fields for a caller that is no
+    /// session, which an acceptance refuses anyway.
+    pub(crate) async fn acceptance_evidence(&self, caller: &Caller) -> Result<Value, AppError> {
+        let Some((opened, email_hash)) = caller.session.clone() else {
+            return Ok(json!({ "provider_subject_digests": [], "session_age_seconds": null }));
+        };
+        let entry = self.journal.web_entry_by_email(&email_hash).await?;
+        let digests: Vec<String> = entry
+            .iter()
+            .flat_map(|e| {
+                [
+                    e.google_subject.as_ref().map(|s| format!("google:{s}")),
+                    e.github_subject.as_ref().map(|s| format!("github:{s}")),
+                ]
+            })
+            .flatten()
+            .map(|s| oml_domain::Sha256Hash::digest(s.as_bytes()).to_prefixed())
+            .collect();
+        let age = (self.clock.now().unix_micros() - opened.unix_micros()).max(0) / 1_000_000;
+        Ok(json!({
+            "provider_subject_digests": digests,
+            "session_age_seconds": age,
+        }))
+    }
+
     /// `POST /v2/keys/{key}/link` (ADR-0085 d16): the tenant key's link to
     /// `user`, journalled as `key.linked_person` and pending until `user`
     /// accepts it from their own console session
@@ -251,10 +278,11 @@ where
         bearer: impl Into<Bearer<'_>>,
         key: Reference,
     ) -> Result<(KeyRecord, Name), AppError> {
-        let caller = self
+        let session = self
             .key_act_caller(bearer.into(), "accept_key_link")
-            .await?
-            .key;
+            .await?;
+        let evidence = self.acceptance_evidence(&session).await?;
+        let caller = session.key;
         let Some(session_user) = caller
             .session_user
             .as_ref()
@@ -318,6 +346,9 @@ where
                 "user": root.name.as_str(),
                 "user_root_id": root_id.to_string(),
                 "accepted_by_key_id": caller.key_id.to_string(),
+                // The provider subject and the session's age, so a forged
+                // acceptance can be told apart afterwards (ADR-0097 d7).
+                "evidence": evidence,
             }),
         )?;
         let mut links = vec![(
