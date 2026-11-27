@@ -94,7 +94,7 @@ done
 
 OML="$BIN/oml"
 "$OML" --url "$URL" --json bootstrap claim eval-admin --token-stdin \
-    --tenant-name eval --principal eval/admin <<<"$TOKEN" >/dev/null || fail "bootstrap claim"
+    --tenant-name eval --principal eval/admin --person eval --email eval@example.com <<<"$TOKEN" >/dev/null || fail "bootstrap claim"
 "$OML" --json workspaces create universe eval-crew >/dev/null || fail "workspace"
 (umask 077
  "$OML" --json keys issue eval-writer --role contributor --used-by agent --principal crew/writer \
