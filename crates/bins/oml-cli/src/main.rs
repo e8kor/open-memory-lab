@@ -2094,12 +2094,12 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 },
         } => {
             let client = resolve_url(cli, &stored)?;
-            let tenant = uuid::Uuid::parse_str(&tenant)
+            let tenant = uuid::Uuid::parse_str(tenant)
                 .map_err(|_| CliError::local(format!("{tenant:?} is not a tenant id")))?;
-            let token = operator_token(&token_dir, tenant)?;
+            let token = operator_token(token_dir, tenant)?;
             let path = format!(
                 "/v2/operator/tenants/{tenant}/acts/{}/settle",
-                segment(&act)?
+                segment(act)?
             );
             let outcome = if *confirm { "confirm" } else { "reverse" };
             let (_, response) =

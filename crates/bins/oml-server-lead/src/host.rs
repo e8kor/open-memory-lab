@@ -304,7 +304,7 @@ mod tests {
                 .expect("greet");
             let mut buf = [0_u8; 4096];
             let mut in_data = false;
-            while let Some(reply) = replies.next() {
+            for reply in replies {
                 // Read until a whole command, or the message's final dot.
                 loop {
                     let n = socket.read(&mut buf).await.expect("read");
