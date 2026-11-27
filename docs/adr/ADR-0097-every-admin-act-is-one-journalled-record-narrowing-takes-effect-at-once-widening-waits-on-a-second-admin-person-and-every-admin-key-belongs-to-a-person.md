@@ -13,7 +13,7 @@ brief's recommendations, and this record re-derives every rule that rested on th
 recommendations (marked **re-derived** where it appears). The operator answered the five tensions
 those answers created, and three readings, the same day; each answer is recorded where it applies
 and marked **decided by the operator, 2026-11-25**. Readings this record takes beyond the answers
-are marked **reading, for the operator to confirm**.
+are marked **reading, for the operator to confirm**. Amended by [ADR-0098](ADR-0098-a-protected-or-frozen-workspace-can-be-marked-public-and-then-every-reading-key-in-the-tenant-reads-its-approved-items.md) (d3, d5, 2026-11-26, decided by the operator).
 
 **Release:** v0.8.6, not built. Four pieces are built in v0.8.5 (d27).
 
@@ -915,3 +915,13 @@ rule this record makes:
 | **A zero-person `sole_admin` with an unlinked bootstrap key (Q2(a) as recommended)** | A bootstrap now names a person (d21). |
 | **Cascading revocation now** | The operator asked for one plain verb with room to add it later (d14). |
 | **A timer that settles a two-admin dispute** | It reverts a fair containment when nobody acts; a freeze with host settlement fails closed (d8, d19). |
+
+## Amendment of 2026-11-26: the public flag joins the widening and narrowing lists (amends d3, d5; ADR-0098)
+
+Decided by the operator on 2026-11-26; recorded in [ADR-0098](ADR-0098-a-protected-or-frozen-workspace-can-be-marked-public-and-then-every-reading-key-in-the-tenant-reads-its-approved-items.md). Designed, not built; it ships in v0.8.6.
+
+- **d5.** Marking a `protected` or `frozen` workspace public (`workspace_public_set`) is widening:
+  it takes effect only when a second admin person who counts confirms it, and at once, marked,
+  under `sole_admin` (ADR-0098 d6).
+- **d3.** Clearing the flag (`workspace_public_clear`) is narrowing: at once, never reverting by
+  itself, and it declines a pending set.
