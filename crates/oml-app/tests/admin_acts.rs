@@ -3709,3 +3709,51 @@ async fn a_declined_sole_admin_federation_acceptance_is_undone() {
         "the decline set the field back"
     );
 }
+
+/// The first curation designation is widening like every later one:
+/// `<user>-curate` and its submitter grant on `universe` and reader grant
+/// wait in one `issue_key` act until a second admin person confirms them,
+/// and the key authenticates nothing meanwhile (ADR-0097 d5, d6, d23;
+/// review finding core-2).
+#[tokio::test]
+async fn the_first_curation_designation_waits_on_a_second_admin_person() {
+    let r = two_admins().await;
+    let bob = r.admin_session("bob").await;
+    let granted = r
+        .app
+        .grant_curation_capacity_with_reason(&bob, &name("alice"), by_name("crew"), Some("curator"))
+        .await
+        .expect("a pending designation");
+    assert!(granted.grants_added.is_empty(), "nothing is served yet");
+    let held = r
+        .store
+        .key_access(r.boot.tenant_id, granted.key.key_id)
+        .await
+        .expect("read")
+        .map(|a| a.grants)
+        .unwrap_or_default();
+    assert!(held.is_empty(), "the curate key holds no grant while it waits");
+    assert!(granted.key.pending_act.is_some(), "the key waits");
+    let act = r
+        .store
+        .admin_acts(r.boot.tenant_id, Some(AdminActState::PendingConfirmation))
+        .await
+        .expect("acts")
+        .into_iter()
+        .find(|a| a.act.as_str() == "issue_key")
+        .expect("the pending issuance");
+    assert_eq!(act.effect["grants"].as_array().map(Vec::len), Some(2));
+    let alice = r.admin_session("alice").await;
+    r.app
+        .confirm_admin_act(Bearer::Session(&alice), act.act_id, Some("confirmed"))
+        .await
+        .expect("a second admin person confirms");
+    let held = r
+        .store
+        .key_access(r.boot.tenant_id, granted.key.key_id)
+        .await
+        .expect("read")
+        .map(|a| a.grants)
+        .unwrap_or_default();
+    assert_eq!(held.len(), 2, "both grants apply at the confirmation");
+}

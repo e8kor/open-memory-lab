@@ -885,11 +885,11 @@ where
                 grants_added: added,
             });
         }
-        // The first designation: the bare `<user>-curate`, holding no grant,
-        // is issued by the server issuer as every session key is (ADR-0097
-        // d18), and both its grants are added as one widening act, so the
-        // capacity waits on a second admin person outside `sole_admin` as a
-        // later designation does (d5, d6; review finding core-2).
+        // The first designation issues `<user>-curate` with its two grants
+        // as one widening admin act, as a plain issuance is: outside
+        // `sole_admin` the key and its grants wait on a second admin person,
+        // as a later designation does (ADR-0097 d5, d6; review finding
+        // core-2).
         let name = key_name(user, Capacity::Curate.suffix())?;
         let req = IssueKeyRequest {
             profile: None,
@@ -902,7 +902,16 @@ where
             used_by: Some(UsedBy::Person),
             default_workspace: None,
             crew: None,
-            grants: Vec::new(),
+            grants: vec![
+                GrantRequest {
+                    node: Reference::Name(Name::parse(UNIVERSE).expect("universe is a name")),
+                    role: Role::Submitter,
+                    deny: Vec::new(),
+                    covers: Covers::Node,
+                    create: false,
+                },
+                reader,
+            ],
             connect_code: false,
             user: None,
             expiry: None,
@@ -910,30 +919,21 @@ where
             person: None,
             create_workspaces: Vec::new(),
         };
-        let prev = self.head_event(tenant_id).await?;
-        let (issuer, links) = self.server_issuer(tenant_id, prev.as_ref()).await?;
-        if !links.is_empty() {
-            self.commit_requests(links).await?;
-        }
-        self.issue_key_by(&issuer, &req, Issuance::Session(user))
+        let issued = self
+            .issue_key_by(&admin.key, &req, Issuance::AdminSession(user, reason))
             .await?;
         let key = self
-            .session_key_of(tenant_id, user, Capacity::Curate)
+            .journal
+            .key(tenant_id, issued.key_id)
             .await?
             .ok_or(AppError::WebKeyMissing { capacity: "curate" })?;
-        let universe = GrantRequest {
-            node: Reference::Name(Name::parse(UNIVERSE).expect("universe is a name")),
-            role: Role::Submitter,
-            deny: Vec::new(),
-            covers: Covers::Node,
-            create: false,
-        };
-        let added = self
-            .add_grants(&admin.key, &key, &[universe, reader], reason)
-            .await?;
         Ok(CapacityGranted {
             key,
-            grants_added: added,
+            grants_added: if issued.pending_act.is_some() {
+                Vec::new()
+            } else {
+                issued.access.grants
+            },
         })
     }
 

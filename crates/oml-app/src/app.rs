@@ -715,6 +715,12 @@ pub(crate) enum Issuance<'a> {
     Plain(Option<&'a str>, Option<&'a Timebox>),
     /// A session key for the allowlist user named: no value.
     Session(&'a Name),
+    /// A session key an admin designates for the user named, with the
+    /// admin's reason: no value, and a widening admin act as a plain
+    /// issuance is, so its grants wait on a second admin person outside
+    /// `sole_admin` (ADR-0097 d5, d6; the first `<user>-curate`, review
+    /// finding core-2).
+    AdminSession(&'a Name, Option<&'a str>),
     /// A person's `<user>-web` issuing a key in its own root, sealed on the
     /// chain head read before that key's access ([`Head::BeforeAccess`]).
     PersonsOwn(&'a Option<SignedEnvelope>),
@@ -4530,7 +4536,7 @@ where
             let admitted = match how {
                 Issuance::PersonsOwn(_) => true,
                 Issuance::Plain(..) => issuer.role == Role::Admin,
-                Issuance::Session(_) => false,
+                Issuance::Session(_) | Issuance::AdminSession(..) => false,
             };
             if !admitted {
                 return Err(AppError::VerbCeiling {
@@ -4577,7 +4583,9 @@ where
         // The server issuer issues the four session-key shapes alone, which
         // its caller fixes, read as an admin's ceiling (ADR-0097 d18).
         let ceiling = match how {
-            Issuance::PersonsOwn(_) | Issuance::Session(_) => Role::Admin,
+            Issuance::PersonsOwn(_) | Issuance::Session(_) | Issuance::AdminSession(..) => {
+                Role::Admin
+            }
             Issuance::Plain(..) => issuer.role,
         };
         // A curator is a reviewer key used by an agent, whose submitter grants
@@ -4762,7 +4770,7 @@ where
         }
         // A session key has no value and so no hash: nothing can present it
         // (ADR-0045 d6).
-        if let Issuance::Session(session_user) = how {
+        if let Issuance::Session(session_user) | Issuance::AdminSession(session_user, _) = how {
             record.credential = Credential::Session;
             record.key_hash = None;
             record.session_user = Some(session_user.clone());
@@ -4772,11 +4780,18 @@ where
         let guardrail_scope = record.guardrail_scope;
         let prev = match how {
             Issuance::PersonsOwn(head) => head.clone(),
-            Issuance::Plain(..) | Issuance::Session(_) => self.head_event(tenant_id).await?,
+            Issuance::Plain(..) | Issuance::Session(_) | Issuance::AdminSession(..) => {
+                self.head_event(tenant_id).await?
+            }
         };
         // A key that could read, write, approve or ratify, by an admin key:
         // a widening act (ADR-0097 d5).
-        if let Issuance::Plain(reason, timebox) = how
+        let admin_act = match how {
+            Issuance::Plain(reason, timebox) => Some((reason, timebox)),
+            Issuance::AdminSession(_, reason) => Some((reason, None)),
+            _ => None,
+        };
+        if let Some((reason, timebox)) = admin_act
             && issuer.role == Role::Admin
         {
             let issued = self
