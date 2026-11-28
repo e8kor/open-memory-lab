@@ -35,7 +35,7 @@ pub use transport::{HttpTransport, Sending, Transport, TransportError};
 /// and of each struct it holds, to the operation's 2xx schema;
 /// `every_method_sends_the_method_path_and_type_its_table_entry_names`
 /// holds the methods to it.
-pub const OPERATIONS: [&str; 50] = [
+pub const OPERATIONS: [&str; 52] = [
     "authorizationServerMetadata GET /.well-known/oauth-authorization-server resp:AuthorizationServerMetadata",
     "whoami GET /v2/whoami query:person resp:Whoami",
     "getGuardrails GET /v1/guardrails query:workspace resp:GuardrailSet",
@@ -63,6 +63,8 @@ pub const OPERATIONS: [&str; 50] = [
     "listAdminActs GET /v2/admin/acts query:state resp:AdminActList",
     "confirmAdminAct POST /v2/admin/acts/{act}/confirm resp:AdminAct",
     "declineAdminAct POST /v2/admin/acts/{act}/decline body:reason resp:AdminAct",
+    "listNotices GET /v2/web/notices resp:NoticeList",
+    "dismissNotice POST /v2/web/notices/{notice}/dismiss resp:Notice",
     "issueKey POST /v2/keys body:name,role,connect_code,expiry resp:KeyIssued",
     "mintConnectCode POST /v2/keys/{key}/connect-codes resp:ConnectCode",
     "addDenial POST /v2/keys/{key}/denials body:workspace resp:Denial",
@@ -1596,8 +1598,33 @@ pub struct TodoCounts {
     /// d7).
     #[serde(default)]
     pub briefs: u64,
+    /// The Notices group: the person's notices not dismissed (ADR-0097
+    /// d20); 0 from an API before v0.8.6.
+    #[serde(default)]
+    pub notices: u64,
     /// Whether a count passed 1,000.
     pub truncated: bool,
+}
+
+/// `GET /v2/web/notices`'s answer: the person's notices not dismissed,
+/// oldest first (ADR-0097 d20).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct NoticeList {
+    pub items: Vec<Notice>,
+}
+
+/// One in-product notice to one person (openapi.yaml `Notice`; ADR-0097
+/// d20): what it tells about, the act, the act's detail and when.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Notice {
+    pub notice_id: String,
+    pub kind: String,
+    #[serde(default)]
+    pub act_id: Option<String>,
+    pub detail: Value,
+    pub at: String,
+    #[serde(default)]
+    pub dismissed_at: Option<String>,
 }
 
 /// `GET /v2/admin/todo/counts`: the guardrail-loosening alerts, 0 from an
@@ -2814,6 +2841,35 @@ impl<T: Transport> Client<T> {
             None => "/v2/todo/counts".to_owned(),
         };
         self.get(Some(call), path).await
+    }
+
+    /// `GET /v2/web/notices`: the calling person's notices not dismissed,
+    /// oldest first (ADR-0097 d20).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn notices(&self, call: &Call<'_>) -> Result<NoticeList, Error> {
+        self.get(Some(call), "/v2/web/notices".to_owned()).await
+    }
+
+    /// `POST /v2/web/notices/{notice}/dismiss`: the person dismisses a
+    /// notice of their own (ADR-0097 d20).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn dismiss_notice(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        notice: &str,
+    ) -> Result<Notice, Error> {
+        self.post(
+            call,
+            format!("/v2/web/notices/{}/dismiss", encode(notice)),
+            idempotency_key,
+            &serde_json::json!({}),
+        )
+        .await
     }
 
     /// `GET /v2/admin/todo/counts`: the administration To do page's
@@ -4100,6 +4156,8 @@ mod tests {
                     .decline_admin_act(&CALL, "idem-a2", "act-1", "not this agent")
                     .await,
             ),
+            decodes(&client.notices(&CALL).await),
+            decodes(&client.dismiss_notice(&CALL, "idem-n1", "n-1").await),
             decodes(
                 &client
                     .issue_key(&CALL, "idem-7", "alice-laptop", "contributor", false, None)

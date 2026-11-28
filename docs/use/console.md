@@ -17,7 +17,8 @@ its own inverted bar.
 ## To do: what waits for a verdict
 
 1. **Read the badge.** Every page carries **To do · N** beside the account name: the held versions
-   `<user>-review` may judge, across every workspace.
+   `<user>-review` may judge, the brief proposals it may ratify and the notices not dismissed,
+   across every workspace.
 2. **Open To do** (`/web/todo`). Its **To review** group lists them oldest first. Each row names
    the decision (New memory, New skill, Edit of v2, Retirement of v1), the kind, workspace and
    author, `same user` where a key of the person wrote it inside their own root, and how long it
@@ -30,6 +31,16 @@ its own inverted bar.
 
 With nothing to judge, To do says "Nothing waits for this account." What to check before
 approving is in [review held memories](../guides/reviewing.md#check-the-memory).
+
+## Notices
+
+An admin act this account must be told about waits in To do's **Notices**, whatever the workspace,
+and counts in the badge: an act against an admin, an act that narrows a person's or a workspace's
+access (a production fix that loosens a guardrail, disabling a person, revoking a person's key,
+denying a reviewer person's key), or a key, grant or connect code a sole admin took at once inside
+this account's own root. Each row names what it tells about, the act, the admin person who took
+it and when. **Dismiss** removes it from To do; the journal keeps the notice and the act
+([ADR-0097](../adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) d20, d24).
 
 ## Brief proposals to ratify
 

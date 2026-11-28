@@ -5,3 +5,5 @@ The workspace picker, Browse, the Memories cockpit and the personal workspace pa
 The admin act confirm screen shows every part of an act that widens: a grant's `create` flag, the workspaces an issuance creates, an admin key's person and a time box's end. A public set also shows the workspace's path, its status and its children that stay private, and says that every reading key of the tenant, user keys included, recalls its approved items by default (ADR-0097 d23, d30, d31; ADR-0098 d9). On the admin Workspaces page, the Public toggle shows "waits on another admin" with the act's link while a set waits, and offers "Clear public", which declines the set. It also lists the node's public acts, from one read of `GET /v2/admin/acts` made beside the rows.
 
 The administration To do lists each cleared public flag under "Done: public cleared", newest first, and leaves it out of the count (ADR-0098 d6).
+
+The personal To do gains a **Notices** group. It lists each notice the person has not dismissed, with a Dismiss form, and the To do badge counts the notices (ADR-0097 d20, d24). The Rust SDK gains `notices` and `dismiss_notice` and reads `TodoCounts.notices`.
