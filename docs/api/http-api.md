@@ -1426,6 +1426,7 @@ Requires: admin key role.
 | `keys` | ['integer', 'null'] | no |  |
 | `connections` | ['integer', 'null'] | no |  |
 | `requests_per_minute` | ['integer', 'null'] | no |  |
+| `reason` | ['string', 'null'] | no | The admin's reason. |
 
 **Responses.** `200` The person's row.; `403` A 403-class refusal naming its rule (access.*, review.*, simulation.audience_refused).; `404` access.not_found — absent or outside read scope, indistinguishable by design.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
 

@@ -18,12 +18,17 @@ class SetWebUserQuotaBody:
         keys (int | None | Unset):
         connections (int | None | Unset):
         requests_per_minute (int | None | Unset):
+        reason (None | str | Unset): The admin's reason. A raise above the person's effective limit, or a cleared
+            override whose default is higher, is a widening admin act (raise_limits) that waits on a second admin person
+            outside sole_admin and requires a reason, else request.validation with details.field /reason; a lowering is
+            narrowing (lower_limits) and applies at once (ADR-0097 d15, d26).
     """
 
     memories: int | None | Unset = UNSET
     keys: int | None | Unset = UNSET
     connections: int | None | Unset = UNSET
     requests_per_minute: int | None | Unset = UNSET
+    reason: None | str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         memories: int | None | Unset
@@ -50,6 +55,12 @@ class SetWebUserQuotaBody:
         else:
             requests_per_minute = self.requests_per_minute
 
+        reason: None | str | Unset
+        if isinstance(self.reason, Unset):
+            reason = UNSET
+        else:
+            reason = self.reason
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update({})
@@ -61,6 +72,8 @@ class SetWebUserQuotaBody:
             field_dict["connections"] = connections
         if requests_per_minute is not UNSET:
             field_dict["requests_per_minute"] = requests_per_minute
+        if reason is not UNSET:
+            field_dict["reason"] = reason
 
         return field_dict
 
@@ -106,11 +119,21 @@ class SetWebUserQuotaBody:
             d.pop("requests_per_minute", UNSET)
         )
 
+        def _parse_reason(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        reason = _parse_reason(d.pop("reason", UNSET))
+
         set_web_user_quota_body = cls(
             memories=memories,
             keys=keys,
             connections=connections,
             requests_per_minute=requests_per_minute,
+            reason=reason,
         )
 
         return set_web_user_quota_body
