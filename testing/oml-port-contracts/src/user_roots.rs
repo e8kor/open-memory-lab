@@ -1442,7 +1442,13 @@ pub async fn the_last_admin_entry_is_refused_a_change_that_leaves_it_pending<
     // two acts before the guard reads it (ADR-0097 d5, d8; review finding
     // core-12); either refusal leaves the entry as it was.
     assert!(
-        matches!(err, AppError::WebField { field: "user" | "admin", .. }),
+        matches!(
+            err,
+            AppError::WebField {
+                field: "user" | "admin",
+                ..
+            }
+        ),
         "{err:?}"
     );
     let stored = w

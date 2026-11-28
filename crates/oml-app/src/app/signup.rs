@@ -365,10 +365,7 @@ where
         // override, or with none the default (ADR-0097 d15).
         let (now, _) = self.quotas_of(tenant_id, root).await?;
         let overrides = self.journal.user_quota_overrides(tenant_id, root).await?;
-        let found = overrides
-            .iter()
-            .find(|(q, _)| *q == quota)
-            .map(|(_, l)| *l);
+        let found = overrides.iter().find(|(q, _)| *q == quota).map(|(_, l)| *l);
         let after = limit.unwrap_or_else(|| self.default_quotas().get(quota));
         let kind = if after > now.get(quota) {
             oml_domain::admin_act::AdminActKind::RaiseLimits

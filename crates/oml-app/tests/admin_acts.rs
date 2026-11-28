@@ -1303,7 +1303,11 @@ async fn admin_acts_to_confirm_counts_what_another_admin_person_may_confirm() {
     // anyone (D30, decided by the operator, 2026-11-28); they stay in the
     // acts list, declinable. The pending issuance adds to bob's alone.
     let (bobs_before, alices_before) = (counts(&bob).await, counts(&alice).await);
-    assert_eq!((bobs_before, alices_before), (0, 0), "no sole_admin act counts");
+    assert_eq!(
+        (bobs_before, alices_before),
+        (0, 0),
+        "no sole_admin act counts"
+    );
     let listed = r
         .app
         .admin_acts_listed(Bearer::Session(&bob), None)
@@ -3855,7 +3859,11 @@ async fn an_unlinked_admin_key_is_suspended_until_a_link_is_accepted() {
         .unlink_key_from_person(Bearer::Session(&alice), key.key_id.into())
         .await
         .expect("unlinked");
-    let err = r.app.admin_acts(key.value.as_str(), None).await.unwrap_err();
+    let err = r
+        .app
+        .admin_acts(key.value.as_str(), None)
+        .await
+        .unwrap_err();
     assert!(matches!(err, AppError::KeySuspended), "{err:?}");
     r.app
         .whoami(key.value.as_str())
@@ -4090,7 +4098,10 @@ async fn an_empty_or_whitespace_reason_is_refused_where_a_reason_is_required() {
             .issue_key_with_reason(r.admin(), &agent_req(), Some(blank))
             .await
             .unwrap_err();
-        assert!(matches!(err, AppError::AdminActReasonRequired), "{blank:?}: {err:?}");
+        assert!(
+            matches!(err, AppError::AdminActReasonRequired),
+            "{blank:?}: {err:?}"
+        );
     }
 }
 
@@ -4140,7 +4151,10 @@ async fn an_admin_entry_moved_to_another_user_with_its_flag_is_refused() {
         )
         .await
         .unwrap_err();
-    assert!(matches!(err, AppError::WebField { field: "user", .. }), "{err:?}");
+    assert!(
+        matches!(err, AppError::WebField { field: "user", .. }),
+        "{err:?}"
+    );
     assert_eq!(r.journal().await.len(), before, "nothing is journalled");
 }
 
@@ -4180,14 +4194,20 @@ async fn the_target_revokes_the_initiator_only_from_the_contest_only_sign_in() {
         .contain_initiator_as(r.boot.tenant_id, &name("bob"), act.act_id)
         .await
         .expect("bob contains alice");
-    assert!(revoked.contains(&alice.key().key_id), "alice's admin session key");
+    assert!(
+        revoked.contains(&alice.key().key_id),
+        "alice's admin session key"
+    );
     let held = r
         .store
         .key(r.boot.tenant_id, alice.key().key_id)
         .await
         .expect("read")
         .expect("held");
-    assert!(held.revoked_at.is_some(), "the initiator's admin key is revoked");
+    assert!(
+        held.revoked_at.is_some(),
+        "the initiator's admin key is revoked"
+    );
 }
 
 /// An admin's grant into an in-progress subtree that would wait on a second
@@ -4273,7 +4293,10 @@ async fn a_pending_key_authenticates_on_no_path_until_confirmed() {
         .confirm_admin_act(Bearer::Session(&bob), act, Some("confirmed"))
         .await
         .expect("confirmed");
-    r.app.whoami(value).await.expect("confirmed, it authenticates");
+    r.app
+        .whoami(value)
+        .await
+        .expect("confirmed, it authenticates");
 }
 
 /// A pending issuance's grants live in the act alone: the key's access
@@ -4384,7 +4407,10 @@ async fn a_link_and_an_address_for_an_existing_person_wait_on_that_person() {
         )
         .await
         .expect("a second address for alice");
-    assert!(entry.pending, "an address for an existing person waits on her");
+    assert!(
+        entry.pending,
+        "an address for an existing person waits on her"
+    );
     let web = r.person_session("alice", Capacity::Web).await;
     r.app
         .accept_key_link(Bearer::Session(&web), issued.key_id.into())
@@ -4406,7 +4432,11 @@ async fn revoking_an_admin_key_breaks_no_sign_in() {
     let key = r.linked_admin_key("alice").await;
     let alice = r.admin_session("alice").await;
     r.app
-        .revoke_key(Bearer::Session(&alice), key.key_id.into(), Some("rotating out"))
+        .revoke_key(
+            Bearer::Session(&alice),
+            key.key_id.into(),
+            Some("rotating out"),
+        )
         .await
         .expect("revoked");
     let again = r.admin_session("alice").await;

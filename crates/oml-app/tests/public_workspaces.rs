@@ -1273,7 +1273,10 @@ async fn a_public_nodes_private_ancestors_are_placeholders_never_names() {
         .await
         .expect("the admin's tree");
     assert!(
-        admin.items.iter().any(|n| n.path == "universe.shared.shared-child"),
+        admin
+            .items
+            .iter()
+            .any(|n| n.path == "universe.shared.shared-child"),
         "an admin key reads every name"
     );
 }

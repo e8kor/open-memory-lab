@@ -1404,23 +1404,21 @@ where
                             reason.as_deref(),
                         )
                     })
-                        .await
-                        .map_err(|e| {
-                            let e = match e {
-                                AppError::WebField { message, .. } => ApiError::validation(message)
-                                    .with_details(
-                                        json!({ "field": format!("/{}", quota.as_str()) }),
-                                    ),
-                                e => map_app_error(e, ErrorContext::Write),
-                            };
-                            // A quota refused after an earlier one was set
-                            // leaves the earlier one standing.
-                            if i == 0 {
-                                ActFailure::first(e)
-                            } else {
-                                ActFailure::after(e)
-                            }
-                        })?;
+                    .await
+                    .map_err(|e| {
+                        let e = match e {
+                            AppError::WebField { message, .. } => ApiError::validation(message)
+                                .with_details(json!({ "field": format!("/{}", quota.as_str()) })),
+                            e => map_app_error(e, ErrorContext::Write),
+                        };
+                        // A quota refused after an earlier one was set
+                        // leaves the earlier one standing.
+                        if i == 0 {
+                            ActFailure::first(e)
+                        } else {
+                            ActFailure::after(e)
+                        }
+                    })?;
                 }
                 let row = st
                     .app

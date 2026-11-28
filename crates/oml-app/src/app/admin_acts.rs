@@ -440,14 +440,14 @@ where
     pub(crate) async fn refuse_in_progress_grants(
         &self,
         tenant_id: Uuid,
-        nodes: impl IntoIterator<Item = Uuid>,
+        nodes: &[Uuid],
     ) -> Result<(), AppError> {
         if self.journal.admin_standing(tenant_id).await?.sole_admin
             && !self.act_against_admin_open(tenant_id).await?
         {
             return Ok(());
         }
-        for node in nodes {
+        for &node in nodes {
             if self
                 .journal
                 .workspace_ancestry(tenant_id, node)

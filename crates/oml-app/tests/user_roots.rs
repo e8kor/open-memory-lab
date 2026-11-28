@@ -7296,7 +7296,13 @@ async fn the_last_admin_entry_changed_to_wait_on_another_person_is_refused() {
     // Moving an admin entry to another user with its flag is refused
     // before the guard reads it: two acts (review finding core-12).
     assert!(
-        matches!(err, AppError::WebField { field: "user" | "admin", .. }),
+        matches!(
+            err,
+            AppError::WebField {
+                field: "user" | "admin",
+                ..
+            }
+        ),
         "{err:?}"
     );
 }

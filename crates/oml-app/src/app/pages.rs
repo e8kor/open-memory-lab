@@ -1000,8 +1000,8 @@ where
         }
         // An admin's grant into an in-progress subtree waits on its
         // reviewer person too, not built: refused by name (d5; core-9).
-        self.refuse_in_progress_grants(tenant_id, resolved.iter().map(|g| g.node))
-            .await?;
+        let nodes: Vec<Uuid> = resolved.iter().map(|g| g.node).collect();
+        self.refuse_in_progress_grants(tenant_id, &nodes).await?;
         // A pending key takes no added grant (ADR-0097 d23).
         if key.pending_act.is_some() {
             return Err(AppError::AdminAct(
