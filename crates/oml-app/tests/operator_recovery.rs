@@ -557,3 +557,107 @@ async fn recovery_is_refused_while_this_process_counts_an_authentication_row_it_
         .await
         .expect("a replica with no failure counted admits it");
 }
+
+/// A sign-in whose authentication row could not be written does not read
+/// as dormancy at the completion: while the row stays unwritten the sweep
+/// refuses the completion `log_write_failed` and the request stays, and
+/// once the store takes writes again the sweep writes the row first and the
+/// sign-in cancels the recovery (ADR-0097 d19, answer 26; review finding
+/// store-5).
+#[tokio::test]
+async fn a_sign_in_whose_row_failed_still_cancels_a_recovery_and_never_reads_as_dormancy() {
+    let (r, bobs) = rig().await;
+    r.clock.advance(31 * DAY);
+    r.recover().await.expect("requested");
+    r.clock.advance(HOUR);
+    r.store.fail_authentication_writes(true);
+    r.app
+        .whoami(bobs.value.as_str())
+        .await
+        .expect("bob signs in; his row is not written");
+    r.clock.advance(72 * HOUR);
+    let err = r.app.recovery_sweep(r.tenant()).await.unwrap_err();
+    assert!(
+        matches!(err, AppError::RecoverRefused(RecoverRefusal::LogWriteFailed)),
+        "{err:?}"
+    );
+    let key = r
+        .store
+        .key(r.tenant(), bobs.key_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert!(key.revoked_at.is_none(), "nothing is revoked");
+    r.store.fail_authentication_writes(false);
+    let sweep = r.app.recovery_sweep(r.tenant()).await.expect("sweep");
+    assert_eq!(
+        (sweep.completed.len(), sweep.cancelled),
+        (0, 1),
+        "the written row cancels the recovery"
+    );
+}
+
+/// A completed recovery revokes every live admin key of the tenant,
+/// whatever its link: a key whose link to its person is still pending
+/// included (ADR-0097 d19; review finding store-4).
+#[tokio::test]
+async fn a_completed_recovery_leaves_no_live_admin_key_in_the_tenant() {
+    let (r, _) = rig().await;
+    let pending = r
+        .app
+        .issue_key(
+            r.admin(),
+            &IssueKeyRequest {
+                profile: None,
+                role: Role::Admin,
+                name: name("bob-laptop"),
+                principal: "bob".to_owned(),
+                used_by: Some(UsedBy::Person),
+                default_workspace: None,
+                crew: None,
+                grants: Vec::new(),
+                user: None,
+                connect_code: false,
+                guardrail_scope: None,
+                expiry: None,
+                requests_per_minute: None,
+                person: Some(name("bob")),
+                create_workspaces: Vec::new(),
+            },
+        )
+        .await
+        .expect("an admin key whose link waits on bob");
+    r.clock.advance(31 * DAY);
+    r.recover().await.expect("requested");
+    r.clock.advance(72 * HOUR);
+    let sweep = r.app.recovery_sweep(r.tenant()).await.expect("sweep");
+    assert_eq!(sweep.completed.len(), 1);
+    let held = r
+        .store
+        .key(r.tenant(), pending.key_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert!(held.revoked_at.is_some(), "the pending-link key is revoked");
+    let live = r.store.live_admin_keys(r.tenant()).await.expect("read");
+    assert!(
+        live.iter()
+            .all(|k| k.name.as_ref().is_some_and(|n| n.as_str().starts_with("carol-"))),
+        "only the new admin person's keys are live: {:?}",
+        live.iter().map(|k| k.name.clone()).collect::<Vec<_>>()
+    );
+}
+
+/// The double's authentication table counts as installed at the clock's
+/// start unless a test sets an older install, as a fresh Postgres's 0076
+/// does, so a recovery right after the install meets `log_too_short`
+/// (ADR-0097, answer 24; review finding store-10).
+#[tokio::test]
+async fn the_doubles_authentication_table_is_installed_when_the_store_is_made() {
+    let store = MemStore::new();
+    let coverage = store.authentication_coverage().await.expect("coverage");
+    assert_eq!(
+        coverage.installed_at,
+        EventTime::parse(oml_app::doubles::FIXED_CLOCK_START).expect("a time")
+    );
+}

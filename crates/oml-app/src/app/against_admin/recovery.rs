@@ -19,8 +19,6 @@
 //! `requested` once, so a second completion, from another replica or after
 //! a restart, commits nothing.
 
-use std::collections::BTreeMap;
-
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -29,7 +27,7 @@ use oml_domain::name::Name;
 use oml_domain::notice::NoticeKind;
 use oml_domain::usage::day_of;
 use oml_domain::web::Email;
-use oml_domain::{EventTime, Role, SignedEnvelope, event_types};
+use oml_domain::{EventTime, SignedEnvelope, event_types};
 
 use super::super::notices::NoticeSpec;
 use super::super::{App, commit_request};
@@ -231,12 +229,18 @@ where
     /// fails this one's chain and the pass is run again, finding the row
     /// settled. A completion whose person or address was taken in the
     /// meantime is refused by name and the request stays, which doctor
-    /// reports as overdue.
+    /// reports as overdue; so is a completion while this process holds a
+    /// sign-in row of the tenant it could not write (`log_write_failed`),
+    /// which each pass writes again first.
     ///
     /// # Errors
-    /// `person_taken` or `email_taken` for a completion, and the store's.
+    /// `person_taken`, `email_taken` or `log_write_failed` for a
+    /// completion, and the store's.
     pub async fn recovery_sweep(&self, tenant_id: Uuid) -> Result<RecoverySweep, AppError> {
         let mut sweep = RecoverySweep::default();
+        // The sign-in rows this process could not write are written again
+        // first, so the cancellation below reads them (store-5).
+        let unwritten = self.retry_authentications(tenant_id).await;
         let Some(prev) = self.head_event(tenant_id).await? else {
             return Ok(sweep);
         };
@@ -291,6 +295,13 @@ where
             .is_some_and(|t| self.clock.now().unix_micros() >= t.unix_micros());
         if !due {
             return Ok(sweep);
+        }
+        // A sign-in row this process still cannot write would read as
+        // dormancy: the completion is refused by name until it lands, as
+        // `recover` is refused (answer 26, reading 2; review finding
+        // store-5). The request stays, and doctor reports it overdue.
+        if unwritten > 0 {
+            return Err(AppError::RecoverRefused(RecoverRefusal::LogWriteFailed));
         }
         sweep
             .completed
@@ -493,28 +504,12 @@ where
         }
     }
 
-    /// Every live admin key of the tenant: each admin person's linked
-    /// bearer keys and admin session keys, and every bearer admin key with
-    /// no accepted link.
+    /// Every live admin key of the tenant, whatever its credential, link,
+    /// suspension or person: d19's completion "revokes every admin key of
+    /// the tenant" (review finding store-4). Reserved keys hold no admin
+    /// role and are not among them.
     async fn tenant_admin_keys(&self, tenant_id: Uuid) -> Result<Vec<KeyRecord>, AppError> {
-        let mut keys: BTreeMap<Uuid, KeyRecord> = BTreeMap::new();
-        let live_admin = |k: &KeyRecord| k.role == Role::Admin && k.revoked_at.is_none();
-        for person in self.admin_persons(tenant_id).await? {
-            for key in self.admin_keys_of(tenant_id, &person).await? {
-                keys.insert(key.key_id, key);
-            }
-            for key in self.journal.web_session_keys(tenant_id, &person).await? {
-                if live_admin(&key) {
-                    keys.insert(key.key_id, key);
-                }
-            }
-        }
-        for key in self.journal.web_unlinked_admin_keys(tenant_id).await? {
-            if live_admin(&key) {
-                keys.insert(key.key_id, key);
-            }
-        }
-        Ok(keys.into_values().collect())
+        Ok(self.journal.live_admin_keys(tenant_id).await?)
     }
 
     /// Deletes the tenant's authentication rows of a day more than 30 days

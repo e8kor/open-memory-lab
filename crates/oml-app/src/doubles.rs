@@ -5609,7 +5609,13 @@ impl JournalStore for MemStore {
             .lock()
             .expect("installed lock")
             .clone()
-            .unwrap_or_else(|| EventTime::from_unix_micros(0).expect("the epoch"));
+            // Unset, the table was installed when the store was made, as a
+            // fresh database's 0076 is: at the fixed clock's start, never
+            // the epoch, so a test with no older install set meets
+            // `log_too_short` as Postgres would (review finding store-10).
+            .unwrap_or_else(|| {
+                EventTime::parse(FIXED_CLOCK_START).expect("the fixed clock's start")
+            });
         Ok(crate::types::AuthenticationCoverage {
             oldest_day,
             installed_at,
@@ -7893,12 +7899,16 @@ impl FixedClock {
     }
 }
 
+/// The time a [`FixedClock`] starts at, and the time a [`MemStore`]'s
+/// authentication table counts as installed unless a test sets another.
+pub const FIXED_CLOCK_START: &str = "2026-10-29T12:00:00.000000Z";
+
 impl Clock for FixedClock {
     fn now(&self) -> EventTime {
         let n = self.ticks.fetch_add(1, Ordering::SeqCst);
         // Past its first day the clock reads on into the next ones, so a
         // test can wait out a seven-day rule (ADR-0097 d11, d23).
-        let noon = EventTime::parse("2026-10-29T12:00:00.000000Z")
+        let noon = EventTime::parse(FIXED_CLOCK_START)
             .expect("the fixed clock's start")
             .unix_micros();
         EventTime::from_unix_micros(noon + i64::try_from(n).expect("a test's ticks"))

@@ -323,6 +323,12 @@ pub struct App<J, S, C, I, Sc> {
     /// doctor's `auth.log_write_failed` (answer 24). The key's next
     /// authentication writes the row again.
     authentication_write_failures: AtomicU64,
+    /// The authentication rows this process could not write, by key, each
+    /// with its tenant and UTC day, retried by the recovery sweep's pass of
+    /// that tenant until written, so a sign-in whose row failed still
+    /// cancels a requested recovery on every replica once the store takes
+    /// writes again (ADR-0097 d19, answer 26; review finding store-5).
+    unwritten_authentications: std::sync::Mutex<BTreeMap<Uuid, (Uuid, String)>>,
     /// The learned sparse encoder the sparse pipelines read the query with
     /// and the encoder task writes kind 2 with; `None` where the deployment
     /// serves no sparse pipeline (ADR-0052 d14, d16).
@@ -2057,6 +2063,7 @@ where
             key_windows: std::sync::Mutex::default(),
             authenticated_days: std::sync::Mutex::default(),
             authentication_write_failures: AtomicU64::new(0),
+            unwritten_authentications: std::sync::Mutex::default(),
             sparse: None,
             formats: Arc::new(crate::ports::ProseFormats),
             signup: None,
@@ -2418,23 +2425,60 @@ where
             }
             days.insert(key.key_id, day);
         }
+        let today = oml_domain::usage::day_of(&now).to_owned();
         let written = self
             .journal
-            .record_authentication(
-                key.tenant_id,
-                key.key_id,
-                oml_domain::usage::day_of(&now),
-                1,
-            )
+            .record_authentication(key.tenant_id, key.key_id, &today, 1)
             .await;
-        if written.is_err() {
+        if written.is_ok() {
+            self.unwritten_authentications
+                .lock()
+                .expect("unpoisoned")
+                .remove(&key.key_id);
+        } else {
             self.authentication_write_failures
                 .fetch_add(1, Ordering::Relaxed);
+            self.unwritten_authentications
+                .lock()
+                .expect("unpoisoned")
+                .insert(key.key_id, (key.tenant_id, today));
             let mut days = self.authenticated_days.lock().expect("unpoisoned");
             if days.get(&key.key_id) == Some(&day) {
                 days.remove(&key.key_id);
             }
         }
+    }
+
+    /// Writes again the authentication rows of `tenant_id` this process
+    /// could not write, and answers how many are still unwritten (review
+    /// finding store-5): the recovery sweep's pass of the tenant runs it
+    /// first, so a failed sign-in row cancels a recovery once it lands.
+    pub(crate) async fn retry_authentications(&self, tenant_id: Uuid) -> usize {
+        let due: Vec<(Uuid, String)> = self
+            .unwritten_authentications
+            .lock()
+            .expect("unpoisoned")
+            .iter()
+            .filter(|(_, (t, _))| *t == tenant_id)
+            .map(|(k, (_, day))| (*k, day.clone()))
+            .collect();
+        let mut left = 0;
+        for (key_id, day) in due {
+            if self
+                .journal
+                .record_authentication(tenant_id, key_id, &day, 1)
+                .await
+                .is_ok()
+            {
+                self.unwritten_authentications
+                    .lock()
+                    .expect("unpoisoned")
+                    .remove(&key_id);
+            } else {
+                left += 1;
+            }
+        }
+        left
     }
 
     /// The authentication rows this process could not write since it
