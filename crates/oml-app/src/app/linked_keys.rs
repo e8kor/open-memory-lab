@@ -254,13 +254,6 @@ where
             .key(tenant_id, key_id)
             .await?
             .ok_or(AppError::NotFound)?;
-        // An admin key never belongs to no one (ADR-0097 d21): unlinking
-        // one, or withdrawing its pending link, is refused as an unlinked
-        // issuance is, and the key is revoked instead (review finding
-        // core-4).
-        if target.role == Role::Admin {
-            return Err(AppError::KeyPerson("admin_key_requires_person"));
-        }
         if target.linked_user.is_none() && target.link_pending.is_none() {
             return Err(AppError::KeyLinkRefused {
                 reason: "not_linked",
@@ -280,16 +273,51 @@ where
                 "unlinked_by_key_id": admin.key_id.to_string(),
             }),
         )?;
-        self.commit(
+        let mut links = vec![(
             event,
             MetadataFold::KeyLinked {
                 key_id: target.key_id,
                 user_root: None,
                 accepted: false,
             },
-            None,
-        )
-        .await?;
+        )];
+        // An admin key never authenticates as no one (ADR-0097 d21): an
+        // unlinked bearer admin key is suspended as unlinked in the
+        // unlink's own commit, as the first start suspends one. It still
+        // reaches whoami, its self-link and its conversion, an accepted
+        // link lifts the suspension, and past the upgrade window's thirty
+        // days the start revokes it (review finding core-4).
+        if target.role == Role::Admin
+            && target.credential == Credential::Bearer
+            && target.suspended.is_none()
+        {
+            let suspended = self.seal(
+                links.last().map(|(e, _)| e),
+                tenant_id,
+                event_types::KEY_SUSPENDED,
+                &admin.principal,
+                Some(admin.key_id),
+                json!({
+                    "key_id": target.key_id.to_string(),
+                    "cause": crate::types::SuspensionCause::Unlinked.as_str(),
+                    "act_id": null,
+                }),
+            )?;
+            let suspension = crate::types::KeySuspension {
+                cause: crate::types::SuspensionCause::Unlinked,
+                act_id: None,
+                at: suspended.envelope.at.clone(),
+            };
+            target.suspended = Some(suspension.clone());
+            links.push((
+                suspended,
+                MetadataFold::KeySuspended {
+                    key_id: target.key_id,
+                    suspension,
+                },
+            ));
+        }
+        self.commit_chain(links).await?;
         Ok(target)
     }
 

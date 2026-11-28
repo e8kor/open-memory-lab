@@ -1168,9 +1168,9 @@ until the operator confirms it.
 
 - **d5's in-progress reviewer confirmation is not built; such a grant is refused.** An admin's
   grant, or an issuance's grant, on a node inside an in-progress subtree is refused
-  `request.validation` with `details.field: /grants` and `details.reason: in_progress_subtree`,
-  in every tenant, `sole_admin` included, instead of being confirmed by a second admin person
-  alone. The subtree's own people still issue their keys as persons' own acts. The two-party
+  `request.validation` with `details.field: /grants` and `details.reason: in_progress_subtree`
+  wherever it would wait on a second admin person, instead of being confirmed by that admin
+  person alone. A `sole_admin` tenant takes it at once, marked, as every widening act there (d10). The subtree's own people still issue their keys as persons' own acts. The two-party
   confirmation (a second admin person and a person holding reviewer there) is deferred to v0.8.7.
 - **d14's v0.8.6 rotation by another admin is not built; it stays refused.** An admin's rotation
   of another admin person's key or of a person's key is still refused `not_admins_key` and
@@ -1194,8 +1194,11 @@ until the operator confirms it.
   keys, or `unflag_own` for the decliner's own flag, which revokes theirs. It requires a reason.
 - **An admin entry does not move to another user with its flag (d5, d8).** That change is refused
   on the `user` field and is sent as an un-flag, then a new admin entry.
-- **An admin key is never unlinked (d21).** `POST /v2/keys/{key}/unlink` on an admin key is
-  refused `admin_key_requires_person`.
+- **An unlinked admin key is suspended (d21, d22).** `POST /v2/keys/{key}/unlink` on a bearer
+  admin key suspends it as unlinked in the unlink's own commit, as the first start suspends an
+  unlinked key. It then reaches only `/v2/whoami`, its self-link and its conversion. An accepted
+  link lifts the suspension, and after 30 days the start revokes it. The unlink is not journalled
+  as an admin act.
 - **A contest restores the entry accepted (d8, answer 3).** The restored entry keeps its pinned
   provider subjects. Its `admin_since` restarts at the restoration, so the restored admin person
   counts as a second admin person again only after seven days. Keeping the original

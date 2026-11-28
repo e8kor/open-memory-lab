@@ -3841,32 +3841,39 @@ async fn declining_an_accepted_sole_admin_flag_is_an_unflag_against_that_admin()
     assert!(!entry.admin, "the flag is off");
 }
 
-/// An admin key is never unlinked from its person: the unlink is refused
-/// `admin_key_requires_person`, as an unlinked issuance is, and the key
-/// keeps its person, so a later un-flag still reaches it (ADR-0097 d21;
-/// review finding core-4).
+/// An unlinked admin key authenticates as no one: the unlink suspends it as
+/// unlinked in its own commit, so it reaches nothing but whoami, its
+/// self-link and its conversion, and an accepted link lifts the suspension
+/// (ADR-0097 d21, d22; review finding core-4).
 #[tokio::test]
-async fn an_admin_key_is_refused_an_unlink_from_its_person() {
+async fn an_unlinked_admin_key_is_suspended_until_a_link_is_accepted() {
     let r = rig().await;
     r.admin_person("alice").await;
     let key = r.linked_admin_key("alice").await;
     let alice = r.admin_session("alice").await;
-    let err = r
-        .app
+    r.app
         .unlink_key_from_person(Bearer::Session(&alice), key.key_id.into())
         .await
-        .unwrap_err();
-    assert!(
-        matches!(err, AppError::KeyPerson("admin_key_requires_person")),
-        "{err:?}"
-    );
-    let held = r
-        .store
-        .key(r.boot.tenant_id, key.key_id)
+        .expect("unlinked");
+    let err = r.app.admin_acts(key.value.as_str(), None).await.unwrap_err();
+    assert!(matches!(err, AppError::KeySuspended), "{err:?}");
+    r.app
+        .whoami(key.value.as_str())
         .await
-        .expect("read")
-        .expect("held");
-    assert!(held.linked_user.is_some(), "the key keeps its person");
+        .expect("whoami still answers");
+    r.app
+        .link_self(key.value.as_str(), &name("alice"), Some("my key again"))
+        .await
+        .expect("it links itself");
+    let web = r.person_session("alice", Capacity::Web).await;
+    r.app
+        .accept_key_link(Bearer::Session(&web), key.key_id.into())
+        .await
+        .expect("alice accepts");
+    r.app
+        .admin_acts(key.value.as_str(), None)
+        .await
+        .expect("linked again, it authenticates");
 }
 
 /// A pending raise applies at its confirmation only the member it sent,
@@ -4183,10 +4190,10 @@ async fn the_target_revokes_the_initiator_only_from_the_contest_only_sign_in() {
     assert!(held.revoked_at.is_some(), "the initiator's admin key is revoked");
 }
 
-/// An admin's grant into an in-progress subtree is refused by name: d5 has
-/// a person holding reviewer there confirm it as well as a second admin
-/// person, and that confirmation is not built, so no admin alone applies
-/// it (ADR-0097 d5; review finding core-9).
+/// An admin's grant into an in-progress subtree that would wait on a second
+/// admin person is refused by name: d5 has a person holding reviewer there
+/// confirm it as well, and that confirmation is not built, so no second
+/// admin alone applies it (ADR-0097 d5; review finding core-9).
 #[tokio::test]
 async fn an_admin_grant_into_an_in_progress_subtree_is_refused_by_name() {
     let r = rig().await;
@@ -4222,14 +4229,19 @@ async fn an_admin_grant_into_an_in_progress_subtree_is_refused_by_name() {
         )
         .await
         .expect("lab in progress");
+    // Two admin persons: the grant would wait on a second one.
+    r.admin_person("alice").await;
+    r.admin_person("bob").await;
+    r.clock.advance(8 * DAY);
     let err = r
         .app
-        .issue_key(
+        .issue_key_with_reason(
             r.admin(),
             &IssueKeyRequest {
                 grants: vec![on_lab(Role::Reader), on_lab(Role::Submitter)],
                 ..agent_req()
             },
+            Some("an agent in the lab"),
         )
         .await
         .unwrap_err();

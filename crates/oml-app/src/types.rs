@@ -520,8 +520,9 @@ pub enum AdminActRefusal {
     FreezeTooRecent,
     /// An admin's grant into an in-progress subtree, which d5 has a person
     /// holding reviewer there confirm as well as a second admin person: the
-    /// reviewer's confirmation is not built in v0.8.6, so the grant is
-    /// refused by name rather than confirmed by an admin alone (review
+    /// reviewer's confirmation is not built in v0.8.6, so outside
+    /// `sole_admin` the grant is refused by name rather than confirmed by an
+    /// admin alone (review
     /// finding core-9; the fix round's note of 2026-11-28).
     InProgressSubtree,
 }

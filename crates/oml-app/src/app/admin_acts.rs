@@ -434,14 +434,19 @@ where
     /// Refuses an admin's grant on a node inside an in-progress subtree
     /// (ADR-0097 d5; review finding core-9): d5 has a person holding
     /// reviewer in that subtree confirm it too, which is not built, so no
-    /// second admin person alone confirms it and no `sole_admin` tenant
-    /// takes it at once. A grant whose node lies outside every in-progress
-    /// subtree passes.
+    /// second admin person alone confirms it. A `sole_admin` tenant takes it
+    /// at once, marked, as every widening act there (d10). A grant whose
+    /// node lies outside every in-progress subtree passes.
     pub(crate) async fn refuse_in_progress_grants(
         &self,
         tenant_id: Uuid,
         nodes: impl IntoIterator<Item = Uuid>,
     ) -> Result<(), AppError> {
+        if self.journal.admin_standing(tenant_id).await?.sole_admin
+            && !self.act_against_admin_open(tenant_id).await?
+        {
+            return Ok(());
+        }
         for node in nodes {
             if self
                 .journal
