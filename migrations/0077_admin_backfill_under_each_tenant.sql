@@ -8,6 +8,8 @@
 -- UPDATE only fills what 0070 left: an `admin_since` the fold has written
 -- since stays, and `sole_admin` only turns false, so the migration is
 -- idempotent over a database where 0070's backfill did apply.
+SET LOCAL lock_timeout = '5s';
+
 DO $$
 DECLARE
     t uuid;
