@@ -561,9 +561,13 @@ where
             reason,
         };
         // A pending issuance's key never authenticated; it is revoked so
-        // its value ends with the act (d23).
+        // its value ends with the act (d23). An undo that takes a live,
+        // accepted admin flag off is an un-flag, classed as d8 classes one,
+        // and noticed as one (core-3).
+        let mut standing = None;
         if act.act == AdminActKind::IssueKey || undo {
-            self.undo_effect(&undo_ctx, &act, undo, &mut links).await?;
+            self.undo_effect(&undo_ctx, &act, undo, &mut links, &mut standing)
+                .await?;
         }
         if let Some(workspace_id) = unpublic {
             let prev = links.last().map(|(e, _)| e.clone()).expect("a link");
@@ -576,10 +580,13 @@ where
                 true,
             )?);
         }
-        let reqs = links
+        let mut reqs: Vec<_> = links
             .into_iter()
             .map(|(event, fold)| commit_request(event, fold, None))
             .collect();
+        if let Some(standing) = &standing {
+            self.with_notice(standing, &mut reqs).await?;
+        }
         self.commit_requests(reqs).await?;
         act.settled_at = Some(at);
         Ok(act)
@@ -588,13 +595,18 @@ where
     /// The narrowing effect that undoes `act`, sealed after the last of
     /// `links`, each event naming the decline's `act_id` (ADR-0097 d10, the
     /// operator's decision of 2026-11-27). With `took_effect` false only a
-    /// pending issuance's key is revoked: nothing else applied.
+    /// pending issuance's key is revoked: nothing else applied. A flag the
+    /// person accepted and holds is taken off as an un-flag is (d8, d21):
+    /// another admin person's un-flag, against an admin, suspends their
+    /// admin keys and is contestable; the decliner's own un-flag revokes
+    /// theirs; its act is left in `standing` for the decline's notice.
     async fn undo_effect(
         &self,
         undo: &Undo<'_>,
         act: &AdminActRecord,
         took_effect: bool,
         links: &mut Vec<(SignedEnvelope, MetadataFold)>,
+        standing: &mut Option<AdminActRecord>,
     ) -> Result<(), AppError> {
         let admin = undo.admin;
         let tenant_id = admin.tenant_id;
@@ -810,10 +822,47 @@ where
                     user: entry.user.clone(),
                     admin: false,
                 };
+                let kind = self.standing_act(admin, Some(&entry), Some(&req)).await?;
                 if let Some((_, _, event_type, fold, payload)) =
                     self.entry_change(admin, &req, true).await?
                 {
-                    self.push_undo(undo, links, event_type, payload, |_| fold)?;
+                    let Some(kind) = kind else {
+                        self.push_undo(undo, links, event_type, payload, |_| fold)?;
+                        return Ok(());
+                    };
+                    let prev = links.last().map(|(e, _)| e.clone()).expect("a link");
+                    let unflag = self
+                        .begin_admin_act(
+                            admin,
+                            kind,
+                            json!({ "user": entry.user.as_str(), "admin": false,
+                                    "to_user": entry.user.as_str(),
+                                    "email_digest": req.email.digest().to_prefixed() }),
+                            undo.reason,
+                            json!({
+                                "before": { "email": req.email.as_str(), "user": entry.user.as_str(),
+                                            "admin": true, "disabled": entry.disabled_at.is_some() },
+                                "after": { "user": entry.user.as_str(), "admin": false },
+                            }),
+                            Some(&prev),
+                        )
+                        .await?;
+                    let act_id = unflag.act_id();
+                    links.push(unflag.link());
+                    let event = self.seal(
+                        Some(&unflag.event),
+                        tenant_id,
+                        event_type,
+                        &admin.principal,
+                        Some(admin.key_id),
+                        with_act_id(payload, act_id),
+                    )?;
+                    links.push((event.clone(), fold));
+                    links.extend(
+                        self.standing_links(admin, act_id, kind, &entry.user, &event)
+                            .await?,
+                    );
+                    *standing = Some(unflag.record);
                 }
             }
             _ => {}

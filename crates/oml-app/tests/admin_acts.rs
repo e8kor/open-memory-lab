@@ -1265,7 +1265,11 @@ async fn a_declined_sole_admin_act_is_revoked_at_once() {
     let flag = last_act(&r, "allow_admin").await;
     assert!(flag.sole_admin);
     r.app
-        .decline_admin_act(Bearer::Session(&alice), flag.act_id, None)
+        .decline_admin_act(
+            Bearer::Session(&alice),
+            flag.act_id,
+            Some("dana takes no admin flag"),
+        )
         .await
         .expect("declined");
     let entry = r
@@ -3770,4 +3774,46 @@ async fn an_unreadable_tenant_never_reads_as_sole_admin() {
         .await
         .unwrap_err();
     assert!(err.to_string().contains("no row"), "{err}");
+}
+
+/// Declining a `sole_admin` flag that its person accepted and holds is an
+/// un-flag of another admin person, classed as d8 classes one: it journals
+/// `unflag_admin`, against an admin, contestable, with a reason required,
+/// and the flag comes off (ADR-0097 d8, d10, d21; review finding core-3).
+#[tokio::test]
+async fn declining_an_accepted_sole_admin_flag_is_an_unflag_against_that_admin() {
+    let r = rig().await;
+    r.admin_person("alice").await;
+    let alice = r.admin_session("alice").await;
+    r.admin_person("bob").await;
+    let flag = r
+        .store
+        .admin_acts(r.boot.tenant_id, None)
+        .await
+        .expect("acts")
+        .into_iter()
+        .rev()
+        .find(|a| a.act.as_str() == "allow_admin")
+        .expect("bob's flag");
+    assert!(flag.sole_admin, "the second person's flag took effect at once");
+    let err = r
+        .app
+        .decline_admin_act(Bearer::Session(&alice), flag.act_id, None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::AdminActReasonRequired), "{err:?}");
+    r.app
+        .decline_admin_act(Bearer::Session(&alice), flag.act_id, Some("bob is no admin"))
+        .await
+        .expect("declined");
+    let unflag = last_act(&r, "unflag_admin").await;
+    assert_eq!(unflag.state, AdminActState::Effective);
+    assert!(unflag.act.contestable(), "an act against an admin");
+    let entry = r
+        .store
+        .web_entry_by_email(&Email::parse("bob@example.com").expect("an email").digest())
+        .await
+        .expect("read")
+        .expect("bob's entry");
+    assert!(!entry.admin, "the flag is off");
 }
