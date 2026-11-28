@@ -4801,7 +4801,7 @@ export interface components {
             admin_narrowing_burst?: number;
             /** @description Admin keys suspended while an act against their person is open: doctor's admin.key_suspended (ADR-0097 d8, d21). Since v0.8.6. */
             admin_keys_suspended?: number;
-            /** @description Admin keys suspended as unlinked at the upgrade, which reach only /v2/whoami and POST /v2/keys/self/link: doctor's admin.key_unlinked_suspended (ADR-0097 d21). Since v0.8.6. */
+            /** @description Admin keys suspended as unlinked at the upgrade, which reach only /v2/whoami, POST /v2/keys/self/link and POST /v2/keys/self/convert: doctor's admin.key_unlinked_suspended (ADR-0097 d21). Since v0.8.6. */
             admin_keys_unlinked_suspended?: number;
             /** @description The fewest days an unlinked admin key has left before it is revoked, 0 with none. Since v0.8.6. */
             admin_unlinked_days_left?: number;
