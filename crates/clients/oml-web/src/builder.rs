@@ -1411,12 +1411,19 @@ pub(crate) fn review_body_as(
         Side::Admin => short(&draft.name),
     };
     let mut out = format!(
-        r#"<div class="oml-col"><header class="oml-section-head"><div class="top"><h1>Review key</h1></div><p class="desc"><code>{shown_name}</code>, a {} {}.</p></header><ol class="oml-steps"><li>Start from</li><li>Shape</li><li aria-current="step">Review</li></ol>"#,
-        text(&draft.role),
-        if draft.connector {
-            "connector key"
+        r#"<div class="oml-col"><header class="oml-section-head"><div class="top"><h1>Review key</h1></div><p class="desc"><code>{shown_name}</code>, {}.</p></header><ol class="oml-steps"><li>Start from</li><li>Shape</li><li aria-current="step">Review</li></ol>"#,
+        if draft.role == "admin" {
+            "an admin key".to_owned()
         } else {
-            "agent key"
+            format!(
+                "a {} {}",
+                text(&draft.role),
+                if draft.connector {
+                    "connector key"
+                } else {
+                    "agent key"
+                }
+            )
         }
     );
     if let Some((code, sentence)) = refused.and_then(server_refusal) {
@@ -1424,6 +1431,9 @@ pub(crate) fn review_body_as(
             out,
             r#"<div class="oml-notice err" role="alert" tabindex="-1" id="errors"><p>The key is not issued: {sentence}</p><p><code>{code}</code></p></div>"#
         );
+    }
+    if side == Side::Admin && draft.role == "admin" {
+        return out + &admin_key_review(draft, csrf);
     }
     out.push_str(r#"<section class="oml-panel"><h2 class="oml-h3">Effective access</h2><ul>"#);
     for line in draft.words() {
@@ -1514,14 +1524,20 @@ pub(crate) fn review_body_as(
             text(&a.reason)
         );
     }
+    out.push_str(&issue_form(side, draft, csrf));
+    out
+}
+
+/// The review step's Issue key form and its Change link, which closes the
+/// page's column.
+fn issue_form(side: Side, draft: &Draft, csrf: &str) -> String {
     let mut back: Vec<String> = draft
         .fields()
         .into_iter()
         .map(|(n, v)| format!("{n}={}", oml_sdk::encode(&v)))
         .collect();
     back.retain(|p| !p.is_empty());
-    let _ = write!(
-        out,
+    format!(
         r#"<form method="post" action="{}"><input type="hidden" name="action" value="build_key"><input type="hidden" name="csrf_token" value="{}">{}{}<button class="primary" type="submit">Issue key</button></form><p><a href="{}?{}">Change</a></p></div>"#,
         side.keys_path(),
         attr(csrf),
@@ -1529,8 +1545,24 @@ pub(crate) fn review_body_as(
         acts::nonce_field(),
         side.path(),
         attr(&back.join("&"))
-    );
-    out
+    )
+}
+
+/// The admin builder's review step for an admin key (ADR-0097 d21, d29):
+/// its person, that it takes no grant or limit and reads no content, the
+/// exact request, and that it authenticates nothing until its person
+/// accepts the link and, outside `sole_admin`, a second admin confirms it.
+fn admin_key_review(draft: &Draft, csrf: &str) -> String {
+    let a = &draft.admin;
+    let body = draft.body_as(Side::Admin, "");
+    format!(
+        r#"<section class="oml-panel"><h2 class="oml-h3">Effective access</h2><p class="desc">Governs the tenant as <code>{person}</code>: keys, workspaces, crews, grants and denials. An admin key reads no memory text outside the journalled admin read, takes no grant, and has no expiry or rate.</p></section><details><summary>The exact request</summary><pre>POST /v2/keys
+{request}</pre></details><p class="oml-consequence">The value is shown once, on the next page.</p><p class="desc">held by a person · belongs to <code>{person}</code></p><p class="desc">Reason: {reason}</p><p class="oml-consequence">The key authenticates nothing until <code>{person}</code> accepts its link on the Keys page. It also waits on another admin until a second admin confirms it, except in a tenant that has only ever had one admin, where it takes effect at once, marked.</p>{form}"#,
+        person = short(&a.person),
+        request = text(&serde_json::to_string_pretty(&body).unwrap_or_default()),
+        reason = text(&a.reason),
+        form = issue_form(Side::Admin, draft, csrf),
+    )
 }
 
 /// The refusals only the server decides (D12), each with its sentence,

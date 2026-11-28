@@ -12835,6 +12835,12 @@ async fn the_admin_key_builder_issues_an_admin_key_for_its_admin_person() {
         review.contains("&quot;person&quot;: &quot;boss&quot;"),
         "{review}"
     );
+    assert!(review.contains("an admin key."), "{review}");
+    assert!(review.contains("belongs to <code>boss</code>"), "{review}");
+    assert!(
+        !review.contains("not covered"),
+        "an admin key takes no grant: {review}"
+    );
     let fields = hidden_fields(&review, "build_key");
     let fields: Vec<(&str, &str)> = fields
         .iter()
