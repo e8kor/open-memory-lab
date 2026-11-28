@@ -4238,3 +4238,168 @@ async fn an_admin_grant_into_an_in_progress_subtree_is_refused_by_name() {
         "{err:?}"
     );
 }
+
+/// A key whose issuance waits on a second admin person authenticates on no
+/// path, takes no connect code meanwhile, and authenticates once confirmed
+/// (ADR-0097 d23; review finding core-15).
+#[tokio::test]
+async fn a_pending_key_authenticates_on_no_path_until_confirmed() {
+    let r = two_admins().await;
+    let pending = pending_key(&r).await;
+    let value = pending.value.as_str();
+    let err = r.app.whoami(value).await.unwrap_err();
+    assert!(matches!(err, AppError::KeyPendingConfirmation), "{err:?}");
+    let err = r
+        .app
+        .workspace_info(value, Some(by_name("crew")))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::KeyPendingConfirmation), "{err:?}");
+    let act = pending.pending_act.expect("the act");
+    let bob = r.admin_session("bob").await;
+    r.app
+        .confirm_admin_act(Bearer::Session(&bob), act, Some("confirmed"))
+        .await
+        .expect("confirmed");
+    r.app.whoami(value).await.expect("confirmed, it authenticates");
+}
+
+/// A pending issuance's grants live in the act alone: the key's access
+/// holds none of them until the confirmation (ADR-0097 d23; review finding
+/// core-15).
+#[tokio::test]
+async fn pending_grants_are_served_by_no_recall_review_or_count_query() {
+    let r = two_admins().await;
+    let pending = pending_key(&r).await;
+    let held = r
+        .store
+        .key_access(r.boot.tenant_id, pending.key_id)
+        .await
+        .expect("read")
+        .map(|a| a.grants)
+        .unwrap_or_default();
+    assert!(held.is_empty(), "no grant row is folded for a pending key");
+    let act = r
+        .store
+        .admin_act(r.boot.tenant_id, pending.pending_act.expect("the act"))
+        .await
+        .expect("read")
+        .expect("the act");
+    assert_eq!(act.effect["grants"].as_array().map(Vec::len), Some(2));
+}
+
+/// An admin's issuance of a key in another person's root is widening: it
+/// waits on a second admin person, and the act names the root's person
+/// (ADR-0097 d5, d6; review finding core-15).
+#[tokio::test]
+async fn an_admin_key_in_another_persons_root_waits_on_a_second_admin_person() {
+    let r = two_admins().await;
+    let issued = r
+        .app
+        .issue_key_with_reason(
+            r.admin(),
+            &IssueKeyRequest {
+                grants: vec![
+                    GrantRequest {
+                        node: by_name("bob"),
+                        role: Role::Reader,
+                        deny: Vec::new(),
+                        covers: Covers::Subtree,
+                        create: false,
+                    },
+                    GrantRequest {
+                        node: by_name("bob"),
+                        role: Role::Submitter,
+                        deny: Vec::new(),
+                        covers: Covers::Subtree,
+                        create: false,
+                    },
+                ],
+                user: Some(name("bob")),
+                ..agent_req()
+            },
+            Some("an agent in bob's root"),
+        )
+        .await
+        .expect("a pending issuance");
+    let act = issued.pending_act.expect("it waits");
+    let act = r
+        .store
+        .admin_act(r.boot.tenant_id, act)
+        .await
+        .expect("read")
+        .expect("the act");
+    assert_eq!(act.state, AdminActState::PendingConfirmation);
+    assert_eq!(act.target["root_person"], "bob");
+}
+
+/// A link of an admin key to a person waits on that person's acceptance,
+/// and the key authenticates nothing meanwhile (ADR-0097 d7, d21; review
+/// finding core-15).
+#[tokio::test]
+async fn a_link_and_an_address_for_an_existing_person_wait_on_that_person() {
+    let r = rig().await;
+    r.admin_person("alice").await;
+    let issued = r
+        .app
+        .issue_key(
+            r.admin(),
+            &IssueKeyRequest {
+                role: Role::Admin,
+                grants: Vec::new(),
+                used_by: Some(UsedBy::Person),
+                person: Some(name("alice")),
+                ..agent_req()
+            },
+        )
+        .await
+        .expect("an admin key for alice");
+    let err = r
+        .app
+        .admin_acts(issued.value.as_str(), None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::KeyLinkPending), "{err:?}");
+    let (entry, _) = r
+        .app
+        .allow_web_email(
+            r.admin(),
+            &WebEmailRequest {
+                email: Email::parse("alice.second@example.com").expect("an email"),
+                user: name("alice"),
+                admin: false,
+            },
+        )
+        .await
+        .expect("a second address for alice");
+    assert!(entry.pending, "an address for an existing person waits on her");
+    let web = r.person_session("alice", Capacity::Web).await;
+    r.app
+        .accept_key_link(Bearer::Session(&web), issued.key_id.into())
+        .await
+        .expect("alice accepts");
+    r.app
+        .admin_acts(issued.value.as_str(), None)
+        .await
+        .expect("accepted, it authenticates");
+}
+
+/// Revoking an admin person's bearer admin key breaks no sign-in: the
+/// person's console sessions come from the server issuer, so a new admin
+/// session still opens (ADR-0097 d14, d18; review finding core-15).
+#[tokio::test]
+async fn revoking_an_admin_key_breaks_no_sign_in() {
+    let r = rig().await;
+    r.admin_person("alice").await;
+    let key = r.linked_admin_key("alice").await;
+    let alice = r.admin_session("alice").await;
+    r.app
+        .revoke_key(Bearer::Session(&alice), key.key_id.into(), Some("rotating out"))
+        .await
+        .expect("revoked");
+    let again = r.admin_session("alice").await;
+    r.app
+        .admin_acts(Bearer::Session(&again), None)
+        .await
+        .expect("the admin session still works");
+}
