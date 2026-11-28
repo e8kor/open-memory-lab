@@ -85,6 +85,120 @@ Update the plugin with `claude plugin update oml@open-memory-lab`. Then set its 
 
 ## Upgrading to v0.8.6
 
+### Upgrade in order: one admin, an unlinked CLI admin key
+
+This is the procedure for a production tenant with one admin person whose CLI admin key, the key
+`oml bootstrap claim` stored, has no accepted link to that person. Each step's detail is in the
+subsection it names. Do them in this order: the first start of v0.8.6 suspends that key, and
+step 5 is the one way back to it ([ADR-0097](../adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md), Production migration; the operator's decisions
+of 2026-11-28, D27).
+
+1. **On v0.8.5, take the read-only counts.** Run `scripts/ops/read_only_counts.sh` as
+   [the v0.8.5 section](#the-last-admin-entry-the-denys-reason-and-the-counts-before-v086) shows.
+   `unlinked_admin_keys` is the number of admin keys the first start suspends, and
+   `service_admin_keys` is the number it converts to maintenance keys. `admin_persons_ever` counts
+   the distinct users that any admin-flagged allowlist event ever named, whether allowed, changed
+   or signed up as admin. Migrations 0070 and 0077 read the same predicate: at 2 or more they set
+   the tenant's `sole_admin` to false. From then on every widening act waits on a second admin
+   person. That person must hold a live admin flag accepted seven days before the act (d10, d11).
+   A tenant that reads 2 or more and has only one live admin cannot widen after the upgrade: no
+   new key, grant, admin flag or public set. This happens when an earlier admin entry was renamed,
+   removed or never accepted. Before the upgrade, add a second admin person and let the flag age
+   seven days. Otherwise expect every widening act to wait, and to expire after seven days.
+2. **Set the operator token directory and the mail relay.** Set `operator.token_dir` (and
+   `OML_OPERATOR__TOKEN_DIR` in root's shell), `mail.host` and `mail.from`, as
+   [the operator token section](#the-operator-token-the-host-settlement-and-the-mail-relay) says.
+   The server reads them at its first start.
+3. **Install the deployer that knows the maintenance-key marker, before the server.** The v0.8.6
+   release notes carry `<!-- oml-deployer: post-step maintenance-key -->`, and a deployer that
+   does not know a marker refuses the release. Upgrade the deployer first, then let it fetch
+   v0.8.6.
+4. **Upgrade.** Migrations 0070 to 0077 run in one transaction each
+   ([below](#migrations-0070-to-0073-and-0077-admin-acts-the-create-flag-public-and-suspensions)).
+   At the first start the server does two things, both journalled under the tenant's reserved
+   server issuer:
+    - It converts each admin key `used_by: service` into a maintenance key in place, with the
+      same value (`key.converted`, `cause: upgrade`).
+    - It suspends each other admin key that has no accepted link (`key.suspended`, `cause:
+      unlinked`). A key whose link waits for its person's acceptance is not suspended.
+
+    The CLI admin key is `used_by: person`, so it is suspended. From then on it answers
+    `auth.invalid`, `details.reason: suspended`, on every route but three: `GET /v2/whoami`,
+    `POST /v2/keys/self/link` and `POST /v2/keys/self/convert`.
+5. **Convert each service key that still holds an admin key.** The deployer's post-step runs
+   `oml keys convert-self --to maintenance` under each admin key its files hold. A suspended key
+   may run it, and the conversion lifts the suspension in the same commit
+   (`key.suspension_lifted`, then `key.converted`). The files keep the same value. Any other
+   service that holds an admin key `used_by: person` runs the same command.
+6. **Link the CLI admin key to the operator, and accept within 30 days.** Under the CLI key, run
+   `oml keys link-self --person <operator> --reason <why>`, then accept the link on the console's
+   Keys page as that person
+   ([the unlinked admin key section](#the-unlinked-admin-key-suspended-at-the-first-start)). The
+   acceptance lifts the suspension. A key still unlinked 30 days after the start is revoked, and
+   `oml doctor`'s `admin.key_unlinked_suspended` shows the days left.
+7. **Check.** `oml doctor` under the linked CLI key shows no `admin.key_unlinked_suspended` line.
+   It also shows `auth.log_coverage` until the authentication table holds 30 days (migration
+   0076). `oml admin rescan --record-held` runs under the maintenance key.
+8. **Change provisioning that bootstraps a server.** `oml bootstrap claim` and `oml quickstart`
+   now require `--person <name> --email <address>`, the admin key's person and that person's
+   sign-in address (d21). A script that calls either without them, such as an `oml-devops`
+   provisioning step, is refused `request.validation` and claims nothing.
+
+Two items in ADR-0097's migration table are deferred to v0.8.7 by the operator's decision of
+2026-11-28 (D27). In a multi-admin tenant, the admin-issued keys, grants and connections in
+another person's root are not made pending, and the investigations opened by keys that d16 now
+refuses stay open. In a one-admin tenant neither changes anything, because there is no second
+admin person to confirm.
+
+### The unlinked admin key suspended at the first start
+
+At the first start of v0.8.6, every admin key with a bearer credential and no accepted link to a
+person is suspended (`key.suspended`, `cause: unlinked`). The exceptions are a key `used_by:
+service`, which the start converts to a maintenance key instead, and a key whose link waits for
+acceptance (d21, d22; D27). A suspended key answers `auth.invalid`, `details.reason: suspended`,
+everywhere except `GET /v2/whoami`, `POST /v2/keys/self/link` and `POST /v2/keys/self/convert`.
+Under such a key every CLI admin act is refused this way, `oml keys issue-agent`, `oml keys
+issue`, `oml deny set` and the `oml-admin:issue-agent-key` skill among them. The console's admin
+pages are unaffected, because they read through `<user>-admin`.
+
+The key is revoked 30 days after the start if it is still unlinked
+(`UNLINKED_ADMIN_KEY_WINDOW_SECS`), and `oml doctor` names it with the days left
+(`admin.key_unlinked_suspended`). There are two ways out:
+
+- **Link it.** `oml keys link-self --person <name> --reason <why>` under the key, then that person
+  accepts the link on the console's Keys page. `link-self` refuses a key that is not `used_by:
+  person` (`key.link_refused`, `details.reason: not_used_by_person`).
+- **Convert it.** A service's key runs `oml keys convert-self --to maintenance` and keeps only the
+  counts and the rescan.
+
+A key that can do neither is replaced: an admin person issues a new admin key to their own person
+from the console's admin key builder (`/web/admin/keys/new`, role admin). In a tenant that has only
+ever had one admin person, that issuance takes effect at once, marked `sole_admin`.
+
+### Migrations 0070 to 0073 and 0077: admin acts, the create flag, public and suspensions
+
+- **0070** adds `admin_acts`, one row per admin act folded from `admin.act`. It also adds
+  `api_keys.pending_act_id`, `web_emails.admin_since` and `tenants.sole_admin` (true by default),
+  and backfills the last two from the journal: each admin entry's accepted flag time, and
+  `sole_admin` false where two or more users were ever named by an admin-flagged entry event
+  (d1, d2, d10, d11). The backfill reads the journal once per admin entry and once per tenant,
+  each read a scan of that tenant's allowlist events.
+- **0071** adds `grants.may_create`, false for every existing grant (d31). It is a catalog change
+  with no row rewritten.
+- **0072** adds `workspaces.public`, false for every workspace, `workspaces.public_act_id`, and a
+  partial index on public nodes that no existing row meets ([ADR-0098](../adr/ADR-0098-a-protected-or-frozen-workspace-can-be-marked-public-and-then-every-reading-key-in-the-tenant-reads-its-approved-items.md) d10). No key's reach
+  and no recall changes at the upgrade.
+- **0073** adds `grants.revoked_epoch` and the suspension columns on `api_keys`:
+  `suspended_cause`, `suspended_act_id` and `suspended_at`, with their constraints (d8, d10, d21).
+  Every existing row reads not suspended, until the first start suspends the unlinked admin keys.
+- **0077** runs 0070's two backfills again, once per tenant with the tenant bound. On a database
+  with forced row-level security, 0070's backfills ran with no tenant bound and changed no row.
+  0077 fills `admin_since` where it is still NULL and only turns `sole_admin` false, with the same
+  predicate as 0070 and as `admin_persons_ever`, so running it twice changes nothing.
+
+Each file waits at most five seconds for a lock. While it holds one, reads of the table it
+changes wait for the migration's commit.
+
 ### Migration 0074, counted persons and the CLI admin key's link
 
 Migration 0074 adds two empty tables, `admin_read_counts` and `notices`, each with its key and
@@ -103,11 +217,14 @@ Three rules start at the upgrade and need a person behind a key ([ADR-0097](../a
 - A ratifier must be another person than the proposer's. A tenant where one person proposes and
   ratifies through two keys needs a second person to ratify, except in a `sole_admin` tenant.
 - The admin read needs a person-linked admin key or a session. Before the upgrade, link the CLI
-  admin key that opens investigations: with a second admin person, their console links it and the
-  operator accepts; in a one-admin tenant, after v0.8.6 starts, run
-  `oml keys link-self --person <operator> --reason <why>` under that key and accept the link from the console
-  (d22). Until then `oml admin read` answers `admin.read_requires_person` and the console's admin
-  pages read as usual through `<user>-admin`.
+  admin key that opens investigations. With a second admin person, their console links it and the
+  operator accepts. In a one-admin tenant, after v0.8.6 starts, run `oml keys link-self --person
+  <operator> --reason <why>` under that key and accept the link from the console (d22). Until
+  then the key is suspended: every route but `whoami`, `self/link` and `self/convert` answers
+  `auth.invalid`, `details.reason: suspended`, `oml admin read` included. Thirty days after the
+  start the key is revoked
+  ([the unlinked admin key section](#the-unlinked-admin-key-suspended-at-the-first-start)).
+  The console's admin pages read as usual through `<user>-admin`.
 
 ### Migration 0075, the maintenance role and the deployer's keys
 
@@ -116,8 +233,10 @@ and replaces `api_keys`'s role check so it admits `maintenance`, validated in th
 transaction: one scan of `api_keys`, which is small, and no row rewritten ([ADR-0097](../adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) d18, d26).
 A key issued before it records no issuer's person, and an act confirmed before it no reason.
 
-No service needs an admin key from v0.8.6 on (d18). After the upgrade, each admin key a service
-holds, the deployer's among them, converts itself in place: under that key run
+No service needs an admin key from v0.8.6 on (d18). The first start converts each admin key
+`used_by: service` into a maintenance key itself (`key.converted`, `cause: upgrade`). After the
+upgrade, each other admin key a service holds, the deployer's among them, converts itself in
+place, even while it is suspended as unlinked. Under that key run
 
 ```bash
 oml keys convert-self --to maintenance
