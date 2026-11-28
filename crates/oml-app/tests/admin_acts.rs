@@ -4059,3 +4059,42 @@ async fn a_contested_removal_restores_an_entry_its_person_signs_in_with() {
     assert!(!entry.pending, "accepted, not waiting on carol");
     r.person_session("carol", Capacity::Web).await;
 }
+
+/// An empty or whitespace reason is no reason: a widening act that waits
+/// is refused `/reason required` for it, as a confirmation is (ADR-0097
+/// d26; review finding surface-3).
+#[tokio::test]
+async fn an_empty_or_whitespace_reason_is_refused_where_a_reason_is_required() {
+    let r = two_admins().await;
+    for blank in ["", "   "] {
+        let err = r
+            .app
+            .issue_key_with_reason(r.admin(), &agent_req(), Some(blank))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::AdminActReasonRequired), "{blank:?}: {err:?}");
+    }
+}
+
+/// A key whose grant on a node carries `create` lists `create_workspace`
+/// among its verbs there, as `oml_write {create_workspace}` admits it
+/// (ADR-0097 d31; ADR-0095 d8; review finding surface-11).
+#[tokio::test]
+async fn a_flagged_grant_lists_create_workspace_where_it_survives() {
+    let r = rig().await;
+    let key = r
+        .app
+        .issue_key(r.admin(), &flagged_req(Covers::Node))
+        .await
+        .expect("a flagged key");
+    let info = r
+        .app
+        .workspace_info(key.value.as_str(), Some(by_name("crew")))
+        .await
+        .expect("the workspace read");
+    assert!(
+        info.my_effective_verbs.contains(&"create_workspace"),
+        "{:?}",
+        info.my_effective_verbs
+    );
+}

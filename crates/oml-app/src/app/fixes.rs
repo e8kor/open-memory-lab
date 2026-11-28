@@ -2074,7 +2074,9 @@ where
         &self,
         bearer: impl Into<Bearer<'_>>,
     ) -> Result<FixStats, AppError> {
-        let admin = self.admin_caller(bearer.into(), "rescan").await?.key;
+        // A maintenance key reads the rescan window's counts too (ADR-0097
+        // d18; review finding surface-1).
+        let admin = self.counts_caller(bearer, "rescan").await?.key;
         self.fix_stats(admin.tenant_id).await
     }
 }

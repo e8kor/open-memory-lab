@@ -266,6 +266,9 @@ where
         prev: Option<&SignedEnvelope>,
         timebox: bool,
     ) -> Result<BegunAct, AppError> {
+        // An empty or whitespace reason is no reason, on every act, as the
+        // confirmation reads one (ADR-0097 d26; review finding surface-3).
+        let reason = reason.map(str::trim).filter(|r| !r.is_empty());
         let tenant_id = admin.tenant_id;
         // Widening, and an erase's shred, wait on a second admin person
         // outside `sole_admin` (d4, d5, d10); a time box takes effect at
