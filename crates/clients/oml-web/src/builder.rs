@@ -149,6 +149,9 @@ pub(crate) struct NewDraft {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct AdminDraft {
     pub user: String,
+    /// The admin person an admin key belongs to (ADR-0097 d21); read only
+    /// with the admin role.
+    pub person: String,
     /// `person` or `service`; empty is `agent`.
     pub used_by: String,
     pub principal: String,
@@ -300,7 +303,7 @@ impl Draft {
             connector: get("kind") == "connector",
             name: get("name"),
             role: match get("role").as_str() {
-                r @ ("reader" | "submitter" | "reviewer") => r.to_owned(),
+                r @ ("reader" | "submitter" | "reviewer" | "admin") => r.to_owned(),
                 _ => "contributor".to_owned(),
             },
             grants,
@@ -314,6 +317,7 @@ impl Draft {
             rate: get("rpm"),
             admin: AdminDraft {
                 user: get("ku"),
+                person: get("kq"),
                 // Empty is an agent's key, the default, so a personal draft
                 // carries no admin field (ADR-0097 d29).
                 used_by: match get("kb").as_str() {
@@ -361,6 +365,7 @@ impl Draft {
         let a = &self.admin;
         for (name, value) in [
             ("ku", &a.user),
+            ("kq", &a.person),
             ("kb", &a.used_by),
             ("kp", &a.principal),
             ("kc", &a.crew),
@@ -408,6 +413,27 @@ impl Draft {
             Side::Personal => format!("{user}-{}", self.name),
             Side::Admin => self.name.clone(),
         };
+        // An admin key belongs to its admin person, is held by that person,
+        // and takes no grant, workspace, scope or limit (ADR-0097 d21, d29),
+        // as `oml keys issue --role admin --person` sends it.
+        if side == Side::Admin && self.role == "admin" {
+            let a = &self.admin;
+            let mut body = json!({
+                "name": name,
+                "role": "admin",
+                "connect_code": false,
+                "used_by": "person",
+                "person": a.person,
+                "grants": [],
+            });
+            if !a.principal.is_empty() {
+                body["principal"] = json!(a.principal);
+            }
+            if !a.reason.is_empty() {
+                body["reason"] = json!(a.reason);
+            }
+            return body;
+        }
         let mut body = json!({
             "name": name,
             "role": self.role,
@@ -509,6 +535,43 @@ impl Draft {
                 ),
                 "kn",
             );
+        }
+        if self.role == "admin" {
+            // An admin key: the admin side's alone, naming its admin person
+            // and a reason; its grants and limits are not sent (ADR-0097
+            // d21, d26, d29).
+            if side == Side::Personal {
+                refuse(
+                    "access.issuer_ceiling",
+                    "A key of the user's own is a contributor, a reader or a submitter.".to_owned(),
+                    "kro",
+                );
+                return out;
+            }
+            if self.admin.person.trim().is_empty() {
+                refuse(
+                    "request.validation",
+                    "An admin key names the admin person it belongs to (admin_key_requires_person)."
+                        .to_owned(),
+                    "kq",
+                );
+            }
+            if self.connector {
+                refuse(
+                    "request.validation",
+                    "An admin key holds no connection: issue it as an agent's key.".to_owned(),
+                    "kro",
+                );
+            }
+            if self.admin.reason.trim().is_empty() {
+                refuse(
+                    "request.validation",
+                    "A reason is required: the issuance waits on another admin, who reads it."
+                        .to_owned(),
+                    "why",
+                );
+            }
+            return out;
         }
         if self.grants.len() > GRANTS_MAX {
             refuse(
@@ -1149,7 +1212,15 @@ pub(crate) fn form_body_as(
     );
     let reviewer = match side {
         Side::Personal => String::new(),
-        Side::Admin => option("reviewer", "reviewer: review held memories", &draft.role),
+        Side::Admin => format!(
+            "{}{}",
+            option("reviewer", "reviewer: review held memories", &draft.role),
+            option(
+                "admin",
+                "admin: an admin person's key, no grants",
+                &draft.role
+            )
+        ),
     };
     let _ = write!(
         out,
@@ -1163,7 +1234,9 @@ pub(crate) fn form_body_as(
         let a = &draft.admin;
         let _ = write!(
             out,
-            r#"<div class="oml-filterrow top"><label>Acts for the user<input class="oml-input" name="ku" value="{}"><span class="desc">Empty: a tenant key that names no user. With a user, every grant lies in that user's root.</span></label><label>Held by<select class="oml-select" name="kb">{}{}{}</select></label></div><div class="oml-filterrow top"><label>Principal<input class="oml-input" name="kp" value="{}"><span class="desc">Empty: the key's name.</span></label><label>Crew<input class="oml-input" name="kc" value="{}"><span class="desc">Empty: no crew. Fixed for the key's life.</span></label></div>"#,
+            r#"<div class="oml-filterrow top"><label for="kq">Admin person<input class="oml-input" id="kq" name="kq" value="{}"{}><span class="desc">With the admin role only: the admin person the key belongs to, by user name. The key authenticates nothing until that person accepts its link on the Keys page; grants, workspaces and limits are not sent.</span></label></div><div class="oml-filterrow top"><label>Acts for the user<input class="oml-input" name="ku" value="{}"><span class="desc">Empty: a tenant key that names no user. With a user, every grant lies in that user's root.</span></label><label>Held by<select class="oml-select" name="kb">{}{}{}</select></label></div><div class="oml-filterrow top"><label>Principal<input class="oml-input" name="kp" value="{}"><span class="desc">Empty: the key's name.</span></label><label>Crew<input class="oml-input" name="kc" value="{}"><span class="desc">Empty: no crew. Fixed for the key's life.</span></label></div>"#,
+            attr(&a.person),
+            invalid("kq"),
             attr(&a.user),
             option("agent", "an agent", a.used_by()),
             option("person", "a person", &a.used_by),
@@ -1517,7 +1590,7 @@ pub(crate) fn defined(name: &str) -> bool {
 /// Whether `name` is a field of the admin builder's `build_key` post: the
 /// personal ones and the admin's own (ADR-0097 d29).
 pub(crate) fn defined_admin(name: &str) -> bool {
-    defined(name) || matches!(name, "ku" | "kb" | "kp" | "kc" | "why")
+    defined(name) || matches!(name, "ku" | "kq" | "kb" | "kp" | "kc" | "why")
 }
 
 /// `w<i><suffix>`'s index, a "new workspace" row's field.
@@ -1829,6 +1902,51 @@ mod tests {
         assert_eq!(body["crew"], "ops");
         assert_eq!(body["used_by"], "agent");
         // A person's own builder takes no reviewer key.
+        assert!(!draft.checks("alice", &tree(), 0).is_empty());
+    }
+
+    /// The admin builder issues an admin key as `oml keys issue --role
+    /// admin --person` does: it names its admin person, is held by that
+    /// person and sends no grant or limit; without a person it is refused
+    /// on the review step, and a person's own builder takes no admin key
+    /// (ADR-0097 d21, d29).
+    #[test]
+    fn the_admin_builder_issues_an_admin_key_that_names_its_person_and_sends_no_grant() {
+        let mut draft = Draft {
+            name: "carol-cli".to_owned(),
+            role: "admin".to_owned(),
+            expires: "2030-01-01".to_owned(),
+            ..Draft::template("review", "alice")
+        };
+        draft.admin.reason = "carol's command line".to_owned();
+        let controls = |d: &Draft| {
+            d.checks_as(Side::Admin, "", &tree(), 0)
+                .iter()
+                .map(|c| c.control.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(controls(&draft), ["kq"]);
+        draft.admin.person = "carol".to_owned();
+        assert!(controls(&draft).is_empty());
+        let body = draft.body_as(Side::Admin, "");
+        assert_eq!(body["role"], "admin");
+        assert_eq!(body["person"], "carol");
+        assert_eq!(body["used_by"], "person");
+        assert_eq!(body["reason"], "carol's command line");
+        assert_eq!(body["grants"], serde_json::json!([]));
+        for absent in [
+            "expiry",
+            "requests_per_minute",
+            "default_workspace",
+            "create_workspaces",
+        ] {
+            assert!(body.get(absent).is_none(), "{absent}: {body}");
+        }
+        let fields = draft.fields();
+        assert!(
+            fields.contains(&("kq".to_owned(), "carol".to_owned())),
+            "{fields:?}"
+        );
         assert!(!draft.checks("alice", &tree(), 0).is_empty());
     }
 }

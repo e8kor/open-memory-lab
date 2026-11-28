@@ -12809,3 +12809,39 @@ async fn a_notice_an_act_writes_shows_in_the_persons_to_do_counts_and_is_dismiss
     );
     assert!(!after.contains("Notices ·"), "{after}");
 }
+
+/// The admin key builder issues an admin key that names its admin person,
+/// as `oml keys issue --role admin --person` does (ADR-0097 d21, d29).
+#[tokio::test]
+async fn the_admin_key_builder_issues_an_admin_key_for_its_admin_person() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (_, _, form) = send(
+        &rig.router,
+        get("/web/admin/keys/new?shape=one", Some(&boss)),
+    )
+    .await;
+    assert!(form.contains(r#"value="admin""#), "{form}");
+    assert!(form.contains("Admin person"), "{form}");
+    let draft = "/web/admin/keys/new?kind=agent&name=boss-cli&role=admin&n=0&m=0&dw=&gs=ancestors&exp=&rpm=&kq=boss&why=the+command+line";
+    let (_, _, review) = send(
+        &rig.router,
+        get(&format!("{draft}&step=review"), Some(&boss)),
+    )
+    .await;
+    assert!(review.contains("<h1>Review key</h1>"), "{review}");
+    assert!(
+        review.contains("&quot;person&quot;: &quot;boss&quot;"),
+        "{review}"
+    );
+    let fields = hidden_fields(&review, "build_key");
+    let fields: Vec<(&str, &str)> = fields
+        .iter()
+        .map(|(n, v)| (n.as_str(), v.as_str()))
+        .collect();
+    let (status, _, body) = send(&rig.router, post("/web/admin/keys", &fields, Some(&boss))).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let key = key_named(&rig, "boss-cli").await;
+    assert_eq!(key.role, Role::Admin);
+}

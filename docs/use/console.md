@@ -91,7 +91,10 @@ one, made when and by which key. A user root takes no status move
 
 The admin console has the same builder at `/web/admin/keys/new`, under the admin Keys page's
 **New key**. It works over the tenant's whole tree, takes a reviewer key, the user the key acts
-for, who holds it, its principal and crew, and needs a reason. Outside a tenant that has only ever
+for, who holds it, its principal and crew, and needs a reason. With the admin role it issues an
+admin key that names its admin person, held by that person, with no grant or limit, as `oml keys
+issue --role admin --person` does; it authenticates nothing until that person accepts its link on
+the Keys page (d21). Outside a tenant that has only ever
 had one admin, its key waits on another admin's confirmation: the value is shown once, and the key
 works nowhere, and its new workspaces are not created, until a second admin confirms it. The admin
 Workspaces page creates a workspace anywhere in the tenant at once
