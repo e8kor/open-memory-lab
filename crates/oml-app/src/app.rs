@@ -4877,20 +4877,21 @@ where
         if let Some((reason, timebox)) = admin_act
             && issuer.role == Role::Admin
         {
-            let issued = self
-                .issue_as_admin_act(
-                    &issuer,
-                    req,
-                    record,
-                    grants,
-                    &creations,
-                    oauth,
-                    prev.as_ref(),
-                    (reason, timebox),
-                    user_ref.as_ref(),
-                    admin_person.as_ref(),
-                )
-                .await?;
+            // Boxed: the admin act's future is large, and every issuance's
+            // future would otherwise carry it on the caller's stack.
+            let issued = Box::pin(self.issue_as_admin_act(
+                &issuer,
+                req,
+                record,
+                grants,
+                &creations,
+                oauth,
+                prev.as_ref(),
+                (reason, timebox),
+                user_ref.as_ref(),
+                admin_person.as_ref(),
+            ))
+            .await?;
             return Ok(IssuedKey {
                 value,
                 default_workspace,

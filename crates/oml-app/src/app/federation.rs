@@ -951,12 +951,9 @@ where
         // read again whenever the node is public, whatever path the walk
         // gave.
         // Boxed: the read sits in every recall's future, which stays small.
-        let ancestry = Box::pin(
-            self.journal
-                .workspace_ancestry(caller.key.tenant_id, node),
-        )
-        .await?
-        .ok_or_else(|| StoreError::Backend(format!("searched node {node} has no ancestry")))?;
+        let ancestry = Box::pin(self.journal.workspace_ancestry(caller.key.tenant_id, node))
+            .await?
+            .ok_or_else(|| StoreError::Backend(format!("searched node {node} has no ancestry")))?;
         let workspace_path = match path {
             Some(path) if !ancestry.first().is_some_and(|w| w.public) => path.clone(),
             _ => served_path(caller, &ancestry),
