@@ -885,6 +885,7 @@ pub async fn user_page(
         name: place.view.name.clone(),
         path: place.view.path.clone(),
         reference: place.reference.clone(),
+        public: place.view.public.value,
     });
     let keep = [("kind", kind.as_str().to_owned())];
     let field = Field {
@@ -900,7 +901,16 @@ pub async fn user_page(
     }
     .html();
     let mut body = crumbs(&place, kind, None, false);
-    let _ = write!(body, r#"<h1 class="mono">{}</h1>"#, text(&place.reference));
+    let _ = write!(
+        body,
+        r#"<h1 class="mono">{}</h1>{}"#,
+        text(&place.reference),
+        if place.view.public.value {
+            r#"<p class="desc">Public: every reading key of the tenant reads its approved items. <span class="oml-tag">Public</span></p>"#
+        } else {
+            ""
+        }
+    );
     body.push_str(&field);
     body.push_str(&kinds_nav(
         &place.reference,
@@ -1123,7 +1133,16 @@ pub async fn admin_page(
     };
     let claims = rows(&place.view.id, kind, listed, Vec::new(), Vec::new());
     let mut body = crumbs(&place, kind, None, true);
-    let _ = write!(body, r#"<h1 class="mono">{}</h1>"#, text(&place.reference));
+    let _ = write!(
+        body,
+        r#"<h1 class="mono">{}</h1>{}"#,
+        text(&place.reference),
+        if place.view.public.value {
+            r#"<p class="desc">Public: every reading key of the tenant reads its approved items. <span class="oml-tag">Public</span></p>"#
+        } else {
+            ""
+        }
+    );
     body.push_str(&kinds_nav(
         &place.reference,
         Some(kind),

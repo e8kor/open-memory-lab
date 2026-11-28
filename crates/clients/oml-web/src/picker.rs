@@ -59,6 +59,22 @@ pub const CLOSEST_MAX: usize = 8;
 /// The query parameter that opens Browse.
 pub const BROWSE: &str = "browse";
 
+/// The label a served path carries in place of a private ancestor the
+/// reading key cannot read (ADR-0098, the operator's decision of
+/// 2026-11-28, D28): never a name, so the console never reads, links or
+/// resolves it.
+pub const PLACEHOLDER: &str = "\u{2026}";
+
+/// Whether `label` is the served placeholder of an unreadable ancestor.
+#[must_use]
+pub fn is_placeholder(label: &str) -> bool {
+    label == PLACEHOLDER
+}
+
+/// The chip a public node carries on the picker, Browse and the cockpit
+/// (ADR-0098 d9).
+pub const PUBLIC_TAG: &str = r#"<span class="oml-tag">Public</span>"#;
+
 /// The reference of the workspace at `path`, where `is_user_root` says
 /// whether a label under `universe` names a person's root: `universe`, a
 /// top-level name, `<user>.<name>` beneath a user root, or the bare name
@@ -138,7 +154,8 @@ impl Roots {
         else {
             return None;
         };
-        (!self.user.contains(top) && !self.shared.contains(top)).then_some(top)
+        (!is_placeholder(top) && !self.user.contains(top) && !self.shared.contains(top))
+            .then_some(top)
     }
 
     /// These kinds with every top label of `paths` they do not know read
@@ -219,6 +236,8 @@ pub struct Place {
     pub name: String,
     pub path: String,
     pub reference: String,
+    /// Whether every reading key of the tenant reads it (ADR-0098 d9).
+    pub public: bool,
 }
 
 /// The names the viewer may choose, from the uncounted tree read: each
@@ -289,6 +308,7 @@ impl Names {
                 id: n.id,
                 name: n.name,
                 path: n.path,
+                public: n.public.value,
             })
             .collect();
         Self {
@@ -324,6 +344,7 @@ impl Names {
                 id: n.id.clone(),
                 name: n.name.clone(),
                 path: n.path.clone(),
+                public: n.public,
             })
             .collect();
         Self {
@@ -349,6 +370,7 @@ impl Names {
                 name: path.rsplit('.').next().unwrap_or_default().to_owned(),
                 id,
                 path,
+                public: false,
             })
             .collect();
         Self {
@@ -373,6 +395,7 @@ impl Names {
                 name: path.rsplit('.').next().unwrap_or_default().to_owned(),
                 path: (*path).to_owned(),
                 reference: roots.reference(path),
+                public: false,
             })
             .collect();
         Self {
@@ -840,8 +863,9 @@ impl Field<'_> {
         if let Chosen::Place(place) = self.chosen {
             let _ = write!(
                 out,
-                r#"<p class="oml-wa-on">Showing <span class="ref">{}</span><a href="{}">Clear</a></p>"#,
+                r#"<p class="oml-wa-on">Showing <span class="ref">{}</span>{}<a href="{}">Clear</a></p>"#,
                 text(&place.reference),
+                if place.public { PUBLIC_TAG } else { "" },
                 attr(&self.link(None, false))
             );
         } else if let Chosen::Ask(typed) = self.chosen {
@@ -987,7 +1011,7 @@ impl Field<'_> {
         let in_progress = n.mode == "in_progress";
         let _ = write!(
             out,
-            r#"<li><span class="n"><a class="ref" href="{}"{}>{}</a><span class="ct">{} {unit}</span>{}{}</span>"#,
+            r#"<li><span class="n"><a class="ref" href="{}"{}>{}</a><span class="ct">{} {unit}</span>{}{}{}</span>"#,
             attr(&self.link(Some(&r), true)),
             if current == Some(n.id.as_str()) {
                 r#" aria-current="true""#
@@ -1008,6 +1032,7 @@ impl Field<'_> {
             } else {
                 String::new()
             },
+            if n.public { PUBLIC_TAG } else { "" },
         );
         let children: Vec<&CountedNode> = nodes
             .iter()
@@ -1258,5 +1283,84 @@ mod tests {
             "{html}"
         );
         assert!(!html.contains("wa-hint"), "{html}");
+    }
+
+    /// A public node is labelled "Public" where it is shown and in Browse
+    /// (ADR-0098 d9).
+    #[test]
+    fn a_public_workspace_is_labelled_public_where_it_is_shown_and_in_browse() {
+        let place = Place {
+            id: "gd".to_owned(),
+            name: "guides".to_owned(),
+            path: "universe.\u{2026}.guides".to_owned(),
+            reference: "guides".to_owned(),
+            public: true,
+        };
+        let chosen = Chosen::Place(place);
+        let node = |id: &str, name: &str, parent: Option<&str>, path: &str, public: bool| {
+            serde_json::from_value::<CountedNode>(serde_json::json!({
+                "id": id, "name": name, "parent_id": parent, "path": path,
+                "status": "protected", "mode": "standard", "user_root": false,
+                "public": public,
+                "counts": {"promoted": 2, "held": 0, "in_progress": 0, "other": 0},
+            }))
+            .unwrap()
+        };
+        let browse = Browse::of(
+            vec![
+                node("u", "universe", None, "universe", false),
+                node(
+                    "gd",
+                    "guides",
+                    Some("hidden"),
+                    "universe.\u{2026}.guides",
+                    true,
+                ),
+            ],
+            false,
+        );
+        let names = Names::default();
+        let field = Field {
+            id: "wa",
+            action: "/web/memories",
+            keep: &[],
+            chosen: &chosen,
+            names: &names,
+            browse: Some(&browse),
+            admin: false,
+            standalone: false,
+            empty: "Empty: every readable workspace.",
+        };
+        let html = field.html();
+        assert!(
+            html.contains(&format!(
+                r#"Showing <span class="ref">guides</span>{PUBLIC_TAG}<a href="#
+            )),
+            "{html}"
+        );
+        assert!(
+            html.contains(&format!(
+                r#">guides</a><span class="ct">2 readable</span>{PUBLIC_TAG}"#
+            )),
+            "{html}"
+        );
+        assert!(
+            !html.contains("\u{2026}<"),
+            "the placeholder is never a link: {html}"
+        );
+    }
+
+    /// The placeholder of an unreadable ancestor is never a top label to
+    /// learn, so no read names it (ADR-0098, D28).
+    #[test]
+    fn a_placeholder_ancestor_is_never_read_or_named() {
+        let roots = Roots::default();
+        assert_eq!(roots.unknown("universe.\u{2026}.guides"), None);
+        assert_eq!(roots.unknown("universe.platform.oncall"), Some("platform"));
+        assert_eq!(roots.reference("universe.\u{2026}.guides"), "guides");
+        assert_eq!(
+            roots.reference("universe.\u{2026}.\u{2026}.guides"),
+            "guides"
+        );
     }
 }

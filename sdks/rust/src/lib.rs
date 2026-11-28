@@ -420,6 +420,10 @@ pub struct WorkspaceView {
     /// that does not serve it (ADR-0046 d8).
     #[serde(default)]
     pub brief: Option<Brief>,
+    /// The node's `public` flag, with a set that waits to an admin key
+    /// (ADR-0098 d9); not public from an API before v0.8.6.
+    #[serde(default)]
+    pub public: PublicFlag,
 }
 
 /// A workspace's review policy (openapi.yaml `ReviewPolicy`): how many

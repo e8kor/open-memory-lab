@@ -993,6 +993,25 @@ async fn regions(
     }
 }
 
+/// The link up to the scope's parent, by its reference; a parent the
+/// served path names only by the placeholder of an ancestor the key cannot
+/// read is said so, never linked or resolved (ADR-0098, D28).
+fn up_to(parent: &str, zoom: &dyn Fn(&str) -> String, refer: &dyn Fn(&str) -> String) -> String {
+    if parent
+        .rsplit('.')
+        .next()
+        .is_some_and(crate::picker::is_placeholder)
+    {
+        return r#"<p class="oml-atlas-up">Inside a workspace this key does not read</p>"#
+            .to_owned();
+    }
+    format!(
+        r#"<p class="oml-atlas-up">Up to <a href="{}">{}</a></p>"#,
+        attr(&zoom(parent)),
+        text(&refer(parent))
+    )
+}
+
 /// The Atlas of `nodes`: the map, the table twin and the scope's panel with
 /// its counts, its links and its dropdown of acts (d28, d30, d32).
 fn atlas_view(
@@ -1040,6 +1059,7 @@ fn atlas_view(
             counts: subtree[i],
             status: n.status.clone(),
             in_progress: in_progress(n),
+            public: n.public,
         })
         .collect();
     let own = Counts::of(&top.counts);
@@ -1054,6 +1074,7 @@ fn atlas_view(
             counts: own,
             status: top.status.clone(),
             in_progress: in_progress(top),
+            public: top.public,
         });
     }
     tiles.sort_by(|a, b| {
@@ -1095,11 +1116,16 @@ fn atlas_view(
     for t in &tiles {
         let _ = write!(
             out,
-            r#"<tr><td class="mono"><a href="{}">{}</a></td><td>{}{}</td><td class="num">{}</td><td>{}<span class="cap">{}</span></td></tr>"#,
+            r#"<tr><td class="mono"><a href="{}">{}</a></td><td>{}{}{}</td><td class="num">{}</td><td>{}<span class="cap">{}</span></td></tr>"#,
             attr(&t.href),
             text(&t.name),
             text(&t.status),
             if t.in_progress { " · in progress" } else { "" },
+            if t.public {
+                format!(" {}", crate::picker::PUBLIC_TAG)
+            } else {
+                String::new()
+            },
             t.counts.total(),
             lifebar(t.counts),
             text(&t.counts.words())
@@ -1109,15 +1135,11 @@ fn atlas_view(
     // The scope's panel: what it holds, where to read it, what to do.
     let _ = write!(
         out,
-        r#"<aside class="oml-rail-side" aria-labelledby="sel-h"><section class="oml-panel"><h2 id="sel-h" class="mono">{}</h2>{}<p class="desc">{}{} · <b>{}</b> readable</p>{}{}<p><a href="{}?workspace={}">Open memories</a></p>"#,
+        r#"<aside class="oml-rail-side" aria-labelledby="sel-h"><section class="oml-panel"><h2 id="sel-h" class="mono">{}</h2>{}<p class="desc">{}{} · <b>{}</b> readable{}</p>{}{}<p><a href="{}?workspace={}">Open memories</a></p>"#,
         text(&top_ref),
         top.path
             .rsplit_once('.')
-            .map_or_else(String::new, |(parent, _)| format!(
-                r#"<p class="oml-atlas-up">Up to <a href="{}">{}</a></p>"#,
-                attr(&zoom(parent)),
-                text(&refer(parent))
-            )),
+            .map_or_else(String::new, |(parent, _)| up_to(parent, &zoom, refer)),
         text(&top.status),
         if in_progress(top) {
             " · in progress"
@@ -1125,6 +1147,11 @@ fn atlas_view(
             ""
         },
         total.total(),
+        if top.public {
+            format!(" {}", crate::picker::PUBLIC_TAG)
+        } else {
+            String::new()
+        },
         lifebar(total),
         legend(total),
         side.memories(),
@@ -1950,5 +1977,25 @@ mod tests {
         assert_eq!(row_state("erased", false), "demoted");
         // The admin search serves `superseded` as a state of its own.
         assert_eq!(row_state("superseded", false), "superseded");
+    }
+
+    /// The cockpit's "Up to" never links or names the placeholder of an
+    /// ancestor the key cannot read (ADR-0098, D28).
+    #[test]
+    fn up_to_says_an_unreadable_parent_is_not_read_and_links_a_readable_one() {
+        let zoom = |p: &str| format!("/web/atlas?workspace={p}");
+        let refer = |p: &str| p.rsplit('.').next().unwrap_or_default().to_owned();
+        let hidden = super::up_to("universe.\u{2026}", &zoom, &refer);
+        assert!(
+            hidden.contains("Inside a workspace this key does not read"),
+            "{hidden}"
+        );
+        assert!(!hidden.contains("<a "), "{hidden}");
+        let shown = super::up_to("universe.platform", &zoom, &refer);
+        assert!(
+            shown
+                .contains(r#"Up to <a href="/web/atlas?workspace=universe.platform">platform</a>"#),
+            "{shown}"
+        );
     }
 }
