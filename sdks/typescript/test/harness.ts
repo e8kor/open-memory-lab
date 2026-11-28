@@ -173,6 +173,9 @@ export async function startServer(): Promise<OmlServer> {
         OML_POSTGRES__OWNER_URL: databaseUrl(database, owner, password),
         OML_SERVER__LISTEN: `127.0.0.1:${port}`,
         OML_KMS__KEYRING_PATH: join(scratch, "keyring"),
+        // The operator tokens each start writes stay in the scratch
+        // directory, never the checkout (ADR-0097 d19).
+        OML_OPERATOR__TOKEN_DIR: join(scratch, "operator"),
       }),
     });
     closeSync(out);
