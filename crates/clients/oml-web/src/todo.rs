@@ -58,7 +58,7 @@ pub const TODO_PAGE: u32 = 200;
 const OWN_KEYS_PAGE: u32 = 200;
 
 /// To do's one act, Next (ADR-0083 d11, d14).
-pub const TODO_ACTIONS: &[&str] = &["next", "ratify"];
+pub const TODO_ACTIONS: &[&str] = &["next", "ratify", "dismiss"];
 
 /// One admin fix's page below To do, where a person confirms or reverts
 /// it (ADR-0089 d8, d15; ADR-0096 P14).
@@ -108,6 +108,7 @@ fn notice(fields: &Fields) -> Option<String> {
         }
         "empty" => Some("Nothing waits for this account.".to_owned()),
         "ratified" => Some("Ratified: the memory joins the brief.".to_owned()),
+        "dismissed" => Some("Dismissed: the notice leaves To do and stays in the journal.".to_owned()),
         "fix_confirmed" => Some(
             "Confirmed: the version the fix serves reads confirmed from now on.".to_owned(),
         ),
@@ -428,11 +429,12 @@ async fn todo_body(
     browse: Option<&Browse>,
 ) -> Result<String, Refusal> {
     let cursor = fields.given("cursor");
-    let (read, counted, briefs, fixes) = tokio::join!(
+    let (read, counted, briefs, fixes, notices) = tokio::join!(
         listing(ctx, &chosen, TODO_PAGE, cursor),
         group_count(ctx, &chosen),
         brief_proposals(ctx, &chosen),
-        review_fixes(ctx, &chosen)
+        review_fixes(ctx, &chosen),
+        person_notices(ctx)
     );
     let read = read.map_err(|e| Box::new(outcome::page(&e, ctx.calls, TODO_PATH)))?;
     let roots = ctx
@@ -522,11 +524,14 @@ async fn todo_body(
         return Ok(body);
     }
     let briefs_section = briefs.as_ref().map(|b| brief_group(ctx, b));
+    // The person's notices, whatever the workspace (ADR-0097 d20).
+    let notices_section = notices.as_deref().map(|n| notice_group(ctx, n));
     // Admin fixes to confirm, after To review (TodoScreen, v0.8.5).
     let fixes_section = fixes.as_deref().map(fix_group);
     let after_review = |body: &mut String| {
         let mut nothing = Vec::new();
         for (section, title) in [
+            (&notices_section, "Notices"),
             (&fixes_section, "Admin fixes to confirm"),
             (&briefs_section, "Brief proposals to ratify"),
         ] {
@@ -544,8 +549,9 @@ async fn todo_body(
             );
         }
     };
-    let others_wait =
-        matches!(fixes_section, Some(Some(_))) || matches!(briefs_section, Some(Some(_)));
+    let others_wait = matches!(fixes_section, Some(Some(_)))
+        || matches!(briefs_section, Some(Some(_)))
+        || matches!(notices_section, Some(Some(_)));
     if page.items.is_empty() && cursor.is_none() {
         match others_wait {
             true => {
@@ -586,6 +592,97 @@ async fn todo_body(
     body.push_str("</section>");
     after_review(&mut body);
     Ok(body)
+}
+
+/// The person's notices not dismissed, `GET /v2/web/notices` as the web
+/// session key (ADR-0097 d20): `None` where the page judges as a linked
+/// key, or the read fails, which the group then leaves out.
+async fn person_notices(ctx: &Ctx<'_>) -> Option<Vec<oml_sdk::Notice>> {
+    if ctx.acting.is_some() {
+        return None;
+    }
+    let credential = ctx.session.credential(Capacity::Web);
+    let ids = ctx.calls.next_ids();
+    Some(
+        ctx.web
+            .api
+            .notices(&call(&credential, &ids))
+            .await
+            .ok()?
+            .items,
+    )
+}
+
+/// What a notice tells about, in words (openapi.yaml `Notice.kind`).
+fn notice_words(kind: &str) -> &'static str {
+    match kind {
+        "act_against_admin" => "An act against an admin",
+        "offensive_narrowing" => "An act that narrows a person's or a workspace's access",
+        "root_reach" => "An admin reached into this account's own root",
+        "recovery" => "The operator recovers the tenant",
+        "settlement" => "The operator settles a dispute",
+        _ => "An admin act",
+    }
+}
+
+/// The Notices group (ADR-0097 d20, d6, d24): each notice not dismissed,
+/// oldest first, what it tells about, the act, who took it and when, and
+/// its Dismiss form; `None` when there is none.
+fn notice_group(ctx: &Ctx<'_>, notices: &[oml_sdk::Notice]) -> Option<String> {
+    if notices.is_empty() {
+        return None;
+    }
+    let mut out = format!(
+        r#"<section class="oml-todo-g" aria-labelledby="todo-notices"><h2 id="todo-notices">Notices · {}</h2><p class="desc">Admin acts this account is told about, oldest first: an act against an admin, an act that narrows a person's or a workspace's access, a reach into this account's own root. Dismissing one removes it from To do; the journal keeps it.</p><ul class="oml-todo">"#,
+        notices.len()
+    );
+    for n in notices {
+        let field = |name: &str| n.detail.get(name).and_then(serde_json::Value::as_str);
+        let _ = write!(
+            out,
+            r#"<li><span class="oml-decision">{}</span> · {} · by {} · {}{}</li>"#,
+            text(notice_words(&n.kind)),
+            text(&field("act").unwrap_or("admin act").replace('_', " ")),
+            field("actor_person").map_or_else(
+                || "an admin key that counts as no person".to_owned(),
+                |p| format!(r#"<span class="mono">{}</span>"#, text(p))
+            ),
+            instant(&n.at),
+            form(
+                TODO_PATH,
+                "dismiss",
+                &ctx.session.csrf(),
+                &format!("{}{}", hidden("notice", &n.notice_id), acts::nonce_field()),
+                "Dismiss",
+                false
+            ),
+        );
+    }
+    out.push_str("</ul></section>");
+    Some(out)
+}
+
+/// **Dismiss** (ADR-0097 d20): `POST /v2/web/notices/{notice}/dismiss` as
+/// the web session key, the person's own act, and back to To do.
+async fn dismiss(web: &Web, session: &Session, calls: &PageCalls, fields: &Fields) -> Response {
+    let Some(notice) = fields.given("notice").filter(|id| is_id(id)) else {
+        return acts::invalid("notice is a notice's id", calls);
+    };
+    let key = match acts::key(session, fields, calls) {
+        Ok(key) => key,
+        Err(refusal) => return *refusal,
+    };
+    let _in_flight = acts::hold(&key).await;
+    let credential = session.credential(Capacity::Web);
+    let ids = calls.next_ids();
+    match web
+        .api
+        .dismiss_notice(&call(&credential, &ids), &key, notice)
+        .await
+    {
+        Ok(_) => acts::see_other(&format!("{TODO_PATH}?done=dismissed"), &[]),
+        Err(e) => outcome::page(&e, calls, TODO_PATH),
+    }
 }
 
 /// The unconfirmed admin fixes `<user>-review` may settle, `GET
@@ -959,6 +1056,7 @@ fn defined(action: &str, name: &str) -> bool {
     match action {
         "next" => matches!(name, "workspace" | "as" | "after"),
         "ratify" => matches!(name, "edge_id" | "title" | "confirm"),
+        "dismiss" => name == "notice",
         "judge" => matches!(name, "artifact_id" | "verdict" | "reason" | "as"),
         _ => false,
     }
@@ -990,6 +1088,9 @@ pub async fn user_act(
     };
     if action == "ratify" {
         return ratify(&web, &session, &calls, &fields).await;
+    }
+    if action == "dismiss" {
+        return dismiss(&web, &session, &calls, &fields).await;
     }
     let acting = match fields.given("as") {
         None => None,
@@ -1483,6 +1584,35 @@ pub async fn judge_act(
 // Administration
 // ---------------------------------------------------------------------
 
+/// The administration To do's "Done: public cleared" group (ADR-0098 d6):
+/// a clear narrows every key's default recall at once and waits on nobody,
+/// so it is listed as done, the newest first, and never counted; empty
+/// when no clear is recorded.
+fn cleared_section(acts: &[oml_sdk::AdminAct]) -> String {
+    let cleared: Vec<String> = acts
+        .iter()
+        .rev()
+        .filter(|a| a.act == "workspace_public_clear")
+        .take(DONE_MAX)
+        .map(crate::admin_acts::act_row)
+        .collect();
+    if cleared.is_empty() {
+        return String::new();
+    }
+    let mut out = format!(
+        r#"<section class="oml-todo-g" aria-labelledby="todo-done"><h2 id="todo-done">Done: public cleared · {}</h2><p class="desc">Public flags an admin person cleared, newest first: each took effect at once and needs nothing more, and each opens its act.</p><ul class="oml-todo">"#,
+        cleared.len()
+    );
+    for r in &cleared {
+        out.push_str(r);
+    }
+    out.push_str("</ul></section>");
+    out
+}
+
+/// The most done acts the administration To do lists, newest first.
+const DONE_MAX: usize = 20;
+
 /// `GET /web/admin/todo`: the administration To do (ADR-0083 d11; ADR-0096
 /// d5, d7): the tenant's fixes no person has confirmed or reverted, the
 /// guardrail-loosening alerts among them, and the open investigations,
@@ -1613,6 +1743,7 @@ pub async fn admin_page(
         }
         body.push_str("</ul></section>");
     }
+    body.push_str(&cleared_section(&admin_acts));
     if empty.len() == 4 {
         body.push_str(r#"<div class="oml-empty"><p>Nothing waits for this account.</p><p class="desc">Admin acts to confirm, admin fixes no person has confirmed or reverted, the alerts among them, and this key's open investigations appear here.</p></div>"#);
     } else if !empty.is_empty() {
@@ -1637,6 +1768,29 @@ pub async fn admin_page(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A cleared public flag is listed in the administration To do as
+    /// done, newest first, and a set is not (ADR-0098 d6).
+    #[test]
+    fn a_cleared_public_flag_is_listed_as_done_and_a_set_is_not() {
+        let act = |id: &str, act: &str, at: &str| {
+            serde_json::from_value::<oml_sdk::AdminAct>(serde_json::json!({
+                "act_id": id, "act": act, "class": "narrowing", "state": "effective",
+                "target": {"workspace_id": "w"}, "grants": [], "actor_person": "bob",
+                "sole_admin": false, "at": at,
+            }))
+            .expect("an act")
+        };
+        let acts = [
+            act("a1", "workspace_public_set", "2026-11-27T10:00:00Z"),
+            act("a2", "workspace_public_clear", "2026-11-28T10:00:00Z"),
+        ];
+        let html = cleared_section(&acts);
+        assert!(html.contains("Done: public cleared · 1"), "{html}");
+        assert!(html.contains("workspace public clear"), "{html}");
+        assert!(!html.contains("workspace public set"), "{html}");
+        assert!(cleared_section(&acts[..1]).is_empty());
+    }
 
     #[test]
     fn a_crafted_notice_shows_only_numbers_and_the_pages_own_words() {

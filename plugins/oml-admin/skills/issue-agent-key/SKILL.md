@@ -51,6 +51,11 @@ follows from that.
       and the CLI adds a reader grant beside the submitter grant; say so before you run it.
     - whether the key only reads (`--role reader`): a reader key holds one reader grant on the
       workspace, recalls there and writes nothing, so its plugin hooks and MCP entry only read.
+    - **why** the key is issued, one sentence, for example `the nightly digest agent for
+      metals-crew`. It goes in `--reason`, is scanned and journalled with the issuance, and a
+      second admin person reads it before confirming. Outside a tenant that has only ever had one
+      admin person the server refuses an issuance without one (`admin_act.reason_required`); the
+      CLI cannot ask for it here, because this conversation is not its terminal.
 
 2. Choose the key file: `$HOME/.config/oml/keys/<principal>`, with each `/` of the principal
    written as `-`, so `crew/agent-7` becomes `crew-agent-7`. If the operator names another path,
@@ -67,8 +72,13 @@ follows from that.
    `--role submitter` or `--role reader` only if the operator asked (with `--user`, `--workspace` may be left out):
 
     ```sh
-    oml keys issue-agent agent-7-laptop --principal crew/agent-7 --workspace metals-crew --out "$HOME/.config/oml/keys/crew-agent-7"
+    oml keys issue-agent agent-7-laptop --principal crew/agent-7 --workspace metals-crew --reason "the nightly digest agent for metals-crew" --out "$HOME/.config/oml/keys/crew-agent-7"
     ```
+
+    Where the tenant has a second admin person the issuance waits on them: stderr ends with
+    "waits on another admin" and the act id, and the key authenticates nothing until that person
+    confirms it (`oml admin confirm <act id>`, or the console's To do). Tell the operator so,
+    with the act id; the file already holds the value, and the next steps hold.
 
     On success stdout holds two `export` lines, one `claude plugin configure` line and one
     `oml setup claude-code` line, and stderr

@@ -137,7 +137,7 @@ operator, 2026-11-25), so a tenant with one person still moves a workspace up th
 
 ## Amendment of 2026-11-26: a frozen workspace admits setting and clearing `public` (amends d5; ADR-0098)
 
-Decided by the operator on 2026-11-26; recorded in [ADR-0098](ADR-0098-a-protected-or-frozen-workspace-can-be-marked-public-and-then-every-reading-key-in-the-tenant-reads-its-approved-items.md). Designed, not built; it ships in v0.8.6.
+Decided by the operator on 2026-11-26; recorded in [ADR-0098](ADR-0098-a-protected-or-frozen-workspace-can-be-marked-public-and-then-every-reading-key-in-the-tenant-reads-its-approved-items.md). Built in v0.8.6.
 
 - **d5.** Setting and clearing a workspace's `public` flag is admitted on a `frozen` workspace. The
   flag changes who reads, an access act unrelated to status, as a grant on a frozen area already

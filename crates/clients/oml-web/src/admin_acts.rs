@@ -15,7 +15,7 @@ use axum::extract::{Form, State};
 use axum::response::Response;
 use http::{StatusCode, Uri};
 use oml_page::web::{attr, form, hidden, input, shell, text};
-use oml_sdk::{AdminAct, encode};
+use oml_sdk::{AdminAct, WorkspaceView, encode};
 
 use crate::keys::instant;
 use crate::pages::{Fields, refused};
@@ -92,10 +92,21 @@ fn target_text<'a>(act: &'a AdminAct, field: &str) -> Option<&'a str> {
     act.target.get(field).and_then(serde_json::Value::as_str)
 }
 
-/// The confirm screen's facts (d23): role, grants, `used_by`, principal,
-/// the root's person, the person who took the act and its reason, with a
-/// flag where the principal spells an existing person's name.
-fn facts(act: &AdminAct) -> String {
+/// The sentence a public set's confirm screen states (ADR-0098 d9).
+pub(crate) const PUBLIC_SET_CONSEQUENCE: &str = "A confirmation makes every reading key of the tenant, user keys included, recall this workspace's approved items by default, with their authors and sources. Its children stay private: the flag covers this node alone.";
+
+/// The act a public set spells (ADR-0098 d6).
+const PUBLIC_SET: &str = "workspace_public_set";
+
+/// The confirm screen's facts (d23): role, grants with their `create`
+/// flag, `used_by`, principal, the root's person, an admin key's person,
+/// the workspaces an issuance creates, the person who took the act and its
+/// reason, with a flag where the principal spells an existing person's
+/// name; for a public set, the workspace's name, status and children that
+/// stay private, and what a confirmation does (ADR-0097 d23, d30, d31;
+/// ADR-0098 d9). `workspace` is the public set's workspace as read, or the
+/// request id of a read that failed.
+fn facts(act: &AdminAct, workspace: Option<&Result<WorkspaceView, String>>) -> String {
     let mut rows: Vec<(String, String)> = vec![
         ("Act".to_owned(), text(&act_words(&act.act))),
         ("Class".to_owned(), text(&act.class.replace('_', " "))),
@@ -115,8 +126,10 @@ fn facts(act: &AdminAct) -> String {
         ("used_by", "Used by"),
         ("principal", "Principal"),
         ("user", "The root's person"),
+        ("person", "The admin key's person"),
         ("workspace_id", "Workspace"),
         ("email", "Email"),
+        ("until", "Time box ends"),
     ] {
         if let Some(value) = target_text(act, field) {
             rows.push((
@@ -131,6 +144,31 @@ fn facts(act: &AdminAct) -> String {
             r#"<span class="oml-chip is-adminfix">the principal spells an existing person's name</span>"#
                 .to_owned(),
         ));
+    }
+    match workspace {
+        Some(Ok(view)) => {
+            rows.push((
+                "Workspace name".to_owned(),
+                format!(r#"<span class="mono">{}</span>"#, text(&view.path)),
+            ));
+            rows.push(("Status".to_owned(), text(&view.status)));
+            let n = view.children.len();
+            rows.push((
+                "Children that stay private".to_owned(),
+                format!("{n} child workspace{}", if n == 1 { "" } else { "s" }),
+            ));
+        }
+        Some(Err(request_id)) => rows.push((
+            "Workspace name".to_owned(),
+            format!(
+                "unavailable: the workspace read failed (request <code>{}</code>)",
+                text(request_id)
+            ),
+        )),
+        None => {}
+    }
+    if act.act == PUBLIC_SET {
+        rows.push(("A confirmation".to_owned(), text(PUBLIC_SET_CONSEQUENCE)));
     }
     if act.sole_admin {
         rows.push((
@@ -167,12 +205,36 @@ fn facts(act: &AdminAct) -> String {
                 .map_or(0, Vec::len);
             let _ = write!(
                 out,
-                r#"<li><span class="oml-decision">{}</span> on <span class="mono">{}</span> · covers the {} · {} denial{}</li>"#,
+                r#"<li><span class="oml-decision">{}</span> on <span class="mono">{}</span> · covers the {} · {} denial{}{}</li>"#,
                 text(field("role").unwrap_or("?")),
                 text(field("node").unwrap_or("?")),
                 text(field("covers").unwrap_or("?")),
                 denies,
                 if denies == 1 { "" } else { "s" },
+                if grant.get("create") == Some(&serde_json::Value::Bool(true)) {
+                    r#" · <span class="oml-chip is-adminfix">creates child workspaces</span>"#
+                } else {
+                    ""
+                },
+            );
+        }
+        out.push_str("</ul>");
+    }
+    let creations = act
+        .target
+        .get("create_workspaces")
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    if !creations.is_empty() {
+        out.push_str(r#"<h2>Workspaces a confirmation creates</h2><ul class="oml-todo">"#);
+        for w in creations {
+            let field = |name: &str| w.get(name).and_then(serde_json::Value::as_str);
+            let _ = write!(
+                out,
+                r#"<li><span class="mono">{}</span> under <span class="mono">{}</span></li>"#,
+                text(field("name").unwrap_or("?")),
+                text(field("parent_id").unwrap_or("the tenant's root")),
             );
         }
         out.push_str("</ul>");
@@ -222,7 +284,23 @@ pub async fn page(
     };
     let body = match fields.given("act") {
         Some(id) => match listed.iter().find(|a| a.act_id == id) {
-            Some(act) => screen(&session, act),
+            Some(act) => {
+                // A public set names its workspace by id alone: one read
+                // more draws its name, status and children (ADR-0098 d9).
+                let workspace = match target_text(act, "workspace_id") {
+                    Some(workspace) if act.act == PUBLIC_SET => {
+                        let ids = calls.next_ids();
+                        Some(
+                            web.api
+                                .workspace(&call(&credential, &ids), workspace)
+                                .await
+                                .map_err(|_| ids.request_id.clone().unwrap_or_default()),
+                        )
+                    }
+                    _ => None,
+                };
+                screen(&session, act, workspace.as_ref())
+            }
             None => return not_found(&calls),
         },
         None => list(&listed),
@@ -264,7 +342,11 @@ fn list(listed: &[AdminAct]) -> String {
 
 /// One act's confirm screen (d23): its facts, and the forms the act admits
 /// for this session's person.
-fn screen(session: &Session, act: &AdminAct) -> String {
+fn screen(
+    session: &Session,
+    act: &AdminAct,
+    workspace: Option<&Result<WorkspaceView, String>>,
+) -> String {
     let mut body = format!(
         r#"<header class="oml-section-head"><div class="top"><h1>Admin act</h1></div><p class="desc">{}</p></header>"#,
         if pending(act) {
@@ -275,7 +357,7 @@ fn screen(session: &Session, act: &AdminAct) -> String {
             "This act is settled here: nothing waits on a confirmation."
         }
     );
-    body.push_str(&facts(act));
+    body.push_str(&facts(act, workspace));
     let me = own_person(session);
     if !(pending(act) || undoable(act)) {
         return body;
@@ -368,5 +450,96 @@ pub async fn act(
     match answer {
         Ok(done) => acts::see_other(&format!("{back}&done={done}"), &[]),
         Err(e) => outcome::page(&e, &calls, &back),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn act(value: serde_json::Value) -> AdminAct {
+        let mut base = json!({
+            "act_id": "00000000-0000-4000-8000-0000000000ac",
+            "class": "widening",
+            "state": "pending_confirmation",
+            "grants": [],
+            "reason": "why",
+            "actor_person": "alice",
+            "sole_admin": false,
+            "at": "2026-11-28T10:00:00Z",
+        });
+        for (k, v) in value.as_object().expect("an object") {
+            base[k] = v.clone();
+        }
+        serde_json::from_value(base).expect("an act")
+    }
+
+    /// An issuance's confirm screen names every part that widens: a
+    /// grant's `create` flag, the workspaces a confirmation creates and an
+    /// admin key's person (ADR-0097 d21, d23, d30, d31).
+    #[test]
+    fn the_confirm_screen_shows_the_create_flag_the_created_workspaces_and_the_admin_keys_person() {
+        let issued = act(json!({
+            "act": "issue_key",
+            "target": {
+                "name": "ops-bot", "role": "contributor", "used_by": "agent",
+                "principal": "ops-bot", "person": "carol",
+                "create_workspaces": [{"name": "ops-space", "parent_id": "11111111-1111-4111-8111-111111111111"}],
+            },
+            "grants": [
+                {"node": "22222222-2222-4222-8222-222222222222", "role": "submitter", "covers": "subtree", "deny": [], "create": true},
+                {"node": "22222222-2222-4222-8222-222222222222", "role": "reader", "covers": "subtree", "deny": [], "create": false},
+            ],
+        }));
+        let html = facts(&issued, None);
+        assert_eq!(
+            html.matches("creates child workspaces").count(),
+            1,
+            "{html}"
+        );
+        assert!(html.contains("Workspaces a confirmation creates"), "{html}");
+        assert!(
+            html.contains(r#"<span class="mono">ops-space</span> under <span class="mono">11111111-1111-4111-8111-111111111111</span>"#),
+            "{html}"
+        );
+        assert!(
+            html.contains(r#"person</dt><dd><span class="mono">carol</span>"#),
+            "{html}"
+        );
+    }
+
+    /// A public set's confirm screen names the workspace, its status, its
+    /// children that stay private, and that every reading key of the tenant,
+    /// user keys included, will recall its approved items (ADR-0098 d9).
+    #[test]
+    fn a_public_sets_confirm_screen_names_the_workspace_its_status_its_private_children_and_the_consequence()
+     {
+        let set = act(json!({
+            "act": "workspace_public_set",
+            "target": {"workspace_id": "33333333-3333-4333-8333-333333333333"},
+        }));
+        let view: WorkspaceView = serde_json::from_value(json!({
+            "id": "33333333-3333-4333-8333-333333333333",
+            "name": "guides", "path": "universe.platform.guides", "status": "frozen",
+            "children": [{"id": "a"}, {"id": "b"}],
+        }))
+        .expect("a view");
+        let html = facts(&set, Some(&Ok(view)));
+        for shown in [
+            "universe.platform.guides",
+            "<dd>frozen</dd>",
+            "2 child workspaces",
+            "user keys included",
+            "Its children stay private",
+        ] {
+            assert!(html.contains(shown), "{shown}: {html}");
+        }
+        let failed = facts(&set, Some(&Err("page-1.2".to_owned())));
+        assert!(failed.contains("the workspace read failed"), "{failed}");
+        assert!(
+            failed.contains("user keys included"),
+            "the consequence is stated anyway: {failed}"
+        );
     }
 }

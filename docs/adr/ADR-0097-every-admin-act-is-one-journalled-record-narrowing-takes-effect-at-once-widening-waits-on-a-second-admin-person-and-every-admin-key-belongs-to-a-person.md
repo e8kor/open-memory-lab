@@ -15,7 +15,11 @@ those answers created, and three readings, the same day; each answer is recorded
 and marked **decided by the operator, 2026-11-25**. Readings this record takes beyond the answers
 were marked **reading, for the operator to confirm**; the operator decided the last two on 2026-11-26. Amended by [ADR-0098](ADR-0098-a-protected-or-frozen-workspace-can-be-marked-public-and-then-every-reading-key-in-the-tenant-reads-its-approved-items.md) (d3, d5, 2026-11-26, decided by the operator).
 
-**Release:** v0.8.6, not built. Four pieces are built in v0.8.5 (d27).
+**Release:** built in v0.8.6; four pieces were built in v0.8.5 (d27). Not built in v0.8.6: the
+production migration's root-reach rows (keys, grants and connections in another person's root made
+pending, and investigations opened by keys d16 refuses closed), deferred to v0.8.7 by the
+operator's decision of 2026-11-28 (D27); and d14's rotation of another admin's key or a person's
+key under a confirmation, which stays refused (`not_admins_key`, `in_persons_root`).
 
 **Amends:** [ADR-0001](ADR-0001-the-constitution.md) (d5, kept: exception 3 reads with two
 changes), [ADR-0009](ADR-0009-status-ladder.md) (d3),
@@ -98,7 +102,7 @@ rotates `api_keys.hash`, sets and accepts a pending link and clears `web_emails.
 In-tenant two-person rules bind tenant admins, never the host. Against the host the controls are
 journal tamper evidence and out-of-band notice.
 
-Decided, not built.
+Decided, and built in v0.8.6 except as the Release line says.
 
 ## Decision
 
@@ -207,7 +211,9 @@ Decided, not built.
 
 - **d8 — An act against another admin takes effect at once, is contestable, and suspends the
   target's admin keys (Q5).** The class: revoking a key of another admin person; un-flagging,
-  removing, disabling, or changing the entry of another admin person.
+  removing, disabling, or changing the entry of another admin person. *Amended by answer 2 of
+  2026-11-27:* revoking another admin's key is final and suspends, contests and freezes nothing;
+  the rest of this decision covers the flag, entry and disable acts.
   - **Revocation is final.** No value comes back, and that is the containment.
   - **Flag, entry and disable acts take effect at once and are contestable** through a
     contest-only sign-in: the target's provider sign-in still opens it when their entry is
@@ -303,7 +309,7 @@ Decided, not built.
   (d18), so revoking an admin key breaks no sign-in. The console offers one button on the admin
   one-key page and on the person's Keys page, and nothing else. Who: an admin person (a linked
   admin key or `<user>-admin`) on any key of the tenant, against another admin person's key d8's
-  act and otherwise narrowing; and a person's `<user>-web` on the person's own keys, those that
+  act (final, with no dispute or freeze, by answer 2 of 2026-11-27) and otherwise narrowing; and a person's `<user>-web` on the person's own keys, those that
   count as the person, as a person's own act and not an admin act (decided by the operator,
   2026-11-25).
   Refused: a session key (`session_key`; a session ends with its entry), a reserved key (it
@@ -462,7 +468,7 @@ Decided, not built.
   by the operator, 2026-11-25; the precondition of d21).** ADR-0085 d16 refuses a self-link (`self_link`,
   the operator, 2026-11-17) and admits links only from a console admin session. A one-admin tenant
   whose CLI key is not the ceremony's linked key then has no way to link it: the only admin is the
-  one who would self-link. This record admits one case: `POST /v2/keys/self/link {person}`,
+  one who would self-link. This record admits one case: `POST /v2/keys/self/link {user}`,
   called under the admin key itself (possession), names a person and sets a pending link that
   takes effect only when that person accepts from their own console session (consent, d7). Both
   proofs together give no reach the holder lacks: the holder already holds the key, and another
@@ -726,7 +732,8 @@ step cannot lock the operator out of a one-admin tenant:
   counts as a confirmed admin flag. Every admin act the console serves, the acceptance included,
   works while the CLI key is suspended.
 - **The guard counts persons.** Suspending admin keys removes no admin person, so d25 is untouched.
-- **The suspended key keeps its one route** for 30 days (a placeholder), and doctor's
+- **The suspended key keeps three routes**, `GET /v2/whoami`, `POST /v2/keys/self/link` and
+  `POST /v2/keys/self/convert`, for 30 days (a placeholder), and doctor's
   `admin.key_unlinked_suspended` names it with the days left. Until the link is accepted, the
   issue-agent-key skill answers `auth.invalid` with `details.reason: suspended`, and keys are
   issued from no CLI. A key revoked after the 30 days is replaced by a new admin key issued to the
@@ -833,7 +840,7 @@ Each red first, named after the sentence it proves:
 `a_key_creates_a_child_only_under_a_grant_that_carries_create`,
 `a_child_under_a_node_grant_carries_the_same_grant_and_no_wider_role`,
 `creating_a_child_under_a_frozen_parent_is_refused`,
-`a_flagged_child_counts_against_the_workspaces_quota`,
+`a_flagged_child_in_the_shared_tree_is_charged_to_no_account` (answer 8 of 2026-11-27),
 `oml_write_create_workspace_reaches_a_shared_parent_only_through_the_create_flag`.
 
 ### The operator's answers of 2026-11-25 to the tensions
@@ -880,8 +887,9 @@ answered each on 2026-11-25. Each answer is recorded where it applies.
   `key.converted`, `key.suspended`, `operator.recovery`, `operator.settlement`).
 - **The CLI and the skill:** `oml keys issue` prints the value once and then "waits on another
   admin" for a pending act; `oml bootstrap claim` and `oml quickstart` require `--person` and
-  `--email`; `oml keys issue` and `issue-agent` take `--create-workspace <parent>/<name>` and
-  `--grant <workspace>:<role>:create` (d30, d31).
+  `--email`; `oml keys issue` and `issue-agent` take `--create-workspace <parent>/<name>`, `oml
+  keys issue` takes `--grant <workspace>:<role>:create` and `issue-agent` `--create` on its one
+  write grant (d30, d31); both take `--reason` and ask for one on a terminal (d26).
 - **Issues:** the build is tracked in milestone v0.8.6; the v0.8.5 pieces in milestone v0.8.5.
 - **The cost:** a multi-admin tenant's widening waits on a second person, who counts only after
   seven days; erase no longer destroys at once; a recovered tenant whose dormant admins never
@@ -1138,7 +1146,7 @@ recover lane took.
 
 ## Amendment of 2026-11-26: the public flag joins the widening and narrowing lists (amends d3, d5; ADR-0098)
 
-Decided by the operator on 2026-11-26; recorded in [ADR-0098](ADR-0098-a-protected-or-frozen-workspace-can-be-marked-public-and-then-every-reading-key-in-the-tenant-reads-its-approved-items.md). Designed, not built; it ships in v0.8.6.
+Decided by the operator on 2026-11-26; recorded in [ADR-0098](ADR-0098-a-protected-or-frozen-workspace-can-be-marked-public-and-then-every-reading-key-in-the-tenant-reads-its-approved-items.md). Built in v0.8.6.
 
 - **d5.** Marking a `protected` or `frozen` workspace public (`workspace_public_set`) is widening:
   it takes effect only when a second admin person who counts confirms it, and at once, marked,

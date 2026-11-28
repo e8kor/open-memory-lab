@@ -29,10 +29,8 @@ def repo(history):
     roles = root / M.ROLE_SOURCE
     roles.parent.mkdir(parents=True)
     for tag, maintenance in history:
-        body = '            Role::Admin => "admin",\n'
-        if maintenance:
-            body += '            Role::Maintenance => "maintenance",\n'
-        roles.write_text(body)
+        names = '"reader", "admin"' + (', "maintenance"' if maintenance else "")
+        roles.write_text(f"pub const KEY_ROLES: &[&str] = &[{names}];\n")
         git("add", "-A")
         git("commit", "-q", "--allow-empty", "-m", tag)
         git("tag", tag)
@@ -52,6 +50,23 @@ class MaintenanceMarker(unittest.TestCase):
         d, root = repo([("v0.8.4", False), ("v0.8.5", False)])
         with d:
             self.assertEqual(M.required(root, "v0.8.5"), [])
+
+    def test_a_tag_whose_role_source_declares_no_key_roles_is_refused_by_name(self):
+        d, root = repo([("v0.8.5", False)])
+        with d:
+            (root / M.ROLE_SOURCE).write_text('            Role::Maintenance => "maintenance",\n')
+            subprocess.run(["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t",
+                            "commit", "-qam", "reformatted"], check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(root), "tag", "v0.8.6"], check=True, capture_output=True)
+            with self.assertRaisesRegex(RuntimeError, "declares no `pub const KEY_ROLES`"):
+                M.required(root, "v0.8.6")
+
+    def test_the_real_domain_source_declares_key_roles_with_maintenance(self):
+        source = (M.ROOT / M.ROLE_SOURCE).read_text(encoding="utf-8")
+        roles = M.roles_of(source)
+        self.assertIsNotNone(roles, f"{M.ROLE_SOURCE} declares no KEY_ROLES")
+        self.assertIn("maintenance", roles)
+        self.assertEqual(len(roles), len(set(roles)))
 
 
 if __name__ == "__main__":

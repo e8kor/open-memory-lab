@@ -581,9 +581,10 @@ struct KeysIssueArgs {
     /// in-progress workspace and never promotes.
     #[arg(long, value_parser = ["curator"])]
     profile: Option<String>,
-    /// Why the key is issued; scanned and journalled with the issuance. An
-    /// admin key's issuance waits on a second admin person and requires it,
-    /// except in a tenant that has only ever had one admin person.
+    /// Why the key is issued; scanned and journalled with the issuance.
+    /// Outside a tenant that has only ever had one admin person the
+    /// issuance waits on a second admin person and requires it; on a
+    /// terminal the CLI asks for one when it is not given.
     #[arg(long)]
     reason: Option<String>,
     /// Write the value to a new owner-only (0600) file, refusing one that
@@ -663,8 +664,44 @@ struct IssueAgentArgs {
     /// created while the issuance waits on a second admin person.
     #[arg(long = "create-workspace", value_name = "PARENT/NAME", value_parser = parse_new_workspace)]
     create_workspaces: Vec<(String, String)>,
+    /// Let the key create child workspaces under --workspace through its
+    /// write grant there, as `--grant <workspace>:<role>:create` does on
+    /// `oml keys issue`; widening, so it waits on a second admin person.
+    /// Refused with --role reader, which writes nothing.
+    #[arg(long)]
+    create: bool,
+    /// Why the key is issued; scanned and journalled with the issuance.
+    /// Outside a tenant that has only ever had one admin person the
+    /// issuance waits on a second admin person and requires it; on a
+    /// terminal the CLI asks for one when it is not given.
+    #[arg(long)]
+    reason: Option<String>,
     #[command(flatten)]
     limits: KeyLimitArgs,
+}
+
+/// The reason an issuing verb sends (ADR-0097 d26): `given`, or, with none
+/// given and both stdin and stderr a terminal, the line the person types at
+/// the prompt; an empty answer, or no terminal, sends none, which a
+/// `sole_admin` tenant takes as `null` and any other refuses with
+/// `admin_act.reason_required`.
+fn reason_or_prompt(given: Option<&str>, what: &str) -> Result<Option<String>, CliError> {
+    use std::io::{BufRead as _, IsTerminal as _, Write as _};
+    if let Some(reason) = given {
+        return Ok(Some(reason.to_owned()));
+    }
+    if !(std::io::stdin().is_terminal() && std::io::stderr().is_terminal()) {
+        return Ok(None);
+    }
+    eprint!("Reason for {what} (journalled with it; empty to send none): ");
+    let _ = std::io::stderr().flush();
+    let mut line = String::new();
+    std::io::stdin()
+        .lock()
+        .read_line(&mut line)
+        .map_err(|e| CliError::local(format!("cannot read the reason from the terminal: {e}")))?;
+    let reason = line.trim();
+    Ok((!reason.is_empty()).then(|| reason.to_owned()))
 }
 
 #[derive(Subcommand)]
@@ -1964,6 +2001,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             command: KeysCommand::Issue(args),
         } => {
             let client = resolve(cli, &stored)?;
+            let reason = reason_or_prompt(args.reason.as_deref(), "the issuance")?;
             // The file is created before anything is sent, so a path that
             // cannot hold the value fails while no key exists (#528).
             let key_file = match &args.out {
@@ -2013,7 +2051,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             if let Some(scope) = &args.guardrail_scope {
                 body["guardrail_scope"] = json!(scope);
             }
-            if let Some(reason) = &args.reason {
+            if let Some(reason) = &reason {
                 body["reason"] = json!(reason);
             }
             args.limits.add_to(&mut body);
@@ -4750,16 +4788,29 @@ fn run_issue_agent(
             ));
         }
     };
+    if args.create && args.role == "reader" {
+        return Err(CliError::local(
+            "refused: --create needs a write grant, and --role reader writes nothing; nothing \
+             was sent",
+        ));
+    }
     let client = resolve(cli, stored)?;
+    let reason = reason_or_prompt(args.reason.as_deref(), "the issuance")?;
     let key_file = match &args.out {
         Some(path) => Some(KeyFile::create(path).map_err(CliError::Local)?),
         None => None,
     };
-    // A reader key reads the workspace and writes nothing (#528).
+    // A reader key reads the workspace and writes nothing (#528); `create`
+    // rides on the submitter grant (ADR-0097 d31).
     let grants = if args.role == "reader" {
         vec![(workspace.clone(), "reader".to_owned())]
     } else {
-        with_reader_beside_submitters(&[(workspace.clone(), "submitter".to_owned())], &args.role)
+        let submitter = if args.create {
+            "submitter:create"
+        } else {
+            "submitter"
+        };
+        with_reader_beside_submitters(&[(workspace.clone(), submitter.to_owned())], &args.role)
     };
     let mut body = json!({
         "role": args.role,
@@ -4783,6 +4834,9 @@ fn run_issue_agent(
     }
     if let Some(scope) = &args.guardrail_scope {
         body["guardrail_scope"] = json!(scope);
+    }
+    if let Some(reason) = &reason {
+        body["reason"] = json!(reason);
     }
     args.limits.add_to(&mut body);
     let (response, replayed) = match client.post_replayable("/v2/keys", &body, &write_opts()) {
@@ -4897,6 +4951,14 @@ fn run_issue_agent(
              configure` has succeeded and no shell still reads it"
         ),
         None => eprintln!("the value is shown once, above, and never again"),
+    }
+    // A widening admin act waits on a second admin person (ADR-0097 d5, d23).
+    if response["admin_act"]["state"] == "pending_confirmation" {
+        eprintln!(
+            "waits on another admin: the key authenticates nothing until a second admin person \
+             runs `oml admin confirm {}`",
+            field(&response["admin_act"], "act_id")
+        );
     }
     Ok(ExitCode::SUCCESS)
 }

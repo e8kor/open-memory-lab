@@ -260,6 +260,16 @@ The verb reads the tenant's token from `<operator.token_dir>/<tenant id>.token`.
 
 One commit journals the settled `admin.act` with no settler, `operator.settlement`, the effect's events, and a `settlement` notice to every admin person and both parties. The settlement issues no key and reads no content.
 
+**One token per process, so target the local replica.** The token belongs to the process start
+that wrote it, and each replica writes its own. With more than one replica behind one URL, a
+request sent to that URL can reach a replica that holds another token, and it is refused
+`operator_token`. Run `oml operator settle` and `oml operator recover` on the host of the replica
+whose token file is read, with `--url http://127.0.0.1:<port>`, that replica's own listener. Give
+each replica its own `operator.token_dir`: two processes that share one directory overwrite each
+other's files at each start, and the replica that started first can then never be reached with a
+token. The recovery sweep is unaffected, because its state is the database's (ADR-0097 d19,
+answer 13).
+
 When `/readyz` reports `operator_tokens: failed`, doctor raises `operator.token_unwritten`. Read the start log's `operator_tokens_unwritten` line, fix `operator.token_dir` or its permissions, and restart the server.
 
 ### Recover a dormant tenant

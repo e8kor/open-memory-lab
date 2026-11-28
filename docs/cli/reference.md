@@ -232,7 +232,7 @@ oml keys issue [OPTIONS] --role <ROLE> <KEY_NAME>
 | `--label <LABEL>` |  |
 | `--guardrail-scope <GUARDRAIL_SCOPE>` | Guardrail scope: workspace loads only the default workspace's guardrails; ancestors also loads every readable ancestor. Defaults to ancestors [possible values: workspace, ancestors] |
 | `--profile <PROFILE>` | Key profile: curator is an agent-held reviewer that narrows within an in-progress workspace and never promotes [possible values: curator] |
-| `--reason <REASON>` | Why the key is issued; scanned and journalled with the issuance. An admin key's issuance waits on a second admin person and requires it, except in a tenant that has only ever had one admin person |
+| `--reason <REASON>` | Why the key is issued; scanned and journalled with the issuance. Outside a tenant that has only ever had one admin person the issuance waits on a second admin person and requires it; on a terminal the CLI asks for one when it is not given |
 | `--out <OUT>` | Write the value to a new owner-only (0600) file, refusing one that exists, and print its path instead of the value; with --json the answer names the path as key_file and carries no value |
 | `--expires <INSTANT>` | Instant the key stops authenticating, RFC 3339 with its offset, such as 2026-12-01T17:00:00Z; must be later than now. Omitted, the key does not expire. Refused for an admin key |
 | `--requests-per-minute <N>` | Requests the key may make in one UTC minute, from 1 to 1000000. Omitted, the key has no rate of its own. Refused for an admin key |
@@ -261,6 +261,8 @@ oml keys issue-agent [OPTIONS] --principal <PRINCIPAL> <KEY_NAME>
 | `--connect-code` | Issue a claude.ai custom-connector key with a single-use connect code instead of a key value |
 | `--guardrail-scope <GUARDRAIL_SCOPE>` | Guardrail scope: workspace loads only the default workspace's guardrails; ancestors also loads every readable ancestor. Defaults to ancestors [possible values: workspace, ancestors] |
 | `--create-workspace <PARENT/NAME>` | Create the workspace <parent>/<name> in the same act and grant the key its role's default grants on it, covering the subtree. Repeatable. Nothing is created while the issuance waits on a second admin person |
+| `--create` | Let the key create child workspaces under --workspace through its write grant there, as `--grant <workspace>:<role>:create` does on `oml keys issue`; widening, so it waits on a second admin person. Refused with --role reader, which writes nothing |
+| `--reason <REASON>` | Why the key is issued; scanned and journalled with the issuance. Outside a tenant that has only ever had one admin person the issuance waits on a second admin person and requires it; on a terminal the CLI asks for one when it is not given |
 | `--expires <INSTANT>` | Instant the key stops authenticating, RFC 3339 with its offset, such as 2026-12-01T17:00:00Z; must be later than now. Omitted, the key does not expire. Refused for an admin key |
 | `--requests-per-minute <N>` | Requests the key may make in one UTC minute, from 1 to 1000000. Omitted, the key has no rate of its own. Refused for an admin key |
 

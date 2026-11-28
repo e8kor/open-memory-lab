@@ -78,6 +78,8 @@ pub(crate) struct Tile {
     pub(crate) counts: Counts,
     pub(crate) status: String,
     pub(crate) in_progress: bool,
+    /// Whether every reading key of the tenant reads it (ADR-0098 d9).
+    pub(crate) public: bool,
 }
 
 /// The squarified layout (Bruls, Huizing and van Wijk) of `sizes`, largest
@@ -320,6 +322,7 @@ mod tests {
                 },
                 status: "development".to_owned(),
                 in_progress: false,
+                public: false,
             },
             Tile {
                 name: "tiny-but-named".to_owned(),
@@ -330,6 +333,7 @@ mod tests {
                 },
                 status: "development".to_owned(),
                 in_progress: false,
+                public: false,
             },
         ];
         let drawn = svg(&tiles, 360.0, 270.0, 13.0, "narrow");

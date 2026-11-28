@@ -15,7 +15,7 @@ profiles in [deployment](../operations/deployment.md).
 Docker with compose v2 and the `oml` CLI ([install](install.md)) are required. Without Docker, the [quickstart](quickstart.md) has a variant that runs the release binaries on the user's own PostgreSQL.
 
 ```sh
-oml quickstart --person <you> --email <your-address>
+oml quickstart --person <name> --email <address>
 ```
 
 In order, it:

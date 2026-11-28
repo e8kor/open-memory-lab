@@ -26,7 +26,7 @@ use http::{HeaderValue, StatusCode, Uri, header};
 use oml_page::web::{
     ADMIN_WORKSPACES_PATH, USER_WORKSPACES_PATH, attr, form, hidden, input, shell, short, text,
 };
-use oml_sdk::{WorkspaceNode, WorkspaceOffers};
+use oml_sdk::{AdminAct, WorkspaceNode, WorkspaceOffers};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
@@ -508,6 +508,7 @@ fn table(
     refs: &[String],
     shown: std::ops::Range<usize>,
     rows: &[Row],
+    public: &PublicActs,
 ) -> String {
     let page = side.path();
     // Each row leads to the workspace's own page (ADR-0082 d1).
@@ -540,7 +541,8 @@ fn table(
             .collect();
         match &row.offers {
             Ok(offers) => {
-                let toggle = public_toggle(side, page, csrf, node, &offers.transitions.status);
+                let toggle =
+                    public_toggle(side, page, csrf, node, &offers.transitions.status, public);
                 let _ = write!(
                     out,
                     r#"<tr>{named}<td>{}{}{pending}</td><td>{}</td><td>{}{toggle}</td></tr>"#,
@@ -599,23 +601,135 @@ fn table(
     out
 }
 
-/// The admin page's Public toggle (ADR-0098 d9): on a `protected` or
+/// The public acts the admin page reads once, beside its rows (ADR-0098
+/// d6, d9): every `workspace_public_set` and `workspace_public_clear` of
+/// the tenant, oldest first, or the request id of a read that failed; the
+/// user page reads none.
+enum PublicActs {
+    None,
+    Read(Vec<AdminAct>),
+    Failed(String),
+}
+
+impl PublicActs {
+    /// `node`'s public acts, oldest first.
+    fn of<'a>(&'a self, node: &'a str) -> impl Iterator<Item = &'a AdminAct> {
+        let acts: &[AdminAct] = match self {
+            Self::Read(acts) => acts,
+            _ => &[],
+        };
+        acts.iter().filter(move |a| {
+            a.target
+                .get("workspace_id")
+                .and_then(serde_json::Value::as_str)
+                == Some(node)
+        })
+    }
+
+    /// The set that waits on a second admin person on `node`, if any.
+    fn pending<'a>(&'a self, node: &'a str) -> Option<&'a AdminAct> {
+        self.of(node)
+            .find(|a| a.act == "workspace_public_set" && a.state == "pending_confirmation")
+    }
+}
+
+/// The tenant's public acts, one read of `GET /v2/admin/acts`, on the
+/// admin side alone.
+async fn public_acts(web: &Web, session: &Session, calls: &PageCalls, side: Side) -> PublicActs {
+    if side != Side::Admin {
+        return PublicActs::None;
+    }
+    let credential = session.credential(Capacity::Admin);
+    let ids = calls.next_ids();
+    match web.api.admin_acts(&call(&credential, &ids), "all").await {
+        Ok(listed) => PublicActs::Read(
+            listed
+                .items
+                .into_iter()
+                .filter(|a| {
+                    matches!(
+                        a.act.as_str(),
+                        "workspace_public_set" | "workspace_public_clear"
+                    )
+                })
+                .collect(),
+        ),
+        Err(_) => PublicActs::Failed(ids.request_id.clone().unwrap_or_default()),
+    }
+}
+
+/// The node's public acts as a folded list, each opening its screen: what,
+/// its state, who and when.
+fn public_history(public: &PublicActs, node: &str) -> String {
+    match public {
+        PublicActs::None => String::new(),
+        PublicActs::Failed(request_id) => format!(
+            r#"<p class="oml-caption">The public acts are unavailable (request <code>{}</code>).</p>"#,
+            text(request_id)
+        ),
+        PublicActs::Read(_) => {
+            let acts: Vec<&AdminAct> = public.of(node).collect();
+            if acts.is_empty() {
+                return String::new();
+            }
+            let mut out = format!(
+                r#"<details class="oml-wa-public"><summary>Public acts · {}</summary><ul>"#,
+                acts.len()
+            );
+            for act in acts.iter().rev() {
+                let _ = write!(
+                    out,
+                    r#"<li>{} · {} · by {} · {} · <a href="{}?act={}">Open</a></li>"#,
+                    text(&crate::admin_acts::act_words(&act.act)),
+                    text(&act.state.replace('_', " ")),
+                    crate::admin_acts::taken_by(act),
+                    crate::keys::instant(&act.at),
+                    crate::admin_acts::ACTS_PATH,
+                    attr(&oml_sdk::encode(&act.act_id)),
+                );
+            }
+            out.push_str("</ul></details>");
+            out
+        }
+    }
+}
+
+/// The admin page's Public toggle (ADR-0098 d6, d9): on a `protected` or
 /// `frozen` workspace outside every user root, a reason and "Mark public",
 /// which waits on another admin person unless the tenant has only ever had
-/// one; on a public one, a reason and "Clear public", at once. The user
-/// page has none: only an admin person sets the flag.
-fn public_toggle(side: Side, page: &str, csrf: &str, node: &WorkspaceNode, status: &str) -> String {
+/// one; while a set waits, "Waits on another admin" with the act's link and
+/// "Clear public", which declines it; on a public one, a reason and "Clear
+/// public", at once; and the node's public acts. The user page has none:
+/// only an admin person sets the flag.
+fn public_toggle(
+    side: Side,
+    page: &str,
+    csrf: &str,
+    node: &WorkspaceNode,
+    status: &str,
+    public: &PublicActs,
+) -> String {
     if side != Side::Admin {
         return String::new();
     }
+    let history = public_history(public, &node.id);
+    let mut out = String::new();
     let (value, button) = if node.public.value {
+        ("false", "Clear public")
+    } else if let Some(waiting) = public.pending(&node.id) {
+        let _ = write!(
+            out,
+            r#"<p class="held">Public: waits on another admin · <a href="{}?act={}">Open the act</a></p>"#,
+            crate::admin_acts::ACTS_PATH,
+            attr(&oml_sdk::encode(&waiting.act_id)),
+        );
         ("false", "Clear public")
     } else if matches!(status, "protected" | "frozen") && !node.user_root {
         ("true", "Mark public")
     } else {
-        return String::new();
+        return history;
     };
-    form(
+    out.push_str(&form(
         page,
         "workspace_public",
         csrf,
@@ -628,7 +742,9 @@ fn public_toggle(side: Side, page: &str, csrf: &str, node: &WorkspaceNode, statu
         ),
         button,
         false,
-    )
+    ));
+    out.push_str(&history);
+    out
 }
 
 /// What the view's reads share.
@@ -827,23 +943,27 @@ async fn view(
         side,
         credentials: &credentials,
     };
-    let (confirm, rows) = match fields.get("op") {
+    let (confirm, rows, public) = match fields.get("op") {
         Some(op) => {
-            let (confirm, rows) = tokio::join!(
+            let (confirm, rows, public) = tokio::join!(
                 confirmation(&ctx, &nodes, &refs, &fields, op),
                 rows(&web.api, &credentials, &calls, &nodes[shown.clone()]),
+                public_acts(&web, &session, &calls, side),
             );
             match confirm {
-                Ok(confirm) => (confirm, rows),
+                Ok(confirm) => (confirm, rows, public),
                 Err(response) => return *response,
             }
         }
-        None => (
-            String::new(),
-            rows(&web.api, &credentials, &calls, &nodes[shown.clone()]).await,
-        ),
+        None => {
+            let (rows, public) = tokio::join!(
+                rows(&web.api, &credentials, &calls, &nodes[shown.clone()]),
+                public_acts(&web, &session, &calls, side),
+            );
+            (String::new(), rows, public)
+        }
     };
-    let table = table(side, &session.csrf(), &nodes, &refs, shown, &rows);
+    let table = table(side, &session.csrf(), &nodes, &refs, shown, &rows, &public);
     let (bar, body) = match side {
         Side::User => {
             let user = session.whoami.user.as_ref().map_or("", |u| u.name.as_str());
@@ -1172,4 +1292,83 @@ pub async fn admin_act(
         return refusal;
     }
     act(web, session, calls, form, Side::Admin).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    const NODE: &str = "33333333-3333-4333-8333-333333333333";
+
+    fn node(public: bool) -> WorkspaceNode {
+        serde_json::from_value(json!({
+            "id": NODE, "name": "guides", "path": "universe.guides",
+            "public": {"value": public},
+        }))
+        .expect("a node")
+    }
+
+    fn public_act(act: &str, state: &str, id: &str) -> AdminAct {
+        serde_json::from_value(json!({
+            "act_id": id, "act": act, "class": "widening", "state": state,
+            "target": {"workspace_id": NODE}, "grants": [], "actor_person": "alice",
+            "sole_admin": false, "at": "2026-11-28T10:00:00Z",
+        }))
+        .expect("an act")
+    }
+
+    /// While a set waits on a second admin person the toggle says so, links
+    /// the act and offers "Clear public", which declines it, never "Mark
+    /// public" again; the node's public acts are listed (ADR-0098 d6, d9).
+    #[test]
+    fn a_waiting_public_set_shows_waits_on_another_admin_offers_clear_and_lists_the_acts() {
+        let acts = PublicActs::Read(vec![
+            public_act(
+                "workspace_public_set",
+                "declined",
+                "aaaaaaaa-0000-4000-8000-000000000001",
+            ),
+            public_act(
+                "workspace_public_set",
+                "pending_confirmation",
+                "aaaaaaaa-0000-4000-8000-000000000002",
+            ),
+        ]);
+        let html = public_toggle(
+            Side::Admin,
+            "/web/admin/workspaces",
+            "csrf",
+            &node(false),
+            "frozen",
+            &acts,
+        );
+        assert!(html.contains("Public: waits on another admin"), "{html}");
+        assert!(
+            html.contains("/web/admin/acts?act=aaaaaaaa-0000-4000-8000-000000000002"),
+            "{html}"
+        );
+        assert!(html.contains("Clear public"), "{html}");
+        assert!(!html.contains("Mark public"), "{html}");
+        assert!(html.contains("Public acts · 2"), "{html}");
+        assert!(html.contains("workspace public set · declined"), "{html}");
+    }
+
+    /// With nothing waiting, a frozen node offers "Mark public", a public
+    /// one "Clear public", and a failed acts read is said with its request id.
+    #[test]
+    fn with_nothing_waiting_the_toggle_marks_or_clears_and_a_failed_read_names_its_request() {
+        let none = PublicActs::Read(Vec::new());
+        let mark = public_toggle(Side::Admin, "/p", "c", &node(false), "frozen", &none);
+        assert!(
+            mark.contains("Mark public") && !mark.contains("waits"),
+            "{mark}"
+        );
+        let clear = public_toggle(Side::Admin, "/p", "c", &node(true), "frozen", &none);
+        assert!(clear.contains("Clear public"), "{clear}");
+        let failed = PublicActs::Failed("page-1.3".to_owned());
+        let shown = public_toggle(Side::Admin, "/p", "c", &node(false), "frozen", &failed);
+        assert!(shown.contains("page-1.3"), "{shown}");
+        assert!(public_toggle(Side::User, "/p", "c", &node(true), "frozen", &none).is_empty());
+    }
 }

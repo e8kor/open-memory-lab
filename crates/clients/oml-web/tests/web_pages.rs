@@ -12759,3 +12759,95 @@ async fn the_admin_acts_list_draws_every_act_and_is_not_found_to_a_non_admin() {
     let (status, _, _) = send(&rig.router, get("/web/admin/acts", Some(&carol))).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+/// A notice an act writes shows in the person's To do, counts in its To
+/// do badge, and is dismissed from there (ADR-0097 d20, d24): an admin
+/// disabling a person notifies every admin person.
+#[tokio::test]
+async fn a_notice_an_act_writes_shows_in_the_persons_to_do_counts_and_is_dismissed_there() {
+    let (rig, _) = two_admins_and_a_pending_key().await;
+    rig.allow("carol@example.com", "carol", false).await;
+    let _carol = signed_in(&rig, "sub-carol", "carol@example.com").await;
+    let alice = signed_in(&rig, "sub-alice", EMAIL).await;
+    let (status, _, body) = act(
+        &rig,
+        &alice,
+        "/web/admin/users",
+        &[
+            ("action", "disable_user"),
+            ("user", "carol"),
+            ("confirm", "yes"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let bob = signed_in(&rig, "sub-bob", "bob@example.com").await;
+    let (status, _, todo) = send(&rig.router, get("/web/todo", Some(&bob))).await;
+    assert_eq!(status, StatusCode::OK, "{todo}");
+    assert!(todo.contains("Notices · 1"), "{todo}");
+    assert!(todo.contains("disable"), "{todo}");
+    assert!(
+        todo.contains(r#"<span class="mono">alice</span>"#),
+        "{todo}"
+    );
+    assert!(
+        todo.contains(r#"href="/web/todo" aria-current="page">To do · 1</a>"#),
+        "{todo}"
+    );
+    let fields = hidden_fields(&todo, "dismiss");
+    let fields: Vec<(&str, &str)> = fields
+        .iter()
+        .map(|(n, v)| (n.as_str(), v.as_str()))
+        .collect();
+    let (status, headers, body) = send(&rig.router, post("/web/todo", &fields, Some(&bob))).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    assert_eq!(location(&headers), "/web/todo?done=dismissed");
+    let (_, _, after) = send(&rig.router, get("/web/todo?done=dismissed", Some(&bob))).await;
+    assert!(
+        after.contains("Dismissed: the notice leaves To do"),
+        "{after}"
+    );
+    assert!(!after.contains("Notices ·"), "{after}");
+}
+
+/// The admin key builder issues an admin key that names its admin person,
+/// as `oml keys issue --role admin --person` does (ADR-0097 d21, d29).
+#[tokio::test]
+async fn the_admin_key_builder_issues_an_admin_key_for_its_admin_person() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (_, _, form) = send(
+        &rig.router,
+        get("/web/admin/keys/new?shape=one", Some(&boss)),
+    )
+    .await;
+    assert!(form.contains(r#"value="admin""#), "{form}");
+    assert!(form.contains("Admin person"), "{form}");
+    let draft = "/web/admin/keys/new?kind=agent&name=boss-cli&role=admin&n=0&m=0&dw=&gs=ancestors&exp=&rpm=&kq=boss&why=the+command+line";
+    let (_, _, review) = send(
+        &rig.router,
+        get(&format!("{draft}&step=review"), Some(&boss)),
+    )
+    .await;
+    assert!(review.contains("<h1>Review key</h1>"), "{review}");
+    assert!(
+        review.contains("&quot;person&quot;: &quot;boss&quot;"),
+        "{review}"
+    );
+    assert!(review.contains("an admin key."), "{review}");
+    assert!(review.contains("belongs to <code>boss</code>"), "{review}");
+    assert!(
+        !review.contains("not covered"),
+        "an admin key takes no grant: {review}"
+    );
+    let fields = hidden_fields(&review, "build_key");
+    let fields: Vec<(&str, &str)> = fields
+        .iter()
+        .map(|(n, v)| (n.as_str(), v.as_str()))
+        .collect();
+    let (status, _, body) = send(&rig.router, post("/web/admin/keys", &fields, Some(&boss))).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let key = key_named(&rig, "boss-cli").await;
+    assert_eq!(key.role, Role::Admin);
+}

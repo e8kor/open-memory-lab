@@ -57,7 +57,7 @@ and wide sources read promoted rows of protected or frozen workspaces, and held 
 against the constitution: the flag changes who reads, never who reviews, and it never serves a row
 that review has not passed.
 
-Decided, not built.
+Decided, and built in v0.8.6.
 
 ## Decision
 
@@ -283,7 +283,7 @@ Decided, not built.
   section on public workspaces, federation's interaction), [lifecycle](../architecture/lifecycle.md)
   (the horizontal bullet), [roles and keys](../architecture/roles-and-keys.md) (the read and the
   admin act) and [retrieval](../architecture/retrieval.md#searching-beyond-the-scope) (default
-  recall over public nodes) carry the design as designed, not built. The event catalog
+  recall over public nodes) describe it as built. The event catalog
   (`workspace.public_set`), the errors page (`workspace.public_refused`), the HTTP and CLI
   references (generated), and the guides [administering](../guides/administering.md) and
   [workspaces](../use/workspaces.md) change with the build. ADR-0009, ADR-0044 and ADR-0097 carry
