@@ -12616,9 +12616,10 @@ async fn admin_acts_to_confirm_open_a_confirm_screen_whose_confirmation_applies_
     let cookie = signed_in(&rig, "sub-alice", EMAIL).await;
     let (status, _, todo) = send(&rig.router, get("/web/admin/todo", Some(&cookie))).await;
     assert_eq!(status, StatusCode::OK, "{todo}");
-    // The two admin flags the boot key set at once under sole admin, and
-    // the pending issuance: as the counts read serves them (d10).
-    assert!(todo.contains("Admin acts to confirm · 3"), "{todo}");
+    // The pending issuance alone: the two admin flags the boot key set at
+    // once under sole admin stay in the acts list and leave To do (D30,
+    // decided by the operator, 2026-11-28).
+    assert!(todo.contains("Admin acts to confirm · 1"), "{todo}");
     let link = format!("/web/admin/acts?act={act}");
     assert!(todo.contains(&link), "{todo}");
     let (status, _, screen) = send(&rig.router, get(&link, Some(&cookie))).await;

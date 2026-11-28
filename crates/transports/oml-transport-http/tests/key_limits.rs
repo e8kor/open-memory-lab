@@ -551,13 +551,31 @@ async fn an_admin_key_sets_and_clears_another_keys_limits_and_each_change_is_one
     w.clock.advance(600);
     let (status, _, _) = w.get("/v2/whoami", key).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+    // A change that raises one limit and lowers the other is two acts
+    // (ADR-0097 d15, note of 2026-11-28): the rate first, then the date.
+    let (status, _, both) = w
+        .post(
+            "/v2/keys/reviewer/limits",
+            &w.admin,
+            &json!({ "expiry": "2026-10-29T12:40:00+00:00", "requests_per_minute": 60 }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{both}");
+    let (status, _, lowered) = w
+        .post(
+            "/v2/keys/reviewer/limits",
+            &w.admin,
+            &json!({ "requests_per_minute": 60 }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{lowered}");
     let head = w.head_seq().await;
 
     let (status, _, set) = w
         .post(
             "/v2/keys/reviewer/limits",
             &w.admin,
-            &json!({ "expiry": "2026-10-29T12:40:00+00:00", "requests_per_minute": 60 }),
+            &json!({ "expiry": "2026-10-29T12:40:00+00:00" }),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{set}");
