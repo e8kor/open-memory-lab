@@ -1892,17 +1892,26 @@ async fn startup_names(
         .await
         .map_err(|e| format!("names_assigned: {e}"))?;
     startup_names_check(store, tenants).await?;
-    // The upgrade window: every admin key with no accepted link is
-    // suspended, and one suspended so past thirty days revoked, before the
-    // lead serves (ADR-0097 d21, the production migration).
-    let (suspended, revoked) = app
+    // The upgrade window: every service admin key is converted to a
+    // maintenance key, every other admin key with no accepted link and no
+    // link pending is suspended, and one suspended so past thirty days
+    // revoked, before the lead serves (ADR-0097 d21, the production
+    // migration; D27 of 2026-11-28).
+    let sweep = app
         .suspend_unlinked_admin_keys(tenants)
         .await
         .map_err(|e| format!("admin.key_unlinked_suspended: {e}"))?;
-    if suspended + revoked > 0 {
+    if sweep.converted > 0 {
         eprintln!(
-            "oml-server: {suspended} unlinked admin keys suspended and {revoked} revoked at start \
-             (ADR-0097 d21); each links itself with `oml keys link-self --person <name> --reason <why>`"
+            "oml-server: {} service admin keys converted to maintenance keys at start (ADR-0097 d18)",
+            sweep.converted
+        );
+    }
+    if sweep.suspended + sweep.revoked > 0 {
+        eprintln!(
+            "oml-server: {} unlinked admin keys suspended and {} revoked at start \
+             (ADR-0097 d21); each links itself with `oml keys link-self --person <name> --reason <why>`",
+            sweep.suspended, sweep.revoked
         );
     }
     Ok(assigned)

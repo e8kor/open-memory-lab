@@ -9,7 +9,7 @@ mod admin_acts;
 mod against_admin;
 mod auth;
 pub mod busy;
-pub use against_admin::{Freeze, OPERATOR_PRINCIPAL, OPERATOR_SETTLE_AFTER_US};
+pub use against_admin::{Freeze, OPERATOR_PRINCIPAL, OPERATOR_SETTLE_AFTER_US, UpgradeSweep};
 mod emails;
 mod exports;
 mod federation;

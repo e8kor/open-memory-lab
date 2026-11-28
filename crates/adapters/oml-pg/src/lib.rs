@@ -13852,6 +13852,11 @@ impl WebStore for PgStore {
         .await
     }
 
+    async fn live_admin_keys(&self, tenant_id: Uuid) -> Result<Vec<KeyRecord>, StoreError> {
+        self.keys_where(tenant_id, "revoked_at IS NULL AND role = 'admin'", |q| q)
+            .await
+    }
+
     async fn web_keys_issued_by(
         &self,
         tenant_id: Uuid,

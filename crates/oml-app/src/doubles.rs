@@ -950,6 +950,22 @@ impl MemStore {
         )
     }
 
+    /// Sets a held key's `used_by`, journalling nothing: a key a build
+    /// before ADR-0097 d21 issued `used_by: service` with the admin role,
+    /// which no issuance through the port now produces, so the first
+    /// start's migration can be tested against it (D27 of 2026-11-28).
+    pub fn seed_key_used_by(&self, tenant_id: Uuid, key_id: Uuid, used_by: oml_domain::UsedBy) {
+        if let Some(key) = self
+            .tenant(tenant_id)
+            .lock()
+            .expect("tenant lock")
+            .keys
+            .get_mut(&key_id)
+        {
+            key.used_by = used_by;
+        }
+    }
+
     /// Sets the tenant's export policy, as the deferred admin route will
     /// (ADR-0084 d10, reading I9).
     pub fn set_export_policy(&self, tenant_id: Uuid, policy: oml_domain::export::ExportPolicy) {
@@ -6968,6 +6984,12 @@ impl WebStore for MemStore {
                 && k.role == Role::Admin
                 && k.credential == Credential::Bearer
                 && k.linked_user.is_none()
+        }))
+    }
+
+    async fn live_admin_keys(&self, tenant_id: Uuid) -> Result<Vec<KeyRecord>, StoreError> {
+        Ok(self.tenant_keys(tenant_id, |k| {
+            k.revoked_at.is_none() && k.role == Role::Admin
         }))
     }
 

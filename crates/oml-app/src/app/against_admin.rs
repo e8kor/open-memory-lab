@@ -92,6 +92,16 @@ fn session_key_shape(key: &KeyRecord) -> bool {
         })
 }
 
+/// What the first start's upgrade sweep did (ADR-0097 d21, the production
+/// migration; D27 of 2026-11-28): keys suspended as unlinked, revoked past
+/// their window, and converted to `maintenance`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct UpgradeSweep {
+    pub suspended: u64,
+    pub revoked: u64,
+    pub converted: u64,
+}
+
 impl<J, S, C, I, Sc> App<J, S, C, I, Sc>
 where
     J: WebStore,
@@ -136,31 +146,66 @@ where
     }
 
     /// The upgrade window at a start (ADR-0097 d21, d22, the production
-    /// migration): in each of `tenants`, every live bearer admin key with no
-    /// accepted link is suspended, `key.suspended {cause: unlinked}`, signed
-    /// by the server with no key acting, and still reaches `/v2/whoami`
-    /// and `POST /v2/keys/self/link`; one suspended so for more than
-    /// [`UNLINKED_ADMIN_KEY_WINDOW_SECS`](crate::types::UNLINKED_ADMIN_KEY_WINDOW_SECS) is revoked, `key.revoked {cause:
-    /// upgrade}`. One chain per tenant; a tenant with nothing to do
-    /// journals nothing, so a later start journals nothing. Answers the
-    /// count of keys suspended and revoked.
+    /// migration; the operator's decision D27 of 2026-11-28), in each of
+    /// `tenants`, signed by the server with no key acting:
+    /// - every live bearer admin key `used_by: service` is converted to
+    ///   `maintenance` in place, `key.converted {cause: upgrade}`, an
+    ///   unlinked suspension lifted first, so a service keeps its hash and
+    ///   reads counts;
+    /// - every other live bearer admin key with no accepted link and no
+    ///   link pending is suspended, `key.suspended {cause: unlinked}`, and
+    ///   still reaches `/v2/whoami`, `POST /v2/keys/self/link` and `POST
+    ///   /v2/keys/self/convert`; one suspended so for more than
+    ///   [`UNLINKED_ADMIN_KEY_WINDOW_SECS`](crate::types::UNLINKED_ADMIN_KEY_WINDOW_SECS)
+    ///   is revoked, `key.revoked {cause: upgrade}`;
+    /// - a key whose link awaits its person's acceptance is not swept: the
+    ///   pending link already keeps it from authenticating (D27).
+    ///
+    /// One chain per tenant; a tenant with nothing to do journals nothing,
+    /// so a later start journals nothing. Answers the count of keys
+    /// suspended, revoked and converted.
     ///
     /// # Errors
     /// The store's.
     pub async fn suspend_unlinked_admin_keys(
         &self,
         tenants: &[Uuid],
-    ) -> Result<(u64, u64), AppError> {
+    ) -> Result<UpgradeSweep, AppError> {
         let now = self.clock.now();
-        let (mut suspended, mut revoked) = (0, 0);
+        let mut sweep = UpgradeSweep::default();
         for &tenant_id in tenants {
-            let keys = self.journal.web_unlinked_admin_keys(tenant_id).await?;
+            let keys = self.journal.live_admin_keys(tenant_id).await?;
             let mut links: Links = Vec::new();
             let mut last = self.head_event(tenant_id).await?;
             for key in keys {
+                if key.credential != Credential::Bearer {
+                    continue;
+                }
+                let unlinked_or_none = key
+                    .suspended
+                    .as_ref()
+                    .is_none_or(|s| s.cause == SuspensionCause::Unlinked);
+                if key.used_by == oml_domain::UsedBy::Service {
+                    if unlinked_or_none {
+                        sweep.converted += 1;
+                        let converted = self.conversion_links(
+                            &key,
+                            last.as_ref(),
+                            "oml-server",
+                            None,
+                            Some(AdminActCause::Upgrade),
+                        )?;
+                        last = converted.last().map(|(e, _)| e.clone());
+                        links.extend(converted);
+                    }
+                    continue;
+                }
+                if key.linked_user.is_some() || key.link_pending.is_some() {
+                    continue;
+                }
                 let (event_type, payload, fold) = match &key.suspended {
                     None => {
-                        suspended += 1;
+                        sweep.suspended += 1;
                         (
                             event_types::KEY_SUSPENDED,
                             json!({
@@ -183,7 +228,7 @@ where
                             && now.unix_micros() - s.at.unix_micros()
                                 >= crate::types::UNLINKED_ADMIN_KEY_WINDOW_SECS * 1_000_000 =>
                     {
-                        revoked += 1;
+                        sweep.revoked += 1;
                         (
                             event_types::KEY_REVOKED,
                             json!({
@@ -226,7 +271,7 @@ where
                 self.commit_links(links).await?;
             }
         }
-        Ok((suspended, revoked))
+        Ok(sweep)
     }
 
     /// The act an entry change by `admin` is, as d8 and d21 class it, for

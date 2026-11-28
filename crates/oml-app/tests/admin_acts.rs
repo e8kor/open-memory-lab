@@ -1740,23 +1740,30 @@ async fn doctor_flags_a_server_issuer_key_outside_the_session_key_shapes() {
 
 /// The upgrade window: an admin key with no accepted link is suspended at
 /// the start, still reaches whoami and its self-link, and authenticates
-/// again once its person accepts the link (ADR-0097 d21, d22).
+/// again once its person accepts the link; or it converts itself to a
+/// maintenance key, which lifts the unlinked suspension in the
+/// conversion's commit, so it then reads counts (ADR-0097 d18, d21, d22;
+/// the production migration; D27 of 2026-11-28).
 #[tokio::test]
-async fn a_suspended_unlinked_admin_key_still_links_itself() {
+async fn a_suspended_unlinked_admin_key_still_links_itself_and_converts_itself() {
     let r = rig().await;
     r.admin_person("alice").await;
-    let (suspended, revoked) = r
+    let sweep = r
         .app
         .suspend_unlinked_admin_keys(&[r.boot.tenant_id])
         .await
         .expect("the upgrade window");
-    assert_eq!((suspended, revoked), (1, 0));
+    assert_eq!((sweep.suspended, sweep.revoked, sweep.converted), (1, 0, 0));
     let again = r
         .app
         .suspend_unlinked_admin_keys(&[r.boot.tenant_id])
         .await
         .expect("a second start");
-    assert_eq!(again, (0, 0), "a later start journals nothing");
+    assert_eq!(
+        (again.suspended, again.revoked, again.converted),
+        (0, 0, 0),
+        "a later start journals nothing"
+    );
     let err = r.app.admin_acts(r.admin(), None).await.unwrap_err();
     assert!(matches!(err, AppError::KeySuspended), "{err:?}");
     r.app.whoami(r.admin()).await.expect("whoami still answers");
@@ -1773,6 +1780,116 @@ async fn a_suspended_unlinked_admin_key_still_links_itself() {
         .admin_acts(r.admin(), None)
         .await
         .expect("linked, it authenticates again");
+
+    // The other way out: the suspended key converts itself.
+    let r = rig().await;
+    r.admin_person("alice").await;
+    r.app
+        .suspend_unlinked_admin_keys(&[r.boot.tenant_id])
+        .await
+        .expect("the upgrade window");
+    let err = r.app.rescan(r.admin(), 0, 10).await.unwrap_err();
+    assert!(matches!(err, AppError::KeySuspended), "{err:?}");
+    let converted = r
+        .app
+        .convert_self(r.admin(), Role::Maintenance)
+        .await
+        .expect("the suspended key converts itself");
+    assert_eq!(converted.role, Role::Maintenance);
+    assert!(converted.suspended.is_none());
+    let types: Vec<String> = r
+        .journal()
+        .await
+        .iter()
+        .rev()
+        .take(2)
+        .map(|e| e.envelope.event_type.clone())
+        .collect();
+    assert_eq!(
+        types,
+        [event_types::KEY_CONVERTED, event_types::KEY_SUSPENSION_LIFTED],
+        "the suspension is lifted in the conversion's commit, before it"
+    );
+    let held = r
+        .store
+        .key(r.boot.tenant_id, r.boot.admin_key.key_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert!(held.suspended.is_none(), "replayed, the key is not suspended");
+    r.app
+        .rescan(r.admin(), 0, 10)
+        .await
+        .expect("the maintenance key reads counts");
+}
+
+/// The first start converts a live admin key `used_by: service` to a
+/// maintenance key under the server, `key.converted {cause: upgrade}`, and
+/// leaves an admin key whose link awaits its person unswept (D27 of
+/// 2026-11-28; ADR-0097 d18, the production migration).
+#[tokio::test]
+async fn the_first_start_converts_service_admin_keys_and_sweeps_no_key_whose_link_is_pending() {
+    let r = rig().await;
+    r.admin_person("alice").await;
+    r.store
+        .seed_key_used_by(r.boot.tenant_id, r.boot.admin_key.key_id, UsedBy::Service);
+    let pending = r
+        .app
+        .issue_key(
+            r.admin(),
+            &IssueKeyRequest {
+                role: Role::Admin,
+                grants: Vec::new(),
+                used_by: Some(UsedBy::Person),
+                person: Some(name("alice")),
+                ..agent_req()
+            },
+        )
+        .await
+        .expect("an admin key whose link waits on alice");
+    let sweep = r
+        .app
+        .suspend_unlinked_admin_keys(&[r.boot.tenant_id])
+        .await
+        .expect("the upgrade window");
+    assert_eq!((sweep.suspended, sweep.revoked, sweep.converted), (0, 0, 1));
+    let converted = r
+        .journal()
+        .await
+        .pop()
+        .expect("an event")
+        .envelope;
+    assert_eq!(converted.event_type, event_types::KEY_CONVERTED);
+    assert_eq!(converted.payload["cause"], "upgrade");
+    assert_eq!(converted.api_key_id, None, "the server converts it");
+    let held = r
+        .store
+        .key(r.boot.tenant_id, r.boot.admin_key.key_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert_eq!(held.role, Role::Maintenance);
+    r.app
+        .rescan(r.admin(), 0, 10)
+        .await
+        .expect("the converted key reads counts");
+    let waiting = r
+        .store
+        .key(r.boot.tenant_id, pending.key_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert!(waiting.suspended.is_none(), "a pending link is not swept");
+    let again = r
+        .app
+        .suspend_unlinked_admin_keys(&[r.boot.tenant_id])
+        .await
+        .expect("a second start");
+    assert_eq!(
+        (again.suspended, again.revoked, again.converted),
+        (0, 0, 0),
+        "a later start journals nothing"
+    );
 }
 
 /// A workspace an issuance creates, `name` under `parent` (ADR-0097 d30).
