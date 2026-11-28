@@ -5195,10 +5195,11 @@ async fn apply_fold(
             // (ADR-0045 d2's note of 2026-11-19).
             sqlx::query(
                 "INSERT INTO web_emails (tenant_id, email_hash, email, user_name, admin, \
-                 created_at, added_by, terms_version, pending_since, admin_since) \
+                 created_at, added_by, terms_version, pending_since, admin_since, \
+                 google_subject, github_subject) \
                  VALUES ($1, $2, $3, $4, $5, ($6)::timestamptz, $7, $8, \
                          CASE WHEN $9 THEN ($6)::timestamptz END, \
-                         CASE WHEN $5 AND NOT $9 THEN ($6)::timestamptz END)",
+                         CASE WHEN $5 AND NOT $9 THEN ($6)::timestamptz END, $10, $11)",
             )
             .bind(tenant_id)
             .bind(entry.email.digest().0.to_vec())
@@ -5209,6 +5210,10 @@ async fn apply_fold(
             .bind(entry.added_by)
             .bind(entry.terms_version.as_deref())
             .bind(entry.pending)
+            // A contest restores a removed entry with its pinned subjects
+            // (ADR-0097 d8, answer 3); a new entry holds none.
+            .bind(entry.google_subject.as_deref())
+            .bind(entry.github_subject.as_deref())
             .execute(&mut **tx)
             .await
             .map_err(|e| match &e {

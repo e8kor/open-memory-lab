@@ -4030,3 +4030,32 @@ async fn raising_a_quota_waits_on_a_second_admin_person_and_lowering_it_takes_ef
     assert!(applied, "a lowering applies at once");
     assert_eq!(overrides().await, vec![(Quota::Keys, 2)]);
 }
+
+/// A contest of a removal restores the entry as it stood, accepted, so the
+/// removed admin person signs in again, rather than an entry that waits on
+/// a person who cannot open a session to accept it (ADR-0097 d8, answer 3
+/// of the second amendment of 2026-11-27; review finding core-8).
+#[tokio::test]
+async fn a_contested_removal_restores_an_entry_its_person_signs_in_with() {
+    let (r, _) = three_admins().await;
+    let alice = r.admin_session("alice").await;
+    let email = entry_of("carol", true).email;
+    r.app
+        .remove_web_email_with_reason(Bearer::Session(&alice), &email, true, Some("a dispute"))
+        .await
+        .expect("alice removes carol's entry");
+    let act = last_act(&r, "remove_admin").await;
+    r.app
+        .contest_admin_act_as(r.boot.tenant_id, &name("carol"), act.act_id)
+        .await
+        .expect("carol contests from the contest-only sign-in");
+    let entry = r
+        .store
+        .web_entry_by_email(&email.digest())
+        .await
+        .expect("read")
+        .expect("carol's entry is back");
+    assert!(entry.admin, "with its flag");
+    assert!(!entry.pending, "accepted, not waiting on carol");
+    r.person_session("carol", Capacity::Web).await;
+}

@@ -868,9 +868,48 @@ where
             user,
             admin: true,
         };
-        if let Some((_, _, event_type, fold, payload)) =
+        // The entry comes back as it stood before the act: accepted, with
+        // its pinned provider subjects, so the person signs in again. The
+        // allowlist's rule that an entry naming an existing person waits on
+        // that person is for new entries, not for a restored one (ADR-0097
+        // d8, answer 3; review finding core-8).
+        let subject = |field: &str| {
+            act.effect
+                .get("before")
+                .and_then(|b| b.get(field))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        };
+        if let Some((_, _, event_type, fold, mut payload)) =
             self.entry_change(admin, &req, true).await?
         {
+            let restore = |entry: &mut WebEntry| {
+                entry.pending = false;
+                if entry.google_subject.is_none() {
+                    entry.google_subject = subject("google_subject");
+                }
+                if entry.github_subject.is_none() {
+                    entry.github_subject = subject("github_subject");
+                }
+            };
+            let fold = match fold {
+                MetadataFold::WebEmailAllowed(mut entry) => {
+                    restore(&mut entry);
+                    MetadataFold::WebEmailAllowed(entry)
+                }
+                MetadataFold::WebEmailChanged {
+                    mut entry,
+                    keep_an_admin,
+                } => {
+                    restore(&mut entry);
+                    MetadataFold::WebEmailChanged {
+                        entry,
+                        keep_an_admin,
+                    }
+                }
+                other => other,
+            };
+            payload["pending"] = json!(false);
             self.push_link(by, act.act_id, links, event_type, payload, fold)?;
         }
         Ok(())
