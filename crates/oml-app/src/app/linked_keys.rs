@@ -254,6 +254,13 @@ where
             .key(tenant_id, key_id)
             .await?
             .ok_or(AppError::NotFound)?;
+        // An admin key never belongs to no one (ADR-0097 d21): unlinking
+        // one, or withdrawing its pending link, is refused as an unlinked
+        // issuance is, and the key is revoked instead (review finding
+        // core-4).
+        if target.role == Role::Admin {
+            return Err(AppError::KeyPerson("admin_key_requires_person"));
+        }
         if target.linked_user.is_none() && target.link_pending.is_none() {
             return Err(AppError::KeyLinkRefused {
                 reason: "not_linked",

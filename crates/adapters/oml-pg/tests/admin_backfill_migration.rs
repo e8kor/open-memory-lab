@@ -9,9 +9,9 @@ use std::sync::atomic::Ordering;
 
 use oml_pg::MIGRATOR;
 use oml_test_pg::{DB_N, drop_db, mint_database, owner_url, run_tag};
+use sqlx::Connection;
 use sqlx::migrate::Migrate;
 use sqlx::postgres::PgConnection;
-use sqlx::Connection;
 use uuid::Uuid;
 
 /// The migration that adds `sole_admin` and `admin_since`.
@@ -72,7 +72,9 @@ async fn seed_tenant(conn: &mut PgConnection, n: u128, admins: &[(&str, &str)]) 
         )
         .bind(tenant)
         .bind(i64::try_from(seq).expect("small") + 1)
-        .bind(Uuid::from_u128(0xE077 + n * 16 + u128::try_from(seq).expect("small")))
+        .bind(Uuid::from_u128(
+            0xE077 + n * 16 + u128::try_from(seq).expect("small"),
+        ))
         .bind(*at)
         .bind(&email)
         .bind(*user)
@@ -120,12 +122,11 @@ async fn the_admin_backfill_runs_under_each_tenants_row_security_on_the_owner_ro
     let one = seed_tenant(&mut conn, 1, &[("carol", "2026-04-01T10:00:00Z")]).await;
     // Production migrates with no tenant bound, under forced row security.
     bind_tenant(&mut conn, None).await;
-    let forced: bool = sqlx::query_scalar(
-        "SELECT relforcerowsecurity FROM pg_class WHERE relname = 'web_emails'",
-    )
-    .fetch_one(&mut conn)
-    .await
-    .expect("the table");
+    let forced: bool =
+        sqlx::query_scalar("SELECT relforcerowsecurity FROM pg_class WHERE relname = 'web_emails'")
+            .fetch_one(&mut conn)
+            .await
+            .expect("the table");
     assert!(forced, "web_emails forces row security for the owner");
     for migration in MIGRATOR
         .iter()

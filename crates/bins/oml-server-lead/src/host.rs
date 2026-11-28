@@ -410,7 +410,10 @@ mod tests {
         ])
         .await;
         let err = relay(port).deliver(&notice()).await.unwrap_err();
-        assert_eq!(err, "the relay refused RCPT TO with 550 for every recipient");
+        assert_eq!(
+            err,
+            "the relay refused RCPT TO with 550 for every recipient"
+        );
         assert!(!err.contains("example.com"));
     }
 

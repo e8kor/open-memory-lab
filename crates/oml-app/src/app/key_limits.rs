@@ -209,7 +209,18 @@ where
         if target.role == Role::Admin {
             return Err(AppError::KeyLimits(KeyLimitsRefusal::AdminKey));
         }
+        // A pending key takes no limit change (ADR-0097 d23; review finding
+        // core-13).
+        if target.pending_act.is_some() {
+            return Err(AppError::AdminAct(
+                crate::types::AdminActRefusal::KeyPending,
+            ));
+        }
         let before = target.clone();
+        let (sent_expiry, sent_rate) = (
+            change.expiry.is_some(),
+            change.requests_per_minute.is_some(),
+        );
         if let Some(expiry) = change.expiry {
             target.expiry = expiry;
         }
@@ -230,6 +241,44 @@ where
         };
         let raise = later(&before.expiry, &target.expiry)
             || raised(before.requests_per_minute, target.requests_per_minute);
+        // A change that raises one limit and lowers the other is two acts
+        // of two classes, refused as a federation policy change that both
+        // widens and narrows is (ADR-0097 d15; amendment of 2026-11-27,
+        // answer 19; review finding core-7).
+        let lower = later(&target.expiry, &before.expiry)
+            || raised(target.requests_per_minute, before.requests_per_minute);
+        if raise && lower {
+            return Err(AppError::AdminField {
+                field: "/",
+                message: "a change that raises one limit and lowers the other is two acts: send the lowering first, then the raise".to_owned(),
+            });
+        }
+        // The members the change sent, and the values they replace: a
+        // confirmation applies only these over the key as it stands then,
+        // and a decline sets back only these, where the key still holds the
+        // act's value (review finding core-7).
+        let mut sent = serde_json::Map::new();
+        let mut found = serde_json::Map::new();
+        if sent_expiry {
+            sent.insert(
+                "expiry".to_owned(),
+                json!(target.expiry.as_ref().map(EventTime::as_str)),
+            );
+            found.insert(
+                "expiry".to_owned(),
+                json!(before.expiry.as_ref().map(EventTime::as_str)),
+            );
+        }
+        if sent_rate {
+            sent.insert(
+                "requests_per_minute".to_owned(),
+                json!(target.requests_per_minute),
+            );
+            found.insert(
+                "requests_per_minute".to_owned(),
+                json!(before.requests_per_minute),
+            );
+        }
         let kind = if raise {
             AdminActKind::RaiseLimits
         } else {
@@ -247,17 +296,14 @@ where
                     "requests_per_minute": target.requests_per_minute,
                 }),
                 reason,
-                // The limits the act found, which a decline of a raise
+                // The members the change sent and the limits they replace,
+                // which a confirmation applies and a decline of a raise
                 // taken at once under `sole_admin` sets back (ADR-0097 d10,
                 // the operator's decision of 2026-11-27).
                 json!({
                     "key_id": key_id.to_string(),
-                    "expiry": target.expiry.as_ref().map(EventTime::as_str),
-                    "requests_per_minute": target.requests_per_minute,
-                    "before": {
-                        "expiry": before.expiry.as_ref().map(EventTime::as_str),
-                        "requests_per_minute": before.requests_per_minute,
-                    },
+                    "change": sent,
+                    "before": found,
                 }),
                 prev.as_ref(),
             )

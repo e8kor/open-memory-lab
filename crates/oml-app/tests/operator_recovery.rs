@@ -578,7 +578,10 @@ async fn a_sign_in_whose_row_failed_still_cancels_a_recovery_and_never_reads_as_
     r.clock.advance(72 * HOUR);
     let err = r.app.recovery_sweep(r.tenant()).await.unwrap_err();
     assert!(
-        matches!(err, AppError::RecoverRefused(RecoverRefusal::LogWriteFailed)),
+        matches!(
+            err,
+            AppError::RecoverRefused(RecoverRefusal::LogWriteFailed)
+        ),
         "{err:?}"
     );
     let key = r
@@ -641,8 +644,10 @@ async fn a_completed_recovery_leaves_no_live_admin_key_in_the_tenant() {
     assert!(held.revoked_at.is_some(), "the pending-link key is revoked");
     let live = r.store.live_admin_keys(r.tenant()).await.expect("read");
     assert!(
-        live.iter()
-            .all(|k| k.name.as_ref().is_some_and(|n| n.as_str().starts_with("carol-"))),
+        live.iter().all(|k| k
+            .name
+            .as_ref()
+            .is_some_and(|n| n.as_str().starts_with("carol-"))),
         "only the new admin person's keys are live: {:?}",
         live.iter().map(|k| k.name.clone()).collect::<Vec<_>>()
     );

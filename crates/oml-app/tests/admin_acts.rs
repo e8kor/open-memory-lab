@@ -12,6 +12,7 @@ use oml_app::domain::name::{Name, NamedKind, Reference};
 use oml_app::domain::web::Email;
 use oml_app::domain::{Role, SignedEnvelope, UsedBy, event_types};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
+use oml_app::ports::Clock as _;
 use oml_app::ports::JournalStore as _;
 use oml_app::ports::WebStore as _;
 use oml_app::types::{
@@ -1811,7 +1812,10 @@ async fn a_suspended_unlinked_admin_key_still_links_itself_and_converts_itself()
         .collect();
     assert_eq!(
         types,
-        [event_types::KEY_CONVERTED, event_types::KEY_SUSPENSION_LIFTED],
+        [
+            event_types::KEY_CONVERTED,
+            event_types::KEY_SUSPENSION_LIFTED
+        ],
         "the suspension is lifted in the conversion's commit, before it"
     );
     let held = r
@@ -1820,7 +1824,10 @@ async fn a_suspended_unlinked_admin_key_still_links_itself_and_converts_itself()
         .await
         .expect("read")
         .expect("held");
-    assert!(held.suspended.is_none(), "replayed, the key is not suspended");
+    assert!(
+        held.suspended.is_none(),
+        "replayed, the key is not suspended"
+    );
     r.app
         .rescan(r.admin(), 0, 10)
         .await
@@ -1857,12 +1864,7 @@ async fn the_first_start_converts_service_admin_keys_and_sweeps_no_key_whose_lin
         .await
         .expect("the upgrade window");
     assert_eq!((sweep.suspended, sweep.revoked, sweep.converted), (0, 0, 1));
-    let converted = r
-        .journal()
-        .await
-        .pop()
-        .expect("an event")
-        .envelope;
+    let converted = r.journal().await.pop().expect("an event").envelope;
     assert_eq!(converted.event_type, event_types::KEY_CONVERTED);
     assert_eq!(converted.payload["cause"], "upgrade");
     assert_eq!(converted.api_key_id, None, "the server converts it");
@@ -3736,7 +3738,10 @@ async fn the_first_curation_designation_waits_on_a_second_admin_person() {
         .expect("read")
         .map(|a| a.grants)
         .unwrap_or_default();
-    assert!(held.is_empty(), "the curate key holds no grant while it waits");
+    assert!(
+        held.is_empty(),
+        "the curate key holds no grant while it waits"
+    );
     assert!(granted.key.pending_act.is_some(), "the key waits");
     let act = r
         .store
@@ -3795,7 +3800,10 @@ async fn declining_an_accepted_sole_admin_flag_is_an_unflag_against_that_admin()
         .rev()
         .find(|a| a.act.as_str() == "allow_admin")
         .expect("bob's flag");
-    assert!(flag.sole_admin, "the second person's flag took effect at once");
+    assert!(
+        flag.sole_admin,
+        "the second person's flag took effect at once"
+    );
     let err = r
         .app
         .decline_admin_act(Bearer::Session(&alice), flag.act_id, None)
@@ -3803,7 +3811,11 @@ async fn declining_an_accepted_sole_admin_flag_is_an_unflag_against_that_admin()
         .unwrap_err();
     assert!(matches!(err, AppError::AdminActReasonRequired), "{err:?}");
     r.app
-        .decline_admin_act(Bearer::Session(&alice), flag.act_id, Some("bob is no admin"))
+        .decline_admin_act(
+            Bearer::Session(&alice),
+            flag.act_id,
+            Some("bob is no admin"),
+        )
         .await
         .expect("declined");
     let unflag = last_act(&r, "unflag_admin").await;
@@ -3816,4 +3828,149 @@ async fn declining_an_accepted_sole_admin_flag_is_an_unflag_against_that_admin()
         .expect("read")
         .expect("bob's entry");
     assert!(!entry.admin, "the flag is off");
+}
+
+/// An admin key is never unlinked from its person: the unlink is refused
+/// `admin_key_requires_person`, as an unlinked issuance is, and the key
+/// keeps its person, so a later un-flag still reaches it (ADR-0097 d21;
+/// review finding core-4).
+#[tokio::test]
+async fn an_admin_key_is_refused_an_unlink_from_its_person() {
+    let r = rig().await;
+    r.admin_person("alice").await;
+    let key = r.linked_admin_key("alice").await;
+    let alice = r.admin_session("alice").await;
+    let err = r
+        .app
+        .unlink_key_from_person(Bearer::Session(&alice), key.key_id.into())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::KeyPerson("admin_key_requires_person")),
+        "{err:?}"
+    );
+    let held = r
+        .store
+        .key(r.boot.tenant_id, key.key_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert!(held.linked_user.is_some(), "the key keeps its person");
+}
+
+/// A pending raise applies at its confirmation only the member it sent,
+/// over the key's limits as they stand then, so an earlier expiry set
+/// since stands; a change that raises one limit and lowers the other is
+/// refused as two acts (ADR-0097 d3, d15; review finding core-7).
+#[tokio::test]
+async fn a_confirmed_raise_applies_only_its_own_member_and_a_later_narrowing_stands() {
+    let r = rig().await;
+    let issued = r
+        .app
+        .issue_key(
+            r.admin(),
+            &IssueKeyRequest {
+                requests_per_minute: Some(60),
+                ..agent_req()
+            },
+        )
+        .await
+        .expect("a key at 60 a minute");
+    r.admin_person("alice").await;
+    r.admin_person("bob").await;
+    r.clock.advance(8 * DAY);
+    let alice = r.admin_session("alice").await;
+    let bob = r.admin_session("bob").await;
+    let (_, raise) = r
+        .app
+        .set_key_limits_with_reason(
+            Bearer::Session(&alice),
+            issued.key_id.into(),
+            oml_app::types::KeyLimitsChange {
+                expiry: None,
+                requests_per_minute: Some(Some(120)),
+            },
+            Some("a busier agent"),
+        )
+        .await
+        .expect("a pending raise");
+    assert_eq!(raise.state, AdminActState::PendingConfirmation);
+    let tomorrow = oml_app::domain::EventTime::from_unix_micros(
+        r.clock.now().unix_micros() + 86_400 * 1_000_000,
+    )
+    .expect("a time");
+    r.app
+        .set_key_limits_with_reason(
+            Bearer::Session(&bob),
+            issued.key_id.into(),
+            oml_app::types::KeyLimitsChange {
+                expiry: Some(Some(tomorrow.clone())),
+                requests_per_minute: None,
+            },
+            Some("the value leaked"),
+        )
+        .await
+        .expect("an earlier expiry at once");
+    r.app
+        .confirm_admin_act(Bearer::Session(&bob), raise.act_id, Some("confirmed"))
+        .await
+        .expect("confirmed");
+    let held = r
+        .store
+        .key(r.boot.tenant_id, issued.key_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert_eq!(held.requests_per_minute, Some(120), "the raise applies");
+    assert_eq!(held.expiry, Some(tomorrow.clone()), "the narrowing stands");
+    let err = r
+        .app
+        .set_key_limits_with_reason(
+            Bearer::Session(&alice),
+            issued.key_id.into(),
+            oml_app::types::KeyLimitsChange {
+                expiry: Some(Some(
+                    oml_app::domain::EventTime::from_unix_micros(
+                        r.clock.now().unix_micros() + 3_600 * 1_000_000,
+                    )
+                    .expect("a time"),
+                )),
+                requests_per_minute: Some(Some(600)),
+            },
+            Some("both at once"),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::AdminField { field: "/", .. }),
+        "{err:?}"
+    );
+}
+
+/// A pending key takes no limit change: the change is refused
+/// `key_pending` and journals nothing (ADR-0097 d23; review finding
+/// core-13).
+#[tokio::test]
+async fn a_pending_key_takes_no_limit_change() {
+    let r = two_admins().await;
+    let pending = pending_key(&r).await;
+    let before = r.journal().await.len();
+    let err = r
+        .app
+        .set_key_limits_with_reason(
+            r.admin(),
+            pending.key_id.into(),
+            oml_app::types::KeyLimitsChange {
+                expiry: None,
+                requests_per_minute: Some(Some(10)),
+            },
+            Some("lower"),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::AdminAct(AdminActRefusal::KeyPending)),
+        "{err:?}"
+    );
+    assert_eq!(r.journal().await.len(), before, "nothing is journalled");
 }

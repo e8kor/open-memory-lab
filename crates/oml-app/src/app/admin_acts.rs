@@ -128,6 +128,51 @@ fn grant_from_json(value: &Value) -> Result<Grant, AppError> {
     })
 }
 
+/// The limits a `raise_limits` act holds, member by member: `None` for a
+/// member the change did not send, `Some(None)` for one it cleared.
+struct SentLimits {
+    expiry: Option<Option<EventTime>>,
+    requests_per_minute: Option<Option<u32>>,
+}
+
+/// The members of `value`, a `change` or `before` object (review finding
+/// core-7).
+fn limits_of(value: Option<&Value>) -> Result<SentLimits, AppError> {
+    let bad = |e: String| AppError::StoredResponse(format!("admin act limits: {e}"));
+    let Some(value) = value else {
+        return Ok(SentLimits {
+            expiry: None,
+            requests_per_minute: None,
+        });
+    };
+    let expiry = match value.get("expiry") {
+        None => None,
+        Some(Value::Null) => Some(None),
+        Some(v) => Some(Some(
+            EventTime::parse(v.as_str().ok_or_else(|| bad(v.to_string()))?)
+                .map_err(|e| bad(e.to_string()))?,
+        )),
+    };
+    let requests_per_minute = match value.get("requests_per_minute") {
+        None => None,
+        Some(Value::Null) => Some(None),
+        Some(v) => Some(Some(
+            v.as_u64()
+                .and_then(|n| u32::try_from(n).ok())
+                .ok_or_else(|| bad(v.to_string()))?,
+        )),
+    };
+    Ok(SentLimits {
+        expiry,
+        requests_per_minute,
+    })
+}
+
+/// The change a `raise_limits` act's effect sent.
+fn limits_change(effect: &Value) -> Result<SentLimits, AppError> {
+    limits_of(effect.get("change"))
+}
+
 /// An admin person as a confirmation judges them (ADR-0097 d11).
 pub(crate) struct ConfirmerView {
     pub(crate) person: oml_domain::name::Name,
@@ -730,19 +775,27 @@ where
             }
             AdminActKind::RaiseLimits => {
                 let Some(key) = live else { return Ok(()) };
-                let before = effect.get("before").cloned().unwrap_or(Value::Null);
-                let expiry = before
-                    .get("expiry")
-                    .and_then(Value::as_str)
-                    .map(EventTime::parse)
-                    .transpose()
-                    .map_err(|e| AppError::StoredResponse(e.to_string()))?;
-                let requests_per_minute = before
-                    .get("requests_per_minute")
-                    .and_then(Value::as_u64)
-                    .map(u32::try_from)
-                    .transpose()
-                    .map_err(|e| AppError::StoredResponse(e.to_string()))?;
+                // Only the members the act changed, and only where the key
+                // still holds the act's value: a narrowing since stands
+                // (ADR-0097 d3; review finding core-7).
+                let change = limits_change(effect)?;
+                let before = limits_of(effect.get("before"))?;
+                let mut expiry = key.expiry.clone();
+                let mut requests_per_minute = key.requests_per_minute;
+                if let (Some(set), Some(back)) = (&change.expiry, &before.expiry)
+                    && &key.expiry == set
+                {
+                    expiry.clone_from(back);
+                }
+                if let (Some(set), Some(back)) =
+                    (change.requests_per_minute, before.requests_per_minute)
+                    && key.requests_per_minute == set
+                {
+                    requests_per_minute = back;
+                }
+                if expiry == key.expiry && requests_per_minute == key.requests_per_minute {
+                    return Ok(());
+                }
                 let payload = json!({
                     "key_id": key.key_id.to_string(),
                     "set_by_key_id": admin.key_id.to_string(),
@@ -1108,18 +1161,19 @@ where
                 let key_id = key_id.ok_or_else(|| {
                     AppError::StoredResponse(format!("admin act {} names no key", act.act_id))
                 })?;
-                let expiry = effect
-                    .get("expiry")
-                    .and_then(Value::as_str)
-                    .map(EventTime::parse)
-                    .transpose()
-                    .map_err(|e| AppError::StoredResponse(e.to_string()))?;
-                let requests_per_minute = effect
-                    .get("requests_per_minute")
-                    .and_then(Value::as_u64)
-                    .map(u32::try_from)
-                    .transpose()
-                    .map_err(|e| AppError::StoredResponse(e.to_string()))?;
+                // The members the change sent, over the key's limits as they
+                // stand at the confirmation, so a narrowing since stands
+                // (review finding core-7).
+                let key = self
+                    .journal
+                    .key(tenant_id, key_id)
+                    .await?
+                    .ok_or(AppError::NotFound)?;
+                let change = limits_change(effect)?;
+                let expiry = change.expiry.unwrap_or_else(|| key.expiry.clone());
+                let requests_per_minute = change
+                    .requests_per_minute
+                    .unwrap_or(key.requests_per_minute);
                 let prev = last(links);
                 let event = self.seal(
                     Some(&prev),

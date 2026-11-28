@@ -68,7 +68,8 @@ where
         }
         let tenant_id = key.tenant_id;
         let prev = self.head_event(tenant_id).await?;
-        let links = self.conversion_links(&key, prev.as_ref(), &key.principal, Some(key.key_id), None)?;
+        let links =
+            self.conversion_links(&key, prev.as_ref(), &key.principal, Some(key.key_id), None)?;
         self.commit_chain(links).await?;
         key.suspended = None;
         key.role = Role::Maintenance;
@@ -106,7 +107,10 @@ where
                     "act_id": null,
                 }),
             )?;
-            links.push((lifted, MetadataFold::KeySuspensionLifted { key_id: key.key_id }));
+            links.push((
+                lifted,
+                MetadataFold::KeySuspensionLifted { key_id: key.key_id },
+            ));
         }
         let mut payload = json!({
             "key_id": key.key_id.to_string(),
