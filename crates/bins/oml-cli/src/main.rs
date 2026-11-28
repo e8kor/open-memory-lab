@@ -8463,7 +8463,7 @@ fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
         (
             "auth_log_write_failures",
             "auth.log_write_failed",
-            "authentication row(s) the server could not write since it started: a key's next authentication writes its row again, and until then recover may read that key as dormant",
+            "authentication row(s) the server could not write since it started: a key's next authentication writes its row again, and oml operator recover is refused log_write_failed on this server process until it restarts",
         ),
     ];
     let report = match read {
@@ -9929,7 +9929,7 @@ mod tests {
                 "fail admin.recovery_pending: 1 operator recovery(ies) of this tenant waiting their 72 hours: any admin person's sign-in cancels it; once it completes every admin key is revoked".to_owned(),
                 "fail admin.recovery_overdue: 1 operator recovery(ies) past their 72 hours and not completed: read the server log's recovery_sweep_failed lines".to_owned(),
                 "warn auth.log_coverage: 12 whole day(s) the server's authentication table covers, under the 30 oml operator recover needs: it refuses log_too_short until then".to_owned(),
-                "warn auth.log_write_failed: 2 authentication row(s) the server could not write since it started: a key's next authentication writes its row again, and until then recover may read that key as dormant".to_owned(),
+                "warn auth.log_write_failed: 2 authentication row(s) the server could not write since it started: a key's next authentication writes its row again, and oml operator recover is refused log_write_failed on this server process until it restarts".to_owned(),
             ]
         );
         let fine = json!({

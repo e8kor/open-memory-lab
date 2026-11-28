@@ -78,7 +78,8 @@ where
     /// token; no key acts. Refused `operator.recover_refused` with
     /// `dispute_open` while an act against an admin is open, `pending` while
     /// a recovery waits, `log_too_short` when the authentication table does
-    /// not reach back 30 days, `admin_active` when an admin key of the
+    /// not reach back 30 days, `log_write_failed` while this process counts
+    /// a row it could not write, `admin_active` when an admin key of the
     /// tenant authenticated in them, and `person_taken` or `email_taken`.
     /// Then, in one commit, `operator.recovery_requested` and a `recovery`
     /// notice to every admin person; the answer carries the email for the
@@ -118,6 +119,12 @@ where
         let coverage = self.journal.authentication_coverage().await?;
         if !coverage.covers(&now, RECOVERY_DORMANCY_DAYS) {
             return refused(RecoverRefusal::LogTooShort);
+        }
+        // A row this process could not write would read as dormancy: while
+        // it counts one, the request is refused. The count is this
+        // process's, so the refusal is per replica (answer 26, reading 2).
+        if self.authentication_write_failures() > 0 {
+            return refused(RecoverRefusal::LogWriteFailed);
         }
         let since_day = day_before(&now, RECOVERY_DORMANCY_DAYS)?;
         if self
