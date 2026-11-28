@@ -880,8 +880,9 @@ answered each on 2026-11-25. Each answer is recorded where it applies.
   `key.converted`, `key.suspended`, `operator.recovery`, `operator.settlement`).
 - **The CLI and the skill:** `oml keys issue` prints the value once and then "waits on another
   admin" for a pending act; `oml bootstrap claim` and `oml quickstart` require `--person` and
-  `--email`; `oml keys issue` and `issue-agent` take `--create-workspace <parent>/<name>` and
-  `--grant <workspace>:<role>:create` (d30, d31).
+  `--email`; `oml keys issue` and `issue-agent` take `--create-workspace <parent>/<name>`, `oml
+  keys issue` takes `--grant <workspace>:<role>:create` and `issue-agent` `--create` on its one
+  write grant (d30, d31); both take `--reason` and ask for one on a terminal (d26).
 - **Issues:** the build is tracked in milestone v0.8.6; the v0.8.5 pieces in milestone v0.8.5.
 - **The cost:** a multi-admin tenant's widening waits on a second person, who counts only after
   seven days; erase no longer destroys at once; a recovered tenant whose dormant admins never
