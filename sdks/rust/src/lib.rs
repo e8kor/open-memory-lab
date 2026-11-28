@@ -4328,8 +4328,13 @@ mod tests {
         assert_eq!(seen[14].uri(), "/v2/keys?limit=200&user=alice");
         assert_eq!(seen[18].uri(), "/v2/review/held?limit=50&workspace=alice");
         assert_eq!(seen[19].uri(), "/v2/review/held?ids=a,b");
+        // The notices: a list read, then a dismiss with an empty body
+        // (ADR-0097 d20).
+        assert_eq!(seen[27].uri(), "/v2/web/notices");
+        assert_eq!(seen[28].uri(), "/v2/web/notices/n-1/dismiss");
+        assert_eq!(seen[28].headers()[IDEMPOTENCY_KEY], "idem-n1");
         assert_eq!(
-            std::str::from_utf8(seen[27].body()).unwrap(),
+            std::str::from_utf8(seen[29].body()).unwrap(),
             r#"{"connect_code":false,"name":"alice-laptop","role":"contributor"}"#
         );
     }
