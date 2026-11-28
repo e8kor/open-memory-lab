@@ -1160,6 +1160,50 @@ answer is recorded here before the code that takes it.
     "every marked act appears in their To do once their entry is seven days old" to the acts
     list.
 
+## Note of 2026-11-28: the review round's deferrals and readings (proposed, for the operator to confirm)
+
+The v0.8.6 fix lane A took these readings where the reviews of PR #527 found the build short of
+this record and building the whole rule did not fit the round. Each fails closed. None is decided
+until the operator confirms it.
+
+- **d5's in-progress reviewer confirmation is not built; such a grant is refused.** An admin's
+  grant, or an issuance's grant, on a node inside an in-progress subtree is refused
+  `request.validation` with `details.field: /grants` and `details.reason: in_progress_subtree`,
+  in every tenant, `sole_admin` included, instead of being confirmed by a second admin person
+  alone. The subtree's own people still issue their keys as persons' own acts. The two-party
+  confirmation (a second admin person and a person holding reviewer there) is deferred to v0.8.7.
+- **d14's v0.8.6 rotation by another admin is not built; it stays refused.** An admin's rotation
+  of another admin person's key or of a person's key is still refused `not_admins_key` and
+  `in_persons_root`, as in v0.8.5. The pending rotation, whose confirmation journals `key.rotated`,
+  is deferred to v0.8.7.
+- **d8's containment by the target.** From the contest-only sign-in, below three admin persons,
+  the target revokes every live admin key of the act's initiator: its bearer keys, its
+  `<user>-admin` session keys, which ends its admin sessions, and the act's own key. Each
+  revocation is final, is sealed as the target with no key acting, and names the act. It is a form
+  on the contest-only page (`POST /web/contest` with `act=contain`), not a route of its own, and
+  it is never reached through an admin key. Ending the initiator's other sessions is not built.
+- **A limit change that raises one limit and lowers the other is two acts (d15).** It is refused
+  `request.validation`, as answer 19 refuses a federation policy change that does both. A
+  confirmation applies only the members the act sent, over the key's limits as they stand then,
+  and a decline sets back only those members where the key still holds the act's value.
+- **A quota change is `raise_limits` or `lower_limits` (d15).** It is classed by the person's
+  effective limit before and after, and `POST /v2/web/users/{user}/quota` takes an optional
+  `reason`.
+- **Declining an accepted `sole_admin` admin flag is an un-flag (d8, d10, d21).** The decline
+  journals `unflag_admin` against that person, which is contestable and suspends their admin
+  keys, or `unflag_own` for the decliner's own flag, which revokes theirs. It requires a reason.
+- **An admin entry does not move to another user with its flag (d5, d8).** That change is refused
+  on the `user` field and is sent as an un-flag, then a new admin entry.
+- **An admin key is never unlinked (d21).** `POST /v2/keys/{key}/unlink` on an admin key is
+  refused `admin_key_requires_person`.
+- **A contest restores the entry accepted (d8, answer 3).** The restored entry keeps its pinned
+  provider subjects. Its `admin_since` restarts at the restoration, so the restored admin person
+  counts as a second admin person again only after seven days. Keeping the original
+  `admin_since` is deferred.
+- **A recovery's completion holds while a sign-in row is unwritten (d19, answer 26).** The sweep
+  writes the process's unwritten authentication rows again first. While one is still unwritten it
+  refuses the completion `log_write_failed`, and the request stays.
+
 ## Rejected alternatives
 
 | Alternative | Why not |

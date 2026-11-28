@@ -431,6 +431,30 @@ where
         })
     }
 
+    /// Refuses an admin's grant on a node inside an in-progress subtree
+    /// (ADR-0097 d5; review finding core-9): d5 has a person holding
+    /// reviewer in that subtree confirm it too, which is not built, so no
+    /// second admin person alone confirms it and no `sole_admin` tenant
+    /// takes it at once. A grant whose node lies outside every in-progress
+    /// subtree passes.
+    pub(crate) async fn refuse_in_progress_grants(
+        &self,
+        tenant_id: Uuid,
+        nodes: impl IntoIterator<Item = Uuid>,
+    ) -> Result<(), AppError> {
+        for node in nodes {
+            if self
+                .journal
+                .workspace_ancestry(tenant_id, node)
+                .await?
+                .is_some_and(|a| a.iter().any(|w| w.in_progress))
+            {
+                return Err(AppError::AdminAct(AdminActRefusal::InProgressSubtree));
+            }
+        }
+        Ok(())
+    }
+
     /// Whether an act against an admin is open in the tenant: then widening
     /// is confirm-first even with one live admin person (ADR-0097 d10).
     pub(crate) async fn act_against_admin_open(&self, tenant_id: Uuid) -> Result<bool, AppError> {

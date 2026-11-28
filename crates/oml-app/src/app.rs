@@ -3676,6 +3676,10 @@ where
     ) -> Result<IssuedKey, AppError> {
         let tenant_id = issuer.tenant_id;
         let key_id = record.key_id;
+        // An admin's grant into an in-progress subtree waits on its reviewer
+        // person too, not built: refused by name (ADR-0097 d5; core-9).
+        self.refuse_in_progress_grants(tenant_id, grants.iter().map(|g| g.node))
+            .await?;
         // The confirm screen flags a principal spelled as a person's name:
         // a user root holds it (ADR-0097 d23).
         let principal_names_person = match Name::parse_reference(&req.principal) {

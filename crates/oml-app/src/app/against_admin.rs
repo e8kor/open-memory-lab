@@ -494,6 +494,94 @@ where
         Ok(act)
     }
 
+    /// The target's containment from the contest-only sign-in (ADR-0097
+    /// d8; review finding core-10): below three admin persons, the person
+    /// an open act is against revokes every live admin key of the act's
+    /// initiator, its bearer keys, its `<user>-admin` session keys, which
+    /// ends its admin sessions, and the act's own key, each final. Sealed as
+    /// the target with no key acting, each `key.revoked` naming the act,
+    /// in one commit. Reached only through the contest-only sign-in, never
+    /// through an admin key. Answers the keys revoked.
+    ///
+    /// # Errors
+    /// `not_contestable` for an act that is not open, `not_target` for
+    /// another person, `not_frozen` with three or more admin persons, an act
+    /// the tenant does not hold, and the store's.
+    pub async fn contain_initiator_as(
+        &self,
+        tenant_id: Uuid,
+        user: &Name,
+        act_id: Uuid,
+    ) -> Result<Vec<Uuid>, AppError> {
+        let prev = self.head_event(tenant_id).await?;
+        let act = self
+            .journal
+            .admin_act(tenant_id, act_id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        if !act.act.contestable()
+            || !matches!(
+                act.state,
+                AdminActState::Effective | AdminActState::Contested
+            )
+        {
+            return Err(AppError::AdminAct(AdminActRefusal::NotContestable));
+        }
+        if target_user(&act).as_ref() != Some(user) {
+            return Err(AppError::AdminAct(AdminActRefusal::NotTarget));
+        }
+        if self.dispute_admins(tenant_id).await? >= 3 {
+            return Err(AppError::AdminAct(AdminActRefusal::NotFrozen));
+        }
+        let mut keys: Vec<KeyRecord> = Vec::new();
+        if let Some(initiator) = &act.actor_person {
+            keys.extend(self.admin_keys_of(tenant_id, initiator).await?);
+            keys.extend(
+                self.journal
+                    .web_session_keys(tenant_id, initiator)
+                    .await?
+                    .into_iter()
+                    .filter(|k| k.role == Role::Admin),
+            );
+        }
+        if let Some(id) = act.actor_key_id
+            && let Some(key) = self.journal.key(tenant_id, id).await?
+            && key.role == Role::Admin
+        {
+            keys.push(key);
+        }
+        keys.retain(|k| k.revoked_at.is_none());
+        keys.sort_by_key(|k| k.key_id);
+        keys.dedup_by_key(|k| k.key_id);
+        let mut links: Links = Vec::with_capacity(keys.len());
+        let mut last = prev;
+        for key in &keys {
+            let event = self.seal(
+                last.as_ref(),
+                tenant_id,
+                event_types::KEY_REVOKED,
+                user.as_str(),
+                None,
+                with_act_id(
+                    json!({
+                        "key_id": key.key_id.to_string(),
+                        "revoked_by_key_id": Value::Null,
+                        "actor_person": user.as_str(),
+                        "reason": Value::Null,
+                        "cause": Value::Null,
+                    }),
+                    act_id,
+                ),
+            )?;
+            last = Some(event.clone());
+            links.push((event, MetadataFold::KeyRevoked { key_id: key.key_id }));
+        }
+        if !links.is_empty() {
+            self.commit_links(links).await?;
+        }
+        Ok(keys.into_iter().map(|k| k.key_id).collect())
+    }
+
     /// `POST /v2/admin/acts/{act}/settle` (ADR-0097 d8, d11): with three or
     /// more admin persons, a third admin person who counts settles an open
     /// contestable act. `confirm`: the target's suspended admin keys are

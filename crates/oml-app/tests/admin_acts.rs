@@ -4136,3 +4136,105 @@ async fn an_admin_entry_moved_to_another_user_with_its_flag_is_refused() {
     assert!(matches!(err, AppError::WebField { field: "user", .. }), "{err:?}");
     assert_eq!(r.journal().await.len(), before, "nothing is journalled");
 }
+
+/// Below three admin persons the target of an open act, from the
+/// contest-only sign-in, revokes the initiator's admin keys, its
+/// `<user>-admin` session key among them, each final; nobody else may
+/// (ADR-0097 d8; review finding core-10).
+#[tokio::test]
+async fn the_target_revokes_the_initiator_only_from_the_contest_only_sign_in() {
+    let r = two_admins().await;
+    let alice = r.admin_session("alice").await;
+    r.app
+        .allow_web_email_with_reason(
+            Bearer::Session(&alice),
+            &entry_of("bob", false),
+            true,
+            Some("a stolen session"),
+        )
+        .await
+        .expect("alice un-flags bob: a freeze");
+    let act = last_act(&r, "unflag_admin").await;
+    let err = r
+        .app
+        .contain_initiator_as(r.boot.tenant_id, &name("alice"), act.act_id)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::AdminAct(AdminActRefusal::NotTarget)),
+        "{err:?}"
+    );
+    r.app
+        .contest_admin_act_as(r.boot.tenant_id, &name("bob"), act.act_id)
+        .await
+        .expect("bob contests");
+    let revoked = r
+        .app
+        .contain_initiator_as(r.boot.tenant_id, &name("bob"), act.act_id)
+        .await
+        .expect("bob contains alice");
+    assert!(revoked.contains(&alice.key().key_id), "alice's admin session key");
+    let held = r
+        .store
+        .key(r.boot.tenant_id, alice.key().key_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert!(held.revoked_at.is_some(), "the initiator's admin key is revoked");
+}
+
+/// An admin's grant into an in-progress subtree is refused by name: d5 has
+/// a person holding reviewer there confirm it as well as a second admin
+/// person, and that confirmation is not built, so no admin alone applies
+/// it (ADR-0097 d5; review finding core-9).
+#[tokio::test]
+async fn an_admin_grant_into_an_in_progress_subtree_is_refused_by_name() {
+    let r = rig().await;
+    r.app
+        .create_workspace(r.admin(), &name("lab"), Some(by_name("universe")), None)
+        .await
+        .expect("lab");
+    let on_lab = |role| GrantRequest {
+        node: by_name("lab"),
+        role,
+        deny: Vec::new(),
+        covers: Covers::Subtree,
+        create: false,
+    };
+    let reviewer = r
+        .app
+        .issue_key(
+            r.admin(),
+            &IssueKeyRequest {
+                role: Role::Reviewer,
+                used_by: Some(UsedBy::Person),
+                grants: vec![on_lab(Role::Reviewer), on_lab(Role::Reader)],
+                ..agent_req()
+            },
+        )
+        .await
+        .expect("a reviewer a person holds");
+    r.app
+        .set_workspace_mode(
+            reviewer.value.as_str(),
+            by_name("lab"),
+            oml_app::domain::in_progress::WorkspaceMode::InProgress,
+        )
+        .await
+        .expect("lab in progress");
+    let err = r
+        .app
+        .issue_key(
+            r.admin(),
+            &IssueKeyRequest {
+                grants: vec![on_lab(Role::Reader), on_lab(Role::Submitter)],
+                ..agent_req()
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::AdminAct(AdminActRefusal::InProgressSubtree)),
+        "{err:?}"
+    );
+}
