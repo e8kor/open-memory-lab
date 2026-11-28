@@ -21,6 +21,8 @@ were marked **reading, for the operator to confirm**; the operator decided the l
 changes), [ADR-0009](ADR-0009-status-ladder.md) (d3),
 [ADR-0010](ADR-0010-roles-and-keys.md) (d1, d3),
 [ADR-0031](ADR-0031-oauth-connections-by-connect-code.md) (d7, d8),
+[ADR-0042](ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md)
+(d8, for authentication counts only, by answer 24 of 2026-11-28),
 [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
 (d3, d7; d6 by d31),
 [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)
@@ -1056,6 +1058,37 @@ before the code that takes it. Answers 21 and 22 are not the lanes' recommendati
     - `link_self` is a consent act and needs a reason.
     - A pending or disabled entry gets no session keys.
     - `check_signup_policy` checks only that the tenant exists.
+
+## Amendment of 2026-11-28: recovery's dormancy is read from a server authentication table (decided by the operator)
+
+Decided by the operator on 2026-11-28, answering the question the v0.8.6 operator lane left on
+answer 21: the request log ([ADR-0042](ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md))
+is stderr JSON lines the server never stores, so nothing the server holds could show recover's
+30 days. Each answer is recorded here before the code that takes it. Answer 24 is the lane's
+recommendation; answer 25 accepts every reading that lane took.
+
+24. **The request log d19's dormancy reads is a server authentication table (decided by the
+    operator, 2026-11-28).** It refines answer 21: "the request log" there is this table.
+    - **Rows.** One row per tenant, key and UTC day, with a count: written at most once per key per
+      day, the authentications of that day coalesced in memory, so the write costs one upsert per
+      key per day. Rows are kept 30 days and a sweep purges older ones.
+    - **Coverage** is the oldest retained row, bounded below by the install or migration time.
+      `oml operator recover` fails closed with a named reason, `operator.recover_refused` with
+      `log_too_short`, when coverage is under 30 days, and never reads a missing row as dormancy.
+    - **Doctor** reads the coverage on every deployment.
+    - **ADR-0042 d8.** This reverses d8's "the server holds no log" for authentication counts only;
+      the request log itself stays stderr JSON lines. ADR-0042 carries the amendment note.
+    - **The cost:** a new migration, whose number is reserved; one upsert per key per day, coalesced
+      in memory, which joins the bottleneck register; and 30 days of tenant, key and day rows in the
+      database.
+25. **The operator lane's readings, all accepted (decided by the operator, 2026-11-28).**
+    - The operator token files are 0600, owned by the server's user, in a 0700 directory.
+    - The host verbs take a tenant id.
+    - A tenant created after a start gets its token at the next start.
+    - A freeze's 24 hours are measured from the act's `at`.
+    - A settlement's recipients are every admin person and both parties, and its email goes to
+      their entries' addresses and to a removed target's earlier address.
+    - The mail relay's failure count is in memory, so a restart clears it.
 
 ## Rejected alternatives
 
