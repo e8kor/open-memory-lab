@@ -1028,6 +1028,41 @@ fn ancestry_of(
 /// A node's derived path from its ancestry, listed node to root: the names
 /// from `universe` down to the node, joined with `.` (ADR-0025 d14). Every
 /// path the app serves is this derivation.
+/// The segment a public node's path shows for an ancestor the reading key
+/// cannot read, in place of its name (ADR-0098, answer 4 of 2026-11-28).
+pub const PRIVATE_SEGMENT: &str = "\u{2026}";
+
+/// The path of the node `ancestry` names, node first, as `caller` is served
+/// it (ADR-0098, answer 4 of 2026-11-28, D28): for a public node, every
+/// ancestor the key cannot read is [`PRIVATE_SEGMENT`], never its name;
+/// `universe`, the node itself and every ancestor the key reads keep their
+/// names. An admin or `maintenance` key reads the tree's structure by its
+/// role and sees every name, and a node that is not public is served as
+/// before ([`derived_path`]).
+fn served_path(caller: &Caller, ancestry: &[WorkspaceRecord]) -> String {
+    let public = ancestry.first().is_some_and(|w| w.public);
+    if !public || matches!(caller.key.role, Role::Admin | Role::Maintenance) {
+        return derived_path(ancestry);
+    }
+    let ids: Vec<Uuid> = ancestry.iter().map(|w| w.workspace_id).collect();
+    ancestry
+        .iter()
+        .enumerate()
+        .rev()
+        .map(|(i, w)| {
+            if i == 0
+                || w.parent_id.is_none()
+                || caller.effective(&ids[i..]).contains(&Role::Reader)
+            {
+                w.name.as_str()
+            } else {
+                PRIVATE_SEGMENT
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
 fn derived_path(ancestry: &[WorkspaceRecord]) -> String {
     ancestry
         .iter()
@@ -2855,7 +2890,7 @@ where
         // `universe` is the one node with no parent.
         let anonymous = ancestry.as_ref().is_some_and(|a| a.len() == 1)
             && memory.author_key_id != caller.key.key_id;
-        let workspace_path = ancestry.map(|ancestry| derived_path(&ancestry));
+        let workspace_path = ancestry.map(|ancestry| served_path(caller, &ancestry));
         let mut derives_from = Vec::with_capacity(memory.derives_from.len());
         if !anonymous {
             for ancestor in &memory.derives_from {
@@ -5620,7 +5655,7 @@ where
             in_progress_root,
             stale_versions,
             approved_by_kind,
-            path: derived_path(&ancestry),
+            path: served_path(&caller, &ancestry),
             policy: review_policy(),
             federation,
             pending_transitions,
@@ -5756,7 +5791,18 @@ where
             .await?;
         let mut items = Vec::with_capacity(page.len());
         for (names, workspace) in page {
-            let path = names.iter().map(Name::as_str).collect::<Vec<_>>().join(".");
+            // A public node's private ancestors are placeholders to a key
+            // that cannot read them (ADR-0098, answer 4 of 2026-11-28).
+            let path = if workspace.public && !structure {
+                let ancestry = self
+                    .journal
+                    .workspace_ancestry(tenant_id, workspace.workspace_id)
+                    .await?
+                    .unwrap_or_default();
+                served_path(&caller, &ancestry)
+            } else {
+                names.iter().map(Name::as_str).collect::<Vec<_>>().join(".")
+            };
             let crew = match workspace.crew_id {
                 None => None,
                 Some(crew_id) => match crews.entry(crew_id) {
@@ -10377,7 +10423,7 @@ where
             .await?
             .unwrap_or_default();
         let ids: Vec<Uuid> = chain.iter().map(|w| w.workspace_id).collect();
-        let scope_path = derived_path(&chain);
+        let scope_path = served_path(&caller, &chain);
         let bound = match guardrail_scope {
             GuardrailScope::Workspace => ids.len().min(1),
             GuardrailScope::Ancestors => ids.len(),
@@ -10387,7 +10433,7 @@ where
             let depth = u32::try_from(ids.len() - 1 - i).unwrap_or(u32::MAX);
             let reads = caller.effective(&ids[i..]).contains(&Role::Reader);
             if reads || !caller.denied(&ids[i..]) {
-                nodes.insert(ids[i], (depth, reads, derived_path(&chain[i..])));
+                nodes.insert(ids[i], (depth, reads, served_path(&caller, &chain[i..])));
             }
         }
         let listed: Vec<Uuid> = nodes.keys().copied().collect();
@@ -10688,7 +10734,7 @@ where
             .await?
             .unwrap_or_default();
         let ids: Vec<Uuid> = chain.iter().map(|w| w.workspace_id).collect();
-        let scope_path = derived_path(&chain);
+        let scope_path = served_path(caller, &chain);
         let bound = match guardrail_scope {
             GuardrailScope::Workspace => ids.len().min(1),
             GuardrailScope::Ancestors => ids.len(),
@@ -10709,7 +10755,7 @@ where
                     distance,
                     true,
                     chain[i].name.as_str().to_owned(),
-                    derived_path(&chain[i..]),
+                    served_path(caller, &chain[i..]),
                 ),
             );
             if in_progress_root_in(&chain[i..]).is_some() {
@@ -10739,7 +10785,7 @@ where
                         u32::try_from(distance).unwrap_or(u32::MAX),
                         false,
                         ancestry[0].name.as_str().to_owned(),
-                        derived_path(&ancestry),
+                        served_path(caller, &ancestry),
                     ),
                 );
                 inside.push(node);
@@ -11977,7 +12023,7 @@ where
         let mut paths: BTreeMap<Uuid, (String, bool)> = BTreeMap::new();
         for i in 1..ids.len() {
             if caller.effective(&ids[i..]).contains(&Role::Reader) {
-                paths.insert(ids[i], (derived_path(&chain[i..]), false));
+                paths.insert(ids[i], (served_path(caller, &chain[i..]), false));
             }
         }
         let mut walked = BTreeMap::new();
@@ -11989,7 +12035,7 @@ where
                 continue;
             }
             if let Some(ancestry) = ancestry_of(&walked, node) {
-                paths.insert(node, (derived_path(&ancestry), true));
+                paths.insert(node, (served_path(caller, &ancestry), true));
             }
         }
         let nodes: Vec<Uuid> = paths.keys().copied().collect();

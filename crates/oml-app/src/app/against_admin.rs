@@ -291,6 +291,17 @@ where
         };
         let kind_against = match change {
             None => AdminActKind::RemoveAdmin,
+            // Moving a live admin flag to another user would make that user
+            // an admin person with no second admin's confirmation (d5) and
+            // lift the tenant out of the freeze count (d8): it is two acts,
+            // an un-flag and then a new admin entry (review finding
+            // core-12).
+            Some(req) if req.user != entry.user && req.admin => {
+                return Err(AppError::WebField {
+                    field: "user",
+                    message: "an admin entry moves to another user as two acts: take the admin flag off first, then add the new user's admin entry",
+                });
+            }
             Some(req) if req.user != entry.user => AdminActKind::ChangeAdmin,
             Some(req) if !req.admin => AdminActKind::UnflagAdmin,
             Some(_) => return Ok(None),

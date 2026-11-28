@@ -4109,3 +4109,30 @@ async fn a_flagged_grant_lists_create_workspace_where_it_survives() {
         info.my_effective_verbs
     );
 }
+
+/// Moving an admin entry to another user while keeping its flag is
+/// refused: it would make a new admin person at once, so it is sent as an
+/// un-flag and then a new admin entry (ADR-0097 d5, d8; review finding
+/// core-12).
+#[tokio::test]
+async fn an_admin_entry_moved_to_another_user_with_its_flag_is_refused() {
+    let r = two_admins().await;
+    let alice = r.admin_session("alice").await;
+    let before = r.journal().await.len();
+    let err = r
+        .app
+        .allow_web_email_with_reason(
+            Bearer::Session(&alice),
+            &WebEmailRequest {
+                email: Email::parse("bob@example.com").expect("an email"),
+                user: name("bob2"),
+                admin: true,
+            },
+            true,
+            Some("a new name"),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::WebField { field: "user", .. }), "{err:?}");
+    assert_eq!(r.journal().await.len(), before, "nothing is journalled");
+}
