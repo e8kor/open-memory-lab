@@ -18,6 +18,7 @@
 
 #![forbid(unsafe_code)]
 
+mod admin_acts;
 mod console;
 pub mod error;
 mod exports;
@@ -27,6 +28,8 @@ mod imports;
 pub mod mcp;
 mod metering;
 pub mod oauth;
+pub mod operator;
+mod public;
 mod rescan;
 mod search;
 pub mod session;
@@ -86,7 +89,7 @@ use oml_app::types::{
 use oml_app::types::{
     BulkItem, BulkVerdictRequest, HELD_PAGE_DEFAULT, HeldListingRequest, HeldPage, ReviewLane,
 };
-use oml_app::types::{Preview, PreviewRequest};
+use oml_app::types::{NewWorkspace, Preview, PreviewRequest};
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
 use crate::time::{parse_date_time, system_event_time, system_event_time_plus};
@@ -129,6 +132,9 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/keys/{key}/denials"),
     ("POST", "/v2/keys/{key}/limits"),
     ("POST", "/v2/keys/{key}/rotate"),
+    ("POST", "/v2/keys/{key}/revoke"),
+    ("POST", "/v2/keys/self/link"),
+    ("POST", "/v2/keys/self/convert"),
     ("POST", "/v2/keys/{key}/link"),
     ("POST", "/v2/keys/{key}/unlink"),
     ("POST", "/v2/keys/{key}/accept_link"),
@@ -146,6 +152,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/workspaces/{workspace}/crew"),
     ("POST", "/v2/workspaces/{workspace}/mode"),
     ("POST", "/v2/workspaces/{workspace}/federation"),
+    ("POST", "/v2/workspaces/{workspace}/public"),
     ("POST", "/v2/workspaces/{workspace}/exports"),
     ("POST", "/v2/workspaces/{workspace}/transitions"),
     (
@@ -169,6 +176,9 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/web/users/{user}/deletion/close"),
     ("POST", "/v2/web/session/end"),
     ("GET", "/v2/web/export"),
+    ("GET", "/v2/web/admin-reads"),
+    ("GET", "/v2/web/notices"),
+    ("POST", "/v2/web/notices/{notice}/dismiss"),
     ("POST", "/v2/web/deletion-requests"),
     ("POST", "/v2/admin/memories/search"),
     ("GET", "/v2/admin/memories/{artifact_id}"),
@@ -177,6 +187,13 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/admin/investigations/{investigation_id}/close"),
     ("POST", "/v2/admin/fixes"),
     ("GET", "/v2/admin/fixes"),
+    ("GET", "/v2/admin/acts"),
+    ("POST", "/v2/admin/acts/{act}/confirm"),
+    ("POST", "/v2/admin/acts/{act}/decline"),
+    ("POST", "/v2/admin/acts/{act}/contest"),
+    ("POST", "/v2/admin/acts/{act}/settle"),
+    ("POST", "/v2/operator/tenants/{tenant}/acts/{act}/settle"),
+    ("POST", "/v2/operator/tenants/{tenant}/recover"),
     ("GET", "/v2/review/fixes"),
     ("POST", "/v2/review/fixes/{fix_id}/confirm"),
     ("POST", "/v2/review/fixes/{fix_id}/revert"),
@@ -301,6 +318,13 @@ pub struct ApiState<J, S, C, I, Sc> {
     /// The identity `oml-web` proves to present a capacity credential
     /// (ADR-0070 d2).
     web_client: session::WebClient,
+    /// The operator tokens this start wrote, one per tenant (ADR-0097
+    /// d19; answer 13); none, and the operator route refuses every call.
+    operator: Arc<operator::OperatorTokens>,
+    /// The mail relay, where the composition configured one (d20; answer
+    /// 14), and what it did since the start.
+    mailer: Option<Arc<dyn oml_app::ports::Mailer>>,
+    mail_health: Arc<operator::MailHealth>,
 }
 
 impl<J: Clone, S, C, I, Sc> Clone for ApiState<J, S, C, I, Sc> {
@@ -319,6 +343,9 @@ impl<J: Clone, S, C, I, Sc> Clone for ApiState<J, S, C, I, Sc> {
             traffic: self.traffic.clone(),
             web: self.web.clone(),
             web_client: self.web_client.clone(),
+            operator: Arc::clone(&self.operator),
+            mailer: self.mailer.clone(),
+            mail_health: Arc::clone(&self.mail_health),
         }
     }
 }
@@ -402,6 +429,9 @@ where
             ("POST", "/v2/keys/{key}/denials") => post(Self::deny_key),
             ("POST", "/v2/keys/{key}/limits") => post(Self::set_key_limits),
             ("POST", "/v2/keys/{key}/rotate") => post(Self::rotate_key),
+            ("POST", "/v2/keys/{key}/revoke") => post(Self::revoke_key_route),
+            ("POST", "/v2/keys/self/link") => post(Self::link_self_route),
+            ("POST", "/v2/keys/self/convert") => post(Self::convert_self_route),
             ("POST", "/v2/keys/{key}/link") => post(Self::link_key),
             ("POST", "/v2/keys/{key}/unlink") => post(Self::unlink_key),
             ("POST", "/v2/keys/{key}/accept_link") => post(Self::accept_key_link),
@@ -423,6 +453,7 @@ where
             ("POST", "/v2/workspaces/{workspace}/federation") => {
                 post(Self::set_workspace_federation)
             }
+            ("POST", "/v2/workspaces/{workspace}/public") => post(Self::set_workspace_public),
             ("POST", "/v2/workspaces/{workspace}/exports") => post(Self::export_workspace_route),
             ("POST", "/v2/workspaces/{workspace}/transitions") => post(Self::propose_transition),
             ("POST", "/v2/workspaces/{workspace}/transitions/{transition_id}/ratify") => {
@@ -445,6 +476,9 @@ where
             ("POST", "/v2/web/users/{user}/deletion/close") => post(Self::close_deletion),
             ("POST", "/v2/web/session/end") => post(Self::end_session),
             ("GET", "/v2/web/export") => get(Self::export_web_person),
+            ("GET", "/v2/web/admin-reads") => get(Self::own_admin_reads_route),
+            ("GET", "/v2/web/notices") => get(Self::notices_route),
+            ("POST", "/v2/web/notices/{notice}/dismiss") => post(Self::notice_dismiss_route),
             ("POST", "/v2/web/deletion-requests") => post(Self::request_deletion),
             ("POST", "/v2/admin/memories/search") => post(Self::admin_search_route),
             ("GET", "/v2/admin/memories/{artifact_id}") => get(Self::admin_read_route),
@@ -455,6 +489,15 @@ where
             }
             ("POST", "/v2/admin/fixes") => post(Self::fix_route),
             ("GET", "/v2/admin/fixes") => get(Self::admin_fixes_route),
+            ("GET", "/v2/admin/acts") => get(Self::admin_acts_route),
+            ("POST", "/v2/admin/acts/{act}/confirm") => post(Self::admin_act_confirm_route),
+            ("POST", "/v2/admin/acts/{act}/decline") => post(Self::admin_act_decline_route),
+            ("POST", "/v2/admin/acts/{act}/contest") => post(Self::admin_act_contest_route),
+            ("POST", "/v2/admin/acts/{act}/settle") => post(Self::admin_act_settle_route),
+            ("POST", "/v2/operator/tenants/{tenant}/acts/{act}/settle") => {
+                post(Self::operator_settle_route)
+            }
+            ("POST", "/v2/operator/tenants/{tenant}/recover") => post(Self::operator_recover_route),
             ("GET", "/v2/review/fixes") => get(Self::review_fixes_route),
             ("POST", "/v2/review/fixes/{fix_id}/confirm") => post(Self::fix_confirm_route),
             ("POST", "/v2/review/fixes/{fix_id}/revert") => post(Self::fix_revert_route),
@@ -526,6 +569,9 @@ where
             traffic: traffic::Traffic::default(),
             web: None,
             web_client: session::WebClient::default(),
+            operator: Arc::default(),
+            mailer: None,
+            mail_health: Arc::default(),
         }
     }
 
@@ -562,6 +608,21 @@ where
     #[must_use]
     pub fn with_web_client(mut self, web_client: session::WebClient) -> Self {
         self.web_client = web_client;
+        self
+    }
+
+    /// The operator tokens the start wrote (ADR-0097 d19; answer 13).
+    #[must_use]
+    pub fn with_operator_tokens(mut self, tokens: operator::OperatorTokens) -> Self {
+        self.operator = Arc::new(tokens);
+        self
+    }
+
+    /// The mail relay the recovery and settlement emails go to (ADR-0097
+    /// d20; answer 14).
+    #[must_use]
+    pub fn with_mailer(mut self, mailer: Arc<dyn oml_app::ports::Mailer>) -> Self {
+        self.mailer = Some(mailer);
         self
     }
 
@@ -635,6 +696,10 @@ where
             // credential, `none` where neither is set: doctor warns then,
             // and every capacity credential is refused (ADR-0070 d2).
             "web_client": st.web_client.identity(),
+            // Whether this start wrote its operator tokens: doctor's
+            // operator.token_unwritten reads it (ADR-0097 d19; answer 13).
+            // No count: the probe answers anyone.
+            "operator_tokens": st.operator.state(),
             // The claim formats this build serves and the adapters that
             // derive their search text: doctor's formats line reads them
             // (ADR-0056 d14).
@@ -2085,7 +2150,11 @@ where
         let name = required_creation_name("/name", req.name.as_deref())?;
         // A session key issues only as the person's own issuance, bounded
         // to their root (ADR-0070 d2, d5; ADR-0045 d9, d16).
-        if let Some(caller) = session::session_caller() {
+        // `<user>-admin` issues as an admin key does, through the admin
+        // builder (ADR-0097 d29).
+        if let Some(caller) = session::session_caller()
+            && !console::is_admin_session(&caller)
+        {
             return Self::issue_key_as_session(st, caller, &req, &name, &idem, body).await;
         }
         // The key's expiry, an RFC 3339 instant, and its own rate; the use
@@ -2140,6 +2209,13 @@ where
             profile: parse_profile(req.profile.as_deref())?,
             expiry,
             requests_per_minute: req.requests_per_minute,
+            // The person an admin key belongs to (ADR-0097 d21).
+            person: req
+                .person
+                .as_deref()
+                .map(|p| creation_name("/person", p))
+                .transpose()?,
+            create_workspaces: new_workspaces(&req.create_workspaces)?,
         };
         // A resubmission under the same key and body replays the answer
         // without the value or the connect code, which are shown once, and
@@ -2156,14 +2232,24 @@ where
             console::Claimed::Act(claim) => claim,
         };
         let label = req.label.clone();
+        let reason = req.reason.clone();
+        let timebox = req.timebox;
         let st = st.clone();
         claim
             .run(async move {
-                let issued = retry_chain(|| st.app.issue_key(acting.bearer(), &issue))
-                    .await
-                    .map_err(|e| {
-                        console::ActFailure::first(map_app_error(e, ErrorContext::Write))
-                    })?;
+                let issued = retry_chain(|| async {
+                    if timebox {
+                        st.app
+                            .issue_timeboxed_key(acting.bearer(), &issue, reason.as_deref())
+                            .await
+                    } else {
+                        st.app
+                            .issue_key_with_reason(acting.bearer(), &issue, reason.as_deref())
+                            .await
+                    }
+                })
+                .await
+                .map_err(|e| console::ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
                 let answer = key_issued_json(&issued, label.as_deref());
                 let kept = console::without_secrets(&answer);
                 Ok(console::Acted {
@@ -2322,13 +2408,17 @@ where
                 .transpose()?,
             requests_per_minute: req.requests_per_minute,
         };
-        let limits_json = |st: &Self, set: &KeyRecord| {
+        let reason = req.reason.clone();
+        // A raise that waits on a second admin person answers the key as it
+        // stands and the act (ADR-0097 d15).
+        let limits_json = |st: &Self, (set, act): &(KeyRecord, oml_app::types::AdminActRecord)| {
             json!({
                 "key_id": set.key_id,
                 "name": set.name.as_ref().map(Name::as_str),
                 "expiry": set.expiry.as_ref().map(|at| at.as_str()),
                 "expired": st.app.key_expired(set),
                 "requests_per_minute": set.requests_per_minute,
+                "admin_act": { "act_id": act.act_id, "state": act.state.as_str() },
             })
         };
         // A person's `<user>-admin` session claims the `Idempotency-Key`
@@ -2346,8 +2436,12 @@ where
             return claim
                 .run(async move {
                     let set = retry_chain(|| {
-                        st.app
-                            .set_key_limits(Bearer::Session(&caller), key.clone(), change.clone())
+                        st.app.set_key_limits_with_reason(
+                            Bearer::Session(&caller),
+                            key.clone(),
+                            change.clone(),
+                            reason.as_deref(),
+                        )
                     })
                     .await
                     .map_err(|e| {
@@ -2358,8 +2452,12 @@ where
                 .await;
         }
         let set = retry_chain(|| {
-            st.app
-                .set_key_limits(acting.bearer(), key.clone(), change.clone())
+            st.app.set_key_limits_with_reason(
+                acting.bearer(),
+                key.clone(),
+                change.clone(),
+                reason.as_deref(),
+            )
         })
         .await
         .map_err(|e| map_app_error(e, ErrorContext::Write))?;
@@ -2379,10 +2477,12 @@ where
         )
     }
 
-    /// `POST /v2/keys/{key}/link {user}`: an admin key links a live tenant
-    /// key a person holds to that person, journalled as `key.linked_person`
-    /// and pending until the person accepts it (ADR-0085 d16, amended
-    /// 2026-11-17 and by the operator's decision of 2026-11-19).
+    /// `POST /v2/keys/{key}/link {user, reason}`: an admin key links a live
+    /// tenant key a person holds to that person, journalled as the
+    /// `link_key` consent act and `key.linked_person`, pending until the
+    /// person accepts it (ADR-0085 d16, amended 2026-11-17 and by the
+    /// operator's decision of 2026-11-19; ADR-0097 d7, answer 15 of
+    /// 2026-11-27).
     async fn link_key_inner(
         st: &Self,
         key_id: &str,
@@ -2393,6 +2493,9 @@ where
         #[serde(deny_unknown_fields)]
         struct LinkBody {
             user: String,
+            // Required: a link is a consent admin act (ADR-0097 d7, d26;
+            // amendment of 2026-11-27, answer 15).
+            reason: Option<String>,
         }
         st.require_writes_open()?;
         let acting = acting(headers, None)?;
@@ -2404,7 +2507,7 @@ where
         })?;
         let linked = retry_chain(|| {
             st.app
-                .link_key_to_person(acting.bearer(), key.clone(), &user)
+                .link_key_to_person(acting.bearer(), key.clone(), &user, req.reason.as_deref())
         })
         .await
         .map_err(|e| map_app_error(e, ErrorContext::Write))?;
@@ -2555,8 +2658,12 @@ where
                 // The path derived from the parent names and the crew record
                 // as stored, as the workspace read serves them (ADR-0025 d14;
                 // ADR-0026 d8).
-                let mut response =
-                    workspace_json(&created.workspace, &created.path, created.crew.as_ref());
+                let mut response = workspace_json(
+                    &created.workspace,
+                    &created.path,
+                    created.crew.as_ref(),
+                    &oml_app::types::PublicFlag::default(),
+                );
                 if let Some(obj) = response.as_object_mut() {
                     obj.insert("created_at".to_owned(), json!(system_event_time().as_str()));
                 }
@@ -3081,7 +3188,7 @@ where
         let items: Vec<Value> = page
             .items
             .iter()
-            .map(|n| workspace_json(&n.workspace, &n.path, n.crew.as_ref()))
+            .map(|n| workspace_json(&n.workspace, &n.path, n.crew.as_ref(), &n.public))
             .collect();
         Ok(json_response(
             StatusCode::OK,
@@ -3145,6 +3252,8 @@ where
                     "status": w.status.as_str(),
                     "user_root": w.user_root,
                     "mode": if w.in_progress { "in_progress" } else { "standard" },
+                    // The picker labels a public node (ADR-0098 d9).
+                    "public": w.public,
                     "counts": {
                         "promoted": r.approved,
                         "held": r.held,
@@ -3265,8 +3374,15 @@ where
             // ceremony records the email as accepted, the one way a person
             // the claim names gets a first sign-in (ADR-0045 d2's note, the
             // operator's decision of 2026-11-20).
+            // Every admin key belongs to a person, the first one included:
+            // a claim names both (ADR-0097 d21).
             let person = match (req.person.as_deref(), req.email.as_deref()) {
-                (None, None) => None,
+                (None, None) => {
+                    return Err(ApiError::validation(
+                        "/person is required: the person the tenant's first admin key belongs to",
+                    )
+                    .with_details(json!({ "field": "/person" })));
+                }
                 (Some(p), Some(e)) => Some(BootstrapPerson {
                     user: creation_name("/person", p)?,
                     email: oml_app::domain::web::Email::parse(e).map_err(|err| {
@@ -3439,14 +3555,16 @@ where
             console::Claimed::Act(claim) => claim,
         };
         let ttl_seconds = req.ttl_seconds;
+        let reason = req.reason.clone();
         let st = st.clone();
         claim
             .run(async move {
                 let code = retry_chain(|| {
-                    st.app.mint_connect_code_with_ttl(
+                    st.app.mint_connect_code_with_reason(
                         Bearer::Session(&caller),
                         key.clone(),
                         ttl_seconds,
+                        reason.as_deref(),
                     )
                 })
                 .await
@@ -3805,7 +3923,12 @@ where
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(
             StatusCode::OK,
-            &workspace_json(&info.workspace, &info.path, info.crew.as_ref()),
+            &workspace_json(
+                &info.workspace,
+                &info.path,
+                info.crew.as_ref(),
+                &info.public,
+            ),
         ))
     }
 }
@@ -4306,6 +4429,19 @@ struct GrantBody {
     /// `subtree`, the default, or `node` (ADR-0044 d4).
     #[serde(default)]
     covers: Option<String>,
+    /// The grant lets its key create child workspaces where it reaches;
+    /// granting it is widening (ADR-0097 d31).
+    #[serde(default)]
+    create: bool,
+}
+
+/// One workspace an issuance creates in its own act: `name` under
+/// `parent`, each by id or name (ADR-0097 d30).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NewWorkspaceBody {
+    parent: String,
+    name: String,
 }
 
 #[derive(Deserialize)]
@@ -4334,6 +4470,15 @@ struct KeyIssueBody {
     /// naming a user creates its root (ADR-0044 d2).
     #[serde(default)]
     user: Option<String>,
+    /// The person an admin key belongs to, by the user's name; required on
+    /// an admin key, with `used_by: person`, and refused on every other role
+    /// (ADR-0097 d21).
+    #[serde(default)]
+    person: Option<String>,
+    /// A time box: issued at once for at most a day, settled afterwards
+    /// by a second admin person (ADR-0097 d13).
+    #[serde(default)]
+    timebox: bool,
     /// Parsed only to be refused while the first-admin-key path is unbuilt
     /// (ADR-0039 d9).
     tenant: Option<String>,
@@ -4348,6 +4493,45 @@ struct KeyIssueBody {
     /// `curator`, or omitted for a key with no profile (ADR-0030 d8).
     #[serde(default)]
     profile: Option<String>,
+    /// The admin's reason, scanned and journalled in the issuance's
+    /// `admin.act`; required when the issuance waits on a second admin
+    /// person (ADR-0097 d26).
+    #[serde(default)]
+    reason: Option<String>,
+    /// The workspaces the issuance creates in the same act, the key's role's
+    /// default grants on each (ADR-0097 d30).
+    #[serde(default)]
+    create_workspaces: Vec<NewWorkspaceBody>,
+}
+
+/// The most workspaces one issuance creates (ADR-0097 d30): the session
+/// issuance's grant bound, chosen, not measured.
+pub(crate) const NEW_WORKSPACES_MAX: usize = 16;
+
+/// `create_workspaces[]` as the issuance takes it, each refusal naming its
+/// JSON Pointer (ADR-0097 d30).
+pub(crate) fn new_workspaces(sent: &[NewWorkspaceBody]) -> Result<Vec<NewWorkspace>, ApiError> {
+    // One issuance commits its creations in one chain, so it creates a
+    // bounded number (ADR-0097 d30; docs/reference/limits.md).
+    if sent.len() > NEW_WORKSPACES_MAX {
+        return Err(ApiError::validation(format!(
+            "an issuance creates at most {NEW_WORKSPACES_MAX} workspaces"
+        ))
+        .with_details(json!({ "field": "/create_workspaces", "reason": "too_many" })));
+    }
+    sent.iter()
+        .enumerate()
+        .map(|(i, w)| {
+            Ok(NewWorkspace {
+                parent: reference(&format!("/create_workspaces/{i}/parent"), &w.parent)?,
+                name: Name::parse(&w.name).map_err(|refusal| {
+                    let field = format!("/create_workspaces/{i}/name");
+                    ApiError::validation(format!("{field} {:?}: {refusal}", w.name))
+                        .with_details(json!({ "field": field }))
+                })?,
+            })
+        })
+        .collect()
 }
 
 /// The body of `POST /v2/keys/{key}/connect-codes`, closed; absent, the code
@@ -4357,6 +4541,10 @@ struct KeyIssueBody {
 struct ConnectCodeBody {
     #[serde(default)]
     ttl_seconds: Option<i64>,
+    /// The admin's reason; a mint that waits on a second admin person
+    /// requires it (ADR-0097 d6, d26).
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 /// The revoke body of `POST /v2/keys/{key}/connections/{connection_id}/revoke`,
@@ -4376,6 +4564,10 @@ struct KeyLimitsBody {
     expiry: Option<Option<String>>,
     #[serde(default, deserialize_with = "sent")]
     requests_per_minute: Option<Option<u32>>,
+    /// The admin's reason; a raise waits on a second admin person and
+    /// requires it (ADR-0097 d15, d26).
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 /// A member sent as `null` is `Some(None)`; one not sent is `None`.
@@ -4862,6 +5054,7 @@ fn grant_requests(grants: &[GrantBody]) -> Result<Vec<GrantRequest>, ApiError> {
                         reference(&format!("/grants/{i}/deny/{j}/workspace"), &d.workspace)
                     })
                     .collect::<Result<_, _>>()?,
+                create: g.create,
             })
         })
         .collect()
@@ -4887,8 +5080,9 @@ fn parse_role(role: &str) -> Result<Role, ApiError> {
         "reviewer" => Ok(Role::Reviewer),
         "admin" => Ok(Role::Admin),
         "operator" => Ok(Role::Operator),
+        "maintenance" => Ok(Role::Maintenance),
         other => Err(ApiError::validation(format!(
-            "role must be one of reader, contributor, submitter, reviewer, admin, operator — not {other:?}"
+            "role must be one of reader, contributor, submitter, reviewer, admin, operator, maintenance — not {other:?}"
         ))),
     }
 }
@@ -4931,6 +5125,15 @@ fn key_issued_json(issued: &IssuedKey, label: Option<&str>) -> Value {
         "denials": [],
         "epoch": issued.access.permission_epoch(),
     });
+    // An admin's issuance is a widening admin act: `pending_confirmation`
+    // until a second admin person confirms it, `effective` where it took
+    // effect at once (ADR-0097 d5, d10, d23).
+    if let Some(act_id) = issued.act_id {
+        body["admin_act"] = json!({
+            "act_id": act_id,
+            "state": if issued.pending_act.is_some() { "pending_confirmation" } else { "effective" },
+        });
+    }
     match &issued.connect_code {
         // A connector key has no value; its code stands in the value's
         // place, shown once (ADR-0031 d7).
@@ -4989,6 +5192,7 @@ fn grant_json(g: &GrantRecord) -> Value {
         "workspace_node_id": g.grant.node,
         "role": g.grant.role.as_str(),
         "covers": g.grant.covers.as_str(),
+        "create": g.grant.create,
         "deny": g
             .grant
             .deny
@@ -5030,6 +5234,9 @@ fn key_json(detail: &KeyDetail, connections: &[ConnectionRecord], expired: bool)
         "revoked_at": key.revoked_at.as_ref().map(|at| at.as_str()),
         "rotated_from": Value::Null,
         "grants": detail.access.grants.iter().map(grant_json).collect::<Vec<_>>(),
+        // The public nodes the key reads through the flag, apart from its
+        // grants (ADR-0098 d9).
+        "public_reach": detail.public_reach,
         "denials": detail
             .access
             .denials
@@ -6338,7 +6545,12 @@ fn linked_key_json(key: &KeyRecord, user: Option<&Name>, pending: bool) -> Value
 /// openapi.yaml `Workspace`: the node, its name, its derived path, its
 /// status and the crew record it names, or null when it names none
 /// (ADR-0025 d14; ADR-0026 d1, d8).
-fn workspace_json(workspace: &WorkspaceRecord, path: &str, crew: Option<&CrewRecord>) -> Value {
+fn workspace_json(
+    workspace: &WorkspaceRecord,
+    path: &str,
+    crew: Option<&CrewRecord>,
+    public: &oml_app::types::PublicFlag,
+) -> Value {
     json!({
         "id": workspace.workspace_id,
         "name": workspace.name.as_str(),
@@ -6349,7 +6561,25 @@ fn workspace_json(workspace: &WorkspaceRecord, path: &str, crew: Option<&CrewRec
         "user_root": workspace.user_root,
         // A person's key puts a workspace in progress (ADR-0030 d1, d13).
         "mode": if workspace.in_progress { "in_progress" } else { "standard" },
+        // Every reading key of the tenant reads a public node (ADR-0098 d9).
+        "public": public_json(public),
     })
+}
+
+/// openapi.yaml `PublicFlag`: the value, since when and by which admin act,
+/// whether it took effect under `sole_admin`, and, to an admin key on the
+/// workspace read, a set that waits on a second admin person (ADR-0098 d9).
+fn public_json(public: &oml_app::types::PublicFlag) -> Value {
+    let mut value = json!({
+        "value": public.value,
+        "since": public.since.as_ref().map(|at| at.as_str()),
+        "act_id": public.act_id,
+        "sole_admin": public.sole_admin,
+    });
+    if let (Some(act_id), Some(obj)) = (public.pending_act_id, value.as_object_mut()) {
+        obj.insert("pending_act_id".to_owned(), json!(act_id));
+    }
+    value
 }
 
 /// openapi.yaml `WorkspaceView`: the `Workspace` fields and the calling key's
@@ -6357,7 +6587,12 @@ fn workspace_json(workspace: &WorkspaceRecord, path: &str, crew: Option<&CrewRec
 /// ADR-0026 d8).
 #[must_use]
 pub fn workspace_view_json(info: &WorkspaceInfo) -> Value {
-    let mut value = workspace_json(&info.workspace, &info.path, info.crew.as_ref());
+    let mut value = workspace_json(
+        &info.workspace,
+        &info.path,
+        info.crew.as_ref(),
+        &info.public,
+    );
     if let Some(obj) = value.as_object_mut() {
         obj.insert(
             "children".to_owned(),
@@ -6520,6 +6755,7 @@ mod tests {
                 role: Role::Submitter,
                 deny: vec![sealed],
                 covers: Covers::Subtree,
+                create: false,
             },
             epoch: 41,
         };

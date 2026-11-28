@@ -11,6 +11,8 @@
 //! (ADR-0054 d2). Nothing is sorted, parsed and re-serialised, or rounded
 //! before the comparison. Each test is named after the sentence it proves.
 
+mod counted;
+
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -87,6 +89,12 @@ impl Lead {
             .env("OML_POSTGRES__OWNER_URL", owner_url(db))
             .env("OML_SERVER__LISTEN", format!("127.0.0.1:{port}"))
             .env("OML_KMS__KEYRING_PATH", keyring)
+            // The operator tokens each start writes stay beside the
+            // scratch keyring, never in the crate (ADR-0097 d19).
+            .env(
+                "OML_OPERATOR__TOKEN_DIR",
+                keyring.with_extension("operator"),
+            )
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -415,7 +423,7 @@ impl World {
             "/v2/bootstrap/claim",
             None,
             json!({
-                "enrollment_token": first.enrollment_token().await,
+                "enrollment_token": first.enrollment_token().await, "person": "founder", "email": "founder@example.com",
                 "name": "root-admin",
                 "tenant_name": "repeat",
                 "admin_principal": "platform/admin",
@@ -469,6 +477,21 @@ impl World {
             &["reader"],
         )
         .await;
+        // The reviewer counts as a person, as a steering verdict needs
+        // (ADR-0097 d12): linked by an application over the lead's database
+        // and keyring, and accepted.
+        {
+            use oml_app::ports::KeyringStore as _;
+            let store = oml_pg::PgStore::connect(&serving_url(&db))
+                .await
+                .expect("the serving store");
+            let signing = oml_server_lead::FileKeyring::new(scratch.join("keyring"))
+                .load_or_create()
+                .await
+                .expect("the lead's keyring");
+            let app = oml_server_lead::lead_app(&store, signing);
+            counted::link_by_founder(&app, &store, &reviewer, "team-reviewer").await;
+        }
         let world = Self {
             db,
             scratch,

@@ -307,12 +307,12 @@ jobs:
           # Timed: the Docker tab of docs/start/quickstart.md, start (this step's
           # first command), first held write, first recall (next step).
           date +%s.%N > "$RUNNER_TEMP/qs_t0"
-          ./target/release/oml quickstart --dir "$RUNNER_TEMP/oml"
+          ./target/release/oml quickstart --dir "$RUNNER_TEMP/oml" --person founder --email founder@example.com
           date +%s.%N > "$RUNNER_TEMP/qs_t1"
           for f in .env keys keys/agent keys/reviewer credentials; do
             stat -c '%a %n' "$RUNNER_TEMP/oml/$f"
           done
-          if ./target/release/oml quickstart --dir "$RUNNER_TEMP/oml" 2>"$RUNNER_TEMP/again"; then
+          if ./target/release/oml quickstart --dir "$RUNNER_TEMP/oml" --person founder --email founder@example.com 2>"$RUNNER_TEMP/again"; then
             echo "a second quickstart was not refused" >&2; exit 1
           fi
           grep -q quickstart.exists "$RUNNER_TEMP/again"

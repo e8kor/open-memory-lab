@@ -119,9 +119,27 @@ where
                 return Err(AppError::KeyRotation(refusal));
             }
         }
+        // An admin's rotation is a neutral admin act, its envelope first in
+        // the rotation's chain (ADR-0097 d9, d14's note).
+        let prev = self.head_event(tenant_id).await?;
+        let act = self
+            .admin_act_of(
+                &caller,
+                oml_domain::admin_act::AdminActKind::RotateKey,
+                json!({
+                    "key_id": key_id.to_string(),
+                    "name": target.name.as_ref().map(|n| n.as_str()),
+                    "role": target.role.as_str(),
+                }),
+                None,
+                prev.as_ref(),
+            )
+            .await?;
         // One instant, read once: the envelope's `at` and the grace's end
-        // derive from it alike.
-        let now = self.clock.now();
+        // derive from it alike, the act's own where there is one.
+        let now = act
+            .as_ref()
+            .map_or_else(|| self.clock.now(), |a| a.record.at.clone());
         let secret = self.ids.new_secret();
         let value = format!("oml_{}", base62_43(&secret));
         let hash = sha256_digest_string(value.as_bytes());
@@ -135,26 +153,30 @@ where
             _ => None,
         };
         let previous_valid_until = previous.as_ref().map(|(_, until)| until.clone());
-        let prev = self.head_event(tenant_id).await?;
         let event = self.seal_at(
-            prev.as_ref(),
+            act.as_ref().map(|a| &a.event).or(prev.as_ref()),
             tenant_id,
             event_types::KEY_ROTATED,
             &caller.principal,
             Some(caller.key_id),
-            rotated_payload(key_id, caller.key_id, previous_valid_until.as_ref()),
+            super::admin_acts::named(
+                rotated_payload(key_id, caller.key_id, previous_valid_until.as_ref()),
+                act.as_ref(),
+            ),
             now,
         )?;
         let rotated_at = event.envelope.at.clone();
         let receipt = self
-            .commit(
-                event,
-                MetadataFold::KeyRotated {
-                    key_id,
-                    key_hash: hash.clone(),
-                    previous,
-                },
-                None,
+            .commit_with_act(
+                act,
+                vec![(
+                    event,
+                    MetadataFold::KeyRotated {
+                        key_id,
+                        key_hash: hash.clone(),
+                        previous,
+                    },
+                )],
             )
             .await?;
         let mut key = target;
@@ -185,23 +207,28 @@ where
         }
         // A key cut off, by a denial on `universe`, stays cut off: a new
         // value would only hand it out again.
+        if self.cut_off(target).await? {
+            return refuse(KeyRotationRefusal::CutOff);
+        }
+        Ok(())
+    }
+
+    /// Whether `key` is cut off: denied on `universe`, so it reads and
+    /// writes nothing (ADR-0096 d4).
+    pub(crate) async fn cut_off(&self, key: &KeyRecord) -> Result<bool, AppError> {
         let universe = self
             .journal
             .resolve_name(
-                target.tenant_id,
+                key.tenant_id,
                 NamedKind::Workspace,
                 &Name::parse("universe").expect("universe is a name"),
             )
             .await?;
-        let cut_off = self
+        Ok(self
             .journal
-            .key_access(target.tenant_id, target.key_id)
+            .key_access(key.tenant_id, key.key_id)
             .await?
-            .is_some_and(|a| a.denials.iter().any(|d| Some(d.denial.node) == universe));
-        if cut_off {
-            return refuse(KeyRotationRefusal::CutOff);
-        }
-        Ok(())
+            .is_some_and(|a| a.denials.iter().any(|d| Some(d.denial.node) == universe)))
     }
 
     /// The instant until which `key`'s previous value still authenticates,

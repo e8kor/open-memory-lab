@@ -108,11 +108,18 @@ fn state_of(location: &str) -> String {
 
 async fn tenant(store: &PgStore, key: &SigningKey, name: &str) -> BootstrapResult {
     lead_app(store, key.clone())
-        .bootstrap_tenant(&BootstrapRequest {
-            tenant_name: Name::parse(name).expect("a name"),
-            admin_key_name: Name::parse("root-admin").expect("a name"),
-            admin_principal: format!("{name}-admin"),
-        })
+        .bootstrap_tenant_for(
+            &BootstrapRequest {
+                tenant_name: Name::parse(name).expect("a name"),
+                admin_key_name: Name::parse("root-admin").expect("a name"),
+                admin_principal: format!("{name}-admin"),
+            },
+            Some(&oml_app::types::BootstrapPerson {
+                user: Name::parse("founder").expect("a name"),
+                email: oml_app::domain::web::Email::parse(&format!("founder@{name}.example"))
+                    .expect("an email"),
+            }),
+        )
         .await
         .expect("bootstrap")
 }
@@ -123,7 +130,7 @@ fn policy(tenant_id: uuid::Uuid) -> SignupPolicy {
     SignupPolicy {
         mode: SignupMode::Open,
         tenant_id,
-        issuer: Name::parse("root-admin").expect("a name"),
+        issuer: Some(Name::parse("root-admin").expect("a name")),
         terms_version: TERMS.to_owned(),
         terms_url: "https://example.com/terms".to_owned(),
         privacy_url: "https://example.com/privacy".to_owned(),

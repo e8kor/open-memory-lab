@@ -9,6 +9,8 @@
 //! rows never reach it, and its submission never reaches the first agent's
 //! events tail, read over `GET /v2/events` since the tail left MCP.
 
+mod counted;
+
 use std::collections::{BTreeSet, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -60,6 +62,32 @@ async fn serving_store(db: &str) -> PgStore {
 
 /// The lead's router over the serving login of a fresh database and its
 /// name, or `None` when this run cannot mint the role pair (ADR-0034 d8).
+/// [`fresh_router`] with an application over the same store and signing
+/// key, for fixtures the router does not reach.
+async fn fresh_router_with_app() -> Option<(Router, String, oml_server_lead::LeadApp, PgStore)> {
+    let db_name = format!(
+        "oml_test_aom_{}_{}_{}",
+        std::process::id(),
+        DB_N.fetch_add(1, Ordering::SeqCst),
+        run_tag()
+    );
+    if !mint_database(&db_name).await {
+        return None;
+    }
+    let store = serving_store(&db_name).await;
+    let signing = SigningKey::from_bytes(&OsIds.new_secret());
+    let router = lead_state(
+        &store,
+        signing.clone(),
+        pg_ping(store.pool().clone()),
+        true,
+        Some(ENROLLMENT.to_owned()),
+    )
+    .into_router();
+    let app = oml_server_lead::lead_app(&store, signing);
+    Some((router, db_name, app, store))
+}
+
 async fn fresh_router() -> Option<(Router, String)> {
     let db_name = format!(
         "oml_test_aom_{}_{}_{}",
@@ -216,7 +244,7 @@ async fn crew(router: &Router) -> Crew {
         "/v2/bootstrap/claim",
         None,
         None,
-        Some(&json!({"enrollment_token": ENROLLMENT, "name": "root-admin", "tenant_name": "aom-tenant"})),
+        Some(&json!({"enrollment_token": ENROLLMENT, "person": "founder", "email": "founder@example.com", "name": "root-admin", "tenant_name": "aom-tenant"})),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{boot}");
@@ -379,10 +407,13 @@ fn set<I: IntoIterator<Item = S>, S: Into<String>>(ids: I) -> BTreeSet<String> {
 #[tokio::test]
 async fn an_agent_holding_one_key_reads_back_searches_under_a_budget_updates_and_proposes_retiring_its_memory()
  {
-    let Some((router, db)) = fresh_router().await else {
+    let Some((router, db, app, store)) = fresh_router_with_app().await else {
         return;
     };
     let crew = crew(&router).await;
+    // The reviewer counts as a person, as an instruction verdict needs
+    // (ADR-0097 d12).
+    counted::link_by_founder(&app, &store, &crew.reviewer, "crew-reviewer").await;
     let (agent, other, wa) = (&crew.agent, &crew.other, crew.workspace.as_str());
     let mut texts: HashMap<String, &str> = HashMap::new();
 

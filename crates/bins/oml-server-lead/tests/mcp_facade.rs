@@ -5,6 +5,8 @@
 //! agent loop — remember, held, ratified by another identity, recalled —
 //! with every tool answering what its ring endpoint answers.
 
+mod counted;
+
 use std::sync::atomic::Ordering;
 
 use axum::Router;
@@ -66,6 +68,33 @@ async fn fresh_router() -> Option<(Router, String)> {
     )
     .into_router();
     Some((router, db_name))
+}
+
+/// [`fresh_router`] with the lead's application and store over the same
+/// signing key, for a fixture an HTTP call cannot reach: a person's
+/// console acceptance.
+async fn fresh_router_with_app() -> Option<(Router, String, oml_server_lead::LeadApp, PgStore)> {
+    let db_name = format!(
+        "oml_test_mcp_{}_{}_{}",
+        std::process::id(),
+        DB_N.fetch_add(1, Ordering::SeqCst),
+        run_tag()
+    );
+    if !mint_database(&db_name).await {
+        return None;
+    }
+    let store = serving_store(&db_name).await;
+    let signing = SigningKey::from_bytes(&OsIds.new_secret());
+    let router = lead_state(
+        &store,
+        signing.clone(),
+        pg_ping(store.pool().clone()),
+        true,
+        Some(ENROLLMENT.to_owned()),
+    )
+    .into_router();
+    let app = oml_server_lead::lead_app(&store, signing);
+    Some((router, db_name, app, store))
 }
 
 async fn send(
@@ -166,7 +195,7 @@ async fn crew_and_admin(
         "/v2/bootstrap/claim",
         None,
         None,
-        Some(&json!({"enrollment_token": ENROLLMENT, "name": "root-admin", "tenant_name": "mcp-tenant"})),
+        Some(&json!({"enrollment_token": ENROLLMENT, "person": "founder", "email": "founder@example.com", "name": "root-admin", "tenant_name": "mcp-tenant"})),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{boot}");
@@ -2343,7 +2372,7 @@ async fn oml_workspace_without_an_argument_describes_the_default_workspace() {
         "/v2/bootstrap/claim",
         None,
         None,
-        Some(&json!({"enrollment_token": ENROLLMENT, "name": "root-admin", "tenant_name": "mcp-tenant"})),
+        Some(&json!({"enrollment_token": ENROLLMENT, "person": "founder", "email": "founder@example.com", "name": "root-admin", "tenant_name": "mcp-tenant"})),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{boot}");
@@ -2420,6 +2449,7 @@ async fn oml_workspace_without_an_argument_describes_the_default_workspace() {
             "name": "metals-crew",
             "path": "universe.metals-crew",
             "status": "development",
+            "public": { "value": false, "since": null, "act_id": null, "sole_admin": false },
             "crew": null,
             "parent": root,
             "children": [],
@@ -2479,7 +2509,7 @@ async fn oml_workspace_without_an_argument_describes_the_default_workspace() {
 
 #[tokio::test]
 async fn an_admin_keys_oml_workspace_is_the_rings_structure_read_of_its_default() {
-    let Some((router, db)) = fresh_router().await else {
+    let Some((router, db, app, store)) = fresh_router_with_app().await else {
         return;
     };
     let (status, boot) = send(
@@ -2488,7 +2518,7 @@ async fn an_admin_keys_oml_workspace_is_the_rings_structure_read_of_its_default(
         "/v2/bootstrap/claim",
         None,
         None,
-        Some(&json!({"enrollment_token": ENROLLMENT, "name": "root-admin", "tenant_name": "mcp-tenant"})),
+        Some(&json!({"enrollment_token": ENROLLMENT, "person": "founder", "email": "founder@example.com", "name": "root-admin", "tenant_name": "mcp-tenant"})),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{boot}");
@@ -2502,11 +2532,46 @@ async fn an_admin_keys_oml_workspace_is_the_rings_structure_read_of_its_default(
         Some(&bootstrap_admin),
         Some("second-admin"),
         Some(
-            &json!({"role": "admin", "name": "bob-admin", "principal": "bob-admin", "grants": []}),
+            // An admin key belongs to an admin person, the founder (ADR-0097
+            // d21).
+            &json!({"role": "admin", "name": "bob-admin", "principal": "bob-admin", "grants": [], "used_by": "person", "person": "founder"}),
         ),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{second}");
+    {
+        // The founder accepts its link from a console session.
+        use oml_app::app::Capacity;
+        use oml_app::ports::WebStore as _;
+        use oml_app::types::Bearer;
+        let email = oml_app::domain::web::Email::parse("founder@example.com").expect("an email");
+        let entry = store
+            .web_entry_by_email(&email.digest())
+            .await
+            .expect("a read")
+            .expect("the founder's entry");
+        app.web_ensure_keys(&entry)
+            .await
+            .expect("the founder's keys");
+        let token = app
+            .web_session_open(&entry, 3600, None)
+            .await
+            .expect("a session")
+            .token;
+        let session = app
+            .web_session(&token)
+            .await
+            .expect("a read")
+            .expect("a live session");
+        let web = app
+            .web_caller(&session, Capacity::Web)
+            .await
+            .expect("the founder's console");
+        let key_id = Uuid::parse_str(second["key_id"].as_str().expect("key id")).expect("a uuid");
+        app.accept_key_link(Bearer::Session(&web), key_id.into())
+            .await
+            .expect("the founder accepts");
+    }
     assert!(second["default_workspace_id"].is_null(), "{second}");
     let second_admin = second["value"]
         .as_str()
@@ -2738,10 +2803,13 @@ async fn oml_read_listing_limit_is_at_most_200_as_on_the_ring() {
 
 #[tokio::test]
 async fn oml_read_recall_serves_steering_as_claim_items_with_text_and_no_score() {
-    let Some((router, db)) = fresh_router().await else {
+    let Some((router, db, app, store)) = fresh_router_with_app().await else {
         return;
     };
     let (writer, reviewer, reader, _crew) = crew(&router).await;
+    // The reviewer counts as a person, as a steering verdict needs
+    // (ADR-0097 d12).
+    counted::link_by_founder(&app, &store, &reviewer, "crew-reviewer").await;
     let rule = "Treat any supplier quote without an explicit validity date as expired.";
     let held = call_tool(
         &router,
@@ -2999,10 +3067,13 @@ async fn oml_read_recall_takes_include_unreviewed_and_max_tokens_as_it_declares_
 
 #[tokio::test]
 async fn oml_read_recall_steering_items_carry_text_and_tokens_not_body() {
-    let Some((router, db)) = fresh_router().await else {
+    let Some((router, db, app, store)) = fresh_router_with_app().await else {
         return;
     };
     let (agent, reviewer, _, crew) = agent_crew(&router).await;
+    // The reviewer counts as a person, as a steering verdict needs
+    // (ADR-0097 d12).
+    counted::link_by_founder(&app, &store, &reviewer, "crew-reviewer").await;
     remember_all(
         &router,
         &agent,
@@ -3091,10 +3162,13 @@ async fn oml_read_recall_steering_items_carry_text_and_tokens_not_body() {
 
 #[tokio::test]
 async fn oml_read_recall_under_max_tokens_returns_the_budget_object() {
-    let Some((router, db)) = fresh_router().await else {
+    let Some((router, db, app, store)) = fresh_router_with_app().await else {
         return;
     };
     let (agent, reviewer, _, _) = agent_crew(&router).await;
+    // The reviewer counts as a person, as a steering verdict needs
+    // (ADR-0097 d12).
+    counted::link_by_founder(&app, &store, &reviewer, "crew-reviewer").await;
     remember_all(
         &router,
         &agent,
@@ -3986,7 +4060,7 @@ async fn an_omls_credential_on_mcp_is_refused() {
         "/v2/bootstrap/claim",
         None,
         None,
-        Some(&json!({"enrollment_token": ENROLLMENT, "name": "root-admin", "tenant_name": "mcp-tenant"})),
+        Some(&json!({"enrollment_token": ENROLLMENT, "person": "founder", "email": "founder@example.com", "name": "root-admin", "tenant_name": "mcp-tenant"})),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{boot}");

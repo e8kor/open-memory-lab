@@ -21,7 +21,7 @@ the Memories list at `GET /web/memories` and `GET /web/admin/memories`; the Cata
 `GET /web/catalog`; the Atlas at
 `GET /web/atlas` and `GET /web/admin/atlas`, with the list's JSON at `GET /web/data/memories` and
 `GET /web/admin/data/memories`; the To do page at `/web/todo` and `/web/admin/todo`, with the Judge
-page at `/web/todo/judge`; and the
+page at `/web/todo/judge`; the admin acts at `/web/admin/acts`, whose `?act=<id>` is one act's confirm screen, confirming or declining it with a reason (ADR-0097 d2, d23); and the
 Keys view at `/web/keys` and `/web/admin/keys`. Every act on them runs through the API as the
 person's session keys, and a form sent twice runs once. Making a workspace's drafts visible to everyone working here or to
 the writing key only, proposing or ratifying a status change, and a bulk verdict are confirmed first. Every page of
@@ -39,7 +39,7 @@ old Review paths answer `308` for this release: `/web/review` to `/web/todo` and
 author, and a verdict the API refuses is shown with its code. On the Keys view a key's value or a
 connect code is shown once, on the page the act lands on: it travels there sealed in a cookie that
 page clears, never in an address or a log line, and `oml-web` keeps no copy. Since v0.8.5 a new key is built at `/web/keys/new`: a starting shape, a form with grant rows inside the person's root, and a review that restates the access before **Issue key** posts once ([ADR-0096](../adr/ADR-0096-a-person-builds-a-key-in-the-console-with-grants-inside-the-own-root-and-a-rate-and-the-admin-reads-one-key-and-sets-its-limits.md) d1). The admin's Keys view
-lists one person's keys, named by `user`, with a cut-off beside each; `?key=<key>` opens one key's full record, with **Set limits** and **Deny on a workspace**, and the admin console still issues no key (d4). The admin workspace page's **Fix** tab, `?view=fix`, posts to `/web/admin/fixes` (d5). The import hand-off, the person's imports and one import are at `/web/workspaces/import` (d6). Route `/web/keys/new`, `/web/admin/fixes` and `/web/workspaces/import` to `oml-web` with the rest. A signed-in `GET /web` goes
+lists one person's keys, named by `user`, with a cut-off beside each; `?key=<key>` opens one key's full record, with **Set limits** and **Deny on a workspace** (d4). Since v0.8.6 the admin console issues keys at `/web/admin/keys/new`, the personal builder's steps over the tenant's tree with the admin's fields and a required reason, each key waiting on a second admin person outside `sole_admin`, and the admin Workspaces page creates a workspace anywhere in the tenant; both builders take a "new workspace" row and a per-grant `create` box ([ADR-0097](../adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) d29 to d31). Route `/web/admin/keys/new` to `oml-web` with the rest. The admin workspace page's **Fix** tab, `?view=fix`, posts to `/web/admin/fixes` (d5). The import hand-off, the person's imports and one import are at `/web/workspaces/import` (d6). Route `/web/keys/new`, `/web/admin/fixes` and `/web/workspaces/import` to `oml-web` with the rest. A signed-in `GET /web` goes
 on to the Keys view. One memory opened by its id is at
 `/web/memory?id=<id>`, and on the admin page, with its attribution and the form that proposes its
 next version, at `/web/admin/memory?id=<id>`; the admin page's Curate view is at
@@ -185,7 +185,7 @@ included. For Caddy (`deploy/caddy/Caddyfile` is the full route table):
 
 ```caddyfile
 memory.example.com {
-	@oml_web path /web/guardrails /web/workspace /web/workspace/new /web/workspace/edit /web/workspace/retire /web/admin/workspace /web/workspaces /web/admin/workspaces /web/memories /web/catalog /web/atlas /web/admin/memories /web/admin/atlas /web/data/memories /web/admin/data/memories /web/review /web/admin/review /web/todo /web/todo/judge /web/admin/todo /web/keys /web/admin/keys
+	@oml_web path /web/guardrails /web/workspace /web/workspace/new /web/workspace/edit /web/workspace/retire /web/admin/workspace /web/workspaces /web/admin/workspaces /web/memories /web/catalog /web/atlas /web/admin/memories /web/admin/atlas /web/data/memories /web/admin/data/memories /web/review /web/admin/review /web/todo /web/todo/judge /web/admin/todo /web/admin/acts /web/keys /web/admin/keys
 	reverse_proxy @oml_web 127.0.0.1:8091
 	reverse_proxy 127.0.0.1:8090
 }

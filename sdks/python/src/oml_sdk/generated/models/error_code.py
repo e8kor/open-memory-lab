@@ -16,6 +16,7 @@ class ErrorCode(StrEnum):
     ADMIN_FIX_SUPERSEDED = "admin.fix_superseded"
     ADMIN_FIX_TARGET_NOT_PROMOTED = "admin.fix_target_not_promoted"
     ADMIN_INVESTIGATION_REQUIRED = "admin.investigation_required"
+    ADMIN_READ_REQUIRES_PERSON = "admin.read_requires_person"
     AUTH_INVALID = "auth.invalid"
     AUTH_MISSING = "auth.missing"
     BUNDLE_DECRYPT_FAILED = "bundle.decrypt_failed"
@@ -62,6 +63,7 @@ class ErrorCode(StrEnum):
     OAUTH_REDIRECT_REFUSED = "oauth.redirect_refused"
     OAUTH_REFRESH_INVALID = "oauth.refresh_invalid"
     OAUTH_RESOURCE_MISMATCH = "oauth.resource_mismatch"
+    OPERATOR_RECOVER_REFUSED = "operator.recover_refused"
     PROPOSAL_PENDING = "proposal.pending"
     REQUEST_IDEMPOTENCY_KEY_REQUIRED = "request.idempotency_key_required"
     REQUEST_PAYLOAD_TOO_LARGE = "request.payload_too_large"
@@ -109,6 +111,7 @@ class ErrorCode(StrEnum):
     WORKSPACE_FROZEN = "workspace.frozen"
     WORKSPACE_HELD_REMAINING = "workspace.held_remaining"
     WORKSPACE_IN_PROGRESS_REFUSED = "workspace.in_progress_refused"
+    WORKSPACE_PUBLIC_REFUSED = "workspace.public_refused"
     WORKSPACE_TRANSITION_REFUSED = "workspace.transition_refused"
 
     def __str__(self) -> str:

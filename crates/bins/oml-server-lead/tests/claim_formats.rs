@@ -137,7 +137,7 @@ async fn bootstrap(router: &Router) -> (String, Uuid) {
         None,
         None,
         Some(json!({
-            "enrollment_token": ENROLLMENT,
+            "enrollment_token": ENROLLMENT, "person": "founder", "email": "founder@example.com",
             "name": "root-admin",
             "tenant_name": "test-tenant",
             "admin_principal": "platform/admin",

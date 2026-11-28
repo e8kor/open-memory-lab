@@ -262,6 +262,10 @@ async fn full_ceremony_through_the_cli() {
             "claim",
             "root-admin",
             "--token-stdin",
+            "--person",
+            "founder",
+            "--email",
+            "founder@example.com",
             "--tenant-name",
             "cli-tenant",
             "--principal",
@@ -297,7 +301,16 @@ async fn full_ceremony_through_the_cli() {
         &server,
         &creds,
         None,
-        &["bootstrap", "claim", "second-admin", "--token-stdin"],
+        &[
+            "bootstrap",
+            "claim",
+            "second-admin",
+            "--token-stdin",
+            "--person",
+            "founder",
+            "--email",
+            "founder@example.com",
+        ],
         ENROLLMENT,
     );
     assert_eq!(code, 1, "consumed token is a typed refusal: {log}");
@@ -551,6 +564,10 @@ impl Lab {
                 "claim",
                 "root-admin",
                 "--token-stdin",
+                "--person",
+                "founder",
+                "--email",
+                "founder@example.com",
                 "--principal",
                 "platform/admin",
             ],
@@ -713,6 +730,112 @@ impl Lab {
         let (code, issued, log) = self.json(None, &all);
         assert_eq!(code, 0, "keys issue: {log}");
         issued
+    }
+
+    /// The founder accepts the pending link of the admin key `issued`
+    /// names, from a console session opened over the lab's store, as an
+    /// admin key authenticates only once its admin person accepts it
+    /// (ADR-0097 d21, d7).
+    async fn founder_accepts(&self, issued: &Value) {
+        use oml_app::app::Capacity;
+        use oml_app::ports::WebStore as _;
+        use oml_app::types::Bearer;
+        let app = oml_server_lead::lead_app(&self.store, self.signing.clone());
+        let email = oml_app::domain::web::Email::parse("founder@example.com").expect("an email");
+        let entry = self
+            .store
+            .web_entry_by_email(&email.digest())
+            .await
+            .expect("a read")
+            .expect("the founder's entry");
+        app.web_ensure_keys(&entry)
+            .await
+            .expect("the founder's keys");
+        let token = app
+            .web_session_open(&entry, 3600, None)
+            .await
+            .expect("a session")
+            .token;
+        let session = app
+            .web_session(&token)
+            .await
+            .expect("a read")
+            .expect("a live session");
+        let web = app
+            .web_caller(&session, Capacity::Web)
+            .await
+            .expect("the founder's console");
+        let key_id =
+            uuid::Uuid::parse_str(issued["key_id"].as_str().expect("key id")).expect("a uuid");
+        app.accept_key_link(Bearer::Session(&web), key_id.into())
+            .await
+            .expect("the founder accepts");
+    }
+
+    /// The key whose value is `value` linked to `person`, a new person of
+    /// the tenant, by the founder's console admin session over the lab's
+    /// store, and accepted from `person`'s session, so it counts as that
+    /// person: an instruction verdict and a ratification need one (ADR-0097
+    /// d12, d17).
+    async fn counts_as(&self, value: &str, person: &str) {
+        use oml_app::app::Capacity;
+        use oml_app::ports::WebStore as _;
+        use oml_app::types::{Bearer, WebEmailRequest};
+        let app = oml_server_lead::lead_app(&self.store, self.signing.clone());
+        let key_id = app.whoami(value).await.expect("the key").key.key_id;
+        let email = oml_app::domain::web::Email::parse("founder@example.com").expect("an email");
+        let founder = self
+            .store
+            .web_entry_by_email(&email.digest())
+            .await
+            .expect("a read")
+            .expect("the founder's entry");
+        app.web_ensure_keys(&founder).await.expect("keys");
+        let session = |entry: oml_app::types::WebEntry, capacity: Capacity| {
+            let app = &app;
+            async move {
+                let token = app
+                    .web_session_open(&entry, 3600, None)
+                    .await
+                    .expect("a session")
+                    .token;
+                let session = app
+                    .web_session(&token)
+                    .await
+                    .expect("a read")
+                    .expect("a live session");
+                app.web_caller(&session, capacity)
+                    .await
+                    .expect("the session key")
+            }
+        };
+        let admin = session(founder, Capacity::Admin).await;
+        let user = oml_app::domain::name::Name::parse(person).expect("a name");
+        let (entry, _) = app
+            .allow_web_email(
+                Bearer::Session(&admin),
+                &WebEmailRequest {
+                    email: oml_app::domain::web::Email::parse(&format!("{person}@example.com"))
+                        .expect("an email"),
+                    user: user.clone(),
+                    admin: false,
+                },
+            )
+            .await
+            .expect("the person's entry");
+        app.web_ensure_keys(&entry).await.expect("keys");
+        app.link_key_to_person(
+            Bearer::Session(&admin),
+            key_id.into(),
+            &user,
+            Some("the person holds this key"),
+        )
+        .await
+        .expect("linked");
+        let web = session(entry, Capacity::Web).await;
+        app.accept_key_link(Bearer::Session(&web), key_id.into())
+            .await
+            .expect("accepted");
     }
 
     /// Every request the lead received since the last call, in order.
@@ -2047,7 +2170,10 @@ async fn keys_issue_and_keys_limit_refuse_a_limit_on_an_admin_key() {
     let (code, _, log) = lab.json(None, &["keys", "show", "limited-admin"]);
     assert_ne!(code, 0, "no such key was issued: {log}");
 
-    let second = lab.issue("second-admin", &["--role", "admin"]);
+    // An admin key belongs to an admin person, the founder, who accepts
+    // its link (ADR-0097 d21).
+    let second = lab.issue("second-admin", &["--role", "admin", "--person", "founder"]);
+    lab.founder_accepts(&second).await;
     assert_eq!(second["expiry"], Value::Null);
     assert_eq!(second["requests_per_minute"], Value::Null);
     let second_value = second["value"].as_str().expect("a value").to_owned();
@@ -2236,24 +2362,22 @@ async fn the_first_admin_email_is_added_by_the_cli_under_an_admin_key() {
         );
     }
     // The last admin entry is kept on every surface, the CLI's included
-    // (ADR-0097 d25, d27 item 4): removing it is refused naming admin.
-    let (code, refused, log) = lab.json(None, &["web", "remove", "alice@example.com"]);
-    assert_ne!(code, 0, "web remove: {log}");
-    assert_eq!(refused["error"]["details"]["field"], "admin", "{log}");
+    // (ADR-0097 d25, d27 item 4): with alice's removed, the founder's is the
+    // last, and its own removal is refused naming admin.
     let (code, _, log) = lab.json(
         None,
         &[
             "web",
-            "allow",
-            "ops@example.com",
-            "--user",
-            "ops",
-            "--admin",
+            "remove",
+            "alice@example.com",
+            "--reason",
+            "alice left",
         ],
     );
-    assert_eq!(code, 0, "web allow: {log}");
-    let (code, _, log) = lab.json(None, &["web", "remove", "alice@example.com"]);
     assert_eq!(code, 0, "web remove: {log}");
+    let (code, refused, log) = lab.json(None, &["web", "remove", "founder@example.com"]);
+    assert_ne!(code, 0, "web remove: {log}");
+    assert_eq!(refused["error"]["details"]["field"], "admin", "{log}");
     let (code, listed, log) = lab.json(None, &["web", "list"]);
     assert_eq!(code, 0, "{log}");
     assert_eq!(
@@ -2394,6 +2518,8 @@ async fn workspaces_tree_under_an_admin_context_lists_the_tree_by_name() {
         column("path"),
         [
             "universe",
+            // The claim's person's root (ADR-0097 d21).
+            "universe.founder",
             "universe.procurement",
             "universe.procurement.metals",
             "universe.procurement.metals.q1-2027",
@@ -2403,7 +2529,14 @@ async fn workspaces_tree_under_an_admin_context_lists_the_tree_by_name() {
     );
     assert_eq!(
         column("name"),
-        ["universe", "procurement", "metals", "q1-2027", "research"]
+        [
+            "universe",
+            "founder",
+            "procurement",
+            "metals",
+            "q1-2027",
+            "research"
+        ]
     );
     assert_eq!(
         column("status"),
@@ -2412,10 +2545,11 @@ async fn workspaces_tree_under_an_admin_context_lists_the_tree_by_name() {
             "development",
             "development",
             "development",
+            "development",
             "development"
         ]
     );
-    assert_eq!(nodes[2]["crew"], crew, "each node carries its crew record");
+    assert_eq!(nodes[3]["crew"], crew, "each node carries its crew record");
     assert_eq!(
         nodes[1].get("crew"),
         Some(&Value::Null),
@@ -2735,6 +2869,8 @@ impl Crew {
             .as_str()
             .expect("reviewer value")
             .to_owned();
+        // The reviewer counts as a person (ADR-0097 d12).
+        lab.counts_as(&reviewer, "crew-reviewer").await;
         Some(Self {
             lab,
             wa,
@@ -4933,6 +5069,10 @@ async fn doctor_warns_when_a_user_key_does_not_read_universe() {
             "claim",
             "root-admin",
             "--token-stdin",
+            "--person",
+            "founder",
+            "--email",
+            "founder@example.com",
             "--tenant-name",
             "user-tenant",
             "--principal",
@@ -5344,7 +5484,15 @@ async fn bootstrap_claim_reads_the_secret_from_stdin_and_takes_no_token_flag() {
     let (server, seen, task) = canned_stub().await;
     let (dir, _) = stub_paths("token-stdin");
     let creds = dir.join("credentials");
-    let claim = ["bootstrap", "claim", "root-admin"];
+    let claim = [
+        "bootstrap",
+        "claim",
+        "root-admin",
+        "--person",
+        "founder",
+        "--email",
+        "founder@example.com",
+    ];
 
     // --token is gone with no alias: argv never carries the secret.
     let mut args = claim.to_vec();
@@ -5398,7 +5546,15 @@ async fn a_claim_without_token_stdin_is_refused_whether_or_not_its_stdin_is_read
         &server,
         &creds,
         None,
-        &["bootstrap", "claim", "root-admin"],
+        &[
+            "bootstrap",
+            "claim",
+            "root-admin",
+            "--person",
+            "founder",
+            "--email",
+            "founder@example.com",
+        ],
         &unread,
     );
     assert_eq!(code, 2, "{log}");
@@ -6553,6 +6709,10 @@ async fn workspaces_status_propose_pending_and_ratify_drive_the_transition_route
     };
     let dora = crew.curator("dora");
     let dan = crew.curator("dan");
+    // Each counts as a person of their own, as a ratification needs
+    // (ADR-0097 d12, d17).
+    crew.lab.counts_as(&dora, "dora-person").await;
+    crew.lab.counts_as(&dan, "dan-person").await;
     crew.lab.take_requests();
 
     let (code, proposal, log) = crew.lab.json(
@@ -7522,6 +7682,8 @@ async fn a_skill_written_from_the_cli_is_held_and_lists_under_oml_skills_list_on
         .as_str()
         .expect("reviewer value")
         .to_owned();
+    // The reviewer counts as a person (ADR-0097 d12).
+    lab.counts_as(&reviewer, "tools-reviewer").await;
     let (code, accepted, log) = lab.json(
         Some(&writer),
         &[
@@ -7702,5 +7864,124 @@ async fn keys_rotate_out_with_a_path_that_cannot_be_created_calls_no_server() {
     assert!(stderr.contains("nothing was sent"), "{stderr}");
     assert!(lab.take_requests().is_empty(), "the server is not called");
     assert!(!path.exists());
+    lab.stop().await;
+}
+
+// -- `oml keys issue --out` and a reader agent key (#528) --------------------
+
+/// `oml keys issue --out <file>` writes the value of a key of any role to a
+/// new owner-only file, and the value reaches neither stdout nor stderr;
+/// `--json` names the path and never the value.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn keys_issue_out_writes_the_value_to_a_0600_file_and_never_to_stdout_or_stderr() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let wa = lab.workspace("metals");
+    let dir = lab.dir.join("keys");
+    std::fs::create_dir_all(&dir).expect("key directory");
+    for (name, role, json) in [
+        ("blind-reader", "reader", false),
+        ("blind-json", "reader", true),
+    ] {
+        let path = dir.join(name);
+        let shown = path.to_str().expect("a UTF-8 path");
+        let grant = format!("{wa}:{role}");
+        let mut args = vec![];
+        if json {
+            args.push("--json");
+        }
+        args.extend([
+            "keys",
+            "issue",
+            name,
+            "--role",
+            role,
+            "--principal",
+            name,
+            "--grant",
+            &grant,
+            "--out",
+            shown,
+        ]);
+        let (code, stdout, stderr) = lab.text(&args);
+        assert_eq!(code, 0, "{stderr}");
+        let written = std::fs::read_to_string(&path).expect("the key file");
+        let value = written
+            .strip_suffix('\n')
+            .expect("the value and one newline");
+        assert!(value.starts_with("oml_"), "{written:?}");
+        #[cfg(unix)]
+        assert_eq!(mode_of(&path), 0o600, "the key file is owner-only");
+        assert!(!stdout.contains(value), "no value on stdout: {stdout}");
+        assert!(!stderr.contains(value), "no value on stderr: {stderr}");
+        assert!(stdout.contains(shown), "the path is named: {stdout}");
+        if json {
+            let answer: Value = serde_json::from_str(&stdout).expect("JSON");
+            assert_eq!(answer["key_file"], shown, "{answer}");
+            assert!(answer.get("value").is_none(), "{answer}");
+        }
+    }
+    lab.stop().await;
+}
+
+/// `oml keys issue --out` refuses a file that already exists, before any
+/// request: nothing is issued and the file is left as it was.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn keys_issue_out_refuses_an_existing_file_and_issues_nothing() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let wa = lab.workspace("metals");
+    let path = lab.dir.join("existing-key");
+    std::fs::write(&path, "kept\n").expect("an existing file");
+    let shown = path.to_str().expect("a UTF-8 path");
+    lab.take_requests();
+    let grant = format!("{wa}:reader");
+    let (code, _stdout, stderr) = lab.text(&[
+        "keys",
+        "issue",
+        "never-issued",
+        "--role",
+        "reader",
+        "--principal",
+        "p",
+        "--grant",
+        &grant,
+        "--out",
+        shown,
+    ]);
+    assert_ne!(code, 0, "{stderr}");
+    assert!(lab.take_requests().is_empty(), "nothing was sent");
+    assert_eq!(std::fs::read_to_string(&path).expect("kept"), "kept\n");
+    lab.stop().await;
+}
+
+/// `oml keys issue-agent --role reader` issues a key that only reads: one
+/// reader grant on the workspace, with the same plugin lines.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue_agent_accepts_reader_and_grants_reader_alone() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let wa = lab.workspace("metals");
+    lab.take_requests();
+    let (code, stdout, stderr) = lab.text(&[
+        "keys",
+        "issue-agent",
+        "blind-test",
+        "--principal",
+        "crew/blind-test",
+        "--workspace",
+        &wa,
+        "--role",
+        "reader",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.starts_with("export OML_URL="), "{stdout}");
+    let seen = lab.take_requests();
+    assert_eq!(routes(&seen), ["POST /v2/keys"]);
+    assert_eq!(seen[0].body["role"], "reader");
+    assert_eq!(seen[0].body["grants"], json!([grant(&wa, "reader")]));
     lab.stop().await;
 }

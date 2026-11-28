@@ -120,7 +120,8 @@ While no tenant exists, the server prints a single-use enrollment token in its l
 TOKEN="$(kubectl --namespace oml logs deployment/oml-server-lead | grep -o 'enr_[0-9a-f]\{48\}' | tail -1)"
 kubectl --namespace oml port-forward service/oml-server 8080:8080 &
 printf '%s\n' "$TOKEN" | oml --url http://127.0.0.1:8080 bootstrap claim <key-name> \
-  --token-stdin --tenant-name <tenant> --principal <admin>
+  --token-stdin --tenant-name <tenant> --principal <admin> \
+  --person <name> --email <address>
 ```
 
 The CLI prints the key once and stores it in `~/.config/oml/credentials`. A restart before the claim voids the old token, so read it from the running pod, never with `--previous`.

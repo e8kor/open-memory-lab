@@ -94,6 +94,10 @@ pub struct RescanReport {
     /// `admin.investigation_open_long` (ADR-0089 d10; the operator,
     /// 2026-11-17).
     pub investigations_open_long: u64,
+    /// Open admin investigations past
+    /// [`crate::types::INVESTIGATION_PAGES_WARN`] pages: doctor's
+    /// `admin.investigation_pages` (ADR-0097 d16).
+    pub investigations_past_pages: u64,
 }
 
 /// A finding as a version's `scan_finding` carries it, as admission's
@@ -218,7 +222,8 @@ where
         limit: usize,
         record_held: bool,
     ) -> Result<RescanReport, AppError> {
-        let admin = self.admin_caller(bearer.into(), "rescan").await?.key;
+        // An admin key's or a maintenance key's (ADR-0097 d18).
+        let admin = self.counts_caller(bearer, "rescan").await?.key;
         let tenant_id = admin.tenant_id;
         let limit = limit.clamp(1, RESCAN_MAX_EVENTS);
         let events = self
@@ -307,58 +312,80 @@ where
             .flatten();
         let recorded_n = recorded.len() as u64;
         if !recorded.is_empty() {
+            // The rescan that records is a neutral admin act: it triggers
+            // the server's scanner and takes no finding as input (ADR-0097
+            // d9).
             let prev = self.head_event(tenant_id).await?;
+            let act = self
+                .admin_act_of(
+                    &admin,
+                    oml_domain::admin_act::AdminActKind::Rescan,
+                    json!({ "after_seq": after_seq, "recorded": recorded.len() }),
+                    None,
+                    prev.as_ref(),
+                )
+                .await?;
+            let prev = act.as_ref().map(|a| a.event.clone()).or(prev);
             let event = self.seal(
                 prev.as_ref(),
                 tenant_id,
                 event_types::SCAN_FINDINGS_RECORDED,
                 &admin.principal,
                 Some(admin.key_id),
-                json!({
-                    "scanned_under": current,
-                    "versions": recorded.iter().map(|(id, found)| json!({
-                        "artifact_id": id.to_string(),
-                        "findings": found.iter().map(|(_, f)| json!({
-                            "class": f.class,
-                            "rule": f.rule,
-                            "action": if f.veto { "veto" } else { "hold" },
-                            "at": f.at,
+                super::admin_acts::named(
+                    json!({
+                        "scanned_under": current,
+                        "versions": recorded.iter().map(|(id, found)| json!({
+                            "artifact_id": id.to_string(),
+                            "findings": found.iter().map(|(_, f)| json!({
+                                "class": f.class,
+                                "rule": f.rule,
+                                "action": if f.veto { "veto" } else { "hold" },
+                                "at": f.at,
+                            })).collect::<Vec<_>>(),
                         })).collect::<Vec<_>>(),
-                    })).collect::<Vec<_>>(),
-                }),
+                    }),
+                    act.as_ref(),
+                ),
             )?;
-            self.commit(
-                event,
-                MetadataFold::FindingsRecorded {
-                    scanned_under: current.map(str::to_owned),
-                    versions: recorded
-                        .iter()
-                        .map(|(id, found)| RecordedVersion {
-                            memory_id: *id,
-                            summary: finding_reason(found),
-                            findings: found
-                                .iter()
-                                .map(|(field, f)| {
-                                    version_finding(f, field.clone(), current, FoundBy::Rescan)
-                                })
-                                .collect::<Vec<VersionFinding>>(),
-                        })
-                        .collect(),
-                },
-                None,
+            self.commit_with_act(
+                act,
+                vec![(
+                    event,
+                    MetadataFold::FindingsRecorded {
+                        scanned_under: current.map(str::to_owned),
+                        versions: recorded
+                            .iter()
+                            .map(|(id, found)| RecordedVersion {
+                                memory_id: *id,
+                                summary: finding_reason(found),
+                                findings: found
+                                    .iter()
+                                    .map(|(field, f)| {
+                                        version_finding(f, field.clone(), current, FoundBy::Rescan)
+                                    })
+                                    .collect::<Vec<VersionFinding>>(),
+                            })
+                            .collect(),
+                    },
+                )],
             )
             .await?;
         }
         let backlog = self.journal.scan_backlog(tenant_id, current).await?;
         let long_before = self.clock.now().unix_micros()
             - super::investigations::INVESTIGATION_OPEN_LONG_SECONDS * 1_000_000;
-        let investigations_open_long = self
-            .journal
-            .investigations(tenant_id, None, true)
-            .await?
+        let open = self.journal.investigations(tenant_id, None, true).await?;
+        let investigations_open_long = open
             .iter()
             .filter(|i| i.opened_at.unix_micros() < long_before)
             .count();
+        let investigations_past_pages = u64::try_from(
+            open.iter()
+                .filter(|i| i.reads > crate::types::INVESTIGATION_PAGES_WARN)
+                .count(),
+        )
+        .unwrap_or(u64::MAX);
         let investigations_open_long = u64::try_from(investigations_open_long).unwrap_or(u64::MAX);
         Ok(RescanReport {
             scanner_version: self.scanner.version(),
@@ -380,6 +407,7 @@ where
             held_successors_stranded: backlog.held_successors_stranded,
             erased_keys_live: backlog.erased_keys_live,
             investigations_open_long,
+            investigations_past_pages,
         })
     }
 }

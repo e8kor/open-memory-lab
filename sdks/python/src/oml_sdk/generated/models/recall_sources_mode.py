@@ -3,6 +3,7 @@ from enum import StrEnum
 
 class RecallSourcesMode(StrEnum):
     LIST = "list"
+    SCOPE = "scope"
     WIDE = "wide"
 
     def __str__(self) -> str:

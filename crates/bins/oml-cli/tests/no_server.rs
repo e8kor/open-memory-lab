@@ -76,7 +76,20 @@ fn a_verb_with_no_pair_is_refused_with_the_no_server_name_and_oml_login() {
     }
     // `bootstrap claim` sends no key and reads only the URL, and says so by
     // the same name, naming each place it looked.
-    let out = oml(&dir, &["bootstrap", "claim", "admin", "--token-stdin"], &[]);
+    let out = oml(
+        &dir,
+        &[
+            "bootstrap",
+            "claim",
+            "admin",
+            "--token-stdin",
+            "--person",
+            "founder",
+            "--email",
+            "founder@example.com",
+        ],
+        &[],
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(2), "{stderr}");
     assert!(stderr.contains("no_server: "), "{stderr}");

@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
+from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
     from ..models.connection import Connection
     from ..models.denial import Denial
     from ..models.grant import Grant
+    from ..models.key_issued_admin_act import KeyIssuedAdminAct
     from ..models.key_live_connect_code_type_1 import KeyLiveConnectCodeType1
     from ..models.whoami_ref import WhoamiRef
 
@@ -57,6 +59,8 @@ class KeyIssued:
         rotated_from (None | str | Unset): The key_id this key succeeded by rotation, if any (key.rotated links the
             two).
         grants (list[Grant] | Unset):
+        public_reach (list[UUID] | Unset): The public workspaces the key reads through the flag, apart from its grants,
+            a global deny applied; empty for a key whose role does not read (ADR-0098 d1, d9). Since v0.8.6.
         denials (list[Denial] | Unset):
         epoch (int | Unset):
         credential (KeyCredential | Unset): bearer: the key has a value presented as Authorization: Bearer. connection:
@@ -76,6 +80,12 @@ class KeyIssued:
             (ADR-0031 d11).
         value (str | Unset): The secret — returned exactly once, journalled as issued-without-value.
         connect_code (ConnectCode | Unset):
+        admin_act (KeyIssuedAdminAct | Unset): An admin key's issuance is a widening admin act (ADR-0097 d5). state
+            pending_confirmation: the value or code is shown once here, and the key authenticates nothing (auth.invalid,
+            details.reason pending_confirmation) and holds no grant until a second admin person confirms the act with POST
+            /v2/admin/acts/{act}/confirm; a connect code's ten minutes run from the confirmation. state effective: the
+            tenant has never had two live admin persons, and the key took effect at once, marked sole_admin (ADR-0097 d10).
+            Absent for a person's own issuance. Since v0.8.6.
     """
 
     key_id: str
@@ -93,6 +103,7 @@ class KeyIssued:
     revoked_at: datetime.datetime | None | Unset = UNSET
     rotated_from: None | str | Unset = UNSET
     grants: list[Grant] | Unset = UNSET
+    public_reach: list[UUID] | Unset = UNSET
     denials: list[Denial] | Unset = UNSET
     epoch: int | Unset = UNSET
     credential: KeyCredential | Unset = UNSET
@@ -104,6 +115,7 @@ class KeyIssued:
     connections: list[Connection] | Unset = UNSET
     value: str | Unset = UNSET
     connect_code: ConnectCode | Unset = UNSET
+    admin_act: KeyIssuedAdminAct | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -184,6 +196,13 @@ class KeyIssued:
                 grants_item = grants_item_data.to_dict()
                 grants.append(grants_item)
 
+        public_reach: list[str] | Unset = UNSET
+        if not isinstance(self.public_reach, Unset):
+            public_reach = []
+            for public_reach_item_data in self.public_reach:
+                public_reach_item = str(public_reach_item_data)
+                public_reach.append(public_reach_item)
+
         denials: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.denials, Unset):
             denials = []
@@ -234,6 +253,10 @@ class KeyIssued:
         if not isinstance(self.connect_code, Unset):
             connect_code = self.connect_code.to_dict()
 
+        admin_act: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.admin_act, Unset):
+            admin_act = self.admin_act.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -265,6 +288,8 @@ class KeyIssued:
             field_dict["rotated_from"] = rotated_from
         if grants is not UNSET:
             field_dict["grants"] = grants
+        if public_reach is not UNSET:
+            field_dict["public_reach"] = public_reach
         if denials is not UNSET:
             field_dict["denials"] = denials
         if epoch is not UNSET:
@@ -283,6 +308,8 @@ class KeyIssued:
             field_dict["value"] = value
         if connect_code is not UNSET:
             field_dict["connect_code"] = connect_code
+        if admin_act is not UNSET:
+            field_dict["admin_act"] = admin_act
 
         return field_dict
 
@@ -292,6 +319,7 @@ class KeyIssued:
         from ..models.connection import Connection
         from ..models.denial import Denial
         from ..models.grant import Grant
+        from ..models.key_issued_admin_act import KeyIssuedAdminAct
         from ..models.key_live_connect_code_type_1 import KeyLiveConnectCodeType1
         from ..models.whoami_ref import WhoamiRef
 
@@ -441,6 +469,15 @@ class KeyIssued:
 
                 grants.append(grants_item)
 
+        _public_reach = d.pop("public_reach", UNSET)
+        public_reach: list[UUID] | Unset = UNSET
+        if _public_reach is not UNSET:
+            public_reach = []
+            for public_reach_item_data in _public_reach:
+                public_reach_item = UUID(public_reach_item_data)
+
+                public_reach.append(public_reach_item)
+
         _denials = d.pop("denials", UNSET)
         denials: list[Denial] | Unset = UNSET
         if _denials is not UNSET:
@@ -547,6 +584,13 @@ class KeyIssued:
         else:
             connect_code = ConnectCode.from_dict(_connect_code)
 
+        _admin_act = d.pop("admin_act", UNSET)
+        admin_act: KeyIssuedAdminAct | Unset
+        if isinstance(_admin_act, Unset):
+            admin_act = UNSET
+        else:
+            admin_act = KeyIssuedAdminAct.from_dict(_admin_act)
+
         key_issued = cls(
             key_id=key_id,
             name=name,
@@ -563,6 +607,7 @@ class KeyIssued:
             revoked_at=revoked_at,
             rotated_from=rotated_from,
             grants=grants,
+            public_reach=public_reach,
             denials=denials,
             epoch=epoch,
             credential=credential,
@@ -572,6 +617,7 @@ class KeyIssued:
             connections=connections,
             value=value,
             connect_code=connect_code,
+            admin_act=admin_act,
         )
 
         key_issued.additional_properties = d

@@ -57,8 +57,9 @@ class RecallSearch:
             d2).
         window (None | RecallSearchWindowType0 | Unset): The date window read from the query by rule oml-when/1,
             anchored to the recall's now; null when the query names no date (ADR-0059 d6).
-        sources (RecallSources | Unset): Under sources wide or a list: what was searched and why (ADR-0072 d8). Every
-            name and number is of a workspace the key reads (d6).
+        sources (RecallSources | Unset): Under sources wide or a list: what was searched and why (ADR-0072 d8); under
+            scope, served only where the recall also searched a public workspace outside the scope, which it then lists
+            (ADR-0098 d3). Every name and number is of a workspace the key reads (d6).
         widen (RecallSearchWiden | Unset): On a sources scope answer, when a workspace the key reads outside the scope
             holds the query's words at least twice as often per row as the scope, on at least two of its rows: a retry with
             sources wide would search it. Read off a signal the server builds in the background, at most 300 seconds old and

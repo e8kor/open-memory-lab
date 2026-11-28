@@ -146,7 +146,7 @@ async fn bootstrap(router: &Router) -> (String, Uuid) {
         "/v2/bootstrap/claim",
         None,
         json!({
-            "enrollment_token": ENROLLMENT,
+            "enrollment_token": ENROLLMENT, "person": "founder", "email": "founder@example.com",
             "name": "root-admin",
             "tenant_name": "upload-tenant",
             "admin_principal": "platform/admin",
@@ -555,7 +555,7 @@ async fn a_lead_whose_storage_url_cannot_be_created_boots_serves_readyz_and_answ
         "/v2/bootstrap/claim",
         None,
         json!({
-            "enrollment_token": token,
+            "enrollment_token": token, "person": "founder", "email": "founder@example.com",
             "name": "root-admin",
             "tenant_name": "upload-tenant",
             "admin_principal": "platform/admin",

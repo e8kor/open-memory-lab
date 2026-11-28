@@ -49,6 +49,7 @@ pub const USER_ACTIONS: &[&str] = &[
 /// The admin page's acts: the cut-off, and a tenant key's link to the
 /// listed person and its end (ADR-0085 d16).
 pub const ADMIN_ACTIONS: &[&str] = &[
+    "build_key",
     "cut_off",
     "rotate_key",
     "link_key",
@@ -182,6 +183,9 @@ const EXPIRES_NOTE: &str =
 
 /// The key builder's page (ADR-0096 d1, D5).
 pub const NEW_KEY_PATH: &str = "/web/keys/new";
+
+/// The admin key builder (ADR-0097 d29).
+pub const ADMIN_NEW_KEY_PATH: &str = "/web/admin/keys/new";
 
 /// The notice a `done` the view's own acts name shows; any other is none.
 fn notice(done: Option<&str>) -> Option<&'static str> {
@@ -540,6 +544,48 @@ fn expiry(expires_at: &str, now: i64) -> String {
 /// The card a shown-once secret is drawn on, as the lead's page drew it.
 fn secret_card(secret: &Secret) -> (&'static str, String) {
     match secret {
+        // The admin builder's key: the value or the code once, and whether
+        // it waits on another admin's confirmation (ADR-0097 d29, d23).
+        Secret::AdminIssued {
+            name,
+            shown,
+            connector,
+            server,
+            pending,
+        } => {
+            let what = if *connector {
+                format!("<pre>{}</pre>", attr(shown))
+            } else if server.is_empty() {
+                format!("<pre>OML_API_KEY={}</pre>", attr(shown))
+            } else {
+                format!(
+                    "<pre>OML_URL={}\nOML_API_KEY={}</pre>",
+                    attr(server),
+                    attr(shown)
+                )
+            };
+            let state = if *pending {
+                r#"<p class="oml-consequence">Waits on another admin: the key authenticates nothing, and its grants and new workspaces wait, until a second admin confirms it under Admin acts to confirm.</p>"#
+            } else {
+                r#"<p class="desc">In effect now.</p>"#
+            };
+            (
+                if *pending {
+                    "Key waits on another admin"
+                } else {
+                    "Key issued"
+                },
+                format!(
+                    r#"<h1>{}</h1><p class="desc">Shown once: copy it now.</p>{state}<div class="card secret"><p class="label">{}</p>{what}</div><p><a href="{ADMIN_KEYS_PATH}">Back to Keys</a></p>"#,
+                    short(name),
+                    if *connector {
+                        "Connect code"
+                    } else {
+                        "For the agent"
+                    },
+                ),
+            )
+        }
         Secret::Key {
             name,
             value,
@@ -908,7 +954,7 @@ async fn admin_view(web: Web, session: Session, calls: Arc<PageCalls>, uri: Uri)
     }
     let user = fields.given("user");
     let mut body = format!(
-        r#"<h1>Keys</h1><p class="desc">One person's agent and connector keys; open one to read its record, set its limits or deny it on a workspace. No key is issued here.</p><form class="row" method="get" action="{ADMIN_KEYS_PATH}">{}<button type="submit">Show</button></form>"#,
+        r#"<h1>Keys</h1><p class="desc">One person's agent and connector keys; open one to read its record, set its limits or deny it on a workspace. <a href="{ADMIN_NEW_KEY_PATH}">New key</a> issues one anywhere in the tenant, which waits on another admin's confirmation.</p><form class="row" method="get" action="{ADMIN_KEYS_PATH}">{}<button type="submit">Show</button></form>"#,
         input("user", "user", user.unwrap_or(""), true)
     );
     if let Some(user) = user {
@@ -1227,10 +1273,17 @@ fn deny_form(csrf: &str, key: &str, fields: &Fields) -> String {
 }
 
 fn link_forms(csrf: &str, user: &str) -> String {
-    let fields = |placeholder: &str| {
+    // A link is a consent act whose reason is required (ADR-0097 d7, d26;
+    // amendment of 2026-11-27, answer 15); an unlink takes none.
+    let fields = |placeholder: &str, reason: bool| {
         format!(
-            "{}{}{}",
+            "{}{}{}{}",
             input("key", placeholder, "", true),
+            if reason {
+                input("reason", "Reason for the link", "", true)
+            } else {
+                String::new()
+            },
             hidden("user", user),
             acts::nonce_field()
         )
@@ -1243,7 +1296,7 @@ fn link_forms(csrf: &str, user: &str) -> String {
             ADMIN_KEYS_PATH,
             "link_key",
             csrf,
-            &fields("tenant key name"),
+            &fields("tenant key name", true),
             "Link key",
             false
         ),
@@ -1251,7 +1304,7 @@ fn link_forms(csrf: &str, user: &str) -> String {
             ADMIN_KEYS_PATH,
             "unlink_key",
             csrf,
-            &fields("linked key name"),
+            &fields("linked key name", false),
             "Unlink key",
             false
         )
@@ -1264,12 +1317,14 @@ fn link_forms(csrf: &str, user: &str) -> String {
 fn defined(side: Side, action: &str, name: &str) -> bool {
     match action {
         "issue_key" | "connect_key" => matches!(name, "name" | "role" | "expires"),
+        "build_key" if side == Side::Admin => crate::builder::defined_admin(name),
         "build_key" => crate::builder::defined(name),
         "cut_off" => matches!(name, "key" | "confirm") || (side == Side::Admin && name == "user"),
         "rotate_key" => {
             matches!(name, "key" | "confirm" | "grace") || (side == Side::Admin && name == "user")
         }
-        "link_key" | "unlink_key" => matches!(name, "key" | "user"),
+        "link_key" => matches!(name, "key" | "user" | "reason"),
+        "unlink_key" => matches!(name, "key" | "user"),
         "set_limits" => matches!(name, "key" | "expires" | "no_expiry" | "rate" | "no_rate"),
         "deny_on" => matches!(name, "key" | "workspace" | "reason"),
         "accept_email" => matches!(name, "email" | "admin"),
@@ -1425,7 +1480,7 @@ async fn act(
     };
     let required: &[&str] = match action {
         "issue_key" | "connect_key" | "build_key" => &["name"],
-        "link_key" => &["key", "user"],
+        "link_key" => &["key", "user", "reason"],
         "deny_on" => &["key", "workspace", "reason"],
         "accept_email" => &["email", "admin"],
         "decline_email" => &["email"],
@@ -1469,8 +1524,40 @@ async fn act(
                 Err(message) => return acts::invalid(&message, &calls),
             };
             let user = session.whoami.user.as_ref().map_or("", |u| u.name.as_str());
-            match web.api.issue_key_with(&call, &key, &draft.body(user)).await {
-                Ok(issued) if issued.replayed() => return acts::see_other(USER_KEYS_PATH, &[]),
+            let builder = match side {
+                Side::User => crate::builder::Side::Personal,
+                Side::Admin => crate::builder::Side::Admin,
+            };
+            match web
+                .api
+                .issue_key_with(&call, &key, &draft.body_as(builder, user))
+                .await
+            {
+                Ok(issued) if issued.replayed() => return acts::see_other(page, &[]),
+                // The admin builder's key shows on the admin Keys page, with
+                // whether it waits on another admin (ADR-0097 d29).
+                Ok(issued) if side == Side::Admin => {
+                    let pending = issued
+                        .admin_act
+                        .as_ref()
+                        .is_some_and(|a| a.state == "pending_confirmation");
+                    let shown = issued
+                        .value
+                        .clone()
+                        .or_else(|| issued.connect_code.as_ref().and_then(|c| c.code.clone()));
+                    let Some(shown) = shown else {
+                        return no_secret(&calls);
+                    };
+                    let secret = Secret::AdminIssued {
+                        name: issued.name.clone(),
+                        connector: issued.value.is_none(),
+                        shown,
+                        server: server(&web).await,
+                        pending,
+                    };
+                    let sealed = once::seal(session.token(), ADMIN_KEYS_PATH, &secret);
+                    return acts::see_other(ADMIN_KEYS_PATH, &[once::set_cookie(&sealed)]);
+                }
                 Ok(issued) => match secret_of(&web, issued).await {
                     Some(secret) => secret,
                     None => return no_secret(&calls),
@@ -1487,12 +1574,9 @@ async fn act(
                         .collect();
                     back.push("step=review".to_owned());
                     back.push(format!("refused={}", encode(&e.code)));
-                    return acts::see_other(
-                        &format!("{}?{}", crate::keys::NEW_KEY_PATH, back.join("&")),
-                        &[],
-                    );
+                    return acts::see_other(&format!("{}?{}", builder.path(), back.join("&")), &[]);
                 }
-                Err(e) => return outcome::page(&e, &calls, crate::keys::NEW_KEY_PATH),
+                Err(e) => return outcome::page(&e, &calls, builder.path()),
             }
         }
         "issue_key" | "connect_key" => {
@@ -1665,7 +1749,10 @@ async fn act(
         "link_key" | "unlink_key" => {
             let name = fields.given("key").unwrap_or_default();
             let user = fields.given("user");
-            let linked_to = (action == "link_key").then_some(user).flatten();
+            let linked_to = (action == "link_key")
+                .then_some(user)
+                .flatten()
+                .map(|u| (u, fields.given("reason").unwrap_or_default()));
             let listed = user.map_or_else(String::new, |u| format!("user={}&", encode(u)));
             let done = if linked_to.is_some() {
                 "linked"

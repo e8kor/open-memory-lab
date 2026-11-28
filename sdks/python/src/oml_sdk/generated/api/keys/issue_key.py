@@ -88,15 +88,18 @@ def sync_detailed(
 ) -> Response[ErrorEnvelope | KeyIssued]:
     """Issue a key under the issuer ceiling; the value appears exactly once, here.
 
-     A person's web session key (<user>-web, through its capacity credential) issues their own key: send
-    name (<user>-<name>, refused naming /name for exactly <user>-web, <user>-review, <user>-curate or
+     A person's admin session key (<user>-admin, through its capacity credential) issues as an admin key
+    does, every field admitted, the admin console's key builder (ADR-0097 d29; since v0.8.6). A person's
+    web session key (<user>-web, through its capacity credential) issues their own key: send name
+    (<user>-<name>, refused naming /name for exactly <user>-web, <user>-review, <user>-curate or
     <user>-admin and no other name), role (contributor, reader or submitter; any other role is
     request.validation naming /role) and connect_code, and optionally grants, default_workspace,
-    guardrail_scope, expiry and requests_per_minute (ADR-0096 d1 to d3; since v0.8.5). Without grants
-    the key holds submitter and reader (contributor), reader (reader) or submitter (submitter) on the
-    root and below; with grants it holds exactly those sent, each grant role reader or submitter, each
-    inside the root, else 403 access.issuer_ceiling naming details.user, or for a grant role the key
-    role does not admit details.role, admissible and grant_index; a submitter key gets no universe
+    guardrail_scope, expiry, requests_per_minute and create_workspaces inside the root, each grant
+    optionally with create (ADR-0096 d1 to d3; since v0.8.5; ADR-0097 d30, d31; since v0.8.6). Without
+    grants the key holds submitter and reader (contributor), reader (reader) or submitter (submitter) on
+    the root and below; with grants it holds exactly those sent, each grant role reader or submitter,
+    each inside the root, else 403 access.issuer_ceiling naming details.user, or for a grant role the
+    key role does not admit details.role, admissible and grant_index; a submitter key gets no universe
     grant, a contributor or reader key the universe reader node grant. At most 16 grants of at most 16
     denials each: more is request.validation with details.field /grants or /grants/<i>/deny and
     details.reason too_many. user, used_by, crew, label, principal, profile and tenant stay
@@ -174,15 +177,18 @@ def sync(
 ) -> ErrorEnvelope | KeyIssued | None:
     """Issue a key under the issuer ceiling; the value appears exactly once, here.
 
-     A person's web session key (<user>-web, through its capacity credential) issues their own key: send
-    name (<user>-<name>, refused naming /name for exactly <user>-web, <user>-review, <user>-curate or
+     A person's admin session key (<user>-admin, through its capacity credential) issues as an admin key
+    does, every field admitted, the admin console's key builder (ADR-0097 d29; since v0.8.6). A person's
+    web session key (<user>-web, through its capacity credential) issues their own key: send name
+    (<user>-<name>, refused naming /name for exactly <user>-web, <user>-review, <user>-curate or
     <user>-admin and no other name), role (contributor, reader or submitter; any other role is
     request.validation naming /role) and connect_code, and optionally grants, default_workspace,
-    guardrail_scope, expiry and requests_per_minute (ADR-0096 d1 to d3; since v0.8.5). Without grants
-    the key holds submitter and reader (contributor), reader (reader) or submitter (submitter) on the
-    root and below; with grants it holds exactly those sent, each grant role reader or submitter, each
-    inside the root, else 403 access.issuer_ceiling naming details.user, or for a grant role the key
-    role does not admit details.role, admissible and grant_index; a submitter key gets no universe
+    guardrail_scope, expiry, requests_per_minute and create_workspaces inside the root, each grant
+    optionally with create (ADR-0096 d1 to d3; since v0.8.5; ADR-0097 d30, d31; since v0.8.6). Without
+    grants the key holds submitter and reader (contributor), reader (reader) or submitter (submitter) on
+    the root and below; with grants it holds exactly those sent, each grant role reader or submitter,
+    each inside the root, else 403 access.issuer_ceiling naming details.user, or for a grant role the
+    key role does not admit details.role, admissible and grant_index; a submitter key gets no universe
     grant, a contributor or reader key the universe reader node grant. At most 16 grants of at most 16
     denials each: more is request.validation with details.field /grants or /grants/<i>/deny and
     details.reason too_many. user, used_by, crew, label, principal, profile and tenant stay
@@ -255,15 +261,18 @@ async def asyncio_detailed(
 ) -> Response[ErrorEnvelope | KeyIssued]:
     """Issue a key under the issuer ceiling; the value appears exactly once, here.
 
-     A person's web session key (<user>-web, through its capacity credential) issues their own key: send
-    name (<user>-<name>, refused naming /name for exactly <user>-web, <user>-review, <user>-curate or
+     A person's admin session key (<user>-admin, through its capacity credential) issues as an admin key
+    does, every field admitted, the admin console's key builder (ADR-0097 d29; since v0.8.6). A person's
+    web session key (<user>-web, through its capacity credential) issues their own key: send name
+    (<user>-<name>, refused naming /name for exactly <user>-web, <user>-review, <user>-curate or
     <user>-admin and no other name), role (contributor, reader or submitter; any other role is
     request.validation naming /role) and connect_code, and optionally grants, default_workspace,
-    guardrail_scope, expiry and requests_per_minute (ADR-0096 d1 to d3; since v0.8.5). Without grants
-    the key holds submitter and reader (contributor), reader (reader) or submitter (submitter) on the
-    root and below; with grants it holds exactly those sent, each grant role reader or submitter, each
-    inside the root, else 403 access.issuer_ceiling naming details.user, or for a grant role the key
-    role does not admit details.role, admissible and grant_index; a submitter key gets no universe
+    guardrail_scope, expiry, requests_per_minute and create_workspaces inside the root, each grant
+    optionally with create (ADR-0096 d1 to d3; since v0.8.5; ADR-0097 d30, d31; since v0.8.6). Without
+    grants the key holds submitter and reader (contributor), reader (reader) or submitter (submitter) on
+    the root and below; with grants it holds exactly those sent, each grant role reader or submitter,
+    each inside the root, else 403 access.issuer_ceiling naming details.user, or for a grant role the
+    key role does not admit details.role, admissible and grant_index; a submitter key gets no universe
     grant, a contributor or reader key the universe reader node grant. At most 16 grants of at most 16
     denials each: more is request.validation with details.field /grants or /grants/<i>/deny and
     details.reason too_many. user, used_by, crew, label, principal, profile and tenant stay
@@ -339,15 +348,18 @@ async def asyncio(
 ) -> ErrorEnvelope | KeyIssued | None:
     """Issue a key under the issuer ceiling; the value appears exactly once, here.
 
-     A person's web session key (<user>-web, through its capacity credential) issues their own key: send
-    name (<user>-<name>, refused naming /name for exactly <user>-web, <user>-review, <user>-curate or
+     A person's admin session key (<user>-admin, through its capacity credential) issues as an admin key
+    does, every field admitted, the admin console's key builder (ADR-0097 d29; since v0.8.6). A person's
+    web session key (<user>-web, through its capacity credential) issues their own key: send name
+    (<user>-<name>, refused naming /name for exactly <user>-web, <user>-review, <user>-curate or
     <user>-admin and no other name), role (contributor, reader or submitter; any other role is
     request.validation naming /role) and connect_code, and optionally grants, default_workspace,
-    guardrail_scope, expiry and requests_per_minute (ADR-0096 d1 to d3; since v0.8.5). Without grants
-    the key holds submitter and reader (contributor), reader (reader) or submitter (submitter) on the
-    root and below; with grants it holds exactly those sent, each grant role reader or submitter, each
-    inside the root, else 403 access.issuer_ceiling naming details.user, or for a grant role the key
-    role does not admit details.role, admissible and grant_index; a submitter key gets no universe
+    guardrail_scope, expiry, requests_per_minute and create_workspaces inside the root, each grant
+    optionally with create (ADR-0096 d1 to d3; since v0.8.5; ADR-0097 d30, d31; since v0.8.6). Without
+    grants the key holds submitter and reader (contributor), reader (reader) or submitter (submitter) on
+    the root and below; with grants it holds exactly those sent, each grant role reader or submitter,
+    each inside the root, else 403 access.issuer_ceiling naming details.user, or for a grant role the
+    key role does not admit details.role, admissible and grant_index; a submitter key gets no universe
     grant, a contributor or reader key the universe reader node grant. At most 16 grants of at most 16
     denials each: more is request.validation with details.field /grants or /grants/<i>/deny and
     details.reason too_many. user, used_by, crew, label, principal, profile and tenant stay

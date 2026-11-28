@@ -31,6 +31,10 @@ struct AllowBody {
     email: Option<String>,
     user: Option<String>,
     admin: Option<bool>,
+    /// The admin's reason; an admin flag that waits on a second admin
+    /// person requires it (ADR-0097 d5, d26).
+    #[serde(default)]
+    reason: Option<String>,
     /// Accepted and changes nothing: the last admin entry is kept on every
     /// surface (ADR-0097 d25, d27 item 4).
     #[allow(
@@ -49,6 +53,10 @@ struct RemoveBody {
     /// The accept's alone: the admin flag the person reviewed, which the
     /// entry must still carry (the operator's decision of 2026-11-20).
     admin: Option<bool>,
+    /// The admin's reason, which removing another admin person's entry
+    /// requires (ADR-0097 d8, d26).
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 fn entry_json(entry: &WebEntry) -> Value {
@@ -268,12 +276,17 @@ where
         // `keep_an_admin` is still read, and changes nothing (ADR-0097 d25,
         // d27 item 4).
         let keep = true;
+        let reason = req.reason.clone();
         let st = st.clone();
         claim
             .run(async move {
                 let (entry, _) = retry_chain(|| {
-                    st.app
-                        .allow_web_email_keeping(acting.bearer(), &request, keep)
+                    st.app.allow_web_email_with_reason(
+                        acting.bearer(),
+                        &request,
+                        keep,
+                        reason.as_deref(),
+                    )
                 })
                 .await
                 .map_err(|e| {
@@ -331,12 +344,17 @@ where
         // `keep_an_admin` is still read, and changes nothing (ADR-0097 d25,
         // d27 item 4).
         let keep = true;
+        let reason = req.reason.clone();
         let st = st.clone();
         claim
             .run(async move {
                 let (_, seq, event_id) = retry_chain(|| {
-                    st.app
-                        .remove_web_email_keeping(acting.bearer(), &email, keep)
+                    st.app.remove_web_email_with_reason(
+                        acting.bearer(),
+                        &email,
+                        keep,
+                        reason.as_deref(),
+                    )
                 })
                 .await
                 .map_err(|e| crate::console::ActFailure::first(map_app_error(e, ErrorContext::Write)))?;

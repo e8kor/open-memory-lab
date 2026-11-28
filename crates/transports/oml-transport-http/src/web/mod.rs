@@ -62,6 +62,8 @@ pub const WEB_ROUTES: &[(&str, &str)] = &[
     ("GET", "/web/callback/{provider}"),
     // Open sign-up (ADR-0068 d2); onboarding is oml-web's (ADR-0070 d7 (b)).
     ("POST", "/web/sign-up"),
+    // The contest-only sign-in's one act (ADR-0097 d8).
+    ("POST", "/web/contest"),
 ];
 
 /// The closed `action` set of `POST /web`: sign-out alone, the one act
@@ -185,7 +187,12 @@ impl WebPages {
     /// anyone (ADR-0045 d18; ADR-0054 d1).
     #[must_use]
     pub fn readyz(&self) -> Value {
-        json!({ "providers": self.provider_list().iter().map(|p| p.as_str()).collect::<Vec<_>>() })
+        let mut body = json!({ "providers": self.provider_list().iter().map(|p| p.as_str()).collect::<Vec<_>>() });
+        // A `signup.issuer` still set, read and ignored (ADR-0097 d18).
+        if self.signup_policy().is_some_and(|p| p.issuer.is_some()) {
+            body["signup_issuer_ignored"] = json!(true);
+        }
+        body
     }
 
     /// One exchange under the provider's cap on concurrent calls.
@@ -285,6 +292,7 @@ where
             ("POST", "/web/sign-in") => post(Self::sign_in),
             ("GET", "/web/callback/{provider}") => get(Self::callback),
             ("POST", "/web/sign-up") => post(Self::sign_up),
+            ("POST", "/web/contest") => post(Self::contest),
             _ => panic!("{method} {path} is in WEB_ROUTES with no handler"),
         }
     }
@@ -776,8 +784,21 @@ where
                         line,
                     };
                 }
+                // The contest-only sign-in opens its one form (ADR-0097 d8).
+                if let CallbackRefusal::Contest(grant) = &refusal {
+                    sign_in_line(request_id, provider, "contest_only", None);
+                    let mut response = self.contest_page(grant).await;
+                    append_cookie(&mut response, &clear_cookie(SIGN_IN_COOKIE));
+                    return Answer {
+                        response,
+                        error_code: None,
+                        line,
+                    };
+                }
                 let (error, outcome) = match refusal {
-                    CallbackRefusal::Unlisted(_) => unreachable!("answered above"),
+                    CallbackRefusal::Unlisted(_) | CallbackRefusal::Contest(_) => {
+                        unreachable!("answered above")
+                    }
                     CallbackRefusal::Refused(r) => (
                         map_app_error(AppError::WebSignIn(r), ErrorContext::Write),
                         r.reason(),

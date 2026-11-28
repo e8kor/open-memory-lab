@@ -29,6 +29,7 @@ fn grant(n: u128, node: Uuid, role: Role, deny: &[Uuid]) -> Grant {
         role,
         deny: deny.to_vec(),
         covers: Covers::Subtree,
+        create: false,
     }
 }
 
@@ -333,6 +334,7 @@ fn an_admin_minting_an_operator_key_is_issuer_ceiling_naming_the_issuable_roles(
                 Role::Submitter,
                 Role::Reviewer,
                 Role::Admin,
+                Role::Maintenance,
             ],
             grant_index: None,
         })
@@ -366,6 +368,7 @@ fn the_key_role_ceiling_answers_before_grant_admissibility() {
                 Role::Submitter,
                 Role::Reviewer,
                 Role::Admin,
+                Role::Maintenance,
             ],
             grant_index: None,
         })
@@ -1093,6 +1096,7 @@ proptest! {
                 role: *role,
                 deny: deny.iter().map(|&d| node_id(d)).collect(),
                 covers: Covers::Subtree,
+                create: false,
             })
             .collect();
         let denials: Vec<KeyDenial> = denial_nodes

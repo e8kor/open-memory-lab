@@ -134,6 +134,7 @@ fn grant(node: Uuid, role: Role) -> GrantRequest {
         role,
         deny: Vec::new(),
         covers: Covers::Subtree,
+        create: false,
     }
 }
 
@@ -179,6 +180,8 @@ fn issue_req(role: Role, principal: &str, grants: Vec<GrantRequest>) -> IssueKey
         guardrail_scope: None,
         expiry: None,
         requests_per_minute: None,
+        person: None,
+        create_workspaces: Vec::new(),
     }
 }
 
@@ -191,9 +194,179 @@ async fn issue_with(
     principal: &str,
     grants: Vec<GrantRequest>,
 ) -> IssuedKey {
-    app.issue_key(admin, &issue_req(role, principal, grants))
+    if role == Role::Admin {
+        return linked_admin_key(app, admin, principal).await;
+    }
+    let issued = app
+        .issue_key(admin, &issue_req(role, principal, grants))
         .await
-        .expect("issue key")
+        .expect("issue key");
+    if role == Role::Reviewer {
+        counted_as(app, admin, &issued, principal).await;
+    }
+    issued
+}
+
+/// A session of `capacity` for `entry`, opened now.
+async fn session_of(
+    app: &TestApp,
+    entry: &oml_app::types::WebEntry,
+    capacity: oml_app::app::Capacity,
+) -> oml_app::app::Caller {
+    let token = app
+        .web_session_open(entry, 3600, None)
+        .await
+        .expect("a session")
+        .token;
+    let session = app
+        .web_session(&token)
+        .await
+        .expect("a read")
+        .expect("a live session");
+    app.web_caller(&session, capacity)
+        .await
+        .expect("the session key")
+}
+
+/// `issued`, a person's reviewer key, linked to the person its principal
+/// names and accepted from that person's session, so it counts as a
+/// person: an instruction verdict and a ladder ratification need one
+/// (ADR-0097 d12, d17).
+async fn counted_as(app: &TestApp, admin: &str, issued: &IssuedKey, principal: &str) {
+    let principal: String = principal
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let principal = principal.as_str();
+    let ops = ops_person(app, admin).await;
+    let email =
+        oml_app::domain::web::Email::parse(&format!("{principal}@example.com")).expect("an email");
+    let entry = match app
+        .list_web_emails(admin, None, 500)
+        .await
+        .expect("entries")
+        .into_iter()
+        .find(|e| e.user.as_str() == principal)
+    {
+        Some(entry) => entry,
+        None => {
+            app.allow_web_email(
+                admin,
+                &oml_app::types::WebEmailRequest {
+                    email,
+                    user: name(principal),
+                    admin: false,
+                },
+            )
+            .await
+            .expect("the person's entry")
+            .0
+        }
+    };
+    app.web_ensure_keys(&entry)
+        .await
+        .expect("the person's keys");
+    let linker = session_of(app, &ops, oml_app::app::Capacity::Admin).await;
+    app.link_key_to_person(
+        oml_app::types::Bearer::Session(&linker),
+        issued.key_id.into(),
+        &name(principal),
+        Some("the person holds this key"),
+    )
+    .await
+    .expect("the key is linked");
+    let web = session_of(app, &entry, oml_app::app::Capacity::Web).await;
+    app.accept_key_link(oml_app::types::Bearer::Session(&web), issued.key_id.into())
+        .await
+        .expect("the person accepts the link");
+}
+
+/// The tenant's one admin person, with session keys: the bootstrap's
+/// person where it named one, else `ops`, so the tenant stays `sole_admin`;
+/// every fixture admin key belongs to them (ADR-0097 d10, d21).
+async fn ops_person(app: &TestApp, admin: &str) -> oml_app::types::WebEntry {
+    let email = oml_app::domain::web::Email::parse("ops@example.com").expect("an email");
+    if let Some(entry) = app
+        .list_web_emails(admin, None, 100)
+        .await
+        .expect("entries")
+        .into_iter()
+        .find(|e| e.admin && !e.pending)
+    {
+        app.web_ensure_keys(&entry)
+            .await
+            .expect("the person's keys");
+        return entry;
+    }
+    let (entry, _) = app
+        .allow_web_email(
+            admin,
+            &oml_app::types::WebEmailRequest {
+                email,
+                user: name("ops"),
+                admin: true,
+            },
+        )
+        .await
+        .expect("ops's admin entry");
+    app.web_ensure_keys(&entry).await.expect("ops's keys");
+    entry
+}
+
+/// `req` as an admin key of `ops`: `used_by: person`, `person: ops`.
+fn ops_admin(req: IssueKeyRequest) -> IssueKeyRequest {
+    IssueKeyRequest {
+        used_by: Some(UsedBy::Person),
+        person: Some(name("ops")),
+        ..req
+    }
+}
+
+/// An admin key belonging to `ops`, its link accepted from ops's own
+/// session: every admin key belongs to a person and authenticates once
+/// that person accepts its link (ADR-0097 d21).
+async fn linked_admin_key(app: &TestApp, admin: &str, principal: &str) -> IssuedKey {
+    linked_admin_key_as(app, admin, issue_req(Role::Admin, principal, Vec::new())).await
+}
+
+/// [`linked_admin_key`] for `req`.
+async fn linked_admin_key_as(app: &TestApp, admin: &str, req: IssueKeyRequest) -> IssuedKey {
+    let entry = ops_person(app, admin).await;
+    let issued = app
+        .issue_key_with_reason(
+            admin,
+            &IssueKeyRequest {
+                person: Some(entry.user.clone()),
+                ..ops_admin(req)
+            },
+            Some("a fixture admin key"),
+        )
+        .await
+        .expect("an admin key");
+    let token = app
+        .web_session_open(&entry, 3600, None)
+        .await
+        .expect("a session")
+        .token;
+    let session = app
+        .web_session(&token)
+        .await
+        .expect("a read")
+        .expect("a live session");
+    let web = app
+        .web_caller(&session, oml_app::app::Capacity::Web)
+        .await
+        .expect("ops-web");
+    app.accept_key_link(oml_app::types::Bearer::Session(&web), issued.key_id.into())
+        .await
+        .expect("ops accepts the link");
+    issued
 }
 
 /// The common fixture: a key whose one grant is its own role on `node`.
@@ -444,10 +617,17 @@ async fn happy_path_end_to_end() {
     assert_eq!(successor.memory.replaces, Some(memory_id));
 
     // The whole chain verifies: genesis, root, admin key, crew, three keys
-    // of one grant each (a key.issued and a grant.issued apiece), submit,
-    // approve, promote, the successor's submission = 14 events.
+    // of one grant each (an admin.act, a key.issued and a grant.issued
+    // apiece; ADR-0097 d2), the crew's create with its admin act, submit,
+    // approve, promote, the successor's submission = 18 events; and 23 more
+    // that make the reviewer key count as a person, as an instruction
+    // verdict and a ladder ratification need (ADR-0097 d12): the admin
+    // person's and the reviewer's entries with their session keys, the
+    // link (its consent act and `key.linked_person`, ADR-0097 d7) and its
+    // acceptance; and the server issuer's issuance and revocation, the
+    // first time a session key is issued (d18).
     let head = app.verify_chain(admin).await.expect("verify chain");
-    assert_eq!(head.seq, 14);
+    assert_eq!(head.seq, 44);
     assert_eq!(head.tenant_id, boot.tenant_id);
 
     // The reader's tail serves only what it may see, ascending, with
@@ -470,7 +650,7 @@ async fn happy_path_end_to_end() {
             event_types::LIFECYCLE_PROMOTE
         ]
     );
-    assert_eq!((tail.head_seq, tail.next_after_seq), (14, 14));
+    assert_eq!((tail.head_seq, tail.next_after_seq), (44, 44));
     let promote = &tail.events[1];
     assert!(!promote.names_actor, "the tail names no reviewer");
     assert!(
@@ -699,8 +879,8 @@ async fn idempotent_submit_replays_the_first_result() {
         .await
         .expect("verify");
     assert_eq!(
-        head.seq, 7,
-        "replay journalled nothing: genesis, root, admin key, crew, the writer's key and grant, 1 submit"
+        head.seq, 9,
+        "replay journalled nothing: genesis, root, admin key, crew and its admin act, the writer's admin act, key and grant, 1 submit"
     );
 
     // Same key, different request: refused, never silently honored.
@@ -1448,6 +1628,7 @@ async fn a_reviewer_is_served_only_held_rows_inside_its_reviewer_grants() {
                 role: Role::Reviewer,
                 deny: vec![masked.into()],
                 covers: Covers::Subtree,
+                create: false,
             },
             grant(other, Role::Reader),
         ],
@@ -2105,6 +2286,7 @@ async fn a_default_no_grant_covers_is_refused() {
         role: Role::Submitter,
         deny: vec![masked.into()],
         covers: Covers::Subtree,
+        create: false,
     };
     for default in [sibling, masked, boot.root_workspace_id] {
         let err = app
@@ -2257,6 +2439,7 @@ async fn issuance_refuses_in_the_issuance_order_and_journals_nothing() {
             role: Role::Submitter,
             deny: vec![Uuid::from_u128(0xDEAD).into()],
             covers: Covers::Subtree,
+            create: false,
         },
     ] {
         let err = app
@@ -2279,6 +2462,7 @@ async fn issuance_refuses_in_the_issuance_order_and_journals_nothing() {
                         role: Role::Submitter,
                         deny: vec![sibling.into()],
                         covers: Covers::Subtree,
+                        create: false,
                     },
                 ],
             ),
@@ -2348,6 +2532,7 @@ async fn issuance_journals_the_key_then_each_grant_with_its_own_seq_as_its_epoch
                 role: Role::Submitter,
                 deny: vec![sub.into()],
                 covers: Covers::Subtree,
+                create: false,
             },
             grant(crew, Role::Reader),
         ],
@@ -2372,9 +2557,15 @@ async fn issuance_journals_the_key_then_each_grant_with_its_own_seq_as_its_epoch
     let at = |seq: u64| &tail[usize::try_from(seq - 1).expect("seq")].envelope;
     let key_issued = at(issued.access.issued_seq);
     assert_eq!(key_issued.event_type, event_types::KEY_ISSUED);
+    // The admin act the issuance is journals first, and every effect names
+    // it (ADR-0097 d2).
+    let act = at(issued.access.issued_seq - 1);
+    assert_eq!(act.event_type, event_types::ADMIN_ACT);
+    let act_id = act.payload["act_id"].clone();
     assert_eq!(
         key_issued.payload,
         serde_json::json!({
+            "act_id": act_id,
             "key_id": issued.key_id.to_string(),
             "role": "contributor",
             "principal": "crew/agent-7",
@@ -2412,6 +2603,7 @@ async fn issuance_journals_the_key_then_each_grant_with_its_own_seq_as_its_epoch
                     .collect::<Vec<_>>(),
                 "covers": "subtree",
                 "epoch": record.epoch,
+                "act_id": act_id,
             })
         );
     }
@@ -2444,46 +2636,25 @@ async fn a_failed_grant_commit_discloses_no_key_value() {
         .unwrap_err();
     assert!(matches!(err, AppError::Store(_)), "{err:?}");
 
-    // The key.issued that committed is followed by its revocation over the
-    // fixed reason, and by no grant.
+    // An admin's issuance is one act: its admin.act, key.issued and grants
+    // commit as one chain, so a refused grant journals none of them
+    // (ADR-0097 d2, d30).
     let tail = journal(&store, boot.tenant_id).await;
-    let types: Vec<&str> = tail
-        .iter()
-        .skip(4)
-        .map(|e| e.envelope.event_type.as_str())
-        .collect();
     assert_eq!(
-        types,
-        vec![event_types::KEY_ISSUED, event_types::KEY_REVOKED],
-        "genesis, root, admin key and crew, then the failed issuance"
+        tail.len(),
+        5,
+        "genesis, root, admin key, the crew and its admin act, and nothing of the failed issuance"
     );
-    let failed_key = tail[4].envelope.payload["key_id"].clone();
-    assert_eq!(
-        tail[5].envelope.payload,
-        serde_json::json!({
-            "key_id": failed_key,
-            "revoked_by_key_id": boot.admin_key.key_id.to_string(),
-            "reason_digest": sha256_digest_string(b"issuance_incomplete"),
-        })
-    );
-    let key_id = Uuid::parse_str(failed_key.as_str().expect("key id")).expect("uuid");
-    let access = store
-        .key_access(boot.tenant_id, key_id)
-        .await
-        .expect("read")
-        .expect("the revoked key stays as history");
-    assert!(access.grants.is_empty(), "no grant was stored");
 
     // The refusal was one-shot: the next issuance completes.
     issue(&app, admin, Role::Reader, "rhea", crew).await;
 }
 
-/// A key whose issuance failed after its `key.issued` keeps its name, so the
-/// key read answers it by that name as history, with the `at` of the
-/// `key.revoked` that followed as its revocation time (roles-and-keys.md
-/// issuance order; ADR-0026 d10).
+/// An admin's issuance whose grant is refused leaves no key behind: the
+/// one chain of its act journals nothing, and its name resolves to nothing
+/// (ADR-0097 d2, d30; ADR-0026 d10).
 #[tokio::test]
-async fn a_key_whose_issuance_failed_part_way_reads_back_by_name_revoked_at_its_key_revoked() {
+async fn an_admin_issuance_whose_grant_is_refused_leaves_no_key() {
     let store = MemStore::new().refusing_next_commit_of(event_types::GRANT_ISSUED);
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
@@ -2496,21 +2667,12 @@ async fn a_key_whose_issuance_failed_part_way_reads_back_by_name_revoked_at_its_
     app.issue_key(admin, &req)
         .await
         .expect_err("the grant's commit is refused");
-    let tail = journal(&store, boot.tenant_id).await;
-    let revocation = tail.last().expect("a chain");
-    assert_eq!(revocation.envelope.event_type, event_types::KEY_REVOKED);
-
-    let detail = app
+    let err = app
         .key(admin, Reference::Name(req.name.clone()))
         .await
-        .expect("a revoked key's name still resolves");
-    assert_eq!(detail.key.name, Some(req.name.clone()));
-    assert_eq!(
-        detail.key.revoked_at,
-        Some(revocation.envelope.at.clone()),
-        "the key.revoked's at, not the key.issued's"
-    );
-    assert_ne!(revocation.envelope.at, tail[tail.len() - 2].envelope.at);
+        .unwrap_err();
+    assert!(matches!(err, AppError::NotFound), "{err:?}");
+    let _ = crew;
 }
 
 // ---------------------------------------------------------------------------
@@ -2620,6 +2782,7 @@ async fn workspace_info_lists_only_readable_children() {
             role: Role::Reader,
             deny: vec![sealed.into()],
             covers: Covers::Subtree,
+            create: false,
         }],
     )
     .await;
@@ -2975,9 +3138,16 @@ async fn a_workspace_names_its_crew_record_by_name_and_the_read_serves_the_recor
         updated.envelope.event_type,
         event_types::WORKSPACE_CREW_UPDATED
     );
+    // A workspace's crew is an admin act, whose act_id the effect names
+    // (ADR-0097 d2).
+    assert!(updated.envelope.payload["act_id"].is_string());
     assert_eq!(
         updated.envelope.payload,
-        json!({ "workspace_id": bare.to_string(), "crew_id": crew.crew_id.to_string() })
+        json!({
+            "workspace_id": bare.to_string(),
+            "crew_id": crew.crew_id.to_string(),
+            "act_id": updated.envelope.payload["act_id"],
+        })
     );
 }
 
@@ -3017,8 +3187,12 @@ async fn a_crew_update_changes_its_charter_and_manager_and_never_its_name() {
             "charter_uri": Value::Null,
             "external_manager": "crewd.example.com",
             "created_by_key_id": boot.admin_key.key_id.to_string(),
+            // A crew is an admin act, whose act_id the effect names
+            // (ADR-0097 d2).
+            "act_id": created.envelope.payload["act_id"],
         })
     );
+    assert!(created.envelope.payload["act_id"].is_string());
 
     let updated = app
         .update_crew(
@@ -3052,6 +3226,7 @@ async fn a_crew_update_changes_its_charter_and_manager_and_never_its_name() {
             "charter_uri": "https://crews.example.com/metals/charter.md",
             "external_manager": "crewd.example.com",
             "updated_by_key_id": boot.admin_key.key_id.to_string(),
+            "act_id": event.envelope.payload["act_id"],
         }),
         "the full new values"
     );
@@ -6064,16 +6239,15 @@ async fn a_global_denial_on_an_admin_key_is_refused_naming_key() {
     let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = &boot.admin_key.value;
-    let second = app
-        .issue_key(
-            admin,
-            &IssueKeyRequest {
-                name: name("second-admin"),
-                ..issue_req(Role::Admin, "bob-admin", Vec::new())
-            },
-        )
-        .await
-        .expect("a second admin key");
+    let second = linked_admin_key_as(
+        &app,
+        admin,
+        IssueKeyRequest {
+            name: name("second-admin"),
+            ..issue_req(Role::Admin, "bob-admin", Vec::new())
+        },
+    )
+    .await;
     let head = journal(&store, boot.tenant_id).await.len();
     for key in [second.key_id.into(), by_name("second-admin")] {
         let err = app.deny_key(admin, key, by_name("crew")).await.unwrap_err();
@@ -6471,6 +6645,9 @@ async fn operator_key(store: &MemStore, tenant: Uuid) -> String {
         requests_per_minute: None,
         linked_user: None,
         link_pending: None,
+        pending_act: None,
+        suspended: None,
+        issuer_person: None,
     };
     seal_onto(
         store,
@@ -6608,21 +6785,23 @@ async fn a_connector_key_is_issued_with_a_connect_code_and_no_value() {
     assert_eq!(
         types,
         [
+            event_types::ADMIN_ACT,
             event_types::KEY_ISSUED,
             event_types::GRANT_ISSUED,
             event_types::GRANT_ISSUED,
             event_types::CONNECTION_CODE_ISSUED,
         ]
     );
-    let key_issued = &events[head].envelope;
+    let act_id = events[head].envelope.payload["act_id"].clone();
+    let key_issued = &events[head + 1].envelope;
     assert_eq!(key_issued.payload["credential"], "connection");
     assert_eq!(issued.access.issued_seq, key_issued.seq);
     let grant_seqs: Vec<u64> = issued.access.grants.iter().map(|g| g.epoch).collect();
     assert_eq!(
         grant_seqs,
-        [events[head + 1].envelope.seq, events[head + 2].envelope.seq]
+        [events[head + 2].envelope.seq, events[head + 3].envelope.seq]
     );
-    let code_issued = &events[head + 3].envelope;
+    let code_issued = &events[head + 4].envelope;
     assert_eq!(
         code_issued.payload,
         json!({
@@ -6631,6 +6810,7 @@ async fn a_connector_key_is_issued_with_a_connect_code_and_no_value() {
             "issued_by_key_id": admin.key_id.to_string(),
             "expires_at": code.expires_at.as_str(),
             "voids_code_id": Value::Null,
+            "act_id": act_id,
         })
     );
     let ttl = code.expires_at.unix_micros() - code_issued.at.unix_micros();
@@ -6666,15 +6846,16 @@ async fn an_admin_or_operator_role_is_refused_a_connect_code_by_its_reason() {
     let app = oauth_app_over(store.clone());
     let (boot, _) = tenant(&app).await;
     let operator = operator_key(&store, boot.tenant_id).await;
+    ops_person(&app, &boot.admin_key.value).await;
     let head = journal(&store, boot.tenant_id).await.len();
 
     let err = app
         .issue_key(
             &boot.admin_key.value,
-            &IssueKeyRequest {
+            &ops_admin(IssueKeyRequest {
                 connect_code: true,
                 ..issue_req(Role::Admin, "second-admin", Vec::new())
-            },
+            }),
         )
         .await
         .unwrap_err();
@@ -7186,8 +7367,11 @@ async fn connections_are_listed_and_revoked_with_oauth_issuer_unset() {
             "revoked_by_key_id": admin.key_id.to_string(),
             "cause": "admin",
             "reason_digest": sha256_digest_string(b"lost phone"),
+            // A connection's revocation is an admin act (ADR-0097 d2).
+            "act_id": event.payload["act_id"],
         })
     );
+    assert!(event.payload["act_id"].is_string());
     let listed = app
         .list_connections(&admin.value, issued.key_id.into())
         .await
@@ -9392,6 +9576,7 @@ async fn a_key_of_an_account_under_a_quota_is_held_to_both_rates_and_the_lower_r
                             role: Role::Submitter,
                             deny: Vec::new(),
                             covers: Covers::Subtree,
+                            create: false,
                         }],
                     )
                 },
@@ -9533,6 +9718,7 @@ async fn an_admin_key_moves_an_expired_keys_date_later_and_the_key_authenticates
     assert_eq!(
         set.payload,
         json!({
+            "act_id": set.payload["act_id"].clone(),
             "key_id": key.key_id.to_string(),
             "set_by_key_id": boot.admin_key.key_id.to_string(),
             "expiry": KEY_EXPIRY_LATER,
@@ -9617,10 +9803,7 @@ async fn no_key_extends_its_own_expiry_or_raises_its_own_rate() {
         before_admin,
         "a refused issuance journals nothing"
     );
-    let agent_admin = app
-        .issue_key(admin, &issue_req(Role::Admin, "agent-admin", Vec::new()))
-        .await
-        .expect("an admin key an agent holds, with no limit");
+    let agent_admin = linked_admin_key(&app, admin, "agent-admin").await;
     let head = journal(&store, boot.tenant_id).await.len();
 
     for agent in &agents {
@@ -9720,10 +9903,7 @@ async fn an_admin_key_is_issued_with_no_limit_and_given_none_by_another_admin_ke
     );
     assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
 
-    let second = app
-        .issue_key(first, &issue_req(Role::Admin, "second-admin", Vec::new()))
-        .await
-        .expect("a second admin key");
+    let second = linked_admin_key(&app, first, "second-admin").await;
     let head = journal(&store, boot.tenant_id).await.len();
     // Its second call, the clear, names an admin key and is refused.
     for change in [
@@ -9834,6 +10014,46 @@ async fn a_limits_change_on_a_session_key_a_revoked_key_or_no_key_is_refused_by_
         .unwrap_err();
     assert!(matches!(absent, AppError::NotFound), "{absent:?}");
     assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+}
+
+/// A connector key cut off by a denial on `universe` and not expired is
+/// refused a connect code by name, as an expired one is: the connection it
+/// would open reads and writes nothing (#353).
+#[tokio::test]
+async fn a_cut_off_unexpired_connector_key_is_refused_a_connect_code() {
+    let store = MemStore::new();
+    let (app, _clock) = oauth_app_with_clock(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let issued = app
+        .issue_key(
+            admin,
+            &connector_req("crew/claude-cut", vec![grant(crew, Role::Submitter)]),
+        )
+        .await
+        .expect("a connector key");
+    app.deny_key(
+        admin,
+        Reference::Id(issued.key_id),
+        Reference::Id(boot.root_workspace_id),
+    )
+    .await
+    .expect("cut off on universe");
+    let head = journal(&store, boot.tenant_id).await.len();
+    let err = app
+        .mint_connect_code(admin, Reference::Id(issued.key_id))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        connect_refused(&err),
+        Some(ConnectRefused::CutOff),
+        "{err:?}"
+    );
+    assert_eq!(
+        journal(&store, boot.tenant_id).await.len(),
+        head,
+        "a refusal journals nothing"
+    );
 }
 
 /// A connection is exactly its key: from the connector key's expiry on its
@@ -12245,7 +12465,9 @@ async fn a_validated_workspaces_crew_record_can_still_be_updated() {
     assert_eq!(
         types,
         [
+            event_types::ADMIN_ACT,
             event_types::WORKSPACE_CREW_UPDATED,
+            event_types::ADMIN_ACT,
             event_types::CREW_UPDATED
         ]
     );
@@ -15493,6 +15715,7 @@ async fn a_connections_whoami_costs_one_request_of_its_keys_rate() {
                             role: Role::Submitter,
                             deny: Vec::new(),
                             covers: Covers::Subtree,
+                            create: false,
                         }],
                     )
                 },
@@ -15540,7 +15763,7 @@ fn metered(probe: TestApp, tenant_id: Uuid, quotas: oml_app::domain::signup::Quo
         .with_signup(oml_app::types::SignupPolicy {
             mode: oml_app::domain::signup::SignupMode::Open,
             tenant_id,
-            issuer: name("root-admin"),
+            issuer: Some(name("root-admin")),
             terms_version: "2026-11-06".to_owned(),
             terms_url: "https://example.com/terms".to_owned(),
             privacy_url: "https://example.com/privacy".to_owned(),
@@ -15558,6 +15781,7 @@ async fn account_keys(app: &TestApp, admin: &str) -> (IssuedKey, IssuedKey) {
         role,
         deny: Vec::new(),
         covers: Covers::Subtree,
+        create: false,
     };
     let writer = app
         .issue_key(
@@ -15898,7 +16122,7 @@ async fn metered_on_a_clock(
         .with_signup(oml_app::types::SignupPolicy {
             mode: oml_app::domain::signup::SignupMode::Open,
             tenant_id: tenant_id.unwrap_or(boot.tenant_id),
-            issuer: name("root-admin"),
+            issuer: Some(name("root-admin")),
             terms_version: "2026-11-06".to_owned(),
             terms_url: "https://example.com/terms".to_owned(),
             privacy_url: "https://example.com/privacy".to_owned(),
@@ -17129,7 +17353,7 @@ async fn two_promoted_versions() -> (
 #[tokio::test]
 async fn a_demoted_version_is_not_served_and_keeps_its_text() {
     let (store, app, boot, writer, reader, _v1, v2) = two_promoted_versions().await;
-    app.demote_version(&boot.admin_key.value, v2)
+    demote(&app, &boot.admin_key.value, v2)
         .await
         .expect("demote the tip");
     assert!(!hit_ids(&app, &reader.value, "settles").await.contains(&v2));
@@ -17154,25 +17378,18 @@ async fn a_demoted_version_is_not_served_and_keeps_its_text() {
     assert_eq!(own.memory.status, MemoryStatus::Demoted);
     let types = types_since(&store, boot.tenant_id, 0).await;
     assert_eq!(
-        types.last().map(String::as_str),
-        Some(event_types::LIFECYCLE_DEMOTE)
+        types[types.len() - 2..],
+        [event_types::LIFECYCLE_DEMOTE, event_types::ADMIN_FIX]
     );
 }
 
 #[tokio::test]
 async fn demoting_the_tip_serves_the_previous_promoted_version() {
     let (store, app, boot, _writer, reader, v1, v2) = two_promoted_versions().await;
-    let demotion = app
-        .demote_version(&boot.admin_key.value, v2)
+    let demotion = demote(&app, &boot.admin_key.value, v2)
         .await
         .expect("demote the tip");
-    assert_eq!(
-        demotion.restored,
-        Some(VersionRef {
-            artifact_id: v1,
-            version: 1
-        })
-    );
+    assert_eq!(demotion.served_id, Some(v1));
     assert_eq!(hit_ids(&app, &reader.value, "canary").await, vec![v1]);
     assert_eq!(listed(&app, &reader.value, "crew").await, vec![v1]);
     assert!(app.get_memory(&reader.value, v1).await.is_ok());
@@ -17186,10 +17403,9 @@ async fn demoting_the_tip_serves_the_previous_promoted_version() {
         .expect("tip")
         .expect("a tip");
     assert_eq!(tip.memory_id, v1);
-    let event = journal(&store, boot.tenant_id)
-        .await
-        .pop()
-        .expect("an event");
+    let mut events = journal(&store, boot.tenant_id).await;
+    events.pop().expect("the admin.fix");
+    let event = events.pop().expect("an event");
     assert_eq!(event.envelope.event_type, event_types::LIFECYCLE_DEMOTE);
     assert_eq!(event.envelope.payload["artifact_id"], json!(v2.to_string()));
     assert_eq!(
@@ -17213,7 +17429,7 @@ async fn demotion_workspace(store: &MemStore, tenant: Uuid, id: Uuid) -> Uuid {
 async fn demoting_the_only_promoted_version_serves_nothing_for_the_claim() {
     let store = MemStore::new();
     let app = app_over(store.clone());
-    let (boot, crew) = tenant(&app).await;
+    let (boot, crew) = fix_tenant(&app).await;
     let (writer, reader, reviewer) = crew_keys(&app, &boot.admin_key.value, crew).await;
     let only = promoted(
         &app,
@@ -17222,11 +17438,10 @@ async fn demoting_the_only_promoted_version_serves_nothing_for_the_claim() {
         &submit_req("dm-only", "the pager rota starts monday"),
     )
     .await;
-    let demotion = app
-        .demote_version(&boot.admin_key.value, only)
+    let demotion = demote(&app, &boot.admin_key.value, only)
         .await
         .expect("demote");
-    assert_eq!(demotion.restored, None);
+    assert_eq!(demotion.served_id, None);
     assert!(hit_ids(&app, &reader.value, "pager rota").await.is_empty());
     assert!(listed(&app, &reader.value, "crew").await.is_empty());
     assert!(
@@ -17241,11 +17456,10 @@ async fn demoting_the_only_promoted_version_serves_nothing_for_the_claim() {
 #[tokio::test]
 async fn demoting_a_superseded_version_moves_no_tip() {
     let (store, app, boot, _writer, reader, v1, v2) = two_promoted_versions().await;
-    let demotion = app
-        .demote_version(&boot.admin_key.value, v1)
+    let demotion = demote(&app, &boot.admin_key.value, v1)
         .await
         .expect("any approved version is demotable");
-    assert_eq!(demotion.restored, None);
+    assert_eq!(demotion.served_id, None);
     assert_eq!(hit_ids(&app, &reader.value, "canary").await, vec![v2]);
     let v1_row = store
         .memory(boot.tenant_id, v1)
@@ -17255,11 +17469,10 @@ async fn demoting_a_superseded_version_moves_no_tip() {
     assert_eq!(v1_row.status, MemoryStatus::Demoted);
     // A demotion of the tip now returns nothing: the version below is
     // demoted.
-    let tip = app
-        .demote_version(&boot.admin_key.value, v2)
+    let tip = demote(&app, &boot.admin_key.value, v2)
         .await
         .expect("demote the tip");
-    assert_eq!(tip.restored, None);
+    assert_eq!(tip.served_id, None);
     assert!(hit_ids(&app, &reader.value, "canary").await.is_empty());
 }
 
@@ -17267,7 +17480,7 @@ async fn demoting_a_superseded_version_moves_no_tip() {
 async fn only_a_promoted_version_can_be_demoted_and_only_by_an_admin_key() {
     let store = MemStore::new();
     let app = app_over(store.clone());
-    let (boot, crew) = tenant(&app).await;
+    let (boot, crew) = fix_tenant(&app).await;
     let (writer, _reader, reviewer) = crew_keys(&app, &boot.admin_key.value, crew).await;
     let held = app
         .submit_memory(&writer.value, &submit_req("dm-held", "the build is green"))
@@ -17277,10 +17490,8 @@ async fn only_a_promoted_version_can_be_demoted_and_only_by_an_admin_key() {
         .memory_id;
     let before = journal(&store, boot.tenant_id).await.len();
     assert!(matches!(
-        app.demote_version(&boot.admin_key.value, held)
-            .await
-            .unwrap_err(),
-        AppError::Transition(_)
+        demote(&app, &boot.admin_key.value, held).await.unwrap_err(),
+        AppError::FixTargetNotPromoted { .. }
     ));
     assert_eq!(
         journal(&store, boot.tenant_id).await.len(),
@@ -17297,16 +17508,16 @@ async fn only_a_promoted_version_can_be_demoted_and_only_by_an_admin_key() {
     let mid = journal(&store, boot.tenant_id).await.len();
     for key in [&writer.value, &reviewer.value] {
         assert!(matches!(
-            app.demote_version(key, served).await.unwrap_err(),
-            AppError::VerbCeiling { verb: "demote", .. }
+            demote(&app, key, served).await.unwrap_err(),
+            AppError::VerbCeiling { verb: "fix", .. }
         ));
         assert!(matches!(
-            app.erase_claim(key, served).await.unwrap_err(),
-            AppError::VerbCeiling { verb: "erase", .. }
+            erase(&app, key, served).await.unwrap_err(),
+            AppError::VerbCeiling { verb: "fix", .. }
         ));
     }
     assert!(matches!(
-        app.demote_version(&boot.admin_key.value, Uuid::from_u128(7))
+        demote(&app, &boot.admin_key.value, Uuid::from_u128(7))
             .await
             .unwrap_err(),
         AppError::NotFound
@@ -17314,72 +17525,39 @@ async fn only_a_promoted_version_can_be_demoted_and_only_by_an_admin_key() {
     assert_eq!(journal(&store, boot.tenant_id).await.len(), mid);
 }
 
-/// The version a demotion read as the one to restore is demoted by a
-/// concurrent request before the demotion commits: the store's
-/// compare-and-set refuses it, and nothing of it is journalled.
+/// A concurrent fix demotes v1 just before the fix of v2 reads the
+/// journal's head: the fix act reads its claim after that head, so it sees
+/// v1 demoted and restores nothing, and the claim serves no version.
 #[tokio::test]
-async fn a_demotion_whose_claim_moved_in_the_store_journals_nothing() {
+async fn a_demotion_that_reads_after_a_racing_demotion_restores_nothing() {
     let (store, app, boot, _writer, _reader, v1, v2) = two_promoted_versions().await;
     let app = std::sync::Arc::new(app);
     let racing = std::sync::Arc::clone(&app);
     let admin = boot.admin_key.value.clone();
-    let before = journal(&store, boot.tenant_id).await.len();
     store.before_next_head_read(async move {
-        racing
-            .demote_version(admin.as_str(), v1)
+        demote(&racing, admin.as_str(), v1)
             .await
             .expect("the racing demotion of v1");
     });
-    assert!(matches!(
-        app.demote_version(&boot.admin_key.value, v2)
+    let fix = demote(&app, &boot.admin_key.value, v2)
+        .await
+        .expect("the demotion of v2");
+    assert_eq!(fix.served_id, None, "v1 is demoted, so nothing is restored");
+    for id in [v1, v2] {
+        let row = store
+            .memory(boot.tenant_id, id)
             .await
-            .unwrap_err(),
-        AppError::Store(StoreError::TipMoved { .. })
-    ));
-    let events = journal(&store, boot.tenant_id).await;
-    assert_eq!(events.len(), before + 1, "only the racing demotion");
-    assert_eq!(
-        events.last().map(|e| &e.envelope.payload["artifact_id"]),
-        Some(&json!(v1.to_string()))
-    );
-    let row = |id| {
-        let store = store.clone();
-        let tenant = boot.tenant_id;
-        async move {
-            store
-                .memory(tenant, id)
-                .await
-                .expect("memory")
-                .expect("row")
-        }
-    };
-    let tip = row(v2).await;
-    assert_eq!(tip.status, MemoryStatus::Promoted, "v2 stays promoted");
-    assert!(tip.is_tip, "and the tip");
-    assert_eq!(row(v1).await.status, MemoryStatus::Demoted);
+            .expect("memory")
+            .expect("row");
+        assert_eq!(row.status, MemoryStatus::Demoted);
+        assert!(!row.is_tip);
+    }
 }
 
 #[tokio::test]
 async fn an_erased_version_serves_no_text_to_recall_the_listing_or_get() {
     let (store, app, boot, writer, reader, v1, v2) = two_promoted_versions().await;
-    let erasure = app
-        .erase_claim(&boot.admin_key.value, v2)
-        .await
-        .expect("erase");
-    assert_eq!(
-        erasure.erased,
-        vec![
-            VersionRef {
-                artifact_id: v1,
-                version: 1
-            },
-            VersionRef {
-                artifact_id: v2,
-                version: 2
-            }
-        ],
-        "an erase takes every version of the claim"
-    );
+    erase(&app, &boot.admin_key.value, v2).await.expect("erase");
     assert!(hit_ids(&app, &reader.value, "canary").await.is_empty());
     assert!(hit_ids(&app, &writer.value, "canary").await.is_empty());
     assert!(listed(&app, &reader.value, "crew").await.is_empty());
@@ -17402,19 +17580,17 @@ async fn an_erased_version_serves_no_text_to_recall_the_listing_or_get() {
         assert!(row.body_digest.starts_with("sha256:"), "the digest stays");
         assert!(!row.is_tip);
     }
-    let event = journal(&store, boot.tenant_id)
-        .await
-        .pop()
-        .expect("an event");
+    let mut events = journal(&store, boot.tenant_id).await;
+    events.pop().expect("the admin.fix");
+    let event = events.pop().expect("an event");
     assert_eq!(event.envelope.event_type, event_types::LIFECYCLE_ERASE);
     assert_eq!(
         event.envelope.payload["artifact_ids"],
-        json!([v1.to_string(), v2.to_string()])
+        json!([v1.to_string(), v2.to_string()]),
+        "an erase takes every version of the claim"
     );
     assert!(matches!(
-        app.erase_claim(&boot.admin_key.value, v1)
-            .await
-            .unwrap_err(),
+        erase(&app, &boot.admin_key.value, v1).await.unwrap_err(),
         AppError::Transition(_)
     ));
 }
@@ -17425,7 +17601,7 @@ async fn an_erased_version_serves_no_text_to_recall_the_listing_or_get() {
 async fn demoting_a_retirement_or_a_vocabulary_term_is_refused_by_name_and_journals_nothing() {
     let store = MemStore::new();
     let app = app_over(store.clone());
-    let (boot, crew) = tenant(&app).await;
+    let (boot, crew) = fix_tenant(&app).await;
     let admin = &boot.admin_key.value;
     let (writer, _reader, reviewer) = crew_keys(&app, admin, crew).await;
     let term = promoted(
@@ -17463,7 +17639,7 @@ async fn demoting_a_retirement_or_a_vocabulary_term_is_refused_by_name_and_journ
         (term, MemoryKind::Term, false),
         (retirement, MemoryKind::Memory, true),
     ] {
-        let err = app.demote_version(admin, id).await.unwrap_err();
+        let err = demote(&app, admin, id).await.unwrap_err();
         assert!(
             matches!(
                 err,
@@ -17498,7 +17674,7 @@ async fn demoting_a_retirement_or_a_vocabulary_term_is_refused_by_name_and_journ
 #[tokio::test]
 async fn demoting_a_steering_tip_serves_the_steering_version_below_it() {
     let app = app();
-    let (boot, crew) = tenant(&app).await;
+    let (boot, crew) = fix_tenant(&app).await;
     let admin = &boot.admin_key.value;
     let writer = issue(&app, admin, Role::Submitter, "wanda", crew).await;
     let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
@@ -17539,10 +17715,10 @@ async fn demoting_a_steering_tip_serves_the_steering_version_below_it() {
         )
     };
     assert_eq!(steering().await, vec![v2]);
-    let demotion = app.demote_version(admin, v2).await.expect("demote");
-    assert_eq!(demotion.restored.map(|r| r.artifact_id), Some(v1));
+    let demotion = demote(&app, admin, v2).await.expect("demote");
+    assert_eq!(demotion.served_id, Some(v1));
     assert_eq!(steering().await, vec![v1], "v1 steers again");
-    app.demote_version(admin, v1).await.expect("demote v1");
+    demote(&app, admin, v1).await.expect("demote v1");
     assert!(steering().await.is_empty(), "no steering is served");
 }
 
@@ -17550,7 +17726,7 @@ async fn demoting_a_steering_tip_serves_the_steering_version_below_it() {
 async fn an_erase_takes_the_claims_held_version_off_the_review_queue() {
     let store = MemStore::new();
     let app = app_over(store.clone());
-    let (boot, crew) = tenant(&app).await;
+    let (boot, crew) = fix_tenant(&app).await;
     let (writer, _reader, reviewer) = crew_keys(&app, &boot.admin_key.value, crew).await;
     let v1 = promoted(
         &app,
@@ -17568,9 +17744,7 @@ async fn an_erase_takes_the_claims_held_version_off_the_review_queue() {
         .expect("supersede")
         .receipt
         .memory_id;
-    app.erase_claim(&boot.admin_key.value, v1)
-        .await
-        .expect("erase");
+    erase(&app, &boot.admin_key.value, v1).await.expect("erase");
     let row = store
         .memory(boot.tenant_id, held)
         .await
@@ -17588,12 +17762,10 @@ async fn an_erase_takes_the_claims_held_version_off_the_review_queue() {
 #[tokio::test]
 async fn the_chain_verifies_after_an_erase_and_a_demotion() {
     let (_store, app, boot, _writer, _reader, v1, v2) = two_promoted_versions().await;
-    app.demote_version(&boot.admin_key.value, v2)
+    demote(&app, &boot.admin_key.value, v2)
         .await
         .expect("demote");
-    app.erase_claim(&boot.admin_key.value, v1)
-        .await
-        .expect("erase");
+    erase(&app, &boot.admin_key.value, v1).await.expect("erase");
     let head = app
         .verify_chain(&boot.admin_key.value)
         .await
@@ -18367,7 +18539,7 @@ async fn the_skill_set_pages_by_fifty_with_one_digest() {
 async fn a_demoted_or_erased_skill_is_not_offered_and_the_erasure_keeps_its_name_and_description() {
     let store = MemStore::new();
     let app = app_over(store.clone());
-    let (boot, crew) = tenant(&app).await;
+    let (boot, crew) = fix_tenant(&app).await;
     let admin = &boot.admin_key.value;
     let writer = agent(&app, admin, "wanda", crew).await;
     let reviewer = issue(&app, admin, Role::Reviewer, "dana", crew).await;
@@ -18390,10 +18562,10 @@ async fn a_demoted_or_erased_skill_is_not_offered_and_the_erasure_keeps_its_name
         offered_at(&app, &reader.value, crew, true).await,
         vec![("deploy".to_owned(), false), ("lint".to_owned(), false)]
     );
-    app.demote_version(admin.as_str(), deploy)
+    demote(&app, admin.as_str(), deploy)
         .await
         .expect("the admin demotes the skill");
-    app.erase_claim(admin.as_str(), lint)
+    erase(&app, admin.as_str(), lint)
         .await
         .expect("the admin erases the skill");
     for key in [&reader.value, &writer.value] {
@@ -18904,10 +19076,7 @@ async fn an_admin_read_without_an_investigation_is_refused() {
         "a refused read journals no admin read"
     );
     // Another admin key's open investigation is not this key's.
-    let other = app
-        .issue_key(admin, &issue_req(Role::Admin, "second-admin", Vec::new()))
-        .await
-        .expect("a second admin key");
+    let other = linked_admin_key(&app, admin, "second-admin").await;
     let theirs = app
         .open_investigation(other.value.as_str(), "their own case")
         .await
@@ -19026,9 +19195,19 @@ async fn link_person(app: &TestApp, admin: &str, key_id: Uuid, person: &str) {
         .web_caller(&sessions[0], Capacity::Admin)
         .await
         .expect("the console admin");
-    app.link_key_to_person(Bearer::Session(&ops), key_id.into(), &name(person))
-        .await
-        .expect("linked, pending");
+    // A fixture reviewer key comes linked to its principal's person
+    // (`counted_as`); the link moves to `person`.
+    let _ = app
+        .unlink_key_from_person(Bearer::Session(&ops), key_id.into())
+        .await;
+    app.link_key_to_person(
+        Bearer::Session(&ops),
+        key_id.into(),
+        &name(person),
+        Some("the person holds this key"),
+    )
+    .await
+    .expect("linked, pending");
     // The named person accepts it from their own console session (ADR-0085
     // d16, the operator's decision of 2026-11-19).
     let own = app
@@ -19038,6 +19217,37 @@ async fn link_person(app: &TestApp, admin: &str, key_id: Uuid, person: &str) {
     app.accept_key_link(Bearer::Session(&own), key_id.into())
         .await
         .expect("accepted");
+}
+
+/// A demotion through the one surface that reaches it, the admin fix act
+/// (ADR-0089 d16; #502): the fix record.
+async fn demote(
+    app: &TestApp,
+    admin: &str,
+    target: Uuid,
+) -> Result<oml_app::types::FixRecord, AppError> {
+    app.admin_fix(
+        admin,
+        &fix_req(oml_app::types::FixAct::Demote, target, None),
+    )
+    .await
+    .map(|o| o.fix().cloned().expect("a demotion is a fix"))
+}
+
+/// An erase through the admin fix act (ADR-0089 d16; #502): at once in a
+/// tenant that has only ever had one admin person (ADR-0097 d4, d10).
+async fn erase(
+    app: &TestApp,
+    admin: &str,
+    target: Uuid,
+) -> Result<oml_app::types::FixRecord, AppError> {
+    app.admin_fix(admin, &fix_req(oml_app::types::FixAct::Erase, target, None))
+        .await
+        .map(|o| {
+            o.fix()
+                .cloned()
+                .expect("an erase of a served claim is a fix")
+        })
 }
 
 fn fix_req(
@@ -19077,7 +19287,10 @@ async fn an_admin_edit_serves_at_once_marked_admin_fix_and_unconfirmed() {
             ),
         )
         .await
-        .expect("an admin edit");
+        .expect("an admin edit")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     assert_eq!(fix.state, FixState::Unconfirmed);
     let served = fix.served_id.expect("an edit serves a version");
     let got = app
@@ -19092,12 +19305,17 @@ async fn an_admin_edit_serves_at_once_marked_admin_fix_and_unconfirmed() {
     let events = journal(&store, boot.tenant_id).await;
     assert_eq!(
         types_after(&events, head),
-        ["submission.remember", "lifecycle.supersede", "admin.fix"]
+        [
+            "admin.act",
+            "submission.remember",
+            "lifecycle.supersede",
+            "admin.fix"
+        ]
     );
     let admin_fix = &events.last().expect("admin.fix").envelope.payload;
     assert_eq!(
         admin_fix["lifecycle_event_id"],
-        events[head + 1].envelope.event_id.to_string(),
+        events[head + 2].envelope.event_id.to_string(),
         "admin.fix names the lifecycle event it caused"
     );
     assert_eq!(admin_fix["reason"], fix.reason);
@@ -19106,28 +19324,19 @@ async fn an_admin_edit_serves_at_once_marked_admin_fix_and_unconfirmed() {
 }
 
 #[tokio::test]
-async fn a_fix_by_an_admin_key_not_used_by_a_person_is_refused_and_journals_nothing() {
-    use oml_app::types::FixAct;
-    let (store, app, boot, _writer, _reader, _v1, v2) = two_promoted_versions().await;
-    let service_admin = issue_with(
-        &app,
-        &boot.admin_key.value,
-        Role::Admin,
-        "svc-admin",
-        vec![],
-    )
-    .await;
+async fn an_admin_key_not_used_by_a_person_is_refused_at_issuance_and_journals_nothing() {
+    // Every admin key belongs to a person (ADR-0097 d21), so no admin key
+    // used by a service exists to take a fix.
+    let (store, app, boot, _writer, _reader, _v1, _v2) = two_promoted_versions().await;
     let head = journal(&store, boot.tenant_id).await.len();
     assert!(matches!(
-        app.admin_fix(
-            service_admin.value.as_str(),
-            &fix_req(FixAct::Demote, v2, None)
+        app.issue_key(
+            &boot.admin_key.value,
+            &issue_req(Role::Admin, "svc-admin", Vec::new()),
         )
         .await
         .unwrap_err(),
-        AppError::FixRequiresPerson {
-            reason: "not_used_by_person"
-        }
+        AppError::KeyPerson("admin_key_requires_person")
     ));
     assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
 }
@@ -19165,12 +19374,15 @@ async fn a_demotion_fix_journals_the_demotion_then_admin_fix_and_marks_the_resto
     let fix = app
         .admin_fix(&boot.admin_key.value, &fix_req(FixAct::Demote, v2, None))
         .await
-        .expect("demote");
+        .expect("demote")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     assert_eq!(fix.served_id, Some(v1));
     let events = journal(&store, boot.tenant_id).await;
     assert_eq!(
         types_after(&events, head),
-        ["lifecycle.demote", "admin.fix"]
+        ["admin.act", "lifecycle.demote", "admin.fix"]
     );
     let got = app.get_memory(&reader.value, v1).await.expect("v1 serves");
     assert_eq!(got.memory.approval.expect("approved").act(), "admin_fix");
@@ -19197,7 +19409,10 @@ async fn a_person_confirms_a_fix_and_the_served_version_reads_confirmed() {
             &fix_req(FixAct::Edit, v1, Some("the queue drains hourly")),
         )
         .await
-        .expect("edit");
+        .expect("edit")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     let listed = app.review_fixes(&reviewer.value).await.expect("list");
     assert_eq!(listed.len(), 1);
     assert!(listed[0].settles, "another person may confirm");
@@ -19251,7 +19466,10 @@ async fn a_revert_serves_the_earlier_text_as_a_server_authored_version_the_rever
             &fix_req(FixAct::Edit, v1, Some("the queue drains hourly")),
         )
         .await
-        .expect("edit");
+        .expect("edit")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     let head = journal(&store, boot.tenant_id).await.len();
     let reverted = app
         .revert_fix(&reviewer.value, fix.fix_id)
@@ -19323,7 +19541,10 @@ async fn an_erasure_is_confirmed_and_never_reverted() {
     let fix = app
         .admin_fix(&boot.admin_key.value, &fix_req(FixAct::Erase, v1, None))
         .await
-        .expect("erase");
+        .expect("erase")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     assert!(matches!(
         app.revert_fix(&reviewer.value, fix.fix_id)
             .await
@@ -19356,7 +19577,10 @@ async fn a_fix_whose_claim_moved_on_is_refused_revert_as_superseded() {
             &fix_req(FixAct::Edit, v1, Some("the queue drains hourly")),
         )
         .await
-        .expect("edit");
+        .expect("edit")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     // A second fix demotes the edit: the claim is served by v1 again, not
     // by the version the first fix made its tip.
     let served = fix.served_id.expect("served");
@@ -19365,7 +19589,10 @@ async fn a_fix_whose_claim_moved_on_is_refused_revert_as_superseded() {
         &fix_req(FixAct::Demote, served, None),
     )
     .await
-    .expect("a later demotion");
+    .expect("a later demotion")
+    .fix()
+    .cloned()
+    .expect("a fix record");
     assert!(matches!(
         app.revert_fix(&reviewer.value, fix.fix_id)
             .await
@@ -19397,7 +19624,10 @@ async fn an_admin_edit_in_a_frozen_workspace_is_refused_and_a_demotion_is_admitt
     assert_frozen(&err, crew, FrozenOp::Write);
     app.admin_fix(admin, &fix_req(FixAct::Demote, v2, None))
         .await
-        .expect("a frozen workspace admits a demotion");
+        .expect("a frozen workspace admits a demotion")
+        .fix()
+        .cloned()
+        .expect("a fix record");
 }
 
 #[tokio::test]
@@ -19452,7 +19682,10 @@ async fn every_served_hit_satisfies_the_read_path_law() {
         ),
     )
     .await
-    .expect("edit");
+    .expect("edit")
+    .fix()
+    .cloned()
+    .expect("a fix record");
     let v2 = app
         .supersede(
             &writer.value,
@@ -19467,7 +19700,10 @@ async fn every_served_hit_satisfies_the_read_path_law() {
         .expect("approve");
     app.admin_fix(&boot.admin_key.value, &fix_req(FixAct::Demote, v2, None))
         .await
-        .expect("demote");
+        .expect("demote")
+        .fix()
+        .cloned()
+        .expect("a fix record");
     let events = journal(&store, boot.tenant_id).await;
     let hits = app
         .recall(&reader.value, &recall_req("canary"))
@@ -19797,7 +20033,9 @@ async fn link_keys(app: &TestApp, admin: &str, keys: &[Uuid], person: &str) {
     use oml_app::domain::web::Email;
     use oml_app::types::{Bearer, WebEmailRequest};
     let mut sessions = Vec::new();
-    for (user, is_admin) in [(format!("ops-{person}"), true), (person.to_owned(), false)] {
+    // One console admin, `ops`, links every person's keys, so the tenant
+    // keeps one admin person and stays `sole_admin` (ADR-0097 d10).
+    for (user, is_admin) in [("ops".to_owned(), true), (person.to_owned(), false)] {
         let (entry, _) = app
             .allow_web_email(
                 admin,
@@ -19826,9 +20064,19 @@ async fn link_keys(app: &TestApp, admin: &str, keys: &[Uuid], person: &str) {
         .await
         .expect("the person's console");
     for key_id in keys {
-        app.link_key_to_person(Bearer::Session(&ops), (*key_id).into(), &name(person))
-            .await
-            .expect("linked, pending");
+        // A fixture reviewer key comes linked to its principal's person
+        // (`counted_as`); the link moves to `person`.
+        let _ = app
+            .unlink_key_from_person(Bearer::Session(&ops), (*key_id).into())
+            .await;
+        app.link_key_to_person(
+            Bearer::Session(&ops),
+            (*key_id).into(),
+            &name(person),
+            Some("the person holds this key"),
+        )
+        .await
+        .expect("linked, pending");
         app.accept_key_link(Bearer::Session(&own), (*key_id).into())
             .await
             .expect("accepted");
@@ -19839,6 +20087,8 @@ async fn link_keys(app: &TestApp, admin: &str, keys: &[Uuid], person: &str) {
 /// reader with no person, each on the crew workspace.
 struct PeopleRig {
     app: TestApp,
+    store: MemStore,
+    boot: BootstrapResult,
     crew: Uuid,
     alice_a: IssuedKey,
     alice_b: IssuedKey,
@@ -19848,7 +20098,8 @@ struct PeopleRig {
 }
 
 async fn people_rig() -> PeopleRig {
-    let app = app();
+    let store = MemStore::new();
+    let app = app_over(store.clone());
     let (boot, crew) = tenant(&app).await;
     let admin = boot.admin_key.value.clone();
     let alice_a = curator(&app, &admin, "alice/a", crew).await;
@@ -19860,6 +20111,8 @@ async fn people_rig() -> PeopleRig {
     link_keys(&app, &admin, &[bob.key_id], "bob").await;
     PeopleRig {
         app,
+        store,
+        boot,
         crew,
         alice_a,
         alice_b,
@@ -19983,6 +20236,78 @@ async fn a_pending_brief_edge_names_its_proposer_to_a_key_of_the_same_person() {
         .expect("bob ratifies");
     let ratified = listed(&r.alice_b).await;
     assert_eq!((ratified.proposed_at, ratified.proposed_by), (None, None));
+}
+
+/// A brief proposal one key of a person made is ratified by another key of
+/// that person outside the person's own root only in a `sole_admin`
+/// tenant, marked; once the tenant has had two admin persons it is
+/// `review.author_in_lineage` with `same_person`, as a verdict is (ADR-0097
+/// build notes and d17).
+#[tokio::test]
+async fn a_same_person_brief_ratification_outside_the_own_root_is_refused_or_marked_sole_admin() {
+    let r = people_rig().await;
+    let claim = promoted(
+        &r.app,
+        &r.writer.value,
+        &r.bob.value,
+        &submit_into("pb2", "the canary drains first", r.crew),
+    )
+    .await;
+    let proposal = r
+        .app
+        .propose_brief_edge(&r.alice_a.value, &brief_req(claim, r.crew), None)
+        .await
+        .expect("a proposal")
+        .proposal;
+    let marked = r
+        .app
+        .ratify_brief_edge(&r.alice_b.value, proposal.edge_id, None)
+        .await
+        .expect("admitted under sole_admin");
+    let event = journal(&r.store, r.boot.tenant_id)
+        .await
+        .into_iter()
+        .rev()
+        .find(|e| e.envelope.event_type == event_types::REVIEW_RATIFY)
+        .expect("the ratification");
+    assert_eq!(event.envelope.payload["sole_admin"], true);
+    assert!(marked.journal_seq.is_some());
+
+    // A second admin person takes the tenant out of sole_admin for good:
+    // `ops` and `adm1` are two live admin persons (ADR-0097 d10).
+    for user in ["adm1"] {
+        r.app
+            .allow_web_email(
+                &r.boot.admin_key.value,
+                &oml_app::types::WebEmailRequest {
+                    email: oml_app::domain::web::Email::parse(&format!("{user}@example.com"))
+                        .expect("an email"),
+                    user: name(user),
+                    admin: true,
+                },
+            )
+            .await
+            .expect("an admin entry");
+    }
+    let claim = promoted(
+        &r.app,
+        &r.writer.value,
+        &r.bob.value,
+        &submit_into("pb3", "the canary drains last", r.crew),
+    )
+    .await;
+    let proposal = r
+        .app
+        .propose_brief_edge(&r.alice_a.value, &brief_req(claim, r.crew), None)
+        .await
+        .expect("a proposal")
+        .proposal;
+    let err = r
+        .app
+        .ratify_brief_edge(&r.alice_b.value, proposal.edge_id, None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::SamePerson), "{err:?}");
 }
 
 /// ADR-0097 d27 item 2: a denial's reason is scanned and journalled in
@@ -20308,9 +20633,14 @@ async fn a_previous_value_in_its_grace_runs_no_key_act() {
     );
     assert_eq!(
         verb_of(
-            app.link_key_to_person(old, bea.key_id.into(), &name("alice"))
-                .await
-                .unwrap_err()
+            app.link_key_to_person(
+                old,
+                bea.key_id.into(),
+                &name("alice"),
+                Some("the person holds this key")
+            )
+            .await
+            .unwrap_err()
         ),
         "link_key"
     );
@@ -20493,12 +20823,8 @@ async fn a_previous_value_in_its_grace_runs_no_key_act() {
         "investigate"
     );
     assert_eq!(
-        verb_of(app.demote_version(old, Uuid::nil()).await.unwrap_err()),
-        "demote"
-    );
-    assert_eq!(
-        verb_of(app.erase_claim(old, Uuid::nil()).await.unwrap_err()),
-        "erase"
+        verb_of(demote(&app, old, Uuid::nil()).await.unwrap_err()),
+        "fix"
     );
     assert_eq!(
         verb_of(app.verify_chain(old).await.unwrap_err()),
@@ -20568,4 +20894,53 @@ async fn a_rotation_takes_its_instant_and_its_grace_from_the_envelope() {
     assert_eq!(rotated.rotated_at, at);
     let until = rotated.previous_valid_until.expect("a grace");
     assert_eq!(until.unix_micros(), at.unix_micros() + 60_000_000);
+}
+
+/// A grant carrying `create` admits no child under a `frozen` parent: the
+/// create is `access.verb_ceiling` with `details.reason: parent_frozen`,
+/// and nothing is journalled (ADR-0097 d31; ADR-0009 d5).
+#[tokio::test]
+async fn creating_a_child_under_a_frozen_parent_is_refused() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let ratifier = issue(&app, admin, Role::Reviewer, "dora", crew).await;
+    let cold = workspace(&app, admin, "cold", boot.root_workspace_id).await;
+    let mut submit = grant(cold, Role::Submitter);
+    submit.create = true;
+    let flagged = app
+        .issue_key(
+            admin.as_str(),
+            &issue_req(
+                Role::Contributor,
+                "agent-cold",
+                vec![grant(cold, Role::Reader), submit],
+            ),
+        )
+        .await
+        .expect("a flagged key");
+    climb(
+        &app,
+        &store,
+        (boot.tenant_id, admin, ratifier.key_id),
+        cold,
+        WorkspaceStatus::Frozen,
+    )
+    .await;
+    let before = journal(&store, boot.tenant_id).await.len();
+    let refused = app
+        .create_workspace(
+            flagged.value.as_str(),
+            &name("thaw"),
+            Some(cold.into()),
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(refused, AppError::ParentFrozen { workspace_id } if workspace_id == cold),
+        "{refused:?}"
+    );
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), before);
 }

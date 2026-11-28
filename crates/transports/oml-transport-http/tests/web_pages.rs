@@ -344,8 +344,8 @@ async fn the_lead_serves_exactly_web_routes() {
     }
     assert_eq!(
         WEB_ROUTES.len(),
-        6,
-        "a new route is a new decision amending ADR-0045; ADR-0068 d10 added seven, ADR-0070 d4 GET /web/sign-in, ADR-0070 d7 (b) moved the two JSON routes, the onboarding page with its poll and export, and the users page to oml-web, and v0.7.1 deleted GET and POST /web/admin (ADR-0070, \"The old URLs deleted\")"
+        7,
+        "a new route is a new decision amending ADR-0045; ADR-0068 d10 added seven, ADR-0070 d4 GET /web/sign-in, ADR-0070 d7 (b) moved the two JSON routes, the onboarding page with its poll and export, and the users page to oml-web, v0.7.1 deleted GET and POST /web/admin (ADR-0070, \"The old URLs deleted\"), and ADR-0097 d8 added POST /web/contest"
     );
     assert_eq!(USER_ACTIONS, ["sign_out"]);
     // An unknown provider in the path is an unknown page.
@@ -1295,12 +1295,15 @@ async fn the_allowlist_routes_take_an_admin_key_and_the_email_only_in_a_body() {
                     role: Role::Submitter,
                     deny: Vec::new(),
                     covers: Default::default(),
+                    create: false,
                 }],
                 connect_code: false,
                 user: None,
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -1385,7 +1388,9 @@ async fn the_allowlist_routes_take_an_admin_key_and_the_email_only_in_a_body() {
         json_post(
             "/v2/web/emails/remove",
             &admin,
-            json!({"email": "BOB@example.com"}),
+            // Another admin person's entry: an act against an admin, which
+            // requires a reason (ADR-0097 d8, d26).
+            json!({"email": "BOB@example.com", "reason": "bob moved on"}),
         ),
     )
     .await;
@@ -1400,7 +1405,12 @@ async fn the_journal_holds_an_email_digest_and_never_the_address() {
     // The last admin entry is kept (ADR-0097 d25), so a second admin first.
     rig.allow("ops@example.com", "ops", true).await;
     rig.app
-        .remove_web_email(&rig.boot.admin_key.value, &Email::parse(EMAIL).unwrap())
+        .remove_web_email_with_reason(
+            &rig.boot.admin_key.value,
+            &Email::parse(EMAIL).unwrap(),
+            true,
+            Some("alice moved on"),
+        )
         .await
         .expect("removed");
     let events = rig
@@ -1793,6 +1803,8 @@ async fn a_persons_own_issuance_takes_an_expiry_and_refuses_a_rate_out_of_bound(
 #[tokio::test]
 async fn the_admin_read_serves_text_and_attribution_and_journals_the_read() {
     let rig = rig().await;
+    // The admin read needs a person-linked admin key (ADR-0097 d16).
+    support::admin_counts(&rig.app, &rig.boot.admin_key.value).await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     let page = issued(&rig, &cookie, "laptop").await;
     let value = value_of(&page);
@@ -2199,6 +2211,22 @@ async fn a_close_whose_closing_commit_loses_the_chain_race_journals_each_event_o
 /// direct row edit makes one (no verb issues an admin key under a user
 /// root): the fixture of #277.
 async fn stray_admin_under_alice(rig: &Rig) -> uuid::Uuid {
+    // Its person is an admin person, as an admin key's must be (ADR-0097
+    // d21); the row edit below is what points it at alice's root.
+    rig.allow("operator-2@example.com", "operator-2", true)
+        .await;
+    let entry = {
+        use oml_app::ports::WebStore as _;
+        rig.store
+            .web_entry_by_email(&Email::parse("operator-2@example.com").unwrap().digest())
+            .await
+            .expect("a read")
+            .expect("the entry")
+    };
+    rig.app
+        .web_ensure_keys(&entry)
+        .await
+        .expect("operator-2's root and keys");
     let stray = rig
         .app
         .issue_key(
@@ -2217,6 +2245,8 @@ async fn stray_admin_under_alice(rig: &Rig) -> uuid::Uuid {
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: Some(Name::parse("operator-2").expect("a name")),
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -2741,8 +2771,8 @@ async fn a_denial_committed_before_a_session_keys_act_reads_the_chain_head_refus
         assert_session_key_denied(status, &answer, verb);
         assert_eq!(
             journalled_after(&rig, head).await,
-            ["key.denied"],
-            "{verb}: the denial alone, and nothing by the denied key after it"
+            ["admin.act", "key.denied"],
+            "{verb}: the denial and its admin act alone, and nothing by the denied key after it"
         );
     }
 }
@@ -3632,28 +3662,31 @@ async fn the_admin_session_denies_a_key_on_a_workspace_and_the_web_session_on_un
     );
 }
 
-/// d4: admin issuance stays off the console: `POST /v2/keys` from
-/// `<user>-admin` is `access.verb_ceiling`, `session_capacity`.
+/// ADR-0097 d29: `<user>-admin` issues as an admin key does, its issuance
+/// one widening admin act; in a tenant that has only ever had one admin
+/// person it takes effect at once, marked `effective` (d10).
 #[tokio::test]
-async fn the_admin_session_still_issues_no_key() {
+async fn the_admin_session_issues_a_key_as_an_admin_act() {
     let rig = rig().await;
     rig.allow("boss@example.com", "boss", true).await;
     let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
-    let head = rig.head().await;
     let (status, answer) = as_web(
         &rig,
         &boss,
         "admin",
         "/v2/keys",
-        json!({"name": "boss-x", "role": "reader", "connect_code": false}),
+        json!({
+            "name": "boss-x",
+            "role": "reader",
+            "principal": "boss-x",
+            "connect_code": false,
+            "grants": [{ "workspace": "universe", "role": "reader" }],
+            "reason": "a reader for the dashboards",
+        }),
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
-    assert_eq!(
-        answer["error"]["details"]["reason"], "session_capacity",
-        "{answer}"
-    );
-    assert_eq!(rig.head().await, head);
+    assert_eq!(status, StatusCode::CREATED, "{answer}");
+    assert!(answer["admin_act"]["act_id"].is_string(), "{answer}");
 }
 
 /// d8: each listed grant carries its coverage, `node` for a node grant.
@@ -4063,4 +4096,47 @@ async fn the_read_grant_gives_the_web_key_no_reviewer_verb() {
         answer["items"][0]["outcome"], "rejected",
         "{status} {answer}"
     );
+}
+
+/// A removed admin's provider sign-in opens the contest of the removal and
+/// nothing else: no entry matches, so the open `remove_admin` act is found
+/// by the address's digest and the subject the entry had pinned; another
+/// account at the same address is refused as an unlisted one (ADR-0097 d8,
+/// the operator's decision of 2026-11-27).
+#[tokio::test]
+async fn a_removed_admins_sign_in_opens_only_the_contest_of_the_removal() {
+    let rig = rig().await;
+    rig.allow(EMAIL, "alice", true).await;
+    rig.allow("bob@example.com", "bob", true).await;
+    let (status, _, _) = sign_in_google(&rig, "sub-1", EMAIL).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "alice pins sub-1");
+    rig.app
+        .remove_web_email_with_reason(
+            &rig.boot.admin_key.value,
+            &Email::parse(EMAIL).unwrap(),
+            true,
+            Some("alice's laptop was stolen"),
+        )
+        .await
+        .expect("alice's entry is removed");
+    let (status, token, body) = sign_in_google(&rig, "sub-1", EMAIL).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.contains("Contest the act"), "{body}");
+    // The page names the act it contests: what, by whom, when and why,
+    // in the console's neutral voice (ADR-0097 d8).
+    assert!(body.contains("remove admin"), "{body}");
+    assert!(
+        body.contains("alice&#39;s laptop was stolen")
+            || body.contains("alice's laptop was stolen"),
+        "{body}"
+    );
+    assert!(body.contains("Taken"), "{body}");
+    for word in [" you ", " your ", " my "] {
+        assert!(!body.to_lowercase().contains(word), "{word}: {body}");
+    }
+    assert_eq!(token, None, "no session opens");
+    let (status, token, body) = sign_in_google(&rig, "sub-2", EMAIL).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(body.contains("not on the list"), "{body}");
+    assert_eq!(token, None);
 }

@@ -51,6 +51,7 @@ pub const ACTIONS: &[&str] = &[
     "workspace_ratify",
     "workspace_mode",
     "create_workspace",
+    "workspace_public",
 ];
 
 /// Which page the view is on.
@@ -218,6 +219,9 @@ fn notice(done: Option<&str>) -> Option<&'static str> {
         "ratified" => Some("ratified"),
         "mode set" => Some("mode set"),
         "created" => Some("created"),
+        "public set" => Some("public: effective"),
+        "public waits" => Some("public: waits on another admin"),
+        "public cleared" => Some("public: cleared"),
         _ => None,
     }
 }
@@ -499,6 +503,7 @@ fn references(nodes: &[WorkspaceNode], own_root: Option<&str>) -> Vec<String> {
 /// with its status, mode, live proposals and dropdown.
 fn table(
     side: Side,
+    csrf: &str,
     nodes: &[WorkspaceNode],
     refs: &[String],
     shown: std::ops::Range<usize>,
@@ -535,10 +540,17 @@ fn table(
             .collect();
         match &row.offers {
             Ok(offers) => {
+                let toggle = public_toggle(side, page, csrf, node, &offers.transitions.status);
                 let _ = write!(
                     out,
-                    r#"<tr>{named}<td>{}{pending}</td><td>{}</td><td>{}</td></tr>"#,
+                    r#"<tr>{named}<td>{}{}{pending}</td><td>{}</td><td>{}{toggle}</td></tr>"#,
                     text(&offers.transitions.status),
+                    // Every reading key of the tenant reads it (ADR-0098 d9).
+                    if node.public.value {
+                        r#" <span class="tag oml-chip is-quiet">Public</span>"#
+                    } else {
+                        ""
+                    },
                     // The mode as the drafts-visibility toggle reads it
                     // (ADR-0091 d16); the stored modes do not change.
                     if offers.transitions.mode == "in_progress" {
@@ -546,7 +558,7 @@ fn table(
                     } else {
                         "drafts visible to the writing key"
                     },
-                    offers.dropdown(page, &node.id)
+                    offers.dropdown(page, &node.id),
                 );
             }
             // A failed secondary read marks its row, with the request id
@@ -585,6 +597,38 @@ fn table(
         out.push_str("</p>");
     }
     out
+}
+
+/// The admin page's Public toggle (ADR-0098 d9): on a `protected` or
+/// `frozen` workspace outside every user root, a reason and "Mark public",
+/// which waits on another admin person unless the tenant has only ever had
+/// one; on a public one, a reason and "Clear public", at once. The user
+/// page has none: only an admin person sets the flag.
+fn public_toggle(side: Side, page: &str, csrf: &str, node: &WorkspaceNode, status: &str) -> String {
+    if side != Side::Admin {
+        return String::new();
+    }
+    let (value, button) = if node.public.value {
+        ("false", "Clear public")
+    } else if matches!(status, "protected" | "frozen") && !node.user_root {
+        ("true", "Mark public")
+    } else {
+        return String::new();
+    };
+    form(
+        page,
+        "workspace_public",
+        csrf,
+        &format!(
+            "{}{}{}{}",
+            hidden("workspace", &node.id),
+            hidden("public", value),
+            hidden("nonce", &nonce()),
+            input("reason", "Reason", "", value == "true"),
+        ),
+        button,
+        false,
+    )
 }
 
 /// What the view's reads share.
@@ -799,7 +843,7 @@ async fn view(
             rows(&web.api, &credentials, &calls, &nodes[shown.clone()]).await,
         ),
     };
-    let table = table(side, &nodes, &refs, shown, &rows);
+    let table = table(side, &session.csrf(), &nodes, &refs, shown, &rows);
     let (bar, body) = match side {
         Side::User => {
             let user = session.whoami.user.as_ref().map_or("", |u| u.name.as_str());
@@ -828,9 +872,29 @@ async fn view(
         }
         Side::Admin => (session.administration(), {
             let user = short(session.whoami.user.as_ref().map_or("", |u| u.name.as_str()));
-            format!(
+            let mut body = format!(
                 r#"<h1>Workspaces</h1><p class="desc">Apply asks for a confirmation.</p><details class="help"><summary>?</summary>Status changes run as <code>{user}-admin</code> and need a second key to ratify; the drafts-visibility toggle runs as <code>{user}-review</code>.</details>{confirm}{table}"#
-            )
+            );
+            // The admin creates anywhere in the tenant, `universe`
+            // included: a neutral act, at once, with nothing to settle
+            // (ADR-0097 d9, d29).
+            body.push_str("<h2>New workspace</h2><p class=\"desc\">Created at once, in development, as <code>");
+            body.push_str(&user);
+            body.push_str("-admin</code>. A workspace is never deleted.</p>");
+            body.push_str(&form(
+                ADMIN_WORKSPACES_PATH,
+                "create_workspace",
+                &session.csrf(),
+                &format!(
+                    "{}{}{}",
+                    input("name", "name", "", true),
+                    input("parent", "inside (blank: universe)", "", false),
+                    hidden("nonce", &nonce())
+                ),
+                "Create",
+                true,
+            ));
+            body
         }),
     };
     outcome::html(
@@ -883,6 +947,14 @@ fn defined(action: &str) -> &'static [&'static str] {
         "create_workspace" => &["action", "csrf_token", "nonce", "name", "parent"],
         "workspace_transition" => &["action", "csrf_token", "nonce", "workspace", "to"],
         "workspace_ratify" => &["action", "csrf_token", "nonce", "workspace", "transition"],
+        "workspace_public" => &[
+            "action",
+            "csrf_token",
+            "nonce",
+            "workspace",
+            "public",
+            "reason",
+        ],
         _ => &["action", "csrf_token", "nonce", "workspace", "mode"],
     }
 }
@@ -926,8 +998,8 @@ async fn act(
         );
     };
     calls.act(action);
-    // Creating a workspace is the user page's act alone.
-    if action == "create_workspace" && side == Side::Admin {
+    // The public flag is the admin page's act alone (ADR-0098 d6).
+    if action == "workspace_public" && side == Side::User {
         return refused(
             StatusCode::BAD_REQUEST,
             "request.validation",
@@ -947,6 +1019,7 @@ async fn act(
         "create_workspace" => &["name"],
         "workspace_transition" => &["workspace", "to"],
         "workspace_ratify" => &["workspace", "transition"],
+        "workspace_public" => &["workspace", "public"],
         _ => &["workspace", "mode"],
     };
     if let Some(missing) = required.iter().find(|n| fields.get(n).is_none()) {
@@ -991,9 +1064,23 @@ async fn act(
     let ids = calls.next_ids();
     let (outcome, done) = match action {
         "create_workspace" => {
-            // A blank parent is the person's own root.
-            let parent = fields.get("parent").filter(|p| !p.is_empty());
-            let credential = session.credential(Capacity::Web);
+            // A blank parent is the person's own root on the user page and
+            // `universe` on the admin page, where `<user>-admin` creates
+            // anywhere in the tenant as a neutral admin act (ADR-0097 d9,
+            // d29).
+            let parent = match side {
+                Side::User => fields.get("parent").filter(|p| !p.is_empty()),
+                Side::Admin => Some(
+                    fields
+                        .get("parent")
+                        .filter(|p| !p.is_empty())
+                        .unwrap_or("universe"),
+                ),
+            };
+            let credential = match side {
+                Side::User => session.credential(Capacity::Web),
+                Side::Admin => session.credential(Capacity::Admin),
+            };
             (
                 web.api
                     .create_workspace(&call(&credential, &ids), &key, field("name"), parent)
@@ -1023,6 +1110,21 @@ async fn act(
                     .map(|_| ()),
                 "ratified",
             )
+        }
+        "workspace_public" => {
+            let public = field("public") == "true";
+            let reason = fields.get("reason").filter(|r| !r.is_empty());
+            let credential = session.credential(Capacity::Admin);
+            let outcome = web
+                .api
+                .set_workspace_public(&call(&credential, &ids), &key, workspace, public, reason)
+                .await;
+            let done = match &outcome {
+                Ok(o) if o.state == "pending_confirmation" => "public+waits",
+                Ok(_) if public => "public+set",
+                _ => "public+cleared",
+            };
+            (outcome.map(|_| ()), done)
         }
         _ => {
             let mode = field("mode");

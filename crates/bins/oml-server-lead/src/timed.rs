@@ -265,6 +265,13 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         )
     }
 
+    fn flagged_creates(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<(Uuid, u64)>, StoreError>> + Send {
+        timed("flagged_creates", self.inner.flagged_creates(tenant_id))
+    }
+
     fn workspace_creator_if_empty(
         &self,
         tenant_id: Uuid,
@@ -922,6 +929,88 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         timed("fixes", self.inner.fixes(tenant_id, unconfirmed_only))
     }
 
+    fn admin_act(
+        &self,
+        tenant_id: Uuid,
+        act_id: Uuid,
+    ) -> impl Future<Output = Result<Option<oml_app::types::AdminActRecord>, StoreError>> + Send
+    {
+        timed("admin_act", self.inner.admin_act(tenant_id, act_id))
+    }
+
+    fn admin_acts(
+        &self,
+        tenant_id: Uuid,
+        state: Option<oml_app::domain::admin_act::AdminActState>,
+    ) -> impl Future<Output = Result<Vec<oml_app::types::AdminActRecord>, StoreError>> + Send {
+        timed("admin_acts", self.inner.admin_acts(tenant_id, state))
+    }
+
+    fn admin_standing(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<oml_app::types::AdminStanding, StoreError>> + Send {
+        timed("admin_standing", self.inner.admin_standing(tenant_id))
+    }
+
+    fn record_authentication(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+        day: &str,
+        count: u64,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send {
+        timed(
+            "record_authentication",
+            self.inner
+                .record_authentication(tenant_id, key_id, day, count),
+        )
+    }
+
+    fn admin_keys_authenticated_since(
+        &self,
+        tenant_id: Uuid,
+        since_day: &str,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send {
+        timed(
+            "admin_keys_authenticated_since",
+            self.inner
+                .admin_keys_authenticated_since(tenant_id, since_day),
+        )
+    }
+
+    fn authentication_coverage(
+        &self,
+    ) -> impl Future<Output = Result<oml_app::types::AuthenticationCoverage, StoreError>> + Send
+    {
+        timed(
+            "authentication_coverage",
+            self.inner.authentication_coverage(),
+        )
+    }
+
+    fn purge_authentications(
+        &self,
+        tenant_id: Uuid,
+        before_day: &str,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send {
+        timed(
+            "purge_authentications",
+            self.inner.purge_authentications(tenant_id, before_day),
+        )
+    }
+
+    fn operator_recoveries(
+        &self,
+        tenant_id: Uuid,
+        state: Option<oml_app::types::RecoveryState>,
+    ) -> impl Future<Output = Result<Vec<oml_app::types::RecoveryRecord>, StoreError>> + Send {
+        timed(
+            "operator_recoveries",
+            self.inner.operator_recoveries(tenant_id, state),
+        )
+    }
+
     fn member_of_no_release(
         &self,
         tenant_id: Uuid,
@@ -930,6 +1019,39 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         timed(
             "member_of_no_release",
             self.inner.member_of_no_release(tenant_id, memory_id),
+        )
+    }
+
+    fn web_person_reviewers(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<PersonReviewer>, StoreError>> + Send {
+        timed(
+            "web_person_reviewers",
+            self.inner.web_person_reviewers(tenant_id),
+        )
+    }
+
+    fn notices(
+        &self,
+        tenant_id: Uuid,
+        recipient: &oml_app::domain::name::Name,
+        dismissed: bool,
+    ) -> impl Future<Output = Result<Vec<oml_app::types::NoticeRecord>, StoreError>> + Send {
+        timed(
+            "notices",
+            self.inner.notices(tenant_id, recipient, dismissed),
+        )
+    }
+
+    fn admin_read_counts(
+        &self,
+        tenant_id: Uuid,
+        person: &oml_app::domain::name::Name,
+    ) -> impl Future<Output = Result<Vec<oml_app::types::AdminReadCount>, StoreError>> + Send {
+        timed(
+            "admin_read_counts",
+            self.inner.admin_read_counts(tenant_id, person),
         )
     }
 
@@ -1174,6 +1296,13 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         tenant_id: Uuid,
     ) -> impl Future<Output = Result<UnnamedRows, StoreError>> + Send {
         timed("unnamed_rows", self.inner.unnamed_rows(tenant_id))
+    }
+
+    fn public_workspaces(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<WorkspaceRecord>, StoreError>> + Send {
+        timed("public_workspaces", self.inner.public_workspaces(tenant_id))
     }
 
     fn workspace(
@@ -1474,6 +1603,17 @@ impl<J: WebStore> WebStore for Timed<J> {
         )
     }
 
+    fn removed_admin_act(
+        &self,
+        email_hash: &Sha256Hash,
+    ) -> impl Future<Output = Result<Option<(Uuid, oml_app::types::AdminActRecord)>, StoreError>> + Send
+    {
+        timed(
+            "removed_admin_act",
+            self.inner.removed_admin_act(email_hash),
+        )
+    }
+
     fn web_entries(
         &self,
         tenant_id: Uuid,
@@ -1561,6 +1701,27 @@ impl<J: WebStore> WebStore for Timed<J> {
         )
     }
 
+    fn web_unlinked_admin_keys(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<KeyRecord>, StoreError>> + Send {
+        timed(
+            "web_unlinked_admin_keys",
+            self.inner.web_unlinked_admin_keys(tenant_id),
+        )
+    }
+
+    fn web_keys_issued_by(
+        &self,
+        tenant_id: Uuid,
+        issuer: Uuid,
+    ) -> impl Future<Output = Result<Vec<KeyRecord>, StoreError>> + Send {
+        timed(
+            "web_keys_issued_by",
+            self.inner.web_keys_issued_by(tenant_id, issuer),
+        )
+    }
+
     fn web_pending_links(
         &self,
         tenant_id: Uuid,
@@ -1605,16 +1766,6 @@ impl<J: WebStore> WebStore for Timed<J> {
         tenant_id: Uuid,
     ) -> impl Future<Output = Result<Vec<QueueDepth>, StoreError>> + Send {
         timed("web_queue", self.inner.web_queue(tenant_id))
-    }
-
-    fn web_person_reviewers(
-        &self,
-        tenant_id: Uuid,
-    ) -> impl Future<Output = Result<Vec<PersonReviewer>, StoreError>> + Send {
-        timed(
-            "web_person_reviewers",
-            self.inner.web_person_reviewers(tenant_id),
-        )
     }
 
     fn web_admin_search(

@@ -4,6 +4,8 @@
 //! the mode; the commit needs zero held; no ranking reads a verdict; R3
 //! holds everywhere else; a curator narrows inside and never widens.
 
+mod counted;
+
 use oml_app::App;
 use oml_app::domain::access::Covers;
 use oml_app::domain::access::Grant;
@@ -45,6 +47,7 @@ fn grant(node: Uuid, role: Role) -> GrantRequest {
         role,
         deny: Vec::new(),
         covers: Covers::Subtree,
+        create: false,
     }
 }
 
@@ -91,6 +94,8 @@ async fn key(
             guardrail_scope: None,
             expiry: None,
             requests_per_minute: None,
+            person: None,
+            create_workspaces: Vec::new(),
         },
     )
     .await
@@ -149,6 +154,9 @@ async fn world() -> World {
     )
     .await
     .expect("person");
+    // Pat's reviewer key counts as pat, as an instruction verdict and a
+    // ladder ratification need (ADR-0097 d12, d17).
+    counted::link_to(&app, &admin, person.key_id, "pat").await;
     let curator = key(
         &app,
         &admin,
@@ -963,7 +971,7 @@ async fn seal_onto(w: &World, event_type: &str, payload: Value, fold: MetadataFo
 impl World {
     /// A second person's reviewer key, another principal, for two-identity acts.
     async fn second_person(&self) -> IssuedKey {
-        key(
+        let quinn = key(
             &self.app,
             &self.boot.admin_key.value,
             Role::Reviewer,
@@ -976,7 +984,9 @@ impl World {
             ],
         )
         .await
-        .expect("second person")
+        .expect("second person");
+        counted::link_to(&self.app, &self.boot.admin_key.value, quinn.key_id, "quinn").await;
+        quinn
     }
 
     async fn promoted(&self, key: &IssuedKey, idem: &str, body: &str, node: Uuid) -> Uuid {
@@ -1315,6 +1325,7 @@ async fn an_unscoped_edge_read_without_a_default_leaves_every_in_progress_subtre
                 role: Role::Reader,
                 deny: Vec::new(),
                 covers: Covers::Subtree,
+                create: false,
             },
         },
     )
@@ -1982,6 +1993,8 @@ async fn a_tip_key_at_an_in_progress_ancestor_is_offered_the_held_skill_below_it
                 guardrail_scope: Some(oml_app::domain::guardrail::GuardrailScope::Workspace),
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await

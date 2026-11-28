@@ -99,7 +99,7 @@ done
 
 OML="$BIN/oml"
 "$OML" --url "$URL" --json bootstrap claim eval-admin --token-stdin \
-    --tenant-name evalfed --principal eval/admin <<<"$TOKEN" >/dev/null || fail "bootstrap claim"
+    --tenant-name evalfed --principal eval/admin --person eval --email eval@example.com <<<"$TOKEN" >/dev/null || fail "bootstrap claim"
 "$OML" --json workspaces create universe eval-fed >/dev/null || fail "workspace"
 TOPICS="$(python3 -c 'import json; print(" ".join(sorted({m["topic"] for m in json.load(open("eval/recall/corpus.json"))["memories"]})))')"
 for topic in $TOPICS; do

@@ -52,10 +52,8 @@ where
         &self,
         bearer: impl Into<Bearer<'_>>,
     ) -> Result<SearchSettings, AppError> {
-        let admin = self
-            .admin_caller(bearer.into(), "search_settings")
-            .await?
-            .key;
+        // An admin key's or a maintenance key's (ADR-0097 d18).
+        let admin = self.counts_caller(bearer, "search_settings").await?.key;
         let mut settings = self.settings_of(admin.tenant_id).await?;
         if self.search.serves(Pipeline::Bm25Postings) || self.search.needs_sparse() {
             settings.postings = self.journal.postings_health(admin.tenant_id).await?;

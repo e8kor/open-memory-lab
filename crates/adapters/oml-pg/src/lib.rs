@@ -50,12 +50,12 @@ use oml_app::types::{
     ClaimEdgeRecord, ClaimEdgeSelection, ClaimKeyState, ClientDescription, ClientKind, ConnectCode,
     ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord, Credential, CrewRecord,
     DenialRecord, DocumentCaching, FormatFields, GrantRecord, GuardrailFields, HIT_KINDS,
-    HeldFilter, HeldRow, INSTRUCTION_HIT_KINDS, KeyAccess, KeyRecord, KeyReferences, KindFields,
-    ListingFilter, ListingPosition, ListingScope, MemoryRecord, NamedRef, OAuthClientRecord,
-    PROVIDER_TENANT, PersonReviewer, PinOutcome, QueueDepth, RefreshFacts, RefreshOutcome,
-    ReviewLane, SourceCheck, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord,
-    TransitionState, UnnamedRows, VersionFinding, WebCredentialKey, WebCredentialRows, WebEntry,
-    WebSessionRecord, WorkspaceRecord, WorkspaceRef,
+    HeldFilter, HeldRow, INSTRUCTION_HIT_KINDS, KeyAccess, KeyRecord, KeyReferences, KeySuspension,
+    KindFields, ListingFilter, ListingPosition, ListingScope, MemoryRecord, NamedRef,
+    OAuthClientRecord, PROVIDER_TENANT, PersonReviewer, PinOutcome, QueueDepth, RefreshFacts,
+    RefreshOutcome, ReviewLane, SourceCheck, SuspensionCause, SweepReport, TenantRow, TokenPair,
+    TokenRecord, TransitionRecord, TransitionState, UnnamedRows, VersionFinding, WebCredentialKey,
+    WebCredentialRows, WebEntry, WebSessionRecord, WorkspaceRecord, WorkspaceRef,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions, PgRow};
@@ -2488,8 +2488,9 @@ async fn key_access_in(
         return Ok(None);
     };
     let grants = sqlx::query(
-        "SELECT id, role, workspace_node_id, deny, epoch, covers FROM grants \
-         WHERE tenant_id = $1 AND key_id = $2 ORDER BY epoch ASC, id ASC",
+        "SELECT id, role, workspace_node_id, deny, epoch, covers, may_create FROM grants \
+         WHERE tenant_id = $1 AND key_id = $2 AND revoked_epoch IS NULL \
+         ORDER BY epoch ASC, id ASC",
     )
     .bind(tenant_id)
     .bind(key_id)
@@ -2510,10 +2511,22 @@ async fn key_access_in(
     let lifts = sqlx::query(
         "SELECT lifted_epoch FROM key_denials \
          WHERE tenant_id = $1 AND key_id = $2 AND lifted_epoch IS NOT NULL \
-         ORDER BY lifted_epoch ASC",
+         UNION ALL \
+         SELECT revoked_epoch FROM grants \
+         WHERE tenant_id = $1 AND key_id = $2 AND revoked_epoch IS NOT NULL \
+         ORDER BY 1 ASC",
     )
     .bind(tenant_id)
     .bind(key_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(backend)?;
+    // The tenant's public nodes, from the partial index on them: the one
+    // read the public reach adds (ADR-0098 d1, the bottleneck register).
+    let public_nodes = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM workspaces WHERE tenant_id = $1 AND public ORDER BY id",
+    )
+    .bind(tenant_id)
     .fetch_all(&mut **tx)
     .await
     .map_err(backend)?;
@@ -2533,6 +2546,7 @@ async fn key_access_in(
                     covers: Covers::parse(&covers).ok_or_else(|| {
                         StoreError::Backend(format!("grants.covers {covers:?} is not a coverage"))
                     })?,
+                    create: row.try_get("may_create").map_err(backend)?,
                 },
                 epoch: seq_from_column(row, "epoch")?,
             })
@@ -2559,6 +2573,7 @@ async fn key_access_in(
             .iter()
             .map(|row| seq_from_column(row, "lifted_epoch"))
             .collect::<Result<_, StoreError>>()?,
+        public_nodes,
     }))
 }
 
@@ -2615,6 +2630,7 @@ fn role_from_str(s: &str) -> Result<Role, StoreError> {
         "reviewer" => Ok(Role::Reviewer),
         "admin" => Ok(Role::Admin),
         "operator" => Ok(Role::Operator),
+        "maintenance" => Ok(Role::Maintenance),
         other => Err(StoreError::Backend(format!("unknown role {other:?}"))),
     }
 }
@@ -3254,8 +3270,8 @@ fn memory_kind_code(kind: &str) -> Option<i16> {
 
 /// The workspace columns every workspace read selects (unqualified: the
 /// recursive walks select them from their CTE).
-const WORKSPACE_COLUMNS: &str =
-    "id, tenant_id, parent_id, name, status, crew, crew_id, user_root, namespace_root_id, mode";
+const WORKSPACE_COLUMNS: &str = "id, tenant_id, parent_id, name, status, crew, crew_id, user_root, namespace_root_id, mode, \
+     public, public_act_id";
 
 /// A workspace row as the port's record. A row with no name yet predates
 /// names and is served to no one: the lead names every such row before it
@@ -3289,6 +3305,8 @@ fn workspace_from_row(row: &PgRow) -> Result<WorkspaceRecord, StoreError> {
         user_root: row.try_get("user_root").map_err(backend)?,
         namespace: row.try_get("namespace_root_id").map_err(backend)?,
         in_progress: row.try_get::<String, _>("mode").map_err(backend)? == "in_progress",
+        public: row.try_get("public").map_err(backend)?,
+        public_act_id: row.try_get("public_act_id").map_err(backend)?,
     })
 }
 
@@ -3297,7 +3315,10 @@ fn workspace_from_row(row: &PgRow) -> Result<WorkspaceRecord, StoreError> {
 /// as a memory's `promoted_at` does, so `EventTime` round-trips exactly.
 const KEY_COLUMNS: &str = "id, tenant_id, role, principal, used_by, default_workspace_id, \
      issued_by, hash, credential, name, crew_id, user_root_id, session_for, guardrail_scope, \
-     profile, requests_per_minute, linked_user_id, link_pending_user_id, \
+     profile, requests_per_minute, linked_user_id, link_pending_user_id, pending_act_id, \
+     suspended_cause, suspended_act_id, issuer_person::text AS issuer_person, \
+     to_char(suspended_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+     AS suspended_at_signed, \
      to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS revoked_at_signed, \
      to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
@@ -3418,6 +3439,28 @@ fn brief_edge_from_row(row: &PgRow) -> Result<BriefEdgeRecord, StoreError> {
 /// (postgres-schema.md api_keys): it resolves under the provider tenant, so
 /// its refusals are the use-cases' own, never a storage failure (ADR-0025
 /// d13).
+/// A key row's suspension (ADR-0097 d8, d21; 0073): `None` when no cause
+/// is stored.
+fn suspension_from_row(row: &PgRow) -> Result<Option<KeySuspension>, StoreError> {
+    let cause: Option<String> = row.try_get("suspended_cause").map_err(backend)?;
+    let Some(cause) = cause else {
+        return Ok(None);
+    };
+    let at: Option<String> = row.try_get("suspended_at_signed").map_err(backend)?;
+    Ok(Some(KeySuspension {
+        cause: SuspensionCause::parse(&cause).ok_or_else(|| {
+            StoreError::Backend(format!("api_keys.suspended_cause {cause:?} is not a cause"))
+        })?,
+        act_id: row.try_get("suspended_act_id").map_err(backend)?,
+        at: at
+            .as_deref()
+            .map(EventTime::parse)
+            .transpose()
+            .map_err(|e| StoreError::Backend(e.to_string()))?
+            .ok_or_else(|| StoreError::Backend("api_keys.suspended_at is null".to_owned()))?,
+    }))
+}
+
 fn key_from_row(row: &PgRow) -> Result<KeyRecord, StoreError> {
     let tenant_id: Option<Uuid> = row.try_get("tenant_id").map_err(backend)?;
     let role: String = row.try_get("role").map_err(backend)?;
@@ -3469,6 +3512,9 @@ fn key_from_row(row: &PgRow) -> Result<KeyRecord, StoreError> {
         requests_per_minute: rate.map(u32::try_from).transpose().map_err(backend)?,
         linked_user: row.try_get("linked_user_id").map_err(backend)?,
         link_pending: row.try_get("link_pending_user_id").map_err(backend)?,
+        pending_act: row.try_get("pending_act_id").map_err(backend)?,
+        suspended: suspension_from_row(row)?,
+        issuer_person: stored_name(row, "issuer_person")?,
     })
 }
 
@@ -4628,6 +4674,7 @@ async fn apply_fold(
         MetadataFold::AdminMemoryRead {
             investigation_id,
             key_id,
+            persons,
         } => {
             let counted = sqlx::query(
                 "UPDATE admin_investigations SET reads = reads + 1 \
@@ -4642,6 +4689,116 @@ async fn apply_fold(
             if counted.rows_affected() != 1 {
                 return Err(StoreError::InvestigationNotOpen { investigation_id });
             }
+            // One count per person whose own root the page read, for the
+            // month of the read (ADR-0097 d16; 0074).
+            let month = at.as_str().get(..7).unwrap_or_default().to_owned();
+            for person in &persons {
+                sqlx::query(
+                    "INSERT INTO admin_read_counts (tenant_id, person, month, reads) \
+                     VALUES ($1, $2, $3, 1) \
+                     ON CONFLICT (tenant_id, person, month) \
+                     DO UPDATE SET reads = admin_read_counts.reads + 1",
+                )
+                .bind(tenant_id)
+                .bind(person.as_str())
+                .bind(&month)
+                .execute(&mut **tx)
+                .await
+                .map_err(backend)?;
+            }
+        }
+        MetadataFold::NoticeWritten {
+            notice_id,
+            kind,
+            act_id,
+            recipients,
+            detail,
+        } => {
+            // One row per recipient (ADR-0097 d20; 0074).
+            for recipient in &recipients {
+                sqlx::query(
+                    "INSERT INTO notices (tenant_id, id, recipient, kind, act_id, detail, \
+                            created_at, seq) \
+                     VALUES ($1, $2, $3, $4, $5, $6, $7::timestamptz, $8)",
+                )
+                .bind(tenant_id)
+                .bind(notice_id)
+                .bind(recipient.as_str())
+                .bind(kind.as_str())
+                .bind(act_id)
+                .bind(&detail)
+                .bind(at.as_str())
+                .bind(seq)
+                .execute(&mut **tx)
+                .await
+                .map_err(backend)?;
+            }
+        }
+        MetadataFold::NoticeDismissed {
+            notice_id,
+            recipient,
+        } => {
+            let dismissed = sqlx::query(
+                "UPDATE notices SET dismissed_at = $4::timestamptz \
+                  WHERE tenant_id = $1 AND id = $2 AND recipient = $3 AND dismissed_at IS NULL",
+            )
+            .bind(tenant_id)
+            .bind(notice_id)
+            .bind(recipient.as_str())
+            .bind(at.as_str())
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if dismissed.rows_affected() != 1 {
+                return Err(StoreError::Backend(format!(
+                    "notice {notice_id} is not an undismissed notice of {}",
+                    recipient.as_str()
+                )));
+            }
+        }
+        MetadataFold::RecoveryRequested(recovery) => {
+            // One requested recovery per tenant: the partial unique index
+            // refuses a second (ADR-0097 d19; 0076).
+            sqlx::query(
+                "INSERT INTO operator_recoveries (tenant_id, id, person, email, state, \
+                        requested_at, requested_seq) \
+                 VALUES ($1, $2, $3, $4, 'requested', ($5)::timestamptz, $6)",
+            )
+            .bind(tenant_id)
+            .bind(recovery.recovery_id)
+            .bind(recovery.person.as_str())
+            .bind(recovery.email.as_str())
+            .bind(at.as_str())
+            .bind(seq)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+        }
+        MetadataFold::RecoverySettled { recovery_id, state } => {
+            // Once: a row already completed or cancelled refuses the commit,
+            // so a second completion from another replica or after a
+            // restart journals nothing (answer 22).
+            let moved = sqlx::query(
+                "UPDATE operator_recoveries SET state = $3, settled_at = ($4)::timestamptz, \
+                        settled_seq = $5 \
+                  WHERE tenant_id = $1 AND id = $2 AND state = 'requested'",
+            )
+            .bind(tenant_id)
+            .bind(recovery_id)
+            .bind(state.as_str())
+            .bind(at.as_str())
+            .bind(seq)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if moved.rows_affected() != 1 {
+                return Err(StoreError::Backend(format!(
+                    "recovery {recovery_id} is not a requested recovery"
+                )));
+            }
+        }
+        MetadataFold::AdminAct(act) => {
+            fold_admin_act(tx, tenant_id, &act, seq, at).await?;
         }
         MetadataFold::AdminFixRecorded(fix) => {
             // The fix's row, unconfirmed, and its mark on the version it
@@ -4929,6 +5086,28 @@ async fn apply_fold(
                 )));
             }
         }
+        MetadataFold::WorkspacePublicSet {
+            workspace_id,
+            public,
+            act_id,
+        } => {
+            let updated = sqlx::query(
+                "UPDATE workspaces SET public = $3, public_act_id = $4 \
+                 WHERE tenant_id = $1 AND id = $2",
+            )
+            .bind(tenant_id)
+            .bind(workspace_id)
+            .bind(public)
+            .bind(act_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if updated.rows_affected() != 1 {
+                return Err(StoreError::Backend(format!(
+                    "workspace {workspace_id} is not held by this tenant"
+                )));
+            }
+        }
         MetadataFold::SearchDefaultSet { pipeline } => {
             sqlx::query("UPDATE tenants SET search_default = $2 WHERE id = $1")
                 .bind(tenant_id)
@@ -5016,9 +5195,10 @@ async fn apply_fold(
             // (ADR-0045 d2's note of 2026-11-19).
             sqlx::query(
                 "INSERT INTO web_emails (tenant_id, email_hash, email, user_name, admin, \
-                 created_at, added_by, terms_version, pending_since) \
+                 created_at, added_by, terms_version, pending_since, admin_since) \
                  VALUES ($1, $2, $3, $4, $5, ($6)::timestamptz, $7, $8, \
-                         CASE WHEN $9 THEN ($6)::timestamptz END)",
+                         CASE WHEN $9 THEN ($6)::timestamptz END, \
+                         CASE WHEN $5 AND NOT $9 THEN ($6)::timestamptz END)",
             )
             .bind(tenant_id)
             .bind(entry.email.digest().0.to_vec())
@@ -5043,6 +5223,7 @@ async fn apply_fold(
                 }
                 _ => backend(e),
             })?;
+            fold_sole_admin(tx, tenant_id).await?;
         }
         MetadataFold::WebEmailChanged {
             entry,
@@ -5063,7 +5244,11 @@ async fn apply_fold(
             // to wait; one that makes it pending starts it now.
             let changed = sqlx::query(
                 "UPDATE web_emails SET user_name = $3, admin = $4, added_by = $7, \
-                 pending_since = CASE WHEN $5 THEN coalesce(pending_since, ($6)::timestamptz) END \
+                 pending_since = CASE WHEN $5 THEN coalesce(pending_since, ($6)::timestamptz) END, \
+                 admin_since = CASE WHEN $4 AND NOT $5 THEN \
+                     CASE WHEN admin AND pending_since IS NULL AND user_name = $3 \
+                          THEN coalesce(admin_since, ($6)::timestamptz) \
+                          ELSE ($6)::timestamptz END END \
                  WHERE tenant_id = $1 AND email_hash = $2",
             )
             .bind(tenant_id)
@@ -5081,6 +5266,7 @@ async fn apply_fold(
                     "web.email_changed names an entry the tenant does not hold".to_owned(),
                 ));
             }
+            fold_sole_admin(tx, tenant_id).await?;
         }
         MetadataFold::WebEmailAccepted {
             email_hash,
@@ -5092,7 +5278,8 @@ async fn apply_fold(
             // a flag flipped since included, aborts it (ADR-0045 d2's note,
             // the operator's decisions of 2026-11-19 and 2026-11-20).
             let accepted = sqlx::query(
-                "UPDATE web_emails SET pending_since = NULL \
+                "UPDATE web_emails SET pending_since = NULL, \
+                 admin_since = CASE WHEN admin THEN ($5)::timestamptz END \
                  WHERE tenant_id = $1 AND email_hash = $2 AND user_name = $3 \
                  AND admin = $4 AND pending_since IS NOT NULL",
             )
@@ -5100,6 +5287,7 @@ async fn apply_fold(
             .bind(email_hash.0.to_vec())
             .bind(user.as_str())
             .bind(admin)
+            .bind(at.as_str())
             .execute(&mut **tx)
             .await
             .map_err(backend)?;
@@ -5109,6 +5297,7 @@ async fn apply_fold(
                         .to_owned(),
                 ));
             }
+            fold_sole_admin(tx, tenant_id).await?;
         }
         MetadataFold::WebEmailRemoved {
             email_hash,
@@ -5204,6 +5393,19 @@ async fn apply_fold(
             }
         }
         MetadataFold::UserDisabled { user } => {
+            // The last live admin person is never disabled, on any surface
+            // (ADR-0097 d25): the tenant's live admin entries, locked.
+            let live: Vec<String> = sqlx::query_scalar(
+                "SELECT user_name::text FROM web_emails WHERE tenant_id = $1 AND admin \
+                 AND pending_since IS NULL AND disabled_at IS NULL ORDER BY email_hash FOR UPDATE",
+            )
+            .bind(tenant_id)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if live.iter().any(|u| u == user.as_str()) && live.iter().all(|u| u == user.as_str()) {
+                return Err(StoreError::LastAdminEntry);
+            }
             sqlx::query("DELETE FROM web_sessions WHERE tenant_id = $1 AND user_name = $2")
                 .bind(tenant_id)
                 .bind(user.as_str())
@@ -5217,6 +5419,16 @@ async fn apply_fold(
             .bind(tenant_id)
             .bind(user.as_str())
             .bind(at.as_str())
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+        }
+        MetadataFold::UserEnabled { user } => {
+            sqlx::query(
+                "UPDATE web_emails SET disabled_at = NULL WHERE tenant_id = $1 AND user_name = $2",
+            )
+            .bind(tenant_id)
+            .bind(user.as_str())
             .execute(&mut **tx)
             .await
             .map_err(backend)?;
@@ -5368,15 +5580,16 @@ async fn apply_fold(
             let insert = if limited {
                 "INSERT INTO api_keys (id, tenant_id, hash, credential, role, principal, \
                  used_by, default_workspace_id, issued_by, issued_seq, name, crew_id, \
-                 user_root_id, session_for, guardrail_scope, profile, expires_at, \
-                 requests_per_minute) \
+                 user_root_id, session_for, guardrail_scope, profile, issuer_person, \
+                 expires_at, requests_per_minute) \
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, \
-                 ($17)::timestamptz, $18)"
+                 $17, ($18)::timestamptz, $19)"
             } else {
                 "INSERT INTO api_keys (id, tenant_id, hash, credential, role, principal, \
                  used_by, default_workspace_id, issued_by, issued_seq, name, crew_id, \
-                 user_root_id, session_for, guardrail_scope, profile) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)"
+                 user_root_id, session_for, guardrail_scope, profile, issuer_person) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, \
+                 $17)"
             };
             let mut insert = sqlx::query(insert)
                 .bind(k.key_id)
@@ -5394,7 +5607,8 @@ async fn apply_fold(
                 .bind(k.user)
                 .bind(k.session_user.as_ref().map(Name::as_str))
                 .bind(k.guardrail_scope.as_str())
-                .bind(k.profile.map(KeyProfile::as_str));
+                .bind(k.profile.map(KeyProfile::as_str))
+                .bind(k.issuer_person.as_ref().map(Name::as_str));
             if limited {
                 insert = insert
                     .bind(k.expiry.as_ref().map(EventTime::as_str))
@@ -5406,6 +5620,21 @@ async fn apply_fold(
                 }
                 None => backend(e),
             })?;
+            // A key that waits on a widening act names it, so it
+            // authenticates nothing until a second admin person confirms
+            // it (ADR-0097 d23; 0070). Its own statement, so a schema
+            // before 0070 still takes every other key.
+            if let Some(act_id) = k.pending_act {
+                sqlx::query(
+                    "UPDATE api_keys SET pending_act_id = $3 WHERE tenant_id = $1 AND id = $2",
+                )
+                .bind(k.tenant_id)
+                .bind(k.key_id)
+                .bind(act_id)
+                .execute(&mut **tx)
+                .await
+                .map_err(backend)?;
+            }
         }
         // The schema's role CHECK and its foreign keys refuse a grant or
         // denial on a key or node the tenant does not hold; the error aborts
@@ -5416,7 +5645,7 @@ async fn apply_fold(
         MetadataFold::GrantIssued { key_id, grant } => {
             sqlx::query(
                 "INSERT INTO grants (id, tenant_id, key_id, role, workspace_node_id, deny, epoch, \
-                 covers) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                 covers, may_create) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
             )
             .bind(grant.grant_id)
             .bind(tenant_id)
@@ -5426,6 +5655,7 @@ async fn apply_fold(
             .bind(deny_to_json(&grant.deny))
             .bind(seq)
             .bind(grant.covers.as_str())
+            .bind(grant.create)
             .execute(&mut **tx)
             .await
             .map_err(backend)?;
@@ -5448,6 +5678,86 @@ async fn apply_fold(
             .execute(&mut **tx)
             .await
             .map_err(backend)?;
+        }
+        MetadataFold::GrantRevoked { key_id, grant_id } => {
+            // The row stays as history, its revoked_epoch this commit's seq;
+            // the guard matches only a grant in force on this key of this
+            // tenant (0073_admin_act_undo.sql `grants.revoked_epoch`).
+            let revoked = sqlx::query(
+                "UPDATE grants SET revoked_epoch = $4 \
+                 WHERE tenant_id = $1 AND id = $2 AND key_id = $3 AND revoked_epoch IS NULL",
+            )
+            .bind(tenant_id)
+            .bind(grant_id)
+            .bind(key_id)
+            .bind(seq)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if revoked.rows_affected() != 1 {
+                return Err(StoreError::Backend(format!(
+                    "grant {grant_id} is not a grant in force on key {key_id} of this tenant"
+                )));
+            }
+        }
+        MetadataFold::ConnectCodeVoided { key_id, code_id } => {
+            let voided = sqlx::query(
+                "UPDATE connect_codes SET voided_seq = $4 \
+                 WHERE tenant_id = $1 AND id = $2 AND key_id = $3 \
+                   AND redeemed_at IS NULL AND voided_seq IS NULL",
+            )
+            .bind(tenant_id)
+            .bind(code_id)
+            .bind(key_id)
+            .bind(seq)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if voided.rows_affected() != 1 {
+                return Err(StoreError::Backend(format!(
+                    "code {code_id} is not an unredeemed live code of key {key_id}"
+                )));
+            }
+        }
+        MetadataFold::KeySuspended { key_id, suspension } => {
+            // Only a live key that is not suspended already is suspended
+            // (0073_admin_act_undo.sql); anything else aborts the commit.
+            let suspended = sqlx::query(
+                "UPDATE api_keys SET suspended_cause = $3, suspended_act_id = $4, \
+                        suspended_at = ($5)::timestamptz \
+                  WHERE tenant_id = $1 AND id = $2 AND revoked_at IS NULL \
+                    AND suspended_cause IS NULL",
+            )
+            .bind(tenant_id)
+            .bind(key_id)
+            .bind(suspension.cause.as_str())
+            .bind(suspension.act_id)
+            .bind(suspension.at.as_str())
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if suspended.rows_affected() != 1 {
+                return Err(StoreError::Backend(format!(
+                    "key {key_id} is not a live key of this tenant that is not suspended"
+                )));
+            }
+        }
+        MetadataFold::KeySuspensionLifted { key_id } => {
+            let lifted = sqlx::query(
+                "UPDATE api_keys SET suspended_cause = NULL, suspended_act_id = NULL, \
+                        suspended_at = NULL \
+                  WHERE tenant_id = $1 AND id = $2 AND suspended_cause IS NOT NULL",
+            )
+            .bind(tenant_id)
+            .bind(key_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if lifted.rows_affected() != 1 {
+                return Err(StoreError::Backend(format!(
+                    "key {key_id} is not a suspended key of this tenant"
+                )));
+            }
         }
         MetadataFold::KeyDenialLifted { key_id, denial_id } => {
             // The row stays as history, its lifted_epoch this commit's seq;
@@ -5557,6 +5867,26 @@ async fn apply_fold(
                 .map_err(backend)?;
             }
         }
+        MetadataFold::KeyConverted { key_id } => {
+            // Only a live admin bearer key converts, in place: the id and
+            // the hash stay, and the role's rate is set (ADR-0097 d18).
+            let set = sqlx::query(
+                "UPDATE api_keys SET role = 'maintenance', requests_per_minute = $3 \
+                 WHERE tenant_id = $1 AND id = $2 AND revoked_at IS NULL \
+                 AND credential = 'bearer' AND role = 'admin'",
+            )
+            .bind(tenant_id)
+            .bind(key_id)
+            .bind(i64::from(oml_app::app::MAINTENANCE_REQUESTS_PER_MINUTE))
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if set.rows_affected() != 1 {
+                return Err(StoreError::Backend(format!(
+                    "key {key_id} is not a live admin bearer key of this tenant"
+                )));
+            }
+        }
         MetadataFold::KeyLimitsSet {
             key_id,
             expiry,
@@ -5581,6 +5911,30 @@ async fn apply_fold(
             if set.rows_affected() != 1 {
                 return Err(StoreError::Backend(format!(
                     "key {key_id} is not a live bearer or connector key of this tenant, or is an admin key"
+                )));
+            }
+        }
+        MetadataFold::KeyDefaultSet {
+            key_id,
+            default_workspace,
+        } => {
+            // The guard matches only a live key of this tenant and a node
+            // it holds, so a default on anything else aborts the commit
+            // (ADR-0097 d30, the operator's decision of 2026-11-27).
+            let set = sqlx::query(
+                "UPDATE api_keys SET default_workspace_id = $3 \
+                 WHERE tenant_id = $1 AND id = $2 AND revoked_at IS NULL \
+                 AND EXISTS (SELECT 1 FROM workspaces WHERE tenant_id = $1 AND id = $3)",
+            )
+            .bind(tenant_id)
+            .bind(key_id)
+            .bind(default_workspace)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if set.rows_affected() != 1 {
+                return Err(StoreError::Backend(format!(
+                    "key {key_id} is not a live key of this tenant, or {default_workspace} is not its node"
                 )));
             }
         }
@@ -6574,15 +6928,21 @@ async fn meter_plan(
         | MetadataFold::WorkspaceModeSet { .. }
         | MetadataFold::NamesAssigned(_)
         | MetadataFold::GrantIssued { .. }
+        | MetadataFold::GrantRevoked { .. }
+        | MetadataFold::KeySuspended { .. }
+        | MetadataFold::KeySuspensionLifted { .. }
         | MetadataFold::KeyDenied { .. }
         | MetadataFold::KeyDenialLifted { .. }
         // An expired key stays on its account's keys meter: its date can
         // be moved later (ADR-0079 d3).
         | MetadataFold::KeyLimitsSet { .. }
+        | MetadataFold::KeyConverted { .. }
+        | MetadataFold::KeyDefaultSet { .. }
         | MetadataFold::KeyRotated { .. }
         | MetadataFold::KeyLinked { .. }
         | MetadataFold::KeyLinkAccepted { .. }
         | MetadataFold::ConnectCodeIssued { .. }
+        | MetadataFold::ConnectCodeVoided { .. }
         | MetadataFold::VerdictRecorded { .. }
         | MetadataFold::SourceChecked { .. }
         | MetadataFold::FindingsRecorded { .. }
@@ -6592,16 +6952,22 @@ async fn meter_plan(
         | MetadataFold::WebEmailRemoved { .. }
         | MetadataFold::AdminRead
         | MetadataFold::AdminMemoryRead { .. }
+        | MetadataFold::NoticeWritten { .. }
+        | MetadataFold::NoticeDismissed { .. }
+        | MetadataFold::RecoveryRequested(_)
+        | MetadataFold::RecoverySettled { .. }
         | MetadataFold::InvestigationOpened { .. }
         | MetadataFold::InvestigationClosed { .. }
         | MetadataFold::AdminFixRecorded(_)
         | MetadataFold::AdminFixSettled { .. }
+        | MetadataFold::AdminAct(_)
         // An import's end moves no meter: each version it wrote was
         // metered by its own commit (ADR-0084 d15).
         | MetadataFold::WorkspaceImported(_)
         | MetadataFold::QuotaSet { .. }
         | MetadataFold::AccountProfileSet { .. }
         | MetadataFold::UserDisabled { .. }
+        | MetadataFold::UserEnabled { .. }
         | MetadataFold::DeletionRequested { .. }
         | MetadataFold::DeletionClosed { .. }
         | MetadataFold::TransitionProposed(_)
@@ -6613,7 +6979,8 @@ async fn meter_plan(
         | MetadataFold::SearchDefaultSet { .. }
         | MetadataFold::TelemetrySettingsSet { .. }
         | MetadataFold::FederationPolicySet(_)
-        | MetadataFold::WorkspaceFederationSet { .. } => {}
+        | MetadataFold::WorkspaceFederationSet { .. }
+        | MetadataFold::WorkspacePublicSet { .. } => {}
         // The `exports` meter is a flow the fold counts itself, held under
         // no quota (ADR-0084 d10, d15).
         MetadataFold::WorkspaceExported { .. } => {}
@@ -8581,6 +8948,90 @@ impl PgStore {
 }
 
 impl JournalStore for PgStore {
+    async fn web_person_reviewers(
+        &self,
+        tenant_id: Uuid,
+    ) -> Result<Vec<PersonReviewer>, StoreError> {
+        // The keys, then their grants and the denials in force, in one
+        // snapshot: three statements over `api_keys`, `grants` and
+        // `key_denials`, never `memories` (#435).
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        one_snapshot(&mut tx).await?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let keys = sqlx::query(&format!(
+            "SELECT {KEY_COLUMNS} FROM api_keys WHERE tenant_id = $1 AND role = 'reviewer' \
+             AND used_by = 'person' AND crew_id IS NULL AND profile IS NULL \
+             AND revoked_at IS NULL ORDER BY name"
+        ))
+        .bind(tenant_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?
+        .iter()
+        .map(key_from_row)
+        .collect::<Result<Vec<_>, _>>()?;
+        let ids: Vec<Uuid> = keys.iter().map(|k| k.key_id).collect();
+        let grants = sqlx::query(
+            "SELECT key_id, id, role, workspace_node_id, deny, covers, may_create FROM grants \
+             WHERE tenant_id = $1 AND key_id = ANY($2) AND revoked_epoch IS NULL \
+             ORDER BY epoch ASC, id ASC",
+        )
+        .bind(tenant_id)
+        .bind(&ids)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        let denials = sqlx::query(
+            "SELECT key_id, id, workspace_node_id FROM key_denials \
+             WHERE tenant_id = $1 AND key_id = ANY($2) AND lifted_epoch IS NULL \
+             ORDER BY epoch ASC, id ASC",
+        )
+        .bind(tenant_id)
+        .bind(&ids)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        let mut out: Vec<PersonReviewer> = keys
+            .into_iter()
+            .map(|key| PersonReviewer {
+                key,
+                grants: Vec::new(),
+                denials: Vec::new(),
+            })
+            .collect();
+        for row in &grants {
+            let role: String = row.try_get("role").map_err(backend)?;
+            let deny: Value = row.try_get("deny").map_err(backend)?;
+            let covers: String = row.try_get("covers").map_err(backend)?;
+            let grant = Grant {
+                grant_id: row.try_get("id").map_err(backend)?,
+                node: row.try_get("workspace_node_id").map_err(backend)?,
+                role: role_from_str(&role)?,
+                deny: deny_from_json(&deny)?,
+                covers: Covers::parse(&covers).ok_or_else(|| {
+                    StoreError::Backend(format!("grants.covers {covers:?} is not a coverage"))
+                })?,
+                create: row.try_get("may_create").map_err(backend)?,
+            };
+            let key_id: Uuid = row.try_get("key_id").map_err(backend)?;
+            if let Some(r) = out.iter_mut().find(|r| r.key.key_id == key_id) {
+                r.grants.push(grant);
+            }
+        }
+        for row in &denials {
+            let denial = KeyDenial {
+                denial_id: row.try_get("id").map_err(backend)?,
+                node: row.try_get("workspace_node_id").map_err(backend)?,
+            };
+            let key_id: Uuid = row.try_get("key_id").map_err(backend)?;
+            if let Some(r) = out.iter_mut().find(|r| r.key.key_id == key_id) {
+                r.denials.push(denial);
+            }
+        }
+        Ok(out)
+    }
+
     async fn upload_open(
         &self,
         session: &oml_app::types::UploadSession,
@@ -9092,6 +9543,29 @@ impl JournalStore for PgStore {
         .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
         Ok(uploads.len() as u64)
+    }
+
+    async fn flagged_creates(&self, tenant_id: Uuid) -> Result<Vec<(Uuid, u64)>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        // A scan of the tenant's `workspace.create` events, read by the
+        // admin rescan window alone (the bottleneck register's "Flagged
+        // creates" row; ADR-0097 d31, the operator's decision of
+        // 2026-11-27).
+        let rows: Vec<(Uuid, i64)> = sqlx::query_as(
+            "SELECT j.api_key_id, count(*) FROM journal j \
+              WHERE j.tenant_id = $1 AND j.event_type = 'workspace.create' \
+                AND j.payload ? 'create_grant_id' AND j.api_key_id IS NOT NULL \
+              GROUP BY j.api_key_id ORDER BY j.api_key_id",
+        )
+        .bind(tenant_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.into_iter()
+            .map(|(key, n)| Ok((key, u64::try_from(n).map_err(backend)?)))
+            .collect()
     }
 
     async fn workspace_creator_if_empty(
@@ -10787,6 +11261,215 @@ impl JournalStore for PgStore {
         self.read_fixes(tenant_id, None, unconfirmed_only).await
     }
 
+    async fn admin_act(
+        &self,
+        tenant_id: Uuid,
+        act_id: Uuid,
+    ) -> Result<Option<oml_app::types::AdminActRecord>, StoreError> {
+        Ok(self
+            .read_admin_acts(tenant_id, Some(act_id), None)
+            .await?
+            .pop())
+    }
+
+    async fn admin_acts(
+        &self,
+        tenant_id: Uuid,
+        state: Option<oml_app::domain::admin_act::AdminActState>,
+    ) -> Result<Vec<oml_app::types::AdminActRecord>, StoreError> {
+        self.read_admin_acts(tenant_id, None, state).await
+    }
+
+    async fn admin_standing(
+        &self,
+        tenant_id: Uuid,
+    ) -> Result<oml_app::types::AdminStanding, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let sole_admin: Option<bool> =
+            sqlx::query_scalar("SELECT sole_admin FROM tenants WHERE id = $1")
+                .bind(tenant_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(backend)?;
+        let rows = sqlx::query(
+            "SELECT user_name::text AS user_name, disabled_at IS NOT NULL AS disabled, \
+                    to_char(admin_since AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+                    AS admin_since_s \
+               FROM web_emails \
+              WHERE tenant_id = $1 AND admin AND pending_since IS NULL \
+                AND admin_since IS NOT NULL \
+              ORDER BY user_name",
+        )
+        .bind(tenant_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        let persons = rows
+            .iter()
+            .map(|row| {
+                let user: String = row.try_get("user_name").map_err(backend)?;
+                let since: String = row.try_get("admin_since_s").map_err(backend)?;
+                Ok(oml_app::types::AdminPerson {
+                    user: Name::parse_reference(&user).map_err(backend)?,
+                    admin_since: EventTime::parse(&since).map_err(backend)?,
+                    disabled: row.try_get("disabled").map_err(backend)?,
+                })
+            })
+            .collect::<Result<Vec<_>, StoreError>>()?;
+        Ok(oml_app::types::AdminStanding {
+            sole_admin: sole_admin.unwrap_or(true),
+            persons,
+        })
+    }
+
+    async fn record_authentication(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+        day: &str,
+        count: u64,
+    ) -> Result<(), StoreError> {
+        // One upsert per key per day, under the tenant's row security
+        // (ADR-0097, answer 24; 0076).
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        sqlx::query(
+            "INSERT INTO key_authentications (tenant_id, key_id, day, count) \
+             VALUES ($1, $2, ($3)::date, $4) \
+             ON CONFLICT (tenant_id, key_id, day) \
+             DO UPDATE SET count = key_authentications.count + EXCLUDED.count",
+        )
+        .bind(tenant_id)
+        .bind(key_id)
+        .bind(day)
+        .bind(i64::try_from(count).unwrap_or(i64::MAX))
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
+    async fn admin_keys_authenticated_since(
+        &self,
+        tenant_id: Uuid,
+        since_day: &str,
+    ) -> Result<u64, StoreError> {
+        // Read tenant-bound; the role is the key's, through its id
+        // (answers 21, 24).
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(DISTINCT a.key_id) FROM key_authentications a \
+               JOIN api_keys k ON k.tenant_id = a.tenant_id AND k.id = a.key_id \
+              WHERE a.tenant_id = $1 AND a.day >= ($2)::date AND k.role = 'admin'",
+        )
+        .bind(tenant_id)
+        .bind(since_day)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(u64::try_from(n).unwrap_or(0))
+    }
+
+    async fn authentication_coverage(
+        &self,
+    ) -> Result<oml_app::types::AuthenticationCoverage, StoreError> {
+        // Deployment wide, under the 0003 startup-enumeration setting that
+        // 0076's coverage_read policy admits (answer 24).
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        sqlx::query("SELECT set_config('oml.startup_check', 'on', true)")
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        let oldest: Option<String> =
+            sqlx::query_scalar("SELECT to_char(min(day), 'YYYY-MM-DD') FROM key_authentications")
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(backend)?;
+        let installed: String = sqlx::query_scalar(
+            "SELECT to_char(installed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+               FROM key_authentications_installed",
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(oml_app::types::AuthenticationCoverage {
+            oldest_day: oldest,
+            installed_at: EventTime::parse(&installed).map_err(backend)?,
+        })
+    }
+
+    async fn purge_authentications(
+        &self,
+        tenant_id: Uuid,
+        before_day: &str,
+    ) -> Result<u64, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let purged = sqlx::query(
+            "DELETE FROM key_authentications WHERE tenant_id = $1 AND day < ($2)::date",
+        )
+        .bind(tenant_id)
+        .bind(before_day)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?
+        .rows_affected();
+        tx.commit().await.map_err(backend)?;
+        Ok(purged)
+    }
+
+    async fn operator_recoveries(
+        &self,
+        tenant_id: Uuid,
+        state: Option<oml_app::types::RecoveryState>,
+    ) -> Result<Vec<oml_app::types::RecoveryRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sqlx::query(
+            "SELECT id, person::text AS person, email, state, \
+                    to_char(requested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+                    AS requested_s, \
+                    to_char(settled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+                    AS settled_s \
+               FROM operator_recoveries \
+              WHERE tenant_id = $1 AND ($2::text IS NULL OR state = $2) \
+              ORDER BY requested_seq",
+        )
+        .bind(tenant_id)
+        .bind(state.map(oml_app::types::RecoveryState::as_str))
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter()
+            .map(|row| {
+                let person: String = row.try_get("person").map_err(backend)?;
+                let email: String = row.try_get("email").map_err(backend)?;
+                let state: String = row.try_get("state").map_err(backend)?;
+                let requested: String = row.try_get("requested_s").map_err(backend)?;
+                let settled: Option<String> = row.try_get("settled_s").map_err(backend)?;
+                Ok(oml_app::types::RecoveryRecord {
+                    recovery_id: row.try_get("id").map_err(backend)?,
+                    person: Name::parse_reference(&person).map_err(backend)?,
+                    email: oml_app::domain::web::Email::parse(&email).map_err(backend)?,
+                    state: oml_app::types::RecoveryState::parse(&state)
+                        .ok_or_else(|| StoreError::Backend(format!("recovery state {state:?}")))?,
+                    requested_at: EventTime::parse(&requested).map_err(backend)?,
+                    settled_at: settled
+                        .map(|s| EventTime::parse(&s))
+                        .transpose()
+                        .map_err(backend)?,
+                })
+            })
+            .collect()
+    }
+
     /// No release table exists until R3 (ADR-0085), so no version is a
     /// member; R3 reads its membership here.
     async fn member_of_no_release(
@@ -10795,6 +11478,76 @@ impl JournalStore for PgStore {
         _memory_id: Uuid,
     ) -> Result<bool, StoreError> {
         Ok(true)
+    }
+
+    async fn notices(
+        &self,
+        tenant_id: Uuid,
+        recipient: &Name,
+        dismissed: bool,
+    ) -> Result<Vec<oml_app::types::NoticeRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows: Vec<NoticeRow> =
+            sqlx::query_as(
+                "SELECT id, kind, act_id, detail, \
+                        to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'), \
+                        to_char(dismissed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+                   FROM notices \
+                  WHERE tenant_id = $1 AND recipient = $2 AND ($3 OR dismissed_at IS NULL) \
+                  ORDER BY seq, id",
+            )
+            .bind(tenant_id)
+            .bind(recipient.as_str())
+            .bind(dismissed)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.into_iter()
+            .map(|(id, kind, act_id, detail, at, dismissed_at)| {
+                Ok(oml_app::types::NoticeRecord {
+                    notice_id: id,
+                    recipient: recipient.clone(),
+                    kind: oml_app::domain::notice::NoticeKind::parse(&kind)
+                        .ok_or_else(|| StoreError::Backend(format!("notice kind {kind}")))?,
+                    act_id,
+                    detail,
+                    at: EventTime::parse(&at).map_err(backend)?,
+                    dismissed_at: dismissed_at
+                        .as_deref()
+                        .map(EventTime::parse)
+                        .transpose()
+                        .map_err(backend)?,
+                })
+            })
+            .collect()
+    }
+
+    async fn admin_read_counts(
+        &self,
+        tenant_id: Uuid,
+        person: &Name,
+    ) -> Result<Vec<oml_app::types::AdminReadCount>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT month, reads FROM admin_read_counts \
+              WHERE tenant_id = $1 AND person = $2 ORDER BY month",
+        )
+        .bind(tenant_id)
+        .bind(person.as_str())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(rows
+            .into_iter()
+            .map(|(month, reads)| oml_app::types::AdminReadCount {
+                month,
+                reads: u64::try_from(reads).unwrap_or(0),
+            })
+            .collect())
     }
 
     async fn investigation(
@@ -11505,7 +12258,8 @@ impl JournalStore for PgStore {
                   WHERE tenant_id = $1 AND id = $2 \
                  UNION ALL \
                  SELECT w.id, w.tenant_id, w.parent_id, w.name, w.status, w.crew, w.crew_id, \
-                        w.user_root, w.namespace_root_id, w.mode, up.depth + 1 \
+                        w.user_root, w.namespace_root_id, w.mode, w.public, \
+                        w.public_act_id, up.depth + 1 \
                    FROM workspaces w JOIN up ON w.id = up.parent_id \
                   WHERE w.tenant_id = $1 \
              ) SELECT {WORKSPACE_COLUMNS} FROM up ORDER BY depth ASC"
@@ -11539,12 +12293,28 @@ impl JournalStore for PgStore {
                   WHERE tenant_id = $1 AND id = $2 \
                  UNION ALL \
                  SELECT w.id, w.tenant_id, w.parent_id, w.name, w.status, w.crew, w.crew_id, \
-                        w.user_root, w.namespace_root_id, w.mode, down.depth + 1 \
+                        w.user_root, w.namespace_root_id, w.mode, w.public, \
+                        w.public_act_id, down.depth + 1 \
                    FROM workspaces w JOIN down ON w.parent_id = down.id \
                   WHERE w.tenant_id = $1 \
              ) SELECT {WORKSPACE_COLUMNS} FROM down ORDER BY depth ASC, id ASC"
         );
         self.workspace_rows(tenant_id, workspace_id, &sql).await
+    }
+
+    async fn public_workspaces(&self, tenant_id: Uuid) -> Result<Vec<WorkspaceRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sqlx::query(&format!(
+            "SELECT {WORKSPACE_COLUMNS} FROM workspaces WHERE tenant_id = $1 AND public \
+             ORDER BY name COLLATE \"C\" ASC, id ASC"
+        ))
+        .bind(tenant_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter().map(workspace_from_row).collect()
     }
 
     async fn workspace_children(
@@ -12240,6 +13010,122 @@ async fn set_lookup_digest(
 /// with every admin entry locked in this transaction, so two commits that
 /// would each leave the other the last admin are serialized and the second
 /// sees the first's change (ADR-0045 d10; ADR-0070 d5).
+/// Takes the tenant out of `sole_admin` for good once it holds two live
+/// admin persons, after a fold on its allowlist (ADR-0097 d10; 0070).
+async fn fold_sole_admin(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+) -> Result<(), StoreError> {
+    sqlx::query(
+        "UPDATE tenants SET sole_admin = false WHERE id = $1 AND sole_admin \
+         AND (SELECT count(DISTINCT user_name) FROM web_emails \
+               WHERE tenant_id = $1 AND admin AND pending_since IS NULL \
+                 AND disabled_at IS NULL) >= 2",
+    )
+    .bind(tenant_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    Ok(())
+}
+
+/// A notice row as `notices` reads it: id, kind, act, detail, written and
+/// dismissed instants (ADR-0097 d20; 0074).
+type NoticeRow = (Uuid, String, Option<Uuid>, Value, String, Option<String>);
+
+/// `admin.act`'s fold (ADR-0097 d2; 0070): the first envelope inserts the
+/// act's row, effective or pending; a later one moves it only from a state
+/// that admits the move, a lost race aborting the commit. A confirmation
+/// clears the `pending_act_id` of the key the act issued (d23).
+async fn fold_admin_act(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    act: &oml_app::types::AdminActRecord,
+    seq: i64,
+    at: &EventTime,
+) -> Result<(), StoreError> {
+    use oml_app::domain::admin_act::AdminActState as St;
+    let from: &[&str] = match act.state {
+        St::Effective | St::PendingConfirmation => {
+            sqlx::query(
+                "INSERT INTO admin_acts (tenant_id, id, act, class, target, reason, \
+                        actor_key_id, actor_person, state, sole_admin, cause, created_at, \
+                        effect, seq) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, ($12)::timestamptz, \
+                        $13, $14)",
+            )
+            .bind(tenant_id)
+            .bind(act.act_id)
+            .bind(act.act.as_str())
+            .bind(act.class().as_str())
+            .bind(&act.target)
+            .bind(act.reason.as_deref())
+            .bind(act.actor_key_id)
+            .bind(act.actor_person.as_ref().map(Name::as_str))
+            .bind(act.state.as_str())
+            .bind(act.sole_admin)
+            .bind(
+                act.cause
+                    .map(oml_app::domain::admin_act::AdminActCause::as_str),
+            )
+            .bind(at.as_str())
+            .bind(&act.effect)
+            .bind(seq)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            return Ok(());
+        }
+        // A time box took effect at once and is settled afterwards
+        // (ADR-0097 d13).
+        St::Confirmed => &["pending_confirmation", "effective"],
+        St::Expired => &["pending_confirmation"],
+        St::Declined => &["pending_confirmation", "effective"],
+        St::Contested => &["effective"],
+        St::Settled => &["effective", "contested"],
+    };
+    let from: Vec<String> = from.iter().map(|s| (*s).to_owned()).collect();
+    let moved = sqlx::query(
+        "UPDATE admin_acts SET state = $3, confirmed_by_person = $4, settled_by_key_id = $5, \
+                settled_at = ($6)::timestamptz, confirm_reason = $8 \
+          WHERE tenant_id = $1 AND id = $2 AND state = ANY($7) \
+            AND ($3 <> 'declined' OR state = 'pending_confirmation' OR sole_admin \
+                 OR target ->> 'timebox' = 'true') \
+            AND ($3 <> 'confirmed' OR state = 'pending_confirmation' \
+                 OR target ->> 'timebox' = 'true')",
+    )
+    .bind(tenant_id)
+    .bind(act.act_id)
+    .bind(act.state.as_str())
+    .bind(act.confirmed_by_person.as_ref().map(Name::as_str))
+    .bind(act.settled_by_key_id)
+    .bind(at.as_str())
+    .bind(&from)
+    .bind(act.confirm_reason.as_deref())
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    if moved.rows_affected() != 1 {
+        return Err(StoreError::Backend(format!(
+            "admin act {} does not move to {} from the state it holds",
+            act.act_id,
+            act.state.as_str()
+        )));
+    }
+    if act.state == St::Confirmed {
+        sqlx::query(
+            "UPDATE api_keys SET pending_act_id = NULL \
+              WHERE tenant_id = $1 AND pending_act_id = $2",
+        )
+        .bind(tenant_id)
+        .bind(act.act_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+    }
+    Ok(())
+}
+
 async fn last_admin_entry(
     tx: &mut Transaction<'_, Postgres>,
     tenant_id: Uuid,
@@ -12247,7 +13133,7 @@ async fn last_admin_entry(
 ) -> Result<bool, StoreError> {
     let admins: Vec<Vec<u8>> = sqlx::query_scalar(
         "SELECT email_hash FROM web_emails WHERE tenant_id = $1 AND admin \
-         AND pending_since IS NULL ORDER BY email_hash FOR UPDATE",
+         AND pending_since IS NULL AND disabled_at IS NULL ORDER BY email_hash FOR UPDATE",
     )
     .bind(tenant_id)
     .fetch_all(&mut **tx)
@@ -12351,6 +13237,85 @@ impl PgStore {
 impl PgStore {
     /// The tenant's admin fixes, oldest first: one by id or every one, the
     /// unconfirmed ones alone when `unconfirmed_only` (ADR-0089 d15; 0064).
+    async fn read_admin_acts(
+        &self,
+        tenant_id: Uuid,
+        act_id: Option<Uuid>,
+        state: Option<oml_app::domain::admin_act::AdminActState>,
+    ) -> Result<Vec<oml_app::types::AdminActRecord>, StoreError> {
+        use oml_app::domain::admin_act::{AdminActCause, AdminActKind, AdminActState};
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sqlx::query(
+            "SELECT id, act, target, reason, actor_key_id, actor_person::text AS actor_person, \
+                    state, confirmed_by_person::text AS confirmed_by_person, settled_by_key_id, \
+                    confirm_reason, sole_admin, cause, effect, \
+                    to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+                    AS created_at_s, \
+                    to_char(settled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+                    AS settled_at_s \
+               FROM admin_acts \
+              WHERE tenant_id = $1 AND ($2::uuid IS NULL OR id = $2) \
+                AND ($3::text IS NULL OR state = $3) \
+              ORDER BY created_at, id",
+        )
+        .bind(tenant_id)
+        .bind(act_id)
+        .bind(state.map(AdminActState::as_str))
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        let name = |v: Option<String>| -> Result<Option<Name>, StoreError> {
+            v.as_deref()
+                .map(Name::parse_reference)
+                .transpose()
+                .map_err(backend)
+        };
+        rows.iter()
+            .map(|row| {
+                let act: String = row.try_get("act").map_err(backend)?;
+                let st: String = row.try_get("state").map_err(backend)?;
+                let cause: Option<String> = row.try_get("cause").map_err(backend)?;
+                let created: String = row.try_get("created_at_s").map_err(backend)?;
+                let settled: Option<String> = row.try_get("settled_at_s").map_err(backend)?;
+                Ok(oml_app::types::AdminActRecord {
+                    act_id: row.try_get("id").map_err(backend)?,
+                    act: AdminActKind::parse(&act)
+                        .ok_or_else(|| StoreError::Backend(format!("unknown admin act {act:?}")))?,
+                    target: row.try_get("target").map_err(backend)?,
+                    reason: row.try_get("reason").map_err(backend)?,
+                    actor_key_id: row.try_get("actor_key_id").map_err(backend)?,
+                    actor_person: name(row.try_get("actor_person").map_err(backend)?)?,
+                    state: AdminActState::parse(&st).ok_or_else(|| {
+                        StoreError::Backend(format!("unknown admin act state {st:?}"))
+                    })?,
+                    confirmed_by_person: name(
+                        row.try_get("confirmed_by_person").map_err(backend)?,
+                    )?,
+                    settled_by_key_id: row.try_get("settled_by_key_id").map_err(backend)?,
+                    confirm_reason: row.try_get("confirm_reason").map_err(backend)?,
+                    sole_admin: row.try_get("sole_admin").map_err(backend)?,
+                    cause: cause
+                        .as_deref()
+                        .map(|c| {
+                            AdminActCause::parse(c).ok_or_else(|| {
+                                StoreError::Backend(format!("unknown admin act cause {c:?}"))
+                            })
+                        })
+                        .transpose()?,
+                    at: EventTime::parse(&created).map_err(backend)?,
+                    settled_at: settled
+                        .as_deref()
+                        .map(EventTime::parse)
+                        .transpose()
+                        .map_err(backend)?,
+                    effect: row.try_get("effect").map_err(backend)?,
+                })
+            })
+            .collect()
+    }
+
     async fn read_fixes(
         &self,
         tenant_id: Uuid,
@@ -12473,6 +13438,37 @@ impl PgStore {
 /// each in a transaction of its own under `oml.tenant_id`, the digest
 /// lookups under 0015's `key_resolution` policies.
 impl WebStore for PgStore {
+    async fn removed_admin_act(
+        &self,
+        email_hash: &Sha256Hash,
+    ) -> Result<Option<(Uuid, oml_app::types::AdminActRecord)>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_lookup_digest(&mut tx, email_hash).await?;
+        // Before any tenant is known, the contest lookup policy admits the
+        // admin act rows whose target names this digest, SELECT only
+        // (migration 0073; ADR-0097 d8, the operator's decision of
+        // 2026-11-27).
+        let found: Option<(Uuid, Uuid)> = sqlx::query_as(
+            "SELECT tenant_id, id FROM admin_acts \
+              WHERE act = 'remove_admin' AND state = 'effective' \
+                AND target->>'email_digest' = $1 \
+              ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(email_hash.to_prefixed())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        let Some((tenant_id, act_id)) = found else {
+            return Ok(None);
+        };
+        Ok(self
+            .read_admin_acts(tenant_id, Some(act_id), None)
+            .await?
+            .pop()
+            .map(|act| (tenant_id, act)))
+    }
+
     async fn web_entry_by_email(
         &self,
         email_hash: &Sha256Hash,
@@ -12846,6 +13842,25 @@ impl WebStore for PgStore {
         .await
     }
 
+    async fn web_unlinked_admin_keys(&self, tenant_id: Uuid) -> Result<Vec<KeyRecord>, StoreError> {
+        self.keys_where(
+            tenant_id,
+            "revoked_at IS NULL AND role = 'admin' AND credential = 'bearer' \
+             AND linked_user_id IS NULL",
+            |q| q,
+        )
+        .await
+    }
+
+    async fn web_keys_issued_by(
+        &self,
+        tenant_id: Uuid,
+        issuer: Uuid,
+    ) -> Result<Vec<KeyRecord>, StoreError> {
+        self.keys_where(tenant_id, "issued_by = $2", |q| q.bind(issuer))
+            .await
+    }
+
     async fn web_pending_links(&self, tenant_id: Uuid) -> Result<Vec<KeyRecord>, StoreError> {
         self.keys_where(
             tenant_id,
@@ -12917,88 +13932,6 @@ impl WebStore for PgStore {
                 })
             })
             .collect()
-    }
-
-    async fn web_person_reviewers(
-        &self,
-        tenant_id: Uuid,
-    ) -> Result<Vec<PersonReviewer>, StoreError> {
-        // The keys, then their grants and the denials in force, in one
-        // snapshot: three statements over `api_keys`, `grants` and
-        // `key_denials`, never `memories` (#435).
-        let mut tx = self.pool.begin().await.map_err(backend)?;
-        one_snapshot(&mut tx).await?;
-        set_tenant(&mut tx, tenant_id).await?;
-        let keys = sqlx::query(&format!(
-            "SELECT {KEY_COLUMNS} FROM api_keys WHERE tenant_id = $1 AND role = 'reviewer' \
-             AND used_by = 'person' AND crew_id IS NULL AND profile IS NULL \
-             AND revoked_at IS NULL ORDER BY name"
-        ))
-        .bind(tenant_id)
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(backend)?
-        .iter()
-        .map(key_from_row)
-        .collect::<Result<Vec<_>, _>>()?;
-        let ids: Vec<Uuid> = keys.iter().map(|k| k.key_id).collect();
-        let grants = sqlx::query(
-            "SELECT key_id, id, role, workspace_node_id, deny, covers FROM grants \
-             WHERE tenant_id = $1 AND key_id = ANY($2) ORDER BY epoch ASC, id ASC",
-        )
-        .bind(tenant_id)
-        .bind(&ids)
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(backend)?;
-        let denials = sqlx::query(
-            "SELECT key_id, id, workspace_node_id FROM key_denials \
-             WHERE tenant_id = $1 AND key_id = ANY($2) AND lifted_epoch IS NULL \
-             ORDER BY epoch ASC, id ASC",
-        )
-        .bind(tenant_id)
-        .bind(&ids)
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(backend)?;
-        tx.commit().await.map_err(backend)?;
-        let mut out: Vec<PersonReviewer> = keys
-            .into_iter()
-            .map(|key| PersonReviewer {
-                key,
-                grants: Vec::new(),
-                denials: Vec::new(),
-            })
-            .collect();
-        for row in &grants {
-            let role: String = row.try_get("role").map_err(backend)?;
-            let deny: Value = row.try_get("deny").map_err(backend)?;
-            let covers: String = row.try_get("covers").map_err(backend)?;
-            let grant = Grant {
-                grant_id: row.try_get("id").map_err(backend)?,
-                node: row.try_get("workspace_node_id").map_err(backend)?,
-                role: role_from_str(&role)?,
-                deny: deny_from_json(&deny)?,
-                covers: Covers::parse(&covers).ok_or_else(|| {
-                    StoreError::Backend(format!("grants.covers {covers:?} is not a coverage"))
-                })?,
-            };
-            let key_id: Uuid = row.try_get("key_id").map_err(backend)?;
-            if let Some(r) = out.iter_mut().find(|r| r.key.key_id == key_id) {
-                r.grants.push(grant);
-            }
-        }
-        for row in &denials {
-            let denial = KeyDenial {
-                denial_id: row.try_get("id").map_err(backend)?,
-                node: row.try_get("workspace_node_id").map_err(backend)?,
-            };
-            let key_id: Uuid = row.try_get("key_id").map_err(backend)?;
-            if let Some(r) = out.iter_mut().find(|r| r.key.key_id == key_id) {
-                r.denials.push(denial);
-            }
-        }
-        Ok(out)
     }
 
     async fn web_admin_search(

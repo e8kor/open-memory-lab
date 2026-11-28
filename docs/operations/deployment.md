@@ -46,7 +46,7 @@ server, `oml-web` and the sign-in routes must share that origin.
 Docker with compose v2 and the `oml` CLI ([install](../start/install.md)) are required.
 
 ```sh
-oml quickstart
+oml quickstart --person <you> --email <your-address>
 ```
 
 The verb writes a compose file with the server, `oml-web`, a Caddy router and
@@ -118,8 +118,13 @@ any proxy or Ingress exposes it. Do it from the host or through a port-forward:
 
 ```sh
 printf '%s\n' "$TOKEN" | oml --url http://127.0.0.1:8080 bootstrap claim <key-name> \
-    --token-stdin --tenant-name <tenant> --principal <admin>
+    --token-stdin --tenant-name <tenant> --principal <admin> \
+    --person <name> --email <address>
 ```
+
+`--person` and `--email` are required: every admin key belongs to a person, the first one included
+([ADR-0097](../adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md)
+d21). A claim without them is refused and leaves no tenant, and the token stays claimable.
 
 The token also sits in whatever store collects the server's logs until a claim consumes it. The CLI
 prints the key once and stores it in `~/.config/oml/credentials`. The rest of the first hour is on
@@ -137,8 +142,8 @@ private network.
   of its own, today `/web/guardrails`, `/web/workspace` and its forms, `/web/admin/workspace`, `/web/workspaces`, `/web/admin/workspaces`, `/web/memories`,
   `/web/atlas`, `/web/admin/memories`, `/web/admin/atlas`, `/web/data/memories`,
   `/web/admin/data/memories`, `/web/review` and `/web/admin/review` (each a `308` for this
-  release), `/web/todo`, `/web/todo/judge`, `/web/admin/todo`, `/web/keys` and `/web/admin/keys`,
-  each for `GET` and, for the Workspaces, To do, Judge and Keys pages, `POST`. Since
+  release), `/web/todo`, `/web/todo/judge`, `/web/admin/todo`, `/web/admin/acts`, `/web/keys` and `/web/admin/keys`,
+  each for `GET` and, for the Workspaces, To do, Judge, admin acts and Keys pages, `POST`. Since
   v0.7.1 the old `?view=` addresses and `/web/admin` answer not found.
   `deploy/caddy/Caddyfile` is a Caddy configuration that routes them; a page that moves in a
   later release adds a route there.

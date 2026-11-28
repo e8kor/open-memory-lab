@@ -108,6 +108,9 @@ pub struct OwnKeyShape {
     pub guardrail_scope: Option<oml_domain::guardrail::GuardrailScope>,
     pub expiry: Option<EventTime>,
     pub requests_per_minute: Option<u32>,
+    /// The workspaces the issuance creates inside the person's root, each
+    /// granted to the key by its role's default grants (ADR-0097 d30).
+    pub create_workspaces: Vec<crate::types::NewWorkspace>,
 }
 
 /// One workspace's queue with its path (ADR-0045 d10).
@@ -554,6 +557,7 @@ where
             role,
             deny: Vec::new(),
             covers: Covers::Subtree,
+            create: false,
         };
         let whole_root = match role {
             Role::Contributor => vec![grant(Role::Submitter), grant(Role::Reader)],
@@ -566,7 +570,9 @@ where
                 ));
             }
         };
-        let grants = if shape.grants.is_empty() {
+        // The whole root only for a key sent with neither grants nor new
+        // workspaces (ADR-0096 d1; ADR-0097 d30).
+        let grants = if shape.grants.is_empty() && shape.create_workspaces.is_empty() {
             whole_root
         } else {
             shape.grants.clone()
@@ -585,6 +591,8 @@ where
             user: Some(user_name),
             expiry: shape.expiry.clone(),
             requests_per_minute: shape.requests_per_minute,
+            person: None,
+            create_workspaces: shape.create_workspaces.clone(),
         };
         self.issue_key_by(&web.key, &req, Issuance::PersonsOwn(head))
             .await
@@ -755,6 +763,19 @@ where
         user: &Name,
         workspace: Reference,
     ) -> Result<CapacityGranted, AppError> {
+        self.grant_review_capacity_with_reason(admin, user, workspace, None)
+            .await
+    }
+
+    /// [`Self::grant_review_capacity`] with the admin's reason, which a grant that waits on
+    /// a second admin person requires (ADR-0097 d5, d26).
+    pub async fn grant_review_capacity_with_reason(
+        &self,
+        admin: &Caller,
+        user: &Name,
+        workspace: Reference,
+        reason: Option<&str>,
+    ) -> Result<CapacityGranted, AppError> {
         require_role(admin, Role::Admin, "grant_review")?;
         let review = self
             .session_key_of(admin.key.tenant_id, user, Capacity::Review)
@@ -765,8 +786,11 @@ where
             role,
             deny: Vec::new(),
             covers: Covers::Subtree,
+            create: false,
         });
-        let added = self.add_grants(&admin.key, &review, &grants).await?;
+        let added = self
+            .add_grants(&admin.key, &review, &grants, reason)
+            .await?;
         Ok(CapacityGranted {
             key: review,
             grants_added: added,
@@ -784,6 +808,19 @@ where
         user: &Name,
         workspace: Reference,
     ) -> Result<CapacityGranted, AppError> {
+        self.grant_read_capacity_with_reason(admin, user, workspace, None)
+            .await
+    }
+
+    /// [`Self::grant_read_capacity`] with the admin's reason, which a grant that waits on
+    /// a second admin person requires (ADR-0097 d5, d26).
+    pub async fn grant_read_capacity_with_reason(
+        &self,
+        admin: &Caller,
+        user: &Name,
+        workspace: Reference,
+        reason: Option<&str>,
+    ) -> Result<CapacityGranted, AppError> {
         require_role(admin, Role::Admin, "grant_read")?;
         let web = self
             .session_key_of(admin.key.tenant_id, user, Capacity::Web)
@@ -794,8 +831,9 @@ where
             role: Role::Reader,
             deny: Vec::new(),
             covers: Covers::Subtree,
+            create: false,
         };
-        let added = self.add_grants(&admin.key, &web, &[reader]).await?;
+        let added = self.add_grants(&admin.key, &web, &[reader], reason).await?;
         Ok(CapacityGranted {
             key: web,
             grants_added: added,
@@ -813,6 +851,19 @@ where
         user: &Name,
         workspace: Reference,
     ) -> Result<CapacityGranted, AppError> {
+        self.grant_curation_capacity_with_reason(admin, user, workspace, None)
+            .await
+    }
+
+    /// [`Self::grant_curation_capacity`] with the admin's reason, which a grant that waits on
+    /// a second admin person requires (ADR-0097 d5, d26).
+    pub async fn grant_curation_capacity_with_reason(
+        &self,
+        admin: &Caller,
+        user: &Name,
+        workspace: Reference,
+        reason: Option<&str>,
+    ) -> Result<CapacityGranted, AppError> {
         require_role(admin, Role::Admin, "grant_curation")?;
         let tenant_id = admin.key.tenant_id;
         let reader = GrantRequest {
@@ -820,12 +871,15 @@ where
             role: Role::Reader,
             deny: Vec::new(),
             covers: Covers::Subtree,
+            create: false,
         };
         if let Some(curate) = self
             .session_key_of(tenant_id, user, Capacity::Curate)
             .await?
         {
-            let added = self.add_grants(&admin.key, &curate, &[reader]).await?;
+            let added = self
+                .add_grants(&admin.key, &curate, &[reader], reason)
+                .await?;
             return Ok(CapacityGranted {
                 key: curate,
                 grants_added: added,
@@ -849,6 +903,7 @@ where
                     role: Role::Submitter,
                     deny: Vec::new(),
                     covers: Covers::Node,
+                    create: false,
                 },
                 reader,
             ],
@@ -856,6 +911,8 @@ where
             user: None,
             expiry: None,
             requests_per_minute: None,
+            person: None,
+            create_workspaces: Vec::new(),
         };
         let issued = self
             .issue_key_by(&admin.key, &req, Issuance::Session(user))
@@ -895,6 +952,7 @@ where
         admin: &KeyRecord,
         key: &KeyRecord,
         grants: &[GrantRequest],
+        reason: Option<&str>,
     ) -> Result<Vec<GrantRecord>, AppError> {
         let tenant_id = admin.tenant_id;
         let held = self
@@ -920,19 +978,84 @@ where
                 role: g.role,
                 deny: Vec::new(),
                 covers: g.covers,
+                // A capacity grant carries no create flag (ADR-0097 d31).
+                create: false,
             });
         }
         // Step 3 applies to added grants; a contributor's shape was checked
         // when it was issued, and adding a grant cannot undo it (ADR-0093 d2).
         check_issuance(Role::Admin, key.role, &resolved).map_err(issuance_refusal)?;
+        if resolved.is_empty() {
+            return Ok(Vec::new());
+        }
+        // A pending key takes no added grant (ADR-0097 d23).
+        if key.pending_act.is_some() {
+            return Err(AppError::AdminAct(
+                crate::types::AdminActRefusal::KeyPending,
+            ));
+        }
+        // Adding a grant or a capacity is widening, a person's root
+        // included (ADR-0097 d5, d6): pending, the grants wait in the act.
+        let mut root_persons = BTreeSet::new();
+        for grant in &resolved {
+            if let Some(person) = self.root_person_of(tenant_id, grant.node).await? {
+                root_persons.insert(person.as_str().to_owned());
+            }
+        }
+        let prev = self.head_event(tenant_id).await?;
+        let act = self
+            .begin_admin_act(
+                admin,
+                oml_domain::admin_act::AdminActKind::AddGrant,
+                serde_json::json!({
+                    "key_id": key.key_id.to_string(),
+                    "name": key.name.as_ref().map(Name::as_str),
+                    "role": key.role.as_str(),
+                    "principal": key.principal,
+                    // The roots' persons the grants reach, which the confirm
+                    // screen names and a grant at once under `sole_admin`
+                    // notifies (ADR-0097 d6).
+                    "root_persons": root_persons,
+                }),
+                reason,
+                serde_json::json!({
+                    "key_id": key.key_id.to_string(),
+                    "grants": resolved.iter().map(super::admin_acts::grant_json).collect::<Vec<_>>(),
+                }),
+                prev.as_ref(),
+            )
+            .await?;
+        if act.pending() {
+            self.commit_with_act(Some(act), Vec::new()).await?;
+            return Ok(Vec::new());
+        }
+        let mut last = act.event.clone();
+        let mut links = Vec::with_capacity(resolved.len());
         let mut added = Vec::with_capacity(resolved.len());
         for grant in resolved {
-            let prev = self
-                .head_event(tenant_id)
-                .await?
-                .ok_or(AppError::NotFound)?;
-            added.push(self.commit_grant(&prev, admin, key.key_id, grant).await?.1);
+            let event = self.grant_event(&last, admin, key.key_id, &grant)?;
+            let event = self.seal(
+                Some(&last),
+                tenant_id,
+                &event.envelope.event_type,
+                &event.envelope.principal,
+                event.envelope.api_key_id,
+                super::admin_acts::with_act_id(event.envelope.payload, act.act_id()),
+            )?;
+            added.push(GrantRecord {
+                grant: grant.clone(),
+                epoch: event.envelope.seq,
+            });
+            last = event.clone();
+            links.push((
+                event,
+                MetadataFold::GrantIssued {
+                    key_id: key.key_id,
+                    grant,
+                },
+            ));
         }
+        self.commit_with_act(Some(act), links).await?;
         Ok(added)
     }
 
@@ -943,7 +1066,14 @@ where
     /// and denials confer reviewer there, as `require_access` reads one key
     /// (ADR-0080 d16; #435). Counts only, never a key or a memory.
     pub async fn review_queue(&self, admin: &Caller) -> Result<Vec<QueueRow>, AppError> {
-        require_role(admin, Role::Admin, "review_queue")?;
+        // Counts per workspace, no content: an admin key's or a maintenance
+        // key's (ADR-0097 d18).
+        if !matches!(admin.key.role, Role::Admin | Role::Maintenance) {
+            return Err(AppError::VerbCeiling {
+                role: admin.key.role,
+                verb: "review_queue",
+            });
+        }
         let tenant_id = admin.key.tenant_id;
         let depths = self.journal.web_queue(tenant_id).await?;
         let reviewers: Vec<_> = if depths.is_empty() {
@@ -1623,7 +1753,10 @@ where
         self.journal_admin_read(
             &caller.key,
             investigation,
-            items.iter().map(|m| m.memory.memory_id).collect(),
+            items
+                .iter()
+                .map(|m| (m.memory.memory_id, m.memory.workspace_id))
+                .collect(),
             search.query.as_deref(),
         )
         .await?;
@@ -1651,8 +1784,13 @@ where
             .await?
             .ok_or(AppError::NotFound)?;
         let read = self.admin_memory(tenant_id, memory, true).await?;
-        self.journal_admin_read(&caller.key, investigation, vec![memory_id], None)
-            .await?;
+        self.journal_admin_read(
+            &caller.key,
+            investigation,
+            vec![(memory_id, read.memory.workspace_id)],
+            None,
+        )
+        .await?;
         Ok(read)
     }
 
@@ -1730,15 +1868,25 @@ where
         Ok(out)
     }
 
+    /// One `memory.admin_read` for a page served, and one count per person
+    /// whose own root the page read, for the month of the read, which that
+    /// person sees on their own page (ADR-0097 d16).
     async fn journal_admin_read(
         &self,
         admin: &KeyRecord,
         investigation_id: Uuid,
-        artifact_ids: Vec<Uuid>,
+        read: Vec<(Uuid, Uuid)>,
         query: Option<&str>,
     ) -> Result<(), AppError> {
-        let ids: BTreeSet<String> = artifact_ids.iter().map(Uuid::to_string).collect();
+        let ids: BTreeSet<String> = read.iter().map(|(id, _)| id.to_string()).collect();
         let tenant_id = admin.tenant_id;
+        let mut persons = BTreeSet::new();
+        let workspaces: BTreeSet<Uuid> = read.iter().map(|(_, w)| *w).collect();
+        for workspace in workspaces {
+            if let Some(person) = self.root_person_of(tenant_id, workspace).await? {
+                persons.insert(person);
+            }
+        }
         let prev = self.head_event(tenant_id).await?;
         let event = self.seal(
             prev.as_ref(),
@@ -1757,6 +1905,7 @@ where
             MetadataFold::AdminMemoryRead {
                 investigation_id,
                 key_id: admin.key_id,
+                persons: persons.into_iter().collect(),
             },
             None,
         )

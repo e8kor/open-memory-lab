@@ -113,6 +113,7 @@ async fn world() -> World {
                 role,
                 deny: Vec::new(),
                 covers: Covers::Subtree,
+                create: false,
             })
         })
         .collect();
@@ -133,11 +134,17 @@ async fn world() -> World {
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await
-        .expect("ann's key")
-        .value;
+        .expect("ann's key");
+    // Ann's key counts as the person annie and the admin key as ops, as a
+    // ratification needs (ADR-0097 d12, d17).
+    support::admin_counts(&app, &admin).await;
+    support::counts_as(&app, &admin, ann.key_id, "annie").await;
+    let ann = ann.value;
     World {
         router: state(&store, app).into_router(),
         tenant: boot.tenant_id,
@@ -328,6 +335,8 @@ async fn world_at_one_request_a_minute() -> World {
         guardrail_scope: None,
         expiry: None,
         requests_per_minute: None,
+        person: None,
+        create_workspaces: Vec::new(),
     };
     // The first key naming ann creates her root (ADR-0044 d3).
     let first = app
@@ -358,6 +367,7 @@ async fn world_at_one_request_a_minute() -> World {
                 role,
                 deny: Vec::new(),
                 covers: Covers::Subtree,
+                create: false,
             })
         })
         .collect();
@@ -375,7 +385,7 @@ async fn world_at_one_request_a_minute() -> World {
         .with_signup(oml_app::types::SignupPolicy {
             mode: oml_app::domain::signup::SignupMode::Allowlist,
             tenant_id: boot.tenant_id,
-            issuer: name("acme-admin"),
+            issuer: Some(name("acme-admin")),
             terms_version: "2026-11-06".to_owned(),
             terms_url: "https://oml.example.com/terms".to_owned(),
             privacy_url: "https://oml.example.com/privacy".to_owned(),

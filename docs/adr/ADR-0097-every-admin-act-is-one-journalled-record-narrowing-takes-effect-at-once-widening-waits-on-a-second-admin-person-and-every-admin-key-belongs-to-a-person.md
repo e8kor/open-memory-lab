@@ -13,7 +13,7 @@ brief's recommendations, and this record re-derives every rule that rested on th
 recommendations (marked **re-derived** where it appears). The operator answered the five tensions
 those answers created, and three readings, the same day; each answer is recorded where it applies
 and marked **decided by the operator, 2026-11-25**. Readings this record takes beyond the answers
-are marked **reading, for the operator to confirm**.
+were marked **reading, for the operator to confirm**; the operator decided the last two on 2026-11-26. Amended by [ADR-0098](ADR-0098-a-protected-or-frozen-workspace-can-be-marked-public-and-then-every-reading-key-in-the-tenant-reads-its-approved-items.md) (d3, d5, 2026-11-26, decided by the operator).
 
 **Release:** v0.8.6, not built. Four pieces are built in v0.8.5 (d27).
 
@@ -21,6 +21,8 @@ are marked **reading, for the operator to confirm**.
 changes), [ADR-0009](ADR-0009-status-ladder.md) (d3),
 [ADR-0010](ADR-0010-roles-and-keys.md) (d1, d3),
 [ADR-0031](ADR-0031-oauth-connections-by-connect-code.md) (d7, d8),
+[ADR-0042](ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md)
+(d8, for authentication counts only, by answer 24 of 2026-11-28),
 [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
 (d3, d7; d6 by d31),
 [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)
@@ -132,9 +134,9 @@ Decided, not built.
   (ADR-0096 d4, kept); `cut_off`; `disable_user` of a non-admin person; `close_deletion`, where the
   person's request is the consent; key revocation of a non-admin key (d14); connection revocation;
   ending sessions; lowering a limit or quota (d15); narrowing a binding or the federation policy;
-  declining a pending or `sole_admin` act. Content fixes keep ADR-0089's settlement by another
-  person, unchanged; every other narrowing act is listed in the admin's To do as done and counted
-  by doctor. *Rejected:* a timer that reverts narrowing (model C), which re-serves a leaked key the
+  declining a pending or `sole_admin` act; lifting a denial (decided by the operator,
+  2026-11-27). Content fixes keep ADR-0089's settlement by another person, unchanged; every other
+  narrowing act is listed in the admin's To do as done and counted by doctor. *Rejected:* a timer that reverts narrowing (model C), which re-serves a leaked key the
   moment nobody ratifies its demotion.
 
 - **d4 — Erase demotes at once, and the shred waits on a second admin person (Q8).** Erase becomes
@@ -172,7 +174,7 @@ Decided, not built.
   confirm screen names the root's person. A pending connect code is shown once at the mint, voids
   none of the person's own codes and redeems nothing until confirmed; the void that
   `mint_connect_code` performs today (`app.rs:11884-11890`) happens at confirmation, and ADR-0031
-  d8's ten-minute life runs from the confirmation (**reading, for the operator to confirm**: from
+  d8's ten-minute life runs from the confirmation (decided by the operator, 2026-11-26: from
   the mint, a code would nearly always expire before a second admin saw it). This reverses ADR-0044 d3 and d7, ADR-0045 d10
   and ADR-0031 d7 and d8 only as far as adding the second admin's confirmation: an admin still
   issues a reviewer user key in another person's root once confirmed, and no consent class covers
@@ -342,8 +344,8 @@ Decided, not built.
 - **d17 — Admins stay on the status ladder, and the ratifier must count as a person other than the
   proposer (Q12, re-derived).** ADR-0009 d3's two identities become two persons at ratification:
   the ratifier counts as a person (d12), and that person differs from the proposer's. Proposers
-  stay as ADR-0095 d5 has them: an admin, a reviewer, or an agent reviewer key over MCP. **Reading,
-  for the operator to confirm:** when the proposing key counts as no person, the ratifier must also
+  stay as ADR-0095 d5 has them: an admin, a reviewer, or an agent reviewer key over MCP. **Decided by
+  the operator, 2026-11-26:** when the proposing key counts as no person, the ratifier must also
   differ from the `actor_person` of the admin act that issued the proposing key, so one admin
   cannot propose through an agent key they issued and ratify through their own session. A ladder
   move is not an admin act: it keeps its own two-person flow whoever takes it, and ADR-0089 d2's
@@ -592,6 +594,9 @@ Decided, not built.
     2026-11-25:** a child in the shared tree counts against the account of the person the creating
     key counts as (d12), and, for a key that counts as no person (a tenant agent key belongs to no
     account, ADR-0071 d1), against the account of the admin person whose act granted the flag.
+    **Amended by the operator, 2026-11-27 (answer 8 of the second amendment of that date):** a
+    flagged child in the shared tree is charged to no account; only the key's request rate bounds
+    it, and doctor's `workspace.flagged_creates` counts it.
   - **Rate.** The key's `requests_per_minute` bounds how fast it creates, as for every create.
 
   This reverses ADR-0095 d3's "own root only" for flagged grants and its answer Q5 (2026-11-24),
@@ -851,8 +856,8 @@ answered each on 2026-11-25. Each answer is recorded where it applies.
    revokes their own keys (d14); under `sole_admin` the founder can still invent a fix settler,
    marked (d11).
 
-Two readings stay open for the operator: the connect code's life running from the confirmation
-(d6) and the ratifier differing from the admin who issued an agent proposer (d17).
+7. **Readings decided on 2026-11-26:** the connect code's life runs from the confirmation (d6), and
+   the ratifier differs from the admin who issued an agent proposer (d17).
 
 ### Pages, API and issues
 
@@ -902,6 +907,221 @@ rule this record makes:
 - **Rotation by an admin of another admin's key or a person's** waits on d6 and d8, as d14's note
   says; v0.8.5 refuses both by name.
 
+## Amendment of 2026-11-27: the core lane's questions (decided by the operator)
+
+Decided by the operator on 2026-11-27, answering the questions the v0.8.6 core lane (PR #524)
+left. Each answer is recorded here before the code that takes it.
+
+- **(a) Lifting a denial is narrowing (d3).** It takes effect at once and waits on no one, as the
+  denial it lifts did. The class table carries it as `lift_denial`; no admin verb lifts a denial
+  yet (the start's rule 5 lift of ADR-0026 d15 is the server's, not an admin act).
+- **(b) Declining a `sole_admin` widening act undoes it (d10, d23).** The decline is its own
+  narrowing act (`decline_act`), and in its commit it applies the matching narrowing effect, each
+  event naming the decline's `act_id`: an issued key is revoked (`key.revoked`); an added grant or
+  capacity is revoked (`grant.revoked`, new); a connect code is voided (`connection.code_voided`,
+  new) unless already redeemed, when the connection it opened is revoked; a raised limit is set
+  back to the limits recorded in the act's target at the act (`key.limits_set`); an admin flag is
+  taken off the entry (`web.email_changed` with `admin: false`), under the last-admin guard
+  (d25). `not_declinable` is gone: every widening act is declinable while pending or taken at once
+  under `sole_admin`.
+- **(c) The core lane's six readings are accepted:**
+  1. a state change re-journals `admin.act` with the same `act_id`, and the `admin_acts` row is
+     the one record of the act;
+  2. a decline is its own narrowing act, `decline_act`, journalled before the declined act's
+     envelope in one commit;
+  3. expiry is computed on read (`state_at`) and not journalled;
+  4. pending grants live in `admin_acts.effect`, the table of their own d23 asks for;
+  5. an admin's issuance (the act, the key, its grants and its connect code) is one atomic chain;
+  6. `<user>-curate` acts count as admin acts.
+
+## Amendment of 2026-11-27 (second): the core2 and issue lanes' questions (decided by the operator)
+
+Decided by the operator on 2026-11-27, answering the questions the v0.8.6 core2 lane (PR #524) and
+issue lane (PR #526) left. Each answer is recorded here before the code that takes it. Answers 1 to
+7 and 9 are the lanes' recommendations; answer 8 is not, and amends d31's quota sentence.
+
+1. **d8's "three or more admin persons" counts the live admin persons plus every open act's
+   target.** A person un-flagged, removed or disabled by an act still open counts toward the three,
+   so the act against them does not drop the tenant into the freeze by itself.
+2. **Revoking another admin's key is final (d8, d14).** It suspends nothing and opens no dispute or
+   freeze: the revocation is the containment, and the target keeps their flag, their entry and their
+   other keys.
+3. **A removed admin entry keeps its identity in the act's effect (d8).** The `remove_admin` act
+   records the entry as it was (email digest, user, admin flag) in its effect, and the contest-only
+   sign-in looks the act up by the signing-in address's email digest when no entry matches, so a
+   removed admin can contest. A contest of a removal restores the entry with its flag and sign-in,
+   as a contest of an un-flag or a disable does.
+4. **An admin person disabling themselves is still refused (d8, d21).** A person ends their own
+   admin standing by un-flagging or removing their own entry, which revokes their admin keys at
+   once; a self-disable is refused, as before.
+5. **d4's erase of a target that is not a promoted version records only the pending shred act,
+   with no fix record.** The demotion half applies only to a promoted version; anything else has
+   nothing to demote, and the act waits on its shred alone.
+6. **d21: the person on an admin key must hold an admin flag.** An admin issuance names a person
+   whose web entry is live and carries the admin flag; any other person is refused
+   `request.validation` with `details.reason: admin_key_requires_admin_person`, naming the person.
+   This holds at issuance and at the link's acceptance: a person whose flag came off before they
+   accept the link cannot accept it, refused as a link is, `details.reason: not_admin_person`.
+7. **A pending key whose default is a workspace the act creates gets the default at confirmation
+   (d30).** The pending issuance names no default it creates (the key is read with no default
+   while it waits). The confirmation's commit journals a new effect, `key.default_set {key_id,
+   default_workspace_id, act_id}`, after the creations, so the key starts with the default its
+   issuance asked for. A `sole_admin` issuance sets the default in its own commit, as before.
+8. **A flagged (d31 `create`) child in the shared tree is not charged to any account's
+   `workspaces` meter; only the request rate bounds it (not the lanes' recommendation).** A child
+   inside a person's root counts on that person's meter as before. This replaces d31's quota
+   sentence of 2026-11-25 for the shared tree. **Cost:** a tenant agent key holding the flag on a
+   shared node is bounded only by its `requests_per_minute` (ADR-0079): at the default rate it can
+   add a node a request, without limit over time, and the meter that bounds a person's own tree
+   does not see it. The admin who grants the flag accepts that bound, and the doctor counts what
+   flagged grants created: `workspace.flagged_creates` (info) lists, per creating key, the
+   workspaces created in the shared tree under a `create` grant, so an admin sees the growth the
+   meter does not.
+9. **Every `create_workspaces[]` parent must already exist (d30).** No creation in one request
+   nests under another creation of the same request; a parent the tenant does not hold, a
+   creation of the same request among them, is refused as any unknown workspace is
+   (`access.not_found`), before anything is journalled.
+
+## Amendment of 2026-11-27 (third): the host and finish lanes' questions (decided by the operator)
+
+Decided by the operator on 2026-11-27, answering the questions the v0.8.6 host lane (PR #529) and
+finish lane (PR #530) left. Each answer is recorded here before the code that takes it. Answers 13
+to 15, 17 and 18 are the lanes' recommendations; 16 and 19 accept every reading those lanes took.
+
+13. **d19's token (decided by the operator, 2026-11-27).** At each start the server writes one
+    operator token per tenant to a 0600 file only root reads, bound to the tenant id and that
+    process start; a restart replaces it, so a token outlives no process. `oml operator recover`
+    and `oml operator settle`, run as root, read the token and call an operator-only route, which
+    refuses any bearer key and any other token. No admin key is involved, and the token is never
+    printed, logged or journalled.
+14. **d20's mail (decided by the operator, 2026-11-27).** Mail is plain SMTP to one local relay
+    configured on the host, which handles TLS and authentication; the server holds no mail
+    credential. The settings name the relay's host and port and the sender address. With no relay
+    set, a recovery or settlement journals its notice and doctor reports
+    `notice.mail_unconfigured`; a relay that refuses or cannot be reached is reported as
+    `notice.mail_delivery_failed`, and the act it tells about stands.
+15. **d7's link is a consent admin act (decided by the operator, 2026-11-27).** In v0.8.6 a link
+    of a key to a person is journalled as an `admin.act` of class `consent` with a required
+    reason (d26). The console's link form, the HTTP link body and every link caller send a reason;
+    a link without one is refused `request.validation` with `details: {field: /reason, reason: required}`, as any admin act missing its reason is.
+16. **The host lane's readings are accepted (decided by the operator, 2026-11-27).**
+    - d12's check covers approvals only, so any reviewer may still reject an instruction.
+    - A d13 renewal allows at most a first box and one renewal per person per workspace.
+    - "The workspace concerned" in d24 is the denied node for a denial and the fix's workspace for
+      a fix. Disabling a person or revoking a person's key notifies only admin persons.
+    - The refusal names are `counts_as_no_person`, `issued_the_proposer`,
+      `admin.read_requires_person` and the `/timebox` reasons.
+17. **#508 N1: the issuer's person (decided by the operator, 2026-11-27).** At issuance the key
+    record keeps the person the issuing key counted as, `issuer_person`, recorded the way
+    `author_person` is at a write (#448). A key issued by a linked key counts as that person when
+    it settles a fix, so a person cannot confirm a fix through a key their own other key issued.
+18. **The confirm reason (decided by the operator, 2026-11-27).** `POST
+    /v2/admin/acts/{act}/confirm` requires a reason, stored with the act (d26) as
+    `confirm_reason`, so the console's confirm screen requires one too. A confirmation without
+    one is refused `request.validation` with `details: {field: /reason, reason: required}`, as any admin act missing its reason is.
+19. **The finish lane's readings are accepted (decided by the operator, 2026-11-27).**
+    - A pending shred never expires.
+    - A federation policy change that both widens and narrows is refused (`request.validation`)
+      and must be sent as two acts.
+    - Erase demotes every promoted version except a retirement, and a vocabulary claim's erase is
+      refused with `lifecycle.demote_kind_unsupported`.
+    - A held successor is not demoted while the shred waits.
+
+## Amendment of 2026-11-27 (fourth): the host verbs and mail ship in v0.8.6 (decided by the operator)
+
+Decided by the operator on 2026-11-27, the third batch of that day. Each answer is recorded here
+before the code that takes it. Answers 21 and 22 are not the lanes' recommendations.
+
+20. **v0.8.6 ships complete (decided by the operator, 2026-11-27).** d19, the host verbs, and d20,
+    the mail, are built before the review.
+21. **d19's dormancy is read from the request log (decided by the operator, 2026-11-27; not the
+    recommendation, which was a `last_authenticated_at` the key row keeps).** `oml operator
+    recover` is admitted only when the request log shows no admin key of the tenant authenticated
+    in the last 30 days. Its costs, recorded:
+    - The request log keeps 30 days (ADR-0042 d8), so the window equals the retention. The check
+      fails closed when the log does not reach back the full 30 days, from a fresh install, purged
+      rows or a gap: it refuses with a named reason, `operator.recover_refused` with
+      `log_too_short`, and never reads a missing log as dormancy.
+    - The log is read tenant-bound. Where its rows carry no tenant, the tenant is derived through
+      the key id.
+    - Doctor gets a line for the log coverage the check depends on.
+22. **d19's completion is a background sweep (decided by the operator, 2026-11-27; not the
+    recommendation, which was a second run of the verb).** The server completes a requested
+    recovery once 72 hours pass with no admin sign-in, and any admin sign-in in the window cancels
+    it. Its costs, recorded: the server holds a timer; the sweep is idempotent across replicas and
+    restart-safe through one journalled completion per request; and doctor reports a request past
+    its 72 hours that is not completed.
+23. **The last lane's readings, all accepted (decided by the operator, 2026-11-27).**
+    - A `maintenance` key carries no `used_by` constraint.
+    - A conversion keeps the key's person link.
+    - The server issuer is a reserved key of its own, apart from the revert key.
+    - `link_self` is a consent act and needs a reason.
+    - A pending or disabled entry gets no session keys.
+    - `check_signup_policy` checks only that the tenant exists.
+
+## Amendment of 2026-11-28: recovery's dormancy is read from a server authentication table (decided by the operator)
+
+Decided by the operator on 2026-11-28, answering the question the v0.8.6 operator lane left on
+answer 21: the request log ([ADR-0042](ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md))
+is stderr JSON lines the server never stores, so nothing the server holds could show recover's
+30 days. Each answer is recorded here before the code that takes it. Answer 24 is the lane's
+recommendation; answer 25 accepts every reading that lane took, and answer 26 every reading the
+recover lane took.
+
+24. **The request log d19's dormancy reads is a server authentication table (decided by the
+    operator, 2026-11-28).** It refines answer 21: "the request log" there is this table.
+    - **Rows.** One row per tenant, key and UTC day, with a count: written at most once per key per
+      day, the authentications of that day coalesced in memory, so the write costs one upsert per
+      key per day. Rows are kept 30 days and a sweep purges older ones.
+    - **Coverage** is the oldest retained row, bounded below by the install or migration time.
+      `oml operator recover` fails closed with a named reason, `operator.recover_refused` with
+      `log_too_short`, when coverage is under 30 days, and never reads a missing row as dormancy.
+    - **Doctor** reads the coverage on every deployment.
+    - **ADR-0042 d8.** This reverses d8's "the server holds no log" for authentication counts only;
+      the request log itself stays stderr JSON lines. ADR-0042 carries the amendment note.
+    - **The cost:** a new migration, whose number is reserved; one upsert per key per day, coalesced
+      in memory, which joins the bottleneck register; and 30 days of tenant, key and day rows in the
+      database.
+25. **The operator lane's readings, all accepted (decided by the operator, 2026-11-28).**
+    - The operator token files are 0600, owned by the server's user, in a 0700 directory.
+    - The host verbs take a tenant id.
+    - A tenant created after a start gets its token at the next start.
+    - A freeze's 24 hours are measured from the act's `at`.
+    - A settlement's recipients are every admin person and both parties, and its email goes to
+      their entries' addresses and to a removed target's earlier address.
+    - The mail relay's failure count is in memory, so a restart clears it.
+26. **The recover lane's nine readings, all accepted (decided by the operator, 2026-11-28).**
+    1. **The count.** Each process writes a key's row once a UTC day, at the key's first
+       authentication that day, so a row's `count` is the writes that day, one per process that saw
+       the key, and not the authentications. Dormancy reads only whether a row exists.
+    2. **A row the server could not write.** The request it rode on goes on, the failure is counted
+       in memory and the key's next authentication writes the row again. While the process counts
+       any such failure since its start, `oml operator recover` is refused by name,
+       `operator.recover_refused` with `log_write_failed`, since a missing row would read as
+       dormancy. The count is the process's own, so the refusal is per replica: a replica that
+       counted no failure admits the request, and a restart clears the count.
+    3. **Coverage is deployment wide**, the oldest day any tenant's row holds. A day on which no key
+       of any tenant authenticated, at the table's oldest end, shortens the coverage, and recover
+       then refuses `log_too_short`. **A known limit, deferred to v0.8.7:** on a quiet deployment
+       this can keep recovery refused; the fix, such as gap tracking against the install marker,
+       is tracked as an issue for v0.8.7.
+    4. **Cancellation.** Any admin authentication of the tenant on the request's day or after, an
+       admin person's sign-in or an admin key's, cancels a requested recovery, as d19's dormancy
+       reads both.
+    5. **A live dispute.** Recover is refused `dispute_open` while an act against an admin is open
+       (Consequences: Q5(a) with Q14).
+    6. **The emails.** A recovery is emailed, and noticed in To do, at its request and at its
+       completion; a cancellation journals `operator.recovery_cancelled` and writes no notice or
+       email.
+    7. **A completion that cannot add its person.** When the person's name or the address is taken
+       while the request waits, the sweep refuses the completion by name (`person_taken`,
+       `email_taken`), the request stays requested, and doctor reports it `admin.recovery_overdue`
+       once its 72 hours pass.
+    8. **The events.** `operator.recovery_requested` at the request, `operator.recovery_cancelled`
+       at a cancellation, and `operator.recovery`, with the window and the revoked keys, at the
+       completion.
+    9. **The tests** arrived with the code rather than committed red before it.
+
 ## Rejected alternatives
 
 | Alternative | Why not |
@@ -915,3 +1135,13 @@ rule this record makes:
 | **A zero-person `sole_admin` with an unlinked bootstrap key (Q2(a) as recommended)** | A bootstrap now names a person (d21). |
 | **Cascading revocation now** | The operator asked for one plain verb with room to add it later (d14). |
 | **A timer that settles a two-admin dispute** | It reverts a fair containment when nobody acts; a freeze with host settlement fails closed (d8, d19). |
+
+## Amendment of 2026-11-26: the public flag joins the widening and narrowing lists (amends d3, d5; ADR-0098)
+
+Decided by the operator on 2026-11-26; recorded in [ADR-0098](ADR-0098-a-protected-or-frozen-workspace-can-be-marked-public-and-then-every-reading-key-in-the-tenant-reads-its-approved-items.md). Designed, not built; it ships in v0.8.6.
+
+- **d5.** Marking a `protected` or `frozen` workspace public (`workspace_public_set`) is widening:
+  it takes effect only when a second admin person who counts confirms it, and at once, marked,
+  under `sole_admin` (ADR-0098 d6).
+- **d3.** Clearing the flag (`workspace_public_clear`) is narrowing: at once, never reverting by
+  itself, and it declines a pending set.

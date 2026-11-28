@@ -100,6 +100,18 @@ pub struct FederationSettings {
     /// The widen hint's signal on this tenant since the lead started, for
     /// doctor (#244).
     pub widen_signal: WidenSignalHealth,
+    /// How many keys met more than 1,000 candidate sources since the lead
+    /// started, and the most any of them met: the counts a `maintenance`
+    /// key reads in place of the list (ADR-0072 d12; ADR-0097 d18).
+    pub wide_counts: WideKeyCounts,
+}
+
+/// The wide keys counted, not listed (ADR-0097 d18: a `maintenance` key
+/// never reads a key list).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WideKeyCounts {
+    pub keys: usize,
+    pub most_candidates: usize,
 }
 
 /// How the widen hint's precomputed signal fared on a tenant since the
@@ -119,6 +131,15 @@ pub struct WidenSignalHealth {
     /// Builds that failed, and the last one's reason.
     pub failed: u64,
     pub last_failure: Option<String>,
+}
+
+/// What an admin's federation act took (ADR-0097 d3, d5): the value as it
+/// now stands, and the admin act that waits on a second admin person, where
+/// it waits; nothing took effect then.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FederationActTaken<T> {
+    pub now: T,
+    pub pending: Option<crate::types::AdminActRecord>,
 }
 
 /// A workspace's federation field as its read serves it (d5).
@@ -237,6 +258,9 @@ pub struct Widen {
 pub enum Via {
     Scope,
     Federated,
+    /// A public node outside the scope, searched by every default recall
+    /// (ADR-0098 d3).
+    Public,
 }
 
 impl Via {
@@ -245,6 +269,7 @@ impl Via {
         match self {
             Via::Scope => "scope",
             Via::Federated => "federated",
+            Via::Public => "public",
         }
     }
 }
@@ -272,7 +297,8 @@ pub struct CutReport {
 /// `search.sources` under `wide` or a list (d8).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SourcesReport {
-    /// `wide` or `list`.
+    /// `wide` or `list`, or `scope` where a default recall searched a
+    /// public node (ADR-0098 d3).
     pub mode: &'static str,
     /// |C|, the trusted candidates the key reads outside the scope; for a
     /// list, the listed nodes.

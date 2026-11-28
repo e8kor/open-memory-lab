@@ -10,6 +10,7 @@ use std::sync::Mutex;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+use oml_domain::admin_act::AdminActKind;
 use oml_domain::name::{Name, NamedKind, Reference, UNIVERSE};
 use oml_domain::signup::{QUOTA_LIMIT_MAX, Quota, Quotas};
 use oml_domain::{Role, UsedBy, event_types};
@@ -226,6 +227,12 @@ where
     /// (ADR-0068 d5).
     pub async fn list_web_users(&self, admin: &Caller) -> Result<Vec<UserRow>, AppError> {
         require_role(admin, Role::Admin, "web_users")?;
+        self.web_user_rows(admin).await
+    }
+
+    /// [`Self::list_web_users`]'s rows, the caller's role checked by its
+    /// caller.
+    async fn web_user_rows(&self, admin: &Caller) -> Result<Vec<UserRow>, AppError> {
         let tenant_id = admin.key.tenant_id;
         let mut by_user: BTreeMap<Name, (bool, bool)> = BTreeMap::new();
         let mut after = None;
@@ -373,11 +380,46 @@ where
         admin: &Caller,
         user: &Name,
     ) -> Result<UserDisabled, AppError> {
+        self.disable_web_user_with_reason(admin, user, None).await
+    }
+
+    /// [`Self::disable_web_user`] with the admin's reason. Disabling a
+    /// person with no admin flag is narrowing (ADR-0097 d3). Disabling
+    /// another admin person is an act against an admin (d8): their entries
+    /// are disabled at once, the act is contestable, their admin keys are
+    /// suspended in the act's commit, and it requires a reason (d26). An
+    /// admin person's own disable is refused as before, by name absent.
+    ///
+    /// # Errors
+    /// As [`Self::disable_web_user`], and an act against an admin sent no
+    /// reason.
+    pub async fn disable_web_user_with_reason(
+        &self,
+        admin: &Caller,
+        user: &Name,
+        reason: Option<&str>,
+    ) -> Result<UserDisabled, AppError> {
+        self.disable_person(admin, user, reason, false).await
+    }
+
+    /// The disable of `user`, `consented` for a closed deletion request,
+    /// whose own request is the consent: then an admin person's admin keys
+    /// are revoked at once, `cause: deactivation` (ADR-0097 d21).
+    async fn disable_person(
+        &self,
+        admin: &Caller,
+        user: &Name,
+        reason: Option<&str>,
+        consented: bool,
+    ) -> Result<UserDisabled, AppError> {
         require_role(admin, Role::Admin, "web_users")?;
         let tenant_id = admin.key.tenant_id;
-        // Only a person the tenant holds, and never an admin: a name no
-        // entry holds, or an admin's, journals nothing (ADR-0068 d8).
+        // Only a person the tenant holds: a name no entry holds journals
+        // nothing (ADR-0068 d8). An admin person is disabled only by
+        // another admin, as an act against an admin, or by their own
+        // closed deletion (ADR-0097 d8, d21).
         let mut held = false;
+        let mut admin_entry = None;
         let mut after = None;
         loop {
             let page = self
@@ -387,8 +429,8 @@ where
             let Some(last) = page.last() else { break };
             after = Some(last.email.digest());
             for e in page.iter().filter(|e| &e.user == user) {
-                if e.admin {
-                    return Err(AppError::NotFound);
+                if e.admin && !e.pending {
+                    admin_entry = Some(e.clone());
                 }
                 held = true;
             }
@@ -415,22 +457,68 @@ where
                 key,
             });
         }
+        let own = self.counted_person_of(&admin.key).await?.as_ref() == Some(user);
+        let kind = match (&admin_entry, consented) {
+            (None, true) => AdminActKind::CloseDeletion,
+            (None, false) => AdminActKind::DisableUser,
+            (Some(_), true) => AdminActKind::CloseDeletion,
+            (Some(_), false) if own => return Err(AppError::NotFound),
+            (Some(_), false) => AdminActKind::DisableAdmin,
+        };
         let prev = self.head_event(tenant_id).await?;
+        let mut act = self
+            .begin_admin_act(
+                &admin.key,
+                kind,
+                json!({
+                    "user": user.as_str(),
+                    // Disabling a person is offensive narrowing, loud at
+                    // once (ADR-0097 d24).
+                    "offensive": true,
+                }),
+                reason,
+                json!({}),
+                prev.as_ref(),
+            )
+            .await?;
+        if let Some(e) = admin_entry
+            .as_ref()
+            .filter(|_| kind == AdminActKind::DisableAdmin)
+        {
+            act.record.effect = json!({
+                "before": { "email": e.email.as_str(), "user": e.user.as_str(),
+                            "admin": true, "disabled": e.disabled_at.is_some() },
+            });
+        }
         let event = self.seal(
-            prev.as_ref(),
+            Some(&act.event),
             tenant_id,
             event_types::WEB_USER_DISABLED,
             &admin.key.principal,
             Some(admin.key.key_id),
-            json!({ "user": user.as_str(), "by_key_id": admin.key.key_id.to_string() }),
+            super::admin_acts::with_act_id(
+                json!({ "user": user.as_str(), "by_key_id": admin.key.key_id.to_string() }),
+                act.act_id(),
+            ),
         )?;
-        let receipt = self
-            .commit(
-                event,
-                MetadataFold::UserDisabled { user: user.clone() },
-                None,
-            )
-            .await?;
+        let mut links = vec![(
+            event.clone(),
+            MetadataFold::UserDisabled { user: user.clone() },
+        )];
+        // An admin person's admin keys: revoked at once for their own
+        // closed deletion, suspended for an act against them (d8, d21).
+        if admin_entry.is_some() {
+            let standing = if consented {
+                AdminActKind::RemoveOwn
+            } else {
+                AdminActKind::DisableAdmin
+            };
+            links.extend(
+                self.standing_links(&admin.key, act.act_id(), standing, user, &event)
+                    .await?,
+            );
+        }
+        let receipt = self.commit_with_act(Some(act), links).await?;
         let mut cut = 0;
         let mut skipped = Vec::new();
         if let Some(root) = root {
@@ -531,7 +619,8 @@ where
         {
             return Err(AppError::NotFound);
         }
-        self.disable_web_user(admin, user).await?;
+        // The person's own request is the consent (ADR-0097 d3, d21).
+        self.disable_person(admin, user, None, true).await?;
         later_step(|| async {
             let prev = self.head_event(tenant_id).await?;
             let event = self.seal(
@@ -561,7 +650,16 @@ where
         &self,
         bearer: impl Into<crate::types::Bearer<'_>>,
     ) -> Result<(Vec<UserRow>, Vec<DeletionRequest>), AppError> {
-        let caller = self.authenticate_bearer(bearer.into()).await?;
+        // A maintenance key reads the rows' counts: no key listed and no
+        // deletion named (ADR-0097 d18).
+        let caller = self.counts_caller(bearer, "web_users").await?;
+        if caller.key.role == Role::Maintenance {
+            let mut rows = self.web_user_rows(&caller).await?;
+            for row in &mut rows {
+                row.admin_keys.clear();
+            }
+            return Ok((rows, Vec::new()));
+        }
         Ok((
             self.list_web_users(&caller).await?,
             self.pending_deletions(&caller).await?,

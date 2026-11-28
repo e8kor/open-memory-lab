@@ -4,13 +4,14 @@
 //! decision of 2026-11-19), and from then on the key acts for them and the
 //! console acts with it through the session.
 
-use serde_json::json;
+use serde_json::{Value, json};
 use uuid::Uuid;
 
+use oml_domain::admin_act::AdminActKind;
 use oml_domain::name::{Name, NamedKind, Reference};
 use oml_domain::{Role, UsedBy, event_types};
 
-use super::{App, Caller, require_role};
+use super::{App, Caller, commit_request, require_role};
 use crate::ports::{Clock, IdGen, MetadataFold, Scanner, Signer, WebStore};
 use crate::types::{AppError, Bearer, Credential, KeyRecord, WebSessionRecord};
 
@@ -22,6 +23,33 @@ where
     I: IdGen,
     Sc: Scanner,
 {
+    /// What an acceptance records of the session that gave it (ADR-0097
+    /// d7): a digest of each provider subject its entry pinned, and the
+    /// session's age in seconds; `null` fields for a caller that is no
+    /// session, which an acceptance refuses anyway.
+    pub(crate) async fn acceptance_evidence(&self, caller: &Caller) -> Result<Value, AppError> {
+        let Some((opened, email_hash)) = caller.session.clone() else {
+            return Ok(json!({ "provider_subject_digests": [], "session_age_seconds": null }));
+        };
+        let entry = self.journal.web_entry_by_email(&email_hash).await?;
+        let digests: Vec<String> = entry
+            .iter()
+            .flat_map(|e| {
+                [
+                    e.google_subject.as_ref().map(|s| format!("google:{s}")),
+                    e.github_subject.as_ref().map(|s| format!("github:{s}")),
+                ]
+            })
+            .flatten()
+            .map(|s| oml_domain::Sha256Hash::digest(s.as_bytes()).to_prefixed())
+            .collect();
+        let age = (self.clock.now().unix_micros() - opened.unix_micros()).max(0) / 1_000_000;
+        Ok(json!({
+            "provider_subject_digests": digests,
+            "session_age_seconds": age,
+        }))
+    }
+
     /// `POST /v2/keys/{key}/link` (ADR-0085 d16): the tenant key's link to
     /// `user`, journalled as `key.linked_person` and pending until `user`
     /// accepts it from their own console session
@@ -37,6 +65,7 @@ where
         bearer: impl Into<Bearer<'_>>,
         key: Reference,
         user: &Name,
+        reason: Option<&str>,
     ) -> Result<KeyRecord, AppError> {
         let admin = self.key_act_caller(bearer.into(), "link_key").await?;
         require_role(&admin, Role::Admin, "link_key")?;
@@ -69,31 +98,139 @@ where
             });
         }
         target.link_pending = Some(root.workspace_id);
+        self.journal_link(&admin, &target, user, root.workspace_id, reason, false)
+            .await?;
+        Ok(target)
+    }
+
+    /// A link's commit (ADR-0097 d7; amendment of 2026-11-27, answer 15):
+    /// the `link_key` admin act, consent, whose reason is required, and
+    /// then `key.linked_person` naming it, pending until the person
+    /// accepts. `own` marks a key's self-link (d22).
+    async fn journal_link(
+        &self,
+        by: &KeyRecord,
+        target: &KeyRecord,
+        user: &Name,
+        root: Uuid,
+        reason: Option<&str>,
+        own: bool,
+    ) -> Result<(), AppError> {
+        let tenant_id = by.tenant_id;
         let prev = self.head_event(tenant_id).await?;
+        let act = self
+            .begin_admin_act(
+                by,
+                AdminActKind::LinkKey,
+                json!({
+                    "key_id": target.key_id.to_string(),
+                    "name": target.name.as_ref().map(Name::as_str),
+                    "role": target.role.as_str(),
+                    "user": user.as_str(),
+                    "self_link": own,
+                }),
+                reason,
+                json!({}),
+                prev.as_ref(),
+            )
+            .await?;
+        let mut payload = json!({
+            "key_id": target.key_id.to_string(),
+            "user": user.as_str(),
+            "user_root_id": root.to_string(),
+            "linked_by_key_id": by.key_id.to_string(),
+            "accepted": false,
+            "act_id": act.act_id().to_string(),
+        });
+        if own {
+            payload["actor"] = json!("self");
+        }
         let event = self.seal(
-            prev.as_ref(),
+            Some(&act.event),
             tenant_id,
             event_types::KEY_LINKED_PERSON,
-            &admin.principal,
-            Some(admin.key_id),
-            json!({
-                "key_id": target.key_id.to_string(),
-                "user": user.as_str(),
-                "user_root_id": root.workspace_id.to_string(),
-                "linked_by_key_id": admin.key_id.to_string(),
-                "accepted": false,
-            }),
+            &by.principal,
+            Some(by.key_id),
+            payload,
         )?;
-        self.commit(
-            event,
-            MetadataFold::KeyLinked {
-                key_id: target.key_id,
-                user_root: Some(root.workspace_id),
-                accepted: false,
-            },
-            None,
-        )
+        let (act_event, act_fold) = act.link();
+        self.commit_requests(vec![
+            commit_request(act_event, act_fold, None),
+            commit_request(
+                event,
+                MetadataFold::KeyLinked {
+                    key_id: target.key_id,
+                    user_root: Some(root),
+                    accepted: false,
+                },
+                None,
+            ),
+        ])
         .await?;
+        Ok(())
+    }
+
+    /// `POST /v2/keys/self/link {user}` (ADR-0097 d22, decided by the
+    /// operator, 2026-11-25): an admin key, presented by its own value,
+    /// links itself to `user`, pending until that person accepts it from
+    /// their own console session, as every link waits (d7). Possession and
+    /// the person's consent together give no reach the holder lacks. The
+    /// one self-link the server admits: a session key is
+    /// `session_admin_only`'s mirror, `bearer_only`, and every other refusal
+    /// is [`Self::link_key_to_person`]'s, `self_link` aside. Journalled as
+    /// `key.linked_person` with `actor: self`.
+    ///
+    /// # Errors
+    /// The refusals above, the caller's authentication, and the store's.
+    pub async fn link_self(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        user: &Name,
+        reason: Option<&str>,
+    ) -> Result<KeyRecord, AppError> {
+        // A key suspended as unlinked at the upgrade still reaches this
+        // route (ADR-0097 d22, the production migration).
+        let caller = match bearer.into() {
+            Bearer::Key(value) => {
+                let (key, previous_value) = self.key_of_value_admitting(value, true).await?;
+                let mut caller = self.caller_of(key).await?;
+                caller.previous_value = previous_value;
+                caller.require_current_value("link_self")?;
+                caller
+            }
+            other => self.key_act_caller(other, "link_self").await?,
+        };
+        require_role(&caller, Role::Admin, "link_self")?;
+        let caller = caller.key;
+        if caller.credential != Credential::Bearer {
+            return Err(AppError::KeyLinkRefused {
+                reason: "bearer_only",
+            });
+        }
+        let tenant_id = caller.tenant_id;
+        let mut target = self
+            .linkable_key(&caller, &Reference::Id(caller.key_id))
+            .await?;
+        let root = self
+            .journal
+            .resolve_name(tenant_id, NamedKind::Workspace, user)
+            .await?;
+        let root = match root {
+            Some(id) => self.journal.workspace(tenant_id, id).await?,
+            None => None,
+        }
+        .filter(|w| w.user_root)
+        .ok_or(AppError::KeyLinkRefused {
+            reason: "user_unknown",
+        })?;
+        if !self.person_signs_in(tenant_id, user).await? {
+            return Err(AppError::KeyLinkRefused {
+                reason: "user_disabled",
+            });
+        }
+        target.link_pending = Some(root.workspace_id);
+        self.journal_link(&caller, &target, user, root.workspace_id, reason, true)
+            .await?;
         Ok(target)
     }
 
@@ -164,10 +301,11 @@ where
         bearer: impl Into<Bearer<'_>>,
         key: Reference,
     ) -> Result<(KeyRecord, Name), AppError> {
-        let caller = self
+        let session = self
             .key_act_caller(bearer.into(), "accept_key_link")
-            .await?
-            .key;
+            .await?;
+        let evidence = self.acceptance_evidence(&session).await?;
+        let caller = session.key;
         let Some(session_user) = caller
             .session_user
             .as_ref()
@@ -207,6 +345,16 @@ where
                 reason: "not_used_by_person",
             });
         }
+        // An admin key's person holds a live admin flag, at its acceptance
+        // as at its issuance (ADR-0097 d21, the operator's decision of
+        // 2026-11-27).
+        if target.role == Role::Admin
+            && !self.is_admin_person(tenant_id, Some(session_user)).await?
+        {
+            return Err(AppError::KeyLinkRefused {
+                reason: "not_admin_person",
+            });
+        }
         target.linked_user = Some(root_id);
         target.link_pending = None;
         let prev = self.head_event(tenant_id).await?;
@@ -221,17 +369,47 @@ where
                 "user": root.name.as_str(),
                 "user_root_id": root_id.to_string(),
                 "accepted_by_key_id": caller.key_id.to_string(),
+                // The provider subject and the session's age, so a forged
+                // acceptance can be told apart afterwards (ADR-0097 d7).
+                "evidence": evidence,
             }),
         )?;
-        self.commit(
+        let mut links = vec![(
             event,
             MetadataFold::KeyLinkAccepted {
                 key_id: target.key_id,
                 user_root: root_id,
             },
-            None,
-        )
-        .await?;
+        )];
+        // An admin key suspended as unlinked at the upgrade authenticates
+        // again once its link is accepted, in the acceptance's commit
+        // (ADR-0097 d22, the production migration).
+        if target
+            .suspended
+            .as_ref()
+            .is_some_and(|s| s.cause == crate::types::SuspensionCause::Unlinked)
+        {
+            let lifted = self.seal(
+                links.last().map(|(e, _)| e),
+                tenant_id,
+                event_types::KEY_SUSPENSION_LIFTED,
+                &caller.principal,
+                Some(caller.key_id),
+                json!({
+                    "key_id": target.key_id.to_string(),
+                    "cause": crate::types::SuspensionCause::Unlinked.as_str(),
+                    "act_id": null,
+                }),
+            )?;
+            links.push((
+                lifted,
+                MetadataFold::KeySuspensionLifted {
+                    key_id: target.key_id,
+                },
+            ));
+            target.suspended = None;
+        }
+        self.commit_chain(links).await?;
         Ok((target, root.name))
     }
 

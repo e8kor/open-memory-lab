@@ -170,9 +170,13 @@ pub async fn people_page(
                 "set_admin",
                 &csrf,
                 &format!(
-                    "{}{}{}",
+                    "{}{}{}{}",
                     hidden("email", &e.email),
                     hidden("admin", flip),
+                    // An admin flag set outside sole_admin, or taken off
+                    // another admin person, carries a reason (ADR-0097 d8,
+                    // d26).
+                    input("reason", "reason", "", false),
                     acts::nonce_field()
                 ),
                 if e.admin {
@@ -198,10 +202,18 @@ pub async fn people_page(
         "allow_email",
         &csrf,
         &format!(
-            "{}{}{}{}",
+            "{}{}{}{}{}",
             input("email", "email", "", true),
             input("user", "user", "", true),
             select("admin", "admin", &[("no", "no"), ("yes", "yes")]),
+            // A new admin person outside sole_admin carries a reason
+            // (ADR-0097 d5, d26).
+            input(
+                "reason",
+                "reason (a new admin waits on another admin)",
+                "",
+                false
+            ),
             acts::nonce_field()
         ),
         "Add",
@@ -222,9 +234,13 @@ pub async fn people_page(
             action,
             &csrf,
             &format!(
-                "{}{}{}",
+                "{}{}{}{}",
                 input("user", "user", "", true),
                 input("workspace", label, "", true),
+                // The reason a grant that waits on another admin requires
+                // (ADR-0097 d5, d26); a tenant that has only ever had one
+                // admin person takes it empty.
+                input("reason", "reason (waits on another admin)", "", false),
                 acts::nonce_field()
             ),
             button,
@@ -282,9 +298,12 @@ async fn removal_confirmation(
         "remove_email",
         &csrf,
         &format!(
-            "{}{}{}",
+            "{}{}{}{}",
             hidden("email", &entry.email),
             hidden("confirm", "yes"),
+            // Removing another admin person's entry carries a reason
+            // (ADR-0097 d8, d26).
+            input("reason", "reason", "", false),
             acts::nonce_field()
         ),
         "Remove the address",
@@ -296,9 +315,9 @@ async fn removal_confirmation(
 
 fn people_defined(action: &str, name: &str) -> bool {
     match action {
-        "allow_email" => matches!(name, "email" | "user" | "admin"),
-        "set_admin" => matches!(name, "email" | "admin"),
-        "remove_email" => matches!(name, "email" | "confirm"),
+        "allow_email" => matches!(name, "email" | "user" | "admin" | "reason"),
+        "set_admin" => matches!(name, "email" | "admin" | "reason"),
+        "remove_email" => matches!(name, "email" | "confirm" | "reason"),
         _ => matches!(name, "user" | "workspace"),
     }
 }
@@ -373,6 +392,12 @@ pub async fn people_act(
     };
     let _in_flight = acts::hold(&key).await;
     let ids = calls.next_ids();
+    // An act against another admin person, and a new one outside
+    // sole_admin, carries the admin's reason (ADR-0097 d8, d26).
+    let reason = fields
+        .given("reason")
+        .map(str::trim)
+        .filter(|r| !r.is_empty());
     let call = call(&credential, &ids);
     let done = match action {
         "allow_email" => web
@@ -383,6 +408,7 @@ pub async fn people_act(
                 email,
                 fields.given("user").unwrap_or_default().trim(),
                 yes(&fields, "admin"),
+                reason,
             )
             .await
             // An address for a person who signs in already waits on them
@@ -397,6 +423,7 @@ pub async fn people_act(
                     &entry.email,
                     &entry.user,
                     yes(&fields, "admin"),
+                    reason,
                 )
                 .await
                 .map(|_| "changed")
@@ -404,7 +431,7 @@ pub async fn people_act(
         "remove_email" => {
             let entry = entry.expect("read above");
             web.api
-                .remove_web_email(&call, &key, &entry.email)
+                .remove_web_email(&call, &key, &entry.email, reason)
                 .await
                 .map(|_| "removed")
         }
@@ -421,6 +448,7 @@ pub async fn people_act(
                     fields.given("user").unwrap_or_default().trim(),
                     capacity,
                     fields.given("workspace").unwrap_or_default().trim(),
+                    reason,
                 )
                 .await
                 .map(|_| "granted")

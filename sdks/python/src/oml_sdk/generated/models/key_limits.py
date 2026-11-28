@@ -2,23 +2,32 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, Self, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 
 from attrs import define as _attrs_define
+
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.key_limits_admin_act import KeyLimitsAdminAct
+
 
 T = TypeVar("T", bound="KeyLimits")
 
 
 @_attrs_define
 class KeyLimits:
-    """A key's limits as they stand (ADR-0079 d5).
+    """A key's limits as they stand (ADR-0079 d5): a raise that waits on a second admin person leaves them unchanged until
+    it is confirmed.
 
-    Attributes:
-        key_id (str):
-        name (None | str):
-        expiry (datetime.datetime | None):
-        expired (bool): Whether the expiry has come on the server's clock.
-        requests_per_minute (int | None):
+        Attributes:
+            key_id (str):
+            name (None | str):
+            expiry (datetime.datetime | None):
+            expired (bool): Whether the expiry has come on the server's clock.
+            requests_per_minute (int | None):
+            admin_act (KeyLimitsAdminAct | Unset): The change's admin act: pending_confirmation for a raise that waits on a
+                second admin person, effective otherwise (ADR-0097 d15). Since v0.8.6.
     """
 
     key_id: str
@@ -26,6 +35,7 @@ class KeyLimits:
     expiry: datetime.datetime | None
     expired: bool
     requests_per_minute: int | None
+    admin_act: KeyLimitsAdminAct | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         key_id = self.key_id
@@ -44,6 +54,10 @@ class KeyLimits:
         requests_per_minute: int | None
         requests_per_minute = self.requests_per_minute
 
+        admin_act: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.admin_act, Unset):
+            admin_act = self.admin_act.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -55,11 +69,15 @@ class KeyLimits:
                 "requests_per_minute": requests_per_minute,
             }
         )
+        if admin_act is not UNSET:
+            field_dict["admin_act"] = admin_act
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.key_limits_admin_act import KeyLimitsAdminAct
+
         d = dict(src_dict)
         key_id = d.pop("key_id")
 
@@ -94,12 +112,20 @@ class KeyLimits:
 
         requests_per_minute = _parse_requests_per_minute(d.pop("requests_per_minute"))
 
+        _admin_act = d.pop("admin_act", UNSET)
+        admin_act: KeyLimitsAdminAct | Unset
+        if isinstance(_admin_act, Unset):
+            admin_act = UNSET
+        else:
+            admin_act = KeyLimitsAdminAct.from_dict(_admin_act)
+
         key_limits = cls(
             key_id=key_id,
             name=name,
             expiry=expiry,
             expired=expired,
             requests_per_minute=requests_per_minute,
+            admin_act=admin_act,
         )
 
         return key_limits

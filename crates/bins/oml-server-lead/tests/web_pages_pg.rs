@@ -113,11 +113,43 @@ fn state_of(location: &str) -> String {
 
 async fn tenant(store: &PgStore, key: &SigningKey, name: &str) -> BootstrapResult {
     lead_app(store, key.clone())
-        .bootstrap_tenant(&BootstrapRequest {
-            tenant_name: Name::parse(name).expect("a name"),
-            admin_key_name: Name::parse("root-admin").expect("a name"),
-            admin_principal: format!("{name}-admin"),
-        })
+        .bootstrap_tenant_for(
+            &BootstrapRequest {
+                tenant_name: Name::parse(name).expect("a name"),
+                admin_key_name: Name::parse("root-admin").expect("a name"),
+                admin_principal: format!("{name}-admin"),
+            },
+            Some(&oml_app::types::BootstrapPerson {
+                user: Name::parse("founder").expect("a name"),
+                email: oml_app::domain::web::Email::parse(&format!("founder@{name}.example"))
+                    .expect("an email"),
+            }),
+        )
+        .await
+        .expect("bootstrap")
+}
+
+/// [`tenant`] whose claim names `user` at `email` as its person, the
+/// tenant's first admin person (ADR-0097 d21).
+async fn tenant_as(
+    store: &PgStore,
+    key: &SigningKey,
+    name: &str,
+    user: &str,
+    email: &str,
+) -> BootstrapResult {
+    lead_app(store, key.clone())
+        .bootstrap_tenant_for(
+            &BootstrapRequest {
+                tenant_name: Name::parse(name).expect("a name"),
+                admin_key_name: Name::parse("root-admin").expect("a name"),
+                admin_principal: format!("{name}-admin"),
+            },
+            Some(&oml_app::types::BootstrapPerson {
+                user: Name::parse(user).expect("a name"),
+                email: oml_app::domain::web::Email::parse(email).expect("an email"),
+            }),
+        )
         .await
         .expect("bootstrap")
 }
@@ -329,26 +361,15 @@ async fn the_first_admin_email_is_added_under_an_admin_key_and_signs_in_through_
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(token, None);
 
-    // alice's is the last admin entry, kept on every surface (ADR-0097 d25,
-    // d27 item 4), so a second admin first.
-    let (status, _, body) = send(
-        &router,
-        json_post_under(
-            "second-admin",
-            "/v2/web/emails",
-            &boot.admin_key.value,
-            json!({"email": "ops@example.com", "user": "ops", "admin": true}),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    // Removing the email ends its session in the same commit.
+    // The claim's founder is the other admin entry (ADR-0097 d21, d25).
+    // Removing alice's email, an act against another admin person with its
+    // reason (d8, d26), ends her session in the same commit.
     let (status, _, body) = send(
         &router,
         json_post(
             "/v2/web/emails/remove",
             &boot.admin_key.value,
-            json!({"email": "alice@example.com"}),
+            json!({"email": "alice@example.com", "reason": "alice left"}),
         ),
     )
     .await;
@@ -694,23 +715,12 @@ async fn bulk_review_lists_confirms_by_id_and_records_each_outcome_once() {
     }
     let store = serving_store(&db).await;
     let key = SigningKey::from_bytes(&OsIds.new_secret());
-    let boot = tenant(&store, &key, "oml").await;
+    // alice is the claim's person, the tenant's one admin person.
+    let boot = tenant_as(&store, &key, "oml", "alice", "alice@example.com").await;
     let providers = MemSignIn::new();
     let traffic = Traffic::default();
     let router = lead_traced(&store, &key, &providers, traffic.clone()).await;
     let admin = boot.admin_key.value.clone();
-    let (status, _, body) = send(
-        &router,
-        json_post(
-            "/v2/web/emails",
-            &admin,
-            json!({"email": "alice@example.com", "user": "alice", "admin": true}),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let (_, token) = sign_in(&router, &providers, 7, "alice@example.com").await;
-    let cookie = format!("{SESSION_COOKIE}={}", token.expect("a session"));
     // Alice's agent writes three held decisions into her root.
     let (status, _, issued) = send(
         &router,
@@ -727,6 +737,20 @@ async fn bulk_review_lists_confirms_by_id_and_records_each_outcome_once() {
     assert_eq!(status, StatusCode::CREATED, "{issued}");
     let loader: Value = serde_json::from_str(&issued).expect("JSON");
     let loader = loader["value"].as_str().expect("a value").to_owned();
+    // alice becomes the second admin person after her agent's key, which
+    // took effect at once while the tenant had one (ADR-0097 d10).
+    let (status, _, body) = send(
+        &router,
+        json_post(
+            "/v2/web/emails",
+            &admin,
+            json!({"email": "alice@example.com", "user": "alice", "admin": true}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (_, token) = sign_in(&router, &providers, 7, "alice@example.com").await;
+    let cookie = format!("{SESSION_COOKIE}={}", token.expect("a session"));
     let mut ids = Vec::new();
     for claim_key in ["adr-0001-d1", "adr-0001-d2", "adr-0001-rejected"] {
         let (status, _, body) = send(

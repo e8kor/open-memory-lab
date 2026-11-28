@@ -19,10 +19,7 @@ use oml_app::ports::{KeyringStore as _, Signer as _};
 use oml_fetch::PinnedFetcher;
 use oml_pg::{PgStore, RoleSplitReason};
 use oml_server_lead::otlp::Export;
-use oml_server_lead::{
-    Config, ConfigError, FileKeyring, LeadSigner, SplitBootError, split_boot,
-    start_lead_with_models,
-};
+use oml_server_lead::{Config, ConfigError, FileKeyring, LeadSigner, SplitBootError, split_boot};
 use oml_transport_http::traffic::Traffic;
 
 /// The stable `event` of the line `main` logs when the role split refuses
@@ -221,7 +218,7 @@ async fn run(config: Result<Config, BootError>, export: Option<&Export>) -> Resu
         }
     }
     let metrics = traffic.metrics().clone();
-    let start = start_lead_with_models(
+    let start = oml_server_lead::start_lead_hosted(
         &store,
         signing_key,
         config.oauth_issuer.clone(),
@@ -236,6 +233,13 @@ async fn run(config: Result<Config, BootError>, export: Option<&Export>) -> Resu
         config.shared,
         Some(config.quota_profiles.clone()),
         Some(config.uploads.clone()),
+        oml_server_lead::host::HostVerbs {
+            token_dir: Some(config.operator_token_dir.clone()),
+            mailer: config
+                .mail
+                .clone()
+                .map(|relay| Arc::new(relay) as Arc<dyn oml_app::ports::Mailer>),
+        },
     )
     .await?;
     // The encoder drains the queue every write fills, off the commit path

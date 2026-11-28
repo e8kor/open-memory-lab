@@ -173,18 +173,20 @@ fn keyring() -> Keyring {
 /// promoted memories whose bodies carry `canary` and their index; every
 /// third derives from the first. Returns (tenant, promoted ids).
 async fn tenant(app: &TestApp, name: &str, canary: &str, n: usize) -> (Uuid, Vec<Uuid>) {
-    let (t, ids, _) = tenant_admin(app, name, canary, n).await;
-    (t, ids)
+    let c = tenant_crew(app, name, canary, n).await;
+    (c.tenant, c.ids)
 }
 
-/// [`tenant`], with its admin key's value: the key the fix acts take.
+/// [`tenant`], with its admin key's value: the key the fix acts take,
+/// linked to the person `alice`, as an admin fix requires (ADR-0089, the
+/// operator's decision of 2026-11-19).
 async fn tenant_admin(
     app: &TestApp,
     name: &str,
     canary: &str,
     n: usize,
 ) -> (Uuid, Vec<Uuid>, String) {
-    let c = tenant_crew(app, name, canary, n).await;
+    let c = fix_crew(app, name, canary, n).await;
     (c.tenant, c.ids, c.admin)
 }
 
@@ -198,14 +200,32 @@ struct Crew {
     reviewer: String,
 }
 
-/// [`tenant_admin`], with the writer's and the reviewer's key values too.
+/// [`tenant`], with the admin's, the writer's and the reviewer's key values.
 async fn tenant_crew(app: &TestApp, name: &str, canary: &str, n: usize) -> Crew {
+    crew_for(app, name, canary, n, false).await
+}
+
+/// [`tenant_crew`], its admin key linked to `alice`, so it takes fixes.
+async fn fix_crew(app: &TestApp, name: &str, canary: &str, n: usize) -> Crew {
+    crew_for(app, name, canary, n, true).await
+}
+
+async fn crew_for(app: &TestApp, name: &str, canary: &str, n: usize, person: bool) -> Crew {
     let boot = app
-        .bootstrap_tenant(&BootstrapRequest {
-            tenant_name: Name::parse(name).expect("name"),
-            admin_key_name: Name::parse(&format!("{name}-admin")).expect("name"),
-            admin_principal: format!("{name}-admin"),
-        })
+        .bootstrap_tenant_for(
+            &BootstrapRequest {
+                tenant_name: Name::parse(name).expect("name"),
+                admin_key_name: Name::parse(&format!("{name}-admin")).expect("name"),
+                admin_principal: format!("{name}-admin"),
+            },
+            person
+                .then(|| oml_app::types::BootstrapPerson {
+                    user: Name::parse("alice").expect("name"),
+                    email: oml_app::domain::web::Email::parse("alice@example.com")
+                        .expect("an email"),
+                })
+                .as_ref(),
+        )
         .await
         .expect("bootstrap");
     let admin = &boot.admin_key.value;
@@ -233,12 +253,15 @@ async fn tenant_crew(app: &TestApp, name: &str, canary: &str, n: usize) -> Crew 
             role,
             deny: Vec::new(),
             covers: oml_app::domain::access::Covers::Subtree,
+            create: false,
         }],
         connect_code: false,
         user: None,
         guardrail_scope: None,
         expiry: None,
         requests_per_minute: None,
+        person: None,
+        create_workspaces: Vec::new(),
     };
     let writer = app
         .issue_key(
@@ -303,10 +326,27 @@ async fn tenant_crew(app: &TestApp, name: &str, canary: &str, n: usize) -> Crew 
     }
 }
 
-/// Erases the claim of `artifact` through the admin's fix primitive, which
-/// journals `lifecycle.erase` naming every version of it (ADR-0089 d16).
+/// `act` on `artifact` through the one surface that demotes or erases, the
+/// admin fix act (ADR-0089 d16; #502). An erase journals `lifecycle.erase`
+/// naming every version of the claim, at once, since the tenant has only
+/// ever had one admin person (ADR-0097 d4, d10).
+async fn fix(app: &TestApp, admin: &str, act: oml_app::types::FixAct, artifact: Uuid) {
+    app.admin_fix(
+        admin,
+        &oml_app::app::FixRequest {
+            act,
+            target: artifact,
+            reason: "ticket 41: the claim is wrong in production".to_owned(),
+            body: None,
+            title: None,
+        },
+    )
+    .await
+    .expect("the fix");
+}
+
 async fn erase(app: &TestApp, admin: &str, artifact: Uuid) {
-    app.erase_claim(admin, artifact).await.expect("erase");
+    fix(app, admin, oml_app::types::FixAct::Erase, artifact).await;
 }
 
 async fn count(lake: &Lake, sql: &str) -> i64 {
@@ -643,10 +683,13 @@ async fn a_demoted_version_reaches_silver_as_demoted_and_keeps_its_sealed_body()
     let mut writer = w.writer().await;
     writer.catch_up().await.expect("drain");
     let lake = w.lake();
-    w.app
-        .demote_version(admin.as_str(), ids[0])
-        .await
-        .expect("demote");
+    fix(
+        &w.app,
+        admin.as_str(),
+        oml_app::types::FixAct::Demote,
+        ids[0],
+    )
+    .await;
     writer.catch_up().await.expect("drain the demotion");
     assert_eq!(
         count(&lake, &format!("SELECT count(*) FROM claims WHERE artifact_id = '{}' AND state = 'demoted' AND body_ciphertext IS NOT NULL", ids[0])).await,
@@ -776,17 +819,14 @@ async fn a_demotion_returns_the_restored_version_to_silver_and_an_erasure_then_e
         return;
     };
     let canary = "demerase-canary-41c7";
-    let c = tenant_crew(&w.app, "acme", canary, 1).await;
+    let c = fix_crew(&w.app, "acme", canary, 1).await;
     let (t, v1) = (c.tenant, c.ids[0]);
     let v2 = successor(&w.app, &c, v1, 1, &format!("{canary} revised"), true).await;
     let v3 = successor(&w.app, &c, v2, 2, &format!("{canary} held"), false).await;
     let mut writer = w.writer().await;
     writer.catch_up().await.expect("drain");
     let lake = w.lake();
-    w.app
-        .demote_version(c.admin.as_str(), v2)
-        .await
-        .expect("demote the tip");
+    fix(&w.app, c.admin.as_str(), oml_app::types::FixAct::Demote, v2).await;
     writer.catch_up().await.expect("drain the demotion");
     let rows = silver_rows(&lake, &[v1, v2]).await;
     let row = |id: Uuid| {
@@ -805,10 +845,7 @@ async fn a_demotion_returns_the_restored_version_to_silver_and_an_erasure_then_e
         (v2.to_string(), "demoted".to_owned(), false, false)
     );
 
-    w.app
-        .erase_claim(c.admin.as_str(), v1)
-        .await
-        .expect("erase the claim");
+    erase(&w.app, c.admin.as_str(), v1).await;
     writer.catch_up().await.expect("drain the erasure");
     let mut o = w.owner().await;
     let mut tx = o.begin().await.expect("tx");

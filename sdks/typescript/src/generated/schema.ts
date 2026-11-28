@@ -219,7 +219,7 @@ export interface paths {
         put?: never;
         /**
          * Create a child workspace in development.
-         * @description Requires: admin key role. parent and crew each take an id or a name, and parent_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /parent (ADR-0039 d7); a crew that names no crew record of the tenant answers access.not_found, checked after the parent and before name.taken. name must be unique in the tenant (409 name.taken, checked after every other check; universe is always taken, by the root). Refused under a frozen parent (workspace.frozen); universe cannot be created or deleted. A resubmission under the same Idempotency-Key and body answers the recorded creation with Idempotency-Replay: true and creates nothing again; the same key with another body is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.7.0). A person's web session key (<user>-web, through its capacity credential) creates under its own root, as the web console's Workspaces view does (ADR-0070 d5). A node below a user root counts on that account's workspaces meter, whoever creates it; past the account's limit the create is 429 limit.quota with details.quota workspaces, and nothing is journalled (ADR-0095 d4; since v0.8.5). MCP's oml_write create_workspace rides this operation for a contributor key that names a user alone; every other key is access.verb_ceiling with details.reason create_is_own_root_only there (ADR-0095 d3).
+         * @description Requires: admin key role. parent and crew each take an id or a name, and parent_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /parent (ADR-0039 d7); a crew that names no crew record of the tenant answers access.not_found, checked after the parent and before name.taken. name must be unique in the tenant (409 name.taken, checked after every other check; universe is always taken, by the root). Refused under a frozen parent (workspace.frozen); universe cannot be created or deleted. A resubmission under the same Idempotency-Key and body answers the recorded creation with Idempotency-Replay: true and creates nothing again; the same key with another body is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.7.0). A person's web session key (<user>-web, through its capacity credential) creates under its own root, as the web console's Workspaces view does (ADR-0070 d5); a person's admin session key (<user>-admin) creates anywhere in the tenant, under universe included, as the admin Workspaces page does, a neutral admin act (ADR-0097 d9, d29; since v0.8.6). Any key whose effective access at the parent comes from a grant carrying create creates there, a shared parent included; under a node grant the child gets the same grant in the create's commit, and a frozen parent refuses it with access.verb_ceiling, details.reason parent_frozen (ADR-0097 d31; since v0.8.6). A node below a user root counts on that account's workspaces meter, whoever creates it; past the account's limit the create is 429 limit.quota with details.quota workspaces, and nothing is journalled (ADR-0095 d4; since v0.8.5). MCP's oml_write create_workspace rides this operation for a contributor key that names a user, and for a key a grant carrying create admits at the parent; every other key is access.verb_ceiling with details.reason create_is_own_root_only there (ADR-0095 d3; ADR-0097 d31).
          */
         post: operations["createWorkspace"];
         delete?: never;
@@ -339,9 +339,29 @@ export interface paths {
         put?: never;
         /**
          * Whether recalls scoped elsewhere may search this workspace when they ask for wider sources (ADR-0072).
-         * @description Requires: a reviewer key used_by person with reviewer effective access on the node, or an admin key; every other key is refused before any lookup with access.verb_ceiling, details.reason federation_is_person_only (ADR-0072 d5). It grants nothing: off, a key that reads the node still recalls there by naming it as the scope. Setting the value the node holds journals nothing; otherwise journals workspace.federation_set. Since v0.7.0.
+         * @description Requires: a reviewer key used_by person with reviewer effective access on the node, or an admin key; every other key is refused before any lookup with access.verb_ceiling, details.reason federation_is_person_only (ADR-0072 d5). It grants nothing: off, a key that reads the node still recalls there by naming it as the scope. An admin key's change is an admin act (ADR-0097 d3, d5): false is narrowing and takes effect at once; true is widening, at once marked sole_admin in a tenant that has only ever had one admin person, and otherwise answers 202 with the pending act and applies at its confirmation. A person's reviewer key acts as the person, never as an admin act. Setting the value the node holds journals nothing; otherwise journals workspace.federation_set. Since v0.7.0.
          */
         post: operations["setWorkspaceFederation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/workspaces/{workspace}/public": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * An admin person marks a protected or frozen workspace public, so every reading key of the tenant reads its approved items and recalls them by default, or clears the mark (ADR-0098).
+         * @description Requires: an admin person, a linked admin key or <user>-admin; every other key, a reviewer key on the workspace included, is refused before any lookup with access.verb_ceiling, details.reason public_is_admin_only (ADR-0098 d6). A set is an admin act of class widening: it takes effect only when a second admin person confirms it with confirmAdminAct, and at once under sole_admin, marked; a reason is required. A clear is narrowing and takes effect at once, declining a set that waits. Refused workspace.public_refused with details.reason status (a development workspace), user_root (a user root or a workspace under one), pending (a set already waits; details.act_id names it), already_public, or not_public. The effect journals workspace.public_set in the commit where the act takes effect. The flag covers the node alone, never its children. Since v0.8.6.
+         */
+        post: operations["setWorkspacePublic"];
         delete?: never;
         options?: never;
         head?: never;
@@ -711,7 +731,7 @@ export interface paths {
         put?: never;
         /**
          * Issue a key under the issuer ceiling; the value appears exactly once, here.
-         * @description A person's web session key (<user>-web, through its capacity credential) issues their own key: send name (<user>-<name>, refused naming /name for exactly <user>-web, <user>-review, <user>-curate or <user>-admin and no other name), role (contributor, reader or submitter; any other role is request.validation naming /role) and connect_code, and optionally grants, default_workspace, guardrail_scope, expiry and requests_per_minute (ADR-0096 d1 to d3; since v0.8.5). Without grants the key holds submitter and reader (contributor), reader (reader) or submitter (submitter) on the root and below; with grants it holds exactly those sent, each grant role reader or submitter, each inside the root, else 403 access.issuer_ceiling naming details.user, or for a grant role the key role does not admit details.role, admissible and grant_index; a submitter key gets no universe grant, a contributor or reader key the universe reader node grant. At most 16 grants of at most 16 denials each: more is request.validation with details.field /grants or /grants/<i>/deny and details.reason too_many. user, used_by, crew, label, principal, profile and tenant stay request.validation naming the field. The date and the rate are changed or cleared afterwards only by an admin key (POST /v2/keys/{key}/limits; ADR-0079 d1, d5; ADR-0096 d2), and any other capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). The session key's access is read when the issuance runs, and a session key that carries a denial, on any workspace, issues nothing: access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070 d2; since v0.7.3). Otherwise requires: admin key role; operator key role only for an operator key, sent without tenant, or a tenant's first admin key, sent with tenant (step 0 of the issuance order). tenant is a designed field (openapi-designed.yaml x-oml-designed-fields), refused with request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9). expiry is the instant from which the key authenticates nothing, later than the server's clock, and requests_per_minute the key's own rate, from 1 to 1000000; either outside that is request.validation naming it in details.field, and nothing is journalled. An admin key carries neither: role admin with expiry or requests_per_minute is request.validation naming the member in details.field, with details.reason admin_key (ADR-0079 d1, d4; since v0.7.3). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workspace, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workspace, crew and tenant reference takes an id or a name, and the response carries ids under their v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant's workarea_node_id, a deny entry's subtree_node_id) is refused with request.validation naming its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201 carries connect_code, shown once, in the value's place; an admin or operator role, used_by service and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason. The Idempotency-Key is claimed for the calling key before the issuance: a resubmission under the same key and body answers the first 201 with Idempotency-Replay: true and issues nothing again, without value and without connect_code.code, which the first answer alone carries; the same key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0).
+         * @description A person's admin session key (<user>-admin, through its capacity credential) issues as an admin key does, every field admitted, the admin console's key builder (ADR-0097 d29; since v0.8.6). A person's web session key (<user>-web, through its capacity credential) issues their own key: send name (<user>-<name>, refused naming /name for exactly <user>-web, <user>-review, <user>-curate or <user>-admin and no other name), role (contributor, reader or submitter; any other role is request.validation naming /role) and connect_code, and optionally grants, default_workspace, guardrail_scope, expiry, requests_per_minute and create_workspaces inside the root, each grant optionally with create (ADR-0096 d1 to d3; since v0.8.5; ADR-0097 d30, d31; since v0.8.6). Without grants the key holds submitter and reader (contributor), reader (reader) or submitter (submitter) on the root and below; with grants it holds exactly those sent, each grant role reader or submitter, each inside the root, else 403 access.issuer_ceiling naming details.user, or for a grant role the key role does not admit details.role, admissible and grant_index; a submitter key gets no universe grant, a contributor or reader key the universe reader node grant. At most 16 grants of at most 16 denials each: more is request.validation with details.field /grants or /grants/<i>/deny and details.reason too_many. user, used_by, crew, label, principal, profile and tenant stay request.validation naming the field. The date and the rate are changed or cleared afterwards only by an admin key (POST /v2/keys/{key}/limits; ADR-0079 d1, d5; ADR-0096 d2), and any other capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). The session key's access is read when the issuance runs, and a session key that carries a denial, on any workspace, issues nothing: access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070 d2; since v0.7.3). Otherwise requires: admin key role; operator key role only for an operator key, sent without tenant, or a tenant's first admin key, sent with tenant (step 0 of the issuance order). tenant is a designed field (openapi-designed.yaml x-oml-designed-fields), refused with request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9). expiry is the instant from which the key authenticates nothing, later than the server's clock, and requests_per_minute the key's own rate, from 1 to 1000000; either outside that is request.validation naming it in details.field, and nothing is journalled. An admin key carries neither: role admin with expiry or requests_per_minute is request.validation naming the member in details.field, with details.reason admin_key (ADR-0079 d1, d4; since v0.7.3). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workspace, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workspace, crew and tenant reference takes an id or a name, and the response carries ids under their v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant's workarea_node_id, a deny entry's subtree_node_id) is refused with request.validation naming its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201 carries connect_code, shown once, in the value's place; an admin or operator role, used_by service and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason. The Idempotency-Key is claimed for the calling key before the issuance: a resubmission under the same key and body answers the first 201 with Idempotency-Replay: true and issues nothing again, without value and without connect_code.code, which the first answer alone carries; the same key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0).
          */
         post: operations["issueKey"];
         delete?: never;
@@ -820,6 +840,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/keys/{key}/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * End one key, and nothing more.
+         * @description Requires: an admin key role in the key's tenant, a person's <user>-admin session key included, on any key of the tenant; or a person's <user>-web session key on that person's own keys, those that count as the person, any other key answering access.not_found (ADR-0097 d14, decided by the operator, 2026-11-25). Any other caller is access.verb_ceiling. The key authenticates nothing afterwards on any path: its value, its OAuth tokens and refresh tokens, and its connect codes, which are voided in the same commit. No cascade: the keys it issued keep working, and session keys come from the server, so revoking an admin key ends no sign-in. A session key (it ends with its entry), the server's reserved key and a revoked key are request.validation with details.field key and details.reason session_key, reserved or revoked. The body admits only reason, scanned, so cascade and rotation can be added later as new members; an unknown field is request.validation. An admin's revocation journals an admin.act, revoke_key (narrowing) or, for a key of another admin person, revoke_admin_key (against an admin), before key.revoked {key_id, revoked_by_key_id, actor_person, reason, act_id, cause}; a person's own revocation journals key.revoked alone, act_id null. Since v0.8.6.
+         */
+        post: operations["revokeKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/keys/self/convert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Convert the calling admin key, in place, into a maintenance key that reads counts only.
+         * @description Requires: an admin key presented by its own current bearer value; any other role is request.validation with details.field key and details.reason not_admin, and a session key details.reason session_key (ADR-0097 d18). to is maintenance; anything else is details.field /to and details.reason not_maintenance. The key keeps its id, name and hash, takes the maintenance role's request rate, 60 a minute (a placeholder), and from then on reaches only the counts oml doctor reads: GET /v2/whoami, GET and POST /v2/admin/rescan, GET /v2/admin/usage/drift, GET /v2/search, GET /v2/federation with no key listed, GET /v2/workspaces/{workspace}/tree, GET /v2/review/queue, GET /v2/events with the head and no event, and GET /v2/web/users with no key listed and no deletion named; every other route refuses it access.verb_ceiling with details.verb maintenance_counts_only. Journalled as one sealed key.converted {key_id, from: admin, to: maintenance}, never a migration's UPDATE. Since v0.8.6.
+         */
+        post: operations["convertSelf"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/keys/self/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Link the calling admin key to its holder's person, pending that person's acceptance.
+         * @description Requires: an admin key presented by its own bearer value (possession); a session key is request.validation with details.field key and details.reason bearer_only, and another role access.verb_ceiling (ADR-0097 d22, decided by the operator, 2026-11-25). user names a user of the tenant with a user root and a web entry that is not disabled; otherwise details.field /user and details.reason user_unknown or user_disabled. The key is a live tenant bearer key used_by person that holds no link and none pending; otherwise details.field key and details.reason revoked, already_linked, not_a_tenant_key or not_used_by_person. The one self-link the server admits: POST /v2/keys/{key}/link keeps refusing self_link. Journalled as key.linked_person with actor self and accepted false: the key acts for no one until that person accepts the link from their own console session with POST /v2/keys/{key}/accept_link. A link is the link_key admin act, class consent, journalled first in the commit as admin.act with its reason, and key.linked_person names its act_id; reason is required and scanned, and a link without one is request.validation with details.field /reason and details.reason required (ADR-0097 d7, d26; amendment of 2026-11-27, answer 15). Since v0.8.6.
+         */
+        post: operations["linkSelf"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/keys/{key}/link": {
         parameters: {
             query?: never;
@@ -831,7 +911,7 @@ export interface paths {
         put?: never;
         /**
          * Link a person's tenant key to the user who signs in, so the console acts with it in shared workspaces.
-         * @description Requires: a console admin session, <user>-admin through its capacity credential, in the key's own tenant; another role is access.verb_ceiling, a bearer admin key, which names no person, is request.validation with details.field key and details.reason session_admin_only, and no MCP tool or CLI command reaches the route (the operator, 2026-11-17: "Console only"). user names a user of the tenant with a user root and a web entry, none of it disabled, and never the calling admin's own person; otherwise request.validation with details.field /user and details.reason user_unknown, user_disabled or self_link. The key is a live tenant bearer key used_by person that holds no link, an admin key's included; otherwise request.validation with details.field key and details.reason revoked (a key past its expiry too), already_linked (unlink it first), not_a_tenant_key (a user key, a session key or a connector key) or not_used_by_person. Journalled as key.linked_person, with accepted false: the link is pending, and the key acts for no one, until that user accepts it from their own console session with POST /v2/keys/{key}/accept_link (the operator's decision of 2026-11-19). The key is refused already_linked while a link pends too. From the acceptance on, the key writes into that user's root as their key wherever its grants allow, and oml-web may name it in OML-Acting-Key beside that user's capacity credential on the console's acting routes (GET /v2/whoami, GET /v2/review/held, GET /v1/memories/{artifact_id}, POST /v2/review/verdicts/bulk): the request runs as the key, with its grants and verb ceilings. The header sent twice, on another route, without a capacity credential, or naming a key the link no longer admits answers auth.invalid with details.reason acting_key_not_linked and runs nothing (ADR-0085 d16, amended 2026-11-17). The Idempotency-Key is required and not replayed. Since v0.8.3.
+         * @description Requires: a console admin session, <user>-admin through its capacity credential, in the key's own tenant; another role is access.verb_ceiling, a bearer admin key, which names no person, is request.validation with details.field key and details.reason session_admin_only, and no MCP tool or CLI command reaches the route (the operator, 2026-11-17: "Console only"). user names a user of the tenant with a user root and a web entry, none of it disabled, and never the calling admin's own person; otherwise request.validation with details.field /user and details.reason user_unknown, user_disabled or self_link. The key is a live tenant bearer key used_by person that holds no link, an admin key's included; otherwise request.validation with details.field key and details.reason revoked (a key past its expiry too), already_linked (unlink it first), not_a_tenant_key (a user key, a session key or a connector key) or not_used_by_person. Journalled as key.linked_person, with accepted false: the link is pending, and the key acts for no one, until that user accepts it from their own console session with POST /v2/keys/{key}/accept_link (the operator's decision of 2026-11-19). The key is refused already_linked while a link pends too. From the acceptance on, the key writes into that user's root as their key wherever its grants allow, and oml-web may name it in OML-Acting-Key beside that user's capacity credential on the console's acting routes (GET /v2/whoami, GET /v2/review/held, GET /v1/memories/{artifact_id}, POST /v2/review/verdicts/bulk): the request runs as the key, with its grants and verb ceilings. The header sent twice, on another route, without a capacity credential, or naming a key the link no longer admits answers auth.invalid with details.reason acting_key_not_linked and runs nothing (ADR-0085 d16, amended 2026-11-17). The Idempotency-Key is required and not replayed. A link is the link_key admin act, class consent, journalled first in the commit as admin.act with its reason, and key.linked_person names its act_id; reason is required and scanned, and a link without one is request.validation with details.field /reason and details.reason required (ADR-0097 d7, d26; amendment of 2026-11-27, answer 15). Since v0.8.3.
          */
         post: operations["linkKey"];
         delete?: never;
@@ -891,7 +971,7 @@ export interface paths {
         put?: never;
         /**
          * Mint a fresh one-time connect code for a connector key; voids the key's earlier codes.
-         * @description A person's web session key mints a code for one of their own connector keys, by name, at the default lifetime; another person's key is access.not_found, and another capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9). The session key's access is read when the code is minted, and a session key that carries a denial, on any workspace, mints none: access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070 d2; since v0.7.3). Otherwise requires: admin key role. The key must be a connector key (issued with connect_code: true, no bearer value), neither revoked nor expired, on a deployment with oauth.issuer set; otherwise 422 oauth.connect_refused with details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here; the server keeps only its SHA-256 digest, and connection.code_issued journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids the key's earlier codes as docs/architecture/roles-and-keys.md (Connections) declares. The Idempotency-Key is claimed for the calling key before the code is minted: a resubmission under the same key and body answers the first 201 with Idempotency-Replay: true and mints nothing, without code, which the first answer alone carries; the same key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0). Lifetime: the oauth.connect_code_ttl setting, or ttl_seconds up to 30 days for a key confined to one workspace (ADR-0067 d3).
+         * @description A person's web session key mints a code for one of their own connector keys, by name, at the default lifetime; another person's key is access.not_found, and another capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9). The session key's access is read when the code is minted, and a session key that carries a denial, on any workspace, mints none: access.verb_ceiling with details.reason session_key_denied, nothing journalled (ADR-0070 d2; since v0.7.3). Otherwise requires: admin key role. The key must be a connector key (issued with connect_code: true, no bearer value), neither revoked, expired nor cut off by a denial on universe, on a deployment with oauth.issuer set; otherwise 422 oauth.connect_refused with details.reason (bearer_key, revoked, expired, cut_off, not_configured; cut_off since v0.8.6, #353, refused again at a pending code's confirmation). The code is shown exactly once, here; the server keeps only its SHA-256 digest, and connection.code_issued journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids the key's earlier codes as docs/architecture/roles-and-keys.md (Connections) declares. The Idempotency-Key is claimed for the calling key before the code is minted: a resubmission under the same key and body answers the first 201 with Idempotency-Replay: true and mints nothing, without code, which the first answer alone carries; the same key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0). Lifetime: the oauth.connect_code_ttl setting, or ttl_seconds up to 30 days for a key confined to one workspace (ADR-0067 d3).
          */
         post: operations["mintConnectCode"];
         delete?: never;
@@ -1282,6 +1362,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/web/notices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The calling person's in-product notices.
+         * @description Requires: a key that counts as a person, the person's session keys among them; one that counts as no person answers access.not_found. A notice is written in the commit of the act it tells about: an act against an admin, to every admin person; offensive narrowing (a production fix that loosens a guardrail, disabling a person, revoking a person's key, denying a reviewer person's key), to every admin person and every reviewer person of the workspace concerned; a reach into a person's own root taken at once under sole_admin, to that person (ADR-0097 d6, d20, d24). Oldest first; the dismissed ones too with dismissed=true. Journals nothing. Since v0.8.6.
+         */
+        get: operations["listNotices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/web/notices/{notice}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The person dismisses a notice of their own.
+         * @description Requires: a key that counts as the notice's recipient. Journals notice.dismissed; it is the person's own act, not an admin act. A notice that is not the person's, or is already dismissed, answers access.not_found (ADR-0097 d20). No body. Since v0.8.6.
+         */
+        post: operations["dismissNotice"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/web/admin-reads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The count of admin reads of the calling person's own root, by month.
+         * @description Requires: a key that counts as a person, the person's session keys among them; one that counts as no person answers access.not_found. Each admin-read page that served a row of the person's own root counts once, for the month of the read (UTC). Reads through keys or connect codes a second admin confirmed in the root are the root's own reads and are not counted (ADR-0097 d6, d16). Journals nothing. Since v0.8.6.
+         */
+        get: operations["ownAdminReads"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/web/export": {
         parameters: {
             query?: never;
@@ -1377,7 +1517,7 @@ export interface paths {
         put?: never;
         /**
          * Set the tenant's federation policy; each field sent replaces its value.
-         * @description Requires: admin key role (ADR-0072 d5). max_sources above 64 is request.validation at /max_sources, and a default_sources other than scope or wide at /default_sources. Journalled as federation.policy_set with the policy, the previous one and the admin key; a change that changes nothing journals nothing. Since v0.7.0.
+         * @description Requires: admin key role (ADR-0072 d5). max_sources above 64 is request.validation at /max_sources, and a default_sources other than scope or wide at /default_sources. Journalled as federation.policy_set with the policy, the previous one and the admin key; a change that changes nothing journals nothing. The change is an admin act (ADR-0097 d3, d5): one that searches less (enabled false, default_sources scope, fewer max_sources) is narrowing and takes effect at once; one that searches more is widening, at once marked sole_admin in a tenant that has only ever had one admin person, and otherwise answers 202 with the pending act, requires a reason, and applies over the policy as it stands at its confirmation; one that does both is request.validation at /, two acts of two classes. Since v0.7.0.
          */
         post: operations["setFederationPolicy"];
         delete?: never;
@@ -1538,6 +1678,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/web/contest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Contest the act the contest-only sign-in opened, the one control it opens.
+         * @description ADR-0097 d8. A disabled or removed admin person's provider sign-in, matching their entry as the open act against them found it, answers the contest page under the sealed __Host-oml_contest cookie, which names the act and the person for ten minutes; a removed admin's act is found by the address's digest (the operator's decision of 2026-11-27). The same-origin check and that cookie; no body. Contests the act (POST /v2/admin/acts/{act}/contest's effect): the flag and sign-in come back, the admin keys stay suspended. Since v0.8.6.
+         */
+        post: operations["webContest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/admin/memories/search": {
         parameters: {
             query?: never;
@@ -1637,9 +1797,149 @@ export interface paths {
         put?: never;
         /**
          * Take a marked break-glass fix that serves at once and waits for a person to confirm or revert it.
-         * @description Requires: admin key role, used by a person and linked to that person (ADR-0089 d1, the operator's decision of 2026-11-19); another admin key answers admin.fix_requires_person, details.reason not_used_by_person or unlinked, every other role access.verb_ceiling. act is demote (an approved version; the claim's tip returns to its latest earlier approved version, or none), edit (body and optional title replace the served tip), retire (the served tip is retired, reason as its body) or erase (every version of the claim is crypto-shredded). reason is 1 to 1,024 bytes, stored in clear and scanned. One commit journals the lifecycle event the act causes, then admin.fix naming it. An edit's body is scanned as its kind requires: a veto answers submission.scan_veto and a hold admin.fix_held_by_scan. In a frozen workspace an edit or retirement answers workspace.frozen. A demotion of a version that is not approved answers admin.fix_target_not_promoted. Not idempotent. Since v0.8.4.
+         * @description Requires: admin key role, used by a person and linked to that person (ADR-0089 d1, the operator's decision of 2026-11-19); another admin key answers admin.fix_requires_person, details.reason not_used_by_person or unlinked, every other role access.verb_ceiling. act is demote (an approved version; the claim's tip returns to its latest earlier approved version, or none), edit (body and optional title replace the served tip), retire (the served tip is retired, reason as its body) or erase (every version of the claim is crypto-shredded: at once, marked sole_admin, in a tenant that has never had two live admin persons; otherwise every approved version of the claim is demoted at once as the fix, the bytes are kept, and the shred waits, unexpiring, on a second admin person's POST /v2/admin/acts/{act}/confirm, while a decline leaves the claim demoted (ADR-0097 d4). An erase of a version that is not approved, outside sole_admin, has nothing to demote: it answers 202 with the pending shred act alone and makes no fix, the operator's decision of 2026-11-27). reason is 1 to 1,024 bytes, stored in clear and scanned. One commit journals the lifecycle event the act causes, then admin.fix naming it. An edit's body is scanned as its kind requires: a veto answers submission.scan_veto and a hold admin.fix_held_by_scan. In a frozen workspace an edit or retirement answers workspace.frozen. A demotion of a version that is not approved answers admin.fix_target_not_promoted. Not idempotent. Since v0.8.4.
          */
         post: operations["adminFix"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/admin/acts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The tenant's admin acts, those waiting on a second admin person by default.
+         * @description Requires: admin key role. Every admin act outside content review is one record (ADR-0097 d1, d2): its class, fixed by the act (narrowing, erase, widening, consent, against_admin, neutral), its state, the person the acting key counted as, its reason and, for a widening act, what its confirmation applies. state is all, or one state; omitted, pending_confirmation. A pending act seven days old reads expired, and is final (ADR-0097 d23). Oldest first. Journals nothing. Since v0.8.6.
+         */
+        get: operations["listAdminActs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/admin/acts/{act}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A second admin person confirms a pending widening act, which takes effect in this commit.
+         * @description Requires: admin key role, a key that counts as a live admin person of the tenant: a <user>-admin session key, or an admin key linked to its person (ADR-0097 d5, d11). The act's effect applies in the confirmation's commit: a pending key's grants and connect code, a grant, a raised limit. Refused with request.validation, details.field act and details.reason: not_pending (the act took effect or was settled), expired (pending seven days; a late confirm never revives it), own_act (the key counts as the person who took the act), not_admin_person (the key counts as no live admin person) or too_new (that person's admin flag was accepted less than seven days before the act). reason is required and scanned, and the act keeps it as confirm_reason; a confirmation without one is refused request.validation with details.field /reason and details.reason required (ADR-0097 d26; amendment of 2026-11-27, answer 18). An act the tenant does not hold is access.not_found. Journalled as admin.act with state confirmed, confirmed_by_person and confirm_reason. Since v0.8.6.
+         */
+        post: operations["confirmAdminAct"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/admin/acts/{act}/contest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The admin person an open act against an admin targets contests it from their own session; the flag and sign-in come back and the suspension stays.
+         * @description Requires: a console session key of the act's target (ADR-0097 d8). The act is an un-flag, removal, disable or change of another admin person's entry, effective and uncontested. The act moves to contested and, in the same commit, the entry's flag and sign-in come back: an un-flagged or changed entry is flagged again, a removed one added again, a disabled person enabled. The target's admin keys stay suspended, and nothing revoked comes back. A disabled or removed target contests from the contest-only sign-in instead (POST /web/contest). Refused with request.validation, details.field act and details.reason: not_contestable or not_target. Journalled as admin.act with state contested. Since v0.8.6.
+         */
+        post: operations["contestAdminAct"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/admin/acts/{act}/settle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * With three or more admin persons, a third admin person settles an open act against an admin, confirm or reverse.
+         * @description Requires: admin key role, a key that counts as a live admin person who is neither party and whose flag was accepted at least seven days before the act (ADR-0097 d8, d11). Three or more admin persons count the live ones and every open act's target (the operator's decision of 2026-11-27). confirm revokes the target's suspended admin keys, cause settlement, and undoes a contest's restoration; reverse lifts the suspension and restores the entry where no contest did. Below three: details.reason fewer_than_three, and the operator settles from the host. Refused with request.validation, details.field act and details.reason: not_contestable, fewer_than_three or not_settler. Journalled as admin.act with state settled. Since v0.8.6.
+         */
+        post: operations["settleAdminAct"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/operator/tenants/{tenant}/acts/{act}/settle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The operator, from the host, confirms or reverses the contested act of a freeze open at least 24 hours.
+         * @description Authenticated by the tenant's operator token of this start alone, sent as OML-Operator-Token: at each start the server writes one per tenant to <operator.token_dir>/<tenant>.token, mode 0600, and oml operator settle, run as root, reads it (ADR-0097 d19; the operator's answer 13 of 2026-11-27). A request that also sends Authorization is auth.invalid with details.reason operator_route_takes_no_key; no token, auth.missing; a token that is not the tenant's of this start, auth.invalid with details.reason operator_token. The act must be an open act against an admin below three admin persons, a freeze, else request.validation with details.reason not_frozen; and open at least 24 hours, a placeholder, else details.reason freeze_too_recent. confirm revokes the target's suspended admin keys, cause settlement, and undoes a contest's restoration; reverse lifts the suspension and restores the entry where no contest did. It issues no key and reads no content. Journalled in one commit: admin.act with state settled and no settler, operator.settlement, the effect's events, and notice.written kind settlement to every admin person and both parties. The notice is then emailed to them through the mail relay (d20; answer 14): mail is sent, unconfigured or failed, with mail_failure naming the SMTP stage and code, and the settlement stands either way. Since v0.8.6.
+         */
+        post: operations["operatorSettle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/operator/tenants/{tenant}/recover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The operator, from the host, asks to recover a tenant in which no admin authenticated for 30 days.
+         * @description Authenticated as operatorSettle is, by the tenant's operator token of this start alone, sent as OML-Operator-Token, and refused auth.invalid with details.reason operator_route_takes_no_key beside an Authorization header (ADR-0097 d19; answer 13). Admitted only when the server authentication table reaches back 30 days, a placeholder, and shows no admin key of the tenant authenticated in them, an admin person's sign-in included (answers 21, 24). Refused operator.recover_refused with details.reason log_too_short (the table does not reach back 30 days: a fresh install or purged rows, never read as dormancy), log_write_failed (this server process counted an authentication row it could not write since it started; per replica), admin_active, pending (a recovery already waits), dispute_open (an act against an admin is open), person_taken or email_taken. Journalled as operator.recovery_requested, with the address's digest alone, and notice.written kind recovery to every admin person, then emailed to them through the mail relay (d20): mail is sent, unconfigured or failed. The server's sweep completes it once 72 hours, a placeholder, pass with no admin sign-in: every admin key of the tenant revoked, cause recovery, the named admin person's entry added, operator.recovery and a notice; any admin sign-in in the 72 hours cancels it, operator.recovery_cancelled (answer 22). The dormant admins keep their flags. Since v0.8.6.
+         */
+        post: operations["operatorRecover"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/admin/acts/{act}/decline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Decline a pending admin act, which then never takes effect, or undo a widening act a sole_admin tenant took at once.
+         * @description Requires: admin key role, the act's own actor included. Declining is narrowing (ADR-0097 d3), journalled as an admin.act decline_act of its own before the declined act's admin.act with state declined. In the same commit the decline undoes what the act applied, each event naming the decline's act_id: a key the act issued is revoked (key.revoked, a pending issuance's key included), grants it added are revoked (grant.revoked), a connect code it minted is voided (connection.code_voided) or the connection opened from it revoked (connection.revoked), a raised limit is set back to the limits the act found (key.limits_set), and an admin flag is taken off its entry (web.email_changed) under the last-admin guard (ADR-0097 d10, the operator's decision of 2026-11-27). Declined is final (ADR-0097 d23). Refused with request.validation, details.field act and details.reason: not_pending (already settled, or took effect and is not widening under sole_admin) or expired. reason is optional and scanned. Since v0.8.6.
+         */
+        post: operations["declineAdminAct"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1961,6 +2261,62 @@ export interface components {
             /** Format: date-time */
             closed_at: string | null;
         };
+        /** @description One in-product notice to one person (ADR-0097 d20). */
+        Notice: {
+            /** Format: uuid */
+            notice_id: string;
+            /** @enum {string} */
+            kind: "act_against_admin" | "offensive_narrowing" | "root_reach" | "recovery" | "settlement";
+            /**
+             * Format: uuid
+             * @description The admin act the notice tells about.
+             */
+            act_id: string | null;
+            /** @description The act's kind, its target and the person the acting key counted as. */
+            detail: Record<string, never>;
+            /** Format: date-time */
+            at: string;
+            /** Format: date-time */
+            dismissed_at: string | null;
+        };
+        /** @description One admin act (ADR-0097 d2): the confirm screen of d23 reads target (the key's role, principal, used_by, the root's person as user, and principal_names_person where the principal spells a person's name) and grants. Since v0.8.6. */
+        AdminAct: {
+            /** Format: uuid */
+            act_id: string;
+            act: string;
+            /** @enum {string} */
+            class: "narrowing" | "erase" | "widening" | "consent" | "against_admin" | "neutral";
+            /** @enum {string} */
+            state: "effective" | "pending_confirmation" | "confirmed" | "declined" | "expired" | "contested" | "settled";
+            target: {
+                [key: string]: unknown;
+            };
+            /** @description What a pending act's confirmation grants; empty once applied. */
+            grants: {
+                [key: string]: unknown;
+            }[];
+            reason: string | null;
+            /** Format: uuid */
+            actor_key_id: string | null;
+            actor_person: string | null;
+            confirmed_by_person: string | null;
+            /** @description The reason the confirmation gave (ADR-0097 d26); null until confirmed. */
+            confirm_reason: string | null;
+            sole_admin: boolean;
+            /** @description upgrade, deactivation, settlement or recovery for an act no admin took; null otherwise. */
+            cause: string | null;
+            /** Format: date-time */
+            at: string;
+            /** Format: date-time */
+            settled_at: string | null;
+            /**
+             * Format: date-time
+             * @description When a pending act expires as declined; null for a pending shred, which never expires (ADR-0097 d4).
+             */
+            expires_at: string | null;
+            /** @description Served on GET /v2/admin/acts alone: whether the calling admin person may confirm or review the act, as the To do count acts_to_confirm judges it: never their own act, a pending act taken at least seven days after their admin flag was accepted, and a widening act a sole_admin tenant took at once once that flag is seven days old (ADR-0097 d2, d10, d11). Since v0.8.6. */
+            to_confirm?: boolean;
+        };
         /** @description An admin's marked break-glass fix (ADR-0089 d3, d8, d15). admin_key_id and admin_person are served on the admin routes alone; a person's review read never names the admin. acts is served on GET /v2/review/fixes alone. Since v0.8.4. */
         Fix: {
             /** Format: uuid */
@@ -2120,12 +2476,12 @@ export interface components {
         /** @description A tenant, by its id or its name, resolved in the deployment's namespace (ADR-0026 d4). */
         TenantRef: components["schemas"]["Id"] | components["schemas"]["NameRef"];
         /** @enum {string} */
-        Role: "reader" | "contributor" | "submitter" | "reviewer" | "admin" | "operator";
+        Role: "reader" | "contributor" | "submitter" | "reviewer" | "admin" | "operator" | "maintenance";
         /**
          * @description The closed error vocabulary; identical to docs/api/errors.md by construction. The oauth codes other than oauth.connect_refused and oauth.attach_refused travel inside RFC error bodies on the OAuth endpoints, at the start of error_description, or on the authorization page; oauth.connect_refused answers on /v2 in this envelope, and oauth.attach_refused, an /mcp tool result, is answered by no served tool since oml_attach left the catalog (ADR-0031, ADR-0039 d2, d9).
          * @enum {string}
          */
-        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "admin.investigation_required" | "admin.fix_requires_person" | "admin.fix_target_not_promoted" | "admin.fix_held_by_scan" | "admin.fix_superseded" | "admin.fix_not_revertible" | "admin.fix_settled" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workspace_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.format_invalid" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.version_conflict" | "submission.claim_key_conflict" | "submission.similar_exists" | "submission.universe_refused" | "submission.user_root_refused" | "workspace.frozen" | "workspace.in_progress_refused" | "workspace.held_remaining" | "workspace.admin_key_under_root" | "workspace.transition_refused" | "review.author_in_lineage" | "review.person_required" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "upload.expired" | "upload.too_large" | "upload.part_size" | "upload.part_number" | "upload.incomplete" | "upload.session_limit" | "upload.tenant_limit" | "upload.storage_failed" | "bundle.format_unknown" | "bundle.layout" | "bundle.path_unsafe" | "bundle.too_large" | "bundle.line_too_long" | "bundle.depth" | "bundle.duplicate" | "bundle.unreferenced_body" | "bundle.malformed" | "bundle.digest_mismatch" | "bundle.signature_invalid" | "bundle.signature_unexpected" | "bundle.unencrypted" | "bundle.decrypt_failed" | "bundle.io" | "import.target_not_in_progress" | "import.over_quota" | "import.bundle_older" | "import.since_mismatch" | "import.source_key_changed" | "import.busy" | "export.disabled" | "export.not_readable" | "export.busy" | "export.too_large" | "memory.not_held" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "proposal.pending" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
+        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "admin.investigation_required" | "admin.read_requires_person" | "admin.fix_requires_person" | "admin.fix_target_not_promoted" | "admin.fix_held_by_scan" | "admin.fix_superseded" | "admin.fix_not_revertible" | "admin.fix_settled" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workspace_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.format_invalid" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.version_conflict" | "submission.claim_key_conflict" | "submission.similar_exists" | "submission.universe_refused" | "submission.user_root_refused" | "workspace.frozen" | "workspace.in_progress_refused" | "workspace.held_remaining" | "workspace.admin_key_under_root" | "workspace.public_refused" | "operator.recover_refused" | "workspace.transition_refused" | "review.author_in_lineage" | "review.person_required" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "upload.expired" | "upload.too_large" | "upload.part_size" | "upload.part_number" | "upload.incomplete" | "upload.session_limit" | "upload.tenant_limit" | "upload.storage_failed" | "bundle.format_unknown" | "bundle.layout" | "bundle.path_unsafe" | "bundle.too_large" | "bundle.line_too_long" | "bundle.depth" | "bundle.duplicate" | "bundle.unreferenced_body" | "bundle.malformed" | "bundle.digest_mismatch" | "bundle.signature_invalid" | "bundle.signature_unexpected" | "bundle.unencrypted" | "bundle.decrypt_failed" | "bundle.io" | "import.target_not_in_progress" | "import.over_quota" | "import.bundle_older" | "import.since_mismatch" | "import.source_key_changed" | "import.busy" | "export.disabled" | "export.not_readable" | "export.busy" | "export.too_large" | "memory.not_held" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "proposal.pending" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
         ExportRequest: {
             /**
              * @description history is the default in a user root; release is refused until releases are built.
@@ -2558,10 +2914,10 @@ export interface components {
                 score: number;
                 matched: components["schemas"]["RecallMatched"];
                 /**
-                 * @description Under sources wide or a list only: scope when the hit's workspace is the recall's scope or under it, federated when it is another workspace the key reads; memory.workspace_path names it (ADR-0072 d8).
+                 * @description Under sources wide or a list, and under scope where a public workspace was searched: scope when the hit's workspace is the recall's scope or under it, federated when it is another workspace the key reads, public when it is a public workspace outside the scope (ADR-0072 d8; ADR-0098 d3); memory.workspace_path names it.
                  * @enum {string}
                  */
-                via?: "scope" | "federated";
+                via?: "scope" | "federated" | "public";
                 passage?: components["schemas"]["RecallPassage"];
                 /** @description A document's hit only: how many of the document's other passages were in the fused list before the k cut, from any retriever. A lower bound, bounded by each list's depth, never an exact count of the passages holding a query word (ADR-0081 d4, the build's reading R3). */
                 more_passages?: number;
@@ -2671,10 +3027,10 @@ export interface components {
                 matches_at_least: number;
             };
         };
-        /** @description Under sources wide or a list: what was searched and why (ADR-0072 d8). Every name and number is of a workspace the key reads (d6). */
+        /** @description Under sources wide or a list: what was searched and why (ADR-0072 d8); under scope, served only where the recall also searched a public workspace outside the scope, which it then lists (ADR-0098 d3). Every name and number is of a workspace the key reads (d6). */
         RecallSources: {
             /** @enum {string} */
-            mode: "wide" | "list";
+            mode: "scope" | "wide" | "list";
             /** @description Under wide, the trusted workspaces the key reads outside the scope that accept federated reads; for a list, the names listed. */
             considered: number;
             /** @description The scope's nodes first, then the federated sources in selection order; for a list, the listed nodes in the order sent. */
@@ -2683,7 +3039,7 @@ export interface components {
                 workspace_id: string;
                 workspace_path: string;
                 /** @enum {string} */
-                via: "scope" | "federated";
+                via: "scope" | "federated" | "public";
                 /** @description The share of the matching rows it holds, weighted by each word's rarity over every source searched or considered: the order selection reads above max_sources (d4.4). */
                 estimate: number;
                 matched: {
@@ -2708,11 +3064,16 @@ export interface components {
             default_sources: "scope" | "wide";
             /** @description The most workspaces a wide recall searches beside its scope, and the most a list names; 8 by default. */
             max_sources: number;
+            /** @description The wide keys, listed to an admin key; empty to a maintenance key, which reads the counts below (ADR-0097 d18). */
             wide_keys: {
                 /** Format: uuid */
                 key_id: string;
                 candidates: number;
             }[];
+            /** @description How many keys met more than 1,000 candidate sources since the lead started, to an admin and a maintenance key alike (ADR-0097 d18). Since v0.8.6. */
+            wide_key_count?: number;
+            /** @description The most candidate sources any of those keys met; 0 with none. Since v0.8.6. */
+            wide_key_most_candidates?: number;
             /** @description The widen hint's signals on this tenant since the lead started; doctor warns on a failed build, on evictions, and on recalls that found none while none was built. */
             widen_signal: {
                 /** @description Signals built. */
@@ -3075,8 +3436,21 @@ export interface components {
              * @enum {string}
              */
             mode?: "standard" | "in_progress";
+            public?: components["schemas"]["PublicFlag"];
             /** Format: date-time */
             created_at?: string;
+        };
+        /** @description Whether every reader, contributor and reviewer key of the tenant reads the node's approved items without a grant, and every default recall searches it (ADR-0098 d1, d3, d9). It covers the node alone. Since v0.8.6. */
+        PublicFlag: {
+            value: boolean;
+            /** @description When the act that set it took effect; null when not public. */
+            since: string | null;
+            /** @description The admin act that set it; null when not public. */
+            act_id: string | null;
+            /** @description Whether that act took effect at once because the tenant has only ever had one admin person (ADR-0097 d10). */
+            sole_admin: boolean;
+            /** @description To an admin key on the workspace read only: a set that waits on a second admin person. */
+            pending_act_id?: string;
         };
         /** @description One node with the calling key's view of it; every value below is relative to that key, and children outside read access are absent (ADR-0025 d14). */
         WorkspaceView: components["schemas"]["Workspace"] & {
@@ -3380,6 +3754,18 @@ export interface components {
              * @enum {string}
              */
             covers?: "subtree" | "node";
+            /**
+             * @description The key creates child workspaces where this grant reaches, a shared tree included: under a node grant each child gets the same grant, create included, and under a subtree grant the child is already covered. Each child counts on the workspaces meter; a frozen parent refuses it (access.verb_ceiling, details.reason parent_frozen). Granting it is widening: an admin's issuance waits on a second admin person outside sole_admin, and a person's own issuance sets it only inside the own root (ADR-0097 d31). Since v0.8.6.
+             * @default false
+             */
+            create?: boolean;
+        };
+        /** @description A workspace the issuance creates in the same act (ADR-0097 d30). Since v0.8.6. */
+        NewWorkspaceRequest: {
+            /** @description The parent, by id or name; for a user key, in that user's root's namespace. */
+            parent: components["schemas"]["WorkspaceRef"];
+            /** @description The new workspace's name, unique in its namespace (409 name.taken). */
+            name: components["schemas"]["Name"];
         };
         /** @description A stored grant, as echoed at issuance and listed on a key. */
         Grant: {
@@ -3396,6 +3782,8 @@ export interface components {
              * @enum {string}
              */
             covers?: "subtree" | "node";
+            /** @description Whether the grant lets its key create child workspaces where it reaches (ADR-0097 d31). Since v0.8.6. */
+            create?: boolean;
             /** @description The journal seq of this grant's grant.issued event. */
             epoch: number;
         };
@@ -3437,6 +3825,11 @@ export interface components {
              */
             profile?: "curator";
             /**
+             * @description A time box (ADR-0097 d13): an admin person's issuance that takes effect at once in any tenant, for a reader, submitter or contributor key whose grants are reader and submitter grants in shared workspaces, never into a user root or an in-progress subtree, with an expiry no more than 24 hours away that everything issued under it inherits. It requires reason, and is an issue_key admin act marked timebox, which a second admin person settles afterwards with confirmAdminAct or declineAdminAct (a decline revokes the key). One open box per admin person per workspace, and one renewal while the first is unsettled; refused while an act against an admin is open or a freeze holds. Each refusal is request.validation with details.field /timebox and details.reason not_admin_person, shape, not_shared, until, open, renewals_exhausted or against_admin_open. Since v0.8.6.
+             * @default false
+             */
+            timebox?: boolean;
+            /**
              * @description Issue a connector key (ADR-0031 d7): no bearer value is minted, and the 201 carries connect_code in place of value. Refused with 422 oauth.connect_refused for an admin or operator role (role), used_by service (used_by_service), or a deployment without oauth.issuer (not_configured).
              * @default false
              */
@@ -3448,6 +3841,10 @@ export interface components {
             expiry?: string;
             /** @description The requests the key may make in one UTC minute, its own rate beside any quota of its account; the request past it is 429 limit.rate. Omitted, the key has none of its own. Refused for role admin (ADR-0079 d1, d4; since v0.7.3). */
             requests_per_minute?: number;
+            /** @description The issuing admin's reason, scanned as a verdict's reason and journalled in the issuance's admin.act. Required when the issuance waits on a second admin person: request.validation with details.field /reason and details.reason required; a missing one on an issuance that takes effect at once under sole_admin is journalled as null (ADR-0097 d26). Since v0.8.6. */
+            reason?: string;
+            /** @description Workspaces the issuance creates in the same act, each journalled as workspace.create before key.issued and granted to the key by its role's default grants over the subtree: a contributor reader and submitter, a submitter submitter, a reader reader, a reviewer reviewer. The creations, the key and its grants commit together or not at all. An admin key creates anywhere, a person's web session inside the own root; an operator key creates none (access.verb_ceiling). When the issuance waits on a second admin person nothing is created until the confirmation, which creates the workspaces, writes the grants and names the act in one commit; a name taken by then answers 409 name.taken, applies nothing, and the act waits until it is declined or expires. A pending key whose default would be a workspace the act creates is issued with no default. A creation below a user root counts on that account's workspaces meter. At most 16 per issuance, else request.validation with details.field /create_workspaces and details.reason too_many (ADR-0097 d30). Since v0.8.6. */
+            create_workspaces?: components["schemas"]["NewWorkspaceRequest"][];
         };
         /** @description A member sent replaces the value, null clears it, and a member not sent keeps it (ADR-0079 d5). */
         KeyLimitsRequest: {
@@ -3458,8 +3855,10 @@ export interface components {
             expiry?: string | null;
             /** @description The key's own requests per UTC minute; null: none of its own. */
             requests_per_minute?: number | null;
+            /** @description The admin's reason, scanned and journalled in the change's admin.act. A raise, a cleared limit or a later expiry is widening and waits on a second admin person outside sole_admin, which requires a reason; a lower rate or an earlier expiry is narrowing and takes effect at once (ADR-0097 d15). Since v0.8.6. */
+            reason?: string;
         };
-        /** @description A key's limits as they stand (ADR-0079 d5). */
+        /** @description A key's limits as they stand (ADR-0079 d5): a raise that waits on a second admin person leaves them unchanged until it is confirmed. */
         KeyLimits: {
             key_id: string;
             name: string | null;
@@ -3468,10 +3867,19 @@ export interface components {
             /** @description Whether the expiry has come on the server's clock. */
             expired: boolean;
             requests_per_minute: number | null;
+            /** @description The change's admin act: pending_confirmation for a raise that waits on a second admin person, effective otherwise (ADR-0097 d15). Since v0.8.6. */
+            admin_act?: {
+                /** Format: uuid */
+                act_id: string;
+                /** @enum {string} */
+                state: "effective" | "pending_confirmation";
+            };
         };
         KeyLinkRequest: {
             /** @description The user the key acts for in the console, by name (ADR-0085 d16). */
             user: string;
+            /** @description Why the key is linked; required, scanned and journalled with the link's consent act (ADR-0097 d7, d26). */
+            reason: string;
         };
         /** @description An upload session to open (ADR-0004 d3, as amended 2026-11-17). */
         UploadOpenRequest: {
@@ -3629,6 +4037,8 @@ export interface components {
             /** @description The key_id this key succeeded by rotation, if any (key.rotated links the two). */
             rotated_from?: string | null;
             grants?: components["schemas"]["Grant"][];
+            /** @description The public workspaces the key reads through the flag, apart from its grants, a global deny applied; empty for a key whose role does not read (ADR-0098 d1, d9). Since v0.8.6. */
+            public_reach?: string[];
             denials?: components["schemas"]["Denial"][];
             epoch?: number;
             /**
@@ -3984,6 +4394,8 @@ export interface components {
                  * @enum {string}
                  */
                 covers: "subtree" | "node";
+                /** @description Whether the grant lets the key create child workspaces where it reaches; a client reads an answer without it, from a server before v0.8.6, as false (ADR-0097 d31). */
+                create?: boolean;
             }[];
         };
         /** @description GET /v2/review/held with ids (ADR-0055 d10; ADR-0070 d5). */
@@ -4010,6 +4422,8 @@ export interface components {
                 user_root: boolean;
                 /** @enum {string} */
                 mode: "standard" | "in_progress";
+                /** @description Whether every reading key of the tenant reads the node (ADR-0098 d9). Since v0.8.6. */
+                public?: boolean;
                 counts: {
                     /** @description Promoted tips. */
                     promoted: number;
@@ -4070,6 +4484,13 @@ export interface components {
             /** @description The secret — returned exactly once, journalled as issued-without-value. */
             value?: string;
             connect_code?: components["schemas"]["ConnectCode"];
+            /** @description An admin key's issuance is a widening admin act (ADR-0097 d5). state pending_confirmation: the value or code is shown once here, and the key authenticates nothing (auth.invalid, details.reason pending_confirmation) and holds no grant until a second admin person confirms the act with POST /v2/admin/acts/{act}/confirm; a connect code's ten minutes run from the confirmation. state effective: the tenant has never had two live admin persons, and the key took effect at once, marked sole_admin (ADR-0097 d10). Absent for a person's own issuance. Since v0.8.6. */
+            admin_act?: {
+                /** Format: uuid */
+                act_id: string;
+                /** @enum {string} */
+                state: "effective" | "pending_confirmation";
+            };
         };
         ConnectCode: {
             code_id: string;
@@ -4188,6 +4609,11 @@ export interface components {
             oauth_issuer: string | null;
             build: components["schemas"]["Build"];
             /**
+             * @description Whether this start wrote the tenants' operator tokens to operator.token_dir: written, none (no tenant yet, or a composition that writes none), or failed, which doctor names operator.token_unwritten (ADR-0097 d19). No count: the probe answers anyone. Since v0.8.6.
+             * @enum {string}
+             */
+            operator_tokens?: "written" | "none" | "failed";
+            /**
              * @description The client identity oml-web proves when it presents a capacity credential (web.client_secret), or none; with none every capacity credential is refused and doctor warns (ADR-0070 d2).
              * @enum {string}
              */
@@ -4263,6 +4689,24 @@ export interface components {
         };
         /** @description One rescan window (ADR-0065 d13). No field carries a version's text, claim key or anchor value. */
         RescanReport: {
+            /** @description The tenant's public workspaces, for doctor's workspace.public: each one's flag and served rows, the rows every default recall of the tenant also searches (ADR-0098 d9). Since v0.8.6. */
+            public_workspaces?: {
+                /** Format: uuid */
+                workspace_id: string;
+                name: string;
+                since: string | null;
+                act_id: string | null;
+                sole_admin: boolean;
+                served_rows: number;
+            }[];
+            /** @description Public workspaces that are development or inside a user root, which only a direct store edit produces: doctor's workspace.public_ineligible, critical (ADR-0098 d9). Since v0.8.6. */
+            public_ineligible?: string[];
+            /** @description Per creating key, the workspaces it created in the shared tree under a grant carrying create, which no account's workspaces meter counts: doctor's workspace.flagged_creates, info (ADR-0097 d31, the operator's decision of 2026-11-27). Since v0.8.6. */
+            flagged_creates?: {
+                /** Format: uuid */
+                key_id: string;
+                workspaces: number;
+            }[];
             scanner_version: string | null;
             /** @description Versions scanned in this window: every stored state but erased. */
             scanned: number;
@@ -4307,6 +4751,72 @@ export interface components {
             promoted_unapproved?: number;
             /** @description After this call, served instruction-class versions (promoted steering, guardrail and skill tips, retirements aside) whose approving key was not a person's reviewer key, or that carry no approval: approved before an instruction became a person's to approve. A person reviews one again by superseding it; the replaced version is then no tip and not counted. Read off the row's approver_used_by, so a person's key that had a crew is not counted. Doctor's instruction_approvals (ADR-0080 d16, #436). Since v0.8.3. */
             instructions_without_person_approval?: number;
+            /** @description After this call, withdrawn versions still in a review queue, which a withdrawal's own transaction rules out: doctor's memory.withdrawn_in_queue (ADR-0083 d13). */
+            withdrawn_in_queue?: number;
+            /** @description Held successors of a version that is no longer its claim's promoted tip, so no verdict can approve them: doctor's memory.held_successor_stranded (ADR-0089 d16). */
+            held_successors_stranded?: number;
+            /** @description Erased versions whose data key is still live, which the erase's own transaction and the lake writer's fold rule out: doctor's lake.erased_key_live (ADR-0005 d2). */
+            erased_keys_live?: number;
+            /** @description Admin investigations open for more than seven days: doctor's admin.investigation_open_long (ADR-0089 d10). */
+            investigations_open_long?: number;
+            /** @description Open admin investigations past 50 pages, a placeholder: doctor's admin.investigation_pages (ADR-0097 d16). */
+            investigations_past_pages?: number;
+            /** @description Admin fixes no person has confirmed or reverted (ADR-0089 d15). */
+            fixes_unconfirmed?: number;
+            /** @description The oldest unconfirmed fix's age in seconds, 0 with none. */
+            fix_oldest_unconfirmed_seconds?: number;
+            /** @description Unconfirmed fixes that loosen a guardrail (ADR-0089 d15). */
+            fixes_loosening_guardrail?: number;
+            /** @description Unconfirmed fixes on a workspace where no live person's reviewer key holds reviewer. */
+            fixes_without_person_reviewer?: number;
+            /** @description Unconfirmed fixes only the fixing admin's own person could settle. */
+            fixes_admin_person_only?: number;
+            /** @description Fixes a person reverted. */
+            fixes_reverted?: number;
+            /** @description Live keys whose link to a person waits on that person's acceptance (ADR-0085 d16). */
+            key_links_pending?: number;
+            /** @description Allowlist entries that wait on their person's acceptance. */
+            web_emails_pending?: number;
+            /** @description Admin acts that wait on a second admin person: doctor's admin.act_pending_confirmation (ADR-0097 d5). */
+            admin_acts_pending?: number;
+            /** @description The oldest pending admin act's age in seconds, 0 with none. */
+            admin_act_oldest_pending_seconds?: number;
+            /** @description Erases whose shred waits on a second admin person, their bytes kept: doctor's admin.erase_shred_pending (ADR-0097 d4). Not counted in admin_acts_pending, since a pending shred never expires. Since v0.8.6. */
+            admin_erase_shreds_pending?: number;
+            /** @description The oldest pending shred's age in seconds, 0 with none (ADR-0097 d4). Since v0.8.6. */
+            admin_erase_shred_oldest_seconds?: number;
+            /** @description Widening acts taken at once under sole_admin: doctor's admin.act_sole_admin (ADR-0097 d10). */
+            admin_acts_sole_admin?: number;
+            /** @description Whether the tenant has never had two live admin persons (ADR-0097 d10). */
+            sole_admin?: boolean;
+            /** @description Admin acts journalled with no reason: doctor's admin.act_without_reason (ADR-0097 d26). */
+            admin_acts_without_reason?: number;
+            /** @description Pending admin acts that expired as declined in the last seven days: doctor's admin.act_expired (ADR-0097 d23). */
+            admin_acts_expired?: number;
+            /** @description Offensive narrowing in the last 24 hours: doctor's admin.offensive_narrowing (ADR-0097 d24). */
+            admin_acts_offensive?: number;
+            /** @description Time boxes no second admin person has settled, open or ended: doctor's admin.timebox_open (ADR-0097 d13). */
+            admin_timeboxes_unsettled?: number;
+            /** @description The most narrowing acts one admin person took in the last 24 hours: doctor's admin.narrowing_burst (ADR-0097 d24). */
+            admin_narrowing_burst?: number;
+            /** @description Admin keys suspended while an act against their person is open: doctor's admin.key_suspended (ADR-0097 d8, d21). Since v0.8.6. */
+            admin_keys_suspended?: number;
+            /** @description Admin keys suspended as unlinked at the upgrade, which reach only /v2/whoami and POST /v2/keys/self/link: doctor's admin.key_unlinked_suspended (ADR-0097 d21). Since v0.8.6. */
+            admin_keys_unlinked_suspended?: number;
+            /** @description The fewest days an unlinked admin key has left before it is revoked, 0 with none. Since v0.8.6. */
+            admin_unlinked_days_left?: number;
+            /** @description Open acts against an admin below three admin persons, a freeze the operator settles: doctor's admin.dispute_open, critical (ADR-0097 d8). Since v0.8.6. */
+            admin_disputes_open?: number;
+            /** @description Freezes open at least 24 hours, a placeholder, which the operator may settle from the host with oml operator settle: doctor's operator.settlement_due (ADR-0097 d19). Since v0.8.6. */
+            operator_settlements_due?: number;
+            /** @description Keys the tenant's server issuer issued that are not one of the four session-key shapes (<user>-web, <user>-review, <user>-curate, <user>-admin): doctor's key.issuer_unexpected_shape, critical (ADR-0097 d18). Since v0.8.6. */
+            key_issuer_unexpected_shape?: number;
+            /** @description 1 when no mail relay is configured (mail.host and mail.from unset), so recovery and settlement notices are journalled and shown in-product only: doctor's notice.mail_unconfigured (ADR-0097 d20). Since v0.8.6. */
+            mail_unconfigured?: number;
+            /** @description Notice emails the relay refused or did not take since the lead started; the acts they told about stand: doctor's notice.mail_delivery_failed (ADR-0097 d20). Since v0.8.6. */
+            mail_delivery_failures?: number;
+            /** @description The last failed delivery's reason, naming the SMTP stage and code and never an address. Since v0.8.6. */
+            mail_last_failure?: string | null;
         };
         /** @description The build that answered (http-api.md "Health"). Times are UTC, YYYY-MM-DDTHH:MM:SSZ; a field nothing could supply is the string unknown. */
         Build: {
@@ -5620,6 +6130,8 @@ export interface operations {
                  */
                 "application/json": {
                     accept_federated: boolean;
+                    /** @description An admin act's reason, scanned as a verdict's (ADR-0097 d26): an admin key's true is widening, and waits on a second admin person, which requires a reason, unless the tenant has only ever had one admin person. Since v0.8.6. */
+                    reason?: string;
                 };
             };
         };
@@ -5634,6 +6146,93 @@ export interface operations {
                 content: {
                     "application/json": {
                         accept_federated: boolean;
+                    };
+                };
+            };
+            /** @description An admin key's acceptance in a tenant that has had two admin persons: it takes effect only once a second admin person confirms the act with POST /v2/admin/acts/{act}/confirm (ADR-0097 d5). Since v0.8.6. */
+            202: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminAct"];
+                };
+            };
+            415: components["responses"]["UnsupportedMedia"];
+            default: components["responses"]["Error"];
+        };
+    };
+    setWorkspacePublic: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Claims an idempotency record (key_id, workspace, idem_key) before side effects. On the provider ring the workspace component is the RESOLVED target — the body's workspace, else the key's default_workspace (ADR-0039 d7); for supersede the workspace component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                workspace: components["parameters"]["WorkspaceId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "public": true,
+                 *       "reason": "every agent of the tenant reads the shared glossary"
+                 *     }
+                 */
+                "application/json": {
+                    /** @description true sets the flag, false clears it. */
+                    public: boolean;
+                    /** @description Why; required for a set outside sole_admin, scanned as a verdict's reason is and journalled with the admin act (ADR-0097 d26). */
+                    reason?: string | null;
+                };
+            };
+        };
+        responses: {
+            /** @description The act took effect, a clear or a set under sole_admin. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        workspace: string;
+                        public: boolean;
+                        /** Format: uuid */
+                        act_id: string;
+                        /** @enum {string} */
+                        state: "effective";
+                    };
+                };
+            };
+            /** @description The set waits on a second admin person, and has no effect until one confirms it. */
+            202: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        workspace: string;
+                        /** Format: uuid */
+                        act_id: string;
+                        /** @enum {string} */
+                        state: "pending_confirmation";
                     };
                 };
             };
@@ -6457,6 +7056,7 @@ export interface operations {
                      * @example {
                      *       "review": 3,
                      *       "briefs": 1,
+                     *       "notices": 0,
                      *       "truncated": false
                      *     }
                      */
@@ -6465,6 +7065,8 @@ export interface operations {
                         review: number;
                         /** @description The Brief proposals group's length: the pending brief edges GET /v2/review/briefs would list the person's reviewer key, at workspace and below or everywhere, never one it or its principal proposed; counted up to 1,000 and sharing truncated (ADR-0096 d7). Since v0.8.5. */
                         briefs: number;
+                        /** @description The Notices group's length: the person's notices not dismissed, as GET /v2/web/notices lists them, whatever the workspace (ADR-0097 d20). Since v0.8.6. */
+                        notices: number;
                         /** @description Whether a count passed 1,000 and answers 1,000, or stopped after reading 2,000 held rows and answers what it counted. */
                         truncated: boolean;
                     };
@@ -6501,12 +7103,15 @@ export interface operations {
                     /**
                      * @example {
                      *       "alerts": 0,
+                     *       "acts_to_confirm": 0,
                      *       "truncated": false
                      *     }
                      */
                     "application/json": {
                         /** @description The guardrail-loosening alerts: unconfirmed fixes that loosen a guardrail (ADR-0096 d7). Since v0.8.5. */
                         alerts: number;
+                        /** @description Admin acts to confirm (ADR-0097 d2, d10, d11): the tenant's widening acts the calling admin person may settle, never their own: pending acts unexpired, taken at least seven days after the person's admin flag was accepted, and acts taken at once under sole_admin once that flag is seven days old. Since v0.8.6. */
+                        acts_to_confirm: number;
                         truncated: boolean;
                     };
                 };
@@ -7105,6 +7710,167 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    revokeKey: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path: {
+                key: components["parameters"]["KeyId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                /**
+                 * @example {
+                 *       "reason": "agent decommissioned"
+                 *     }
+                 */
+                "application/json": {
+                    reason?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The key is revoked. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "key_id": "d405428e-4c99-426d-8826-76d28436e423",
+                     *       "name": "alice-laptop",
+                     *       "revoked_at": "2026-11-26T10:00:00.000000Z",
+                     *       "act_id": "0192f0a0-0000-7000-8000-000000000001",
+                     *       "journal_seq": 412
+                     *     }
+                     */
+                    "application/json": {
+                        key_id: string;
+                        name: string | null;
+                        /** Format: date-time */
+                        revoked_at: string;
+                        /** @description The admin act the revocation rode; null for a person's own. */
+                        act_id: string | null;
+                        journal_seq: number;
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    convertSelf: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "to": "maintenance"
+                 *     }
+                 */
+                "application/json": {
+                    /** @enum {string} */
+                    to: "maintenance";
+                };
+            };
+        };
+        responses: {
+            /** @description The converted key. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        key_id: string;
+                        name: string | null;
+                        /** @constant */
+                        role: "maintenance";
+                        requests_per_minute: number | null;
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    linkSelf: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "user": "alice",
+                 *       "reason": "the deployer's key, held by alice"
+                 *     }
+                 */
+                "application/json": {
+                    user: string;
+                    reason: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The link, pending. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        key_id: string;
+                        name: string | null;
+                        user: string;
+                        /** @constant */
+                        accepted: false;
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
     linkKey: {
         parameters: {
             query?: never;
@@ -7127,7 +7893,8 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "user": "alice"
+                 *       "user": "alice",
+                 *       "reason": "alice reviews with this key"
                  *     }
                  */
                 "application/json": components["schemas"]["KeyLinkRequest"];
@@ -7270,6 +8037,8 @@ export interface operations {
                 "application/json": {
                     /** @description How long the code lives, 1 second to 30 days; omitted, the ten-minute default. A lifetime past ten minutes is minted only for a connector key whose grants all sit on one workspace other than the universe and that names no user root; otherwise 422 oauth.connect_refused with details.reason not_confined. Outside 1 to 2592000 is request.validation naming /ttl_seconds (ADR-0067 d3). */
                     ttl_seconds?: number;
+                    /** @description The admin's reason, scanned and journalled in the mint's admin.act. An admin's mint is widening (ADR-0097 d5, d6): outside sole_admin it waits on a second admin person and requires a reason; the code is shown once here, voids no earlier code and redeems nothing until confirmed, and its life runs from the confirmation. A connector key that itself waits on its issuance's confirmation takes no code: request.validation with details.field key and details.reason key_pending. Since v0.8.6. */
+                    reason?: string;
                 };
             };
         };
@@ -7997,6 +8766,8 @@ export interface operations {
                     /** @description A name under the creation grammar, at most 56 characters. */
                     user: string;
                     admin: boolean;
+                    /** @description Scanned and journalled on the admin act. Required for a new admin person outside sole_admin and for an act against another admin person: an un-flag or a change of their entry (ADR-0097 d8, d26). Since v0.8.6. */
+                    reason?: string;
                     /** @description Read and ignored since v0.8.5, when the guard holds whatever is sent (ADR-0097 d25, d27): un-flagging the tenant's last admin entry is refused, request.validation with details.field admin, and nothing changes; the store reads the admin entries under lock in the commit's own transaction (ADR-0045 d10; ADR-0070 d5). Since v0.6.4. */
                     keep_an_admin?: boolean;
                 };
@@ -8045,6 +8816,8 @@ export interface operations {
                  */
                 "application/json": {
                     email: string;
+                    /** @description Scanned and journalled on the admin act. Required to remove another admin person's entry, an act against an admin (ADR-0097 d8, d26). Since v0.8.6. */
+                    reason?: string;
                     /** @description Read and ignored since v0.8.5, when the guard holds whatever is sent (ADR-0097 d25, d27): removing the tenant's last admin entry is refused, request.validation with details.field admin, and nothing changes; the store reads the admin entries under lock in the commit's own transaction (ADR-0045 d10; ADR-0070 d5). Since v0.6.4. */
                     keep_an_admin?: boolean;
                 };
@@ -8240,6 +9013,8 @@ export interface operations {
                     capacity: "review" | "curate" | "read";
                     /** @description Each by id or name. */
                     workspaces: string[];
+                    /** @description Why the capacity is given; scanned and journalled in each grant's admin.act. Required when the grant waits on a second admin person, outside sole_admin (ADR-0097 d5, d26). Since v0.8.6. */
+                    reason?: string;
                 };
             };
         };
@@ -8445,6 +9220,114 @@ export interface operations {
                 content?: never;
             };
             403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    listNotices: {
+        parameters: {
+            query?: {
+                dismissed?: boolean;
+            };
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The notices. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Notice"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    dismissNotice: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path: {
+                notice: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The notice, dismissed. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Notice"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    ownAdminReads: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The person and the months with any admin read, oldest first. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        person: string;
+                        months: {
+                            month: string;
+                            reads: number;
+                        }[];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
             default: components["responses"]["Error"];
         };
     };
@@ -8682,6 +9565,8 @@ export interface operations {
                     /** @enum {string} */
                     default_sources?: "scope" | "wide";
                     max_sources?: number;
+                    /** @description The admin act's reason, scanned as a verdict's; a widening that waits requires one (ADR-0097 d26). Since v0.8.6. */
+                    reason?: string;
                 };
             };
         };
@@ -8695,6 +9580,17 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FederationSettings"];
+                };
+            };
+            /** @description A widening in a tenant that has had two admin persons: it takes effect only once a second admin person confirms the act (ADR-0097 d5). Since v0.8.6. */
+            202: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminAct"];
                 };
             };
             403: components["responses"]["Forbidden"];
@@ -9106,6 +10002,44 @@ export interface operations {
             };
         };
     };
+    webContest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The contested page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description request.validation, the cookie missing, sealed by no one or older than ten minutes, on a page. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description A cross-origin request, on a page. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+        };
+    };
     adminSearchMemories: {
         parameters: {
             query?: never;
@@ -9418,6 +10352,355 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Fix"];
+                };
+            };
+            /** @description An erase of a version that is not approved, outside sole_admin: no fix, only the admin act whose shred waits on a second admin person (ADR-0097 d4, the operator's decision of 2026-11-27). Since v0.8.6. */
+            202: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminAct"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            default: components["responses"]["Error"];
+        };
+    };
+    listAdminActs: {
+        parameters: {
+            query?: {
+                state?: "all" | "effective" | "pending_confirmation" | "confirmed" | "declined" | "expired" | "contested" | "settled";
+            };
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The acts. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["AdminAct"][];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    confirmAdminAct: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path: {
+                act: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "reason": "checked with the person who asked"
+                 *     }
+                 */
+                "application/json": {
+                    reason: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The confirmed act. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminAct"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            default: components["responses"]["Error"];
+        };
+    };
+    contestAdminAct: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path: {
+                act: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The act in its new state. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminAct"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            default: components["responses"]["Error"];
+        };
+    };
+    settleAdminAct: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path: {
+                act: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "outcome": "confirm"
+                 *     }
+                 */
+                "application/json": {
+                    /** @enum {string} */
+                    outcome: "confirm" | "reverse";
+                };
+            };
+        };
+        responses: {
+            /** @description The act in its new state. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminAct"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            default: components["responses"]["Error"];
+        };
+    };
+    operatorSettle: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description The tenant's operator token of this start; never logged. */
+                "OML-Operator-Token": string;
+            };
+            path: {
+                tenant: string;
+                act: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "outcome": "confirm"
+                 *     }
+                 */
+                "application/json": {
+                    /** @enum {string} */
+                    outcome: "confirm" | "reverse";
+                };
+            };
+        };
+        responses: {
+            /** @description The settled act, the persons notified, and what the relay did with the email. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        act: components["schemas"]["AdminAct"];
+                        notified: string[];
+                        /** @enum {string} */
+                        mail: "sent" | "unconfigured" | "failed";
+                        mail_failure: string | null;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            default: components["responses"]["Error"];
+        };
+    };
+    operatorRecover: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description The tenant's operator token of this start; never logged. */
+                "OML-Operator-Token": string;
+            };
+            path: {
+                tenant: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "person": "carol",
+                 *       "email": "carol@example.com"
+                 *     }
+                 */
+                "application/json": {
+                    /** @description The admin person the recovery adds: a name the tenant holds as no workspace, key or entry. */
+                    person: string;
+                    /**
+                     * Format: email
+                     * @description The address the new admin person signs in with; no entry may hold it.
+                     */
+                    email: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The recovery, requested; the persons notified, and what the relay did with the email. */
+            202: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        recovery: {
+                            /** Format: uuid */
+                            recovery_id: string;
+                            person: string;
+                            /** @enum {string} */
+                            state: "requested" | "completed" | "cancelled";
+                            /** Format: date-time */
+                            requested_at: string;
+                            /** Format: date-time */
+                            completes_after: string | null;
+                            /** Format: date-time */
+                            settled_at: string | null;
+                        };
+                        notified: string[];
+                        /** @enum {string} */
+                        mail: "sent" | "unconfigured" | "failed";
+                        mail_failure: string | null;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            default: components["responses"]["Error"];
+        };
+    };
+    declineAdminAct: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path: {
+                act: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                /**
+                 * @example {
+                 *       "reason": "not this agent"
+                 *     }
+                 */
+                "application/json": {
+                    reason?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The declined act. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminAct"];
                 };
             };
             403: components["responses"]["Forbidden"];

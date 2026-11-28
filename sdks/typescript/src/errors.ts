@@ -145,6 +145,10 @@ export class WorkspaceImportError extends ApiError {
 export class ExportError extends ApiError {
   override name = "ExportError";
 }
+/** `operator`: a host verb the server refuses (ADR-0097 d19). */
+export class OperatorError extends ApiError {
+  override name = "OperatorError";
+}
 /** `settings`: the settings document. */
 export class SettingsError extends ApiError {
   override name = "SettingsError";
@@ -171,6 +175,7 @@ export const FAMILIES: Readonly<Record<string, typeof ApiError>> = Object.freeze
   memory: MemoryStateError,
   lifecycle: LifecycleError,
   admin: AdminError,
+  operator: OperatorError,
   limit: LimitError,
   bundle: BundleError,
   import: WorkspaceImportError,

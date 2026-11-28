@@ -40,10 +40,14 @@ pub fn with_reader_beside_submitters(
     for (node, role) in grants {
         sent.push((node.clone(), role.clone()));
         // A submitter grant on the node alone brings a reader grant on the
-        // node alone (ADR-0044 d4).
-        let (base, reader) = match role.split_once(':') {
-            Some((base, covers)) => (base, format!("reader:{covers}")),
-            None => (role.as_str(), "reader".to_owned()),
+        // node alone (ADR-0044 d4); its `create` flag stays on the
+        // submitter grant (ADR-0097 d31).
+        let mut parts = role.split(':');
+        let base = parts.next().unwrap_or_default();
+        let reader = if parts.any(|flag| flag == "node") {
+            "reader:node".to_owned()
+        } else {
+            "reader".to_owned()
         };
         let reads = |(n, r): &(String, String)| n == node && *r == reader;
         if base == "submitter"
@@ -451,6 +455,21 @@ mod tests {
 
     /// A submitter key writes without recall: its grants go as given, and no
     /// reader grant is added beside them (ADR-0093 d2, d6).
+    #[test]
+    fn a_create_flag_stays_on_the_submitter_grant_and_the_reader_beside_it_takes_none() {
+        let sent = with_reader_beside_submitters(
+            &[("crew".to_owned(), "submitter:node:create".to_owned())],
+            "contributor",
+        );
+        assert_eq!(
+            sent,
+            [
+                ("crew".to_owned(), "submitter:node:create".to_owned()),
+                ("crew".to_owned(), "reader:node".to_owned()),
+            ]
+        );
+    }
+
     #[test]
     fn a_submitter_keys_grants_go_as_given() {
         let grants = [("alice".to_owned(), "submitter".to_owned())];

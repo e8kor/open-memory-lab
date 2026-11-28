@@ -29,6 +29,8 @@ struct PolicyBody {
     enabled: Option<bool>,
     default_sources: Option<String>,
     max_sources: Option<u32>,
+    /// The admin act's reason (ADR-0097 d26).
+    reason: Option<String>,
 }
 
 /// openapi.yaml `WorkspaceFederationRequest`, closed.
@@ -36,6 +38,8 @@ struct PolicyBody {
 #[serde(deny_unknown_fields)]
 struct WorkspaceBody {
     accept_federated: bool,
+    /// An admin act's reason (ADR-0097 d26).
+    reason: Option<String>,
 }
 
 /// openapi.yaml `FederationSettings`: the policy, the keys that met more
@@ -50,6 +54,10 @@ fn settings_json(settings: &FederationSettings, wide_keys: &[WideKey]) -> Value 
             "key_id": k.key_id,
             "candidates": k.candidates,
         })).collect::<Vec<_>>(),
+        // The counts, which a maintenance key reads in place of the list
+        // (ADR-0097 d18).
+        "wide_key_count": settings.wide_counts.keys,
+        "wide_key_most_candidates": settings.wide_counts.most_candidates,
         "widen_signal": {
             "built": settings.widen_signal.built,
             "unserved": settings.widen_signal.unserved,
@@ -120,10 +128,22 @@ where
                 default_sources,
                 max_sources: req.max_sources,
             };
-            let (settings, wide) = retry_chain(|| st.app.set_federation_policy(&token, change))
-                .await
-                .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-            Ok(json_response(StatusCode::OK, &settings_json(&settings, &wide)))
+            let taken = retry_chain(|| {
+                st.app
+                    .set_federation_policy_with_reason(&token, change, req.reason.as_deref())
+            })
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+            // A widening that waits on a second admin person answers its
+            // act (ADR-0097 d5).
+            if let Some(act) = &taken.pending {
+                return Ok(json_response(
+                    StatusCode::ACCEPTED,
+                    &crate::admin_acts::admin_act_json(act),
+                ));
+            }
+            let (settings, wide) = &taken.now;
+            Ok(json_response(StatusCode::OK, &settings_json(settings, wide)))
         }
         .await;
         finish(&rid, result)
@@ -145,18 +165,27 @@ where
             let _idem = idempotency_key(&headers)?;
             let workspace = reference("workspace", &workspace_id)?;
             let req: WorkspaceBody = parse_json(&headers, &body)?;
-            let federation = retry_chain(|| {
-                st.app.set_workspace_federation(
+            let taken = retry_chain(|| {
+                st.app.set_workspace_federation_with_reason(
                     acting.bearer(),
                     workspace.clone(),
                     req.accept_federated,
+                    req.reason.as_deref(),
                 )
             })
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+            // An admin's acceptance that waits on a second admin person
+            // answers its act (ADR-0097 d5).
+            if let Some(act) = &taken.pending {
+                return Ok(json_response(
+                    StatusCode::ACCEPTED,
+                    &crate::admin_acts::admin_act_json(act),
+                ));
+            }
             Ok(json_response(
                 StatusCode::OK,
-                &json!({ "accept_federated": federation.accept_federated }),
+                &json!({ "accept_federated": taken.now.accept_federated }),
             ))
         }
         .await;

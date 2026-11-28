@@ -7,7 +7,7 @@ answers: what the lead logs for each HTTP request and each MCP call, in which fo
 
 # ADR-0042 — Every request logs one line under an id the caller may name, metrics stay off the public port, and trace export is opt-in
 
-**Status:** accepted design · 2026-11-04 · amended by [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)
+**Status:** accepted design · 2026-11-04 · amended by [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) · d8 amended by [ADR-0097](ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) (answer 24, decided by the operator, 2026-11-28)
 
 **Release:** introduced in v0.4.1 ([releases](../changelog.md))
 
@@ -318,6 +318,23 @@ Decided, not built.
   histogram) and #109 (what the request log, the metrics and trace
   export cost per request, and how many bytes the log writes per request, which is what 30 days
   of it occupies).
+
+## Amendment of 2026-11-28: the server keeps authentication counts (ADR-0097, answer 24)
+
+Decided by the operator on 2026-11-28 and recorded in [ADR-0097](ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) as answer 24. It
+amends d8 for authentication counts only.
+
+- **What changes.** d8's "the lead holds no log file and deletes nothing" no longer holds for one
+  table: the server keeps one row per tenant, key and UTC day with a count of that day's
+  authentications, written at most once per key per day and coalesced in memory, and a sweep
+  deletes rows older than 30 days. The 30 days are enforced by the server for this table, not by
+  the host's log machinery. ADR-0097 d19's recovery reads it to tell that no admin key of a
+  tenant authenticated in the last 30 days.
+- **What does not change.** The request log stays stderr JSON lines, kept where they land under
+  d8's 30 days, and the server stores none of them. The table carries ids and a count, and no
+  `client_ip`, `principal`, `key_name`, `user_agent` or request id.
+- **The cost:** one upsert per key per day ([limits](../reference/limits.md)), and a tenant's key ids
+  by day for 30 days in the database.
 
 ## Rejected alternatives
 

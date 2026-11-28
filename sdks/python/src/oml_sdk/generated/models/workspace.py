@@ -13,6 +13,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.crew import Crew
+    from ..models.public_flag import PublicFlag
 
 
 T = TypeVar("T", bound="Workspace")
@@ -34,6 +35,9 @@ class Workspace:
         mode (WorkspaceMode | Unset): in_progress when a person's key put the node in progress: readers inside recall
             unreviewed memories, labelled, and nothing inside reaches a read from outside until the commit (ADR-0030 d1,
             d2).
+        public (PublicFlag | Unset): Whether every reader, contributor and reviewer key of the tenant reads the node's
+            approved items without a grant, and every default recall searches it (ADR-0098 d1, d3, d9). It covers the node
+            alone. Since v0.8.6.
         created_at (datetime.datetime | Unset):
     """
 
@@ -45,6 +49,7 @@ class Workspace:
     crew: Crew | None | Unset = UNSET
     user_root: bool | Unset = UNSET
     mode: WorkspaceMode | Unset = UNSET
+    public: PublicFlag | Unset = UNSET
     created_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -76,6 +81,10 @@ class Workspace:
         if not isinstance(self.mode, Unset):
             mode = self.mode.value
 
+        public: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.public, Unset):
+            public = self.public.to_dict()
+
         created_at: str | Unset = UNSET
         if not isinstance(self.created_at, Unset):
             created_at = self.created_at.isoformat()
@@ -97,6 +106,8 @@ class Workspace:
             field_dict["user_root"] = user_root
         if mode is not UNSET:
             field_dict["mode"] = mode
+        if public is not UNSET:
+            field_dict["public"] = public
         if created_at is not UNSET:
             field_dict["created_at"] = created_at
 
@@ -105,6 +116,7 @@ class Workspace:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.crew import Crew
+        from ..models.public_flag import PublicFlag
 
         d = dict(src_dict)
         id = d.pop("id")
@@ -148,6 +160,13 @@ class Workspace:
         else:
             mode = WorkspaceMode(_mode)
 
+        _public = d.pop("public", UNSET)
+        public: PublicFlag | Unset
+        if isinstance(_public, Unset):
+            public = UNSET
+        else:
+            public = PublicFlag.from_dict(_public)
+
         _created_at = d.pop("created_at", UNSET)
         created_at: datetime.datetime | Unset
         if isinstance(_created_at, Unset):
@@ -164,6 +183,7 @@ class Workspace:
             crew=crew,
             user_root=user_root,
             mode=mode,
+            public=public,
             created_at=created_at,
         )
 

@@ -264,6 +264,9 @@ pub enum ConnectRefused {
     /// reach more than one workspace, the universe, or a user root
     /// (ADR-0067 d3).
     NotConfined,
+    /// A key cut off by a denial on `universe` (#353): the connection it
+    /// would open reads and writes nothing, as an expired key's would.
+    CutOff,
 }
 
 impl ConnectRefused {
@@ -280,6 +283,7 @@ impl ConnectRefused {
             ConnectRefused::ConnectorKey => "connector_key",
             ConnectRefused::SessionKey => "session_key",
             ConnectRefused::NotConfined => "not_confined",
+            ConnectRefused::CutOff => "cut_off",
         }
     }
 }

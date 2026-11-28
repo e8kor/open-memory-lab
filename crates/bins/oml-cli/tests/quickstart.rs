@@ -58,6 +58,7 @@ fn quickstart(home: &Path, path: &str, stack: &Path, port: u16) -> Output {
         .args(["quickstart", "--dir"])
         .arg(stack)
         .args(["--port", &port.to_string()])
+        .args(["--person", "founder", "--email", "founder@example.com"])
         .output()
         .expect("the oml binary runs")
 }

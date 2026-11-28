@@ -764,6 +764,8 @@ pub fn workspace_record(
 ) -> WorkspaceRecord {
     WorkspaceRecord {
         in_progress: false,
+        public: false,
+        public_act_id: None,
         workspace_id,
         tenant_id,
         parent_id,
@@ -817,6 +819,9 @@ pub fn key_record(tenant_id: Uuid, key_id: Uuid, role: Role, issued_by: Option<U
         requests_per_minute: None,
         linked_user: None,
         link_pending: None,
+        pending_act: None,
+        suspended: None,
+        issuer_person: None,
     }
 }
 
@@ -3121,6 +3126,9 @@ pub async fn journal_key_lookup_by_hash<S: JournalStore>(store: &S) {
         requests_per_minute: None,
         linked_user: None,
         link_pending: None,
+        pending_act: None,
+        suspended: None,
+        issuer_person: None,
     };
     rig.commit(
         store,
@@ -3203,6 +3211,115 @@ pub async fn a_revoked_key_no_longer_resolves_by_its_hash<S: JournalStore>(store
     );
 }
 
+/// `key.default_set` sets a live key's default to a node of its tenant,
+/// and reads back; a revoked key, or a node the tenant does not hold, is
+/// refused and commits nothing (event-catalog.md `key.default_set`;
+/// ADR-0097 d30, the operator's decision of 2026-11-27).
+pub async fn key_default_set_sets_a_live_keys_default_and_refuses_anything_else<S: JournalStore>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(5100);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let root = Uuid::from_u128(0xD5_0001);
+    rig.commit(
+        store,
+        event_types::WORKSPACE_CREATE,
+        json!({ "workspace_id": root.to_string() }),
+        MetadataFold::WorkspaceCreated(workspace_record(t, root, None, "universe")),
+        None,
+    )
+    .await
+    .expect("a node");
+    let key = key_record(t, Uuid::from_u128(0xD5_0002), Role::Reader, None);
+    rig.issue_key(store, key.clone()).await;
+    let set = |key_id, default_workspace| {
+        (
+            event_types::KEY_DEFAULT_SET,
+            json!({ "key_id": key_id }),
+            MetadataFold::KeyDefaultSet {
+                key_id,
+                default_workspace,
+            },
+        )
+    };
+    let (event_type, payload, fold) = set(key.key_id, root);
+    rig.commit(store, event_type, payload, fold, None)
+        .await
+        .expect("the default is set");
+    let stored = store.key(t, key.key_id).await.expect("read").expect("held");
+    assert_eq!(stored.default_workspace, Some(root));
+    let head = store.chain_head(t).await.expect("head");
+    let (event_type, payload, fold) = set(key.key_id, Uuid::from_u128(0xD5_0003));
+    let refused = rig.commit(store, event_type, payload, fold, None).await;
+    assert!(
+        matches!(refused, Err(StoreError::Backend(_))),
+        "{refused:?}"
+    );
+    let (event_type, payload, fold) = set(Uuid::from_u128(0xD5_0004), root);
+    let refused = rig.commit(store, event_type, payload, fold, None).await;
+    assert!(
+        matches!(refused, Err(StoreError::Backend(_))),
+        "{refused:?}"
+    );
+    assert_eq!(
+        store.chain_head(t).await.expect("head"),
+        head,
+        "a refused default commits nothing"
+    );
+}
+
+/// `key.converted` turns a live admin bearer key into a `maintenance` key
+/// in place: the same id and hash, the role's request rate. Any other key,
+/// a reader or a key already converted, is refused and commits nothing
+/// (event-catalog.md `key.converted`; ADR-0097 d18).
+pub async fn key_converted_makes_a_live_admin_key_a_maintenance_key_and_refuses_any_other<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(29);
+    rig.seed_chain(store, 0).await;
+    let admin = key_record(rig.tenant_id, Uuid::from_u128(0xC0), Role::Admin, None);
+    let reader = key_record(rig.tenant_id, Uuid::from_u128(0xC1), Role::Reader, None);
+    rig.issue_key(store, admin.clone()).await;
+    rig.issue_key(store, reader.clone()).await;
+    let convert = |key_id: Uuid| {
+        (
+            event_types::KEY_CONVERTED,
+            json!({ "key_id": key_id, "from": "admin", "to": "maintenance" }),
+            MetadataFold::KeyConverted { key_id },
+        )
+    };
+    let (event_type, payload, fold) = convert(admin.key_id);
+    rig.commit(store, event_type, payload, fold, None)
+        .await
+        .expect("the admin key converts");
+    let stored = store
+        .key(rig.tenant_id, admin.key_id)
+        .await
+        .expect("read")
+        .expect("the key");
+    assert_eq!(stored.role, Role::Maintenance);
+    assert_eq!(stored.key_hash, admin.key_hash, "the hash is kept");
+    assert_eq!(stored.requests_per_minute, Some(60));
+    for key_id in [reader.key_id, admin.key_id] {
+        let head = store.chain_head(rig.tenant_id).await.expect("head");
+        let (event_type, payload, fold) = convert(key_id);
+        assert!(
+            rig.commit(store, event_type, payload, fold, None)
+                .await
+                .is_err(),
+            "only a live admin key converts"
+        );
+        assert_eq!(
+            store.chain_head(rig.tenant_id).await.expect("head"),
+            head,
+            "nothing is committed"
+        );
+    }
+}
+
 /// A key's expiry and its requests per minute fold in with `key.issued`
 /// and read back exactly; `key.limits_set` replaces both, `None` clearing
 /// one. A key past its expiry still resolves by its hash, since the use
@@ -3225,6 +3342,7 @@ pub async fn a_keys_limits_fold_with_its_issuance_and_are_replaced_by_key_limits
         requests_per_minute: Some(30),
         linked_user: None,
         link_pending: None,
+        pending_act: None,
         ..key_record(rig.tenant_id, Uuid::from_u128(0xE0), Role::Reader, None)
     };
     rig.issue_key(store, key.clone()).await;
@@ -3785,6 +3903,7 @@ pub async fn grants_and_denials_round_trip_through_their_folds_and_key_access<S:
         role: Role::Submitter,
         deny: vec![masked, masked_too],
         covers: Covers::Subtree,
+        create: false,
     };
     let reader_grant = Grant {
         grant_id: Uuid::from_u128(0xF10),
@@ -3792,6 +3911,7 @@ pub async fn grants_and_denials_round_trip_through_their_folds_and_key_access<S:
         role: Role::Reader,
         deny: Vec::new(),
         covers: Covers::Subtree,
+        create: false,
     };
     let first = rig
         .issue_grant(store, agent.key_id, writer_grant.clone())
@@ -3830,6 +3950,7 @@ pub async fn grants_and_denials_round_trip_through_their_folds_and_key_access<S:
                 epoch: denied.seq,
             }],
             lift_epochs: Vec::new(),
+            public_nodes: Vec::new(),
         }),
     );
     assert_eq!(
@@ -3839,6 +3960,7 @@ pub async fn grants_and_denials_round_trip_through_their_folds_and_key_access<S:
             grants: Vec::new(),
             denials: Vec::new(),
             lift_epochs: Vec::new(),
+            public_nodes: Vec::new(),
         }),
         "a key with no grant reads back empty lists, never nothing"
     );
@@ -3894,6 +4016,7 @@ pub async fn a_grant_epoch_is_its_event_seq<S: JournalStore>(store: &S) {
                 role: Role::Reader,
                 deny: Vec::new(),
                 covers: Covers::Subtree,
+                create: false,
             },
         )
         .await
@@ -3972,6 +4095,7 @@ pub async fn a_grant_or_denial_the_schema_refuses_commits_nothing<S: JournalStor
         role,
         deny: Vec::new(),
         covers: Covers::Subtree,
+        create: false,
     };
     let denial = |id, node| KeyDenial {
         denial_id: Uuid::from_u128(id),
@@ -4046,6 +4170,7 @@ pub async fn a_grant_or_denial_the_schema_refuses_commits_nothing<S: JournalStor
         grants: Vec::new(),
         denials: Vec::new(),
         lift_epochs: Vec::new(),
+        public_nodes: Vec::new(),
     });
     assert_eq!(
         store.key_access(t, key.key_id).await.expect("read"),
@@ -4120,6 +4245,7 @@ pub async fn a_lifted_denial_masks_nothing_and_its_lift_moves_the_permission_epo
                 epoch: kept_at.seq,
             }],
             lift_epochs: vec![lift.seq],
+            public_nodes: Vec::new(),
         },
         "the lifted denial masks nothing; the other stays in force"
     );
@@ -5775,9 +5901,11 @@ pub async fn an_investigation_counts_its_reads_and_closes_once<S: JournalStore>(
     )
     .await
     .expect("open");
+    let alice = Name::parse("alice").expect("a name");
     let read = |investigation_id, key_id| MetadataFold::AdminMemoryRead {
         investigation_id,
         key_id,
+        persons: vec![alice.clone()],
     };
     for _ in 0..2 {
         rig.commit(
@@ -5816,6 +5944,22 @@ pub async fn an_investigation_counts_its_reads_and_closes_once<S: JournalStore>(
         .expect("read")
         .expect("held");
     assert_eq!((found.key_id, found.reads), (key, 2));
+    // Each read counted once against the person whose root it read, by
+    // month; a refused read counted nothing (ADR-0097 d16).
+    let counts = store
+        .admin_read_counts(tenant, &alice)
+        .await
+        .expect("counts");
+    assert_eq!(counts.len(), 1);
+    assert_eq!(counts[0].reads, 2);
+    assert_eq!(counts[0].month.len(), 7);
+    assert!(
+        store
+            .admin_read_counts(tenant, &Name::parse("bob").expect("a name"))
+            .await
+            .expect("counts")
+            .is_empty()
+    );
     assert_eq!(found.reason, "ticket 9");
     assert!(found.closed_at.is_none());
     let close = |key_id| MetadataFold::InvestigationClosed {
@@ -7381,6 +7525,7 @@ pub async fn workspace_names_are_unique_per_namespace_and_resolve_in_their_own<S
         role: Role::Reader,
         deny: Vec::new(),
         covers: Covers::Node,
+        create: false,
     };
     rig.issue_grant(store, key.key_id, node.clone())
         .await
@@ -7394,6 +7539,46 @@ pub async fn workspace_names_are_unique_per_namespace_and_resolve_in_their_own<S
         access.grants.iter().map(|g| &g.grant).collect::<Vec<_>>(),
         vec![&node]
     );
+}
+
+/// A grant's `create` flag is stored with it and read back on the key's
+/// access, and an unflagged grant reads `false` (ADR-0097 d31; migration
+/// 0071).
+pub async fn a_grants_create_flag_is_stored_and_read_back<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(31);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let universe = workspace_record(t, Uuid::from_u128(0xB3A0), None, "universe");
+    rig.create_workspace(store, universe.clone()).await;
+    let key = key_record(t, Uuid::from_u128(0xD3A0), Role::Contributor, None);
+    rig.issue_key(store, key.clone()).await;
+    let flagged = Grant {
+        grant_id: Uuid::from_u128(0xF3A0),
+        node: universe.workspace_id,
+        role: Role::Submitter,
+        deny: Vec::new(),
+        covers: Covers::Node,
+        create: true,
+    };
+    let plain = Grant {
+        grant_id: Uuid::from_u128(0xF3A1),
+        role: Role::Reader,
+        create: false,
+        ..flagged.clone()
+    };
+    for grant in [flagged.clone(), plain.clone()] {
+        rig.issue_grant(store, key.key_id, grant)
+            .await
+            .expect("a grant");
+    }
+    let access = store
+        .key_access(t, key.key_id)
+        .await
+        .expect("read")
+        .expect("access");
+    let mut read: Vec<&Grant> = access.grants.iter().map(|g| &g.grant).collect();
+    read.sort_by_key(|g| g.grant_id);
+    assert_eq!(read, vec![&flagged, &plain]);
 }
 
 /// A workspace's name is unique in its tenant across the whole tree: a
@@ -10846,6 +11031,376 @@ pub async fn a_console_link_waits_on_its_persons_acceptance<S: JournalStore>(sto
     );
 }
 
+/// `admin.act`'s fold (ADR-0097 d2, d10, d23): the first envelope inserts
+/// the act, a confirmation moves it once and clears the `pending_act` of
+/// the key it issued, and a second move from a settled state commits
+/// nothing. Two live admin entries take the tenant out of `sole_admin` for
+/// good, and each admin person reads back with the acceptance of the flag.
+/// `workspace.public_set` folds the node's flag and the act that set it;
+/// every key's access read then names the tenant's public nodes, and the
+/// public listing serves them by name, another tenant's never (ADR-0098
+/// d1, d9, d10). A node the tenant does not hold is refused.
+pub async fn a_public_set_folds_the_flag_and_every_access_read_names_the_public_nodes<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(502);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let root = Uuid::from_u128(0x4C00);
+    let shared = Uuid::from_u128(0x4C01);
+    rig.create_workspace(store, workspace_record(t, root, None, "universe"))
+        .await;
+    rig.create_workspace(store, workspace_record(t, shared, Some(root), "shared"))
+        .await;
+    let key = key_record(t, Uuid::from_u128(0x4C02), Role::Reader, None);
+    rig.issue_key(store, key.clone()).await;
+    let read = store
+        .key_access(t, key.key_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert!(read.public_nodes.is_empty(), "no node starts public");
+    assert!(store.public_workspaces(t).await.expect("read").is_empty());
+    let act_id = Uuid::from_u128(0x4C03);
+    rig.commit(
+        store,
+        event_types::WORKSPACE_PUBLIC_SET,
+        json!({ "workspace_id": shared.to_string(), "value": true }),
+        MetadataFold::WorkspacePublicSet {
+            workspace_id: shared,
+            public: true,
+            act_id,
+        },
+        None,
+    )
+    .await
+    .expect("the flag folds");
+    let node = store
+        .workspace(t, shared)
+        .await
+        .expect("read")
+        .expect("held");
+    assert!(node.public);
+    assert_eq!(node.public_act_id, Some(act_id));
+    let read = store
+        .key_access(t, key.key_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert_eq!(read.public_nodes, vec![shared]);
+    assert_eq!(
+        store
+            .public_workspaces(t)
+            .await
+            .expect("read")
+            .iter()
+            .map(|w| w.workspace_id)
+            .collect::<Vec<_>>(),
+        vec![shared]
+    );
+    let mut other = ChainRig::new(503);
+    other.seed_chain(store, 0).await;
+    assert!(
+        store
+            .public_workspaces(other.tenant_id)
+            .await
+            .expect("read")
+            .is_empty()
+    );
+    let refused = rig
+        .commit(
+            store,
+            event_types::WORKSPACE_PUBLIC_SET,
+            json!({ "value": true }),
+            MetadataFold::WorkspacePublicSet {
+                workspace_id: Uuid::from_u128(0x4CFF),
+                public: true,
+                act_id,
+            },
+            None,
+        )
+        .await;
+    assert!(
+        matches!(refused, Err(StoreError::Backend(_))),
+        "{refused:?}"
+    );
+}
+
+pub async fn an_admin_act_moves_once_and_its_confirmation_lets_the_pending_key_in<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    use oml_app::domain::admin_act::{AdminActKind, AdminActState};
+    use oml_app::types::{AdminActRecord, WebEntry};
+    let mut rig = ChainRig::new(501);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    assert!(store.admin_standing(t).await.expect("standing").sole_admin);
+    for (n, user) in [(0x4B01_u128, "alice"), (0x4B02, "bob")] {
+        let entry = WebEntry {
+            tenant_id: t,
+            email: oml_app::domain::web::Email::parse(&format!("{user}@example.com"))
+                .expect("an email"),
+            user: Name::parse(user).expect("a name"),
+            admin: true,
+            google_subject: None,
+            github_subject: None,
+            added_by: Uuid::from_u128(n),
+            terms_version: None,
+            disabled_at: None,
+            pending: false,
+        };
+        rig.commit(
+            store,
+            event_types::WEB_EMAIL_ALLOWED,
+            json!({ "user": user, "admin": true }),
+            MetadataFold::WebEmailAllowed(entry),
+            None,
+        )
+        .await
+        .expect("an admin entry");
+    }
+    let standing = store.admin_standing(t).await.expect("standing");
+    assert!(!standing.sole_admin, "two live admin persons");
+    assert_eq!(
+        standing
+            .persons
+            .iter()
+            .map(|p| p.user.as_str())
+            .collect::<Vec<_>>(),
+        ["alice", "bob"]
+    );
+    let act_id = Uuid::from_u128(0x4B10);
+    let key = KeyRecord {
+        pending_act: Some(act_id),
+        ..key_record(t, Uuid::from_u128(0x4B11), Role::Reader, None)
+    };
+    let act = AdminActRecord {
+        act_id,
+        act: AdminActKind::IssueKey,
+        target: json!({ "key_id": key.key_id.to_string() }),
+        reason: Some("an agent".to_owned()),
+        actor_key_id: Some(Uuid::from_u128(0x4B12)),
+        actor_person: Some(Name::parse("alice").expect("a name")),
+        state: AdminActState::PendingConfirmation,
+        confirmed_by_person: None,
+        settled_by_key_id: None,
+        confirm_reason: None,
+        sole_admin: false,
+        cause: None,
+        at: ChainRig::at(1),
+        settled_at: None,
+        effect: json!({ "key_id": key.key_id.to_string(), "grants": [] }),
+    };
+    rig.commit(
+        store,
+        event_types::ADMIN_ACT,
+        json!({ "act_id": act_id.to_string() }),
+        MetadataFold::AdminAct(Box::new(act.clone())),
+        None,
+    )
+    .await
+    .expect("the act");
+    rig.issue_key(store, key.clone()).await;
+    let held = store.key(t, key.key_id).await.expect("read").expect("key");
+    assert_eq!(held.pending_act, Some(act_id));
+    let stored = store
+        .admin_act(t, act_id)
+        .await
+        .expect("read")
+        .expect("act");
+    assert_eq!(stored.state, AdminActState::PendingConfirmation);
+    assert_eq!(stored.effect, act.effect);
+    assert_eq!(
+        store
+            .admin_acts(t, Some(AdminActState::PendingConfirmation))
+            .await
+            .expect("list")
+            .len(),
+        1
+    );
+    let confirmed = AdminActRecord {
+        state: AdminActState::Confirmed,
+        confirmed_by_person: Some(Name::parse("bob").expect("a name")),
+        settled_by_key_id: Some(Uuid::from_u128(0x4B13)),
+        confirm_reason: Some("checked with ops".to_owned()),
+        ..act.clone()
+    };
+    rig.commit(
+        store,
+        event_types::ADMIN_ACT,
+        json!({ "act_id": act_id.to_string() }),
+        MetadataFold::AdminAct(Box::new(confirmed.clone())),
+        None,
+    )
+    .await
+    .expect("the confirmation");
+    let held = store.key(t, key.key_id).await.expect("read").expect("key");
+    assert_eq!(held.pending_act, None, "the confirmed key authenticates");
+    let stored = store
+        .admin_act(t, act_id)
+        .await
+        .expect("read")
+        .expect("act");
+    assert_eq!(stored.state, AdminActState::Confirmed);
+    assert_eq!(stored.confirmed_by_person, confirmed.confirmed_by_person);
+    assert_eq!(
+        stored.confirm_reason, confirmed.confirm_reason,
+        "the store keeps the reason the confirmation required"
+    );
+    let head = store.chain_head(t).await.expect("head");
+    let declined = AdminActRecord {
+        state: AdminActState::Declined,
+        ..act
+    };
+    assert!(
+        rig.commit(
+            store,
+            event_types::ADMIN_ACT,
+            json!({ "act_id": act_id.to_string() }),
+            MetadataFold::AdminAct(Box::new(declined)),
+            None,
+        )
+        .await
+        .is_err(),
+        "a confirmed act is declined by no later envelope"
+    );
+    assert_eq!(store.chain_head(t).await.expect("head"), head);
+}
+
+/// The server authentication table holds one row per tenant, key and day,
+/// counted; recovery's dormancy reads the admin keys among them from a day
+/// on; coverage is the oldest day held, bounded below by the install; the
+/// purge deletes the days before its cutoff. A recovery's row is requested
+/// once per tenant and settled once (ADR-0097 d19; answers 22, 24).
+pub async fn the_authentication_table_counts_a_key_a_day_and_a_recovery_settles_once<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    use oml_app::types::{RecoveryRecord, RecoveryState};
+    let mut rig = ChainRig::new(504);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let admin = key_record(t, Uuid::from_u128(0x5001), Role::Admin, None);
+    let agent = key_record(t, Uuid::from_u128(0x5002), Role::Contributor, None);
+    rig.issue_key(store, admin.clone()).await;
+    rig.issue_key(store, agent.clone()).await;
+    for _ in 0..2 {
+        store
+            .record_authentication(t, admin.key_id, "2026-01-01", 1)
+            .await
+            .expect("a row");
+    }
+    store
+        .record_authentication(t, agent.key_id, "2026-01-05", 1)
+        .await
+        .expect("a row");
+    let since = |day: &'static str| store.admin_keys_authenticated_since(t, day);
+    assert_eq!(since("2026-01-01").await.expect("read"), 1, "one admin key");
+    assert_eq!(
+        since("2026-01-02").await.expect("read"),
+        0,
+        "an agent key is no admin authentication"
+    );
+    let coverage = store.authentication_coverage().await.expect("coverage");
+    assert_eq!(coverage.oldest_day.as_deref(), Some("2026-01-01"));
+    assert_eq!(
+        store
+            .purge_authentications(t, "2026-01-02")
+            .await
+            .expect("purge"),
+        1
+    );
+    assert_eq!(since("2026-01-01").await.expect("read"), 0, "purged");
+    let mut other = ChainRig::new(505);
+    other.seed_chain(store, 0).await;
+    assert_eq!(
+        store
+            .admin_keys_authenticated_since(other.tenant_id, "2000-01-01")
+            .await
+            .expect("read"),
+        0,
+        "read tenant-bound"
+    );
+
+    let recovery = RecoveryRecord {
+        recovery_id: Uuid::from_u128(0x5010),
+        person: Name::parse("carol").expect("a name"),
+        email: oml_app::domain::web::Email::parse("carol@example.com").expect("an email"),
+        state: RecoveryState::Requested,
+        requested_at: ChainRig::at(1),
+        settled_at: None,
+    };
+    rig.commit(
+        store,
+        event_types::OPERATOR_RECOVERY_REQUESTED,
+        json!({ "recovery_id": recovery.recovery_id.to_string() }),
+        MetadataFold::RecoveryRequested(recovery.clone()),
+        None,
+    )
+    .await
+    .expect("requested");
+    let held = store
+        .operator_recoveries(t, Some(RecoveryState::Requested))
+        .await
+        .expect("read");
+    assert_eq!(held.len(), 1);
+    assert_eq!(held[0].email, recovery.email, "the address is kept");
+    let head = store.chain_head(t).await.expect("head");
+    let second = RecoveryRecord {
+        recovery_id: Uuid::from_u128(0x5011),
+        ..recovery.clone()
+    };
+    assert!(
+        rig.commit(
+            store,
+            event_types::OPERATOR_RECOVERY_REQUESTED,
+            json!({ "recovery_id": second.recovery_id.to_string() }),
+            MetadataFold::RecoveryRequested(second),
+            None,
+        )
+        .await
+        .is_err(),
+        "one requested recovery per tenant"
+    );
+    assert_eq!(store.chain_head(t).await.expect("head"), head);
+    let settle = MetadataFold::RecoverySettled {
+        recovery_id: recovery.recovery_id,
+        state: RecoveryState::Completed,
+    };
+    rig.commit(
+        store,
+        event_types::OPERATOR_RECOVERY,
+        json!({ "recovery_id": recovery.recovery_id.to_string() }),
+        settle.clone(),
+        None,
+    )
+    .await
+    .expect("completed");
+    let head = store.chain_head(t).await.expect("head");
+    assert!(
+        rig.commit(
+            store,
+            event_types::OPERATOR_RECOVERY,
+            json!({ "recovery_id": recovery.recovery_id.to_string() }),
+            settle,
+            None,
+        )
+        .await
+        .is_err(),
+        "a recovery completes once"
+    );
+    assert_eq!(store.chain_head(t).await.expect("head"), head);
+    let done = store.operator_recoveries(t, None).await.expect("read");
+    assert_eq!(done.len(), 1);
+    assert_eq!(done[0].state, RecoveryState::Completed);
+    assert!(done[0].settled_at.is_some());
+}
+
 pub async fn run_journal_store_suite<S, F, Fut>(new_store: F)
 where
     S: JournalStore,
@@ -10875,6 +11430,20 @@ where
     Box::pin(a_console_link_waits_on_its_persons_acceptance(
         &new_store().await,
     ))
+    .await;
+    Box::pin(
+        an_admin_act_moves_once_and_its_confirmation_lets_the_pending_key_in(&new_store().await),
+    )
+    .await;
+    Box::pin(
+        a_public_set_folds_the_flag_and_every_access_read_names_the_public_nodes(
+            &new_store().await,
+        ),
+    )
+    .await;
+    Box::pin(
+        the_authentication_table_counts_a_key_a_day_and_a_recovery_settles_once(&new_store().await),
+    )
     .await;
     Box::pin(no_version_is_a_release_member_until_releases_exist(
         &new_store().await,
@@ -10986,6 +11555,16 @@ where
     .await;
     Box::pin(
         a_keys_limits_fold_with_its_issuance_and_are_replaced_by_key_limits_set(&new_store().await),
+    )
+    .await;
+    Box::pin(
+        key_converted_makes_a_live_admin_key_a_maintenance_key_and_refuses_any_other(
+            &new_store().await,
+        ),
+    )
+    .await;
+    Box::pin(
+        key_default_set_sets_a_live_keys_default_and_refuses_anything_else(&new_store().await),
     )
     .await;
     Box::pin(
@@ -11135,6 +11714,10 @@ where
     )
     .await;
     Box::pin(two_workspaces_in_one_tenant_cannot_share_a_name(
+        &new_store().await,
+    ))
+    .await;
+    Box::pin(a_grants_create_flag_is_stored_and_read_back(
         &new_store().await,
     ))
     .await;

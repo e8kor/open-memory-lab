@@ -158,6 +158,11 @@ enum Command {
         #[command(subcommand)]
         command: AdminCommand,
     },
+    /// Host verbs, run as root on the server's host with the tenant's operator token.
+    Operator {
+        #[command(subcommand)]
+        command: OperatorCommand,
+    },
     /// Submit a claim for review, replace one with --replaces, or propose its retirement.
     Write(WriteArgs),
     /// Fetch a memory by artifact id, recall with --query, or list memories.
@@ -213,6 +218,41 @@ enum Command {
 }
 
 #[derive(Subcommand)]
+enum OperatorCommand {
+    /// Confirm or reverse the contested act of a freeze open at least 24 hours.
+    #[command(group(clap::ArgGroup::new("outcome").required(true).args(["confirm", "reverse"])))]
+    Settle {
+        /// The tenant's id, as oml whoami names it.
+        tenant: String,
+        /// The act's id, as oml admin acts lists it.
+        act: String,
+        /// Confirm the act: the target's suspended admin keys are revoked.
+        #[arg(long)]
+        confirm: bool,
+        /// Reverse the act: the suspension lifts and the entry is restored.
+        #[arg(long)]
+        reverse: bool,
+        /// The server's operator.token_dir, which holds <tenant>.token.
+        #[arg(long, env = "OML_OPERATOR__TOKEN_DIR")]
+        token_dir: std::path::PathBuf,
+    },
+    /// Ask the server to recover a tenant in which no admin authenticated for 30 days.
+    Recover {
+        /// The tenant's id, as oml whoami names it.
+        tenant: String,
+        /// The admin person the recovery adds, a name the tenant does not hold.
+        #[arg(long)]
+        person: String,
+        /// The address the new admin person signs in with.
+        #[arg(long)]
+        email: String,
+        /// The server's operator.token_dir, which holds <tenant>.token.
+        #[arg(long, env = "OML_OPERATOR__TOKEN_DIR")]
+        token_dir: std::path::PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
 enum DemoCommand {
     /// Create 30 fictional-team memories (20 approved, 4 superseded, 6 held),
     /// then fence their author and reviewer identities. Admin key; no keys are printed.
@@ -234,6 +274,12 @@ struct QuickstartArgs {
     /// Port on 127.0.0.1 for the lead.
     #[arg(long, default_value_t = 8080)]
     port: u16,
+    /// The person the quickstart's admin key belongs to, by user name.
+    #[arg(long)]
+    person: String,
+    /// That person's sign-in email for the console.
+    #[arg(long)]
+    email: String,
 }
 
 #[derive(Subcommand)]
@@ -353,16 +399,16 @@ enum BootstrapCommand {
         /// Principal for the first admin key.
         #[arg(long)]
         principal: Option<String>,
-        /// The person the first admin key acts for: the claim creates that
-        /// person's user root and links the key to it, so the key may take
-        /// an admin fix. Requires --email.
-        #[arg(long, requires = "email")]
-        person: Option<String>,
+        /// The person the first admin key belongs to: the claim creates that
+        /// person's user root and links the key to it. Required, since every
+        /// admin key belongs to a person.
+        #[arg(long)]
+        person: String,
         /// The person's sign-in email, recorded as accepted for the console:
         /// the one way the person --person names gets a first sign-in.
-        /// Requires --person.
-        #[arg(long, requires = "person")]
-        email: Option<String>,
+        /// Required.
+        #[arg(long)]
+        email: String,
     },
 }
 
@@ -438,6 +484,37 @@ enum KeysCommand {
         #[arg(long, value_name = "FILE")]
         out: Option<std::path::PathBuf>,
     },
+    /// Revoke one key: it authenticates nothing afterwards on any path, and
+    /// the keys it issued keep working. Journals key.revoked. An admin key
+    /// revokes any key of the tenant except a session key.
+    Revoke {
+        /// Key id or name.
+        #[arg(value_name = "KEY")]
+        key_ref: String,
+        /// Why the key is revoked; scanned and journalled.
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// Convert the calling admin key, in place, into a maintenance key that
+    /// reads counts only and takes the rescan; it keeps its value. Journals
+    /// key.converted.
+    ConvertSelf {
+        /// The role to convert into; maintenance is the one admitted.
+        #[arg(long, default_value = "maintenance")]
+        to: String,
+    },
+    /// Link the calling admin key to a person, pending until that person
+    /// accepts the link on the console's Keys page; journals
+    /// key.linked_person. The one link a key makes to its own holder.
+    LinkSelf {
+        /// The person's user name.
+        #[arg(long)]
+        person: String,
+        /// Why; required, scanned and journalled with the link's consent
+        /// act.
+        #[arg(long)]
+        reason: String,
+    },
     /// Revoke one connector-key connection and journal connection.revoked.
     Disconnect {
         /// Connector key id or name.
@@ -455,7 +532,7 @@ enum KeysCommand {
 struct KeysIssueArgs {
     /// Key name, unique in the tenant and never released; distinct from principal and label.
     key_name: String,
-    /// reader | contributor | submitter | reviewer | admin. A contributor
+    /// reader | contributor | submitter | reviewer | admin | maintenance. A contributor
     /// recalls and writes; a submitter writes without recall.
     #[arg(long)]
     role: String,
@@ -468,9 +545,16 @@ struct KeysIssueArgs {
     default_workspace: Option<String>,
     /// Grant <workspace>:<role>, or <workspace>:<role>:node for one node; workspace
     /// may be id or name. Repeatable. For a contributor key, each submitter grant
-    /// brings a reader grant on the same workspace.
+    /// brings a reader grant on the same workspace. A create suffix,
+    /// <workspace>:<role>:create, lets the key create child workspaces there;
+    /// granting it waits on a second admin person.
     #[arg(long = "grant", value_parser = parse_grant)]
     grants: Vec<(String, String)>,
+    /// Create the workspace <parent>/<name> in the same act and grant the key its
+    /// role's default grants on it, covering the subtree. Repeatable. Nothing is
+    /// created while the issuance waits on a second admin person.
+    #[arg(long = "create-workspace", value_name = "PARENT/NAME", value_parser = parse_new_workspace)]
+    create_workspaces: Vec<(String, String)>,
     /// Crew record (id or name), fixed for the key's life.
     #[arg(long)]
     crew: Option<String>,
@@ -478,6 +562,12 @@ struct KeysIssueArgs {
     /// workspace names resolve; the first key creates that root.
     #[arg(long)]
     user: Option<String>,
+    /// The person an admin key belongs to, by user name; required with
+    /// --role admin and refused on any other role. It implies --used-by
+    /// person, and the key authenticates nothing until that person accepts
+    /// its link on the console's Keys page.
+    #[arg(long)]
+    person: Option<String>,
     /// Principal the key acts as.
     #[arg(long)]
     principal: Option<String>,
@@ -491,6 +581,16 @@ struct KeysIssueArgs {
     /// in-progress workspace and never promotes.
     #[arg(long, value_parser = ["curator"])]
     profile: Option<String>,
+    /// Why the key is issued; scanned and journalled with the issuance. An
+    /// admin key's issuance waits on a second admin person and requires it,
+    /// except in a tenant that has only ever had one admin person.
+    #[arg(long)]
+    reason: Option<String>,
+    /// Write the value to a new owner-only (0600) file, refusing one that
+    /// exists, and print its path instead of the value; with --json the
+    /// answer names the path as key_file and carries no value.
+    #[arg(long)]
+    out: Option<PathBuf>,
     #[command(flatten)]
     limits: KeyLimitArgs,
 }
@@ -543,8 +643,8 @@ struct IssueAgentArgs {
     #[arg(long, default_value = "agent", value_parser = ["agent", "person"])]
     used_by: String,
     /// contributor recalls and writes the workspace; submitter writes it without
-    /// recall.
-    #[arg(long, default_value = "contributor", value_parser = ["contributor", "submitter"])]
+    /// recall; reader only recalls it.
+    #[arg(long, default_value = "contributor", value_parser = ["contributor", "submitter", "reader"])]
     role: String,
     /// Write the key to a new 0600 file without overwriting and print a line that
     /// reads it instead of the value.
@@ -558,6 +658,11 @@ struct IssueAgentArgs {
     /// ancestors also loads every readable ancestor. Defaults to ancestors.
     #[arg(long, value_parser = ["workspace", "ancestors"])]
     guardrail_scope: Option<String>,
+    /// Create the workspace <parent>/<name> in the same act and grant the key its
+    /// role's default grants on it, covering the subtree. Repeatable. Nothing is
+    /// created while the issuance waits on a second admin person.
+    #[arg(long = "create-workspace", value_name = "PARENT/NAME", value_parser = parse_new_workspace)]
+    create_workspaces: Vec<(String, String)>,
     #[command(flatten)]
     limits: KeyLimitArgs,
 }
@@ -625,6 +730,18 @@ enum WorkspacesCommand {
         /// `on` lets federated recalls search it (the default); `off` declines.
         #[arg(value_parser = ["on", "off"])]
         accept: String,
+        /// Why: an admin's `on` waits on another admin person and requires
+        /// one, unless the tenant has only ever had one admin person.
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// Mark a protected or frozen workspace public, so every reading key of
+    /// the tenant reads its approved items and recalls them by default, or
+    /// clear the mark. An admin person only; a set waits on another admin
+    /// person unless the tenant has only ever had one.
+    Public {
+        #[command(subcommand)]
+        command: WorkspacePublicCommand,
     },
     /// Set a workspace's crew record (admin key).
     Crew {
@@ -840,6 +957,47 @@ enum AdminCommand {
         #[arg(long)]
         title: Option<String>,
     },
+    /// List the tenant's admin acts that wait on a second admin person, or
+    /// with --state another state, or all.
+    Acts {
+        /// all, effective, pending_confirmation, confirmed, declined, expired,
+        /// contested or settled; defaults to pending_confirmation.
+        #[arg(long)]
+        state: Option<String>,
+    },
+    /// Confirm another admin person's pending act as the second admin
+    /// person; it takes effect now. Journals admin.act.
+    Confirm {
+        /// The act's id, listed by `oml admin acts`.
+        act: String,
+        /// Why; required, scanned and kept with the act.
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// Decline a pending admin act, which then never takes effect, or undo
+    /// a widening act taken at once in a tenant with one admin person: the
+    /// key, grant, code, limit or admin flag it applied. Journals admin.act.
+    Decline {
+        /// The act's id, listed by `oml admin acts`.
+        act: String,
+        /// Why; scanned and journalled.
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// Settle an open act against another admin person as a third admin
+    /// person: --confirm revokes the target's suspended admin keys, --reverse
+    /// lifts the suspension and restores the entry. Below three admin
+    /// persons the operator settles from the host. Journals admin.act.
+    Settle {
+        /// The act's id, listed by `oml admin acts --state effective`.
+        act: String,
+        /// Confirm the act.
+        #[arg(long, conflicts_with = "reverse", required_unless_present = "reverse")]
+        confirm: bool,
+        /// Reverse the act.
+        #[arg(long)]
+        reverse: bool,
+    },
     /// List the tenant's admin fixes no person has confirmed or reverted,
     /// or with --all every fix.
     Fixes {
@@ -862,6 +1020,28 @@ enum AdminCommand {
         /// scanned, counts under 5 as <5; no artifact id, claim key or text.
         #[arg(long, conflicts_with = "record_held")]
         rates: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum WorkspacePublicCommand {
+    /// Mark the workspace public: an admin act of class widening, which
+    /// waits on another admin person and journals workspace.public_set when
+    /// it takes effect.
+    Set {
+        /// Workspace id or name.
+        workspace: String,
+        /// Why every reading key of the tenant should read it.
+        #[arg(long)]
+        reason: String,
+    },
+    /// Clear the mark: narrowing, at once; a set that waits is declined.
+    Clear {
+        /// Workspace id or name.
+        workspace: String,
+        /// Why the workspace stops being public.
+        #[arg(long)]
+        reason: Option<String>,
     },
 }
 
@@ -889,6 +1069,11 @@ enum SearchCommand {
         /// the most a sources list names, 0 to 64.
         #[arg(long)]
         max_sources: Option<u32>,
+        /// Why: a change that searches more waits on another admin person
+        /// and requires one, unless the tenant has only ever had one admin
+        /// person.
+        #[arg(long)]
+        reason: Option<String>,
     },
 }
 
@@ -931,12 +1116,19 @@ enum WebCommand {
         /// Allow access to the admin page.
         #[arg(long)]
         admin: bool,
+        /// Why: required for a new admin person once the tenant has had two,
+        /// and for an act against another admin person.
+        #[arg(long)]
+        reason: Option<String>,
     },
     /// Remove an email, end its sessions, and journal web.email_removed; the
     /// user's agent keys keep working.
     Remove {
         /// Email address.
         email: String,
+        /// Why: required to remove another admin person's entry.
+        #[arg(long)]
+        reason: Option<String>,
     },
     /// List the tenant's allowed emails.
     List,
@@ -1378,12 +1570,38 @@ fn parse_grant(s: &str) -> Result<(String, String), String> {
     let (node, role) = s
         .split_once(':')
         .ok_or_else(|| format!("{s:?} is not <workspace>:<role>"))?;
-    match role.split_once(':') {
-        None | Some((_, "node")) => Ok((node.to_owned(), role.to_owned())),
-        Some(_) => Err(format!(
-            "{s:?} is not <workspace>:<role> or <workspace>:<role>:node"
-        )),
+    // After the role, `node` (ADR-0044 d4) and `create` (ADR-0097 d31), each
+    // at most once, in either order.
+    let flags: Vec<&str> = role.split(':').skip(1).collect();
+    let known = flags.iter().all(|f| matches!(*f, "node" | "create"));
+    let once = flags.iter().filter(|f| **f == "node").count() <= 1
+        && flags.iter().filter(|f| **f == "create").count() <= 1;
+    if known && once {
+        Ok((node.to_owned(), role.to_owned()))
+    } else {
+        Err(format!(
+            "{s:?} is not <workspace>:<role>, with :node, :create or both after the role"
+        ))
     }
+}
+
+/// `--create-workspace <parent>/<name>`: the parent by id or name and the
+/// new workspace's name (ADR-0097 d30).
+fn parse_new_workspace(s: &str) -> Result<(String, String), String> {
+    match s.rsplit_once('/') {
+        Some((parent, name)) if !parent.is_empty() && !name.is_empty() => {
+            Ok((parent.to_owned(), name.to_owned()))
+        }
+        _ => Err(format!("{s:?} is not <parent>/<name>")),
+    }
+}
+
+/// The issuance body's `create_workspaces` (ADR-0097 d30).
+fn new_workspaces_json(created: &[(String, String)]) -> Vec<Value> {
+    created
+        .iter()
+        .map(|(parent, name)| json!({ "parent": parent, "name": name }))
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -1693,12 +1911,8 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             if let Some(p) = principal {
                 body["admin_principal"] = json!(p);
             }
-            if let Some(p) = person {
-                body["person"] = json!(p);
-            }
-            if let Some(e) = email {
-                body["email"] = json!(e);
-            }
+            body["person"] = json!(person);
+            body["email"] = json!(email);
             let (_, response) = client.post(
                 "/v2/bootstrap/claim",
                 &body,
@@ -1750,6 +1964,12 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             command: KeysCommand::Issue(args),
         } => {
             let client = resolve(cli, &stored)?;
+            // The file is created before anything is sent, so a path that
+            // cannot hold the value fails while no key exists (#528).
+            let key_file = match &args.out {
+                Some(path) => Some(KeyFile::create(path).map_err(CliError::Local)?),
+                None => None,
+            };
             let grants = with_reader_beside_submitters(&args.grants, &args.role);
             if !cli.json {
                 for (node, _) in grants.iter().filter(|g| !args.grants.contains(g)) {
@@ -1765,6 +1985,9 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 "used_by": args.used_by,
                 "grants": grants_json(&grants),
             });
+            if !args.create_workspaces.is_empty() {
+                body["create_workspaces"] = json!(new_workspaces_json(&args.create_workspaces));
+            }
             if let Some(wa) = &args.default_workspace {
                 body["default_workspace"] = json!(wa);
             }
@@ -1773,6 +1996,10 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             }
             if let Some(user) = &args.user {
                 body["user"] = json!(user);
+            }
+            if let Some(person) = &args.person {
+                body["person"] = json!(person);
+                body["used_by"] = json!("person");
             }
             if let Some(p) = &args.principal {
                 body["principal"] = json!(p);
@@ -1786,16 +2013,55 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             if let Some(scope) = &args.guardrail_scope {
                 body["guardrail_scope"] = json!(scope);
             }
+            if let Some(reason) = &args.reason {
+                body["reason"] = json!(reason);
+            }
             args.limits.add_to(&mut body);
-            let (_, response) = client.post("/v2/keys", &body, &write_opts())?;
+            let mut response = match client.post("/v2/keys", &body, &write_opts()) {
+                Ok((_, response)) => response,
+                Err(e) => {
+                    // The empty file holds nothing either way, so it goes.
+                    if let Some(Err(note)) = key_file.map(KeyFile::discard) {
+                        eprintln!("note: {note}");
+                    }
+                    return Err(e);
+                }
+            };
+            // With --out the value goes to the file alone (#528).
+            let shown = match key_file {
+                Some(file) => {
+                    let shown = file.shown().to_owned();
+                    let value = response["value"].as_str().unwrap_or_default().to_owned();
+                    file.write_value(&value).map_err(|e| {
+                        CliError::local(format!(
+                            "key {} ({}) was issued, but writing {shown} failed ({e}); its value                              is lost and the key is live. Revoke it with oml keys revoke {}",
+                            field(&response, "name"),
+                            field(&response, "key_id"),
+                            field(&response, "key_id"),
+                        ))
+                    })?;
+                    if let Some(answer) = response.as_object_mut() {
+                        answer.remove("value");
+                        answer.insert("key_file".to_owned(), json!(shown));
+                    }
+                    Some(shown)
+                }
+                None => None,
+            };
             if cli.json {
                 print_json(&response);
             } else {
-                println!("key issued — SHOWN ONCE");
+                match &shown {
+                    Some(path) => println!("key issued — its value is only in {path} (0600)"),
+                    None => println!("key issued — SHOWN ONCE"),
+                }
                 println!();
                 println!("    name   : {}", field(&response, "name"));
                 println!("    key id : {}", field(&response, "key_id"));
-                println!("    key    : {}", field(&response, "value"));
+                match &shown {
+                    Some(path) => println!("    file   : {path}"),
+                    None => println!("    key    : {}", field(&response, "value")),
+                }
                 println!("    role   : {}", field(&response, "role"));
                 println!("    default: {}", field(&response, "default_workspace_id"));
                 if response["user"].is_object() {
@@ -1815,7 +2081,177 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                     }
                 }
                 println!();
-                println!("store this value now; the server keeps only its hash.");
+                if shown.is_none() {
+                    println!("store this value now; the server keeps only its hash.");
+                }
+                // A widening admin act waits on a second admin person
+                // (ADR-0097 d5, d23).
+                if response["admin_act"]["state"] == "pending_confirmation" {
+                    println!(
+                        "waits on another admin: the key authenticates nothing until a second \
+                         admin person runs `oml admin confirm {}`",
+                        field(&response["admin_act"], "act_id")
+                    );
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Operator {
+            command:
+                OperatorCommand::Settle {
+                    tenant,
+                    act,
+                    confirm,
+                    reverse: _,
+                    token_dir,
+                },
+        } => {
+            let client = resolve_url(cli, &stored)?;
+            let tenant = uuid::Uuid::parse_str(tenant)
+                .map_err(|_| CliError::local(format!("{tenant:?} is not a tenant id")))?;
+            let token = operator_token(token_dir, tenant)?;
+            let path = format!(
+                "/v2/operator/tenants/{tenant}/acts/{}/settle",
+                segment(act)?
+            );
+            let outcome = if *confirm { "confirm" } else { "reverse" };
+            let (_, response) =
+                client.post_operator(&path, &json!({ "outcome": outcome }), &token)?;
+            if cli.json {
+                print_json(&response);
+            } else {
+                println!(
+                    "act {} settled from the host: {}; notified {}",
+                    field(&response["act"], "act_id"),
+                    if *confirm { "confirmed" } else { "reversed" },
+                    response["notified"]
+                        .as_array()
+                        .map(|p| p
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .collect::<Vec<_>>()
+                            .join(", "))
+                        .unwrap_or_default()
+                );
+                match response["mail"].as_str() {
+                    Some("sent") => println!("email handed to the mail relay"),
+                    Some("failed") => println!(
+                        "warn the mail relay did not take the email ({}); the settlement stands",
+                        response["mail_failure"].as_str().unwrap_or("?")
+                    ),
+                    _ => println!(
+                        "warn no mail relay is configured (mail.host, mail.from): the notice is in-product only"
+                    ),
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Operator {
+            command:
+                OperatorCommand::Recover {
+                    tenant,
+                    person,
+                    email,
+                    token_dir,
+                },
+        } => {
+            let client = resolve_url(cli, &stored)?;
+            let tenant = uuid::Uuid::parse_str(tenant)
+                .map_err(|_| CliError::local(format!("{tenant:?} is not a tenant id")))?;
+            let token = operator_token(token_dir, tenant)?;
+            let path = format!("/v2/operator/tenants/{tenant}/recover");
+            let (_, response) = client.post_operator(
+                &path,
+                &json!({ "person": person, "email": email }),
+                &token,
+            )?;
+            if cli.json {
+                print_json(&response);
+            } else {
+                let recovery = &response["recovery"];
+                println!(
+                    "recovery {} requested for {}: it completes after {} unless an admin person signs in first; notified {}",
+                    field(recovery, "recovery_id"),
+                    field(recovery, "person"),
+                    field(recovery, "completes_after"),
+                    response["notified"]
+                        .as_array()
+                        .map(|p| p
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .collect::<Vec<_>>()
+                            .join(", "))
+                        .unwrap_or_default()
+                );
+                match response["mail"].as_str() {
+                    Some("sent") => println!("email handed to the mail relay"),
+                    Some("failed") => println!(
+                        "warn the mail relay did not take the email ({}); the request stands, and a dormant admin sees only the in-product notice",
+                        response["mail_failure"].as_str().unwrap_or("?")
+                    ),
+                    _ => println!(
+                        "warn no mail relay is configured (mail.host, mail.from): the notice is in-product only, which a dormant admin does not see"
+                    ),
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Keys {
+            command: KeysCommand::ConvertSelf { to },
+        } => {
+            let client = resolve(cli, &stored)?;
+            let (_, response) =
+                client.post("/v2/keys/self/convert", &json!({ "to": to }), &write_opts())?;
+            if cli.json {
+                print_json(&response);
+            } else {
+                println!(
+                    "key {} is now a {} key: it reads counts only and takes the rescan",
+                    response["name"].as_str().unwrap_or("?"),
+                    response["role"].as_str().unwrap_or("?")
+                );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Keys {
+            command: KeysCommand::LinkSelf { person, reason },
+        } => {
+            let client = resolve(cli, &stored)?;
+            let (_, response) = client.post(
+                "/v2/keys/self/link",
+                &json!({ "user": person, "reason": reason }),
+                &write_opts(),
+            )?;
+            if cli.json {
+                print_json(&response);
+            } else {
+                println!(
+                    "key {} linked to {person}, pending: {person} accepts it on the console's Keys page",
+                    field(&response, "name")
+                );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Keys {
+            command: KeysCommand::Revoke { key_ref, reason },
+        } => {
+            let client = resolve(cli, &stored)?;
+            let path = format!("/v2/keys/{}/revoke", segment(key_ref)?);
+            let body = match reason {
+                Some(reason) => json!({ "reason": reason }),
+                None => json!({}),
+            };
+            let (_, response) = client.post(&path, &body, &write_opts())?;
+            if cli.json {
+                print_json(&response);
+            } else {
+                println!(
+                    "key {} revoked at {}",
+                    field(&response, "name"),
+                    field(&response, "revoked_at")
+                );
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -2212,6 +2648,8 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                     );
                 }
                 println!("    crew    : {}", crew_line(&response["crew"]));
+                // ADR-0098 d9: the flag, since when, and a set that waits.
+                println!("    public  : {}", public_line(&response["public"]));
                 for c in response["children"].as_array().into_iter().flatten() {
                     println!(
                         "    child   : {} ({}, {})",
@@ -2239,16 +2677,30 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         }
 
         Command::Workspaces {
-            command: WorkspacesCommand::Federation { workspace, accept },
+            command:
+                WorkspacesCommand::Federation {
+                    workspace,
+                    accept,
+                    reason,
+                },
         } => {
             let client = resolve(cli, &stored)?;
-            let (_, response) = client.post(
+            let mut body = json!({ "accept_federated": accept == "on" });
+            if let Some(reason) = reason {
+                body["reason"] = json!(reason);
+            }
+            let (status, response) = client.post(
                 &format!("/v2/workspaces/{}/federation", segment(workspace)?),
-                &json!({ "accept_federated": accept == "on" }),
+                &body,
                 &write_opts(),
             )?;
             if cli.json {
                 print_json(&response);
+            } else if status == 202 {
+                println!(
+                    "{}",
+                    federation_pending(&format!("workspace {workspace}"), &response)
+                );
             } else {
                 println!(
                     "workspace {workspace} {} federated reads",
@@ -2258,6 +2710,31 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                         "declines"
                     }
                 );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Workspaces {
+            command: WorkspacesCommand::Public { command },
+        } => {
+            let (workspace, public, reason) = match command {
+                WorkspacePublicCommand::Set { workspace, reason } => {
+                    (workspace, true, Some(reason.as_str()))
+                }
+                WorkspacePublicCommand::Clear { workspace, reason } => {
+                    (workspace, false, reason.as_deref())
+                }
+            };
+            let client = resolve(cli, &stored)?;
+            let (status, response) = client.post(
+                &format!("/v2/workspaces/{}/public", segment(workspace)?),
+                &json!({ "public": public, "reason": reason }),
+                &write_opts(),
+            )?;
+            if cli.json {
+                print_json(&response);
+            } else {
+                println!("{}", public_printed(workspace, status, &response));
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -2816,6 +3293,41 @@ fn one_line_error(e: &CliError) -> String {
     }
 }
 
+/// Doctor's `operator.token_unwritten` (ADR-0097 d19): a start that could
+/// not write its operator tokens refuses every host settlement until a
+/// start writes them.
+fn operator_token_doctor(ready: Option<&(u16, Value)>) -> Vec<String> {
+    match ready {
+        Some((_, body)) if body["operator_tokens"] == "failed" => vec![
+            "warn operator.token_unwritten: the server could not write its operator tokens, so oml operator settle is refused; read the start log's operator_tokens_unwritten line and fix operator.token_dir"
+                .to_owned(),
+        ],
+        _ => Vec::new(),
+    }
+}
+
+/// The tenant's operator token of the server's current start, from
+/// `<dir>/<tenant>.token` (ADR-0097 d19; answer 13). Only root and the
+/// server's user read the file; the token is sent and never printed.
+fn operator_token(dir: &std::path::Path, tenant: uuid::Uuid) -> Result<String, CliError> {
+    let path = dir.join(format!("{tenant}.token"));
+    let text = std::fs::read_to_string(&path).map_err(|e| {
+        CliError::local(format!(
+            "cannot read the operator token {}: {} (run as root on the server's host, with --token-dir naming the server's operator.token_dir)",
+            path.display(),
+            e.kind()
+        ))
+    })?;
+    let token = text.trim();
+    if token.is_empty() {
+        return Err(CliError::local(format!(
+            "{} holds no token",
+            path.display()
+        )));
+    }
+    Ok(token.to_owned())
+}
+
 fn write_opts() -> CallOpts {
     CallOpts {
         auth: true,
@@ -2837,6 +3349,54 @@ fn node_suffix(grant: &Value) -> &'static str {
     }
 }
 
+/// `oml workspaces public set|clear`'s line (ADR-0098 d9): `effective`
+/// with the flag now held, or that the set waits on another admin person,
+/// with the act id either way.
+/// A federation widening that waits on another admin person (ADR-0097 d5).
+fn federation_pending(what: &str, act: &Value) -> String {
+    let id = act["act_id"].as_str().unwrap_or("?");
+    format!(
+        "{what}: the change waits on another admin person (act {id}); they confirm it with oml admin confirm {id}"
+    )
+}
+
+fn public_printed(workspace: &str, status: u16, response: &Value) -> String {
+    let act = response["act_id"].as_str().unwrap_or("?");
+    if status == 202 {
+        format!(
+            "workspace {workspace}: public waits on another admin person (act {act}); they confirm it with oml admin confirm {act}"
+        )
+    } else if response["public"] == true {
+        format!("workspace {workspace}: public, effective (act {act})")
+    } else {
+        format!("workspace {workspace}: not public, effective (act {act})")
+    }
+}
+
+/// `oml workspaces show`'s public line: yes since when, marked
+/// `sole_admin` where it took effect so, or no; and a set that waits.
+fn public_line(public: &Value) -> String {
+    let mut line = if public["value"] == true {
+        format!(
+            "yes, since {}{}",
+            public["since"].as_str().unwrap_or("?"),
+            if public["sole_admin"] == true {
+                " (sole_admin)"
+            } else {
+                ""
+            }
+        )
+    } else {
+        "no".to_owned()
+    };
+    if let Some(act) = public["pending_act_id"].as_str() {
+        line.push_str(&format!(
+            "; a set waits on another admin person (act {act})"
+        ));
+    }
+    line
+}
+
 /// A crew record as one line: its name and id, or `—` for none.
 fn crew_line(crew: &Value) -> String {
     if crew.is_object() {
@@ -2851,10 +3411,19 @@ fn crew_line(crew: &Value) -> String {
 fn grants_json(grants: &[(String, String)]) -> Vec<Value> {
     grants
         .iter()
-        .map(|(node, role)| match role.split_once(':') {
-            // A `:node` suffix is a grant on the node alone (ADR-0044 d4).
-            Some((role, covers)) => json!({ "workspace": node, "role": role, "covers": covers }),
-            None => json!({ "workspace": node, "role": role }),
+        .map(|(node, role)| {
+            let mut parts = role.split(':');
+            let mut grant = json!({ "workspace": node, "role": parts.next().unwrap_or_default() });
+            for flag in parts {
+                match flag {
+                    // A `:node` suffix is a grant on the node alone (ADR-0044 d4).
+                    "node" => grant["covers"] = json!("node"),
+                    // `:create` lets the key create children there (ADR-0097 d31).
+                    "create" => grant["create"] = json!(true),
+                    _ => {}
+                }
+            }
+            grant
         })
         .collect()
 }
@@ -4186,8 +4755,12 @@ fn run_issue_agent(
         Some(path) => Some(KeyFile::create(path).map_err(CliError::Local)?),
         None => None,
     };
-    let grants =
-        with_reader_beside_submitters(&[(workspace.clone(), "submitter".to_owned())], &args.role);
+    // A reader key reads the workspace and writes nothing (#528).
+    let grants = if args.role == "reader" {
+        vec![(workspace.clone(), "reader".to_owned())]
+    } else {
+        with_reader_beside_submitters(&[(workspace.clone(), "submitter".to_owned())], &args.role)
+    };
     let mut body = json!({
         "role": args.role,
         "name": args.key_name,
@@ -4196,6 +4769,9 @@ fn run_issue_agent(
         "default_workspace": workspace,
         "grants": grants_json(&grants),
     });
+    if !args.create_workspaces.is_empty() {
+        body["create_workspaces"] = json!(new_workspaces_json(&args.create_workspaces));
+    }
     if let Some(crew) = &args.crew {
         body["crew"] = json!(crew);
     }
@@ -4292,10 +4868,11 @@ fn run_issue_agent(
                 .iter()
                 .map(|g| {
                     format!(
-                        "{}:{}{}",
+                        "{}:{}{}{}",
                         field(g, "workspace_node_id"),
                         field(g, "role"),
-                        if g["covers"] == "node" { ":node" } else { "" }
+                        if g["covers"] == "node" { ":node" } else { "" },
+                        if g["create"] == true { ":create" } else { "" }
                     )
                 })
                 .collect()
@@ -4699,6 +5276,25 @@ fn rates_lines(report: &Value) -> Vec<String> {
 /// `close`, or lists the key's open ones (ADR-0089 d10, d15).
 /// One line per fix: its id, act, state, the version it serves, whether it
 /// loosens a guardrail, its age, the acts this key may take, and its reason.
+/// One admin act as `oml admin acts` prints it (ADR-0097 d2): its id,
+/// act, class, state, the acting person and its reason.
+fn admin_act_line(a: &Value) -> String {
+    format!(
+        "{}  {}  {}  {}{}  by {}  {}",
+        field(a, "act_id"),
+        field(a, "act"),
+        field(a, "class"),
+        field(a, "state"),
+        if a["sole_admin"] == true {
+            " (sole_admin)"
+        } else {
+            ""
+        },
+        field(a, "actor_person"),
+        field(a, "reason"),
+    )
+}
+
 fn print_fixes(cli: &Cli, answer: &Value) -> Result<ExitCode, CliError> {
     if cli.json {
         print_json(answer);
@@ -4868,6 +5464,68 @@ fn run_admin(
             let fix = client.post("/v2/admin/fixes", &sent, &write)?.1;
             return print_fixes(cli, &fix);
         }
+        AdminCommand::Acts { state } => {
+            let path = match state {
+                Some(state) => format!("/v2/admin/acts?state={}", segment(state)?),
+                None => "/v2/admin/acts".to_owned(),
+            };
+            let acts = client.get(&path)?.1;
+            if cli.json {
+                print_json(&acts);
+            } else {
+                for a in acts["items"]
+                    .as_array()
+                    .map(Vec::as_slice)
+                    .unwrap_or_default()
+                {
+                    println!("{}", admin_act_line(a));
+                }
+            }
+            return Ok(ExitCode::SUCCESS);
+        }
+        AdminCommand::Confirm { act, reason } => {
+            let path = format!("/v2/admin/acts/{}/confirm", segment(act)?);
+            let body = match reason {
+                Some(reason) => json!({ "reason": reason }),
+                None => json!({}),
+            };
+            let settled = client.post(&path, &body, &write_opts())?.1;
+            if cli.json {
+                print_json(&settled);
+            } else {
+                println!("{}", admin_act_line(&settled));
+            }
+            return Ok(ExitCode::SUCCESS);
+        }
+        AdminCommand::Decline { act, reason } => {
+            let path = format!("/v2/admin/acts/{}/decline", segment(act)?);
+            let body = match reason {
+                Some(reason) => json!({ "reason": reason }),
+                None => json!({}),
+            };
+            let settled = client.post(&path, &body, &write_opts())?.1;
+            if cli.json {
+                print_json(&settled);
+            } else {
+                println!("{}", admin_act_line(&settled));
+            }
+            return Ok(ExitCode::SUCCESS);
+        }
+        AdminCommand::Settle {
+            act,
+            confirm,
+            reverse: _,
+        } => {
+            let path = format!("/v2/admin/acts/{}/settle", segment(act)?);
+            let body = json!({ "outcome": if *confirm { "confirm" } else { "reverse" } });
+            let settled = client.post(&path, &body, &write_opts())?.1;
+            if cli.json {
+                print_json(&settled);
+            } else {
+                println!("{}", admin_act_line(&settled));
+            }
+            return Ok(ExitCode::SUCCESS);
+        }
         AdminCommand::Fixes { all } => {
             let state = if *all { "all" } else { "unconfirmed" };
             let fixes = client.get(&format!("/v2/admin/fixes?state={state}"))?.1;
@@ -4966,6 +5624,7 @@ fn run_search(
             enabled,
             default_sources,
             max_sources,
+            reason,
         } => {
             let policy = if enabled.is_none() && default_sources.is_none() && max_sources.is_none()
             {
@@ -4981,9 +5640,20 @@ fn run_search(
                 if let Some(m) = max_sources {
                     body.insert("max_sources".to_owned(), Value::from(*m));
                 }
-                client
-                    .post("/v2/federation", &Value::Object(body), &write_opts())?
-                    .1
+                if let Some(reason) = reason {
+                    body.insert("reason".to_owned(), Value::from(reason.as_str()));
+                }
+                let (status, response) =
+                    client.post("/v2/federation", &Value::Object(body), &write_opts())?;
+                if status == 202 {
+                    if cli.json {
+                        print_json(&response);
+                    } else {
+                        println!("{}", federation_pending("the federation policy", &response));
+                    }
+                    return Ok(ExitCode::SUCCESS);
+                }
+                response
             };
             if cli.json {
                 print_json(&policy);
@@ -5161,8 +5831,16 @@ fn run_web(cli: &Cli, stored: &Credentials, command: &WebCommand) -> Result<Exit
         )
     };
     match command {
-        WebCommand::Allow { email, user, admin } => {
-            let body = json!({ "email": email, "user": user, "admin": admin });
+        WebCommand::Allow {
+            email,
+            user,
+            admin,
+            reason,
+        } => {
+            let mut body = json!({ "email": email, "user": user, "admin": admin });
+            if let Some(reason) = reason {
+                body["reason"] = json!(reason);
+            }
             let (_, entry) = client.post("/v2/web/emails", &body, &write_opts())?;
             if cli.json {
                 print_json(&entry);
@@ -5170,8 +5848,11 @@ fn run_web(cli: &Cli, stored: &Credentials, command: &WebCommand) -> Result<Exit
                 println!("allowed {}", entry_line(&entry));
             }
         }
-        WebCommand::Remove { email } => {
-            let body = json!({ "email": email });
+        WebCommand::Remove { email, reason } => {
+            let mut body = json!({ "email": email });
+            if let Some(reason) = reason {
+                body["reason"] = json!(reason);
+            }
             let (_, result) = client.post("/v2/web/emails/remove", &body, &write_opts())?;
             if cli.json {
                 print_json(&result);
@@ -5450,6 +6131,10 @@ fn run_quickstart(args: &QuickstartArgs) -> Result<ExitCode, CliError> {
             "quickstart",
             "--principal",
             "platform/admin",
+            "--person",
+            &args.person,
+            "--email",
+            &args.email,
         ],
         Some(token),
     )?;
@@ -6423,14 +7108,20 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
                 .as_ref()
                 .is_some_and(|(_, body)| body["web"].is_object());
             let is_admin = matches!(&me, Some(Ok(v)) if v["role"] == "admin");
+            // A maintenance key reads the same counts, and never a key
+            // list or an address (ADR-0097 d18): the admin entries' lines
+            // stay an admin's, run by a person.
+            let reads_counts = is_admin || matches!(&me, Some(Ok(v)) if v["role"] == "maintenance");
             if pages_on && is_admin {
                 admin_emails = count_admin_emails(&client);
+            }
+            if pages_on && reads_counts {
                 // Open sign-up's people and requests (ADR-0068 d11).
                 signup_overview = client.get("/v2/web/users").ok().map(|(_, v)| v);
             }
-            // The tenant's search default, read by an admin key (ADR-0049
-            // d8).
-            if is_admin {
+            // The tenant's search default, read by an admin or maintenance
+            // key (ADR-0049 d8; ADR-0097 d18).
+            if reads_counts {
                 (tree_nodes, tree_incomplete) = tree_pages(&client, "/v2/workspaces/universe/tree");
                 search_settings = client.get("/v2/search").ok().map(|(_, v)| v);
                 // The tenant's federation policy and its wide keys
@@ -6499,8 +7190,12 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let withdrawals = withdrawn_queue_doctor(rescan_read.as_ref());
     let withdrawals_fail = withdrawals.iter().any(|line| line.starts_with("fail"));
     let withdrawals_warn = withdrawals.iter().any(|line| line.starts_with("warn"));
-    let lifecycle = lifecycle_doctor(rescan_read.as_ref());
+    let mut lifecycle = lifecycle_doctor(rescan_read.as_ref());
+    lifecycle.extend(public_doctor(rescan_read.as_ref()));
+    lifecycle.extend(flagged_creates_doctor(rescan_read.as_ref()));
+    lifecycle.extend(operator_token_doctor(ready.as_ref()));
     let lifecycle_warn = lifecycle.iter().any(|line| line.starts_with("warn"));
+    let lifecycle_fail = lifecycle.iter().any(|line| line.starts_with("fail"));
     let telemetry_warn = telemetry.iter().any(|line| line.starts_with("warn"));
     let usage = usage_doctor(usage_drift.as_ref());
     let usage_warn = usage.iter().any(|line| line.starts_with("warn"));
@@ -6557,7 +7252,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let probes_ok = matches!((&health, &ready), (Some((200, _)), Some((200, _))));
     let whoami_ok = !matches!(me, Some(Err(_)));
     let review_warn = review.as_ref().is_some_and(|line| line.starts_with("warn"));
-    let outcome = if !probes_ok || !whoami_ok || !oauth_ok || withdrawals_fail {
+    let outcome = if !probes_ok || !whoami_ok || !oauth_ok || withdrawals_fail || lifecycle_fail {
         "fail"
     } else if me.is_none()
         || server_origin.is_some()
@@ -6925,6 +7620,16 @@ fn federation_doctor(settings: Option<&Value>) -> Vec<String> {
             "warn key {} reads {} trusted workspaces outside its scopes, above 1,000: each recall of a federated tenant reads their counts, so its statistics read grows with them",
             key["key_id"].as_str().unwrap_or("?"),
             key["candidates"]
+        ));
+    }
+    // A maintenance key reads the counts and no key list (ADR-0097 d18).
+    let listed = settings["wide_keys"].as_array().map_or(0, Vec::len);
+    if listed == 0
+        && let Some(n) = settings["wide_key_count"].as_u64().filter(|n| *n > 0)
+    {
+        lines.push(format!(
+            "warn {n} key(s) read up to {} trusted workspaces outside their scopes, above 1,000: each recall of a federated tenant reads their counts, so its statistics read grows with them; an admin key's oml doctor names the keys",
+            settings["wide_key_most_candidates"]
         ));
     }
     // The widen hint's signal (ADR-0072 d8, as built by #244): a build that
@@ -7520,6 +8225,85 @@ fn withdrawn_queue_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
     }]
 }
 
+/// Doctor's public workspace lines (ADR-0098 d9), from the same admin
+/// rescan window: `workspace.public` names each public workspace, since
+/// when, by which act, whether it took effect under `sole_admin`, and its
+/// served rows, the load it adds to every default recall of the tenant;
+/// `workspace.public_ineligible` fails for a public workspace that is
+/// `development` or inside a user root, which only a direct store edit
+/// produces. A server before the flag reports neither, and the lines are
+/// then absent.
+fn public_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
+    let Some(Ok(report)) = read else {
+        return Vec::new();
+    };
+    let (Some(public), Some(ineligible)) = (
+        report.get("public_workspaces").and_then(Value::as_array),
+        report.get("public_ineligible").and_then(Value::as_array),
+    ) else {
+        return Vec::new();
+    };
+    let rows: u64 = public
+        .iter()
+        .filter_map(|w| w["served_rows"].as_u64())
+        .sum();
+    let mut lines = vec![format!(
+        "workspace.public: {} public workspace(s), {rows} served row(s) every default recall of the tenant also searches",
+        public.len()
+    )];
+    for w in public {
+        lines.push(format!(
+            "workspace.public: {} since {} (act {}{}), {} served row(s)",
+            w["name"].as_str().unwrap_or("?"),
+            w["since"].as_str().unwrap_or("?"),
+            w["act_id"].as_str().unwrap_or("?"),
+            if w["sole_admin"] == true {
+                ", sole_admin"
+            } else {
+                ""
+            },
+            w["served_rows"].as_u64().unwrap_or(0)
+        ));
+    }
+    lines.push(if ineligible.is_empty() {
+        "workspace.public_ineligible: 0".to_owned()
+    } else {
+        format!(
+            "fail workspace.public_ineligible: {} public workspace(s) are development or inside a user root, which no admin act allows; clear each with oml workspaces public clear <workspace>",
+            ineligible.len()
+        )
+    });
+    lines
+}
+
+/// Doctor's `workspace.flagged_creates` (ADR-0097 d31, the operator's
+/// decision of 2026-11-27), an info line from the same admin rescan window:
+/// the workspaces keys created in the shared tree under a grant carrying
+/// `create`, per creating key. No account's `workspaces` meter counts them,
+/// so a tenant agent key with the flag is bounded only by its request rate.
+/// A server before the flag reports none, and the line is then absent.
+fn flagged_creates_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
+    let Some(Ok(report)) = read else {
+        return Vec::new();
+    };
+    let Some(keys) = report.get("flagged_creates").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let total: u64 = keys.iter().filter_map(|k| k["workspaces"].as_u64()).sum();
+    let mut lines = vec![format!(
+        "workspace.flagged_creates: {total} workspace(s) created in the shared tree under a create grant, by {} key(s); no meter counts them, only each key's request rate bounds them",
+        keys.len()
+    )];
+    for k in keys {
+        lines.push(format!(
+            "workspace.flagged_creates: key {} created {}",
+            k["key_id"].as_str().unwrap_or("?"),
+            k["workspaces"].as_u64().unwrap_or(0)
+        ));
+    }
+    lines
+}
+
 /// Doctor's lifecycle lines (ADR-0089 d16, notes of 2026-11-18; ADR-0085
 /// d16's pending links, the operator's decision of 2026-11-19), from the
 /// same admin rescan window: `memory.held_successor_stranded` warns of held
@@ -7530,7 +8314,7 @@ fn withdrawn_queue_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
 /// out. A server before a count does not report it, and its line is then
 /// absent; a count that is no unsigned integer is named, never read as zero.
 fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
-    const LINES: [(&str, &str, &str); 10] = [
+    const LINES: [(&str, &str, &str); 30] = [
         (
             "held_successors_stranded",
             "memory.held_successor_stranded",
@@ -7545,6 +8329,11 @@ fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
             "investigations_open_long",
             "admin.investigation_open_long",
             "admin investigation(s) open for more than 7 days; the key that opened each closes it with oml admin investigate --close <id>",
+        ),
+        (
+            "investigations_past_pages",
+            "admin.investigation_pages",
+            "open admin investigation(s) read more than 50 pages; the person who opened each closes it with oml admin investigate --close <id> once the investigation is done",
         ),
         (
             "fixes_unconfirmed",
@@ -7581,6 +8370,101 @@ fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
             "web.email_pending",
             "sign-in email(s) wait on their person's acceptance; each signs in to nothing until that person accepts it on the console's Keys page, or the person or an admin removes it",
         ),
+        (
+            "admin_acts_pending",
+            "admin.act_pending_confirmation",
+            "admin act(s) wait on a second admin person; each takes effect only once confirmed with oml admin confirm <act>, and expires as declined after 7 days",
+        ),
+        (
+            "admin_erase_shreds_pending",
+            "admin.erase_shred_pending",
+            "erase(s) demoted their claim and keep its bytes until a second admin person confirms the shred with oml admin confirm <act>, or declines it",
+        ),
+        (
+            "admin_acts_sole_admin",
+            "admin.act_sole_admin",
+            "admin act(s) took effect at once because the tenant has only ever had one admin person; a second admin person reviews them with oml admin acts --state effective",
+        ),
+        (
+            "admin_acts_without_reason",
+            "admin.act_without_reason",
+            "admin act(s) carry no reason; send --reason with each admin act",
+        ),
+        (
+            "admin_acts_expired",
+            "admin.act_expired",
+            "admin act(s) expired unconfirmed in the last 7 days and never took effect; take the act again if it is still wanted",
+        ),
+        (
+            "admin_narrowing_burst",
+            "admin.narrowing_burst",
+            "narrowing acts by one admin person in the last 24 hours, past the 20 doctor flags; read them with oml admin acts --state effective",
+        ),
+        (
+            "admin_acts_offensive",
+            "admin.offensive_narrowing",
+            "offensive narrowing act(s) in the last 24 hours: a person's key revoked or a reviewer person's key denied; read each with oml admin acts --state effective",
+        ),
+        (
+            "admin_timeboxes_unsettled",
+            "admin.timebox_open",
+            "time box(es) no second admin person has settled; another admin person confirms or declines each with oml admin acts",
+        ),
+        (
+            "admin_keys_suspended",
+            "admin.key_suspended",
+            "admin key(s) suspended while an act against their person is open; settling the act revokes them or lifts the suspension",
+        ),
+        (
+            "admin_keys_unlinked_suspended",
+            "admin.key_unlinked_suspended",
+            "admin key(s) suspended as unlinked at the upgrade; each links itself with oml keys link-self --person <name> --reason <why> and its person accepts on the console's Keys page",
+        ),
+        (
+            "admin_disputes_open",
+            "admin.dispute_open",
+            "act(s) against an admin open below three admin persons: both parties take no widening act until the operator settles it from the host",
+        ),
+        (
+            "operator_settlements_due",
+            "operator.settlement_due",
+            "freeze(s) open at least 24 hours: the operator settles each from the host with oml operator settle <tenant> <act> --confirm|--reverse",
+        ),
+        (
+            "key_issuer_unexpected_shape",
+            "key.issuer_unexpected_shape",
+            "key(s) the server issuer issued outside the four session-key shapes; revoke each with oml keys revoke <key> --reason <why> and report it",
+        ),
+        (
+            "mail_unconfigured",
+            "notice.mail_unconfigured",
+            "no mail relay is set (mail.host, mail.from): recovery and settlement notices are shown in-product only, and a dormant admin sees none",
+        ),
+        (
+            "mail_delivery_failures",
+            "notice.mail_delivery_failed",
+            "notice email(s) the mail relay refused or did not take since the lead started; the acts they told about stand",
+        ),
+        (
+            "admin_recoveries_pending",
+            "admin.recovery_pending",
+            "operator recovery(ies) of this tenant waiting their 72 hours: any admin person's sign-in cancels it; once it completes every admin key is revoked",
+        ),
+        (
+            "admin_recoveries_overdue",
+            "admin.recovery_overdue",
+            "operator recovery(ies) past their 72 hours and not completed: read the server log's recovery_sweep_failed lines",
+        ),
+        (
+            "auth_log_coverage_days",
+            "auth.log_coverage",
+            "whole day(s) the server's authentication table covers, under the 30 oml operator recover needs: it refuses log_too_short until then",
+        ),
+        (
+            "auth_log_write_failures",
+            "auth.log_write_failed",
+            "authentication row(s) the server could not write since it started: a key's next authentication writes its row again, and oml operator recover is refused log_write_failed on this server process until it restarts",
+        ),
     ];
     let report = match read {
         None => {
@@ -7603,7 +8487,65 @@ fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
             let count = report.get(*field)?;
             Some(match count.as_u64() {
                 None => format!("warn {line}: the server's {field} is {count}, not a count"),
+                // Coverage reads the other way: 30 days or more is what
+                // recover needs (ADR-0097, answer 24).
+                Some(n) if *field == "auth_log_coverage_days" => {
+                    if n >= 30 {
+                        format!("{line}: {n} days")
+                    } else {
+                        format!("warn {line}: {n} {what}")
+                    }
+                }
                 Some(0) => format!("{line}: 0"),
+                // At most 20 narrowing acts by one person in a day are
+                // ordinary: a placeholder (ADR-0097 d24).
+                Some(n) if *field == "admin_narrowing_burst" && n <= 20 => format!("{line}: {n}"),
+                // Critical: offensive narrowing is loud (ADR-0097 d24).
+                Some(n)
+                    if *field == "admin_acts_offensive"
+                        || *field == "admin_disputes_open"
+                        || *field == "key_issuer_unexpected_shape" =>
+                {
+                    format!("fail {line}: {n} {what}")
+                }
+                // Critical: a recovery waiting its 72 hours revokes every
+                // admin key once it completes, and one past them means the
+                // sweep is failing (ADR-0097 d19, answer 22).
+                Some(n)
+                    if *field == "admin_recoveries_pending"
+                        || *field == "admin_recoveries_overdue" =>
+                {
+                    format!("fail {line}: {n} {what}")
+                }
+                Some(_) if *field == "mail_unconfigured" => format!("warn {line}: {what}"),
+                Some(n) if *field == "mail_delivery_failures" => {
+                    let last = report
+                        .get("mail_last_failure")
+                        .and_then(Value::as_str)
+                        .unwrap_or("?");
+                    format!("fail {line}: {n} {what}; the last: {last}")
+                }
+                Some(n) if *field == "admin_keys_unlinked_suspended" => {
+                    let left = report
+                        .get("admin_unlinked_days_left")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    format!("warn {line}: {n} {what}; {left} days left before revocation")
+                }
+                Some(n) if *field == "admin_erase_shreds_pending" => {
+                    let oldest = report
+                        .get("admin_erase_shred_oldest_seconds")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    format!("warn {line}: {n} {what}; the oldest is {oldest} s old")
+                }
+                Some(n) if *field == "admin_acts_pending" => {
+                    let oldest = report
+                        .get("admin_act_oldest_pending_seconds")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    format!("warn {line}: {n} {what}; the oldest is {oldest} s old")
+                }
                 Some(n) if *field == "fixes_unconfirmed" => {
                     let oldest = report
                         .get("fix_oldest_unconfirmed_seconds")
@@ -7982,6 +8924,13 @@ fn web_doctor(
                 .to_owned(),
         );
     }
+    // `signup.issuer` is read and ignored for one release (ADR-0097 d18).
+    if body["web"]["signup_issuer_ignored"] == true {
+        lines.push(
+            "warn signup.issuer_ignored: signup.issuer is set and no longer read; the server issuer adds each sign-up's entry and issues its session keys, so remove the setting"
+                .to_owned(),
+        );
+    }
     // The failed exchanges are the metrics listener's (ADR-0054 d1).
     for provider in &providers {
         let Some(scrape) = scrape else { break };
@@ -8284,6 +9233,28 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn a_grant_takes_node_and_create_after_its_role_and_a_new_workspace_is_parent_slash_name() {
+        let (node, role) = parse_grant("crew:submitter:create").expect("a grant");
+        assert_eq!(
+            grants_json(&[(node, role)]),
+            [json!({ "workspace": "crew", "role": "submitter", "create": true })]
+        );
+        let both = parse_grant("crew:reader:create:node").expect("a grant");
+        assert_eq!(
+            grants_json(&[both]),
+            [json!({ "workspace": "crew", "role": "reader", "covers": "node", "create": true })]
+        );
+        assert!(parse_grant("crew:reader:create:create").is_err());
+        assert!(parse_grant("crew:reader:everything").is_err());
+        assert_eq!(
+            parse_new_workspace("universe.crew/alpha"),
+            Ok(("universe.crew".to_owned(), "alpha".to_owned()))
+        );
+        assert!(parse_new_workspace("alpha").is_err());
+        assert!(parse_new_workspace("crew/").is_err());
+    }
 
     #[test]
     fn doctor_warns_a_reviewer_key_that_is_not_a_persons_that_instructions_need_a_person() {
@@ -8874,13 +9845,33 @@ mod tests {
                 "memory.held_successor_stranded: not read; an admin key reads it".to_owned(),
                 "lake.erased_key_live: not read; an admin key reads it".to_owned(),
                 "admin.investigation_open_long: not read; an admin key reads it".to_owned(),
+                "admin.investigation_pages: not read; an admin key reads it".to_owned(),
                 "admin.fix_unconfirmed: not read; an admin key reads it".to_owned(),
                 "admin.fix_loosens_guardrail: not read; an admin key reads it".to_owned(),
                 "admin.fix_without_person_reviewer: not read; an admin key reads it".to_owned(),
                 "admin.fix_admin_person_only: not read; an admin key reads it".to_owned(),
                 "admin.fix_reverted: not read; an admin key reads it".to_owned(),
                 "key.link_pending: not read; an admin key reads it".to_owned(),
-                "web.email_pending: not read; an admin key reads it".to_owned()
+                "web.email_pending: not read; an admin key reads it".to_owned(),
+                "admin.act_pending_confirmation: not read; an admin key reads it".to_owned(),
+                "admin.erase_shred_pending: not read; an admin key reads it".to_owned(),
+                "admin.act_sole_admin: not read; an admin key reads it".to_owned(),
+                "admin.act_without_reason: not read; an admin key reads it".to_owned(),
+                "admin.act_expired: not read; an admin key reads it".to_owned(),
+                "admin.narrowing_burst: not read; an admin key reads it".to_owned(),
+                "admin.offensive_narrowing: not read; an admin key reads it".to_owned(),
+                "admin.timebox_open: not read; an admin key reads it".to_owned(),
+                "admin.key_suspended: not read; an admin key reads it".to_owned(),
+                "admin.key_unlinked_suspended: not read; an admin key reads it".to_owned(),
+                "admin.dispute_open: not read; an admin key reads it".to_owned(),
+                "operator.settlement_due: not read; an admin key reads it".to_owned(),
+                "key.issuer_unexpected_shape: not read; an admin key reads it".to_owned(),
+                "notice.mail_unconfigured: not read; an admin key reads it".to_owned(),
+                "notice.mail_delivery_failed: not read; an admin key reads it".to_owned(),
+                "admin.recovery_pending: not read; an admin key reads it".to_owned(),
+                "admin.recovery_overdue: not read; an admin key reads it".to_owned(),
+                "auth.log_coverage: not read; an admin key reads it".to_owned(),
+                "auth.log_write_failed: not read; an admin key reads it".to_owned()
             ]
         );
         assert_eq!(
@@ -8889,6 +9880,77 @@ mod tests {
                 "warn lake.erased_key_live: the server's erased_keys_live is \"many\", not a count"
                     .to_owned()
             ]
+        );
+    }
+
+    #[test]
+    fn the_lifecycle_doctor_names_a_settlement_due_an_issuer_out_of_shape_and_the_mail_relay() {
+        let report = json!({
+            "operator_settlements_due": 1,
+            "key_issuer_unexpected_shape": 1,
+            "mail_unconfigured": 1,
+            "mail_delivery_failures": 2,
+            "mail_last_failure": "the relay refused RCPT TO with 550",
+        });
+        assert_eq!(
+            lifecycle_doctor(Some(&Ok(report))),
+            vec![
+                "warn operator.settlement_due: 1 freeze(s) open at least 24 hours: the operator settles each from the host with oml operator settle <tenant> <act> --confirm|--reverse".to_owned(),
+                "fail key.issuer_unexpected_shape: 1 key(s) the server issuer issued outside the four session-key shapes; revoke each with oml keys revoke <key> --reason <why> and report it".to_owned(),
+                "warn notice.mail_unconfigured: no mail relay is set (mail.host, mail.from): recovery and settlement notices are shown in-product only, and a dormant admin sees none".to_owned(),
+                "fail notice.mail_delivery_failed: 2 notice email(s) the mail relay refused or did not take since the lead started; the acts they told about stand; the last: the relay refused RCPT TO with 550".to_owned(),
+            ]
+        );
+        let fine = json!({ "mail_unconfigured": 0, "mail_delivery_failures": 0 });
+        assert_eq!(
+            lifecycle_doctor(Some(&Ok(fine))),
+            vec![
+                "notice.mail_unconfigured: 0".to_owned(),
+                "notice.mail_delivery_failed: 0".to_owned(),
+            ]
+        );
+        let ready = (200, json!({ "operator_tokens": "failed" }));
+        assert_eq!(operator_token_doctor(Some(&ready)).len(), 1);
+        let ready = (200, json!({ "operator_tokens": "written" }));
+        assert!(operator_token_doctor(Some(&ready)).is_empty());
+    }
+
+    #[test]
+    fn the_lifecycle_doctor_names_a_recovery_waiting_or_overdue_and_the_authentication_coverage() {
+        let report = json!({
+            "admin_recoveries_pending": 1,
+            "admin_recoveries_overdue": 1,
+            "auth_log_coverage_days": 12,
+            "auth_log_write_failures": 2,
+        });
+        assert_eq!(
+            lifecycle_doctor(Some(&Ok(report))),
+            vec![
+                "fail admin.recovery_pending: 1 operator recovery(ies) of this tenant waiting their 72 hours: any admin person's sign-in cancels it; once it completes every admin key is revoked".to_owned(),
+                "fail admin.recovery_overdue: 1 operator recovery(ies) past their 72 hours and not completed: read the server log's recovery_sweep_failed lines".to_owned(),
+                "warn auth.log_coverage: 12 whole day(s) the server's authentication table covers, under the 30 oml operator recover needs: it refuses log_too_short until then".to_owned(),
+                "warn auth.log_write_failed: 2 authentication row(s) the server could not write since it started: a key's next authentication writes its row again, and oml operator recover is refused log_write_failed on this server process until it restarts".to_owned(),
+            ]
+        );
+        let fine = json!({
+            "admin_recoveries_pending": 0,
+            "admin_recoveries_overdue": 0,
+            "auth_log_coverage_days": 31,
+            "auth_log_write_failures": 0,
+        });
+        assert_eq!(
+            lifecycle_doctor(Some(&Ok(fine))),
+            vec![
+                "admin.recovery_pending: 0".to_owned(),
+                "admin.recovery_overdue: 0".to_owned(),
+                "auth.log_coverage: 31 days".to_owned(),
+                "auth.log_write_failed: 0".to_owned(),
+            ]
+        );
+        let empty = json!({ "auth_log_coverage_days": 0 });
+        assert_eq!(
+            lifecycle_doctor(Some(&Ok(empty))),
+            vec!["warn auth.log_coverage: 0 whole day(s) the server's authentication table covers, under the 30 oml operator recover needs: it refuses log_too_short until then".to_owned()]
         );
     }
 
@@ -8935,6 +9997,38 @@ mod tests {
         assert_eq!(
             lifecycle_doctor(Some(&Ok(json!({ "web_emails_pending": 0 })))),
             vec!["web.email_pending: 0".to_owned()]
+        );
+    }
+
+    #[test]
+    fn the_lifecycle_doctor_warns_of_erases_whose_shred_waits_with_the_oldest_age() {
+        let report = json!({
+            "admin_erase_shreds_pending": 1,
+            "admin_erase_shred_oldest_seconds": 7200,
+        });
+        assert_eq!(
+            lifecycle_doctor(Some(&Ok(report))),
+            vec!["warn admin.erase_shred_pending: 1 erase(s) demoted their claim and keep its bytes until a second admin person confirms the shred with oml admin confirm <act>, or declines it; the oldest is 7200 s old".to_owned()]
+        );
+    }
+
+    #[test]
+    fn the_lifecycle_doctor_warns_of_admin_acts_waiting_on_a_second_admin_person() {
+        let report = json!({
+            "admin_acts_pending": 2,
+            "admin_act_oldest_pending_seconds": 3600,
+            "admin_acts_sole_admin": 0,
+            "admin_acts_without_reason": 1,
+            "admin_acts_expired": 0,
+        });
+        assert_eq!(
+            lifecycle_doctor(Some(&Ok(report))),
+            vec![
+                "warn admin.act_pending_confirmation: 2 admin act(s) wait on a second admin person; each takes effect only once confirmed with oml admin confirm <act>, and expires as declined after 7 days; the oldest is 3600 s old".to_owned(),
+                "admin.act_sole_admin: 0".to_owned(),
+                "warn admin.act_without_reason: 1 admin act(s) carry no reason; send --reason with each admin act".to_owned(),
+                "admin.act_expired: 0".to_owned(),
+            ]
         );
     }
 
@@ -9204,6 +10298,21 @@ mod tests {
         assert_eq!(
             web_doctor(Some(&set), None, None),
             vec!["on (google)".to_owned()]
+        );
+    }
+
+    #[test]
+    fn the_web_doctor_names_a_signup_issuer_that_is_read_and_ignored() {
+        let set = (
+            200,
+            json!({"web": {"providers": ["google"], "signup_issuer_ignored": true}, "web_client": "secret"}),
+        );
+        assert_eq!(
+            web_doctor(Some(&set), None, None),
+            vec![
+                "on (google)".to_owned(),
+                "warn signup.issuer_ignored: signup.issuer is set and no longer read; the server issuer adds each sign-up's entry and issues its session keys, so remove the setting".to_owned(),
+            ]
         );
     }
 
@@ -9554,6 +10663,25 @@ mod tests {
         assert_eq!(valid_line(&open), "none declared");
         let ended = serde_json::json!({ "valid_from": null, "valid_until": "2015" });
         assert_eq!(valid_line(&ended), "from any time, until 2015");
+    }
+
+    #[test]
+    fn a_maintenance_keys_federation_doctor_counts_the_wide_keys_it_cannot_list() {
+        let settings = json!({
+            "enabled": true,
+            "max_sources": 8,
+            "wide_keys": [],
+            "wide_key_count": 2,
+            "wide_key_most_candidates": 1500,
+            "widen_signal": { "built": 1, "unserved": 0, "evicted": 0, "failed": 0, "last_failure": null },
+        });
+        assert_eq!(
+            federation_doctor(Some(&settings)),
+            vec![
+                "warn 2 key(s) read up to 1500 trusted workspaces outside their scopes, above 1,000: each recall of a federated tenant reads their counts, so its statistics read grows with them; an admin key's oml doctor names the keys"
+                    .to_owned()
+            ]
+        );
     }
 
     #[test]

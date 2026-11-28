@@ -284,6 +284,11 @@ pub enum ErrorContext {
     Write,
 }
 
+/// The refusal of an act that would leave no live admin person, as
+/// `oml-app` words it (ADR-0097 d25).
+const LAST_ADMIN_MESSAGE: &str =
+    "this is the organisation's last admin address; add another admin first";
+
 /// The one place `oml-app`'s typed refusals become errors.md codes
 /// (errors.md "Implementation mapping": the attachment happens once, at the
 /// transport edge).
@@ -300,6 +305,24 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             format!("this key expired at {}", expiry.as_str()),
         )
         .with_details(json!({ "reason": "expired", "expiry": expiry.as_str() })),
+        AppError::KeyRevocation(refusal) => ApiError::validation(refusal.message())
+            .with_details(json!({ "field": "key", "reason": refusal.reason() })),
+        AppError::Timebox(refusal) => ApiError::validation(refusal.message())
+            .with_details(json!({ "field": "/timebox", "reason": refusal.reason() })),
+        AppError::AdminAct(refusal) => ApiError::validation(refusal.message())
+            .with_details(json!({ "field": refusal.field(), "reason": refusal.reason() })),
+        AppError::KeyPendingConfirmation => ApiError::auth_invalid("pending_confirmation"),
+        AppError::KeySuspended => ApiError::auth_invalid("suspended"),
+        AppError::KeyLinkPending => ApiError::auth_invalid("link_pending"),
+        AppError::KeyPerson(reason) => ApiError::validation(err.to_string())
+            .with_details(json!({ "field": "/person", "reason": reason })),
+        AppError::AdminActReasonRequired => ApiError::validation(
+            "this admin act waits on a second admin person, and requires a reason",
+        )
+        .with_details(json!({ "field": "/reason", "reason": "required" })),
+        AppError::KeyConversion(refusal) => ApiError::validation(refusal.message()).with_details(
+            json!({ "field": refusal.field(), "reason": refusal.reason() }),
+        ),
         AppError::KeyRotation(refusal) => ApiError::validation(refusal.message()).with_details(
             json!({ "field": refusal.field(), "reason": refusal.reason() }),
         ),
@@ -515,6 +538,17 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "verb": "create_workspace",
             "role": role.as_str(),
             "reason": "create_is_own_root_only",
+        })),
+        AppError::ParentFrozen { workspace_id } => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "access.verb_ceiling",
+            "A grant carrying create admits a child under an unfrozen parent only; a frozen node never acquires a descendant (ADR-0097 d31; ADR-0009 d5).",
+            "create_workspace under a frozen parent is refused",
+        )
+        .with_details(json!({
+            "verb": "create_workspace",
+            "workspace_id": workspace_id.to_string(),
+            "reason": "parent_frozen",
         })),
         AppError::TransitionPending { transition_id } => ApiError::new(
             StatusCode::CONFLICT,
@@ -851,6 +885,51 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "role": role.as_str(),
             "used_by": used_by.as_str(),
         })),
+        // Only an admin person sets or clears `public` (ADR-0098 d6).
+        AppError::PublicIsAdminOnly { role } => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "access.verb_ceiling",
+            "R1: marking a workspace public gives every reading key of the tenant a read, an admin person's act, never an agent's or a workspace reviewer's.",
+            format!(
+                "setting or clearing a workspace's public flag needs an admin person, a linked admin key or <user>-admin, and this is a {} key",
+                role.as_str()
+            ),
+        )
+        .with_details(json!({
+            "reason": "public_is_admin_only",
+            "role": role.as_str(),
+        })),
+        // The host's recovery of a dormant tenant refused by name (ADR-0097
+        // d19; answers 21, 24): `log_too_short` never reads a missing row as
+        // dormancy.
+        AppError::RecoverRefused(refusal) => ApiError::new(
+            StatusCode::CONFLICT,
+            "operator.recover_refused",
+            "The operator recovers a tenant only after 30 days the server's authentication table covers, in which no admin key authenticated and no admin person signed in, with no dispute open and no recovery waiting.",
+            refusal.message().to_owned(),
+        )
+        .with_details(json!({ "reason": refusal.reason() })),
+        // What the node is or holds refuses the flag (ADR-0098 d5, d6).
+        AppError::WorkspacePublicRefused {
+            workspace_id,
+            reason,
+            act_id,
+        } => {
+            let mut details = json!({
+                "workspace_id": workspace_id.to_string(),
+                "reason": reason.reason(),
+            });
+            if let (Some(act_id), Some(obj)) = (act_id, details.as_object_mut()) {
+                obj.insert("act_id".to_owned(), json!(act_id.to_string()));
+            }
+            ApiError::new(
+                StatusCode::CONFLICT,
+                "workspace.public_refused",
+                "Only a protected or frozen workspace outside every user root is marked public, one set at a time, and only a public one is cleared.",
+                reason.message().to_owned(),
+            )
+            .with_details(details)
+        }
         // Only a person's reviewer key or a tenant admin sets a workspace's
         // federation field (ADR-0072 d5).
         AppError::FederationHumanOnly { role, used_by } => ApiError::new(
@@ -947,6 +1026,29 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "R2: the reviewer is never the author — enforced against the full lineage closure.",
             "the ratifying key or principal is in an endpoint's lineage closure",
         ),
+        AppError::CountsAsNoPerson { act } => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "review.person_required",
+            "An instruction verdict, a fix settlement and a ladder ratification each need a key that counts as a person (ADR-0097 d12).",
+            format!("this key counts as no person, so it takes no {act}"),
+        )
+        .with_details(json!({ "reason": "counts_as_no_person", "act": act })),
+        AppError::RatifierSamePerson { issued_the_proposer } => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "review.ratifier_is_proposer",
+            "The ratifier counts as a person other than the proposer's, and other than the admin who issued an agent proposer (ADR-0097 d17).",
+            "the ratifying key counts as the proposer's person",
+        )
+        .with_details(json!({
+            "reason": if issued_the_proposer { "issued_the_proposer" } else { "same_person" },
+        })),
+        AppError::AdminReadRequiresPerson => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "admin.read_requires_person",
+            "The admin read needs a person-linked admin key or a session, and counts its reads per person (ADR-0097 d16).",
+            "this admin key counts as no person",
+        )
+        .with_details(json!({ "reason": "counts_as_no_person" })),
         AppError::SamePerson => ApiError::new(
             StatusCode::FORBIDDEN,
             "review.author_in_lineage",
@@ -1267,14 +1369,19 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             format!("this session holds no {capacity} key on this organisation"),
         )
         .with_details(json!({ "capacity": capacity })),
+        // The last live admin person, refused on every surface with its
+        // reason (ADR-0097 d25).
+        AppError::WebField {
+            field: "admin",
+            message,
+        } if message == LAST_ADMIN_MESSAGE => ApiError::validation(message)
+            .with_details(json!({ "field": "admin", "reason": "last_admin" })),
         AppError::WebField { field, message } => {
             ApiError::validation(message).with_details(json!({ "field": field }))
         }
         // Converted to `WebField` by `From<StoreError>`; never built raw.
-        AppError::Store(StoreError::LastAdminEntry) => ApiError::validation(
-            "this is the organisation's last admin address; add another admin first",
-        )
-        .with_details(json!({ "field": "admin" })),
+        AppError::Store(StoreError::LastAdminEntry) => ApiError::validation(LAST_ADMIN_MESSAGE)
+            .with_details(json!({ "field": "admin", "reason": "last_admin" })),
         // A read's feedback member is refused by the field it names, and
         // the read is not run (ADR-0054 d6).
         AppError::Feedback { field, message } => {

@@ -606,7 +606,10 @@ where
         let ServedNodes {
             nodes: readable, ..
         } = self.served_nodes(&caller, key.scope).await?;
-        let hit_nodes = with_universe(&caller, &readable, &scope_ancestry);
+        let mut hit_nodes = with_universe(&caller, &readable, &scope_ancestry);
+        // The scope a default recall searches holds every public node the
+        // key reads, so none is a candidate beside it (ADR-0098 d3, d7).
+        self.public_hit_nodes(&caller, &mut hit_nodes).await?;
         let (candidates, _) = self.candidates(&caller, key.scope, &hit_nodes).await?;
         let candidates: Vec<Uuid> = candidates.into_iter().map(|c| c.id).collect();
         let built_at_us = self.clock.now().unix_micros();

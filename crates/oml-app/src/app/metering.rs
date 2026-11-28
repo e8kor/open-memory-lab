@@ -363,8 +363,8 @@ where
         &self,
         bearer: impl Into<Bearer<'_>>,
     ) -> Result<UsageDriftReport, AppError> {
-        let caller = self.authenticate_bearer(bearer.into()).await?;
-        require_role(&caller, Role::Admin, "usage_drift")?;
+        // An admin key's or a maintenance key's (ADR-0097 d18).
+        let caller = self.counts_caller(bearer, "usage_drift").await?;
         let tenant_id = caller.key.tenant_id;
         let month = Month::of(&self.clock.now());
         let name_of = |root: Uuid| async move {

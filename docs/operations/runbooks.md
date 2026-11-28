@@ -220,22 +220,70 @@ Rotation does not heal the past. Anything the attacker signed still verifies und
 
 ## Revoke a key
 
-OML has no `revoke` or `rotate` command. To stop a key, deny it, then issue a new one.
+Use this when a key leaked, or its holder no longer needs it. `oml keys revoke` ends one key on every path: its value, its OAuth tokens and their refresh, and its connect codes. Nothing cascades, so the keys it issued keep working ([ADR-0097](../adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) d14). Revoking is narrowing and takes effect at once; revoking a person's key is loud, a notice to every admin person (d24).
 
-1. Deny the key across the whole tree.
-
-   ```bash
-   oml deny set <key> universe
-   ```
-
-2. Issue the replacement.
+1. Revoke the key, with the reason the journal keeps.
 
    ```bash
-   oml keys issue <key-name> --role <role> --grant <workspace>:<role>
+   oml keys revoke <key> --reason "<why>"
    ```
 
-3. Check the old key's denial.
+2. When the key's holder still needs access, issue a replacement. An issuance is widening: outside `sole_admin` it waits until a second admin person confirms it with `oml admin confirm <act> --reason "<why>"`.
 
    ```bash
-   oml keys show <old-key>
+   oml keys issue <key-name> --role <role> --grant <workspace>:<role> --reason "<why>"
    ```
+
+3. Check that the old key is revoked: `oml keys show <old-key>` names its revocation.
+
+To give a key a new value and keep its grants instead, use `oml keys rotate <key>`, with `--grace` (at most 24 hours) when its holder needs time to switch. A session key, the server's reserved key and a revoked key are refused by name.
+
+## A dispute between two admins is frozen, or a tenant's admins are dormant
+
+Use this when `oml doctor` raises `admin.dispute_open` (critical) or `operator.settlement_due`, or when no admin person of a tenant has signed in for 30 days. [ADR-0097](../adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) d19 gives the operator two host verbs for these cases. Both are built in v0.8.6. Recovery's dormancy is read from the server's authentication table, one row per key and UTC day kept 30 days (answer 24 of 2026-11-28).
+
+### Settle a freeze from the host
+
+A freeze is an act against an admin person, an un-flag, removal, disable or entry change, left open in a tenant with fewer than three admin persons. Both parties lose widening until it is settled. Once it has been open 24 hours, a placeholder, doctor raises `operator.settlement_due`, and the operator settles it from the host.
+
+1. Read the act's id: an admin person of the tenant lists it with `oml admin acts --state effective`, and doctor counts it. Read the tenant's id from that person's `oml whoami`.
+2. On the server's host, as root, run:
+
+   ```sh
+   oml operator settle <tenant id> <act id> --confirm --token-dir <operator.token_dir> --url <server>
+   ```
+
+   Use `--reverse` in place of `--confirm` to reverse the act. `--token-dir` reads `OML_OPERATOR__TOKEN_DIR` when it is not given.
+3. Read the answer. `--confirm` revokes the target's suspended admin keys, `cause: settlement`. `--reverse` lifts the suspension and restores the entry. The answer names the persons notified and what the mail relay did: it took the email, no relay is configured, or it refused it, with the SMTP stage and code. The settlement stands in every case.
+
+The verb reads the tenant's token from `<operator.token_dir>/<tenant id>.token`. Each server start writes one token per tenant there, mode 0600 in a 0700 directory, so only root and the server's own user read it. A restart replaces every token, and a tenant created after the start has no token until the next start. The token is never printed, logged or journalled, and no admin key is involved (answer 13 of 2026-11-27). The route refuses a request that also sends a key (`auth.invalid`, `operator_route_takes_no_key`) and a token that is not the tenant's of the current start (`operator_token`); a request with no token is `auth.missing`. It refuses an act that is not a freeze (`not_frozen`) and a freeze younger than 24 hours (`freeze_too_recent`).
+
+One commit journals the settled `admin.act` with no settler, `operator.settlement`, the effect's events, and a `settlement` notice to every admin person and both parties. The settlement issues no key and reads no content.
+
+When `/readyz` reports `operator_tokens: failed`, doctor raises `operator.token_unwritten`. Read the start log's `operator_tokens_unwritten` line, fix `operator.token_dir` or its permissions, and restart the server.
+
+### Recover a dormant tenant
+
+Use this when no admin person of a tenant has signed in, and no admin key of it has authenticated, for 30 days, a placeholder, and the tenant needs an admin again. The dormant admins keep their flags, so the new admin cannot widen alone until one of them returns, or, with one dormant admin, until the operator settles the new admin's un-flag of that admin (above). With two or more dormant admins that un-flag opens no freeze, so the new admin's widening waits for one of them to return: an accepted limit (d19).
+
+1. Check the coverage. `oml doctor` reports `auth.log_coverage`: the whole days the server's authentication table reaches back, deployment wide. Under 30 it warns, and the verb refuses `log_too_short`. A fresh install or an upgrade to v0.8.6 covers nothing on its first day and reaches 30 days after 30 days of traffic. A day on which no key of any tenant authenticated leaves a gap at the table's oldest end, so a quiet deployment can read short; the verb then refuses rather than reading the gap as dormancy. This is a known limit, tracked for v0.8.7.
+2. Read the tenant's id. With no admin person to run `oml whoami`, it is the name of the tenant's token file in `operator.token_dir`, `<tenant id>.token`.
+3. On the server's host, as root, run:
+
+   ```sh
+   oml operator recover <tenant id> --person <name> --email <address> --token-dir <operator.token_dir> --url <server>
+   ```
+
+   `<name>` is the admin person the recovery adds, a name the tenant does not hold as a workspace, key or entry, and `<address>` the address they sign in with. `--token-dir` reads `OML_OPERATOR__TOKEN_DIR` when it is not given, as `oml operator settle` does.
+4. Read the answer. It names the recovery's id, when it completes, the persons notified and what the mail relay did. Every admin person gets a `recovery` notice in To do and an email, which is how a dormant admin learns of it: configure the relay first (below).
+5. Wait. Any admin person's sign-in, or any admin key's authentication, in the 72 hours, a placeholder, cancels the recovery: the server's sweep, once a minute, journals `operator.recovery_cancelled`. With none, the sweep completes it once the 72 hours pass: in one commit every admin key of the tenant is revoked, `cause: recovery`, the named person's entry is added as an admin person, and `operator.recovery` records the window and the revoked keys. The new admin person signs in to the console with that address, and the server issuer issues their session keys.
+
+The verb is refused `operator.recover_refused` with `details.reason` `log_too_short` (step 1), `log_write_failed` (this server process could not write some authentication rows since it started), `admin_active` (an admin authenticated in the 30 days), `pending` (a recovery already waits), `dispute_open` (an act against an admin is open: settle it first), `person_taken` or `email_taken`. The route refuses a key and a wrong token as the settle route does.
+
+While a recovery waits, doctor raises `admin.recovery_pending` (critical). Past its 72 hours and not completed, it raises `admin.recovery_overdue` (critical): the sweep is failing for that tenant. Read the server log's `recovery_sweep_failed` lines. A name or address taken while the request waited is refused by name there, and the request stays; ask the tenant's other users which entry holds it. The sweep's state is the database's, so a restart resumes it, and each request completes once whichever replica's sweep reaches it first. When doctor raises `auth.log_write_failed`, the server could not write some authentication rows since it started. The key's next authentication writes the row again, but a row that was never written would read as dormancy, so while that process counts any such failure it refuses the verb `log_write_failed`. The count is each process's own: another replica that counted none admits the request, so run the verb against a replica whose doctor reads `auth.log_write_failed: 0`, or fix the write path and restart (answer 26 of 2026-11-28).
+
+Do not edit the database by hand: the journal's tamper evidence is the control against the host.
+
+### Notice email
+
+Recovery and settlement notices are emailed to every admin person, since a dormant admin sees nothing in-product (d20). Set `mail.host` and `mail.from`, and `mail.port` when the relay is not on 25 ([configuration](configuration.md)). The relay is a local one, such as Postfix on the host, which handles TLS and authentication. The server speaks plain SMTP to it and holds no mail credential (answer 14). With no relay set, doctor warns `notice.mail_unconfigured`. When the relay refuses or cannot be reached, doctor raises `notice.mail_delivery_failed` with the last reason, and the start log has a `notice_mail_failed` line. The count is the process's own, and a restart clears it.

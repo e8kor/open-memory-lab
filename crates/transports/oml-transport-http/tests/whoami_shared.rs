@@ -48,7 +48,7 @@ fn open_signup() -> SignupPolicy {
     SignupPolicy {
         mode: oml_app::domain::signup::SignupMode::Open,
         tenant_id: uuid::Uuid::nil(),
-        issuer: Name::parse("root-admin").expect("a name"),
+        issuer: Some(Name::parse("root-admin").expect("a name")),
         terms_version: "1".to_owned(),
         terms_url: "https://oml.example.com/terms".to_owned(),
         privacy_url: "https://oml.example.com/privacy".to_owned(),

@@ -273,6 +273,22 @@ impl Client {
         Ok(request.send_json(body.clone()))
     }
 
+    /// POST a JSON body to the operator's host route with `token` as its
+    /// `OML-Operator-Token` and no key (ADR-0097 d19): the route refuses
+    /// any `Authorization` header.
+    pub fn post_operator(
+        &self,
+        path: &str,
+        body: &Value,
+        token: &str,
+    ) -> Result<(u16, Value), CliError> {
+        let request = self
+            .agent
+            .post(&format!("{}{path}", self.server))
+            .set("OML-Operator-Token", token);
+        finish(request.send_json(body.clone()))
+    }
+
     /// POST a JSON body under the key, with `idempotency_key` as its
     /// `Idempotency-Key`, so a re-run naming the same key replays the first
     /// answer (http-api.md idempotency; ADR-0039 d3).

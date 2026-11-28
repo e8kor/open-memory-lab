@@ -59,6 +59,8 @@ struct World {
     router: Router,
     tenant: uuid::Uuid,
     admin: String,
+    /// A second admin key, bob's (ADR-0097 d21).
+    second: String,
 }
 
 async fn world() -> World {
@@ -73,10 +75,13 @@ async fn world() -> World {
         })
         .await
         .expect("bootstrap");
+    let second =
+        support::linked_admin_key(&app, &boot.admin_key.value, "bob", "second-admin").await;
     World {
         router: state(&store, app).into_router(),
         tenant: boot.tenant_id,
         admin: boot.admin_key.value,
+        second,
         store,
     }
 }
@@ -218,16 +223,7 @@ async fn a_used_key_sent_with_another_request_is_digest_mismatch_and_acts_nothin
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn two_admins_under_one_idempotency_key_each_issue_their_own_key() {
     let w = world().await;
-    let (status, _, second) = send(
-        &w.router,
-        "/v2/keys",
-        &w.admin,
-        "k-admin",
-        &json!({"role": "admin", "name": "second-admin", "principal": "bob"}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED, "{second}");
-    let second = second["value"].as_str().expect("the value").to_owned();
+    let second = w.second.clone();
     let (s1, h1, a1) = send(
         &w.router,
         "/v2/keys",

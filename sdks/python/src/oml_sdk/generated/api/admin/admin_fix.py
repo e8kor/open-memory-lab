@@ -4,6 +4,7 @@ from typing import Any
 import httpx
 
 from ...client import AuthenticatedClient, Client
+from ...models.admin_act import AdminAct
 from ...models.admin_fix_body import AdminFixBody
 from ...models.error_envelope import ErrorEnvelope
 from ...models.fix import Fix
@@ -42,11 +43,16 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ErrorEnvelope | Fix:
+) -> AdminAct | ErrorEnvelope | Fix:
     if response.status_code == 201:
         response_201 = Fix.from_dict(response.json())
 
         return response_201
+
+    if response.status_code == 202:
+        response_202 = AdminAct.from_dict(response.json())
+
+        return response_202
 
     if response.status_code == 403:
         response_403 = ErrorEnvelope.from_dict(response.json())
@@ -70,7 +76,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ErrorEnvelope | Fix]:
+) -> Response[AdminAct | ErrorEnvelope | Fix]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -86,7 +92,7 @@ def sync_detailed(
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-) -> Response[ErrorEnvelope | Fix]:
+) -> Response[AdminAct | ErrorEnvelope | Fix]:
     """Take a marked break-glass fix that serves at once and waits for a person to confirm or revert it.
 
      Requires: admin key role, used by a person and linked to that person (ADR-0089 d1, the operator's
@@ -94,12 +100,17 @@ def sync_detailed(
     not_used_by_person or unlinked, every other role access.verb_ceiling. act is demote (an approved
     version; the claim's tip returns to its latest earlier approved version, or none), edit (body and
     optional title replace the served tip), retire (the served tip is retired, reason as its body) or
-    erase (every version of the claim is crypto-shredded). reason is 1 to 1,024 bytes, stored in clear
-    and scanned. One commit journals the lifecycle event the act causes, then admin.fix naming it. An
-    edit's body is scanned as its kind requires: a veto answers submission.scan_veto and a hold
-    admin.fix_held_by_scan. In a frozen workspace an edit or retirement answers workspace.frozen. A
-    demotion of a version that is not approved answers admin.fix_target_not_promoted. Not idempotent.
-    Since v0.8.4.
+    erase (every version of the claim is crypto-shredded: at once, marked sole_admin, in a tenant that
+    has never had two live admin persons; otherwise every approved version of the claim is demoted at
+    once as the fix, the bytes are kept, and the shred waits, unexpiring, on a second admin person's
+    POST /v2/admin/acts/{act}/confirm, while a decline leaves the claim demoted (ADR-0097 d4). An erase
+    of a version that is not approved, outside sole_admin, has nothing to demote: it answers 202 with
+    the pending shred act alone and makes no fix, the operator's decision of 2026-11-27). reason is 1 to
+    1,024 bytes, stored in clear and scanned. One commit journals the lifecycle event the act causes,
+    then admin.fix naming it. An edit's body is scanned as its kind requires: a veto answers
+    submission.scan_veto and a hold admin.fix_held_by_scan. In a frozen workspace an edit or retirement
+    answers workspace.frozen. A demotion of a version that is not approved answers
+    admin.fix_target_not_promoted. Not idempotent. Since v0.8.4.
 
     Args:
         x_request_id (str | Unset):
@@ -112,7 +123,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope | Fix]
+        Response[AdminAct | ErrorEnvelope | Fix]
     """
 
     kwargs = _get_kwargs(
@@ -136,7 +147,7 @@ def sync(
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-) -> ErrorEnvelope | Fix | None:
+) -> AdminAct | ErrorEnvelope | Fix | None:
     """Take a marked break-glass fix that serves at once and waits for a person to confirm or revert it.
 
      Requires: admin key role, used by a person and linked to that person (ADR-0089 d1, the operator's
@@ -144,12 +155,17 @@ def sync(
     not_used_by_person or unlinked, every other role access.verb_ceiling. act is demote (an approved
     version; the claim's tip returns to its latest earlier approved version, or none), edit (body and
     optional title replace the served tip), retire (the served tip is retired, reason as its body) or
-    erase (every version of the claim is crypto-shredded). reason is 1 to 1,024 bytes, stored in clear
-    and scanned. One commit journals the lifecycle event the act causes, then admin.fix naming it. An
-    edit's body is scanned as its kind requires: a veto answers submission.scan_veto and a hold
-    admin.fix_held_by_scan. In a frozen workspace an edit or retirement answers workspace.frozen. A
-    demotion of a version that is not approved answers admin.fix_target_not_promoted. Not idempotent.
-    Since v0.8.4.
+    erase (every version of the claim is crypto-shredded: at once, marked sole_admin, in a tenant that
+    has never had two live admin persons; otherwise every approved version of the claim is demoted at
+    once as the fix, the bytes are kept, and the shred waits, unexpiring, on a second admin person's
+    POST /v2/admin/acts/{act}/confirm, while a decline leaves the claim demoted (ADR-0097 d4). An erase
+    of a version that is not approved, outside sole_admin, has nothing to demote: it answers 202 with
+    the pending shred act alone and makes no fix, the operator's decision of 2026-11-27). reason is 1 to
+    1,024 bytes, stored in clear and scanned. One commit journals the lifecycle event the act causes,
+    then admin.fix naming it. An edit's body is scanned as its kind requires: a veto answers
+    submission.scan_veto and a hold admin.fix_held_by_scan. In a frozen workspace an edit or retirement
+    answers workspace.frozen. A demotion of a version that is not approved answers
+    admin.fix_target_not_promoted. Not idempotent. Since v0.8.4.
 
     Args:
         x_request_id (str | Unset):
@@ -162,7 +178,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope | Fix
+        AdminAct | ErrorEnvelope | Fix
     """
 
     return sync_detailed(
@@ -181,7 +197,7 @@ async def asyncio_detailed(
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-) -> Response[ErrorEnvelope | Fix]:
+) -> Response[AdminAct | ErrorEnvelope | Fix]:
     """Take a marked break-glass fix that serves at once and waits for a person to confirm or revert it.
 
      Requires: admin key role, used by a person and linked to that person (ADR-0089 d1, the operator's
@@ -189,12 +205,17 @@ async def asyncio_detailed(
     not_used_by_person or unlinked, every other role access.verb_ceiling. act is demote (an approved
     version; the claim's tip returns to its latest earlier approved version, or none), edit (body and
     optional title replace the served tip), retire (the served tip is retired, reason as its body) or
-    erase (every version of the claim is crypto-shredded). reason is 1 to 1,024 bytes, stored in clear
-    and scanned. One commit journals the lifecycle event the act causes, then admin.fix naming it. An
-    edit's body is scanned as its kind requires: a veto answers submission.scan_veto and a hold
-    admin.fix_held_by_scan. In a frozen workspace an edit or retirement answers workspace.frozen. A
-    demotion of a version that is not approved answers admin.fix_target_not_promoted. Not idempotent.
-    Since v0.8.4.
+    erase (every version of the claim is crypto-shredded: at once, marked sole_admin, in a tenant that
+    has never had two live admin persons; otherwise every approved version of the claim is demoted at
+    once as the fix, the bytes are kept, and the shred waits, unexpiring, on a second admin person's
+    POST /v2/admin/acts/{act}/confirm, while a decline leaves the claim demoted (ADR-0097 d4). An erase
+    of a version that is not approved, outside sole_admin, has nothing to demote: it answers 202 with
+    the pending shred act alone and makes no fix, the operator's decision of 2026-11-27). reason is 1 to
+    1,024 bytes, stored in clear and scanned. One commit journals the lifecycle event the act causes,
+    then admin.fix naming it. An edit's body is scanned as its kind requires: a veto answers
+    submission.scan_veto and a hold admin.fix_held_by_scan. In a frozen workspace an edit or retirement
+    answers workspace.frozen. A demotion of a version that is not approved answers
+    admin.fix_target_not_promoted. Not idempotent. Since v0.8.4.
 
     Args:
         x_request_id (str | Unset):
@@ -207,7 +228,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope | Fix]
+        Response[AdminAct | ErrorEnvelope | Fix]
     """
 
     kwargs = _get_kwargs(
@@ -229,7 +250,7 @@ async def asyncio(
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-) -> ErrorEnvelope | Fix | None:
+) -> AdminAct | ErrorEnvelope | Fix | None:
     """Take a marked break-glass fix that serves at once and waits for a person to confirm or revert it.
 
      Requires: admin key role, used by a person and linked to that person (ADR-0089 d1, the operator's
@@ -237,12 +258,17 @@ async def asyncio(
     not_used_by_person or unlinked, every other role access.verb_ceiling. act is demote (an approved
     version; the claim's tip returns to its latest earlier approved version, or none), edit (body and
     optional title replace the served tip), retire (the served tip is retired, reason as its body) or
-    erase (every version of the claim is crypto-shredded). reason is 1 to 1,024 bytes, stored in clear
-    and scanned. One commit journals the lifecycle event the act causes, then admin.fix naming it. An
-    edit's body is scanned as its kind requires: a veto answers submission.scan_veto and a hold
-    admin.fix_held_by_scan. In a frozen workspace an edit or retirement answers workspace.frozen. A
-    demotion of a version that is not approved answers admin.fix_target_not_promoted. Not idempotent.
-    Since v0.8.4.
+    erase (every version of the claim is crypto-shredded: at once, marked sole_admin, in a tenant that
+    has never had two live admin persons; otherwise every approved version of the claim is demoted at
+    once as the fix, the bytes are kept, and the shred waits, unexpiring, on a second admin person's
+    POST /v2/admin/acts/{act}/confirm, while a decline leaves the claim demoted (ADR-0097 d4). An erase
+    of a version that is not approved, outside sole_admin, has nothing to demote: it answers 202 with
+    the pending shred act alone and makes no fix, the operator's decision of 2026-11-27). reason is 1 to
+    1,024 bytes, stored in clear and scanned. One commit journals the lifecycle event the act causes,
+    then admin.fix naming it. An edit's body is scanned as its kind requires: a veto answers
+    submission.scan_veto and a hold admin.fix_held_by_scan. In a frozen workspace an edit or retirement
+    answers workspace.frozen. A demotion of a version that is not approved answers
+    admin.fix_target_not_promoted. Not idempotent. Since v0.8.4.
 
     Args:
         x_request_id (str | Unset):
@@ -255,7 +281,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope | Fix
+        AdminAct | ErrorEnvelope | Fix
     """
 
     return (

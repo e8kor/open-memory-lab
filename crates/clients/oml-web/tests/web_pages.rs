@@ -131,7 +131,15 @@ fn front(lead: SocketAddr, web: SocketAddr) -> Router {
 /// the lead with both providers on and the web client's secret set, and
 /// `oml-web` reaching it over loopback.
 async fn rig() -> Rig {
-    let store = MemStore::new();
+    // The console suite adds several admin entries to reach its persons;
+    // the admin act's confirm-first rule has its own suite (ADR-0097 d10).
+    rig_on(MemStore::new().keeping_sole_admin(), false).await
+}
+
+/// [`rig`] over `store`; with `one_clock` the tests' own app shares the
+/// lead's clock, so an act a test takes after moving it is as old as the
+/// lead reads it (ADR-0097 d11).
+async fn rig_on(store: MemStore, one_clock: bool) -> Rig {
     let providers = MemSignIn::new();
     let boot = test_app(&store)
         .bootstrap_tenant(&BootstrapRequest {
@@ -172,9 +180,14 @@ async fn rig() -> Rig {
         api: oml_web::api(Arc::new(transport), WEB_CLIENT_SECRET).expect("an API client"),
     });
     let web = serve(web).await;
+    let app = if one_clock {
+        test_app_on(&store, lead_clock.clone())
+    } else {
+        test_app(&store)
+    };
     let rig = Rig {
         lead_clock,
-        app: Arc::new(test_app(&store)),
+        app: Arc::new(app),
         store,
         router: front(lead, web),
         direct: front(web, web),
@@ -432,6 +445,62 @@ async fn signed_in(rig: &Rig, subject: &str, email: &str) -> String {
 /// An open investigation of the tenant's boot admin key, for the tests'
 /// own admin reads through the application (ADR-0089 d10).
 async fn boot_investigation(rig: &Rig) -> uuid::Uuid {
+    // The admin read needs a person-linked admin key (ADR-0097 d16): the
+    // boot key links itself to the tenant's admin person, who accepts.
+    let admin = rig.boot.admin_key.value.as_str();
+    let ops = match rig
+        .app
+        .list_web_emails(admin, None, 500)
+        .await
+        .expect("entries")
+        .into_iter()
+        .find(|e| e.admin && !e.pending)
+    {
+        Some(entry) => entry,
+        None => {
+            rig.app
+                .allow_web_email(
+                    admin,
+                    &oml_app::types::WebEmailRequest {
+                        email: oml_app::domain::web::Email::parse("ops-boot@example.com")
+                            .expect("an email"),
+                        user: oml_app::domain::name::Name::parse("ops-boot").expect("a name"),
+                        admin: true,
+                    },
+                )
+                .await
+                .expect("an admin entry")
+                .0
+        }
+    };
+    rig.app.web_ensure_keys(&ops).await.expect("session keys");
+    if let Ok(key) = rig
+        .app
+        .link_self(admin, &ops.user, Some("the person holds this key"))
+        .await
+    {
+        let token = rig
+            .app
+            .web_session_open(&ops, 3600, None)
+            .await
+            .expect("a session")
+            .token;
+        let session = rig
+            .app
+            .web_session(&token)
+            .await
+            .expect("a read")
+            .expect("a live session");
+        let web = rig
+            .app
+            .web_caller(&session, oml_app::app::Capacity::Web)
+            .await
+            .expect("the console");
+        rig.app
+            .accept_key_link(oml_app::types::Bearer::Session(&web), key.key_id.into())
+            .await
+            .expect("the link is accepted");
+    }
     rig.app
         .open_investigation(rig.boot.admin_key.value.as_str(), "the console tests")
         .await
@@ -1292,6 +1361,7 @@ async fn tenant_reviewer_in(rig: &Rig, name: &str, user: &str) -> oml_app::types
                         role,
                         deny: Vec::new(),
                         covers: oml_app::domain::access::Covers::Subtree,
+                        create: false,
                     })
                     .collect(),
                 connect_code: false,
@@ -1299,6 +1369,8 @@ async fn tenant_reviewer_in(rig: &Rig, name: &str, user: &str) -> oml_app::types
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -1856,37 +1928,6 @@ async fn the_admin_workspaces_page_is_not_found_for_a_person_who_is_not_an_admin
 }
 
 #[tokio::test]
-async fn the_admin_workspaces_page_refuses_a_create_as_no_action_of_its_own_and_creates_nothing() {
-    let rig = rig().await;
-    rig.allow("boss@example.com", "boss", true).await;
-    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
-    let (status, _, page) = act(
-        &rig,
-        &admin,
-        "/web/admin/workspaces",
-        &[("action", "create_workspace"), ("name", "shadow")],
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{page}");
-    assert!(page.contains("request.validation"), "{page}");
-    assert!(
-        page.contains("action is not one of this page&#39;s actions")
-            || page.contains("action is not one of this page's actions"),
-        "{page}"
-    );
-    let root = key_named(&rig, "boss-web").await.user.expect("a root");
-    let children = rig
-        .store
-        .workspace_children(rig.boot.tenant_id, root)
-        .await
-        .unwrap();
-    assert!(
-        children.iter().all(|w| w.name.as_str() != "shadow"),
-        "nothing was created"
-    );
-}
-
-#[tokio::test]
 async fn the_old_workspaces_urls_are_not_found_and_their_acts_run_nothing() {
     // The lead's 303s from the old URLs are deleted in v0.7.1 (ADR-0070,
     // "The old URLs deleted"): an old URL is not found, an old act is
@@ -2229,7 +2270,7 @@ async fn every_signed_in_page_draws_the_sign_out_control_in_its_header() {
         );
         drawn += 1;
     }
-    assert_eq!(drawn, 27, "every page route of oml_web::PAGES was read");
+    assert_eq!(drawn, 29, "every page route of oml_web::PAGES was read");
     // A page an act answers is drawn by the same chrome.
     let (status, _, page) = act(
         &rig,
@@ -3646,6 +3687,9 @@ async fn the_last_admin_address_is_never_removed_or_unflagged_from_the_page() {
             ("action", "set_admin"),
             ("email", "carol@example.com"),
             ("admin", "no"),
+            // Carol is another admin person: the act carries a reason
+            // (ADR-0097 d8, d26).
+            ("reason", "carol moves teams"),
         ],
     )
     .await;
@@ -5937,6 +5981,7 @@ async fn alice_key(
             role,
             deny: Vec::new(),
             covers: oml_app::domain::access::Covers::Subtree,
+            create: false,
         })
         .collect();
     issuer
@@ -5956,6 +6001,8 @@ async fn alice_key(
                 guardrail_scope: None,
                 expiry: expiry.map(|at| oml_app::domain::EventTime::parse(at).expect("an instant")),
                 requests_per_minute,
+                person: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -6937,12 +6984,15 @@ async fn other_tenant_writes(rig: &Rig, body: &str) {
                     role: Role::Submitter,
                     deny: Vec::new(),
                     covers: oml_app::domain::access::Covers::Subtree,
+                    create: false,
                 }],
                 connect_code: false,
                 user: None,
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -8410,6 +8460,7 @@ async fn held_in_a_nested_shared_workspace(rig: &Rig) -> (String, String, uuid::
                         role,
                         deny: Vec::new(),
                         covers: oml_app::domain::access::Covers::Subtree,
+                        create: false,
                     })
                     .collect(),
                 connect_code: false,
@@ -8417,6 +8468,8 @@ async fn held_in_a_nested_shared_workspace(rig: &Rig) -> (String, String, uuid::
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -8788,6 +8841,7 @@ async fn team_key(
                         role: *role,
                         deny: Vec::new(),
                         covers: oml_app::domain::access::Covers::Subtree,
+                        create: false,
                     })
                     .collect(),
                 connect_code: false,
@@ -8795,6 +8849,8 @@ async fn team_key(
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -8915,6 +8971,7 @@ async fn the_console_judges_in_a_shared_workspace_with_the_linked_key() {
             ("action", "link_key"),
             ("key", "alice-team"),
             ("user", "alice"),
+            ("reason", "alice works with this key"),
         ],
     )
     .await;
@@ -12335,12 +12392,15 @@ async fn the_admin_console_rotates_a_tenant_key_and_offers_no_rotate_on_a_person
                     role: Role::Reader,
                     deny: Vec::new(),
                     covers: oml_app::domain::access::Covers::Subtree,
+                    create: false,
                 }],
                 connect_code: false,
                 user: None,
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -12376,4 +12436,326 @@ async fn the_admin_console_rotates_a_tenant_key_and_offers_no_rotate_on_a_person
     let new = value_of(&shown);
     rig.app.whoami(&new).await.expect("the new value");
     assert!(rig.app.whoami(&old).await.is_err(), "the old value stopped");
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0097 d29 to d31: the admin console creates workspaces and issues keys
+// ---------------------------------------------------------------------------
+
+/// The admin Workspaces page creates a workspace anywhere in the tenant as
+/// `<user>-admin`, a blank parent meaning `universe`: the form posts once
+/// and answers a `303` back to the view (ADR-0097 d9, d29).
+#[tokio::test]
+async fn the_admin_workspaces_page_creates_a_workspace_under_universe() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (status, _, page) = send(&rig.router, get("/web/admin/workspaces", Some(&boss))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("<h2>New workspace</h2>"), "{page}");
+    assert!(page.contains("inside (blank: universe)"), "{page}");
+    assert!(page.contains("as <code>boss-admin</code>"), "{page}");
+    let hidden = hidden_fields(&page, "create_workspace");
+    let mut fields: Vec<(&str, &str)> = hidden
+        .iter()
+        .map(|(n, v)| (n.as_str(), v.as_str()))
+        .collect();
+    fields.push(("name", "ops-shared"));
+    fields.push(("parent", ""));
+    let (status, headers, body) = send(
+        &rig.router,
+        post("/web/admin/workspaces", &fields, Some(&boss)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    assert_eq!(location(&headers), "/web/admin/workspaces?done=created");
+    let created = rig
+        .store
+        .resolve_name(
+            rig.boot.tenant_id,
+            oml_app::domain::name::NamedKind::Workspace,
+            &Name::parse("ops-shared").expect("a name"),
+        )
+        .await
+        .expect("read")
+        .expect("created");
+    let node = rig
+        .store
+        .workspace(rig.boot.tenant_id, created)
+        .await
+        .expect("read")
+        .expect("held");
+    assert_eq!(node.parent_id, Some(rig.boot.root_workspace_id));
+}
+
+/// The admin key builder: the templates, a review that refuses a draft
+/// without a reason and restates a new workspace and a grant's create
+/// flag in the exact request, and Issue key, which shows the value once on
+/// the admin Keys page. A person who is no admin finds no such page
+/// (ADR-0097 d26, d29, d30, d31).
+#[tokio::test]
+async fn the_admin_key_builder_issues_a_key_with_a_new_workspace_and_a_create_grant() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (status, _, _) = send(&rig.router, get("/web/admin/keys/new", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _, start) = send(&rig.router, get("/web/admin/keys/new", Some(&boss))).await;
+    assert_eq!(status, StatusCode::OK, "{start}");
+    for shape in ["one", "read", "write", "review", "new", "connector"] {
+        assert!(
+            start.contains(&format!(r#"href="/web/admin/keys/new?shape={shape}""#)),
+            "{shape}: {start}"
+        );
+    }
+    assert!(!start.contains("<script"), "{start}");
+    let (_, _, form) = send(
+        &rig.router,
+        get("/web/admin/keys/new?shape=new", Some(&boss)),
+    )
+    .await;
+    assert!(form.contains("New workspace 1"), "{form}");
+    assert!(form.contains("Add a new workspace"), "{form}");
+    assert!(form.contains(r#"name="why""#), "{form}");
+    let draft = "/web/admin/keys/new?kind=agent&name=ops-bot&role=contributor&n=2&g0w=universe&g0r=submitter&g0c=subtree&g0k=1&g1w=universe&g1r=reader&g1c=subtree&m=1&w0p=universe&w0n=ops-space&dw=&gs=ancestors&exp=&rpm=&kb=agent";
+    let (_, _, refused) = send(
+        &rig.router,
+        get(&format!("{draft}&step=review"), Some(&boss)),
+    )
+    .await;
+    assert!(refused.contains(r##"<a href="#why">"##), "{refused}");
+    let (_, _, review) = send(
+        &rig.router,
+        get(
+            &format!("{draft}&why=the+ops+agent&step=review"),
+            Some(&boss),
+        ),
+    )
+    .await;
+    assert!(review.contains("<h1>Review key</h1>"), "{review}");
+    assert!(review.contains("&quot;create_workspaces&quot;"), "{review}");
+    assert!(review.contains("&quot;create&quot;: true"), "{review}");
+    assert!(review.contains("Waits on another admin"), "{review}");
+    assert!(review.contains(r#"action="/web/admin/keys""#), "{review}");
+    let fields = hidden_fields(&review, "build_key");
+    let fields: Vec<(&str, &str)> = fields
+        .iter()
+        .map(|(n, v)| (n.as_str(), v.as_str()))
+        .collect();
+    let (status, headers, body) =
+        send(&rig.router, post("/web/admin/keys", &fields, Some(&boss))).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    assert_eq!(location(&headers), "/web/admin/keys");
+    let (sealed, _) = set_cookie(&headers, ONCE_COOKIE).expect("the shown-once cookie");
+    let (_, _, shown) = send(
+        &rig.router,
+        get(
+            "/web/admin/keys",
+            Some(&format!("{boss}; {ONCE_COOKIE}={sealed}")),
+        ),
+    )
+    .await;
+    assert!(shown.contains("OML_API_KEY="), "{shown}");
+    assert!(shown.contains("Shown once"), "{shown}");
+    key_named(&rig, "ops-bot").await;
+}
+
+// -- admin acts on the console (ADR-0097 d2, d23) ----------------------------
+
+/// A tenant with two admin persons, alice and bob, accepted eight days ago,
+/// and an agent key the boot admin key issued since, pending: it waits on a
+/// second admin person.
+async fn two_admins_and_a_pending_key() -> (Rig, String) {
+    let rig = rig_on(MemStore::new(), true).await;
+    rig.allow(EMAIL, "alice", true).await;
+    rig.allow("bob@example.com", "bob", true).await;
+    rig.lead_clock.advance(8 * 86_400);
+    let issued = rig
+        .app
+        .issue_key_with_reason(
+            rig.boot.admin_key.value.as_str(),
+            &oml_app::types::IssueKeyRequest {
+                profile: None,
+                role: oml_app::domain::Role::Reader,
+                name: Name::parse("acts-agent").expect("a name"),
+                principal: "acts-agent".to_owned(),
+                used_by: Some(oml_app::domain::UsedBy::Agent),
+                default_workspace: None,
+                crew: None,
+                grants: vec![oml_app::types::GrantRequest {
+                    node: oml_app::domain::name::Reference::parse("universe").expect("a name"),
+                    role: oml_app::domain::Role::Reader,
+                    deny: Vec::new(),
+                    covers: oml_app::domain::access::Covers::Subtree,
+                    create: false,
+                }],
+                user: None,
+                connect_code: false,
+                guardrail_scope: None,
+                expiry: None,
+                requests_per_minute: None,
+                person: None,
+                create_workspaces: Vec::new(),
+            },
+            Some("an agent for the nightly digest"),
+        )
+        .await
+        .expect("a pending issuance");
+    let act = issued.pending_act.expect("the issuance waits");
+    (rig, act.to_string())
+}
+
+/// The administration To do lists the act under "Admin acts to confirm",
+/// and its confirm screen shows what a confirmation applies (d23): the
+/// role, the grants, `used_by`, the principal, who took it and why; the
+/// confirmation applies it and the screen says so.
+#[tokio::test]
+async fn admin_acts_to_confirm_open_a_confirm_screen_whose_confirmation_applies_the_act() {
+    let (rig, act) = two_admins_and_a_pending_key().await;
+    let cookie = signed_in(&rig, "sub-alice", EMAIL).await;
+    let (status, _, todo) = send(&rig.router, get("/web/admin/todo", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{todo}");
+    // The two admin flags the boot key set at once under sole admin, and
+    // the pending issuance: as the counts read serves them (d10).
+    assert!(todo.contains("Admin acts to confirm · 3"), "{todo}");
+    let link = format!("/web/admin/acts?act={act}");
+    assert!(todo.contains(&link), "{todo}");
+    let (status, _, screen) = send(&rig.router, get(&link, Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{screen}");
+    for shown in [
+        "issue key",
+        "widening",
+        "pending confirmation",
+        "an agent for the nightly digest",
+        "acts-agent",
+        "Grants a confirmation applies",
+        "reader",
+        "agent",
+        "Confirm",
+        "Decline",
+    ] {
+        assert!(screen.contains(shown), "{shown}: {screen}");
+    }
+    for word in [" you ", " your ", " my "] {
+        assert!(!screen.to_lowercase().contains(word), "{word}");
+    }
+    let csrf = csrf_of(&screen);
+    // A confirmation carries a reason (ADR-0097 d26; amendment of
+    // 2026-11-27, answer 18): one sent without is refused before any call.
+    let (status, _, body) = send(
+        &rig.router,
+        post(
+            "/web/admin/acts",
+            &[
+                ("csrf_token", csrf.as_str()),
+                ("action", "confirm"),
+                ("act", act.as_str()),
+            ],
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.contains("a confirmation carries a reason"), "{body}");
+    let (status, headers, body) = send(
+        &rig.router,
+        post(
+            "/web/admin/acts",
+            &[
+                ("csrf_token", csrf.as_str()),
+                ("action", "confirm"),
+                ("act", act.as_str()),
+                ("reason", "the digest is wanted"),
+            ],
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let location = headers[http::header::LOCATION]
+        .to_str()
+        .expect("a location");
+    assert_eq!(location, format!("{link}&done=confirmed"));
+    let (_, _, after) = send(&rig.router, get(location, Some(&cookie))).await;
+    assert!(after.contains("confirmed: the act took effect"), "{after}");
+    assert!(after.contains("Confirmed by"), "{after}");
+    assert!(after.contains("the digest is wanted"), "{after}");
+    assert!(
+        !after.contains(r#"value="confirm""#),
+        "no form once settled"
+    );
+}
+
+/// A decline on the confirm screen carries a reason: one sent without is
+/// refused before any API call, and one with it is final.
+#[tokio::test]
+async fn a_decline_on_the_confirm_screen_requires_a_reason_and_is_final() {
+    let (rig, act) = two_admins_and_a_pending_key().await;
+    let cookie = signed_in(&rig, "sub-bob", "bob@example.com").await;
+    let link = format!("/web/admin/acts?act={act}");
+    let (_, _, screen) = send(&rig.router, get(&link, Some(&cookie))).await;
+    let csrf = csrf_of(&screen);
+    let (status, _, body) = send(
+        &rig.router,
+        post(
+            "/web/admin/acts",
+            &[
+                ("csrf_token", csrf.as_str()),
+                ("action", "decline"),
+                ("act", act.as_str()),
+            ],
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.contains("a decline carries a reason"), "{body}");
+    let (status, headers, body) = send(
+        &rig.router,
+        post(
+            "/web/admin/acts",
+            &[
+                ("csrf_token", csrf.as_str()),
+                ("action", "decline"),
+                ("act", act.as_str()),
+                ("reason", "the digest runs elsewhere"),
+            ],
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let location = headers[http::header::LOCATION]
+        .to_str()
+        .expect("a location");
+    let (_, _, after) = send(&rig.router, get(location, Some(&cookie))).await;
+    assert!(
+        after.contains("declined: the act never takes effect"),
+        "{after}"
+    );
+    assert!(!after.contains(r#"value="decline""#), "{after}");
+}
+
+/// The admin acts list draws every act, newest first, each opening its
+/// screen; a person with no admin entry is not found there.
+#[tokio::test]
+async fn the_admin_acts_list_draws_every_act_and_is_not_found_to_a_non_admin() {
+    let (rig, act) = two_admins_and_a_pending_key().await;
+    let cookie = signed_in(&rig, "sub-alice", EMAIL).await;
+    let (status, _, list) = send(&rig.router, get("/web/admin/acts", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    assert!(list.contains("<h1>Admin acts</h1>"), "{list}");
+    assert!(
+        list.contains(&format!("/web/admin/acts?act={act}")),
+        "{list}"
+    );
+    assert!(
+        list.contains("allow admin"),
+        "the flags are acts too: {list}"
+    );
+    rig.allow("carol@example.com", "carol", false).await;
+    let carol = signed_in(&rig, "sub-carol", "carol@example.com").await;
+    let (status, _, _) = send(&rig.router, get("/web/admin/acts", Some(&carol))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }

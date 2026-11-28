@@ -52,6 +52,7 @@ export {
   NamingError,
   OAuthError,
   OmlError,
+  OperatorError,
   ProposalError,
   RequestError,
   ReviewError,

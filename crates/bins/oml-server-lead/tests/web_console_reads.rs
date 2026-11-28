@@ -15,6 +15,7 @@ use serde_json::Value;
 use tower::ServiceExt as _;
 
 use oml_app::App;
+use oml_app::app::Capacity;
 use oml_app::domain::access::Covers;
 use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::web::{Email, capacity_credential};
@@ -121,6 +122,23 @@ async fn rig() -> Rig {
     )
     .with_web_client(WebClient::new(Some(SECRET.to_owned()), None))
     .into_router();
+    // Each key's first authentication of a day writes its authentication
+    // row, one store call once a day (ADR-0097, answer 24; limits.md). The
+    // counts below are a request's on any later authentication, so every
+    // key the tests present authenticates once here, outside a request.
+    for token in &tokens {
+        let session = lead
+            .web_session(token)
+            .await
+            .expect("a read")
+            .expect("a live session");
+        for capacity in [Capacity::Web, Capacity::Review, Capacity::Admin] {
+            let _ = lead.web_caller(&session, capacity).await;
+        }
+    }
+    lead.whoami(boot.admin_key.value.as_str())
+        .await
+        .expect("the admin key");
     let bob = tokens.pop().expect("bob's token");
     let alice = tokens.pop().expect("alice's token");
     Rig {
@@ -236,6 +254,35 @@ async fn whoami_without_the_person_block_reads_the_session_keys_access_once() {
 async fn a_session_keys_read_resolves_its_caller_on_the_gates_access_once_and_a_request_with_a_body_reads_it_again()
  {
     let rig = rig().await;
+    // The admin read needs a person-linked admin key (ADR-0097 d16): the
+    // bootstrap key links itself to alice, who accepts.
+    {
+        use oml_app::types::Bearer;
+        let linked = rig
+            .app
+            .link_self(
+                rig.admin.as_str(),
+                &Name::parse("alice").expect("a name"),
+                Some("the person holds this key"),
+            )
+            .await
+            .expect("the self-link");
+        let session = rig
+            .app
+            .web_session(&rig.alice)
+            .await
+            .expect("a read")
+            .expect("alice's session");
+        let web = rig
+            .app
+            .web_caller(&session, Capacity::Web)
+            .await
+            .expect("alice's console");
+        rig.app
+            .accept_key_link(Bearer::Session(&web), linked.key_id.into())
+            .await
+            .expect("alice accepts");
+    }
     let admin = web(&rig.alice, "admin");
     let tree = get(
         &rig.router,
@@ -304,8 +351,11 @@ async fn a_session_keys_read_resolves_its_caller_on_the_gates_access_once_and_a_
     .await;
     assert_eq!(by_value.status, StatusCode::OK, "{}", by_value.body);
     assert_eq!(by_session.status, StatusCode::OK, "{}", by_session.body);
+    // The admin read's person gate reads a linked key's person off its
+    // user root, one call, and a session's off its user, none (ADR-0097
+    // d16).
     assert_eq!(
-        by_session.store_calls(),
+        by_session.store_calls() + 1,
         by_value.store_calls(),
         "{} / {}",
         by_session.line,
@@ -766,12 +816,15 @@ async fn held_in_workspaces(rig: &Rig, n: usize) {
                     role: Role::Submitter,
                     deny: Vec::new(),
                     covers: Covers::Subtree,
+                    create: false,
                 }],
                 connect_code: false,
                 user: Some(Name::parse("alice").expect("a name")),
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -1009,17 +1062,19 @@ async fn the_todo_counts_reads_cost_the_same_store_calls_at_6_and_48_workspaces(
         assert_eq!(admin.status, StatusCode::OK, "{}", admin.body);
         assert_eq!(
             admin.body,
-            serde_json::json!({"alerts": 0, "truncated": false})
+            serde_json::json!({"alerts": 0, "acts_to_confirm": 0, "truncated": false})
         );
         // Measured 2026-11-19 over the in-memory store: the gate's call and
         // the use case's own resolution of the admin key, which reads its
         // access afresh as every later resolution in a request does
         // (ADR-0070 d8, #297); and since v0.8.5 the fixes read the alerts
         // are counted from (ADR-0096 d7), one call whatever their number.
+        // Measured 2026-11-27: since v0.8.6 "Admin acts to confirm" adds
+        // two reads, whatever the number of workspaces (ADR-0097 d2, d11).
         assert_eq!(
             admin.store_calls(),
-            3,
-            "the gate's call, the key's resolution and the fixes read: {}",
+            5,
+            "the gate's call, the key's resolution, the fixes read and the two admin act reads: {}",
             admin.line
         );
     }
@@ -1125,12 +1180,15 @@ async fn the_catalog_pages_read_costs_the_gate_the_listing_and_on_the_first_page
                     role: Role::Submitter,
                     deny: Vec::new(),
                     covers: Covers::Subtree,
+                    create: false,
                 }],
                 connect_code: false,
                 user: Some(Name::parse("alice").expect("a name")),
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -1155,6 +1213,7 @@ async fn the_catalog_pages_read_costs_the_gate_the_listing_and_on_the_first_page
                         role,
                         deny: Vec::new(),
                         covers: Covers::Subtree,
+                        create: false,
                     })
                     .collect(),
                 connect_code: false,
@@ -1162,6 +1221,8 @@ async fn the_catalog_pages_read_costs_the_gate_the_listing_and_on_the_first_page
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await

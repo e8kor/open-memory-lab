@@ -165,6 +165,9 @@ def oml_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[OmlServer]:
                     OML_POSTGRES__OWNER_URL=_database_url(database, owner, password),
                     OML_SERVER__LISTEN=f"127.0.0.1:{port}",
                     OML_KMS__KEYRING_PATH=str(scratch / "keyring"),
+                    # The operator tokens each start writes stay in the
+                    # scratch directory, never the checkout (ADR-0097 d19).
+                    OML_OPERATOR__TOKEN_DIR=str(scratch / "operator"),
                 ),
             )
         token = None
@@ -206,6 +209,7 @@ def oml_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[OmlServer]:
         boot = oml(
             "bootstrap", "claim", "sdk-admin", "--token-stdin",
             "--tenant-name", "sdk-tests", "--principal", "platform/admin",
+            "--person", "founder", "--email", "founder@example.com",
             stdin=f"{token}\n",
         )  # fmt: skip
         root = boot["root_workspace_id"]

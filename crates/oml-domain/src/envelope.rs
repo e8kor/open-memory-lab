@@ -52,9 +52,27 @@ pub mod event_types {
     /// A key's revocation; journalled for a key whose issuance failed after
     /// its `key.issued` (ADR-0025 d2, reason `issuance_incomplete`).
     pub const KEY_REVOKED: &str = "key.revoked";
+    /// A grant an admin act added, revoked by the decline of that act
+    /// (ADR-0097 d10, the operator's decision of 2026-11-27).
+    pub const GRANT_REVOKED: &str = "grant.revoked";
+    /// A key authenticates nothing for now: an act against its admin
+    /// person is open, or it stood unlinked at the upgrade (ADR-0097 d8,
+    /// d21).
+    pub const KEY_SUSPENDED: &str = "key.suspended";
+    /// A suspension ends: the act against an admin was settled reversed, or
+    /// the unlinked key's link was accepted (ADR-0097 d8, d21, d22).
+    pub const KEY_SUSPENSION_LIFTED: &str = "key.suspension_lifted";
     /// An admin key set another key's expiry and request rate: both values
     /// as they stand after the change (ADR-0079 d5).
     pub const KEY_LIMITS_SET: &str = "key.limits_set";
+    /// An admin key converted itself into a `maintenance` key in place,
+    /// keeping its id and hash: `{key_id, from: admin, to: maintenance}`
+    /// (ADR-0097 d18).
+    pub const KEY_CONVERTED: &str = "key.converted";
+    /// A key's default workspace is set: a pending issuance's confirmation
+    /// names the workspace it creates as the key's default (ADR-0097 d30,
+    /// the operator's decision of 2026-11-27).
+    pub const KEY_DEFAULT_SET: &str = "key.default_set";
     /// A key got a new value; the previous one works until
     /// `previous_valid_until`, or stopped at once (ADR-0096 d13).
     pub const KEY_ROTATED: &str = "key.rotated";
@@ -122,6 +140,9 @@ pub mod event_types {
     pub const CONNECTION_CODE_ISSUED: &str = "connection.code_issued";
     /// A connection opens at the token exchange and replaces the key's
     /// earlier open connection in the same commit (ADR-0031 d7, d12).
+    /// A connect code voided by the decline of the admin act that minted
+    /// it (ADR-0097 d10, the operator's decision of 2026-11-27).
+    pub const CONNECTION_CODE_VOIDED: &str = "connection.code_voided";
     pub const CONNECTION_OPENED: &str = "connection.opened";
     /// A connection ends, by an admin or a reuse; the commit voids the
     /// key's codes from which no connection opened (ADR-0031 d8, d12).
@@ -151,6 +172,9 @@ pub mod event_types {
     /// An admin disabled a person: their entries and sessions end and
     /// their agent keys are cut off (ADR-0068 d8).
     pub const WEB_USER_DISABLED: &str = "web.user_disabled";
+    /// A disabled person's entries sign in again: the contest of an act
+    /// against an admin that disabled them, or its reversal (ADR-0097 d8).
+    pub const WEB_USER_ENABLED: &str = "web.user_enabled";
     /// A person asked for their account to be deleted (ADR-0068 d6).
     pub const WEB_DELETION_REQUESTED: &str = "web.deletion_requested";
     /// An admin closed a deletion request by disabling the person; the
@@ -168,6 +192,30 @@ pub mod event_types {
     /// An admin's fix: its act, targets, reason and `loosens_guardrail`,
     /// and the ids of the lifecycle events it caused (ADR-0089 d3, d16).
     pub const ADMIN_FIX: &str = "admin.fix";
+    /// One admin act's envelope (ADR-0097 d2): `act_id`, `act`, `class`,
+    /// `target`, `reason`, `actor_person`, `state`, `confirmed_by_person`,
+    /// `sole_admin` and `cause`, journalled in the commit of its effect and
+    /// again, with the same `act_id`, at each change of its state.
+    pub const ADMIN_ACT: &str = "admin.act";
+    /// A notice written to the persons an act concerns, in the act's own
+    /// commit (ADR-0097 d20).
+    pub const NOTICE_WRITTEN: &str = "notice.written";
+    /// A person dismissed a notice of their own (ADR-0097 d20).
+    pub const NOTICE_DISMISSED: &str = "notice.dismissed";
+    /// The operator settled a frozen dispute from the host: the contested
+    /// act confirmed or reversed, and nothing else (ADR-0097 d19).
+    pub const OPERATOR_SETTLEMENT: &str = "operator.settlement";
+    /// The operator asked to recover a dormant tenant from the host: the
+    /// recovery's id, the admin person it names, the address's digest and
+    /// the 30 days it read (ADR-0097 d19, answers 21, 22, 24).
+    pub const OPERATOR_RECOVERY_REQUESTED: &str = "operator.recovery_requested";
+    /// The server's sweep completed a recovery 72 hours after its request
+    /// with no admin sign-in: the window and the admin keys it revoked
+    /// (ADR-0097 d19, answer 22). One per request.
+    pub const OPERATOR_RECOVERY: &str = "operator.recovery";
+    /// An admin sign-in within the 72 hours cancelled a recovery (ADR-0097
+    /// d19, answer 22).
+    pub const OPERATOR_RECOVERY_CANCELLED: &str = "operator.recovery_cancelled";
     /// A person confirmed an admin's fix (ADR-0089 d8).
     pub const ADMIN_FIX_CONFIRMED: &str = "admin.fix_confirmed";
     /// A person reverted an admin's fix (ADR-0089 d8).
@@ -188,6 +236,9 @@ pub mod event_types {
     /// A person's reviewer key or a tenant admin set a workspace's federation
     /// field, `accept_federated` (ADR-0072 d5).
     pub const WORKSPACE_FEDERATION_SET: &str = "workspace.federation_set";
+    /// The admin act that sets or clears a workspace's `public` flag took
+    /// effect (ADR-0098 d9): `{workspace_id, value, act_id, from}`.
+    pub const WORKSPACE_PUBLIC_SET: &str = "workspace.public_set";
     /// An admin key read the tenant's recall events: how many, how many
     /// carried query text, and the page's bounds (ADR-0054 d2, as amended).
     pub const TELEMETRY_EVENTS_READ: &str = "telemetry.events_read";

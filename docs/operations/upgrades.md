@@ -1,7 +1,7 @@
 ---
 status: Stable
 verified: 2026-11-25
-answers: "how to upgrade an OML server: how migrations run, the upgrade steps in order, what rollback does and does not mean, the upgrade from a pre-0.3.1 install, the v0.5.4 fix, how to move from v0.3, v0.8.5's migrations 0067, 0068 and 0069, the workspaces quota, the oml_write modes and the Python SDK that upgrades with the server, key rotation and what a previous value runs in its grace, the last admin entry kept on every surface and the read-only counts before v0.8.6, the v0.8.4 role rename that clients take in the server's window, with no key issued or listed until both run v0.8.4, what v0.8.4's migrations 0063, 0064 and 0066 cost, the admin key links, links and sign-in emails that wait on their person, and the reset of a database that ran a draft of 0063 or 0064, the v0.8.3 rename that clients take before the server, what the v0.8.3 migrations cost and what waits during them, and the storage.url to set before v0.8.3's uploads"
+answers: "how to upgrade an OML server: how migrations run, v0.8.6's migrations 0074, 0075 and 0076, the person a reviewer, ratifier or admin-read key needs, the deployer's admin keys converted to maintenance keys, the confirm and link reasons, the operator token directory and the mail relay, the authentication table recovery reads and its 30 days, the upgrade steps in order, what rollback does and does not mean, the upgrade from a pre-0.3.1 install, the v0.5.4 fix, how to move from v0.3, v0.8.5's migrations 0067, 0068 and 0069, the workspaces quota, the oml_write modes and the Python SDK that upgrades with the server, key rotation and what a previous value runs in its grace, the last admin entry kept on every surface and the read-only counts before v0.8.6, the v0.8.4 role rename that clients take in the server's window, with no key issued or listed until both run v0.8.4, what v0.8.4's migrations 0063, 0064 and 0066 cost, the admin key links, links and sign-in emails that wait on their person, and the reset of a database that ran a draft of 0063 or 0064, the v0.8.3 rename that clients take before the server, what the v0.8.3 migrations cost and what waits during them, and the storage.url to set before v0.8.3's uploads"
 ---
 
 # Upgrade OML
@@ -82,6 +82,100 @@ spellings that a new server refuses, and each refusal names the new spelling.
 
 Update the plugin with `claude plugin update oml@open-memory-lab`. Then set its `url` and `api_key` with
 `/plugin configure oml@open-memory-lab`. The plugin serves no tools until both are set.
+
+## Upgrading to v0.8.6
+
+### Migration 0074, counted persons and the CLI admin key's link
+
+Migration 0074 adds two empty tables, `admin_read_counts` and `notices`, each with its key and
+tenant policy; it reads and rewrites no existing row, so it takes its locks only for the catalog
+change. The fold fills them from new events: each admin-read page counts against the persons whose
+roots it read, and an act against an admin, offensive narrowing or a reach into a person's root
+under `sole_admin` writes its notices in its own commit ([ADR-0097](../adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) d6, d16, d20, d24).
+
+Three rules start at the upgrade and need a person behind a key ([ADR-0097](../adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) d12, d16, d17):
+
+- An instruction verdict and a status ratification need a key that counts as a person. A tenant
+  reviewer key `used_by: person` that no person accepted a link for now approves knowledge only;
+  link it to its person from the admin console's Keys page, and that person accepts it, before
+  the upgrade, or its next instruction approval answers `review.person_required`,
+  `details.reason: counts_as_no_person`.
+- A ratifier must be another person than the proposer's. A tenant where one person proposes and
+  ratifies through two keys needs a second person to ratify, except in a `sole_admin` tenant.
+- The admin read needs a person-linked admin key or a session. Before the upgrade, link the CLI
+  admin key that opens investigations: with a second admin person, their console links it and the
+  operator accepts; in a one-admin tenant, after v0.8.6 starts, run
+  `oml keys link-self --person <operator> --reason <why>` under that key and accept the link from the console
+  (d22). Until then `oml admin read` answers `admin.read_requires_person` and the console's admin
+  pages read as usual through `<user>-admin`.
+
+### Migration 0075, the maintenance role and the deployer's keys
+
+Migration 0075 adds two nullable columns, `admin_acts.confirm_reason` and `api_keys.issuer_person`,
+and replaces `api_keys`'s role check so it admits `maintenance`, validated in the same
+transaction: one scan of `api_keys`, which is small, and no row rewritten ([ADR-0097](../adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) d18, d26).
+A key issued before it records no issuer's person, and an act confirmed before it no reason.
+
+No service needs an admin key from v0.8.6 on (d18). After the upgrade, each admin key a service
+holds, the deployer's among them, converts itself in place: under that key run
+
+```bash
+oml keys convert-self --to maintenance
+```
+
+The key keeps its value, so the files that hold it need no change, and from then on it reads the
+counts `oml doctor` reads and runs `oml admin rescan --record-held`, and nothing else. The release
+notes carry `<!-- oml-deployer: post-step maintenance-key -->` for a deployer that runs the step
+itself. Session keys are issued by the tenant's reserved server issuer from the first sign-in
+after the upgrade; open sign-up's `signup.issuer` is read and ignored, and `oml doctor` names it
+until it is removed.
+
+Three changes that clients send ([ADR-0097](../adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) d7, d26):
+
+- `POST /v2/admin/acts/{act}/confirm` requires a `reason` (`oml admin confirm <act> --reason`).
+- A link of a key to a person requires a `reason`, on `POST /v2/keys/{key}/link` and `POST
+  /v2/keys/self/link` (`oml keys link-self --reason`).
+- An older CLI or console that sends neither is refused `request.validation` with
+  `details.field: /reason`, and nothing is journalled.
+
+### The operator token, the host settlement and the mail relay
+
+From v0.8.6 each server start writes one operator token per tenant to `operator.token_dir`,
+`oml-operator` under the server's working directory by default, mode 0600 in a 0700 directory
+([ADR-0097](../adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) d19; answer 13). Before the upgrade, point it at a directory on the state volume that only
+root and the server's user reach, such as `/var/lib/oml/operator`, and set
+`OML_OPERATOR__TOKEN_DIR` to the same path in root's shell, so `oml operator settle` finds it.
+The server keeps no token across a restart, and needs no step of its own: the first start writes
+the files.
+
+Configure the mail relay for the settlement notice (d20; answer 14): set `mail.host`, `mail.from`
+and, when the relay is not on 25, `mail.port`. The relay is a local one that handles TLS and
+authentication; the server holds no mail credential. Without it, `oml doctor` warns
+`notice.mail_unconfigured`, and a settlement's notice reaches admins in-product only.
+
+### Migration 0076, the authentication table and the operator's recovery
+
+Migration 0076 adds three tables ([ADR-0097](../adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) d19; answer 24 of 2026-11-28):
+`key_authentications`, one row per tenant, key and UTC day a key authenticated, with a count;
+`key_authentications_installed`, one row holding the time the migration ran; and
+`operator_recoveries`, the recoveries `oml operator recover` requests. It reads and rewrites no
+existing row, so it takes its locks only for the catalog change.
+
+From the first start of v0.8.6 the server writes a key's row at its first authentication of each
+UTC day, an admin person's sign-in included, one upsert per key per day, and a sweep each minute
+deletes rows of a day more than 30 days back. This is the one log the server keeps
+([ADR-0042](../adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md) d8, as amended on 2026-11-28): ids and a count, never a principal, address or
+request id. The request log itself stays stderr JSON lines.
+
+The table covers nothing on the upgrade's first day, so `oml operator recover` refuses
+`log_too_short` for the first 30 days after the upgrade, and `oml doctor` warns
+`auth.log_coverage` until then. No step is needed: the coverage grows with traffic. Set
+`mail.host` and `mail.from` before a recovery is ever needed, since its email is how a dormant
+admin learns of it (d20).
+
+The recovery sweep runs in every server that writes operator tokens, which `oml-server` does at
+each start. Its state is the database's: a restart resumes a waiting recovery, and with several
+replicas each request completes once.
 
 ## Upgrading to v0.8.5
 

@@ -34,6 +34,10 @@ use oml_page::escape;
 /// terms page's ten minutes (ADR-0068 d2).
 pub const SIGN_UP_COOKIE: &str = "__Host-oml_signup";
 
+/// The contest-only sign-in's cookie (ADR-0097 d8): the act and the person
+/// the sign-in admitted, sealed, for the one form it opens.
+pub const CONTEST_COOKIE: &str = "__Host-oml_contest";
+
 // The stylesheet is long enough that hashing it runs past the compiler's
 // const-evaluation lint; the work is bounded by the file's size.
 #[allow(long_running_const_eval)]
@@ -178,6 +182,107 @@ where
     I: IdGen + 'static,
     Sc: Scanner + 'static,
 {
+    /// The contest-only sign-in's page (ADR-0097 d8): the one control it
+    /// opens, the act's contest, under a sealed cookie naming the act and
+    /// the person for ten minutes. The console's own contest page is the
+    /// console lane's; this is the server's form.
+    pub(crate) async fn contest_page(&self, grant: &oml_app::app::ContestGrant) -> Response {
+        // What the act is, by whom, when and why, read under the grant; a
+        // read that fails draws the form alone, which still contests.
+        let about = match self.app.contest_act(grant).await {
+            Ok(act) => format!(
+                r#"<dl class="oml-facts"><dt>Act</dt><dd>{}</dd><dt>Taken by</dt><dd>{}</dd><dt>Taken</dt><dd>{}</dd><dt>Reason</dt><dd>{}</dd></dl>"#,
+                escape(&act.act.as_str().replace('_', " ")),
+                act.actor_person.as_ref().map_or_else(
+                    || "an admin key that counts as no person".to_owned(),
+                    |p| format!(r#"<span class="mono">{}</span>"#, escape(p.as_str()))
+                ),
+                escape(act.at.as_str()),
+                act.reason
+                    .as_deref()
+                    .map_or_else(|| "none given".to_owned(), escape),
+            ),
+            Err(_) => String::new(),
+        };
+        let sealed = self.pages().sealer.seal(
+            json!({
+                "t": grant.tenant_id.to_string(),
+                "u": grant.user.as_str(),
+                "a": grant.act_id.to_string(),
+                "s": i64::try_from(unix_now()).unwrap_or(0),
+            })
+            .to_string()
+            .as_bytes(),
+        );
+        let mut response = html_response(
+            StatusCode::OK,
+            bare(
+                "Contest",
+                &format!(
+                    r#"<h1>Contest</h1><p class="desc">An act against this admin person is open. This sign-in opens its contest and nothing else: a contest restores the flag and the sign-in, and the admin keys stay suspended until the act is settled.</p>{about}<form method="post" action="/web/contest"><button type="submit" class="primary">Contest the act</button></form>"#
+                ),
+            ),
+        );
+        append_cookie(
+            &mut response,
+            &set_cookie(CONTEST_COOKIE, &sealed, SIGN_IN_TTL_SECS),
+        );
+        response
+    }
+
+    /// `POST /web/contest` (ADR-0097 d8): the contest the contest-only
+    /// sign-in opened, same origin only, under its sealed cookie of under
+    /// ten minutes.
+    pub(crate) async fn contest(State(st): State<Self>, rid: Rid, headers: HeaderMap) -> Response {
+        let line = WebLine::default();
+        let answer = async {
+            if let Some(refused) = person_only(&headers) {
+                return Self::start_refused(&refused, line);
+            }
+            let issuer = st.app.oauth_issuer().expect("routed only with an issuer");
+            if !same_origin(&headers, issuer) {
+                return Self::start_refused(&origin_refused(), line);
+            }
+            let now = i64::try_from(unix_now()).unwrap_or(0);
+            let grant = cookie(&headers, CONTEST_COOKIE)
+                .and_then(|sealed| st.pages().sealer.open(&sealed))
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                .and_then(|v| {
+                    let started = v.get("s")?.as_i64()?;
+                    (now >= started && now - started < SIGN_IN_TTL_SECS).then_some(())?;
+                    Some((
+                        uuid::Uuid::parse_str(v.get("t")?.as_str()?).ok()?,
+                        oml_app::domain::name::Name::parse(v.get("u")?.as_str()?).ok()?,
+                        uuid::Uuid::parse_str(v.get("a")?.as_str()?).ok()?,
+                    ))
+                });
+            let Some((tenant_id, user, act_id)) = grant else {
+                let error = app_error(AppError::WebSignIn(SignInRefusal::StateMismatch));
+                return Self::start_refused(&error, line);
+            };
+            match retry_chain(|| st.app.contest_admin_act_as(tenant_id, &user, act_id)).await {
+                Ok(_) => {
+                    let mut response = html_response(
+                        StatusCode::OK,
+                        bare(
+                            "Contested",
+                            r#"<h1>Contested</h1><p class="desc">The flag and the sign-in are back; the admin keys stay suspended until the act is settled.</p><p><a href="/web/sign-in">Sign in</a></p>"#,
+                        ),
+                    );
+                    append_cookie(&mut response, &clear_cookie(CONTEST_COOKIE));
+                    Answer {
+                        response,
+                        error_code: None,
+                        line,
+                    }
+                }
+                Err(e) => Self::start_refused(&app_error(e), line),
+            }
+        }
+        .await;
+        Self::web_finish(&rid, answer)
+    }
+
     fn start_refused(error: &ApiError, line: WebLine) -> Answer {
         let mut answer = Answer {
             response: html_response(

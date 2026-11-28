@@ -80,7 +80,7 @@ impl Lead {
                     .set("Content-Type", "application/json"),
                 Some(
                     json!({
-                        "enrollment_token": enrollment,
+                        "enrollment_token": enrollment, "person": "founder", "email": "founder@example.com",
                         "name": "root-admin",
                         "tenant_name": "acme",
                     })

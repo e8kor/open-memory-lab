@@ -121,12 +121,15 @@ async fn key<S: JournalStore + Clone>(rig: &Rig<S>, key_name: &str, role: Role) 
                     role,
                     deny: Vec::new(),
                     covers: Covers::Subtree,
+                    create: false,
                 }],
                 user: None,
                 connect_code: false,
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -336,6 +339,7 @@ async fn only_a_contributor_or_a_submitter_key_opens_an_upload<S: JournalStore +
         role,
         deny: Vec::new(),
         covers: Covers::Subtree,
+        create: false,
     };
     let contributor = rig
         .app
@@ -355,6 +359,8 @@ async fn only_a_contributor_or_a_submitter_key_opens_an_upload<S: JournalStore +
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -700,6 +706,8 @@ async fn without_an_object_store_no_upload_opens<S: JournalStore + Clone>(store:
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await

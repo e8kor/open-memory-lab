@@ -49,6 +49,10 @@ any key, is refused `proposal.pending` naming the live one; the workspace read s
 was proposed and, to a key of the same person, which key proposed it. An agent's reviewer key
 proposes over MCP with `oml_write` and `propose_status`, and ratification stays off MCP ([ADR-0095](../adr/ADR-0095-an-agent-creates-its-own-child-workspaces-writes-guardrails-and-proposes-status-and-brief-changes-through-oml-write-and-every-verdict-and-setting-stays-with-people.md) d5).
 
+## Public workspaces
+
+A workspace an admin marked public is read by every key of the tenant that reads, without a grant: its approved items only, with their authors. Every recall at any workspace also searches it, and each hit from it carries `via: "public"`; its steering and guardrails apply only to recalls on its own branch. `oml workspaces show <workspace>` prints whether it is public and since when ([ADR-0098](../adr/ADR-0098-a-protected-or-frozen-workspace-can-be-marked-public-and-then-every-reading-key-in-the-tenant-reads-its-approved-items.md)).
+
 ## In-progress workspaces
 
 Review costs a delay. While a team builds something together, that delay hides each agent's work

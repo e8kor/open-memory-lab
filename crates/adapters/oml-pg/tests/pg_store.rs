@@ -1962,6 +1962,7 @@ async fn grants_of_another_tenant_are_invisible_under_rls() {
             role: Role::Reader,
             deny: Vec::new(),
             covers: Covers::Subtree,
+            create: false,
         },
     )
     .await
@@ -3037,12 +3038,13 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // null for every tenant they find
             // (ADR-0049 d4); 0040 the federation policy, off with its
             // defaults (ADR-0072 d5); 0054 the export policy, own_root on
-            // every existing row (ADR-0084 d10).
+            // every existing row (ADR-0084 d10); 0070 sole_admin, true for a
+            // tenant whose journal never flagged two admins (ADR-0097 d10).
             (true, "tenants") => {
                 "(to_jsonb(t) - 'name' - 'prior_name' - 'crew_id' - 'path' - 'search_default' \
                   - 'telemetry_query_text_since' - 'federation_enabled' \
                   - 'federation_default_sources' - 'federation_max_sources' \
-                  - 'export_policy') \
+                  - 'export_policy' - 'sole_admin') \
                  || jsonb_build_object('name', t.prior_name)"
             }
             // Before 0017 a workspace's status is the one every build served,
@@ -3057,10 +3059,12 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // null for every workspace it finds (ADR-0044 d12); 0028 adds
             // mode, standard for every workspace it finds (ADR-0030 d14);
             // 0040 accept_federated, true for every workspace it finds
-            // (ADR-0072 d5).
+            // (ADR-0072 d5); 0072 public, false, and public_act_id, null,
+            // for every workspace it finds (ADR-0098 d10).
             (true, "workspaces") => {
                 "(to_jsonb(t) - 'name' - 'prior_name' - 'crew_id' - 'path' - 'user_root' \
-                 - 'namespace_root_id' - 'mode' - 'accept_federated') \
+                 - 'namespace_root_id' - 'mode' - 'accept_federated' - 'public' \
+                 - 'public_act_id') \
                  || jsonb_build_object('name', t.prior_name)"
             }
             // 0012 adds credential, folded as bearer for every key it finds
@@ -3072,15 +3076,20 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // and requests_per_minute, null for every key it finds
             // (ADR-0079); 0050 adds linked_user_id and 0064
             // link_pending_user_id, null for every key they find (ADR-0085
-            // d16).
+            // d16); 0070 pending_act_id and 0073 the suspension, null for
+            // every key they find (ADR-0097 d8, d21, d23); 0075
+            // issuer_person, null for every key it finds (#508 N1).
             (true, "api_keys") => {
                 "to_jsonb(t) - 'name' - 'crew_id' - 'credential' - 'user_root_id' \
                  - 'session_for' - 'guardrail_scope' - 'profile' - 'expires_at' \
-                 - 'requests_per_minute' - 'linked_user_id' - 'link_pending_user_id'"
+                 - 'requests_per_minute' - 'linked_user_id' - 'link_pending_user_id' - 'pending_act_id' \
+                 - 'suspended_cause' - 'suspended_act_id' - 'suspended_at' - 'issuer_person'"
             }
             // 0014 adds covers, subtree for every grant it finds (ADR-0044
-            // d12).
-            (true, "grants") => "to_jsonb(t) - 'covers'",
+            // d12); 0071 adds may_create, false for every grant it finds
+            // (ADR-0097 d31); 0073 revoked_epoch, null for every grant it
+            // finds (ADR-0097 d10).
+            (true, "grants") => "to_jsonb(t) - 'covers' - 'may_create' - 'revoked_epoch'",
             // 0016 adds a guardrail's severity and rule, null on every other
             // kind (proposed ADR-0037 d10); 0020 adds the stored search
             // lexemes, generated from the claim (ADR-0049 d12); 0025 adds
@@ -6470,8 +6479,8 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 69,
-        "every migration through 0069_key_previous_hashes"
+        applied, 76,
+        "every migration through 0076_key_authentications_and_operator_recoveries"
     );
     drop(conn);
     drop_dbs(&created).await;
@@ -6771,6 +6780,47 @@ async fn bootstrap_pg(app: &PgApp, tenant_name: &str) -> oml_app::types::Bootstr
     .expect("bootstrap")
 }
 
+/// [`bootstrap_pg`] with its admin key linked to the person `alice`, as an
+/// admin fix requires (ADR-0089, the operator's decision of 2026-11-19).
+async fn person_bootstrap_pg(app: &PgApp, tenant_name: &str) -> oml_app::types::BootstrapResult {
+    app.bootstrap_tenant_for(
+        &BootstrapRequest {
+            tenant_name: name(tenant_name),
+            admin_key_name: name("root-admin"),
+            admin_principal: "alice-admin".to_owned(),
+        },
+        Some(&oml_app::types::BootstrapPerson {
+            user: name("alice"),
+            email: oml_app::domain::web::Email::parse("alice@example.com").expect("an email"),
+        }),
+    )
+    .await
+    .expect("bootstrap")
+}
+
+/// `act` on `target` through the one surface that demotes or erases, the
+/// admin fix act (ADR-0089 d16; #502); an erase shreds at once, since the
+/// tenant has only ever had one admin person (ADR-0097 d4, d10).
+async fn fix_pg(
+    app: &PgApp,
+    admin: &str,
+    act: oml_app::types::FixAct,
+    target: Uuid,
+) -> Result<oml_app::types::FixRecord, AppError> {
+    app.admin_fix(
+        admin,
+        &oml_app::app::FixRequest {
+            act,
+            target,
+            reason: "ticket 41: the claim is wrong in production".to_owned(),
+            body: None,
+            title: None,
+        },
+    )
+    .await
+    .map(|o| o.fix().cloned().expect("a fix record"))
+}
+
 /// A workspace `child` under `parent`, created by `admin`; its id.
 async fn workspace_pg(app: &PgApp, admin: &str, child: &str, parent: Uuid) -> Uuid {
     app.create_workspace(admin, &name(child), Some(parent.into()), None)
@@ -6806,9 +6856,51 @@ async fn reviewer_pg(
                 role: Role::Reviewer,
                 deny: Vec::new(),
                 covers: oml_app::domain::access::Covers::Subtree,
+                create: false,
             }],
             expiry: None,
             requests_per_minute: None,
+            person: None,
+            create_workspaces: Vec::new(),
+        },
+    )
+    .await
+    .expect("issue a reviewer key")
+}
+
+/// [`reviewer_pg`] used by a person, which a link can make count as one
+/// (ADR-0085 d16; ADR-0097 d12).
+async fn linkable_reviewer_pg(
+    app: &PgApp,
+    admin: &str,
+    key_name: &str,
+    principal: &str,
+    node: Uuid,
+) -> oml_app::types::IssuedKey {
+    app.issue_key(
+        admin,
+        &oml_app::types::IssueKeyRequest {
+            profile: None,
+            role: Role::Reviewer,
+            name: name(key_name),
+            principal: principal.to_owned(),
+            used_by: Some(oml_app::domain::UsedBy::Person),
+            default_workspace: None,
+            crew: None,
+            connect_code: false,
+            user: None,
+            guardrail_scope: None,
+            grants: vec![oml_app::types::GrantRequest {
+                node: node.into(),
+                role: Role::Reviewer,
+                deny: Vec::new(),
+                covers: oml_app::domain::access::Covers::Subtree,
+                create: false,
+            }],
+            expiry: None,
+            requests_per_minute: None,
+            person: None,
+            create_workspaces: Vec::new(),
         },
     )
     .await
@@ -6859,7 +6951,10 @@ async fn propose_then_ratify_through_the_serving_role_moves_status_and_journals_
     let boot = bootstrap_pg(&app, "acme").await;
     let (t, admin) = (boot.tenant_id, boot.admin_key.value.clone());
     let crew = workspace_pg(&app, &admin, "crew", boot.root_workspace_id).await;
-    let dora = reviewer_pg(&app, &admin, "dora-key", "dora", crew).await;
+    let dora = linkable_reviewer_pg(&app, &admin, "dora-key", "dora", crew).await;
+    // Dora's key counts as a person, as a ratification needs (ADR-0097
+    // d12, d17).
+    oml_port_contracts::federation::counted(&app, &admin, t, dora.key_id).await;
     let other = bootstrap_pg(&app, "globex").await;
 
     let proposal = app
@@ -7041,7 +7136,10 @@ async fn a_concurrent_child_create_and_a_validated_ratification_never_leave_a_va
     let app = Arc::new(app_over_pg(&store));
     let boot = bootstrap_pg(&app, "acme").await;
     let (t, admin) = (boot.tenant_id, boot.admin_key.value.clone());
-    let dora = reviewer_pg(&app, &admin, "dora-key", "dora", boot.root_workspace_id).await;
+    let dora = linkable_reviewer_pg(&app, &admin, "dora-key", "dora", boot.root_workspace_id).await;
+    // Dora's key counts as a person, as a ratification needs (ADR-0097
+    // d12, d17).
+    oml_port_contracts::federation::counted(&app, &admin, t, dora.key_id).await;
 
     let (mut created_won, mut ratified_won) = (0, 0);
     for round in 0..8 {
@@ -7932,8 +8030,8 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 69,
-        "every migration through 0069_key_previous_hashes"
+        applied, 76,
+        "every migration through 0076_key_authentications_and_operator_recoveries"
     );
     drop(conn);
 
@@ -8939,8 +9037,8 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
     assert_eq!(
-        applied, 69,
-        "every migration through 0069_key_previous_hashes"
+        applied, 76,
+        "every migration through 0076_key_authentications_and_operator_recoveries"
     );
     drop(conn);
 
@@ -12130,6 +12228,7 @@ async fn writer_pg(app: &PgApp, admin: &str, node: Uuid) -> String {
                     role,
                     deny: Vec::new(),
                     covers: Covers::Subtree,
+                    create: false,
                 })
                 .collect(),
             connect_code: false,
@@ -12137,6 +12236,8 @@ async fn writer_pg(app: &PgApp, admin: &str, node: Uuid) -> String {
             guardrail_scope: None,
             expiry: None,
             requests_per_minute: None,
+            person: None,
+            create_workspaces: Vec::new(),
         },
     )
     .await
@@ -12393,9 +12494,12 @@ async fn migration_0052_releases_a_lane_claim_a_crew_key_took_before_the_lane() 
                     role: Role::Reviewer,
                     deny: Vec::new(),
                     covers: oml_app::domain::access::Covers::Subtree,
+                    create: false,
                 }],
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -12508,8 +12612,29 @@ async fn two_promoted_pg(
     store: &PgStore,
     tenant: &str,
 ) -> (PgApp, Uuid, String, String, Uuid, Uuid) {
+    two_promoted_pg_with(store, tenant, false).await
+}
+
+/// [`two_promoted_pg`] with its admin key linked to `alice`, as the fix act
+/// that demotes and erases requires (#502).
+async fn fix_two_promoted_pg(
+    store: &PgStore,
+    tenant: &str,
+) -> (PgApp, Uuid, String, String, Uuid, Uuid) {
+    two_promoted_pg_with(store, tenant, true).await
+}
+
+async fn two_promoted_pg_with(
+    store: &PgStore,
+    tenant: &str,
+    person: bool,
+) -> (PgApp, Uuid, String, String, Uuid, Uuid) {
     let app = app_over_pg(store);
-    let boot = bootstrap_pg(&app, tenant).await;
+    let boot = if person {
+        person_bootstrap_pg(&app, tenant).await
+    } else {
+        bootstrap_pg(&app, tenant).await
+    };
     let admin = boot.admin_key.value.clone();
     let crew = workspace_pg(&app, &admin, "crew", boot.root_workspace_id).await;
     let writer = writer_pg(&app, &admin, crew).await;
@@ -12594,12 +12719,11 @@ async fn a_demotion_returns_the_tip_and_keeps_the_text_in_postgres() {
     }
     let created = Mutex::new(Vec::new());
     let store = fresh_store(&created).await;
-    let (app, tenant, admin, _writer, v1, v2) = two_promoted_pg(&store, "demote").await;
-    let demotion = app
-        .demote_version(admin.as_str(), v2)
+    let (app, tenant, admin, _writer, v1, v2) = fix_two_promoted_pg(&store, "demote").await;
+    let demotion = fix_pg(&app, admin.as_str(), oml_app::types::FixAct::Demote, v2)
         .await
         .expect("demote the tip");
-    assert_eq!(demotion.restored.map(|r| r.artifact_id), Some(v1));
+    assert_eq!(demotion.served_id, Some(v1));
     let row = store.memory(tenant, v2).await.expect("read").expect("row");
     assert_eq!(row.status, MemoryStatus::Demoted);
     assert!(!row.is_tip);
@@ -12624,14 +12748,15 @@ async fn a_demotion_returns_the_tip_and_keeps_the_text_in_postgres() {
     // Demoting it again is refused before the store; its claim's version
     // below, once demoted, returns no tip.
     assert!(matches!(
-        app.demote_version(admin.as_str(), v2).await.unwrap_err(),
-        AppError::Transition(_)
+        fix_pg(&app, admin.as_str(), oml_app::types::FixAct::Demote, v2)
+            .await
+            .unwrap_err(),
+        AppError::FixTargetNotPromoted { .. }
     ));
-    let last = app
-        .demote_version(admin.as_str(), v1)
+    let last = fix_pg(&app, admin.as_str(), oml_app::types::FixAct::Demote, v1)
         .await
         .expect("demote v1");
-    assert_eq!(last.restored, None);
+    assert_eq!(last.served_id, None);
     assert!(
         store
             .claim_tip(tenant, row.workspace_id, "canary")
@@ -12650,7 +12775,7 @@ async fn an_erase_leaves_no_clear_body_in_the_live_row_its_passages_queue_teleme
     }
     let created = Mutex::new(Vec::new());
     let store = fresh_store(&created).await;
-    let (app, tenant, admin, writer, v1, v2) = two_promoted_pg(&store, "erase").await;
+    let (app, tenant, admin, writer, v1, v2) = fix_two_promoted_pg(&store, "erase").await;
     // A held successor in the review queue, a passage of v2, and a recall
     // that served v2 with its query text kept (the tenant opted in).
     let v3 = app
@@ -12747,8 +12872,25 @@ async fn an_erase_leaves_no_clear_body_in_the_live_row_its_passages_queue_teleme
     )
     .await;
     let (digest, bytes): (Vec<u8>, i32) = (before.get(0), before.get(1));
-    let erasure = app.erase_claim(admin.as_str(), v2).await.expect("erase");
-    assert_eq!(erasure.erased.len(), 3, "every version of the claim");
+    fix_pg(&app, admin.as_str(), oml_app::types::FixAct::Erase, v2)
+        .await
+        .expect("erase");
+    let erased = store
+        .events_range(tenant, 1, 10_000)
+        .await
+        .expect("the journal");
+    let erase = erased
+        .iter()
+        .rev()
+        .find(|e| e.envelope.event_type == oml_app::domain::event_types::LIFECYCLE_ERASE)
+        .expect("the erase");
+    assert_eq!(
+        erase.envelope.payload["artifact_ids"]
+            .as_array()
+            .map(Vec::len),
+        Some(3),
+        "every version of the claim"
+    );
     assert_eq!(traces(passages, v2).await, 0, "no passage");
     assert_eq!(traces(queued, v3).await, 0, "off the review queue");
     let erased_events = "SELECT count(*) FROM recall_events \
@@ -12899,7 +13041,7 @@ async fn an_erase_destroys_the_versions_data_key_and_no_other() {
     }
     let created = Mutex::new(Vec::new());
     let store = fresh_store(&created).await;
-    let (app, tenant, admin, writer, v1, v2) = two_promoted_pg(&store, "erasekey").await;
+    let (app, tenant, admin, writer, v1, v2) = fix_two_promoted_pg(&store, "erasekey").await;
     // Another claim of the same tenant, and another tenant's version, each
     // keyed by the lake writer: the erase reaches neither.
     let untouched = app
@@ -12925,7 +13067,9 @@ async fn an_erase_destroys_the_versions_data_key_and_no_other() {
     live_key(&store, tenant, v1).await;
     live_key(&store, tenant, untouched).await;
     live_key(&store, other_tenant, other_v1).await;
-    app.erase_claim(admin.as_str(), v1).await.expect("erase");
+    fix_pg(&app, admin.as_str(), oml_app::types::FixAct::Erase, v1)
+        .await
+        .expect("erase");
     let (gone, destroyed, _) = key_state(&store, tenant, v1).await;
     assert!(gone, "the wrapped key is gone");
     assert!(destroyed.is_some(), "and its destruction stamped");
@@ -13174,9 +13318,12 @@ async fn person_reviewer_pg(app: &PgApp, admin: &str, key_name: &str, node: Uuid
                 role: Role::Reviewer,
                 deny: Vec::new(),
                 covers: Covers::Subtree,
+                create: false,
             }],
             expiry: None,
             requests_per_minute: None,
+            person: None,
+            create_workspaces: Vec::new(),
         },
     )
     .await
@@ -13307,7 +13454,7 @@ async fn document_rig(store: &PgStore, tenant: &str) -> DocumentRig {
         )
         .expect("a configuration"),
     );
-    let boot = bootstrap_pg(&app, tenant).await;
+    let boot = person_bootstrap_pg(&app, tenant).await;
     let admin = boot.admin_key.value.clone();
     let crew = workspace_pg(&app, &admin, "crew", boot.root_workspace_id).await;
     let writer = writer_pg(&app, &admin, crew).await;
@@ -13642,8 +13789,8 @@ async fn migrations_0059_and_0060_apply_over_0058_with_a_document_row_and_count_
             .await
             .expect("versions");
     assert_eq!(
-        applied, 69,
-        "every migration through 0069_key_previous_hashes"
+        applied, 76,
+        "every migration through 0076_key_authentications_and_operator_recoveries"
     );
     let (partitions, attached, valid, carries, validated): (i64, i64, bool, bool, bool) =
         sqlx::query_as(
@@ -13793,7 +13940,7 @@ async fn migrations_0059_and_0060_apply_over_0058_with_a_document_row_and_count_
     drop_dbs(&created).await;
 }
 
-/// A promoted document erased through `erase_claim` leaves nothing that
+/// A promoted document erased through the admin fix act leaves nothing that
 /// was cut or derived from its text (ADR-0081 d3; ADR-0089 d16; ADR-0005
 /// d2): its passages, its lexical and its sparse postings, its sparse
 /// queue entry, its words in the vocabulary and its counts all go with the
@@ -13857,7 +14004,9 @@ async fn a_documents_passages_postings_words_and_sparse_entries_go_with_its_eras
     );
     assert_eq!(queued, 0, "encoded, off the queue");
     assert_eq!((words, counts), (1, 1), "its words and its counts");
-    app.erase_claim(admin.as_str(), doc).await.expect("erase");
+    fix_pg(&app, admin.as_str(), oml_app::types::FixAct::Erase, doc)
+        .await
+        .expect("erase");
     assert_eq!(
         left().await,
         (0, 0, 0, 0, 0, 0),

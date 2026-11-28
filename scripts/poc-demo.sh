@@ -156,7 +156,8 @@ step "bootstrap claim (single-use token -> first admin key, credentials stored 0
 TENANT="$(jqf .tenant_id)"
 
 step "a second claim is refused — the token is consumed (typed refusal, exit 1)" 1 \
-    "$OML" --url "$SERVER_URL" --json bootstrap claim second-admin --token-stdin <<<"$TOKEN"
+    "$OML" --url "$SERVER_URL" --json bootstrap claim second-admin --token-stdin \
+    --person alice --email alice@example.com <<<"$TOKEN"
 
 # --- workspace and the crew's keys (admin credentials from the stored file) ---
 # Every workspace below goes by its name, the root as `universe` (ADR-0026 d6),

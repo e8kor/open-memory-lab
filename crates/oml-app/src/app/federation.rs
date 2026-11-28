@@ -19,11 +19,13 @@ use oml_domain::in_progress::may_set_mode;
 use oml_domain::name::{NamedKind, Reference};
 use oml_domain::{MemoryKind, Role, WorkspaceStatus, event_types};
 
+use oml_domain::admin_act::AdminActKind;
+
 use super::{App, Caller, derived_path};
 use crate::federation::{
-    CountsScope, CutReport, DefaultSources, FederationPolicy, FederationPolicyChange,
-    FederationRecord, FederationSettings, SearchedSource, SourceRefusal, Sources, SourcesReport,
-    Via, WorkspaceFederation,
+    CountsScope, CutReport, DefaultSources, FederationActTaken, FederationPolicy,
+    FederationPolicyChange, FederationRecord, FederationSettings, SearchedSource, SourceRefusal,
+    Sources, SourcesReport, Via, WorkspaceFederation,
 };
 use crate::ports::{Clock, IdGen, JournalStore, MetadataFold, Scanner, Signer, StoreError};
 use crate::search::{Fusion, MatchMode, Pipeline, RetrieverKind};
@@ -52,8 +54,19 @@ pub(super) struct SourcePlan {
     pub reference: Option<Vec<Uuid>>,
     /// The federated nodes searched: a hit on one is `via: federated`.
     pub federated: BTreeSet<Uuid>,
+    /// The public nodes outside the scope searched: a hit on one is `via:
+    /// public` (ADR-0098 d3).
+    pub public: BTreeSet<Uuid>,
     pub report: Option<SourcesReport>,
     pub record: Option<FederationRecord>,
+}
+
+/// The wide keys' counts (ADR-0097 d18).
+fn wide_counts(wide: &[WideKey]) -> crate::federation::WideKeyCounts {
+    crate::federation::WideKeyCounts {
+        keys: wide.len(),
+        most_candidates: wide.iter().map(|k| k.candidates).max().unwrap_or(0),
+    }
 }
 
 /// A candidate source: a trusted node outside the scope the key reads.
@@ -78,17 +91,25 @@ where
         &self,
         bearer: impl Into<Bearer<'_>>,
     ) -> Result<(FederationSettings, Vec<WideKey>), AppError> {
-        let admin = self
-            .admin_caller(bearer.into(), "federation_settings")
-            .await?
-            .key;
+        // An admin key's, or a maintenance key's with no key listed
+        // (ADR-0097 d18).
+        let admin = self.counts_caller(bearer, "federation_settings").await?.key;
         let policy = self.journal.federation_policy(admin.tenant_id).await?;
+        let wide = self.wide_keys_of(admin.tenant_id);
+        let wide_counts = wide_counts(&wide);
+        // A maintenance key reads the counts and never the list.
+        let wide = if admin.role == Role::Maintenance {
+            Vec::new()
+        } else {
+            wide
+        };
         Ok((
             FederationSettings {
                 policy,
                 widen_signal: self.widen.health_of(admin.tenant_id),
+                wide_counts,
             },
-            self.wide_keys_of(admin.tenant_id),
+            wide,
         ))
     }
 
@@ -101,6 +122,30 @@ where
         bearer: impl Into<Bearer<'_>>,
         change: FederationPolicyChange,
     ) -> Result<(FederationSettings, Vec<WideKey>), AppError> {
+        Ok(self
+            .set_federation_policy_with_reason(bearer, change, None)
+            .await?
+            .now)
+    }
+
+    /// [`Self::set_federation_policy`] as an admin act (ADR-0097 d3, d5): a
+    /// change that searches less (federation off, the `scope` default,
+    /// fewer sources) is narrowing and takes effect at once; one that
+    /// searches more is widening, takes effect at once marked under
+    /// `sole_admin`, and otherwise waits on a second admin person, whose
+    /// confirmation applies the change over the policy as it stands then.
+    /// A change that does both is two acts of two classes and is refused,
+    /// [`AppError::AdminField`] at `/`, journalling nothing.
+    ///
+    /// # Errors
+    /// As [`Self::set_federation_policy`], the refusal above, and a pending
+    /// widening sent no reason.
+    pub async fn set_federation_policy_with_reason(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        change: FederationPolicyChange,
+        reason: Option<&str>,
+    ) -> Result<FederationActTaken<(FederationSettings, Vec<WideKey>)>, AppError> {
         let admin = self
             .admin_caller(bearer.into(), "federation_policy")
             .await?
@@ -118,29 +163,124 @@ where
             default_sources: change.default_sources.unwrap_or(from.default_sources),
             max_sources: change.max_sources.unwrap_or(from.max_sources),
         };
+        let mut pending = None;
+        let mut now = from;
         if policy != from {
+            let widens = policy.enabled && !from.enabled
+                || policy.default_sources == DefaultSources::Wide
+                    && from.default_sources != DefaultSources::Wide
+                || policy.max_sources > from.max_sources;
+            let narrows = !policy.enabled && from.enabled
+                || policy.default_sources != DefaultSources::Wide
+                    && from.default_sources == DefaultSources::Wide
+                || policy.max_sources < from.max_sources;
+            if widens && narrows {
+                return Err(AppError::AdminField {
+                    field: "/",
+                    message: "a change that widens and narrows the federation policy is two acts: send the narrowing first, then the widening".to_owned(),
+                });
+            }
+            let kind = if widens {
+                AdminActKind::WidenFederationPolicy
+            } else {
+                AdminActKind::NarrowFederationPolicy
+            };
             let prev = self.head_event(tenant_id).await?;
-            let event = self.seal(
-                prev.as_ref(),
-                tenant_id,
-                event_types::FEDERATION_POLICY_SET,
-                &admin.principal,
-                Some(admin.key_id),
+            let act = self
+                .begin_admin_act(
+                    &admin,
+                    kind,
+                    json!({ "policy": policy_json(&policy), "from": policy_json(&from) }),
+                    reason,
+                    json!({ "change": change_json(&change), "from": policy_json(&from) }),
+                    prev.as_ref(),
+                )
+                .await?;
+            if act.pending() {
+                pending = Some(act.record.clone());
+                self.commit_with_act(Some(act), Vec::new()).await?;
+            } else {
+                let event = self.policy_event(&act.event, &admin, policy, from, act.act_id())?;
+                self.commit_with_act(Some(act), vec![event]).await?;
+                now = policy;
+            }
+        }
+        let wide = self.wide_keys_of(tenant_id);
+        Ok(FederationActTaken {
+            now: (
+                FederationSettings {
+                    policy: now,
+                    widen_signal: self.widen.health_of(tenant_id),
+                    wide_counts: wide_counts(&wide),
+                },
+                wide,
+            ),
+            pending,
+        })
+    }
+
+    /// `federation.policy_set` of `policy` over `from`, sealed on `prev` and
+    /// naming the admin act that caused it (ADR-0097 d2).
+    pub(crate) fn policy_event(
+        &self,
+        prev: &oml_domain::SignedEnvelope,
+        admin: &crate::types::KeyRecord,
+        policy: FederationPolicy,
+        from: FederationPolicy,
+        act_id: Uuid,
+    ) -> Result<(oml_domain::SignedEnvelope, MetadataFold), AppError> {
+        let event = self.seal(
+            Some(prev),
+            admin.tenant_id,
+            event_types::FEDERATION_POLICY_SET,
+            &admin.principal,
+            Some(admin.key_id),
+            super::admin_acts::with_act_id(
                 json!({
                     "policy": policy_json(&policy),
                     "from": policy_json(&from),
                     "by_key_id": admin.key_id.to_string(),
                 }),
-            )?;
-            self.commit(event, MetadataFold::FederationPolicySet(policy), None)
-                .await?;
-        }
-        Ok((
-            FederationSettings {
-                policy,
-                widen_signal: self.widen.health_of(tenant_id),
+                act_id,
+            ),
+        )?;
+        Ok((event, MetadataFold::FederationPolicySet(policy)))
+    }
+
+    /// `workspace.federation_set` of `workspace_id` to `accept_federated`,
+    /// sealed on `prev` under `key` and naming `act_id` where an admin act
+    /// caused it (ADR-0097 d2).
+    pub(crate) fn workspace_federation_event(
+        &self,
+        prev: Option<&oml_domain::SignedEnvelope>,
+        key: &crate::types::KeyRecord,
+        workspace_id: Uuid,
+        accept_federated: bool,
+        act_id: Option<Uuid>,
+    ) -> Result<(oml_domain::SignedEnvelope, MetadataFold), AppError> {
+        let payload = json!({
+            "workspace_id": workspace_id.to_string(),
+            "field": "accept_federated",
+            "value": accept_federated,
+            "from": !accept_federated,
+        });
+        let event = self.seal(
+            prev,
+            key.tenant_id,
+            event_types::WORKSPACE_FEDERATION_SET,
+            &key.principal,
+            Some(key.key_id),
+            match act_id {
+                Some(act_id) => super::admin_acts::with_act_id(payload, act_id),
+                None => payload,
             },
-            self.wide_keys_of(tenant_id),
+        )?;
+        Ok((
+            event,
+            MetadataFold::WorkspaceFederationSet {
+                workspace_id,
+                accept_federated,
+            },
         ))
     }
 
@@ -155,6 +295,29 @@ where
         workspace: Reference,
         accept_federated: bool,
     ) -> Result<WorkspaceFederation, AppError> {
+        Ok(self
+            .set_workspace_federation_with_reason(bearer, workspace, accept_federated, None)
+            .await?
+            .now)
+    }
+
+    /// [`Self::set_workspace_federation`], an admin's as an admin act
+    /// (ADR-0097 d3, d5): turning `accept_federated` off is narrowing, at
+    /// once; turning it on is widening, at once marked under `sole_admin`,
+    /// and otherwise pending until a second admin person confirms it, which
+    /// applies it then. A person's reviewer key acts as the person, never
+    /// as an admin act (d1).
+    ///
+    /// # Errors
+    /// As [`Self::set_workspace_federation`], and a pending widening sent no
+    /// reason.
+    pub async fn set_workspace_federation_with_reason(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        workspace: Reference,
+        accept_federated: bool,
+        reason: Option<&str>,
+    ) -> Result<FederationActTaken<WorkspaceFederation>, AppError> {
         let caller = self
             .key_act_caller(bearer.into(), "set_workspace_federation")
             .await?;
@@ -188,33 +351,53 @@ where
             .federation_declining(tenant_id, &[workspace_id])
             .await?
             .is_empty();
+        let done = |accept_federated, pending| FederationActTaken {
+            now: WorkspaceFederation { accept_federated },
+            pending,
+        };
         if from == accept_federated {
-            return Ok(WorkspaceFederation { accept_federated });
+            return Ok(done(accept_federated, None));
         }
         let prev = self.head_event(tenant_id).await?;
-        let event = self.seal(
-            prev.as_ref(),
-            tenant_id,
-            event_types::WORKSPACE_FEDERATION_SET,
-            &key.principal,
-            Some(key.key_id),
-            json!({
-                "workspace_id": workspace_id.to_string(),
-                "field": "accept_federated",
-                "value": accept_federated,
-                "from": from,
-            }),
+        let act = if admin {
+            let act = self
+                .begin_admin_act(
+                    key,
+                    if accept_federated {
+                        AdminActKind::AcceptFederation
+                    } else {
+                        AdminActKind::DeclineFederation
+                    },
+                    json!({
+                        "workspace_id": workspace_id.to_string(),
+                        "accept_federated": accept_federated,
+                    }),
+                    reason,
+                    json!({
+                        "workspace_id": workspace_id.to_string(),
+                        "accept_federated": accept_federated,
+                    }),
+                    prev.as_ref(),
+                )
+                .await?;
+            if act.pending() {
+                let record = act.record.clone();
+                self.commit_with_act(Some(act), Vec::new()).await?;
+                return Ok(done(from, Some(record)));
+            }
+            Some(act)
+        } else {
+            None
+        };
+        let event = self.workspace_federation_event(
+            act.as_ref().map(|a| &a.event).or(prev.as_ref()),
+            key,
+            workspace_id,
+            accept_federated,
+            act.as_ref().map(super::admin_acts::BegunAct::act_id),
         )?;
-        self.commit(
-            event,
-            MetadataFold::WorkspaceFederationSet {
-                workspace_id,
-                accept_federated,
-            },
-            None,
-        )
-        .await?;
-        Ok(WorkspaceFederation { accept_federated })
+        self.commit_with_act(act, vec![event]).await?;
+        Ok(done(accept_federated, None))
     }
 
     /// The keys of `tenant_id` the doctor line names (d12).
@@ -247,6 +430,7 @@ where
         policy: Option<FederationPolicy>,
         scope: Uuid,
         hit_nodes: &[Uuid],
+        public: &BTreeSet<Uuid>,
         kinds: &[MemoryKind],
         pipeline: Pipeline,
         query: &str,
@@ -262,9 +446,50 @@ where
         };
         // `scope` is today's answer, and it reads nothing more: no policy,
         // no candidate and no count, federation on or off (d12, as amended).
-        if sources == Sources::Scope {
+        if sources == Sources::Scope && public.is_empty() {
             return Ok(SourcePlan {
                 promoted: hit_nodes.to_vec(),
+                ..SourcePlan::default()
+            });
+        }
+        // Only `bm25_postings` prunes, and never under `match: all`
+        // (ADR-0052 d4, d6).
+        let prunes = pipeline.retrievers().contains(&RetrieverKind::Bm25Postings)
+            && req.match_mode == MatchMode::Any;
+        let counts_scope = |nodes: Vec<Uuid>| CountsScope {
+            nodes,
+            kinds: kinds.to_vec(),
+            expired_at,
+            prunes,
+        };
+        // A default recall that searched a public node outside the scope
+        // lists each one in `search.sources`, so every hit still says where
+        // it came from; the statistics are the hit nodes', public ones
+        // among them, as the scope's own (ADR-0098 d3, d7). Federation is
+        // neither read nor needed.
+        if sources == Sources::Scope {
+            let counts = self
+                .journal
+                .reference_counts(tenant_id, &counts_scope(hit_nodes.to_vec()), query)
+                .await?;
+            let kept = Kept::of(&counts);
+            let reference = kept.sum(hit_nodes.iter());
+            let mut searched = Vec::with_capacity(public.len());
+            for node in hit_nodes.iter().filter(|n| public.contains(n)) {
+                searched.push(
+                    self.searched(caller, *node, None, Via::Public, &kept, &reference)
+                        .await?,
+                );
+            }
+            return Ok(SourcePlan {
+                promoted: hit_nodes.to_vec(),
+                public: public.clone(),
+                report: Some(SourcesReport {
+                    mode: "scope",
+                    considered: searched.len(),
+                    searched,
+                    cut: CutReport::default(),
+                }),
                 ..SourcePlan::default()
             });
         }
@@ -310,16 +535,6 @@ where
                 pipeline: pipeline.as_str().to_owned(),
             });
         }
-        // Only `bm25_postings` prunes, and never under `match: all`
-        // (ADR-0052 d4, d6).
-        let prunes = pipeline.retrievers().contains(&RetrieverKind::Bm25Postings)
-            && req.match_mode == MatchMode::Any;
-        let counts_scope = |nodes: Vec<Uuid>| CountsScope {
-            nodes,
-            kinds: kinds.to_vec(),
-            expired_at,
-            prunes,
-        };
         match sources {
             Sources::List(names) => {
                 // (4) Each name in index order, the first unusable one
@@ -344,7 +559,9 @@ where
                     .collect();
                 let mut searched = Vec::with_capacity(listed.len());
                 for node in &listed {
-                    let via = if federated.contains(node) {
+                    let via = if public.contains(node) {
+                        Via::Public
+                    } else if federated.contains(node) {
                         Via::Federated
                     } else {
                         Via::Scope
@@ -354,6 +571,11 @@ where
                             .await?,
                     );
                 }
+                let listed_public: BTreeSet<Uuid> = listed
+                    .iter()
+                    .filter(|n| public.contains(n))
+                    .copied()
+                    .collect();
                 Ok(SourcePlan {
                     promoted: listed.clone(),
                     held_within: Some(listed.iter().copied().collect()),
@@ -372,6 +594,7 @@ where
                         reference_workspace_ids: listed,
                     }),
                     federated,
+                    public: listed_public,
                 })
             }
             Sources::Scope | Sources::Wide => {
@@ -422,7 +645,11 @@ where
                             caller,
                             *node,
                             paths.get(node),
-                            Via::Scope,
+                            if public.contains(node) {
+                                Via::Public
+                            } else {
+                                Via::Scope
+                            },
                             &kept,
                             &reference,
                         )
@@ -463,6 +690,7 @@ where
                         reference_workspace_ids: r,
                     }),
                     federated: selected.into_iter().collect(),
+                    public: public.clone(),
                 })
             }
         }
@@ -733,7 +961,7 @@ where
         let counts = kept.of_node(&node);
         let matched_words = match via {
             Via::Scope => Vec::new(),
-            Via::Federated => kept
+            Via::Federated | Via::Public => kept
                 .words
                 .iter()
                 .zip(&counts.df)
@@ -808,6 +1036,35 @@ fn sources_invalid(field: &'static str, message: &str) -> AppError {
     AppError::SourcesInvalid {
         field,
         message: message.to_owned(),
+    }
+}
+
+/// The fields a policy change sends, as its admin act's effect holds them.
+fn change_json(change: &FederationPolicyChange) -> Value {
+    json!({
+        "enabled": change.enabled,
+        "default_sources": change.default_sources.map(DefaultSources::as_str),
+        "max_sources": change.max_sources,
+    })
+}
+
+/// The policy `base` with the fields of `change`, as an effect holds it.
+pub(crate) fn apply_change_json(base: FederationPolicy, change: &Value) -> FederationPolicy {
+    FederationPolicy {
+        enabled: change
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(base.enabled),
+        default_sources: change
+            .get("default_sources")
+            .and_then(Value::as_str)
+            .and_then(DefaultSources::parse)
+            .unwrap_or(base.default_sources),
+        max_sources: change
+            .get("max_sources")
+            .and_then(Value::as_u64)
+            .and_then(|m| u32::try_from(m).ok())
+            .unwrap_or(base.max_sources),
     }
 }
 

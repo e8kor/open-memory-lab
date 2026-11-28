@@ -17,7 +17,7 @@ use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::{EventTime, MemoryKind, Role, UsedBy};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, SeqIdGen};
 use oml_app::federation::Sources;
-use oml_app::ports::{Clock, JournalStore};
+use oml_app::ports::{Clock, ConnectionStore, JournalStore, WebStore};
 use oml_app::search::{MatchMode, Pipeline, SearchConfig};
 use oml_app::types::{
     AnchorFilter, AppError, BootstrapRequest, GrantRequest, IssueKeyRequest, IssuedKey,
@@ -47,6 +47,7 @@ fn grant(node: Uuid, role: Role) -> GrantRequest {
         role,
         deny: Vec::new(),
         covers: Covers::Subtree,
+        create: false,
     }
 }
 
@@ -58,6 +59,8 @@ pub struct AsOfWorld<S: JournalStore> {
     pub clock: FixedClock,
     pub tenant: Uuid,
     pub admin: String,
+    /// The tenant's admin person's console session (ADR-0089 d16).
+    pub console: oml_app::types::WebSessionRecord,
     pub writer: IssuedKey,
     pub reviewer: IssuedKey,
     pub reader: IssuedKey,
@@ -67,7 +70,7 @@ pub struct AsOfWorld<S: JournalStore> {
     idem: AtomicU64,
 }
 
-impl<S: JournalStore + Clone> AsOfWorld<S> {
+impl<S: WebStore + ConnectionStore + Clone> AsOfWorld<S> {
     /// The tree and the keys, serving `searches`, the first the default.
     pub async fn new(store: S, searches: &[&str]) -> Self {
         let pipelines: Vec<Pipeline> = searches
@@ -83,6 +86,10 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
             MarkerScanner::default(),
         )
         .with_search(SearchConfig::new(&pipelines, pipelines[0]).expect("a search config"));
+        // The tenant's one admin person is the console admin `counted`
+        // adds, so it stays `sole_admin` and its issuances take effect at
+        // once (ADR-0097 d10); the fix act that demotes runs from that
+        // person's session (ADR-0089 d16).
         let boot = app
             .bootstrap_tenant(&BootstrapRequest {
                 tenant_name: fresh("asof"),
@@ -130,11 +137,16 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
             vec![grant(home, Role::Reader)],
         )
         .await;
+        // The reviewer counts as a person, as an instruction verdict needs
+        // (ADR-0097 d12).
+        let console =
+            crate::federation::counted(&app, admin.as_str(), boot.tenant_id, reviewer.key_id).await;
         AsOfWorld {
             app,
             clock,
             tenant: boot.tenant_id,
             admin,
+            console,
             writer,
             reviewer,
             reader,
@@ -161,6 +173,32 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
     #[must_use]
     pub fn instant(&self) -> EventTime {
         self.clock.now()
+    }
+
+    /// Demotes `id` through the one surface that demotes, the admin fix act
+    /// (ADR-0089 d16; #502): the fix record.
+    pub async fn demote(&self, id: Uuid) -> oml_app::types::FixRecord {
+        let ops = self
+            .app
+            .web_caller(&self.console, oml_app::app::Capacity::Admin)
+            .await
+            .expect("the console admin");
+        self.app
+            .admin_fix(
+                oml_app::types::Bearer::Session(&ops),
+                &oml_app::app::FixRequest {
+                    act: oml_app::types::FixAct::Demote,
+                    target: id,
+                    reason: "the version is wrong".to_owned(),
+                    body: None,
+                    title: None,
+                },
+            )
+            .await
+            .expect("demote")
+            .fix()
+            .cloned()
+            .expect("a demotion is a fix")
     }
 
     /// One claim `claim_key` of `kind` on `node` by the writer, left held.
@@ -413,7 +451,7 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
 }
 
 /// A key issued by the tenant admin.
-async fn issue<S: JournalStore + Clone>(
+async fn issue<S: WebStore + ConnectionStore + Clone>(
     app: &AsOfApp<S>,
     admin: &str,
     role: Role,
@@ -436,6 +474,8 @@ async fn issue<S: JournalStore + Clone>(
             guardrail_scope: None,
             expiry: None,
             requests_per_minute: None,
+            person: None,
+            create_workspaces: Vec::new(),
         },
     )
     .await
@@ -451,7 +491,9 @@ fn one(id: Uuid) -> BTreeSet<Uuid> {
 /// `every_pipeline_answers_an_as_of_recall_over_the_scope_at_the_instant`:
 /// before the first promotion nothing, between the two the first version,
 /// after the second the second, in recall, the listing, steering and get.
-pub async fn an_as_of_read_serves_the_tip_the_claim_had_then<S: JournalStore + Clone>(
+pub async fn an_as_of_read_serves_the_tip_the_claim_had_then<
+    S: WebStore + ConnectionStore + Clone,
+>(
     store: S,
     searches: &[&str],
 ) {
@@ -532,7 +574,9 @@ pub async fn an_as_of_read_serves_the_tip_the_claim_had_then<S: JournalStore + C
 /// `an_as_of_read_applies_todays_grants_and_denials`: a reader that read
 /// the claim at an instant reads nothing at that instant once denied today,
 /// and a key with no grant on the node never reads it at any instant.
-pub async fn an_as_of_read_applies_todays_grants_and_denials<S: JournalStore + Clone>(
+pub async fn an_as_of_read_applies_todays_grants_and_denials<
+    S: WebStore + ConnectionStore + Clone,
+>(
     store: S,
     searches: &[&str],
 ) {
@@ -578,7 +622,7 @@ pub async fn an_as_of_read_never_serves_a_version_erased_today<S, E, Fut>(
     searches: &[&str],
     erase: E,
 ) where
-    S: JournalStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
     E: Fn(Uuid, Uuid) -> Fut,
     Fut: core::future::Future<Output = ()>,
 {
@@ -631,7 +675,7 @@ pub async fn an_as_of_read_never_serves_a_version_erased_today<S, E, Fut>(
 /// demoted version below the tip leaves the instants it was the tip with
 /// none.
 pub async fn an_as_of_read_skips_a_demoted_version_and_serves_the_version_below_it<
-    S: JournalStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
 >(
     store: S,
     searches: &[&str],
@@ -651,10 +695,7 @@ pub async fn an_as_of_read_skips_a_demoted_version_and_serves_the_version_below_
     let t3 = w.instant();
     // A version below the tip goes: the instants it was the tip serve v1,
     // and today's tip stays (the probe, not the short cut, answers t2).
-    w.app
-        .demote_version(w.admin.as_str(), v2)
-        .await
-        .expect("demote v2, below the tip");
+    w.demote(v2).await;
     for &search in &w.searches {
         let at = |t| w.hits(&w.reader, "runbook lives", search, t, false);
         assert_eq!(
@@ -684,12 +725,8 @@ pub async fn an_as_of_read_skips_a_demoted_version_and_serves_the_version_below_
     assert!(w.get(&w.reader, v2, None).await.is_err());
     // The tip goes: v1, the greatest promoted version below it that is not
     // demoted, is the tip again and stands in at every instant.
-    let demotion = w
-        .app
-        .demote_version(w.admin.as_str(), v3)
-        .await
-        .expect("demote the tip");
-    assert_eq!(demotion.restored.map(|r| r.artifact_id), Some(v1));
+    let demotion = w.demote(v3).await;
+    assert_eq!(demotion.served_id, Some(v1));
     for &search in &w.searches {
         let at = |t| w.hits(&w.reader, "runbook lives", search, t, false);
         assert_eq!(
@@ -700,10 +737,7 @@ pub async fn an_as_of_read_skips_a_demoted_version_and_serves_the_version_below_
         assert_eq!(at(Some(&t2)).await, one(v1), "{search}: and for v2 at t2");
         assert_eq!(at(None).await, one(v1), "{search}: v1 is today's tip");
     }
-    w.app
-        .demote_version(w.admin.as_str(), v1)
-        .await
-        .expect("demote the last");
+    w.demote(v1).await;
     for &search in &w.searches {
         let at = |t| w.hits(&w.reader, "runbook lives", search, t, false);
         for t in [&t1, &t2, &t3] {
@@ -724,7 +758,7 @@ pub async fn an_as_of_read_skips_a_demoted_version_and_serves_the_version_below_
 /// ratification ends `v1` there (ADR-0059 d4); demoting `v2` leaves `v1`
 /// open again, served today and at an instant before the demotion.
 pub async fn a_demotion_restores_the_end_the_version_had_before_its_supersession<
-    S: JournalStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
 >(
     store: S,
     searches: &[&str],
@@ -750,12 +784,8 @@ pub async fn a_demotion_restores_the_end_the_version_had_before_its_supersession
         );
     }
     let t = w.instant();
-    let demotion = w
-        .app
-        .demote_version(w.admin.as_str(), v2)
-        .await
-        .expect("demote the tip");
-    assert_eq!(demotion.restored.map(|r| r.artifact_id), Some(v1));
+    let demotion = w.demote(v2).await;
+    assert_eq!(demotion.served_id, Some(v1));
     for &search in &w.searches {
         let at = |t| w.hits(&w.reader, "lease renews", search, t, false);
         assert_eq!(at(None).await, one(v1), "{search}: v1 serves today");
@@ -787,7 +817,7 @@ pub async fn a_demotion_restores_the_end_the_version_had_before_its_supersession
 /// past, `v3` supersedes `v2`, and demoting `v2` leaves `v1` open again, so
 /// an as-of read in `v2`'s tenure serves `v1` in its place.
 pub async fn demoting_a_version_below_the_tip_restores_the_end_its_ratification_gave_the_version_it_replaced<
-    S: JournalStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
 >(
     store: S,
     searches: &[&str],
@@ -809,12 +839,8 @@ pub async fn demoting_a_version_below_the_tip_restores_the_end_its_ratification_
     let v3 = w
         .supersede(v2, 2, "the rota rotates every month", false)
         .await;
-    let demotion = w
-        .app
-        .demote_version(w.admin.as_str(), v2)
-        .await
-        .expect("demote v2, below the tip");
-    assert_eq!(demotion.restored, None, "the tip does not move");
+    let demotion = w.demote(v2).await;
+    assert_eq!(demotion.served_id, None, "the tip does not move");
     for &search in &w.searches {
         let at = |t| w.hits(&w.reader, "rota rotates", search, t, false);
         assert_eq!(
@@ -832,7 +858,7 @@ pub async fn demoting_a_version_below_the_tip_restores_the_end_its_ratification_
 /// rows (#474): the version it names as reopened carries the end the event
 /// names, and with none named the version the demoted one replaces keeps
 /// the end it had.
-async fn demote_and_check_the_event<S: JournalStore + Clone>(
+async fn demote_and_check_the_event<S: WebStore + ConnectionStore + Clone>(
     w: &AsOfWorld<S>,
     store: &S,
     id: Uuid,
@@ -846,21 +872,19 @@ async fn demote_and_check_the_event<S: JournalStore + Clone>(
         Some(r) => store.memory(w.tenant, r).await.expect("read"),
         None => None,
     };
-    let demotion = w
-        .app
-        .demote_version(w.admin.as_str(), id)
-        .await
-        .expect("demote");
+    let demotion = w.demote(id).await;
     let event = store
-        .events_range(w.tenant, demotion.journal_seq, 1)
+        .events_range(w.tenant, 1, 100_000)
         .await
         .expect("range")
-        .remove(0)
+        .into_iter()
+        .find(|e| e.envelope.event_id == demotion.lifecycle_event_id)
+        .expect("the fix's demotion")
         .envelope;
     assert_eq!(event.event_type, "lifecycle.demote");
     let p = &event.payload;
     assert_eq!(p["artifact_id"], id.to_string());
-    let restored = demotion.restored.map(|r| r.artifact_id);
+    let restored = demotion.served_id;
     assert_eq!(
         p["restored_artifact_id"].as_str(),
         restored.map(|r| r.to_string()).as_deref(),
@@ -924,7 +948,7 @@ pub async fn the_demote_event_names_what_the_store_wrote_in_either_order<S, F, F
     make: F,
     searches: &[&str],
 ) where
-    S: JournalStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
     F: Fn() -> Fut,
     Fut: core::future::Future<Output = S>,
 {
@@ -990,7 +1014,7 @@ pub async fn the_demote_event_names_what_the_store_wrote_in_either_order<S, F, F
 
 /// `a_retired_claim_serves_its_earlier_tip_before_the_retirement_and_nothing_after`.
 pub async fn a_retired_claim_serves_its_earlier_tip_before_the_retirement<
-    S: JournalStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
 >(
     store: S,
     searches: &[&str],
@@ -1021,7 +1045,7 @@ pub async fn a_retired_claim_serves_its_earlier_tip_before_the_retirement<
 /// recorded by the instant is served with `include_unreviewed`, one recorded
 /// after it is not, a version held then and promoted since is absent, and
 /// another key never meets a held row.
-pub async fn held_rows_at_an_instant_follow_todays_rules<S: JournalStore + Clone>(
+pub async fn held_rows_at_an_instant_follow_todays_rules<S: WebStore + ConnectionStore + Clone>(
     store: S,
     searches: &[&str],
 ) {
@@ -1077,7 +1101,7 @@ pub async fn held_rows_at_an_instant_follow_todays_rules<S: JournalStore + Clone
 /// held rows today; at an instant, only those recorded by it, and a row held
 /// then and approved since is absent, in recall and the scoped listing.
 pub async fn inside_an_in_progress_scope_held_rows_at_an_instant_follow_todays_rules<
-    S: JournalStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
 >(
     store: S,
     searches: &[&str],
@@ -1136,7 +1160,7 @@ pub async fn inside_an_in_progress_scope_held_rows_at_an_instant_follow_todays_r
 /// store takes the two node sets apart, the own held rows' and every
 /// author's, in every statement.
 pub async fn a_read_at_an_ancestor_serves_a_descendant_in_progress_subtree_beside_its_own_held_rows<
-    S: JournalStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
 >(
     store: S,
     searches: &[&str],
@@ -1279,7 +1303,7 @@ pub async fn a_read_at_an_ancestor_serves_a_descendant_in_progress_subtree_besid
 
 /// `an_as_of_after_the_leads_clock_is_refused`, and the arguments `as_of`
 /// does not combine with, each refused naming its field.
-pub async fn an_as_of_after_the_leads_clock_is_refused<S: JournalStore + Clone>(
+pub async fn an_as_of_after_the_leads_clock_is_refused<S: WebStore + ConnectionStore + Clone>(
     store: S,
     searches: &[&str],
 ) {
@@ -1340,7 +1364,7 @@ pub async fn an_as_of_after_the_leads_clock_is_refused<S: JournalStore + Clone>(
 
 /// Every law but the erasure one, which needs a store-specific act.
 /// A user's key on its own root, named `user`, of `role`.
-async fn user_key<S: JournalStore + Clone>(
+async fn user_key<S: WebStore + ConnectionStore + Clone>(
     w: &AsOfWorld<S>,
     user: &Name,
     role: Role,
@@ -1368,6 +1392,7 @@ async fn user_key<S: JournalStore + Clone>(
                         role: *r,
                         deny: Vec::new(),
                         covers: Covers::Subtree,
+                        create: false,
                     })
                     .collect(),
                 connect_code: false,
@@ -1375,6 +1400,8 @@ async fn user_key<S: JournalStore + Clone>(
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -1387,7 +1414,7 @@ async fn user_key<S: JournalStore + Clone>(
 /// numbers, and the usage meter counts the chain as the one live memory it
 /// was before, never a second.
 pub async fn a_claim_whose_approved_versions_are_all_demoted_takes_a_new_version_continuing_its_numbers<
-    S: JournalStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
 >(
     store: S,
     searches: &[&str],
@@ -1467,10 +1494,7 @@ pub async fn a_claim_whose_approved_versions_are_all_demoted_takes_a_new_version
     approve(v2).await;
     assert_eq!(memories().await, 1, "one chain, one memory");
     for id in [v2, v1] {
-        w.app
-            .demote_version(w.admin.as_str(), id)
-            .await
-            .expect("demote");
+        w.demote(id).await;
     }
     assert_eq!(memories().await, 1, "a demoted chain still counts");
     let v3 = w
@@ -1512,7 +1536,7 @@ pub async fn a_claim_whose_approved_versions_are_all_demoted_takes_a_new_version
 
 pub async fn run_as_of_suite<S, F, Fut>(make: F, searches: &[&str])
 where
-    S: JournalStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
     F: Fn() -> Fut,
     Fut: core::future::Future<Output = S>,
 {

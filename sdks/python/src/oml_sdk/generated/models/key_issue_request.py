@@ -14,6 +14,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.grant_request import GrantRequest
+    from ..models.new_workspace_request import NewWorkspaceRequest
 
 
 T = TypeVar("T", bound="KeyIssueRequest")
@@ -58,6 +59,15 @@ class KeyIssueRequest:
         profile (KeyIssueRequestProfile | Unset): curator: a reviewer key used by an agent that may reject, propose
             retirements and summaries, and flag contradictions inside an in-progress workspace only, and never approves; any
             other role or used_by is request.validation, details.field /profile (ADR-0030 d8, d9).
+        timebox (bool | Unset): A time box (ADR-0097 d13): an admin person's issuance that takes effect at once in any
+            tenant, for a reader, submitter or contributor key whose grants are reader and submitter grants in shared
+            workspaces, never into a user root or an in-progress subtree, with an expiry no more than 24 hours away that
+            everything issued under it inherits. It requires reason, and is an issue_key admin act marked timebox, which a
+            second admin person settles afterwards with confirmAdminAct or declineAdminAct (a decline revokes the key). One
+            open box per admin person per workspace, and one renewal while the first is unsettled; refused while an act
+            against an admin is open or a freeze holds. Each refusal is request.validation with details.field /timebox and
+            details.reason not_admin_person, shape, not_shared, until, open, renewals_exhausted or against_admin_open. Since
+            v0.8.6. Default: False.
         connect_code (bool | Unset): Issue a connector key (ADR-0031 d7): no bearer value is minted, and the 201 carries
             connect_code in place of value. Refused with 422 oauth.connect_refused for an admin or operator role (role),
             used_by service (used_by_service), or a deployment without oauth.issuer (not_configured). Default: False.
@@ -67,6 +77,21 @@ class KeyIssueRequest:
         requests_per_minute (int | Unset): The requests the key may make in one UTC minute, its own rate beside any
             quota of its account; the request past it is 429 limit.rate. Omitted, the key has none of its own. Refused for
             role admin (ADR-0079 d1, d4; since v0.7.3).
+        reason (str | Unset): The issuing admin's reason, scanned as a verdict's reason and journalled in the issuance's
+            admin.act. Required when the issuance waits on a second admin person: request.validation with details.field
+            /reason and details.reason required; a missing one on an issuance that takes effect at once under sole_admin is
+            journalled as null (ADR-0097 d26). Since v0.8.6.
+        create_workspaces (list[NewWorkspaceRequest] | Unset): Workspaces the issuance creates in the same act, each
+            journalled as workspace.create before key.issued and granted to the key by its role's default grants over the
+            subtree: a contributor reader and submitter, a submitter submitter, a reader reader, a reviewer reviewer. The
+            creations, the key and its grants commit together or not at all. An admin key creates anywhere, a person's web
+            session inside the own root; an operator key creates none (access.verb_ceiling). When the issuance waits on a
+            second admin person nothing is created until the confirmation, which creates the workspaces, writes the grants
+            and names the act in one commit; a name taken by then answers 409 name.taken, applies nothing, and the act waits
+            until it is declined or expires. A pending key whose default would be a workspace the act creates is issued with
+            no default. A creation below a user root counts on that account's workspaces meter. At most 16 per issuance,
+            else request.validation with details.field /create_workspaces and details.reason too_many (ADR-0097 d30). Since
+            v0.8.6.
     """
 
     role: Role
@@ -80,9 +105,12 @@ class KeyIssueRequest:
     principal: str | Unset = UNSET
     guardrail_scope: GuardrailScope | Unset = UNSET
     profile: KeyIssueRequestProfile | Unset = UNSET
+    timebox: bool | Unset = False
     connect_code: bool | Unset = False
     expiry: datetime.datetime | Unset = UNSET
     requests_per_minute: int | Unset = UNSET
+    reason: str | Unset = UNSET
+    create_workspaces: list[NewWorkspaceRequest] | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         role = self.role.value
@@ -126,6 +154,8 @@ class KeyIssueRequest:
         if not isinstance(self.profile, Unset):
             profile = self.profile.value
 
+        timebox = self.timebox
+
         connect_code = self.connect_code
 
         expiry: str | Unset = UNSET
@@ -133,6 +163,15 @@ class KeyIssueRequest:
             expiry = self.expiry.isoformat()
 
         requests_per_minute = self.requests_per_minute
+
+        reason = self.reason
+
+        create_workspaces: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.create_workspaces, Unset):
+            create_workspaces = []
+            for create_workspaces_item_data in self.create_workspaces:
+                create_workspaces_item = create_workspaces_item_data.to_dict()
+                create_workspaces.append(create_workspaces_item)
 
         field_dict: dict[str, Any] = {}
 
@@ -160,18 +199,25 @@ class KeyIssueRequest:
             field_dict["guardrail_scope"] = guardrail_scope
         if profile is not UNSET:
             field_dict["profile"] = profile
+        if timebox is not UNSET:
+            field_dict["timebox"] = timebox
         if connect_code is not UNSET:
             field_dict["connect_code"] = connect_code
         if expiry is not UNSET:
             field_dict["expiry"] = expiry
         if requests_per_minute is not UNSET:
             field_dict["requests_per_minute"] = requests_per_minute
+        if reason is not UNSET:
+            field_dict["reason"] = reason
+        if create_workspaces is not UNSET:
+            field_dict["create_workspaces"] = create_workspaces
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.grant_request import GrantRequest
+        from ..models.new_workspace_request import NewWorkspaceRequest
 
         d = dict(src_dict)
         role = Role(d.pop("role"))
@@ -228,6 +274,8 @@ class KeyIssueRequest:
         else:
             profile = KeyIssueRequestProfile(_profile)
 
+        timebox = d.pop("timebox", UNSET)
+
         connect_code = d.pop("connect_code", UNSET)
 
         _expiry = d.pop("expiry", UNSET)
@@ -238,6 +286,19 @@ class KeyIssueRequest:
             expiry = datetime.datetime.fromisoformat(_expiry)
 
         requests_per_minute = d.pop("requests_per_minute", UNSET)
+
+        reason = d.pop("reason", UNSET)
+
+        _create_workspaces = d.pop("create_workspaces", UNSET)
+        create_workspaces: list[NewWorkspaceRequest] | Unset = UNSET
+        if _create_workspaces is not UNSET:
+            create_workspaces = []
+            for create_workspaces_item_data in _create_workspaces:
+                create_workspaces_item = NewWorkspaceRequest.from_dict(
+                    create_workspaces_item_data
+                )
+
+                create_workspaces.append(create_workspaces_item)
 
         key_issue_request = cls(
             role=role,
@@ -251,9 +312,12 @@ class KeyIssueRequest:
             principal=principal,
             guardrail_scope=guardrail_scope,
             profile=profile,
+            timebox=timebox,
             connect_code=connect_code,
             expiry=expiry,
             requests_per_minute=requests_per_minute,
+            reason=reason,
+            create_workspaces=create_workspaces,
         )
 
         return key_issue_request

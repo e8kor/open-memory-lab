@@ -101,13 +101,22 @@ where
                 body: sent.body,
                 title: sent.title,
             };
-            let fix = retry_chain(|| st.app.admin_fix(acting.bearer(), &req))
+            let outcome = retry_chain(|| st.app.admin_fix(acting.bearer(), &req))
                 .await
                 .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-            Ok(json_response(
-                StatusCode::CREATED,
-                &fix_json(&fix, st.app.now().unix_micros(), true),
-            ))
+            // An erase of a version that is not promoted, outside
+            // `sole_admin`, makes no fix: its pending shred act answers 202
+            // (ADR-0097 d4, amendment of 2026-11-27, answer 5).
+            Ok(match outcome.fix() {
+                Some(fix) => json_response(
+                    StatusCode::CREATED,
+                    &fix_json(fix, st.app.now().unix_micros(), true),
+                ),
+                None => json_response(
+                    StatusCode::ACCEPTED,
+                    &crate::admin_acts::admin_act_json(outcome.act()),
+                ),
+            })
         };
         finish(&rid, inner.await)
     }

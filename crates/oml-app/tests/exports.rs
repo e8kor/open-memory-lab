@@ -100,6 +100,7 @@ fn grant(node: &str, role: Role) -> GrantRequest {
         role,
         deny: Vec::new(),
         covers: Covers::Subtree,
+        create: false,
     }
 }
 
@@ -128,6 +129,8 @@ async fn issue(
             guardrail_scope: None,
             expiry: None,
             requests_per_minute: None,
+            person: None,
+            create_workspaces: Vec::new(),
         },
     )
     .await
@@ -693,6 +696,8 @@ async fn a_crew_key_is_refused_export_as_person_only() {
                 guardrail_scope: None,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
+                create_workspaces: Vec::new(),
             },
         )
         .await
@@ -943,6 +948,7 @@ async fn a_linked_key_exports_none_of_its_persons_other_keys_held_rows() {
         oml_app::types::Bearer::Session(&ops),
         bob.key_id.into(),
         &name("alice"),
+        Some("the person holds this key"),
     )
     .await
     .expect("linked, pending");

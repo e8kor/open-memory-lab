@@ -13,6 +13,11 @@ notes, since a changed rule set leaves held versions scanned under the old one u
 it writes, then checks them; `check` names the line to add when one is missing. A release with no
 previous stable tag carries no marker. Standard library only; it reads the tags with git, so the
 checkout needs its full history.
+
+The first release whose key roles include `maintenance` (`ROLE_SOURCE`) carries
+`<!-- oml-deployer: post-step maintenance-key -->`: the deployer then converts each admin key its
+files hold into a maintenance key with `oml keys convert-self`, so no service keeps an admin key
+(ADR-0097 d18; docs/operations/upgrades.md).
 """
 from __future__ import annotations
 
@@ -25,6 +30,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SCANNER_SOURCE = "crates/oml-scan/src/lib.rs"
 ADMIN_RESCAN_MARKER = "<!-- oml-deployer: post-step admin-rescan-record-held -->"
+ROLE_SOURCE = "crates/oml-domain/src/model.rs"
+MAINTENANCE_MARKER = "<!-- oml-deployer: post-step maintenance-key -->"
+MAINTENANCE_ROLE = 'Role::Maintenance => "maintenance"'
 RULESET = re.compile(r'^pub const RULESET: &str = "([^"]+)";', re.M)
 TAG = re.compile(r"^v(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?$")
 STABLE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
@@ -69,6 +77,13 @@ def ruleset_at(root: Path, rev: str) -> str | None:
     return ruleset_of(git(root, "show", f"{rev}:{SCANNER_SOURCE}"))
 
 
+def maintenance_at(root: Path, rev: str) -> bool:
+    """Whether the key roles at `rev` include `maintenance` (ADR-0097 d18)."""
+    if not git(root, "ls-tree", "--name-only", rev, "--", ROLE_SOURCE).strip():
+        return False
+    return MAINTENANCE_ROLE in git(root, "show", f"{rev}:{ROLE_SOURCE}")
+
+
 def required(root: Path, tag: str) -> list[tuple[str, str]]:
     """Each marker the notes of `tag` must carry, with the sentence that says why.
 
@@ -82,12 +97,18 @@ def required(root: Path, tag: str) -> list[tuple[str, str]]:
     if before is None:
         return []
     then = ruleset_at(root, before)
-    if then == now:
-        return []
-    return [(
-        ADMIN_RESCAN_MARKER,
-        f"the scanner's rule set is {now} at {tag} and {then or 'not declared'} at {before}",
-    )]
+    wanted = []
+    if then != now:
+        wanted.append((
+            ADMIN_RESCAN_MARKER,
+            f"the scanner's rule set is {now} at {tag} and {then or 'not declared'} at {before}",
+        ))
+    if maintenance_at(root, tag) and not maintenance_at(root, before):
+        wanted.append((
+            MAINTENANCE_MARKER,
+            f"the maintenance key role is new at {tag}, absent at {before}",
+        ))
+    return wanted
 
 
 def missing(notes: str, wanted: list[tuple[str, str]]) -> list[str]:

@@ -5,6 +5,8 @@
 //! against the real router; every byte on the wire is the spec's shape
 //! (docs/api/openapi.yaml, docs/api/errors.md).
 
+mod counted;
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -326,7 +328,7 @@ async fn bootstrap(router: &Router) -> (String, Uuid, Uuid) {
 
 async fn bootstrap_claim(router: &Router, person: Option<&str>) -> (String, Uuid, Uuid) {
     let mut claim = json!({
-        "enrollment_token": ENROLLMENT,
+        "enrollment_token": ENROLLMENT, "person": "founder", "email": "founder@example.com",
         "name": "root-admin",
         "tenant_name": "test-tenant",
         "admin_principal": "platform/admin",
@@ -379,6 +381,45 @@ fn key_name(role: &str, principal: &str) -> String {
         .collect()
 }
 
+/// The bootstrap's founder accepts the pending link of the admin key
+/// `issued` names, from a console session opened in the store, so the key
+/// authenticates (ADR-0097 d21, d7). Answers the key's value.
+async fn founder_accepts(rig: &Rig, issued: &Value) -> String {
+    use oml_app::app::Capacity;
+    use oml_app::ports::WebStore as _;
+    use oml_app::types::Bearer;
+    let app = oml_server_lead::lead_app(&rig.store, rig.signing.clone());
+    let email = oml_app::domain::web::Email::parse("founder@example.com").expect("an email");
+    let entry = rig
+        .store
+        .web_entry_by_email(&email.digest())
+        .await
+        .expect("a read")
+        .expect("the founder's entry");
+    app.web_ensure_keys(&entry)
+        .await
+        .expect("the founder's keys");
+    let token = app
+        .web_session_open(&entry, 3600, None)
+        .await
+        .expect("a session")
+        .token;
+    let session = app
+        .web_session(&token)
+        .await
+        .expect("a read")
+        .expect("a live session");
+    let web = app
+        .web_caller(&session, Capacity::Web)
+        .await
+        .expect("the founder's console");
+    let key_id = Uuid::parse_str(issued["key_id"].as_str().expect("key id")).expect("a uuid");
+    app.accept_key_link(Bearer::Session(&web), key_id.into())
+        .await
+        .expect("the founder accepts");
+    issued["value"].as_str().expect("value").to_owned()
+}
+
 /// Issues a key over HTTP carrying exactly `grants`; returns the 201 body.
 async fn issue_key_with(
     router: &Router,
@@ -398,6 +439,10 @@ async fn issue_key_with(
             // approves steering (ADR-0080 d16); other keys are unattested.
             .body(if role == "reviewer" {
                 json!({ "role": role, "name": name, "principal": principal, "grants": grants, "used_by": "person" })
+            } else if role == "admin" {
+                // An admin key belongs to an admin person: the bootstrap's
+                // founder (ADR-0097 d21).
+                json!({ "role": role, "name": name, "principal": principal, "grants": grants, "used_by": "person", "person": "founder" })
             } else {
                 json!({ "role": role, "name": name, "principal": principal, "grants": grants })
             }),
@@ -974,7 +1019,9 @@ async fn the_leads_start_names_rows_that_predate_names_once_per_chain_and_a_seco
         for &(tenant, _, _) in &tenants {
             assert_eq!(
                 names_assigned_on(&store, tenant).await,
-                (1, 4),
+                // The names, then the PoC admin key's suspension as unlinked
+                // at the first start, each once (ADR-0097 d21, d22).
+                (1, 5),
                 "start {start}: one system.names_assigned on the chain, journalled once"
             );
         }
@@ -992,9 +1039,20 @@ async fn the_leads_start_names_rows_that_predate_names_once_per_chain_and_a_seco
                 Call::auth(&format!("oml_poc_admin_{n}")),
             )
             .await;
-            assert_eq!(status, StatusCode::OK, "start {start}: {body}");
+            // The PoC admin key stands unlinked, so the start suspended it
+            // and it reads nothing until linked (ADR-0097 d21, d22); the
+            // store serves the root by its name.
+            assert_eq!(status, StatusCode::UNAUTHORIZED, "start {start}: {body}");
+            assert_eq!(body["error"]["details"]["reason"], "suspended", "{body}");
+            let tenant = tenants[n].0;
+            let held = store
+                .workspace(tenant, root)
+                .await
+                .expect("a read")
+                .expect("the root");
             assert_eq!(
-                body["path"], "universe",
+                held.name.as_str(),
+                "universe",
                 "start {start}: rule 1 named the root"
             );
         }
@@ -1891,7 +1949,7 @@ async fn a_bootstrap_claim_checks_the_token_before_the_name_and_a_refused_name_c
     let router = &rig.router;
     let claim = |token: &str| {
         Call::default().body(json!({
-            "enrollment_token": token,
+            "enrollment_token": token, "person": "founder", "email": "founder@example.com",
             "name": "root-admin",
             "tenant_name": "Test_Tenant",
         }))
@@ -1910,7 +1968,7 @@ async fn a_bootstrap_claim_checks_the_token_before_the_name_and_a_refused_name_c
     // claim with none, or with one the creation grammar refuses, is
     // `request.validation` naming `name` (ADR-0026 d9).
     for name in [Value::Null, json!("Root Admin")] {
-        let mut unnamed = json!({ "enrollment_token": ENROLLMENT, "tenant_name": "test-tenant" });
+        let mut unnamed = json!({ "enrollment_token": ENROLLMENT, "person": "founder", "email": "founder@example.com", "tenant_name": "test-tenant" });
         if !name.is_null() {
             unnamed["name"] = name;
         }
@@ -1971,7 +2029,7 @@ async fn a_failed_partition_creation_spends_no_enrollment_token() {
         &rig.router,
         "POST",
         "/v2/bootstrap/claim",
-        Call::default().body(json!({ "enrollment_token": ENROLLMENT, "name": "root-admin" })),
+        Call::default().body(json!({ "enrollment_token": ENROLLMENT, "person": "founder", "email": "founder@example.com", "name": "root-admin" })),
     )
     .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
@@ -2505,6 +2563,7 @@ async fn get_v2_keys_by_name_answers_the_key() {
             "revoked_at": null,
             "rotated_from": null,
             "grants": issued["grants"],
+            "public_reach": [],
             "denials": [{
                 "denial_id": denial["denial_id"],
                 "workspace_node_id": quarter,
@@ -2811,7 +2870,8 @@ async fn the_crew_routes_read_update_and_list_crew_records_by_id_or_name_for_adm
     assert_eq!(status, StatusCode::OK, "{second}");
     assert_eq!(second, json!({ "items": [redline], "next_cursor": null }));
     let other_admin = issue_key_with(router, &admin, "admin", "platform/second", json!([])).await;
-    let other_admin = other_admin["value"].as_str().expect("value");
+    let other_admin = founder_accepts(&rig, &other_admin).await;
+    let other_admin = other_admin.as_str();
     let (status, _, foreign) = send(
         router,
         "GET",
@@ -2909,6 +2969,7 @@ async fn post_v2_workspaces_crew_points_a_workspace_at_a_crew_record_by_name() {
             "crew": record,
             "user_root": false,
             "mode": "standard",
+            "public": { "value": false, "since": null, "act_id": null, "sole_admin": false },
         })
     );
     let (status, _, view) = send(
@@ -2942,12 +3003,13 @@ async fn an_admin_keys_workspace_read_lists_every_child_with_my_effective_verbs_
     let quarter = create_workspace(router, &admin, metals, "q1-2027").await;
     let reader = issue_key(router, &admin, "reader", "crew/agent-recall", quarter).await;
     let second_admin = issue_key_with(router, &admin, "admin", "platform/second", json!([])).await;
-    let second_admin = second_admin["value"].as_str().expect("value").to_owned();
+    let second_admin = founder_accepts(&rig, &second_admin).await;
 
     for token in [&admin, &second_admin] {
         let (status, _, view) =
             send(router, "GET", "/v2/workspaces/universe", Call::auth(token)).await;
         assert_eq!(status, StatusCode::OK, "{view}");
+        assert_eq!(view["children"][0]["path_leaf"], "founder", "{view}");
         assert_eq!(
             view,
             json!({
@@ -2959,7 +3021,10 @@ async fn an_admin_keys_workspace_read_lists_every_child_with_my_effective_verbs_
                 "crew": null,
                 "user_root": false,
                 "mode": "standard",
+                "public": { "value": false, "since": null, "act_id": null, "sole_admin": false },
                 "children": [
+                    // The claim's person's root (ADR-0097 d21).
+                    view["children"][0].clone(),
                     { "id": metals, "path_leaf": "metals-crew", "status": "development" },
                     { "id": redline, "path_leaf": "redline", "status": "development" },
                 ],
@@ -3344,7 +3409,11 @@ async fn a_key_issued_with_an_expiry_is_refused_as_expired_from_that_instant_unt
     assert_eq!(set["expiry"], "2999-01-01T00:00:00.000000Z");
     assert_eq!(set["expired"], false);
     assert_eq!(set["requests_per_minute"], Value::Null);
-    assert_eq!(head_seq(&rig, tenant).await, head + 1, "one key.limits_set");
+    assert_eq!(
+        head_seq(&rig, tenant).await,
+        head + 2,
+        "one key.limits_set, behind its admin act"
+    );
     let (status, _, me) = send(router, "GET", "/v2/whoami", Call::auth(&key)).await;
     assert_eq!(status, StatusCode::OK, "{me}");
     assert_eq!(me["requests_per_minute"], Value::Null);
@@ -3397,7 +3466,7 @@ async fn access_refusals_carry_their_recovery_details() {
     assert_envelope(&body, "access.issuer_ceiling");
     assert_eq!(
         body["error"]["details"],
-        json!({ "role": "operator", "admissible": ["reader", "contributor", "submitter", "reviewer", "admin"] })
+        json!({ "role": "operator", "admissible": ["reader", "contributor", "submitter", "reviewer", "admin", "maintenance"] })
     );
     // A deny outside its grant, and a default no grant covers.
     for (idem, body) in [
@@ -3962,8 +4031,8 @@ async fn a_filtered_page_advances_next_after_seq() {
     };
     let router = &t.rig.router;
     let start = head_seq(&t.rig, t.tenant).await;
-    // Six events no tail shows: three keys, a key.issued and a
-    // grant.issued apiece.
+    // Nine events no tail shows: three keys, an admin.act, a key.issued
+    // and a grant.issued apiece (ADR-0097 d2).
     for n in 0..3 {
         tail_key(
             router,
@@ -3976,7 +4045,7 @@ async fn a_filtered_page_advances_next_after_seq() {
         .await;
     }
     let head = head_seq(&t.rig, t.tenant).await;
-    assert_eq!(head, start + 6);
+    assert_eq!(head, start + 9);
     let page = async |after_seq: u64| {
         send(
             router,
@@ -3996,7 +4065,15 @@ async fn a_filtered_page_advances_next_after_seq() {
     let (status, _, second) = page(start + 4).await;
     assert_eq!(status, StatusCode::OK, "{second}");
     assert_eq!(second["items"], json!([]), "{second}");
-    assert_eq!(second["next_after_seq"].as_u64(), Some(head), "{second}");
+    assert_eq!(
+        second["next_after_seq"].as_u64(),
+        Some(start + 8),
+        "{second}"
+    );
+    let (status, _, third) = page(start + 8).await;
+    assert_eq!(status, StatusCode::OK, "{third}");
+    assert_eq!(third["items"], json!([]), "{third}");
+    assert_eq!(third["next_after_seq"].as_u64(), Some(head), "{third}");
     // No raw event follows the head: the resume point stays where it is.
     let (status, _, idle) = page(head).await;
     assert_eq!(status, StatusCode::OK, "{idle}");
@@ -4216,6 +4293,10 @@ async fn steering_rig() -> Option<(Rig, String, Uuid, Uuid, String, String)> {
     let quotes = create_workspace(&rig.router, &admin, crew, "quotes").await;
     let writer = issue_key(&rig.router, &admin, "submitter", "crew/agent-7", crew).await;
     let reviewer = issue_key(&rig.router, &admin, "reviewer", "crew/reviewer-3", crew).await;
+    // The reviewer counts as a person, as a steering verdict needs
+    // (ADR-0097 d12).
+    let app = oml_server_lead::lead_app(&rig.store, rig.signing.clone());
+    counted::link_value(&app, &admin, &reviewer, "crew-reviewer").await;
     Some((rig, admin, crew, quotes, writer, reviewer))
 }
 
@@ -4642,6 +4723,10 @@ async fn own_held_rig() -> Option<(Rig, String, Uuid, String, String, String)> {
     let rig = fresh_rig().await?;
     let (admin, _tenant, crew) = crew_tenant(&rig.router).await;
     let (agent, reviewer, reader) = supersession_keys(&rig.router, &admin, crew).await;
+    // The reviewer counts as a person, as a steering verdict needs
+    // (ADR-0097 d12).
+    let app = oml_server_lead::lead_app(&rig.store, rig.signing.clone());
+    counted::link_value(&app, &admin, &reviewer, "crew-reviewer").await;
     Some((rig, admin, crew, agent, reviewer, reader))
 }
 
@@ -6163,6 +6248,7 @@ async fn crew_given_at_create_is_persisted_and_returned() {
             "crew": crew_record,
             "user_root": false,
             "mode": "standard",
+            "public": { "value": false, "since": null, "act_id": null, "sole_admin": false },
             "children": [{ "id": quarter, "path_leaf": "q1-2027", "status": "development" }],
             "edges": [],
             "my_effective_verbs": [
@@ -6326,6 +6412,7 @@ async fn get_v2_workspaces_tree_by_name_answers_an_admin_key_the_whole_subtree_p
                     "crew": null,
                     "user_root": false,
                     "mode": "standard",
+                    "public": { "value": false, "since": null, "act_id": null, "sole_admin": false },
                 },
                 {
                     "id": metals["id"],
@@ -6336,6 +6423,7 @@ async fn get_v2_workspaces_tree_by_name_answers_an_admin_key_the_whole_subtree_p
                     "crew": crew,
                     "user_root": false,
                     "mode": "standard",
+                    "public": { "value": false, "since": null, "act_id": null, "sole_admin": false },
                 },
                 {
                     "id": q1["id"],
@@ -6346,6 +6434,7 @@ async fn get_v2_workspaces_tree_by_name_answers_an_admin_key_the_whole_subtree_p
                     "crew": null,
                     "user_root": false,
                     "mode": "standard",
+                    "public": { "value": false, "since": null, "act_id": null, "sole_admin": false },
                 },
                 {
                     "id": q2["id"],
@@ -6356,6 +6445,7 @@ async fn get_v2_workspaces_tree_by_name_answers_an_admin_key_the_whole_subtree_p
                     "crew": null,
                     "user_root": false,
                     "mode": "standard",
+                    "public": { "value": false, "since": null, "act_id": null, "sole_admin": false },
                 },
                 {
                     "id": review["id"],
@@ -6366,6 +6456,7 @@ async fn get_v2_workspaces_tree_by_name_answers_an_admin_key_the_whole_subtree_p
                     "crew": null,
                     "user_root": false,
                     "mode": "standard",
+                    "public": { "value": false, "since": null, "act_id": null, "sole_admin": false },
                 },
             ],
             "next_cursor": null,
@@ -6379,7 +6470,9 @@ async fn get_v2_workspaces_tree_by_name_answers_an_admin_key_the_whole_subtree_p
     // Two at a time: the cursor resumes after the last node served.
     let (status, _, first) = tree("universe/tree?limit=2".to_owned(), admin.clone()).await;
     assert_eq!(status, StatusCode::OK, "{first}");
-    assert_eq!(tree_paths(&first), ["universe", "universe.procurement"]);
+    // The founder's own root, which the claim created, comes first (ADR-0097
+    // d21: a bootstrap names a person).
+    assert_eq!(tree_paths(&first), ["universe", "universe.founder"]);
     let mut paths: Vec<String> = tree_paths(&first).into_iter().map(str::to_owned).collect();
     let mut cursor = first["next_cursor"]
         .as_str()
@@ -6402,6 +6495,7 @@ async fn get_v2_workspaces_tree_by_name_answers_an_admin_key_the_whole_subtree_p
         paths,
         [
             "universe",
+            "universe.founder",
             "universe.procurement",
             "universe.procurement.metals",
             "universe.procurement.metals.q1-2027",
@@ -7748,7 +7842,11 @@ async fn whoami(router: &Router, token: &str) -> (StatusCode, Value) {
 fn whoami_grants(issued: &Value) -> Value {
     let mut grants = issued["grants"].clone();
     for grant in grants.as_array_mut().expect("grants") {
-        grant.as_object_mut().expect("grant").remove("deny");
+        let grant = grant.as_object_mut().expect("grant");
+        grant.remove("deny");
+        // whoami serves no create flag; the key's record does (ADR-0097
+        // d31).
+        grant.remove("create");
     }
     grants
 }
@@ -8148,8 +8246,8 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     );
     assert_eq!(
         declared.len(),
-        110,
-        "the source check (ADR-0057 d5), the workspace mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the four web routes the lead keeps (ADR-0045 d25; its two JSON routes are oml-web's, ADR-0070 d7 (b), and GET and POST /web/admin are deleted, ADR-0070 \"The old URLs deleted\"), open sign-up's one the lead keeps, POST /web/sign-up (ADR-0068 d10; the onboarding and users pages are oml-web's, ADR-0070 d7 (b)), the web console's ten (ADR-0070 d5), the sign-in page oml-web sends to (ADR-0070 d4) , federation's three (ADR-0072 d5), usage metering's six (ADR-0071 d5, d6), a key's limits (ADR-0079 d5), a key's link, unlink and acceptance (ADR-0085 d16), the withdrawal (ADR-0083 d13), the skill read (ADR-0080 d11), the five upload routes (ADR-0004 d3), the workspace export and the import and its status (ADR-0084 d15), the admin investigation's open, list and close (ADR-0089 d10, d15), the five fix routes, the admin's fix and list and a person's list, confirm and revert (ADR-0089 d15), a pending sign-in email's acceptance and removal by its person (ADR-0045 d2, the operator's decision of 2026-11-19), and the imports listing and the brief proposals (ADR-0096 d6, d7)"
+        125,
+        "the source check (ADR-0057 d5), the workspace mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the four web routes the lead keeps (ADR-0045 d25; its two JSON routes are oml-web's, ADR-0070 d7 (b), and GET and POST /web/admin are deleted, ADR-0070 \"The old URLs deleted\"), open sign-up's one the lead keeps, POST /web/sign-up (ADR-0068 d10; the onboarding and users pages are oml-web's, ADR-0070 d7 (b)), the web console's ten (ADR-0070 d5), the sign-in page oml-web sends to (ADR-0070 d4) , federation's three (ADR-0072 d5), usage metering's six (ADR-0071 d5, d6), a key's limits (ADR-0079 d5), a key's link, unlink and acceptance (ADR-0085 d16), the withdrawal (ADR-0083 d13), the skill read (ADR-0080 d11), the five upload routes (ADR-0004 d3), the workspace export and the import and its status (ADR-0084 d15), the admin investigation's open, list and close (ADR-0089 d10, d15), the five fix routes, the admin's fix and list and a person's list, confirm and revert (ADR-0089 d15), a pending sign-in email's acceptance and removal by its person (ADR-0045 d2, the operator's decision of 2026-11-19), the imports listing and the brief proposals (ADR-0096 d6, d7), and the admin acts' list, confirm and decline, a key's revocation and an admin key's self-link (ADR-0097 d2, d14, d22), and a workspace's public flag (ADR-0098 d9), and ADR-0097 d8's contest and settle and the contest-only sign-in's POST /web/contest, and a person's admin-read count and notices, listed and dismissed (ADR-0097 d16, d20), and an admin key's conversion into a maintenance key (ADR-0097 d18), and the operator's host settlement and recovery (ADR-0097 d19)"
     );
     assert_eq!(oauth.len(), 6, "the six OAuth operations");
 
@@ -9284,6 +9382,11 @@ async fn a_transition_proposed_and_ratified_over_http_moves_the_workspace_and_th
     let crew = create_workspace(router, &admin, root, "crew").await;
     let dora = reviewer_on(router, &admin, "dora", crew).await;
     let dan = reviewer_on(router, &admin, "dan", crew).await;
+    // Each reviewer counts as a person of their own, as a ratification
+    // needs (ADR-0097 d12, d17).
+    let app = oml_server_lead::lead_app(&rig.store, rig.signing.clone());
+    counted::link_value(&app, &admin, &dora, "dora-person").await;
+    counted::link_value(&app, &admin, &dan, "dan-person").await;
 
     let (status, _, proposal) = send(
         router,
@@ -9369,6 +9472,11 @@ async fn claim_and_brief_edges_are_proposed_listed_and_ratified_on_v2_edges_and_
     let writer = agent_on(router, &admin, "crew/writer", crew).await;
     let dora = reviewer_on(router, &admin, "dora", crew).await;
     let dan = reviewer_on(router, &admin, "dan", crew).await;
+    // Each reviewer counts as a person of their own, as a ratification
+    // needs (ADR-0097 d12, d17).
+    let app = oml_server_lead::lead_app(&rig.store, rig.signing.clone());
+    counted::link_value(&app, &admin, &dora, "dora-person").await;
+    counted::link_value(&app, &admin, &dan, "dan-person").await;
     let a = promoted_artifact_over_http(router, &writer, &dora, crew, "quote-a").await;
     let b = promoted_artifact_over_http(router, &writer, &dora, crew, "quote-b").await;
 
@@ -10004,7 +10112,7 @@ async fn rerank_rig(floor: f32) -> Option<(Router, String, String)> {
         "POST",
         "/v2/bootstrap/claim",
         Call::default().body(json!({
-            "enrollment_token": started.enrollment_token.expect("an empty deployment"),
+            "enrollment_token": started.enrollment_token.expect("an empty deployment"), "person": "founder", "email": "founder@example.com",
             "name": "root-admin",
             "tenant_name": "test-tenant",
             "admin_principal": "platform/admin",
@@ -10111,6 +10219,7 @@ const WEB_SECRET: &str = "oml-web-client-secret-for-the-tests-0001";
 struct WebRig {
     router: Router,
     app: oml_server_lead::LeadApp,
+    store: PgStore,
     admin: String,
     root: Uuid,
     db_name: String,
@@ -10137,6 +10246,7 @@ async fn web_rig() -> Option<WebRig> {
     Some(WebRig {
         router,
         app,
+        store,
         admin,
         root,
         db_name,
@@ -10210,16 +10320,73 @@ impl WebRig {
             "/v2/keys",
             Call::auth(&self.admin)
                 .idem(&format!("tenant-{name}"))
-                .body(json!({
-                    "role": role,
-                    "name": name,
-                    "principal": name,
-                    "grants": grants,
-                })),
+                .body(if role == "admin" {
+                    // An admin key belongs to an admin person, the
+                    // founder, who accepts its link (ADR-0097 d21).
+                    json!({
+                        "role": role,
+                        "name": name,
+                        "principal": name,
+                        "grants": grants,
+                        "used_by": "person",
+                        "person": "founder",
+                    })
+                } else {
+                    json!({
+                        "role": role,
+                        "name": name,
+                        "principal": name,
+                        "grants": grants,
+                    })
+                }),
         )
         .await;
         assert_eq!(status, StatusCode::CREATED, "{body}");
+        if role == "admin" {
+            self.founder_accepts(&body).await;
+        }
         body["value"].as_str().expect("value").to_owned()
+    }
+
+    /// The founder accepts the pending link of the admin key `issued`
+    /// names, from a console session (ADR-0097 d21, d7).
+    async fn founder_accepts(&self, issued: &Value) {
+        use oml_app::app::Capacity;
+        use oml_app::ports::WebStore as _;
+        use oml_app::types::Bearer;
+        let email = oml_app::domain::web::Email::parse("founder@example.com").expect("an email");
+        let entry = self
+            .store
+            .web_entry_by_email(&email.digest())
+            .await
+            .expect("a read")
+            .expect("the founder's entry");
+        self.app
+            .web_ensure_keys(&entry)
+            .await
+            .expect("the founder's keys");
+        let token = self
+            .app
+            .web_session_open(&entry, 3600, None)
+            .await
+            .expect("a session")
+            .token;
+        let session = self
+            .app
+            .web_session(&token)
+            .await
+            .expect("a read")
+            .expect("a live session");
+        let web = self
+            .app
+            .web_caller(&session, Capacity::Web)
+            .await
+            .expect("the founder's console");
+        let key_id = Uuid::parse_str(issued["key_id"].as_str().expect("key id")).expect("a uuid");
+        self.app
+            .accept_key_link(Bearer::Session(&web), key_id.into())
+            .await
+            .expect("the founder accepts");
     }
 
     /// A held memory written by `key` in `workspace`; its id.
@@ -10477,7 +10644,10 @@ async fn an_omls_credential_without_the_web_client_is_auth_invalid() {
 /// under the rig's admin key; the status and the body.
 async fn link_key(rig: &WebRig, admin: &str, key: &str, user: Option<&str>) -> (StatusCode, Value) {
     let (verb, body) = match user {
-        Some(user) => ("link", json!({ "user": user })),
+        Some(user) => (
+            "link",
+            json!({ "user": user, "reason": "the person holds this key" }),
+        ),
         None => ("unlink", json!({})),
     };
     let (status, _, body) = send(
@@ -10518,10 +10688,6 @@ async fn a_console_request_acts_as_the_key_linked_to_its_person_and_no_other() {
     };
     let token = rig.signed_in("alice@example.com", "alice", false).await;
     let bob_web = credential(&rig.signed_in("bob@example.com", "bob", false).await, "web");
-    let ops = credential(
-        &rig.signed_in("ops@example.com", "ops", true).await,
-        "admin",
-    );
     let web = credential(&token, "web");
     let payments = create_workspace(&rig.router, &rig.admin, rig.root, "payments").await;
     let on_payments = json!([
@@ -10546,6 +10712,12 @@ async fn a_console_request_acts_as_the_key_linked_to_its_person_and_no_other() {
     )
     .await;
     let id = |key: &Value| key["key_id"].as_str().expect("key id").to_owned();
+    // The second admin person comes after the issuances, which take effect
+    // at once while the tenant has had one (ADR-0097 d10).
+    let ops = credential(
+        &rig.signed_in("ops@example.com", "ops", true).await,
+        "admin",
+    );
 
     let (status, linked) = link_key(&rig, &ops, "reviewer-alice", Some("alice")).await;
     assert_eq!(status, StatusCode::OK, "{linked}");
@@ -10835,7 +11007,8 @@ async fn the_admin_capacity_ends_when_the_entry_loses_admin() {
     let Some(rig) = web_rig().await else {
         return;
     };
-    let _other = rig.signed_in("ops@example.com", "ops", true).await;
+    // The founder is the other admin entry; ada is the second admin person,
+    // flagged at once while the tenant has had one (ADR-0097 d10).
     let token = rig.signed_in("ada@example.com", "ada", true).await;
     let admin = credential(&token, "admin");
     let (status, _, queue) = send(&rig.router, "GET", "/v2/review/queue", web_call(&admin)).await;
@@ -10846,7 +11019,8 @@ async fn the_admin_capacity_ends_when_the_entry_loses_admin() {
         "/v2/web/emails",
         Call::auth(&rig.admin)
             .idem("unflag-ada")
-            .body(json!({ "email": "ada@example.com", "user": "ada", "admin": false, "keep_an_admin": true })),
+            // An act against another admin carries a reason (ADR-0097 d8, d26).
+            .body(json!({ "email": "ada@example.com", "user": "ada", "admin": false, "keep_an_admin": true, "reason": "ada moves teams" })),
     )
     .await;
     assert_eq!(
@@ -11179,17 +11353,6 @@ async fn the_admin_operations_answer_the_admin_role_alone() {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
-    // A reason is not journalled, so it is refused, never dropped.
-    let (status, _, body) = send(
-        &rig.router,
-        "POST",
-        "/v2/web/users/alice/disable",
-        Call::auth(&rig.admin)
-            .idem("disable-reason")
-            .body(json!({ "reason": "spam" })),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     let (status, _, body) = send(
         &rig.router,
         "POST",
@@ -11202,7 +11365,11 @@ async fn the_admin_operations_answer_the_admin_role_alone() {
         &rig.router,
         "POST",
         "/v2/web/users/alice/disable",
-        Call::auth(&rig.admin).idem("disable-1"),
+        // A disable is an admin act, and its reason is journalled with it
+        // (ADR-0097 d26).
+        Call::auth(&rig.admin)
+            .idem("disable-1")
+            .body(json!({ "reason": "spam" })),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{disabled}");
@@ -11628,15 +11795,16 @@ async fn keep_an_admin_refuses_removing_the_last_admin_entry() {
     let Some(rig) = web_rig().await else {
         return;
     };
-    let _token = rig.signed_in("ada@example.com", "ada", true).await;
+    // The founder's entry is the tenant's one admin entry, and its own
+    // admin key acts on it (ADR-0097 d21, d25).
     for (path, body) in [
         (
             "/v2/web/emails",
-            json!({ "email": "ada@example.com", "user": "ada", "admin": false, "keep_an_admin": true }),
+            json!({ "email": "founder@example.com", "user": "founder", "admin": false, "keep_an_admin": true }),
         ),
         (
             "/v2/web/emails/remove",
-            json!({ "email": "ada@example.com", "keep_an_admin": true }),
+            json!({ "email": "founder@example.com", "keep_an_admin": true }),
         ),
     ] {
         let (status, _, refused) = send(
@@ -11761,30 +11929,35 @@ async fn a_web_session_key_issues_connects_and_cuts_off_its_own_keys() {
     drop_db(&rig.db_name).await;
 }
 
-/// The admin capacity issues no plain key through `POST /v2/keys`
-/// (`access.verb_ceiling`, `session_capacity`), and cuts a person's key off
-/// on universe as the admin page does (ADR-0070 d2, d5).
+/// The admin capacity issues through `POST /v2/keys` as an admin key does,
+/// one admin act (ADR-0097 d29), and cuts a person's key off on universe
+/// as the admin page does (ADR-0070 d5).
 #[tokio::test]
-async fn the_admin_capacity_issues_no_plain_key() {
+async fn the_admin_capacity_issues_a_key_as_an_admin_act() {
     let Some(rig) = web_rig().await else {
         return;
     };
-    let token = rig.signed_in("ada@example.com", "ada", true).await;
-    let admin = credential(&token, "admin");
     let _alice = rig.signed_in("alice@example.com", "alice", false).await;
     let _laptop = rig.agent_key("alice", "alice-laptop").await;
+    // ada becomes the second admin person after the agent's key, which
+    // took effect at once while the tenant had one (ADR-0097 d10).
+    let token = rig.signed_in("ada@example.com", "ada", true).await;
+    let admin = credential(&token, "admin");
     let (status, _, body) = send(
         &rig.router,
         "POST",
         "/v2/keys",
-        web_call(&admin)
-            .idem("plain")
-            .body(json!({ "name": "minted", "role": "admin", "principal": "minted" })),
+        web_call(&admin).idem("plain").body(json!({
+            "name": "minted",
+            "role": "reader",
+            "principal": "minted",
+            "grants": [{ "workspace": "universe", "role": "reader" }],
+            "reason": "a reader for the dashboards",
+        })),
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
-    assert_envelope(&body, "access.verb_ceiling");
-    assert_eq!(body["error"]["details"]["reason"], "session_capacity");
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert!(body["admin_act"]["act_id"].is_string(), "{body}");
     let (status, _, denial) = send(
         &rig.router,
         "POST",
@@ -11881,12 +12054,14 @@ async fn keep_an_admin_holds_under_two_concurrent_unflags() {
     let Some(rig) = web_rig().await else {
         return;
     };
+    // The founder and ada are the two admin entries; the founder's key
+    // un-flags both at once: ada's is an act against an admin with its
+    // reason, the founder's own revokes the key itself (ADR-0097 d8, d21).
     let _ada = rig.signed_in("ada@example.com", "ada", true).await;
-    let _ops = rig.signed_in("ops@example.com", "ops", true).await;
     let unflag = |email: &str, user: &str| {
         Call::auth(&rig.admin)
             .idem(&format!("unflag-{user}"))
-            .body(json!({ "email": email, "user": user, "admin": false, "keep_an_admin": true }))
+            .body(json!({ "email": email, "user": user, "admin": false, "keep_an_admin": true, "reason": "a test" }))
     };
     let (a, b) = tokio::join!(
         send(
@@ -11899,30 +12074,35 @@ async fn keep_an_admin_holds_under_two_concurrent_unflags() {
             &rig.router,
             "POST",
             "/v2/web/emails",
-            unflag("ops@example.com", "ops")
+            unflag("founder@example.com", "founder")
         ),
     );
     let statuses = [a.0, b.0];
-    assert!(
-        statuses.contains(&StatusCode::OK) && statuses.contains(&StatusCode::BAD_REQUEST),
-        "one lands and one is refused: {} {}",
+    assert_eq!(
+        statuses.iter().filter(|s| **s == StatusCode::OK).count(),
+        1,
+        "one lands: {} {}",
         a.2,
         b.2
     );
-    let refused = if a.0 == StatusCode::BAD_REQUEST {
-        &a.2
+    // The other is the last-admin guard's refusal, or, after the founder's
+    // own un-flag landed, the revoked key's.
+    let other = if a.0 == StatusCode::OK { &b } else { &a };
+    if other.0 == StatusCode::BAD_REQUEST {
+        assert_eq!(other.2["error"]["details"]["field"], "admin", "{}", other.2);
     } else {
-        &b.2
-    };
-    assert_eq!(refused["error"]["details"]["field"], "admin", "{refused}");
-    let (_, _, list) = send(&rig.router, "GET", "/v2/web/emails", Call::auth(&rig.admin)).await;
-    let admins = list["items"]
-        .as_array()
-        .expect("items")
-        .iter()
-        .filter(|e| e["admin"] == true)
-        .count();
-    assert_eq!(admins, 1, "{list}");
+        assert_eq!(other.0, StatusCode::UNAUTHORIZED, "{}", other.2);
+    }
+    let mut admins = 0;
+    for email in ["ada@example.com", "founder@example.com"] {
+        use oml_app::ports::WebStore as _;
+        let digest = oml_app::domain::web::Email::parse(email)
+            .expect("an email")
+            .digest();
+        let entry = rig.store.web_entry_by_email(&digest).await.expect("a read");
+        admins += usize::from(entry.is_some_and(|e| e.admin));
+    }
+    assert_eq!(admins, 1, "one admin entry is kept");
     drop_db(&rig.db_name).await;
 }
 
@@ -12107,6 +12287,11 @@ async fn the_widen_hint_is_the_same_over_http_and_mcp_once_the_lead_builds_its_s
         .to_owned();
     let dora = reviewer_on(router, &admin, "dora", root).await;
     let dan = reviewer_on(router, &admin, "dan", root).await;
+    // Each reviewer counts as a person of their own, as a ratification
+    // needs (ADR-0097 d12, d17).
+    let app = oml_server_lead::lead_app(&rig.store, rig.signing.clone());
+    counted::link_value(&app, &admin, &dora, "dora-person").await;
+    counted::link_value(&app, &admin, &dan, "dan-person").await;
     let mut n = 0;
     for (name, bodies) in [
         (
@@ -12346,7 +12531,7 @@ async fn an_admin_fix_serves_marked_and_a_person_confirms_it_over_http() {
     .await;
     // Only an admin key takes a fix: a submitter, a reviewer and an agent's
     // key are refused at the verb (ADR-0089 d1, d11).
-    let agent = issue_key(router, &admin, "submitter", "fx/bot", fx.crew).await;
+    let agent = fx.agent.clone();
     for key in [&writer, &reviewer, &agent] {
         let (status, _, refused) = send(
             router,
@@ -12387,7 +12572,7 @@ async fn an_admin_fix_serves_marked_and_a_person_confirms_it_over_http() {
     assert_eq!(status, StatusCode::OK, "{got}");
     assert_eq!(got["approver"]["act"], "admin_fix", "{got}");
     assert_eq!(got["approver"]["confirmed"], false, "{got}");
-    let mcp_reader = issue_key(router, &admin, "reader", "fx/reader", fx.crew).await;
+    let mcp_reader = fx.reader.clone();
     // No reader learns which admin wrote the fixed version (ADR-0089 d7).
     assert_eq!(got["principal"], Value::Null, "{got}");
     assert_eq!(got["author_key_id"], Value::Null, "{got}");
@@ -12462,37 +12647,31 @@ async fn an_admin_fix_serves_marked_and_a_person_confirms_it_over_http() {
 }
 
 /// A console-linked fix rig on PostgreSQL (ADR-0089, the operator's
-/// decision of 2026-11-19): the admin key linked to `platform` through the
-/// console, a workspace `fixes`, an agent submitter there, and dana's reviewer
+/// decision of 2026-11-19): the admin key linked to its founder at the
+/// claim, a workspace `fixes`, an agent submitter there, and dana's reviewer
 /// key linked to dana.
 struct FixRig {
     rig: WebRig,
-    crew: Uuid,
     writer: String,
     reviewer: String,
+    /// A second agent submitter and a reader, issued with the rest while
+    /// the tenant had one admin person (ADR-0097 d10).
+    agent: String,
+    reader: String,
 }
 
 async fn fix_rig() -> Option<FixRig> {
+    // The bootstrap's admin key belongs to its founder, an admin person,
+    // linked and accepted at the claim (ADR-0097 d21).
     let rig = web_rig().await?;
-    let platform = credential(
-        &rig.signed_in("platform@example.com", "platform", false)
-            .await,
-        "web",
-    );
     let dana_web = credential(
         &rig.signed_in("dana@example.com", "dana", false).await,
         "web",
     );
-    let ops = credential(
-        &rig.signed_in("ops@example.com", "ops", true).await,
-        "admin",
-    );
-    let (status, linked) = link_key(&rig, &ops, "root-admin", Some("platform")).await;
-    assert_eq!(status, StatusCode::OK, "the admin key links: {linked}");
-    let (status, accepted) = accept_link(&rig, &platform, "root-admin").await;
-    assert_eq!(status, StatusCode::OK, "platform accepts: {accepted}");
     let crew = create_workspace(&rig.router, &rig.admin, rig.root, "fixes").await;
     let writer = issue_key(&rig.router, &rig.admin, "submitter", "fx/agent", crew).await;
+    let agent = issue_key(&rig.router, &rig.admin, "submitter", "fx/bot", crew).await;
+    let reader = issue_key(&rig.router, &rig.admin, "reader", "fx/reader", crew).await;
     let dana = issue_key_with(
         &rig.router,
         &rig.admin,
@@ -12501,6 +12680,12 @@ async fn fix_rig() -> Option<FixRig> {
         json!([{ "workspace": crew, "role": "reviewer" }, { "workspace": crew, "role": "reader" }]),
     )
     .await;
+    // The second admin person comes after the issuances, which take effect
+    // at once while the tenant has had one (ADR-0097 d10).
+    let ops = credential(
+        &rig.signed_in("ops@example.com", "ops", true).await,
+        "admin",
+    );
     let name = dana["name"].as_str().expect("name").to_owned();
     let (status, linked) = link_key(&rig, &ops, &name, Some("dana")).await;
     assert_eq!(status, StatusCode::OK, "{linked}");
@@ -12508,9 +12693,10 @@ async fn fix_rig() -> Option<FixRig> {
     assert_eq!(status, StatusCode::OK, "dana accepts: {accepted}");
     Some(FixRig {
         rig,
-        crew,
         writer,
         reviewer: dana["value"].as_str().expect("value").to_owned(),
+        agent,
+        reader,
     })
 }
 
@@ -12707,27 +12893,36 @@ async fn the_bootstrap_claim_records_its_persons_email_accepted_and_takes_neithe
     drop_db(&rig.db_name).await;
 }
 
-/// A bootstrap claim that names no person leaves the first admin key
-/// unlinked, and its fix is refused by name (ADR-0089, the operator's
-/// decision of 2026-11-19).
+/// A bootstrap claim that names no person is refused naming `/person`,
+/// consumes no token and leaves no tenant: every admin key belongs to a
+/// person, the first one included (ADR-0097 d21).
 #[tokio::test]
-async fn an_unlinked_admin_keys_fix_answers_fix_requires_person_unlinked() {
+async fn a_bootstrap_claim_without_a_person_is_refused_and_leaves_no_tenant() {
     let Some(rig) = fresh_rig().await else {
         return;
     };
-    let (admin, _tenant, _root) = bootstrap(&rig.router).await;
-    let (status, _, fix) = send(
+    let (status, _, body) = send(
         &rig.router,
         "POST",
-        "/v2/admin/fixes",
-        Call::auth(&admin).body(json!({
-            "act": "demote", "target": Uuid::nil(), "reason": "ticket 45",
+        "/v2/bootstrap/claim",
+        Call::default().body(json!({
+            "enrollment_token": ENROLLMENT,
+            "name": "root-admin",
+            "tenant_name": "test-tenant",
         })),
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "{fix}");
-    assert_envelope(&fix, "admin.fix_requires_person");
-    assert_eq!(fix["error"]["details"]["reason"], "unlinked", "{fix}");
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["details"]["field"], "/person", "{body}");
+    assert!(
+        enumerate_tenants(rig.store.pool())
+            .await
+            .expect("tenants")
+            .is_empty(),
+        "no tenant is left"
+    );
+    // The token is still claimable.
+    let (_admin, _tenant, _root) = bootstrap(&rig.router).await;
     drop_db(&rig.db_name).await;
 }
 
@@ -13026,5 +13221,145 @@ async fn an_admin_keys_previous_value_in_its_grace_adds_no_web_email() {
     .await;
     assert_eq!(status, StatusCode::OK, "{added}");
     assert_eq!(whoami_status(&rig, &old).await, StatusCode::OK);
+    drop_db(&rig.db_name).await;
+}
+
+/// The operator route admits only the tenant's token of this start, sent as
+/// `OML-Operator-Token` with no key: a bearer key beside it, a wrong token
+/// and another tenant's token are `auth.invalid`, each naming why, no token
+/// is `auth.missing`, and `/readyz` says the tokens were written (ADR-0097 d19; answer
+/// 13).
+#[tokio::test]
+async fn the_operator_route_admits_only_the_tenants_token_of_this_start() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let (admin, tenant, _) = bootstrap(&rig.router).await;
+    let router = lead_state(
+        &rig.store,
+        rig.signing.clone(),
+        pg_ping(rig.store.pool().clone()),
+        true,
+        None,
+    )
+    .with_operator_tokens(oml_transport_http::operator::OperatorTokens::new([(
+        tenant,
+        "omlop_the-tenants-token".to_owned(),
+    )]))
+    .into_router();
+    let path = |tenant: Uuid| {
+        format!(
+            "/v2/operator/tenants/{tenant}/acts/{}/settle",
+            Uuid::from_u128(7)
+        )
+    };
+    let settle = |call: Call| call.body(json!({ "outcome": "confirm" }));
+    let reason = |body: &Value| body["error"]["details"]["reason"].clone();
+    for (call, why) in [
+        (
+            Call::auth(&admin).header("oml-operator-token", "omlop_the-tenants-token"),
+            "operator_route_takes_no_key",
+        ),
+        (
+            Call::default().header("oml-operator-token", "omlop_another"),
+            "operator_token",
+        ),
+    ] {
+        let (status, _, body) = send(&router, "POST", &path(tenant), settle(call)).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+        assert_envelope(&body, "auth.invalid");
+        assert_eq!(reason(&body), why, "{body}");
+    }
+    let (status, _, body) = send(&router, "POST", &path(tenant), settle(Call::default())).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_envelope(&body, "auth.missing");
+    let (status, _, body) = send(
+        &router,
+        "POST",
+        &path(Uuid::from_u128(9)),
+        settle(Call::default().header("oml-operator-token", "omlop_the-tenants-token")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "another tenant's: {body}");
+    let (status, _, body) = send(
+        &router,
+        "POST",
+        &path(tenant),
+        settle(Call::default().header("oml-operator-token", "omlop_the-tenants-token")),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "the token admits; no such act: {body}"
+    );
+    let (_, _, ready) = send(&router, "GET", "/readyz", Call::default()).await;
+    assert_eq!(ready["operator_tokens"], "written");
+    drop_db(&rig.db_name).await;
+}
+
+/// `oml operator recover`'s route takes the tenant's operator token and no
+/// key, and on a store whose authentication table was installed today it
+/// refuses `operator.recover_refused` with `log_too_short`: a missing row
+/// is never read as dormancy (ADR-0097 d19; answers 21, 24).
+#[tokio::test]
+async fn the_recover_route_refuses_log_too_short_on_a_table_installed_today() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let (admin, tenant, _) = bootstrap(&rig.router).await;
+    let router = lead_state(
+        &rig.store,
+        rig.signing.clone(),
+        pg_ping(rig.store.pool().clone()),
+        true,
+        None,
+    )
+    .with_operator_tokens(oml_transport_http::operator::OperatorTokens::new([(
+        tenant,
+        "omlop_the-tenants-token".to_owned(),
+    )]))
+    .into_router();
+    let path = format!("/v2/operator/tenants/{tenant}/recover");
+    let body = json!({ "person": "carol", "email": "carol@example.com" });
+    let (status, _, refused) = send(
+        &router,
+        "POST",
+        &path,
+        Call::auth(&admin)
+            .header("oml-operator-token", "omlop_the-tenants-token")
+            .body(body.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{refused}");
+    assert_eq!(
+        refused["error"]["details"]["reason"],
+        "operator_route_takes_no_key"
+    );
+    let token = || Call::default().header("oml-operator-token", "omlop_the-tenants-token");
+    let (status, _, invalid) = send(
+        &router,
+        "POST",
+        &path,
+        token().body(json!({ "person": "carol", "email": "not an address" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{invalid}");
+    assert_envelope(&invalid, "request.validation");
+    let (status, _, short) = send(&router, "POST", &path, token().body(body)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{short}");
+    assert_envelope(&short, "operator.recover_refused");
+    assert_eq!(short["error"]["details"]["reason"], "log_too_short");
+    let journal = rig
+        .store
+        .events_range(tenant, 1, 10_000)
+        .await
+        .expect("journal");
+    assert!(
+        journal
+            .iter()
+            .all(|e| !e.envelope.event_type.starts_with("operator.recovery")),
+        "a refused recovery journals nothing"
+    );
     drop_db(&rig.db_name).await;
 }

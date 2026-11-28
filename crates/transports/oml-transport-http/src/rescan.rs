@@ -18,9 +18,13 @@ use crate::traffic::Rid;
 use crate::{ApiState, bearer, finish, json_response, retry_chain};
 
 /// openapi.yaml `RescanReport`.
-fn report_json(r: &RescanReport, fixes: &oml_app::app::FixStats) -> Value {
+fn report_json(
+    r: &RescanReport,
+    fixes: &oml_app::app::FixStats,
+    public: &oml_app::app::PublicStats,
+) -> Value {
     let action = |veto: bool| if veto { "veto" } else { "hold" };
-    json!({
+    let mut report = json!({
         "scanner_version": r.scanner_version,
         "scanned": r.scanned,
         "findings": r.hits.iter().map(|h| json!({
@@ -50,6 +54,7 @@ fn report_json(r: &RescanReport, fixes: &oml_app::app::FixStats) -> Value {
         "held_successors_stranded": r.held_successors_stranded,
         "erased_keys_live": r.erased_keys_live,
         "investigations_open_long": r.investigations_open_long,
+        "investigations_past_pages": r.investigations_past_pages,
         "fixes_unconfirmed": fixes.unconfirmed,
         "fix_oldest_unconfirmed_seconds": fixes.oldest_unconfirmed_seconds,
         "fixes_loosening_guardrail": fixes.loosening_guardrail,
@@ -58,7 +63,75 @@ fn report_json(r: &RescanReport, fixes: &oml_app::app::FixStats) -> Value {
         "fixes_reverted": fixes.reverted,
         "key_links_pending": fixes.links_pending,
         "web_emails_pending": fixes.emails_pending,
-    })
+        "admin_acts_pending": fixes.acts_pending,
+        "admin_act_oldest_pending_seconds": fixes.act_oldest_pending_seconds,
+        "admin_erase_shreds_pending": fixes.shreds_pending,
+        "admin_erase_shred_oldest_seconds": fixes.shred_oldest_pending_seconds,
+        "admin_acts_sole_admin": fixes.acts_sole_admin,
+        "sole_admin": fixes.sole_admin,
+        "admin_acts_without_reason": fixes.acts_without_reason,
+        "admin_acts_expired": fixes.acts_expired,
+        "admin_acts_offensive": fixes.acts_offensive,
+        "admin_timeboxes_unsettled": fixes.timeboxes_unsettled,
+        "admin_narrowing_burst": fixes.narrowing_burst,
+        "admin_keys_suspended": fixes.keys_suspended,
+        "admin_keys_unlinked_suspended": fixes.keys_unlinked_suspended,
+        "admin_unlinked_days_left": fixes.unlinked_days_left,
+        "admin_disputes_open": fixes.disputes_open,
+    });
+    // The doctor's `workspace.public` and `workspace.public_ineligible`
+    // (ADR-0098 d9), added apart so the one literal stays under the macro's
+    // recursion limit.
+    if let Some(obj) = report.as_object_mut() {
+        obj.insert(
+            "public_workspaces".to_owned(),
+            public
+                .public
+                .iter()
+                .map(|w| {
+                    json!({
+                        "workspace_id": w.workspace_id,
+                        "name": w.name,
+                        "since": w.flag.since.as_ref().map(|at| at.as_str()),
+                        "act_id": w.flag.act_id,
+                        "sole_admin": w.flag.sole_admin,
+                        "served_rows": w.served_rows,
+                    })
+                })
+                .collect(),
+        );
+        obj.insert("public_ineligible".to_owned(), json!(public.ineligible));
+        // Doctor's `operator.settlement_due` (ADR-0097 d19) and
+        // `key.issuer_unexpected_shape` (d18).
+        obj.insert(
+            "operator_settlements_due".to_owned(),
+            json!(fixes.settlements_due),
+        );
+        obj.insert(
+            "key_issuer_unexpected_shape".to_owned(),
+            json!(fixes.issuer_unexpected_shape),
+        );
+        // Doctor's `admin.recovery_pending`, `admin.recovery_overdue`,
+        // `auth.log_coverage` and `auth.log_write_failed` (ADR-0097 d19;
+        // answers 22, 24).
+        obj.insert(
+            "admin_recoveries_pending".to_owned(),
+            json!(fixes.recoveries_pending),
+        );
+        obj.insert(
+            "admin_recoveries_overdue".to_owned(),
+            json!(fixes.recoveries_overdue),
+        );
+        obj.insert(
+            "auth_log_coverage_days".to_owned(),
+            json!(fixes.authentication_coverage_days),
+        );
+        obj.insert(
+            "auth_log_write_failures".to_owned(),
+            json!(fixes.authentication_write_failures),
+        );
+    }
+    report
 }
 
 impl<J, S, C, I, Sc> ApiState<J, S, C, I, Sc>
@@ -133,7 +206,36 @@ where
                 .admin_fix_stats(&token)
                 .await
                 .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-            Ok(json_response(StatusCode::OK, &report_json(&report, &fixes)))
+            let public = st
+                .app
+                .admin_public_stats(&token)
+                .await
+                .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+            let flagged = st
+                .app
+                .admin_flagged_creates(&token)
+                .await
+                .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+            let mut body = report_json(&report, &fixes, &public);
+            // Doctor's `notice.mail_unconfigured` and
+            // `notice.mail_delivery_failed` (ADR-0097 d20; answer 14).
+            if let (Some(obj), Value::Object(mail)) = (body.as_object_mut(), st.mail_report()) {
+                obj.extend(mail);
+            }
+            // Doctor's `workspace.flagged_creates` (ADR-0097 d31, the
+            // operator's decision of 2026-11-27).
+            if let Some(obj) = body.as_object_mut() {
+                obj.insert(
+                    "flagged_creates".to_owned(),
+                    flagged
+                        .iter()
+                        .map(|(key_id, workspaces)| {
+                            json!({ "key_id": key_id, "workspaces": workspaces })
+                        })
+                        .collect(),
+                );
+            }
+            Ok(json_response(StatusCode::OK, &body))
         }
         .await;
         finish(rid, result)

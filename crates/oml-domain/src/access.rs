@@ -73,6 +73,9 @@ pub struct Grant {
     pub deny: Vec<Uuid>,
     /// The node's subtree, or the node alone (ADR-0044 d4).
     pub covers: Covers,
+    /// Whether the grant lets its key create child workspaces where it
+    /// reaches (ADR-0097 d31). Granting it is widening.
+    pub create: bool,
 }
 
 impl Grant {
@@ -86,6 +89,34 @@ impl Grant {
             Covers::Subtree => ancestry.contains(&self.node),
             Covers::Node => ancestry.first() == Some(&self.node),
         }
+    }
+}
+
+/// Whether a key of `key_role` reads the tenant's public nodes (ADR-0098
+/// d2): the roles that read, `reader`, `contributor` and `reviewer`, on
+/// tenant and user keys alike. A submitter recalls nothing but its own
+/// rows, and an admin or operator key reads no claim content.
+#[must_use]
+pub fn reads_public(key_role: Role) -> bool {
+    matches!(key_role, Role::Reader | Role::Contributor | Role::Reviewer)
+}
+
+/// The reach a public node adds to a reading key's effective access
+/// (ADR-0098 d1): a reader grant on the node alone that the key does not
+/// hold. It is computed per request and never written; its id is the
+/// node's own, so it names no grant row. It carries no deny entry, so a
+/// per-grant deny of another grant never removes it, and a global deny
+/// does, as it removes any grant.
+#[must_use]
+pub fn public_reach_grant(node: Uuid) -> Grant {
+    Grant {
+        grant_id: node,
+        node,
+        role: Role::Reader,
+        deny: Vec::new(),
+        covers: Covers::Node,
+        // A public read never gives `create` (ADR-0098 d1).
+        create: false,
     }
 }
 
@@ -108,7 +139,7 @@ pub fn admissible_grant_roles(key_role: Role) -> &'static [Role] {
         Role::Contributor => &[Role::Reader, Role::Submitter],
         Role::Submitter => &[Role::Submitter],
         Role::Reviewer => &[Role::Reader, Role::Reviewer],
-        Role::Admin | Role::Operator => &[],
+        Role::Admin | Role::Operator | Role::Maintenance => &[],
     }
 }
 
@@ -203,9 +234,12 @@ pub fn issuable_key_roles(issuer_role: Role) -> &'static [Role] {
             Role::Submitter,
             Role::Reviewer,
             Role::Admin,
+            Role::Maintenance,
         ],
         Role::Operator => &[Role::Admin, Role::Operator],
-        Role::Reader | Role::Contributor | Role::Submitter | Role::Reviewer => &[],
+        Role::Reader | Role::Contributor | Role::Submitter | Role::Reviewer | Role::Maintenance => {
+            &[]
+        }
     }
 }
 
@@ -291,6 +325,32 @@ fn globally_denied(denials: &[KeyDenial], ancestry: &[Uuid]) -> bool {
 /// (workspaces.md, per-grant attenuation).
 fn survives(grant: &Grant, ancestry: &[Uuid]) -> bool {
     grant.reaches(ancestry) && !grant.deny.iter().any(|d| ancestry.contains(d))
+}
+
+/// The grant carrying `create` that admits a child under the node whose
+/// ancestry, node to root, this is (ADR-0097 d31): a flagged grant that
+/// survives there, none where a global denial covers the node. A subtree
+/// grant is preferred, since it already covers the child and writes no
+/// grant on it; `None` where no flagged grant reaches.
+#[must_use]
+pub fn create_grant<'a>(
+    grants: &'a [Grant],
+    denials: &[KeyDenial],
+    ancestry: &[Uuid],
+) -> Option<&'a Grant> {
+    if globally_denied(denials, ancestry) {
+        return None;
+    }
+    let mut flagged = grants.iter().filter(|g| g.create && survives(g, ancestry));
+    let first = flagged.next()?;
+    if first.covers == Covers::Subtree {
+        return Some(first);
+    }
+    Some(
+        flagged
+            .find(|g| g.covers == Covers::Subtree)
+            .unwrap_or(first),
+    )
 }
 
 /// `effective_roles(N)` (workspaces.md, effective access; ADR-0025 d1):

@@ -67,13 +67,24 @@ one, made when and by which key. A user root takes no status move
 2. **Shape it.** Name the key after the `<user>-` prefix and pick its role: contributor (recall
    and write), reader (recall only) or submitter (write without recall). Each grant row names a
    workspace in the root, reader or submitter, the workspace and below or the workspace only, and
-   the workspaces below it to leave out. **Add a grant** adds a row. A date works through that day
-   in every time zone, and a rate caps the key's requests a minute.
+   the workspaces below it to leave out. **Add a grant** adds a row. A grant's **Creates child
+   workspaces here** box lets the key create workspaces where the grant reaches. **Add a new
+   workspace** adds a row that creates a workspace inside the root with the key, granted to it by
+   its role. A date works through that day in every time zone, and a rate caps the key's requests
+   a minute.
 3. **Review it.** The review restates the access in words, marks the root's tree and shows the
    exact request. A refusal the page can decide, such as a session key's name or a grant outside
    the root, is listed at the top with its code and a link to the field.
 4. **Issue key.** The value, or the connect code for a connector, is shown once. Only an admin
    changes the key's date or rate afterwards.
+
+The admin console has the same builder at `/web/admin/keys/new`, under the admin Keys page's
+**New key**. It works over the tenant's whole tree, takes a reviewer key, the user the key acts
+for, who holds it, its principal and crew, and needs a reason. Outside a tenant that has only ever
+had one admin, its key waits on another admin's confirmation: the value is shown once, and the key
+works nowhere, and its new workspaces are not created, until a second admin confirms it. The admin
+Workspaces page creates a workspace anywhere in the tenant at once
+([ADR-0097](../adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) d29 to d31).
 
 ## Rotate a key
 

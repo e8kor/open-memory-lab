@@ -823,12 +823,15 @@ mod tests {
                         role: Role::Reader,
                         deny: Vec::new(),
                         covers: Covers::Subtree,
+                        create: false,
                     }],
                     user: Some(name("alice")),
                     connect_code: false,
                     guardrail_scope: None,
                     expiry: None,
                     requests_per_minute: None,
+                    person: None,
+                    create_workspaces: Vec::new(),
                 },
             )
             .await

@@ -106,6 +106,20 @@ pub enum CallbackRefusal {
     Unlisted(ProviderIdentity),
     Provider(ProviderFailure),
     Store(String),
+    /// The contest-only sign-in (ADR-0097 d8): a disabled admin person,
+    /// whose provider identity matches their entry as the act against them
+    /// found it, while that act is open and uncontested. It opens nothing
+    /// but the act's contest.
+    Contest(ContestGrant),
+}
+
+/// What the contest-only sign-in admits (ADR-0097 d8): the act, and the
+/// person it is against.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContestGrant {
+    pub tenant_id: Uuid,
+    pub user: oml_domain::name::Name,
+    pub act_id: Uuid,
 }
 
 impl<J, S, C, I, Sc> App<J, S, C, I, Sc>
@@ -182,6 +196,39 @@ where
             .await
             .map_err(store)?
         else {
+            // A removed admin has no entry: the open removal's effect keeps
+            // the entry as it stood, and its provider sign-in opens the
+            // contest of that act alone (ADR-0097 d8, the operator's
+            // decision of 2026-11-27).
+            if let Some((tenant_id, act)) = self
+                .journal
+                .removed_admin_act(&email_hash)
+                .await
+                .map_err(store)?
+            {
+                let before = act.effect.get("before");
+                let pinned = before
+                    .and_then(|b| {
+                        b.get(match identity.provider {
+                            Provider::Google => "google_subject",
+                            Provider::GitHub => "github_subject",
+                        })
+                    })
+                    .and_then(serde_json::Value::as_str);
+                let user = before
+                    .and_then(|b| b.get("user"))
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(|u| oml_domain::name::Name::parse(u).ok());
+                if let Some(user) = user
+                    && pinned.is_none_or(|s| s == identity.subject)
+                {
+                    return Err(CallbackRefusal::Contest(ContestGrant {
+                        tenant_id,
+                        user,
+                        act_id: act.act_id,
+                    }));
+                }
+            }
             // Open mode takes an unlisted, verified identity to the terms
             // page (ADR-0068 d2); allowlist mode refuses it as before.
             return Err(
@@ -195,8 +242,30 @@ where
                 },
             );
         };
-        // A disabled person signs in to nothing (ADR-0068 d8).
+        // A disabled person signs in to nothing (ADR-0068 d8), save the
+        // contest of an open act against them (ADR-0097 d8).
         if entry.disabled_at.is_some() {
+            let pinned = entry.subject(identity.provider);
+            if pinned.is_none_or(|s| s == identity.subject) {
+                let open = self
+                    .open_disputes(entry.tenant_id)
+                    .await
+                    .map_err(|e| CallbackRefusal::Store(e.to_string()))?
+                    .into_iter()
+                    .find(|a| {
+                        a.act == oml_domain::admin_act::AdminActKind::DisableAdmin
+                            && a.state == oml_domain::admin_act::AdminActState::Effective
+                            && a.target.get("user").and_then(serde_json::Value::as_str)
+                                == Some(entry.user.as_str())
+                    });
+                if let Some(act) = open {
+                    return Err(CallbackRefusal::Contest(ContestGrant {
+                        tenant_id: entry.tenant_id,
+                        user: entry.user.clone(),
+                        act_id: act.act_id,
+                    }));
+                }
+            }
             return Err(refused(SignInRefusal::Disabled));
         }
         // Nor does an entry that waits on its person, and its provider
@@ -277,6 +346,20 @@ where
                 credentials,
             )
             .await?;
+        // An admin person's sign-in is an admin authentication of the day,
+        // written against their `<user>-admin` session key, whichever
+        // capacity the session goes on to use: recovery's dormancy reads it,
+        // and it cancels a requested recovery (ADR-0097 d19, answers 22, 24).
+        if entry.admin
+            && let Ok(name) = key_name(&entry.user, Capacity::Admin.suffix())
+            && let Some(id) = self
+                .journal
+                .resolve_name(entry.tenant_id, NamedKind::Key, &name)
+                .await?
+            && let Some(key) = self.journal.key(entry.tenant_id, id).await?
+        {
+            self.note_authenticated(&key).await;
+        }
         Ok(OpenedSession { token, record })
     }
 
@@ -343,12 +426,22 @@ where
     /// key whose issuance creates `universe.<user>`, submitter and reader on
     /// it; `<user>-review`, a tenant reviewer key with reviewer and reader on
     /// that root; and, for an admin entry, `<user>-admin`. Each is issued
-    /// by the admin key that added the entry, only when missing, so a sign-in
-    /// whose issuance failed part way completes at the next one. Every
+    /// by the tenant's reserved server issuer, never an admin key (ADR-0097
+    /// d18, reversing ADR-0045 d6's "under the admin key that added the
+    /// entry"), only for an accepted entry that is not disabled, and only
+    /// when missing, so a sign-in whose issuance failed part way completes
+    /// at the next one. `<user>-admin` is issued only for an entry whose
+    /// admin flag is in force: a pending flag is not on the entry until its
+    /// confirmation (d5). Every
     /// session key's principal is its own name, so R2 lets `<user>-review`
     /// approve the person's agents' writes.
     pub async fn web_ensure_keys(&self, entry: &WebEntry) -> Result<(), AppError> {
         let tenant_id = entry.tenant_id;
+        // A pending or disabled entry signs in to nothing, so it is issued
+        // nothing (ADR-0097 d18).
+        if entry.pending || entry.disabled_at.is_some() {
+            return Ok(());
+        }
         let held = self
             .journal
             .web_session_keys(tenant_id, &entry.user)
@@ -369,18 +462,20 @@ where
         if needed.is_empty() {
             return Ok(());
         }
-        let issuer = self
-            .journal
-            .key(tenant_id, entry.added_by)
-            .await?
-            .filter(|k| k.revoked_at.is_none() && k.role == Role::Admin)
-            .ok_or(AppError::WebKeyMissing { capacity: "web" })?;
+        // The server issuer, issued and revoked in a commit of its own the
+        // first time a tenant needs it (ADR-0097 d18).
+        let prev = self.head_event(tenant_id).await?;
+        let (issuer, links) = self.server_issuer(tenant_id, prev.as_ref()).await?;
+        if !links.is_empty() {
+            self.commit_requests(links).await?;
+        }
         let root = Reference::Name(entry.user.clone());
         let grant = |role: Role| GrantRequest {
             node: root.clone(),
             role,
             deny: Vec::new(),
             covers: Covers::Subtree,
+            create: false,
         };
         for capacity in needed {
             let name = key_name(&entry.user, capacity.suffix())?;
@@ -413,6 +508,8 @@ where
                 user,
                 expiry: None,
                 requests_per_minute: None,
+                person: None,
+                create_workspaces: Vec::new(),
             };
             self.issue_key_by(&issuer, &req, Issuance::Session(&entry.user))
                 .await?;
@@ -461,8 +558,9 @@ where
             }
             None => None,
         };
-        self.session_key_caller(session, capacity, rows)
-            .map(|(caller, _)| caller)
+        let (caller, _) = self.session_key_caller(session, capacity, rows)?;
+        self.note_authenticated(&caller.key).await;
+        Ok(caller)
     }
 
     /// The caller `rows` make for `capacity` of `session`, with the access
@@ -509,6 +607,7 @@ where
             Some(access)
         };
         let mut caller = Caller::of(rows.key, access.clone());
+        caller.session = Some((session.created_at.clone(), session.email_hash));
         // Every session key of the person but the admin capacity's owns the
         // rows of every key of the person: the keys naming their root and
         // their web, review and curate session keys, never a linked tenant
@@ -576,6 +675,7 @@ where
             // session keys at the API as it binds their agent keys
             // (ADR-0068 d5).
             Ok((caller, access)) => {
+                self.note_authenticated(&caller.key).await;
                 self.admit_request(&caller.key).await?;
                 if first_resolution {
                     *caller.gate_read.lock().expect("unpoisoned") = access;
@@ -590,8 +690,8 @@ where
     /// A person's own sign-up (ADR-0068 d2), after the terms page: in open
     /// mode, for a provider-verified identity no entry holds, with the
     /// current terms version accepted; an address an entry holds is refused
-    /// whatever its tenant or flag. A drawn user, the entry under
-    /// `signup.issuer` journalled as `web.signed_up` with the email's
+    /// whatever its tenant or flag. A drawn user, the entry under the
+    /// server issuer (ADR-0097 d18) journalled as `web.signed_up` with the email's
     /// digest, the provider subject pinned. The caller then issues the
     /// session keys and opens a session.
     pub async fn web_sign_up(
@@ -673,42 +773,40 @@ where
         Ok(entry)
     }
 
-    /// The live admin key `signup.issuer` names in the sign-up tenant;
-    /// otherwise the start's check failed or the key was revoked since,
-    /// and the sign-up fails closed (ADR-0068 d1, d11).
+    /// The sign-up tenant's reserved server issuer, as stored or as issued
+    /// and revoked in a commit of its own (ADR-0097 d18): a sign-up's entry
+    /// is added under it, and `signup.issuer` is read and ignored.
     async fn signup_issuer(&self, policy: &SignupPolicy) -> Result<KeyRecord, AppError> {
-        let id = self
-            .journal
-            .resolve_name(policy.tenant_id, NamedKind::Key, &policy.issuer)
-            .await?
-            .ok_or(AppError::WebKeyMissing {
-                capacity: "signup issuer",
-            })?;
-        self.journal
-            .key(policy.tenant_id, id)
-            .await?
-            .filter(|k| k.role == Role::Admin && k.revoked_at.is_none())
-            .ok_or(AppError::WebKeyMissing {
-                capacity: "signup issuer",
-            })
+        let prev = self.head_event(policy.tenant_id).await?;
+        let (issuer, links) = self.server_issuer(policy.tenant_id, prev.as_ref()).await?;
+        if !links.is_empty() {
+            self.commit_requests(links).await?;
+        }
+        Ok(issuer)
     }
 
-    /// Whether the start's settings name a live admin key in an existing
-    /// tenant (ADR-0068 d1): the composition stops when not.
+    /// Whether the start's settings name an existing tenant (ADR-0068 d1):
+    /// the composition stops when not. `signup.issuer` is no longer read
+    /// (ADR-0097 d18).
     pub async fn check_signup_policy(&self) -> Result<(), String> {
         let Some(policy) = self.signup_policy() else {
             return Ok(());
         };
-        self.signup_issuer(policy).await.map(|_| ()).map_err(|_| {
-            format!(
-                "signup.issuer {} is not a live admin key of the tenant signup.tenant names (ADR-0068 d1)",
-                policy.issuer.as_str()
-            )
-        })
+        match self.head_event(policy.tenant_id).await {
+            Ok(Some(_)) => Ok(()),
+            _ => Err(format!(
+                "signup.tenant {} is not a tenant of this deployment (ADR-0068 d1)",
+                policy.tenant_id
+            )),
+        }
     }
 
     /// A drawn name no workspace, key or entry of the tenant holds.
-    async fn user_name_free(&self, tenant_id: Uuid, user: &Name) -> Result<bool, AppError> {
+    pub(crate) async fn user_name_free(
+        &self,
+        tenant_id: Uuid,
+        user: &Name,
+    ) -> Result<bool, AppError> {
         if self
             .journal
             .resolve_name(tenant_id, NamedKind::Workspace, user)

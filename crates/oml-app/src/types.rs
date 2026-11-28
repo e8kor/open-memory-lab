@@ -145,7 +145,69 @@ pub struct KeyRecord {
     /// acts for no one (ADR-0085 d16, the operator's decision of
     /// 2026-11-19). `None` for every other key.
     pub link_pending: Option<Uuid>,
+    /// The widening `admin.act` this key waits on, from its `key.issued`
+    /// until a second admin person confirms it: a pending key authenticates
+    /// nothing on any path, and takes no added grant, limit change or
+    /// connect code (ADR-0097 d5, d23). `None` for every other key.
+    pub pending_act: Option<Uuid>,
+    /// Why the key authenticates nothing for now: an open act against its
+    /// person (ADR-0097 d8, d21), or no accepted link at the upgrade, when
+    /// it still reaches `/v2/whoami` and `POST /v2/keys/self/link` (d22,
+    /// the production migration). `None` for every other key.
+    pub suspended: Option<KeySuspension>,
+    /// The person the issuing key counted as at issuance, recorded the way
+    /// `author_person` is at a write (#448): a key counts as that person
+    /// too when it settles a fix, whatever its issuer's link becomes
+    /// (ADR-0097, amendment of 2026-11-27, answer 17; #508 N1). `None` for
+    /// a key whose issuer counted as no person, and for every key issued
+    /// before v0.8.6.
+    pub issuer_person: Option<Name>,
 }
+
+/// Why and since when a key is suspended (ADR-0097 d8, d21).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeySuspension {
+    pub cause: SuspensionCause,
+    /// The act against an admin that suspended it; `None` for `unlinked`.
+    pub act_id: Option<Uuid>,
+    pub at: EventTime,
+}
+
+/// The two causes of a suspension (ADR-0097 d8, d21).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SuspensionCause {
+    /// An act against the key's admin person is open (d8, d21).
+    AgainstAdmin,
+    /// An admin key that stood with no accepted link at the first start of
+    /// v0.8.6 (the production migration).
+    Unlinked,
+}
+
+impl SuspensionCause {
+    /// The spelling of `key.suspended.cause` and of the column.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SuspensionCause::AgainstAdmin => "against_admin",
+            SuspensionCause::Unlinked => "unlinked",
+        }
+    }
+
+    /// The cause a spelling names; `None` for any other string.
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "against_admin" => Some(SuspensionCause::AgainstAdmin),
+            "unlinked" => Some(SuspensionCause::Unlinked),
+            _ => None,
+        }
+    }
+}
+
+/// How long an admin key suspended as unlinked at the upgrade keeps its one
+/// route before it is revoked: thirty days, a placeholder (ADR-0097, the
+/// production migration).
+pub const UNLINKED_ADMIN_KEY_WINDOW_SECS: i64 = 30 * 86_400;
 
 impl KeyRecord {
     /// Whether the key's expiry has come at `now`: a key lives while its
@@ -167,6 +229,366 @@ impl KeyRecord {
             KeyState::Expired
         } else {
             KeyState::Active
+        }
+    }
+}
+
+/// One admin act as its record holds it (ADR-0097 d2): one row per act,
+/// folded from the act's `admin.act` envelopes, the first journalled in the
+/// commit of its effect and each later one, with the same `act_id`, at a
+/// change of its state. `effect` is what a confirmation applies for an act
+/// still `pending_confirmation`, a pending key's grants among it, so no
+/// grant is in force, or read by any recall, review or count query, before
+/// a second admin person confirms (d23).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AdminActRecord {
+    pub act_id: Uuid,
+    pub act: oml_domain::admin_act::AdminActKind,
+    /// What the act names: a key, a workspace, a person, an entry.
+    pub target: Value,
+    pub reason: Option<String>,
+    /// The admin key that took the act; `None` for an act with a `cause`.
+    pub actor_key_id: Option<Uuid>,
+    /// The person the acting key counts as, recorded at the act; `None`
+    /// for a key that counts as no person, until ADR-0097 d21 leaves none.
+    pub actor_person: Option<Name>,
+    pub state: oml_domain::admin_act::AdminActState,
+    pub confirmed_by_person: Option<Name>,
+    /// The admin key that confirmed or declined the act.
+    pub settled_by_key_id: Option<Uuid>,
+    /// The reason a confirmation required, scanned as any act's (ADR-0097
+    /// d26; amendment of 2026-11-27, answer 18); a decline's reason is its
+    /// own `decline_act`'s.
+    pub confirm_reason: Option<String>,
+    /// Taken at once in a tenant that never had two live admin persons
+    /// (ADR-0097 d10).
+    pub sole_admin: bool,
+    pub cause: Option<oml_domain::admin_act::AdminActCause>,
+    pub at: EventTime,
+    pub settled_at: Option<EventTime>,
+    pub effect: Value,
+}
+
+/// Why a time-boxed issuance is refused, `request.validation` with
+/// `details.field: /timebox` and `details.reason` (ADR-0097 d13).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimeboxRefusal {
+    /// The issuer counts as no live admin person.
+    NotAdminPerson,
+    /// The key is not a reader, submitter or contributor key whose grants
+    /// are reader and submitter grants on shared workspaces, with no
+    /// create flag, connect code, user, person or new workspace.
+    Shape,
+    /// A grant reaches a user root or an in-progress subtree.
+    NotShared,
+    /// The box names no `expiry`, or one more than 24 hours away.
+    Until,
+    /// The actor person already holds an open box on the workspace.
+    Open,
+    /// One renewal is taken; a second admin person settles the first box
+    /// before another.
+    RenewalsExhausted,
+    /// An act against an admin is open, or a freeze holds.
+    AgainstAdminOpen,
+}
+
+impl TimeboxRefusal {
+    /// `details.reason`.
+    #[must_use]
+    pub fn reason(self) -> &'static str {
+        match self {
+            TimeboxRefusal::NotAdminPerson => "not_admin_person",
+            TimeboxRefusal::Shape => "shape",
+            TimeboxRefusal::NotShared => "not_shared",
+            TimeboxRefusal::Until => "until",
+            TimeboxRefusal::Open => "open",
+            TimeboxRefusal::RenewalsExhausted => "renewals_exhausted",
+            TimeboxRefusal::AgainstAdminOpen => "against_admin_open",
+        }
+    }
+
+    /// The sentence the refusal answers.
+    #[must_use]
+    pub fn message(self) -> &'static str {
+        match self {
+            TimeboxRefusal::NotAdminPerson => "a time box is an admin person's act",
+            TimeboxRefusal::Shape => {
+                "a time box issues a reader, submitter or contributor key whose grants are reader and submitter grants, with no create flag, connect code, user, person or new workspace"
+            }
+            TimeboxRefusal::NotShared => {
+                "a time box grants in shared workspaces only, never into a user root or an in-progress subtree"
+            }
+            TimeboxRefusal::Until => {
+                "a time box takes an expiry no more than 24 hours away, which everything issued under it inherits"
+            }
+            TimeboxRefusal::Open => {
+                "this admin person already holds an open time box on this workspace"
+            }
+            TimeboxRefusal::RenewalsExhausted => {
+                "one renewal is taken: a second admin person settles the first time box before another"
+            }
+            TimeboxRefusal::AgainstAdminOpen => {
+                "no time box is taken while an act against an admin is open or a freeze holds"
+            }
+        }
+    }
+}
+
+impl AdminActRecord {
+    /// Whether the act is a time-boxed issuance, taken at once and settled
+    /// afterwards by a second admin person (ADR-0097 d13).
+    #[must_use]
+    pub fn timebox(&self) -> bool {
+        self.target.get("timebox") == Some(&Value::Bool(true))
+    }
+
+    /// The act's class, fixed by its act (ADR-0097 d2).
+    #[must_use]
+    pub fn class(&self) -> oml_domain::admin_act::AdminActClass {
+        self.act.class()
+    }
+
+    /// The state at `now`: a pending act past its life reads `expired`,
+    /// terminal, whatever the row holds (ADR-0097 d23).
+    #[must_use]
+    pub fn state_at(&self, now: &EventTime) -> oml_domain::admin_act::AdminActState {
+        use oml_domain::admin_act::{AdminActState, PENDING_LIFE_SECS};
+        if self.expires()
+            && now.unix_micros() - self.at.unix_micros() >= PENDING_LIFE_SECS * 1_000_000
+        {
+            AdminActState::Expired
+        } else {
+            self.state
+        }
+    }
+
+    /// Whether the act is pending widening, whose life ends (d23). A
+    /// pending shred never expires: d23's expiry is widening's, and the
+    /// bytes it keeps are reported by doctor until a second admin person
+    /// confirms or declines it (d4).
+    fn expires(&self) -> bool {
+        use oml_domain::admin_act::{AdminActClass, AdminActState};
+        self.state == AdminActState::PendingConfirmation && self.class() != AdminActClass::Erase
+    }
+
+    /// The end of a pending act's life (ADR-0097 d23).
+    #[must_use]
+    pub fn expires_at(&self) -> Option<EventTime> {
+        use oml_domain::admin_act::PENDING_LIFE_SECS;
+        self.expires()
+            .then(|| {
+                EventTime::from_unix_micros(self.at.unix_micros() + PENDING_LIFE_SECS * 1_000_000)
+            })
+            .flatten()
+    }
+}
+
+/// A live admin person of a tenant (ADR-0097 d10, d11): an accepted,
+/// unpending entry with the admin flag, and when that flag was accepted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdminPerson {
+    pub user: Name,
+    pub admin_since: EventTime,
+    pub disabled: bool,
+}
+
+/// What the confirm-first rule reads of a tenant in one call (ADR-0097
+/// d10, d11): whether it never had two live admin persons, and its admin
+/// persons.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdminStanding {
+    pub sole_admin: bool,
+    pub persons: Vec<AdminPerson>,
+}
+
+/// Why setting or clearing a workspace's `public` flag is refused,
+/// `workspace.public_refused` with `details.reason` (ADR-0098 d5, d6, d9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublicRefusal {
+    /// The node is `development`, so it may sit in an in-progress subtree
+    /// and its rules are loose (d5).
+    Status,
+    /// The node is a user root or lies under one: a person's own work
+    /// never becomes public (d5).
+    UserRoot,
+    /// A set already waits on a second admin person (d6).
+    Pending,
+    /// The node is already public.
+    AlreadyPublic,
+    /// The node is not public and no set waits on it.
+    NotPublic,
+}
+
+impl PublicRefusal {
+    /// `details.reason`.
+    #[must_use]
+    pub fn reason(self) -> &'static str {
+        match self {
+            PublicRefusal::Status => "status",
+            PublicRefusal::UserRoot => "user_root",
+            PublicRefusal::Pending => "pending",
+            PublicRefusal::AlreadyPublic => "already_public",
+            PublicRefusal::NotPublic => "not_public",
+        }
+    }
+
+    /// The sentence the refusal answers.
+    #[must_use]
+    pub fn message(self) -> &'static str {
+        match self {
+            PublicRefusal::Status => {
+                "only a protected or frozen workspace is marked public; a development one is refused"
+            }
+            PublicRefusal::UserRoot => {
+                "a user root and every workspace under it stay private: a person's own work never becomes public"
+            }
+            PublicRefusal::Pending => {
+                "a set of public on this workspace already waits on a second admin person"
+            }
+            PublicRefusal::AlreadyPublic => "the workspace is already public",
+            PublicRefusal::NotPublic => {
+                "the workspace is not public and no set of public waits on it"
+            }
+        }
+    }
+}
+
+/// A workspace's `public` flag as the reads serve it (ADR-0098 d9): the
+/// value, since when and by which admin act, whether that act took effect
+/// under `sole_admin`, and, to an admin key on the workspace read, the act
+/// of a set that waits on a second admin person. A node not public serves
+/// `value: false` and no act.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PublicFlag {
+    pub value: bool,
+    pub since: Option<EventTime>,
+    pub act_id: Option<Uuid>,
+    pub sole_admin: bool,
+    pub pending_act_id: Option<Uuid>,
+}
+
+/// What a set or a clear of `public` answers (ADR-0098 d9): `effective`
+/// with the value now held, or `pending_confirmation` while a set waits on
+/// a second admin person.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublicOutcome {
+    pub workspace_id: Uuid,
+    pub public: bool,
+    pub act_id: Uuid,
+    pub state: oml_domain::admin_act::AdminActState,
+}
+
+/// Why a confirmation or a decline of an admin act is refused, each
+/// `request.validation` with `details.field: act` and `details.reason`
+/// (ADR-0097 d5, d10, d11, d23).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdminActRefusal {
+    /// The act waits on no confirmation: it took effect, or was settled.
+    NotPending,
+    /// The act expired unconfirmed; a late confirm never revives it.
+    Expired,
+    /// The confirming key counts as the person who took the act.
+    OwnAct,
+    /// The confirming key counts as no admin person of the tenant.
+    NotAdminPerson,
+    /// The confirming admin person's flag was accepted less than seven
+    /// days before the act.
+    TooNew,
+    /// The key waits on its own issuance's confirmation, and takes no added
+    /// grant, limit change or connect code meanwhile (ADR-0097 d23).
+    KeyPending,
+    /// A party to a frozen dispute takes no widening act, and its initiator
+    /// no act against an admin (ADR-0097 d8).
+    Frozen,
+    /// Only an open un-flag, removal, disable or change of an admin
+    /// person's entry is contested or settled (d8).
+    NotContestable,
+    /// Only the act's target contests it (d8).
+    NotTarget,
+    /// A settler counts as a third admin person: neither party, and a
+    /// live admin person whose flag is seven days older than the act (d8,
+    /// d11).
+    NotSettler,
+    /// Below three admin persons the act is settled by the operator from
+    /// the host, not in the tenant (d8, d19).
+    FewerThanThree,
+    /// The operator settles only the act of a freeze: an open contestable
+    /// act below three admin persons (d19).
+    NotFrozen,
+    /// The operator settles a freeze only once it has been open 24 hours,
+    /// a placeholder (d19).
+    FreezeTooRecent,
+}
+
+impl AdminActRefusal {
+    /// `details.reason`.
+    #[must_use]
+    pub fn reason(self) -> &'static str {
+        match self {
+            AdminActRefusal::NotPending => "not_pending",
+            AdminActRefusal::Expired => "expired",
+            AdminActRefusal::OwnAct => "own_act",
+            AdminActRefusal::NotAdminPerson => "not_admin_person",
+            AdminActRefusal::TooNew => "too_new",
+            AdminActRefusal::KeyPending => "key_pending",
+            AdminActRefusal::Frozen => "frozen",
+            AdminActRefusal::NotContestable => "not_contestable",
+            AdminActRefusal::NotTarget => "not_target",
+            AdminActRefusal::NotSettler => "not_settler",
+            AdminActRefusal::FewerThanThree => "fewer_than_three",
+            AdminActRefusal::NotFrozen => "not_frozen",
+            AdminActRefusal::FreezeTooRecent => "freeze_too_recent",
+        }
+    }
+
+    /// The sentence the refusal answers.
+    #[must_use]
+    pub fn message(self) -> &'static str {
+        match self {
+            AdminActRefusal::NotPending => "the admin act waits on no confirmation",
+            AdminActRefusal::Expired => {
+                "the admin act expired unconfirmed, and a late confirm never revives it"
+            }
+            AdminActRefusal::OwnAct => {
+                "a second admin person confirms an admin act, never the person who took it"
+            }
+            AdminActRefusal::NotAdminPerson => {
+                "the confirming key counts as no admin person of the tenant"
+            }
+            AdminActRefusal::TooNew => {
+                "an admin person counts only once their admin flag is seven days older than the act"
+            }
+            AdminActRefusal::KeyPending => {
+                "the key waits on a second admin person's confirmation of its issuance, and takes no grant, limit change or connect code until then"
+            }
+            AdminActRefusal::Frozen => {
+                "a dispute between two admin persons is open below three admins: both take no widening act, and its initiator no act against an admin"
+            }
+            AdminActRefusal::NotContestable => {
+                "only an open un-flag, removal, disable or change of an admin person's entry is contested or settled"
+            }
+            AdminActRefusal::NotTarget => "only the admin person the act is against contests it",
+            AdminActRefusal::NotSettler => {
+                "a third admin person settles: neither party, and an admin person whose flag is seven days older than the act"
+            }
+            AdminActRefusal::FewerThanThree => {
+                "below three admin persons the operator settles the act from the host"
+            }
+            AdminActRefusal::NotFrozen => {
+                "the operator settles only the act of a freeze: an open act against an admin below three admin persons"
+            }
+            AdminActRefusal::FreezeTooRecent => {
+                "the operator settles a freeze only once it has been open 24 hours"
+            }
+        }
+    }
+
+    /// `details.field`: `key` for a pending key, else `act`.
+    #[must_use]
+    pub fn field(self) -> &'static str {
+        match self {
+            AdminActRefusal::KeyPending => "key",
+            _ => "act",
         }
     }
 }
@@ -200,6 +622,54 @@ pub enum KeyLimitsRefusal {
     AdminKeyExpiry,
     /// An admin key issued with a `requests_per_minute`.
     AdminKeyRate,
+}
+
+/// Why `POST /v2/keys/self/convert` converts nothing (ADR-0097 d18), each
+/// refused by name as `request.validation` with `details.reason`: only an
+/// admin bearer key converts, itself, into a `maintenance` key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyConversionRefusal {
+    /// `to` names a role other than `maintenance`.
+    TargetRole,
+    /// The calling key is not an admin key.
+    NotAdmin,
+    /// A session key has no value and converts nothing.
+    SessionKey,
+}
+
+impl KeyConversionRefusal {
+    /// `details.field`.
+    #[must_use]
+    pub fn field(self) -> &'static str {
+        match self {
+            KeyConversionRefusal::TargetRole => "/to",
+            _ => "key",
+        }
+    }
+
+    /// `details.reason`.
+    #[must_use]
+    pub fn reason(self) -> &'static str {
+        match self {
+            KeyConversionRefusal::TargetRole => "not_maintenance",
+            KeyConversionRefusal::NotAdmin => "not_admin",
+            KeyConversionRefusal::SessionKey => "session_key",
+        }
+    }
+
+    /// The refusal's message.
+    #[must_use]
+    pub fn message(self) -> &'static str {
+        match self {
+            KeyConversionRefusal::TargetRole => {
+                "an admin key converts into a maintenance key only (ADR-0097 d18)"
+            }
+            KeyConversionRefusal::NotAdmin => "only an admin key converts itself (ADR-0097 d18)",
+            KeyConversionRefusal::SessionKey => {
+                "a session key has no value and converts nothing (ADR-0097 d18)"
+            }
+        }
+    }
 }
 
 /// Why a key takes no new value (ADR-0096 d13), each refused by name as
@@ -288,6 +758,52 @@ impl KeyRotationRefusal {
             }
         }
     }
+}
+
+/// Why a key is not revoked (ADR-0097 d14), each `request.validation`
+/// with `details.field: key` and `details.reason`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyRevocationRefusal {
+    /// A session key ends with its entry, never by revocation.
+    SessionKey,
+    /// The server's reserved key resolves on no route.
+    Reserved,
+    /// The key is revoked already.
+    Revoked,
+}
+
+impl KeyRevocationRefusal {
+    /// `details.reason`.
+    #[must_use]
+    pub fn reason(self) -> &'static str {
+        match self {
+            KeyRevocationRefusal::SessionKey => "session_key",
+            KeyRevocationRefusal::Reserved => "reserved",
+            KeyRevocationRefusal::Revoked => "revoked",
+        }
+    }
+
+    /// The sentence the refusal answers.
+    #[must_use]
+    pub fn message(self) -> &'static str {
+        match self {
+            KeyRevocationRefusal::SessionKey => {
+                "a session key ends with its entry's session, never by revocation"
+            }
+            KeyRevocationRefusal::Reserved => "the server's reserved key resolves on no route",
+            KeyRevocationRefusal::Revoked => "the key is revoked already",
+        }
+    }
+}
+
+/// A revoked key (ADR-0097 d14): the key as it stands, the instant of its
+/// `key.revoked`, and the admin act it rode, `None` for a person's own.
+#[derive(Debug, Clone)]
+pub struct RevokedKey {
+    pub key: KeyRecord,
+    pub revoked_at: EventTime,
+    pub act_id: Option<Uuid>,
+    pub journal_seq: u64,
 }
 
 /// A rotated key (ADR-0096 d13): the key as it stands, its new value, shown
@@ -958,16 +1474,23 @@ pub struct KeyAccess {
     pub grants: Vec<GrantRecord>,
     /// The denials no `key.denial_lifted` has lifted: only these mask.
     pub denials: Vec<DenialRecord>,
-    /// The journal seq of each `key.denial_lifted` on the key. A lifted
-    /// denial masks nothing and its row stays as history; its lift still
-    /// moves the permission epoch (event-catalog.md `key.denial_lifted`).
+    /// The journal seq of each `key.denial_lifted` and `grant.revoked` on
+    /// the key. A lifted denial masks nothing and a revoked grant confers
+    /// nothing, each row staying as history; the lift or revocation still
+    /// moves the permission epoch (event-catalog.md `key.denial_lifted`,
+    /// `grant.revoked`).
     pub lift_epochs: Vec<u64>,
+    /// The tenant's public nodes, read in the same snapshot from the
+    /// partial index on them: each joins the key's reach as a reader grant
+    /// on the node alone that the key does not hold, when its role reads
+    /// (ADR-0098 d1). Empty in a tenant with no public node.
+    pub public_nodes: Vec<Uuid>,
 }
 
 impl KeyAccess {
     /// The key's permission epoch over what is built: the latest of its
-    /// `key.issued`, `grant.issued`, `key.denied` and `key.denial_lifted`
-    /// seqs (workspaces.md permission epoch; ADR-0025 d14).
+    /// `key.issued`, `grant.issued`, `key.denied`, `key.denial_lifted` and
+    /// `grant.revoked` seqs (workspaces.md permission epoch; ADR-0025 d14).
     #[must_use]
     pub fn permission_epoch(&self) -> u64 {
         self.grants
@@ -1026,6 +1549,13 @@ pub struct WorkspaceRecord {
     /// Whether a person's key put the node in progress (ADR-0030 d1):
     /// `workspaces.mode`, written by `workspace.mode_set` alone.
     pub in_progress: bool,
+    /// Whether every reading key of the tenant reads the node's approved
+    /// items without a grant (ADR-0098 d1): `workspaces.public`, written
+    /// by `workspace.public_set` alone.
+    pub public: bool,
+    /// The admin act whose effect last set or cleared `public`; `None` on
+    /// a node never marked (ADR-0098 d9).
+    pub public_act_id: Option<Uuid>,
 }
 
 impl WorkspaceRecord {
@@ -1219,6 +1749,9 @@ pub struct WorkspaceInfo {
     /// (ADR-0082 d8 item 7, d10). Counts name no content, so an admin key
     /// is served them too.
     pub approved_by_kind: Vec<(MemoryKind, u64)>,
+    /// The node's `public` flag, with, to an admin key, the act of a set
+    /// that waits on a second admin person (ADR-0098 d9).
+    pub public: PublicFlag,
 }
 
 /// One node of a workspace tree read, with its derived path and the crew
@@ -1229,6 +1762,8 @@ pub struct TreeNode {
     pub workspace: WorkspaceRecord,
     pub path: String,
     pub crew: Option<CrewRecord>,
+    /// The node's `public` flag as the reads serve it (ADR-0098 d9).
+    pub public: PublicFlag,
 }
 
 /// One page of a workspace tree read, in path order, and the cursor of the
@@ -1862,6 +2397,12 @@ pub struct BootstrapPerson {
 /// it and its grants as stored, ids and epochs included (ADR-0025 d2).
 #[derive(Debug, Clone)]
 pub struct IssuedKey {
+    /// The issuance's admin act, for an admin key's issuance (ADR-0097
+    /// d2); `None` for every other issuance.
+    pub act_id: Option<Uuid>,
+    /// The act the key waits on when it is pending a second admin person's
+    /// confirmation (ADR-0097 d5, d23); `None` once it authenticates.
+    pub pending_act: Option<Uuid>,
     pub key_id: Uuid,
     /// The bearer key's value; empty for a connector key, which has none
     /// and whose [`IssuedKey::connect_code`] stands in its place (ADR-0031
@@ -1966,6 +2507,14 @@ pub struct IssueKeyRequest {
     /// [`KEY_REQUESTS_PER_MINUTE_MAX`]; `None` gives it none, and an admin
     /// key takes no other (ADR-0079 d4).
     pub requests_per_minute: Option<u32>,
+    /// The person an admin key belongs to, by the user's name: an admin
+    /// key is issued only with one, `used_by: person`, and a link to that
+    /// person pending until the person accepts it; it authenticates nothing
+    /// until then (ADR-0097 d21, d7). Refused on every other role.
+    pub person: Option<Name>,
+    /// The workspaces this issuance creates in the same act, each granted
+    /// to the key by its role's default grants (ADR-0097 d30).
+    pub create_workspaces: Vec<NewWorkspace>,
 }
 
 /// One requested grant: a role over the subtree of `node`, less the
@@ -1978,6 +2527,19 @@ pub struct GrantRequest {
     pub deny: Vec<Reference>,
     /// The node's subtree, the default, or the node alone (ADR-0044 d4).
     pub covers: Covers,
+    /// The grant lets the key create child workspaces where it reaches
+    /// (ADR-0097 d31); granting it is widening.
+    pub create: bool,
+}
+
+/// A workspace an issuance creates in its own act, named `name` under
+/// `parent` (by id or name, in the key's user root's namespace for a user
+/// key), on which the key gets the grants its role takes by default,
+/// covering the subtree (ADR-0097 d30).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewWorkspace {
+    pub parent: Reference,
+    pub name: Name,
 }
 
 /// `POST /v2/crews` (http-api.md crews; ADR-0026 d8): every field but the
@@ -2334,6 +2896,9 @@ pub struct TodoCounts {
     /// The Brief proposals group: the pending brief edges the person's
     /// reviewer key may ratify (ADR-0096 d7).
     pub briefs: u64,
+    /// The Notices group: the person's notices not dismissed (ADR-0097
+    /// d20).
+    pub notices: u64,
     /// Whether a count passed [`TODO_COUNT_CAP`].
     pub truncated: bool,
 }
@@ -2346,6 +2911,11 @@ pub struct AdminTodoCounts {
     /// The guardrail-loosening alerts: the tenant's unconfirmed fixes that
     /// loosen a guardrail (ADR-0096 d7).
     pub alerts: u64,
+    /// "Admin acts to confirm" (ADR-0097 d2, d10, d11): the tenant's
+    /// widening acts this admin person may settle, not their own: pending
+    /// acts unexpired whose age rule the person meets, and acts taken at
+    /// once under `sole_admin` once the person's flag is seven days old.
+    pub acts_to_confirm: u64,
     /// Whether a count passed [`TODO_COUNT_CAP`].
     pub truncated: bool,
 }
@@ -3159,6 +3729,10 @@ pub struct KeyDetail {
     /// issuance without one folding as `ancestors` (proposed ADR-0037 d4).
     pub guardrail_scope: GuardrailScope,
     pub access: KeyAccess,
+    /// The public nodes the key reads through the flag, apart from its
+    /// grants, a global deny applied; empty for a key whose role does not
+    /// read (ADR-0098 d1, d9).
+    pub public_reach: Vec<Uuid>,
 }
 
 /// A row a key's record references, as `whoami` serves it: its id and its
@@ -3589,7 +4163,10 @@ impl<'a> From<&'a String> for Bearer<'a> {
 pub struct SignupPolicy {
     pub mode: oml_domain::signup::SignupMode,
     pub tenant_id: Uuid,
-    pub issuer: Name,
+    /// `signup.issuer` as configured: read and ignored for one release,
+    /// named by doctor's `signup.issuer_ignored`; the server issuer adds
+    /// a sign-up's entry (ADR-0097 d18).
+    pub issuer: Option<Name>,
     pub terms_version: String,
     pub terms_url: String,
     pub privacy_url: String,
@@ -3861,6 +4438,261 @@ pub struct FixRecord {
     pub superseded_by: Option<Uuid>,
 }
 
+/// One email the server hands to the mail relay (ADR-0097 d20; answer
+/// 14): a recovery or settlement notice, plain text, to every admin
+/// person of the tenant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutboundMail {
+    pub to: Vec<oml_domain::web::Email>,
+    pub subject: String,
+    pub body: String,
+}
+
+/// What the operator's host settlement of a freeze did (ADR-0097 d19): the
+/// settled act, the persons its notice went to, and the email the
+/// composition sends to the relay after the commit.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OperatorSettlement {
+    pub act: AdminActRecord,
+    pub notified: Vec<Name>,
+    pub mail: OutboundMail,
+}
+
+/// How far back recovery's dormancy reads: 30 days, a placeholder
+/// (ADR-0097 d19).
+pub const RECOVERY_DORMANCY_DAYS: i64 = 30;
+
+/// How long a requested recovery waits before the sweep completes it: 72
+/// hours, a placeholder (ADR-0097 d19, answer 22).
+pub const RECOVERY_WAIT_US: i64 = 72 * 3_600 * 1_000_000;
+
+/// How long the authentication table keeps a day: 30 days (ADR-0097,
+/// answer 24).
+pub const AUTHENTICATION_RETENTION_DAYS: i64 = 30;
+
+/// One day in microseconds.
+pub(crate) const DAY_US: i64 = 86_400 * 1_000_000;
+
+/// What the server authentication table covers (ADR-0097, answer 24):
+/// the oldest retained row's day, deployment wide, and when the table was
+/// installed. Coverage starts at the later of that day's start and the
+/// install; with no row held it covers nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthenticationCoverage {
+    /// The oldest day any tenant's row holds, `YYYY-MM-DD`; `None` with no
+    /// row held.
+    pub oldest_day: Option<String>,
+    /// When the table was installed: the migration's time.
+    pub installed_at: EventTime,
+}
+
+impl AuthenticationCoverage {
+    /// When the coverage starts: the oldest retained row's day, bounded
+    /// below by the install; `None` with no row held, which covers nothing.
+    #[must_use]
+    pub fn since(&self) -> Option<EventTime> {
+        let day = self.oldest_day.as_deref()?;
+        let start = EventTime::parse(&format!("{day}T00:00:00.000000Z")).ok()?;
+        Some(if start.unix_micros() >= self.installed_at.unix_micros() {
+            start
+        } else {
+            self.installed_at.clone()
+        })
+    }
+
+    /// The whole days covered at `now`, 0 with no row held.
+    #[must_use]
+    pub fn days(&self, now: &EventTime) -> i64 {
+        self.since().map_or(0, |since| {
+            now.unix_micros().saturating_sub(since.unix_micros()) / DAY_US
+        })
+    }
+
+    /// Whether the table reaches back `days` whole days from `now`: never
+    /// with no row held, so a missing row is never read as dormancy.
+    #[must_use]
+    pub fn covers(&self, now: &EventTime, days: i64) -> bool {
+        self.since().is_some_and(|since| {
+            now.unix_micros().saturating_sub(since.unix_micros()) >= days.saturating_mul(DAY_US)
+        })
+    }
+}
+
+/// Where an operator recovery stands (ADR-0097 d19, answer 22).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecoveryState {
+    /// Requested: the 72 hours run, and any admin sign-in cancels it.
+    Requested,
+    /// The sweep completed it: the admin keys revoked, the new admin added.
+    Completed,
+    /// An admin signed in within the 72 hours.
+    Cancelled,
+}
+
+impl RecoveryState {
+    /// The spelling of the column and of the events' `state`.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RecoveryState::Requested => "requested",
+            RecoveryState::Completed => "completed",
+            RecoveryState::Cancelled => "cancelled",
+        }
+    }
+
+    /// The state a spelling names.
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "requested" => RecoveryState::Requested,
+            "completed" => RecoveryState::Completed,
+            "cancelled" => RecoveryState::Cancelled,
+            _ => return None,
+        })
+    }
+}
+
+/// One operator recovery of a dormant tenant (ADR-0097 d19): the admin
+/// person it names, the address their entry gets, and its state. The
+/// address is kept beside the request, as an allowlist entry keeps its
+/// own, and the journal carries its digest alone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecoveryRecord {
+    pub recovery_id: Uuid,
+    pub person: Name,
+    pub email: oml_domain::web::Email,
+    pub state: RecoveryState,
+    pub requested_at: EventTime,
+    pub settled_at: Option<EventTime>,
+}
+
+impl RecoveryRecord {
+    /// When the sweep may complete it: 72 hours after the request.
+    #[must_use]
+    pub fn completes_after(&self) -> Option<EventTime> {
+        EventTime::from_unix_micros(
+            self.requested_at
+                .unix_micros()
+                .saturating_add(RECOVERY_WAIT_US),
+        )
+    }
+}
+
+/// Why `oml operator recover` is refused, `operator.recover_refused` with
+/// `details.reason` (ADR-0097 d19; answers 21, 24).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecoverRefusal {
+    /// The authentication table does not reach back 30 days: a fresh
+    /// install, purged rows or no row held. A missing row is never read as
+    /// dormancy (answers 21, 24).
+    LogTooShort,
+    /// This process counted an authentication row it could not write since
+    /// it started, so a missing row could read as dormancy; the count is
+    /// the process's own, so the refusal is per replica (answer 26, reading
+    /// 2).
+    LogWriteFailed,
+    /// An admin key of the tenant authenticated, or an admin person signed
+    /// in, within the 30 days.
+    AdminActive,
+    /// A recovery of the tenant already waits its 72 hours.
+    Pending,
+    /// An act against an admin is open: recovery's dormancy gate never
+    /// opens during a live dispute (Consequences, Q5(a) with Q14).
+    DisputeOpen,
+    /// The person's name is taken in the tenant.
+    PersonTaken,
+    /// An allowlist entry holds the address.
+    EmailTaken,
+}
+
+impl RecoverRefusal {
+    /// `details.reason`.
+    #[must_use]
+    pub fn reason(self) -> &'static str {
+        match self {
+            RecoverRefusal::LogTooShort => "log_too_short",
+            RecoverRefusal::LogWriteFailed => "log_write_failed",
+            RecoverRefusal::AdminActive => "admin_active",
+            RecoverRefusal::Pending => "pending",
+            RecoverRefusal::DisputeOpen => "dispute_open",
+            RecoverRefusal::PersonTaken => "person_taken",
+            RecoverRefusal::EmailTaken => "email_taken",
+        }
+    }
+
+    /// The message.
+    #[must_use]
+    pub fn message(self) -> &'static str {
+        match self {
+            RecoverRefusal::LogTooShort => {
+                "the server's authentication table does not reach back 30 days, so dormancy cannot be read; a missing row is never dormancy"
+            }
+            RecoverRefusal::LogWriteFailed => {
+                "this server process could not write some authentication rows since it started, so a missing row could read as dormancy; fix the write path and restart the server"
+            }
+            RecoverRefusal::AdminActive => {
+                "an admin key of the tenant authenticated, or an admin person signed in, within the last 30 days"
+            }
+            RecoverRefusal::Pending => "a recovery of the tenant already waits its 72 hours",
+            RecoverRefusal::DisputeOpen => {
+                "an act against an admin is open; the operator settles it with oml operator settle"
+            }
+            RecoverRefusal::PersonTaken => "the person's name is taken in the tenant",
+            RecoverRefusal::EmailTaken => "an allowlist entry holds the address",
+        }
+    }
+}
+
+/// What a recovery's request or completion did (ADR-0097 d19, d20): the
+/// recovery, the persons its notice went to, and the email the
+/// composition sends to the relay after the commit.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OperatorRecovery {
+    pub recovery: RecoveryRecord,
+    pub notified: Vec<Name>,
+    /// The admin keys the completion revoked; empty for a request.
+    pub revoked_keys: Vec<Uuid>,
+    pub mail: OutboundMail,
+}
+
+/// What one pass of the recovery sweep did in one tenant (ADR-0097 d19,
+/// answer 22): the recoveries it completed, with their emails, and how many
+/// an admin sign-in cancelled.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RecoverySweep {
+    pub completed: Vec<OperatorRecovery>,
+    pub cancelled: u64,
+}
+
+/// One notice to one person (ADR-0097 d20): what it tells about, the admin
+/// act it names, when it was written, and whether the person dismissed it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoticeRecord {
+    pub notice_id: Uuid,
+    pub recipient: Name,
+    pub kind: oml_domain::notice::NoticeKind,
+    pub act_id: Option<Uuid>,
+    /// What the notice names besides the act: the act's kind, its target's
+    /// key, person or workspace.
+    pub detail: Value,
+    pub at: EventTime,
+    pub dismissed_at: Option<EventTime>,
+}
+
+/// The admin reads of one person's own root in one month (ADR-0097 d16):
+/// one per page an admin read that served a row of that root.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdminReadCount {
+    /// `YYYY-MM`, UTC.
+    pub month: String,
+    pub reads: u64,
+}
+
+/// How many pages one investigation may read before `oml doctor` names it
+/// (`admin.investigation_pages`): fifty, a placeholder, chosen, not
+/// measured (ADR-0097 d16).
+pub const INVESTIGATION_PAGES_WARN: u64 = 50;
+
 /// An admin key's investigation: the reason its reads of claim text are
 /// made under, open until the key closes it (ADR-0089 d10, d15).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3906,6 +4738,59 @@ pub enum AppError {
     /// A key that takes no new value, or a grace too long (ADR-0096 d13).
     #[error("{}", .0.message())]
     KeyRotation(KeyRotationRefusal),
+    /// `POST /v2/keys/self/convert` refused (ADR-0097 d18).
+    #[error("{}", .0.message())]
+    KeyConversion(KeyConversionRefusal),
+    /// A key the revoke verb does not end (ADR-0097 d14).
+    #[error("{}", .0.message())]
+    KeyRevocation(KeyRevocationRefusal),
+    /// A confirmation or decline of an admin act refused (ADR-0097 d5,
+    /// d11, d23).
+    #[error("{}", .0.message())]
+    AdminAct(AdminActRefusal),
+    /// `oml operator recover` refused (ADR-0097 d19; answers 21, 24):
+    /// `operator.recover_refused` with `details.reason`.
+    #[error("{}", .0.message())]
+    RecoverRefused(RecoverRefusal),
+    /// A key whose widening act waits on a second admin person
+    /// authenticates nothing (ADR-0097 d23): `auth.invalid` with
+    /// `details.reason: pending_confirmation`.
+    #[error("this key waits on a second admin person's confirmation")]
+    KeyPendingConfirmation,
+    /// A suspended key authenticates nothing (ADR-0097 d8, d21):
+    /// `auth.invalid` with `details.reason: suspended`.
+    #[error("this key is suspended")]
+    KeySuspended,
+    /// An admin key whose link to its person waits on that person's
+    /// acceptance authenticates nothing (ADR-0097 d21): `auth.invalid` with
+    /// `details.reason: link_pending`.
+    #[error("this admin key waits on its person's acceptance of its link")]
+    KeyLinkPending,
+    /// An issuance's `person` refused (ADR-0097 d21): an admin key without
+    /// one or not `used_by: person` (`admin_key_requires_person`), or a
+    /// `person` on a key that is not an admin key (`person_admin_only`).
+    #[error("{}", match *.0 {
+        "person_admin_only" => "person names the person an admin key belongs to, and is refused on any other role",
+        _ => "an admin key is issued only with a person, used_by person",
+    })]
+    KeyPerson(&'static str),
+    /// An admin act that requires a reason was sent none (ADR-0097 d26).
+    #[error("this admin act requires a reason")]
+    AdminActReasonRequired,
+    /// A set or clear of a workspace's `public` flag refused for what the
+    /// node is or holds (ADR-0098 d5, d6): `workspace.public_refused`,
+    /// naming the pending act where one waits.
+    #[error("{}", .reason.message())]
+    WorkspacePublicRefused {
+        workspace_id: Uuid,
+        reason: PublicRefusal,
+        act_id: Option<Uuid>,
+    },
+    /// Only an admin person sets or clears `public`: a linked admin key or
+    /// `<user>-admin` (ADR-0098 d6): `access.verb_ceiling` with
+    /// `details.reason: public_is_admin_only`.
+    #[error("setting or clearing a workspace's public flag is an admin person's act")]
+    PublicIsAdminOnly { role: Role },
     #[error(
         "{verb} is outside the {role:?} verb ceiling (roles-and-keys.md permission matrix, R1)"
     )]
@@ -4189,6 +5074,28 @@ pub enum AppError {
         "a key acting for the author's person judges no version outside that person's root (review.author_in_lineage)"
     )]
     SamePerson,
+    /// A time-boxed issuance refused (ADR-0097 d13).
+    #[error("{}", .0.message())]
+    Timebox(TimeboxRefusal),
+    /// The admin read from a key that counts as no person: it needs a
+    /// person-linked admin key or a session (ADR-0097 d16;
+    /// `admin.read_requires_person`).
+    #[error("the admin read needs a person-linked admin key or a session (ADR-0097 d16)")]
+    AdminReadRequiresPerson,
+    /// An instruction verdict, a fix settlement or a ladder ratification
+    /// from a key that counts as no person (ADR-0097 d12): none of the
+    /// three is taken by such a key. `review.person_required` with
+    /// `details.reason: counts_as_no_person`.
+    #[error("a key that counts as no person takes no {act} (ADR-0097 d12; review.person_required)")]
+    CountsAsNoPerson { act: &'static str },
+    /// A ladder ratification by the proposer's person, or, where the
+    /// proposing key counts as no person, by the person of the admin who
+    /// issued it (ADR-0097 d17). `review.ratifier_is_proposer` with
+    /// `details.reason` `same_person` or `issued_the_proposer`.
+    #[error(
+        "the ratifier counts as the proposer's person (ADR-0097 d17; review.ratifier_is_proposer)"
+    )]
+    RatifierSamePerson { issued_the_proposer: bool },
     /// The edge is decided: ratified before this call, or by a commit that
     /// won the store's compare-and-set. Nothing was journalled.
     // reading: errors.md declares no edge-specific code; a verdict on a
@@ -4309,6 +5216,11 @@ pub enum AppError {
     /// `create_is_own_root_only`; ADR-0095 d3).
     #[error("an agent creates a workspace only inside its own person's root (ADR-0095 d3)")]
     CreateIsOwnRootOnly { role: Role },
+    /// A create admitted by a grant carrying `create` under a `frozen`
+    /// parent (`access.verb_ceiling`, `details.reason: parent_frozen`;
+    /// ADR-0097 d31).
+    #[error("workspace {workspace_id} is frozen: no child is created under it (ADR-0097 d31)")]
+    ParentFrozen { workspace_id: Uuid },
     /// A workspace already holds a live proposal to this status
     /// (`proposal.pending`, `details.transition_id`; ADR-0095 d5, #515).
     #[error("a live proposal to this status is pending (ADR-0095 d5)")]
@@ -4690,6 +5602,9 @@ pub enum WebEmailOutcome {
     Allowed,
     Changed,
     Unchanged,
+    /// An admin flag that waits on a second admin person: nothing changed
+    /// yet (ADR-0097 d5).
+    PendingConfirmation,
 }
 
 /// A pin of a provider subject on an entry, as the store answers it

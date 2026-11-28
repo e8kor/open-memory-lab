@@ -42,6 +42,7 @@ where
         reason: &str,
     ) -> Result<Investigation, AppError> {
         let admin = self.admin_caller(bearer.into(), "investigate").await?.key;
+        self.admin_read_person(&admin).await?;
         let reason = reason.trim();
         if reason.is_empty() || reason.len() > INVESTIGATION_REASON_MAX_BYTES {
             return Err(AppError::AdminField {
@@ -171,6 +172,7 @@ where
         investigation: Option<Uuid>,
         field: &'static str,
     ) -> Result<Uuid, AppError> {
+        self.admin_read_person(admin).await?;
         let id = investigation.ok_or(AppError::InvestigationRequired { field })?;
         self.journal
             .investigation(admin.tenant_id, id)
@@ -178,5 +180,48 @@ where
             .filter(|i| i.key_id == admin.key_id && i.closed_at.is_none())
             .map(|i| i.investigation_id)
             .ok_or(AppError::InvestigationRequired { field })
+    }
+
+    /// `GET /v2/web/admin-reads` (ADR-0097 d16): the person the calling key
+    /// counts as, and the count of admin reads of that person's own root by
+    /// month. A key that counts as no person is
+    /// [`AppError::NotFound`]: it has no root of its own to be read.
+    ///
+    /// # Errors
+    /// The above, the caller's authentication, and the store's.
+    pub async fn own_admin_reads(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+    ) -> Result<(oml_domain::name::Name, Vec<crate::types::AdminReadCount>), AppError> {
+        let caller = self.authenticate_bearer(bearer.into()).await?.key;
+        let person = self
+            .counted_person_of(&caller)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        let counts = self
+            .journal
+            .admin_read_counts(caller.tenant_id, &person)
+            .await?;
+        Ok((person, counts))
+    }
+
+    /// The person an admin read counts against, its gate (ADR-0097 d16): a
+    /// person-linked admin key or a session, never a key that counts as no
+    /// person ([`AppError::AdminReadRequiresPerson`]); and in a freeze both
+    /// parties lose it (d8).
+    pub(crate) async fn admin_read_person(
+        &self,
+        admin: &KeyRecord,
+    ) -> Result<oml_domain::name::Name, AppError> {
+        let person = self
+            .counted_person_of(admin)
+            .await?
+            .ok_or(AppError::AdminReadRequiresPerson)?;
+        if let Some(freeze) = self.freeze(admin.tenant_id).await?
+            && (freeze.initiator.as_ref() == Some(&person) || freeze.target == person)
+        {
+            return Err(AppError::AdminAct(crate::types::AdminActRefusal::Frozen));
+        }
+        Ok(person)
     }
 }

@@ -35,7 +35,7 @@ pub use transport::{HttpTransport, Sending, Transport, TransportError};
 /// and of each struct it holds, to the operation's 2xx schema;
 /// `every_method_sends_the_method_path_and_type_its_table_entry_names`
 /// holds the methods to it.
-pub const OPERATIONS: [&str; 47] = [
+pub const OPERATIONS: [&str; 50] = [
     "authorizationServerMetadata GET /.well-known/oauth-authorization-server resp:AuthorizationServerMetadata",
     "whoami GET /v2/whoami query:person resp:Whoami",
     "getGuardrails GET /v1/guardrails query:workspace resp:GuardrailSet",
@@ -60,6 +60,9 @@ pub const OPERATIONS: [&str; 47] = [
     "reviewQueue GET /v2/review/queue resp:ReviewQueue",
     "todoCounts GET /v2/todo/counts query:workspace resp:TodoCounts",
     "adminTodoCounts GET /v2/admin/todo/counts resp:AdminTodoCounts",
+    "listAdminActs GET /v2/admin/acts query:state resp:AdminActList",
+    "confirmAdminAct POST /v2/admin/acts/{act}/confirm resp:AdminAct",
+    "declineAdminAct POST /v2/admin/acts/{act}/decline body:reason resp:AdminAct",
     "issueKey POST /v2/keys body:name,role,connect_code,expiry resp:KeyIssued",
     "mintConnectCode POST /v2/keys/{key}/connect-codes resp:ConnectCode",
     "addDenial POST /v2/keys/{key}/denials body:workspace resp:Denial",
@@ -73,7 +76,7 @@ pub const OPERATIONS: [&str; 47] = [
     "listWebEmails GET /v2/web/emails query:limit,cursor resp:WebEmailPage",
     "allowWebEmail POST /v2/web/emails body:email,user,admin,keep_an_admin resp:WebEmail",
     "removeWebEmail POST /v2/web/emails/remove body:email,keep_an_admin resp:Removed",
-    "grantWebCapacities POST /v2/web/users/{user}/capacities body:capacity,workspaces resp:CapacityGranted",
+    "grantWebCapacities POST /v2/web/users/{user}/capacities body:capacity,workspaces,reason resp:CapacityGranted",
     "listWebUsers GET /v2/web/users resp:WebUsers",
     "setWebUserQuota POST /v2/web/users/{user}/quota body:memories,keys,connections,requests_per_minute resp:WebUser",
     "disableWebUser POST /v2/web/users/{user}/disable resp:Disabled",
@@ -270,6 +273,40 @@ pub struct WorkspaceNode {
     /// names beneath it `<user>.<name>` (d5).
     #[serde(default)]
     pub user_root: bool,
+    /// The node's `public` flag (ADR-0098 d9); not public when a server
+    /// before the flag serves none.
+    #[serde(default)]
+    pub public: PublicFlag,
+}
+
+/// A workspace's `public` flag (openapi.yaml `PublicFlag`; ADR-0098 d9):
+/// whether every reading key of the tenant reads the node, since when, by
+/// which admin act, whether that act took effect under `sole_admin`, and,
+/// to an admin key on the workspace read, a set that waits.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+pub struct PublicFlag {
+    #[serde(default)]
+    pub value: bool,
+    #[serde(default)]
+    pub since: Option<String>,
+    #[serde(default)]
+    pub act_id: Option<String>,
+    #[serde(default)]
+    pub sole_admin: bool,
+    #[serde(default)]
+    pub pending_act_id: Option<String>,
+}
+
+/// `POST /v2/workspaces/{workspace}/public`'s answer: `effective`, or
+/// `pending_confirmation` while a set waits on a second admin person
+/// (ADR-0098 d9).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct PublicOutcome {
+    pub workspace: String,
+    #[serde(default)]
+    pub public: bool,
+    pub act_id: String,
+    pub state: String,
 }
 
 /// `GET /v2/workspaces/{workspace}/tree`: one page of nodes.
@@ -1390,6 +1427,9 @@ pub struct CountedNode {
     /// Whether the node is a person's root (ADR-0044 d1).
     #[serde(default)]
     pub user_root: bool,
+    /// Whether every reading key of the tenant reads the node (ADR-0098 d9).
+    #[serde(default)]
+    pub public: bool,
 }
 
 /// `GET /v2/workspaces/{workspace}/tree?counts=true`: the subtree, a parent
@@ -1557,7 +1597,52 @@ pub struct TodoCounts {
 pub struct AdminTodoCounts {
     #[serde(default)]
     pub alerts: u64,
+    /// The admin acts the calling admin person may confirm (ADR-0097 d2,
+    /// d10, d11); 0 from a server before v0.8.6.
+    #[serde(default)]
+    pub acts_to_confirm: u64,
     pub truncated: bool,
+}
+
+/// `GET /v2/admin/acts`'s answer.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct AdminActList {
+    pub items: Vec<AdminAct>,
+}
+
+/// One admin act (openapi.yaml `AdminAct`; ADR-0097 d2, d23): what the
+/// confirm screen reads, the target's role, principal, `used_by` and the
+/// root's person, and what a confirmation grants.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct AdminAct {
+    pub act_id: String,
+    pub act: String,
+    pub class: String,
+    pub state: String,
+    pub target: Value,
+    #[serde(default)]
+    pub grants: Vec<Value>,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub actor_person: Option<String>,
+    #[serde(default)]
+    pub confirmed_by_person: Option<String>,
+    /// The reason the confirmation gave (ADR-0097 d26).
+    #[serde(default)]
+    pub confirm_reason: Option<String>,
+    pub sole_admin: bool,
+    #[serde(default)]
+    pub cause: Option<String>,
+    pub at: String,
+    #[serde(default)]
+    pub settled_at: Option<String>,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    /// Whether the calling admin person may confirm or review the act, as
+    /// the To do count judges it (ADR-0097 d11); served by the list alone.
+    #[serde(default)]
+    pub to_confirm: bool,
 }
 
 /// A grant as a listed key carries it: the role, the workspace's path and
@@ -1870,10 +1955,22 @@ pub struct KeyIssued {
     pub value: Option<String>,
     #[serde(default)]
     pub connect_code: Option<ConnectCode>,
+    /// The admin act an admin's issuance is, and its state:
+    /// `pending_confirmation` until a second admin person confirms it,
+    /// `effective` where it took effect at once (ADR-0097 d5, d10, d23).
+    #[serde(default)]
+    pub admin_act: Option<IssuedAct>,
     /// Whether the answer was a recorded outcome replayed, which carries no
     /// value or code; read off `Idempotency-Replay`, not the body.
     #[serde(skip)]
     replayed: bool,
+}
+
+/// The admin act of an admin's issuance (ADR-0097 d2).
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct IssuedAct {
+    pub act_id: String,
+    pub state: String,
 }
 
 impl KeyIssued {
@@ -1892,6 +1989,7 @@ impl KeyIssued {
             name,
             value,
             connect_code,
+            admin_act: None,
             replayed: false,
         }
     }
@@ -2391,6 +2489,28 @@ impl<T: Transport> Client<T> {
             format!("/v2/workspaces/{}/mode", encode(workspace)),
             idempotency_key,
             &serde_json::json!({ "mode": mode }),
+        )
+        .await
+    }
+
+    /// `POST /v2/workspaces/{workspace}/public`: an admin person sets or
+    /// clears the node's `public` flag with a reason (ADR-0098 d6, d9).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn set_workspace_public(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        workspace: &str,
+        public: bool,
+        reason: Option<&str>,
+    ) -> Result<PublicOutcome, Error> {
+        self.post(
+            call,
+            format!("/v2/workspaces/{}/public", encode(workspace)),
+            idempotency_key,
+            &serde_json::json!({ "public": public, "reason": reason }),
         )
         .await
     }
@@ -2950,6 +3070,62 @@ impl<T: Transport> Client<T> {
         .await
     }
 
+    /// `GET /v2/admin/acts?state=`: the tenant's admin acts in `state`, or
+    /// `all`, oldest first (ADR-0097 d2).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn admin_acts(&self, call: &Call<'_>, state: &str) -> Result<AdminActList, Error> {
+        self.get(
+            Some(call),
+            format!("/v2/admin/acts?state={}", encode(state)),
+        )
+        .await
+    }
+
+    /// `POST /v2/admin/acts/{act}/confirm {reason}`: a second admin person
+    /// confirms a pending act, which takes effect in that commit, with the
+    /// reason the act keeps (ADR-0097 d5, d11, d26).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn confirm_admin_act(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        act: &str,
+        reason: &str,
+    ) -> Result<AdminAct, Error> {
+        self.post(
+            call,
+            format!("/v2/admin/acts/{}/confirm", encode(act)),
+            idempotency_key,
+            &serde_json::json!({ "reason": reason }),
+        )
+        .await
+    }
+
+    /// `POST /v2/admin/acts/{act}/decline {reason}`: a decline, final, which
+    /// undoes a `sole_admin` act it declines (ADR-0097 d3, d10, d23).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn decline_admin_act(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        act: &str,
+        reason: &str,
+    ) -> Result<AdminAct, Error> {
+        self.post(
+            call,
+            format!("/v2/admin/acts/{}/decline", encode(act)),
+            idempotency_key,
+            &serde_json::json!({ "reason": reason }),
+        )
+        .await
+    }
+
     /// `GET /v2/admin/fixes`: the tenant's unconfirmed fixes (ADR-0089 d15).
     ///
     /// # Errors
@@ -3123,9 +3299,10 @@ impl<T: Transport> Client<T> {
         .await
     }
 
-    /// `POST /v2/keys/{key}/link`: an admin links a person's tenant key to
-    /// `user`, or `None`, `POST /v2/keys/{key}/unlink`, ends its link
-    /// (ADR-0085 d16).
+    /// `POST /v2/keys/{key}/link {user, reason}`: an admin links a person's
+    /// tenant key to `user`, a consent act whose reason is required, or
+    /// `None`, `POST /v2/keys/{key}/unlink`, ends its link (ADR-0085 d16;
+    /// ADR-0097 d7).
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
@@ -3134,10 +3311,13 @@ impl<T: Transport> Client<T> {
         call: &Call<'_>,
         idempotency_key: &str,
         key: &str,
-        user: Option<&str>,
+        user: Option<(&str, &str)>,
     ) -> Result<KeyLink, Error> {
         let (verb, body) = match user {
-            Some(user) => ("link", serde_json::json!({ "user": user })),
+            Some((user, reason)) => (
+                "link",
+                serde_json::json!({ "user": user, "reason": reason }),
+            ),
             None => ("unlink", serde_json::json!({})),
         };
         self.post(
@@ -3433,7 +3613,9 @@ impl<T: Transport> Client<T> {
     }
 
     /// `POST /v2/web/emails`: adds an entry or changes one; with
-    /// `keep_an_admin` un-flagging the last admin is refused.
+    /// `keep_an_admin` un-flagging the last admin is refused. `reason` is
+    /// required for a new admin person outside `sole_admin` and for an act
+    /// against another admin person (ADR-0097 d8, d26).
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
@@ -3444,19 +3626,21 @@ impl<T: Transport> Client<T> {
         email: &str,
         user: &str,
         admin: bool,
+        reason: Option<&str>,
     ) -> Result<WebEmail, Error> {
-        self.post(
-            call,
-            "/v2/web/emails".to_owned(),
-            idempotency_key,
-            &serde_json::json!({
-                "email": email, "user": user, "admin": admin, "keep_an_admin": true,
-            }),
-        )
-        .await
+        let mut body = serde_json::json!({
+            "email": email, "user": user, "admin": admin, "keep_an_admin": true,
+        });
+        if let Some(reason) = reason {
+            body["reason"] = serde_json::json!(reason);
+        }
+        self.post(call, "/v2/web/emails".to_owned(), idempotency_key, &body)
+            .await
     }
 
-    /// `POST /v2/web/emails/remove`, refusing the last admin entry.
+    /// `POST /v2/web/emails/remove`, refusing the last admin entry;
+    /// `reason` is required to remove another admin person's entry
+    /// (ADR-0097 d8, d26).
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
@@ -3465,12 +3649,17 @@ impl<T: Transport> Client<T> {
         call: &Call<'_>,
         idempotency_key: &str,
         email: &str,
+        reason: Option<&str>,
     ) -> Result<Removed, Error> {
+        let mut body = serde_json::json!({ "email": email, "keep_an_admin": true });
+        if let Some(reason) = reason {
+            body["reason"] = serde_json::json!(reason);
+        }
         self.post(
             call,
             "/v2/web/emails/remove".to_owned(),
             idempotency_key,
-            &serde_json::json!({ "email": email, "keep_an_admin": true }),
+            &body,
         )
         .await
     }
@@ -3532,12 +3721,19 @@ impl<T: Transport> Client<T> {
         user: &str,
         capacity: &str,
         workspace: &str,
+        reason: Option<&str>,
     ) -> Result<CapacityGranted, Error> {
+        let mut body = serde_json::json!({ "capacity": capacity, "workspaces": [workspace] });
+        // The admin's reason, which a grant waiting on a second admin
+        // person requires (ADR-0097 d5, d26).
+        if let Some(reason) = reason {
+            body["reason"] = serde_json::json!(reason);
+        }
         self.post(
             call,
             format!("/v2/web/users/{}/capacities", encode(user)),
             idempotency_key,
-            &serde_json::json!({ "capacity": capacity, "workspaces": [workspace] }),
+            &body,
         )
         .await
     }
@@ -3884,6 +4080,17 @@ mod tests {
             decodes(&client.review_queue(&CALL).await),
             decodes(&client.todo_counts(&CALL, Some("alice")).await),
             decodes(&client.admin_todo_counts(&CALL).await),
+            decodes(&client.admin_acts(&CALL, "all").await),
+            decodes(
+                &client
+                    .confirm_admin_act(&CALL, "idem-a1", "act-1", "checked")
+                    .await,
+            ),
+            decodes(
+                &client
+                    .decline_admin_act(&CALL, "idem-a2", "act-1", "not this agent")
+                    .await,
+            ),
             decodes(
                 &client
                     .issue_key(&CALL, "idem-7", "alice-laptop", "contributor", false, None)
@@ -3943,17 +4150,17 @@ mod tests {
             decodes(&client.list_web_emails(&CALL, 200, None).await),
             decodes(
                 &client
-                    .allow_web_email(&CALL, "idem-12", "a@example.com", "alice", false)
+                    .allow_web_email(&CALL, "idem-12", "a@example.com", "alice", false, None)
                     .await,
             ),
             decodes(
                 &client
-                    .remove_web_email(&CALL, "idem-13", "a@example.com")
+                    .remove_web_email(&CALL, "idem-13", "a@example.com", None)
                     .await,
             ),
             decodes(
                 &client
-                    .grant_web_capacity(&CALL, "idem-14", "alice", "review", "alice")
+                    .grant_web_capacity(&CALL, "idem-14", "alice", "review", "alice", None)
                     .await,
             ),
             decodes(&client.list_web_users(&CALL).await),
@@ -4043,11 +4250,19 @@ mod tests {
             std::str::from_utf8(seen[15].body()).unwrap(),
             r#"{"name":"proj","parent":"alice"}"#
         );
+        // The admin acts: the list's state in the query, a confirm with an
+        // empty body, and a decline's reason (ADR-0097 d23).
+        assert_eq!(seen[24].uri(), "/v2/admin/acts?state=all");
+        assert_eq!(seen[25].uri(), "/v2/admin/acts/act-1/confirm");
+        assert_eq!(
+            std::str::from_utf8(seen[26].body()).unwrap(),
+            r#"{"reason":"not this agent"}"#
+        );
         assert_eq!(seen[14].uri(), "/v2/keys?limit=200&user=alice");
         assert_eq!(seen[18].uri(), "/v2/review/held?limit=50&workspace=alice");
         assert_eq!(seen[19].uri(), "/v2/review/held?ids=a,b");
         assert_eq!(
-            std::str::from_utf8(seen[24].body()).unwrap(),
+            std::str::from_utf8(seen[27].body()).unwrap(),
             r#"{"connect_code":false,"name":"alice-laptop","role":"contributor"}"#
         );
     }
@@ -4274,6 +4489,7 @@ mod tests {
                 connector_url: "https://oml.example.com/mcp".to_owned(),
                 replayed: false,
             }),
+            admin_act: None,
             replayed: false,
         };
         let shown = format!("{issued:?}");

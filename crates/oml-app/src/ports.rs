@@ -257,6 +257,28 @@ pub enum MetadataFold {
         key_id: Uuid,
         grant: Grant,
     },
+    /// `grant.revoked`: the grant `grant_id` on `key_id` confers nothing
+    /// from this commit on, its row staying as history, and this commit's
+    /// seq moves the key's permission epoch. The store refuses a grant it
+    /// does not hold on that key, and one already revoked (ADR-0097 d10,
+    /// the operator's decision of 2026-11-27).
+    GrantRevoked {
+        key_id: Uuid,
+        grant_id: Uuid,
+    },
+    /// `key.suspended`: the live key authenticates nothing from this
+    /// commit on, `/v2/whoami` and `POST /v2/keys/self/link` aside for an
+    /// `unlinked` one. The store refuses a key it does not hold, a revoked
+    /// one, and one suspended already (ADR-0097 d8, d21).
+    KeySuspended {
+        key_id: Uuid,
+        suspension: crate::types::KeySuspension,
+    },
+    /// `key.suspension_lifted`: the suspended key authenticates again. The
+    /// store refuses a key that is not suspended (ADR-0097 d8, d22).
+    KeySuspensionLifted {
+        key_id: Uuid,
+    },
     /// `key.denied`: one global per-key denial row on `key_id`, journalled
     /// by `created_by`, its epoch this commit's seq. The store refuses a
     /// denial on a key or node it does not hold (postgres-schema.md
@@ -276,6 +298,15 @@ pub enum MetadataFold {
         key_id: Uuid,
         denial_id: Uuid,
     },
+    /// `admin.act` (ADR-0097 d2): the act's row, inserted by its first
+    /// envelope and moved by each later one with the same `act_id`. The
+    /// store refuses a first envelope whose act it already holds, and a
+    /// move from a state that does not admit it: `confirmed` and `declined`
+    /// only from `pending_confirmation`, `declined` from `effective` too
+    /// for a `sole_admin` act. A move to `confirmed` clears the
+    /// `pending_act` of the key the act issued, which authenticates from
+    /// this commit on (d23).
+    AdminAct(Box<crate::types::AdminActRecord>),
     /// `key.revoked`: the key resolves by its hash no more; its row, grants
     /// and denials stay as history. The store refuses a revocation of a key
     /// it does not hold (roles-and-keys.md key lifecycle; ADR-0025 d2). It
@@ -293,6 +324,21 @@ pub enum MetadataFold {
         key_id: Uuid,
         expiry: Option<EventTime>,
         requests_per_minute: Option<u32>,
+    },
+    /// `key.converted`: the live admin bearer key becomes a `maintenance`
+    /// key from this commit on, keeping its id and hash. The store refuses
+    /// any other key (ADR-0097 d18).
+    KeyConverted {
+        key_id: Uuid,
+    },
+    /// `key.default_set`: the live key's default workspace becomes
+    /// `default_workspace`, a node of its tenant, from this commit on. The
+    /// store refuses a key it does not hold, a revoked key, and a node it
+    /// does not hold (event-catalog.md `key.default_set`; ADR-0097 d30, the
+    /// operator's decision of 2026-11-27).
+    KeyDefaultSet {
+        key_id: Uuid,
+        default_workspace: Uuid,
     },
     /// `key.rotated`: the live bearer key's hash becomes `key_hash` from
     /// this commit on; its previous hash, where `previous` names one, still
@@ -339,6 +385,15 @@ pub enum MetadataFold {
     ConnectCodeIssued {
         code: ConnectCode,
         voids: Option<Uuid>,
+    },
+    /// `connection.code_voided`: the unredeemed code `code_id` of `key_id`
+    /// redeems nothing from this commit on, its `voided_seq` this seq. The
+    /// store refuses a code it does not hold on that key, a redeemed one,
+    /// and one already voided (ADR-0097 d10, the operator's decision of
+    /// 2026-11-27).
+    ConnectCodeVoided {
+        key_id: Uuid,
+        code_id: Uuid,
     },
     /// `connection.opened`: the `authorized` connection opens, its
     /// `opened_seq` this commit's seq and its `auth_code_redeemed_at` this
@@ -535,9 +590,43 @@ pub enum MetadataFold {
     /// its open investigations, whose read count moves; the store refuses
     /// an investigation that is not open or not the key's with
     /// [`StoreError::InvestigationNotOpen`] (ADR-0045 d21; ADR-0089 d10).
+    /// `notice.written`: one row per recipient of the notice (ADR-0097
+    /// d20).
+    NoticeWritten {
+        notice_id: Uuid,
+        kind: oml_domain::notice::NoticeKind,
+        act_id: Option<Uuid>,
+        recipients: Vec<oml_domain::name::Name>,
+        detail: serde_json::Value,
+    },
+    /// `notice.dismissed`: the recipient's row is dismissed; a row that
+    /// is not the recipient's, or one already dismissed, is refused with
+    /// [`StoreError::Backend`], which the use case's own check rules out.
+    NoticeDismissed {
+        notice_id: Uuid,
+        recipient: oml_domain::name::Name,
+    },
+    /// `operator.recovery_requested`: the recovery's row, `requested`
+    /// (ADR-0097 d19). A tenant holds one requested recovery at a time; a
+    /// second is refused with [`StoreError::Backend`], which the use case's
+    /// own check rules out.
+    RecoveryRequested(crate::types::RecoveryRecord),
+    /// `operator.recovery` (`completed`) or `operator.recovery_cancelled`
+    /// (`cancelled`): the requested recovery's row moves to `state`. A row
+    /// that is not `requested` is refused with [`StoreError::Backend`], so
+    /// a second completion of one request, from another replica or a
+    /// restart, commits nothing (answer 22).
+    RecoverySettled {
+        recovery_id: Uuid,
+        state: crate::types::RecoveryState,
+    },
+    /// `persons` are the persons whose own roots the page read: each one's
+    /// count of admin reads for the month of the event moves by one
+    /// (ADR-0097 d16).
     AdminMemoryRead {
         investigation_id: Uuid,
         key_id: Uuid,
+        persons: Vec<oml_domain::name::Name>,
     },
     /// `admin.fix`: the fix's row, unconfirmed, and the mark on the
     /// version it made the served tip (`served_id`), in the commit that
@@ -605,6 +694,12 @@ pub enum MetadataFold {
     /// commit's time and their sessions end in the same commit (ADR-0068
     /// d8). The key cut-offs are their own `key.denied` commits.
     UserDisabled {
+        user: Name,
+    },
+    /// `web.user_enabled`: every entry naming `user` signs in again from
+    /// this commit on; the keys a disable cut off stay cut off (ADR-0097
+    /// d8: a contest restores the flag and sign-in only).
+    UserEnabled {
         user: Name,
     },
     /// `web.deletion_requested`: the person's pending request, at the
@@ -718,6 +813,14 @@ pub enum MetadataFold {
     WorkspaceFederationSet {
         workspace_id: Uuid,
         accept_federated: bool,
+    },
+    /// `workspace.public_set`: the node's `public` flag and the admin act
+    /// whose effect it is; the store refuses a node it does not hold
+    /// (ADR-0098 d6, d9).
+    WorkspacePublicSet {
+        workspace_id: Uuid,
+        public: bool,
+        act_id: Uuid,
     },
 }
 
@@ -1054,6 +1157,15 @@ pub trait Retriever: Send + Sync {
 /// on another store, as an embedder's index would be, gets its own (ADR-0049
 /// d2).
 pub trait JournalStore: Retriever + Send + Sync {
+    /// The tenant's live person's reviewer keys, each with its grants and
+    /// the denials in force, in name order: keys only, never a memory
+    /// (ADR-0080 d16; #435). Notices read it for the reviewer
+    /// persons of a workspace (ADR-0097 d24).
+    fn web_person_reviewers(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<PersonReviewer>, StoreError>> + Send;
+
     /// Inserts an open upload session, in one transaction with the count
     /// of the key's open and unbound sessions and the sum of the tenant's
     /// declared bytes: the session's key holding `per_key` of them already
@@ -1197,6 +1309,16 @@ pub trait JournalStore: Retriever + Send + Sync {
         tenant_id: Uuid,
         workspace_id: Uuid,
     ) -> impl Future<Output = Result<Option<Uuid>, StoreError>> + Send;
+
+    /// The workspaces keys created in the shared tree under a grant
+    /// carrying `create`, counted per creating key, in key id order: the
+    /// `workspace.create` events whose payload names `create_grant_id`.
+    /// No meter counts them (ADR-0097 d31, the operator's decision of
+    /// 2026-11-27); doctor's `workspace.flagged_creates` reads this.
+    fn flagged_creates(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<(Uuid, u64)>, StoreError>> + Send;
 
     /// Records one version the import wrote and sets the row's
     /// `import_provenance`; recording it again changes nothing (ADR-0084
@@ -1696,6 +1818,75 @@ pub trait JournalStore: Retriever + Send + Sync {
         reads_promoted: bool,
     ) -> impl Future<Output = Result<Option<u32>, StoreError>> + Send;
 
+    /// One admin act of the tenant (ADR-0097 d2).
+    fn admin_act(
+        &self,
+        tenant_id: Uuid,
+        act_id: Uuid,
+    ) -> impl Future<Output = Result<Option<crate::types::AdminActRecord>, StoreError>> + Send;
+
+    /// The tenant's admin acts in `state`, or every one when `None`, oldest
+    /// first; one indexed read by `(tenant, state)` (ADR-0097, the
+    /// bottleneck register's "Admin acts to confirm" row).
+    fn admin_acts(
+        &self,
+        tenant_id: Uuid,
+        state: Option<oml_domain::admin_act::AdminActState>,
+    ) -> impl Future<Output = Result<Vec<crate::types::AdminActRecord>, StoreError>> + Send;
+
+    /// Whether the tenant never had two live admin persons, and its admin
+    /// persons with the acceptance of each flag, in one read (ADR-0097 d10,
+    /// d11).
+    fn admin_standing(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<crate::types::AdminStanding, StoreError>> + Send;
+
+    /// Adds `count` to the tenant's authentication row of `key_id` on `day`
+    /// (`YYYY-MM-DD`, UTC), creating it (ADR-0097 d19, answer 24; ADR-0042
+    /// d8 as amended): the server authentication table recovery's dormancy
+    /// reads. The caller writes a key's row at most once a day.
+    fn record_authentication(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+        day: &str,
+        count: u64,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+
+    /// How many admin keys of the tenant have an authentication row on
+    /// `since_day` or later, revoked keys included (ADR-0097 d19, answer
+    /// 24): recovery's dormancy, read tenant-bound.
+    fn admin_keys_authenticated_since(
+        &self,
+        tenant_id: Uuid,
+        since_day: &str,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send;
+
+    /// What the authentication table covers, deployment wide (answer 24):
+    /// the oldest retained row's day, bounded below by the time the table
+    /// was installed, and when that was. `None` for the oldest day while
+    /// no row is held.
+    fn authentication_coverage(
+        &self,
+    ) -> impl Future<Output = Result<crate::types::AuthenticationCoverage, StoreError>> + Send;
+
+    /// Deletes the tenant's authentication rows of a day before
+    /// `before_day` and answers how many (answer 24's purge sweep).
+    fn purge_authentications(
+        &self,
+        tenant_id: Uuid,
+        before_day: &str,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send;
+
+    /// The tenant's operator recoveries, oldest first, in `state` when one
+    /// is given (ADR-0097 d19, answers 21, 22).
+    fn operator_recoveries(
+        &self,
+        tenant_id: Uuid,
+        state: Option<crate::types::RecoveryState>,
+    ) -> impl Future<Output = Result<Vec<crate::types::RecoveryRecord>, StoreError>> + Send;
+
     /// One admin fix of the tenant (ADR-0089 d15).
     fn fix(
         &self,
@@ -1721,6 +1912,23 @@ pub trait JournalStore: Retriever + Send + Sync {
         tenant_id: Uuid,
         memory_id: Uuid,
     ) -> impl Future<Output = Result<bool, StoreError>> + Send;
+
+    /// `recipient`'s notices, oldest first, the dismissed ones only when
+    /// `dismissed` (ADR-0097 d20).
+    fn notices(
+        &self,
+        tenant_id: Uuid,
+        recipient: &oml_domain::name::Name,
+        dismissed: bool,
+    ) -> impl Future<Output = Result<Vec<crate::types::NoticeRecord>, StoreError>> + Send;
+
+    /// The admin reads of `person`'s own root, one count per month
+    /// (`YYYY-MM`, UTC) with any, oldest first (ADR-0097 d16).
+    fn admin_read_counts(
+        &self,
+        tenant_id: Uuid,
+        person: &oml_domain::name::Name,
+    ) -> impl Future<Output = Result<Vec<crate::types::AdminReadCount>, StoreError>> + Send;
 
     /// One investigation of the tenant, open or closed (ADR-0089 d10).
     fn investigation(
@@ -1957,6 +2165,13 @@ pub trait JournalStore: Retriever + Send + Sync {
         workspace_id: Uuid,
     ) -> impl Future<Output = Result<Option<WorkspaceRecord>, StoreError>> + Send;
 
+    /// The tenant's public nodes, ordered by name in byte order, from the
+    /// partial index on them (ADR-0098 d9, the doctor's `workspace.public`).
+    fn public_workspaces(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<WorkspaceRecord>, StoreError>> + Send;
+
     /// The node and each parent in turn, from the node to the root, by
     /// `parent_id`; `None` for a node this tenant does not hold. This is the
     /// one ancestry walk effective access costs per request (workspaces.md;
@@ -2146,6 +2361,16 @@ pub trait WebStore: JournalStore {
         email_hash: &Sha256Hash,
     ) -> impl Future<Output = Result<Option<WebEntry>, StoreError>> + Send;
 
+    /// The open, uncontested `remove_admin` act whose target names the
+    /// email's digest, in whichever tenant holds it, latest first: the
+    /// contest-only sign-in's lookup for a removed admin, whose entry no
+    /// longer exists (ADR-0097 d8, the operator's decision of 2026-11-27).
+    /// `None` when no such act is `effective`.
+    fn removed_admin_act(
+        &self,
+        email_hash: &Sha256Hash,
+    ) -> impl Future<Output = Result<Option<(Uuid, crate::types::AdminActRecord)>, StoreError>> + Send;
+
     /// The tenant's entries in the order of their email's digest, after
     /// the digest `after`, at most `limit`; a cursor that is a digest keeps
     /// every address out of the listing's query string (ADR-0045 d2).
@@ -2241,6 +2466,23 @@ pub trait WebStore: JournalStore {
         user_root: Uuid,
     ) -> impl Future<Output = Result<Vec<KeyRecord>, StoreError>> + Send;
 
+    /// The tenant's live bearer admin keys with no accepted link, in name
+    /// order: the keys the upgrade window suspends (ADR-0097 d21, the
+    /// production migration).
+    fn web_unlinked_admin_keys(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<KeyRecord>, StoreError>> + Send;
+
+    /// Every key of the tenant `issuer` issued, revoked ones included, in
+    /// name order: doctor reads the server issuer's issuances against the
+    /// four session-key shapes (ADR-0097 d18).
+    fn web_keys_issued_by(
+        &self,
+        tenant_id: Uuid,
+        issuer: Uuid,
+    ) -> impl Future<Output = Result<Vec<KeyRecord>, StoreError>> + Send;
+
     /// The tenant's live keys whose link waits on its person's acceptance,
     /// in name order (ADR-0085 d16, the operator's decision of 2026-11-19).
     fn web_pending_links(
@@ -2269,14 +2511,6 @@ pub trait WebStore: JournalStore {
         &self,
         tenant_id: Uuid,
     ) -> impl Future<Output = Result<Vec<QueueDepth>, StoreError>> + Send;
-
-    /// The tenant's live person's reviewer keys, each with its grants and
-    /// the denials in force, in name order: keys only, never a memory
-    /// (ADR-0080 d16; #435).
-    fn web_person_reviewers(
-        &self,
-        tenant_id: Uuid,
-    ) -> impl Future<Output = Result<Vec<PersonReviewer>, StoreError>> + Send;
 
     /// Every memory of the tenant the search names, any state, newest
     /// first (ADR-0045 d21).
@@ -3354,4 +3588,18 @@ impl Formats for ProseFormats {
     fn adapters(&self) -> Vec<&'static str> {
         vec!["identity/1"]
     }
+}
+
+/// The outbound mail relay (ADR-0097 d20; answer 14 of 2026-11-27): plain
+/// SMTP to one local relay the host configures, which handles TLS and
+/// authentication, so the server holds no mail credential. The composition
+/// supplies it; a send that fails names its reason, and the act it tells
+/// about stands.
+pub trait Mailer: Send + Sync {
+    /// Hands `mail` to the relay, or names why the relay refused it or
+    /// could not be reached. The reason never carries an address.
+    fn send<'a>(
+        &'a self,
+        mail: &'a crate::types::OutboundMail,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
 }

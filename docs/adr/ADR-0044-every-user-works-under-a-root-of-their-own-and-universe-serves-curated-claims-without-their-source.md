@@ -7,7 +7,7 @@ answers: what a user is and where their root workspace sits; how a key is tied t
 
 # ADR-0044 — Every user works under a root of their own beneath `universe`, and `universe` serves only curated claims, without their source
 
-**Status:** accepted design · 2026-11-04 · amended by [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · amended 2026-11-12 by [the amendment](#the-amendment-of-2026-11-12-a-memory-is-started-in-a-user-root-by-its-own-users-keys-only) (d16: a memory is started in a user root by that user's keys only; #329), which the operator accepted the same day · amended by [ADR-0082](ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) (d8, 2026-11-14) · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d7, 2026-11-14) · amended by [ADR-0097](ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) (d3, d6, d7, 2026-11-25, decided by the operator)
+**Status:** accepted design · 2026-11-04 · amended by [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · amended 2026-11-12 by [the amendment](#the-amendment-of-2026-11-12-a-memory-is-started-in-a-user-root-by-its-own-users-keys-only) (d16: a memory is started in a user root by that user's keys only; #329), which the operator accepted the same day · amended by [ADR-0082](ADR-0082-a-person-builds-and-edits-a-workspaces-skills-guardrails-and-documents-in-the-console-each-edit-a-held-version-under-the-persons-own-keys.md) (d8, 2026-11-14) · amended by [ADR-0089](ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md) (d7, 2026-11-14) · amended by [ADR-0097](ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) (d3, d6, d7, 2026-11-25, decided by the operator) · amended by [ADR-0098](ADR-0098-a-protected-or-frozen-workspace-can-be-marked-public-and-then-every-reading-key-in-the-tenant-reads-its-approved-items.md) (d3, d10, 2026-11-26, decided by the operator)
 
 **Release:** introduced in v0.5.0 ([releases](../changelog.md))
 
@@ -617,3 +617,17 @@ and marked `sole_admin` in a `sole_admin` tenant, otherwise pending a second adm
 - **d6** (ADR-0097 d31, decided by the operator, 2026-11-25). A tenant key creates a child
   workspace under a node where its grant carries `create`, a flag whose granting is widening;
   without the flag, tenant keys still create nothing.
+
+## Amendment of 2026-11-26: a user key reads and recalls every public workspace (amends d3, d10; ADR-0098)
+
+Decided by the operator on 2026-11-26; recorded in [ADR-0098](ADR-0098-a-protected-or-frozen-workspace-can-be-marked-public-and-then-every-reading-key-in-the-tenant-reads-its-approved-items.md). Designed, not built; it ships in v0.8.6.
+
+- **d3.** A user key reads a public node outside its own root, read only: a `protected` or `frozen`
+  shared node an admin marked `public` (ADR-0098 d1, d2). Every other grant rule of d3 stands, and
+  no user key writes, reviews or is granted anything outside its root and the `universe` node.
+- **d10.** A recall at a scope inside a user root also searches every public node the key reads,
+  ranked in the same total order beside `universe`'s hits (ADR-0098 d3). A public node's steering
+  and guardrails do not apply at the user's scope, since they are not on its ancestor chain. The
+  crowding cost #145 measures now covers public nodes too, accepted by the operator.
+- **d9 is unchanged.** A public `universe` node is served without its source, as before
+  (ADR-0098 d4, d5).
