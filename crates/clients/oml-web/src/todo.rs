@@ -1483,6 +1483,35 @@ pub async fn judge_act(
 // Administration
 // ---------------------------------------------------------------------
 
+/// The administration To do's "Done: public cleared" group (ADR-0098 d6):
+/// a clear narrows every key's default recall at once and waits on nobody,
+/// so it is listed as done, the newest first, and never counted; empty
+/// when no clear is recorded.
+fn cleared_section(acts: &[oml_sdk::AdminAct]) -> String {
+    let cleared: Vec<String> = acts
+        .iter()
+        .rev()
+        .filter(|a| a.act == "workspace_public_clear")
+        .take(DONE_MAX)
+        .map(crate::admin_acts::act_row)
+        .collect();
+    if cleared.is_empty() {
+        return String::new();
+    }
+    let mut out = format!(
+        r#"<section class="oml-todo-g" aria-labelledby="todo-done"><h2 id="todo-done">Done: public cleared · {}</h2><p class="desc">Public flags an admin person cleared, newest first: each took effect at once and needs nothing more, and each opens its act.</p><ul class="oml-todo">"#,
+        cleared.len()
+    );
+    for r in &cleared {
+        out.push_str(r);
+    }
+    out.push_str("</ul></section>");
+    out
+}
+
+/// The most done acts the administration To do lists, newest first.
+const DONE_MAX: usize = 20;
+
 /// `GET /web/admin/todo`: the administration To do (ADR-0083 d11; ADR-0096
 /// d5, d7): the tenant's fixes no person has confirmed or reverted, the
 /// guardrail-loosening alerts among them, and the open investigations,
@@ -1613,6 +1642,7 @@ pub async fn admin_page(
         }
         body.push_str("</ul></section>");
     }
+    body.push_str(&cleared_section(&admin_acts));
     if empty.len() == 4 {
         body.push_str(r#"<div class="oml-empty"><p>Nothing waits for this account.</p><p class="desc">Admin acts to confirm, admin fixes no person has confirmed or reverted, the alerts among them, and this key's open investigations appear here.</p></div>"#);
     } else if !empty.is_empty() {
@@ -1637,6 +1667,29 @@ pub async fn admin_page(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A cleared public flag is listed in the administration To do as
+    /// done, newest first, and a set is not (ADR-0098 d6).
+    #[test]
+    fn a_cleared_public_flag_is_listed_as_done_and_a_set_is_not() {
+        let act = |id: &str, act: &str, at: &str| {
+            serde_json::from_value::<oml_sdk::AdminAct>(serde_json::json!({
+                "act_id": id, "act": act, "class": "narrowing", "state": "effective",
+                "target": {"workspace_id": "w"}, "grants": [], "actor_person": "bob",
+                "sole_admin": false, "at": at,
+            }))
+            .expect("an act")
+        };
+        let acts = [
+            act("a1", "workspace_public_set", "2026-11-27T10:00:00Z"),
+            act("a2", "workspace_public_clear", "2026-11-28T10:00:00Z"),
+        ];
+        let html = cleared_section(&acts);
+        assert!(html.contains("Done: public cleared · 1"), "{html}");
+        assert!(html.contains("workspace public clear"), "{html}");
+        assert!(!html.contains("workspace public set"), "{html}");
+        assert!(cleared_section(&acts[..1]).is_empty());
+    }
 
     #[test]
     fn a_crafted_notice_shows_only_numbers_and_the_pages_own_words() {
