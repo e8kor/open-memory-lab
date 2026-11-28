@@ -91,7 +91,10 @@ impl Lead {
             .env("OML_KMS__KEYRING_PATH", keyring)
             // The operator tokens each start writes stay beside the
             // scratch keyring, never in the crate (ADR-0097 d19).
-            .env("OML_OPERATOR__TOKEN_DIR", keyring.with_extension("operator"))
+            .env(
+                "OML_OPERATOR__TOKEN_DIR",
+                keyring.with_extension("operator"),
+            )
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

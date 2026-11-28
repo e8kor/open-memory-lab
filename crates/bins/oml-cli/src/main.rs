@@ -236,6 +236,20 @@ enum OperatorCommand {
         #[arg(long, env = "OML_OPERATOR__TOKEN_DIR")]
         token_dir: std::path::PathBuf,
     },
+    /// Ask the server to recover a tenant in which no admin authenticated for 30 days.
+    Recover {
+        /// The tenant's id, as oml whoami names it.
+        tenant: String,
+        /// The admin person the recovery adds, a name the tenant does not hold.
+        #[arg(long)]
+        person: String,
+        /// The address the new admin person signs in with.
+        #[arg(long)]
+        email: String,
+        /// The server's operator.token_dir, which holds <tenant>.token.
+        #[arg(long, env = "OML_OPERATOR__TOKEN_DIR")]
+        token_dir: std::path::PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2128,6 +2142,56 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                     ),
                     _ => println!(
                         "warn no mail relay is configured (mail.host, mail.from): the notice is in-product only"
+                    ),
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Operator {
+            command:
+                OperatorCommand::Recover {
+                    tenant,
+                    person,
+                    email,
+                    token_dir,
+                },
+        } => {
+            let client = resolve_url(cli, &stored)?;
+            let tenant = uuid::Uuid::parse_str(&tenant)
+                .map_err(|_| CliError::local(format!("{tenant:?} is not a tenant id")))?;
+            let token = operator_token(&token_dir, tenant)?;
+            let path = format!("/v2/operator/tenants/{tenant}/recover");
+            let (_, response) = client.post_operator(
+                &path,
+                &json!({ "person": person, "email": email }),
+                &token,
+            )?;
+            if cli.json {
+                print_json(&response);
+            } else {
+                let recovery = &response["recovery"];
+                println!(
+                    "recovery {} requested for {}: it completes after {} unless an admin person signs in first; notified {}",
+                    field(recovery, "recovery_id"),
+                    field(recovery, "person"),
+                    field(recovery, "completes_after"),
+                    response["notified"]
+                        .as_array()
+                        .map(|p| p
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .collect::<Vec<_>>()
+                            .join(", "))
+                        .unwrap_or_default()
+                );
+                match response["mail"].as_str() {
+                    Some("sent") => println!("email handed to the mail relay"),
+                    Some("failed") => println!(
+                        "warn the mail relay did not take the email ({}); the request stands, and a dormant admin sees only the in-product notice",
+                        response["mail_failure"].as_str().unwrap_or("?")
+                    ),
+                    _ => println!(
+                        "warn no mail relay is configured (mail.host, mail.from): the notice is in-product only, which a dormant admin does not see"
                     ),
                 }
             }
@@ -8250,7 +8314,7 @@ fn flagged_creates_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
 /// out. A server before a count does not report it, and its line is then
 /// absent; a count that is no unsigned integer is named, never read as zero.
 fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
-    const LINES: [(&str, &str, &str); 26] = [
+    const LINES: [(&str, &str, &str); 30] = [
         (
             "held_successors_stranded",
             "memory.held_successor_stranded",
@@ -8381,6 +8445,26 @@ fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
             "notice.mail_delivery_failed",
             "notice email(s) the mail relay refused or did not take since the lead started; the acts they told about stand",
         ),
+        (
+            "admin_recoveries_pending",
+            "admin.recovery_pending",
+            "operator recovery(ies) of this tenant waiting their 72 hours: any admin person's sign-in cancels it; once it completes every admin key is revoked",
+        ),
+        (
+            "admin_recoveries_overdue",
+            "admin.recovery_overdue",
+            "operator recovery(ies) past their 72 hours and not completed: read the server log's recovery_sweep_failed lines",
+        ),
+        (
+            "auth_log_coverage_days",
+            "auth.log_coverage",
+            "whole day(s) the server's authentication table covers, under the 30 oml operator recover needs: it refuses log_too_short until then",
+        ),
+        (
+            "auth_log_write_failures",
+            "auth.log_write_failed",
+            "authentication row(s) the server could not write since it started: a key's next authentication writes its row again, and until then recover may read that key as dormant",
+        ),
     ];
     let report = match read {
         None => {
@@ -8403,6 +8487,15 @@ fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
             let count = report.get(*field)?;
             Some(match count.as_u64() {
                 None => format!("warn {line}: the server's {field} is {count}, not a count"),
+                // Coverage reads the other way: 30 days or more is what
+                // recover needs (ADR-0097, answer 24).
+                Some(n) if *field == "auth_log_coverage_days" => {
+                    if n >= 30 {
+                        format!("{line}: {n} days")
+                    } else {
+                        format!("warn {line}: {n} {what}")
+                    }
+                }
                 Some(0) => format!("{line}: 0"),
                 // At most 20 narrowing acts by one person in a day are
                 // ordinary: a placeholder (ADR-0097 d24).
@@ -8412,6 +8505,15 @@ fn lifecycle_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
                     if *field == "admin_acts_offensive"
                         || *field == "admin_disputes_open"
                         || *field == "key_issuer_unexpected_shape" =>
+                {
+                    format!("fail {line}: {n} {what}")
+                }
+                // Critical: a recovery waiting its 72 hours revokes every
+                // admin key once it completes, and one past them means the
+                // sweep is failing (ADR-0097 d19, answer 22).
+                Some(n)
+                    if *field == "admin_recoveries_pending"
+                        || *field == "admin_recoveries_overdue" =>
                 {
                     format!("fail {line}: {n} {what}")
                 }
@@ -9765,7 +9867,11 @@ mod tests {
                 "operator.settlement_due: not read; an admin key reads it".to_owned(),
                 "key.issuer_unexpected_shape: not read; an admin key reads it".to_owned(),
                 "notice.mail_unconfigured: not read; an admin key reads it".to_owned(),
-                "notice.mail_delivery_failed: not read; an admin key reads it".to_owned()
+                "notice.mail_delivery_failed: not read; an admin key reads it".to_owned(),
+                "admin.recovery_pending: not read; an admin key reads it".to_owned(),
+                "admin.recovery_overdue: not read; an admin key reads it".to_owned(),
+                "auth.log_coverage: not read; an admin key reads it".to_owned(),
+                "auth.log_write_failed: not read; an admin key reads it".to_owned()
             ]
         );
         assert_eq!(
@@ -9807,6 +9913,45 @@ mod tests {
         assert_eq!(operator_token_doctor(Some(&ready)).len(), 1);
         let ready = (200, json!({ "operator_tokens": "written" }));
         assert!(operator_token_doctor(Some(&ready)).is_empty());
+    }
+
+    #[test]
+    fn the_lifecycle_doctor_names_a_recovery_waiting_or_overdue_and_the_authentication_coverage() {
+        let report = json!({
+            "admin_recoveries_pending": 1,
+            "admin_recoveries_overdue": 1,
+            "auth_log_coverage_days": 12,
+            "auth_log_write_failures": 2,
+        });
+        assert_eq!(
+            lifecycle_doctor(Some(&Ok(report))),
+            vec![
+                "fail admin.recovery_pending: 1 operator recovery(ies) of this tenant waiting their 72 hours: any admin person's sign-in cancels it; once it completes every admin key is revoked".to_owned(),
+                "fail admin.recovery_overdue: 1 operator recovery(ies) past their 72 hours and not completed: read the server log's recovery_sweep_failed lines".to_owned(),
+                "warn auth.log_coverage: 12 whole day(s) the server's authentication table covers, under the 30 oml operator recover needs: it refuses log_too_short until then".to_owned(),
+                "warn auth.log_write_failed: 2 authentication row(s) the server could not write since it started: a key's next authentication writes its row again, and until then recover may read that key as dormant".to_owned(),
+            ]
+        );
+        let fine = json!({
+            "admin_recoveries_pending": 0,
+            "admin_recoveries_overdue": 0,
+            "auth_log_coverage_days": 31,
+            "auth_log_write_failures": 0,
+        });
+        assert_eq!(
+            lifecycle_doctor(Some(&Ok(fine))),
+            vec![
+                "admin.recovery_pending: 0".to_owned(),
+                "admin.recovery_overdue: 0".to_owned(),
+                "auth.log_coverage: 31 days".to_owned(),
+                "auth.log_write_failed: 0".to_owned(),
+            ]
+        );
+        let empty = json!({ "auth_log_coverage_days": 0 });
+        assert_eq!(
+            lifecycle_doctor(Some(&Ok(empty))),
+            vec!["warn auth.log_coverage: 0 whole day(s) the server's authentication table covers, under the 30 oml operator recover needs: it refuses log_too_short until then".to_owned()]
+        );
     }
 
     #[test]

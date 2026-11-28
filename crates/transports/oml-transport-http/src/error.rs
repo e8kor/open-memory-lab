@@ -899,6 +899,16 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "reason": "public_is_admin_only",
             "role": role.as_str(),
         })),
+        // The host's recovery of a dormant tenant refused by name (ADR-0097
+        // d19; answers 21, 24): `log_too_short` never reads a missing row as
+        // dormancy.
+        AppError::RecoverRefused(refusal) => ApiError::new(
+            StatusCode::CONFLICT,
+            "operator.recover_refused",
+            "The operator recovers a tenant only after 30 days the server's authentication table covers, in which no admin key authenticated and no admin person signed in, with no dispute open and no recovery waiting.",
+            refusal.message().to_owned(),
+        )
+        .with_details(json!({ "reason": refusal.reason() })),
         // What the node is or holds refuses the flag (ADR-0098 d5, d6).
         AppError::WorkspacePublicRefused {
             workspace_id,

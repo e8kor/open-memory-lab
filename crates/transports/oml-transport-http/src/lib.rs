@@ -193,6 +193,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/admin/acts/{act}/contest"),
     ("POST", "/v2/admin/acts/{act}/settle"),
     ("POST", "/v2/operator/tenants/{tenant}/acts/{act}/settle"),
+    ("POST", "/v2/operator/tenants/{tenant}/recover"),
     ("GET", "/v2/review/fixes"),
     ("POST", "/v2/review/fixes/{fix_id}/confirm"),
     ("POST", "/v2/review/fixes/{fix_id}/revert"),
@@ -496,6 +497,7 @@ where
             ("POST", "/v2/operator/tenants/{tenant}/acts/{act}/settle") => {
                 post(Self::operator_settle_route)
             }
+            ("POST", "/v2/operator/tenants/{tenant}/recover") => post(Self::operator_recover_route),
             ("GET", "/v2/review/fixes") => get(Self::review_fixes_route),
             ("POST", "/v2/review/fixes/{fix_id}/confirm") => post(Self::fix_confirm_route),
             ("POST", "/v2/review/fixes/{fix_id}/revert") => post(Self::fix_revert_route),

@@ -111,6 +111,25 @@ fn report_json(
             "key_issuer_unexpected_shape".to_owned(),
             json!(fixes.issuer_unexpected_shape),
         );
+        // Doctor's `admin.recovery_pending`, `admin.recovery_overdue`,
+        // `auth.log_coverage` and `auth.log_write_failed` (ADR-0097 d19;
+        // answers 22, 24).
+        obj.insert(
+            "admin_recoveries_pending".to_owned(),
+            json!(fixes.recoveries_pending),
+        );
+        obj.insert(
+            "admin_recoveries_overdue".to_owned(),
+            json!(fixes.recoveries_overdue),
+        );
+        obj.insert(
+            "auth_log_coverage_days".to_owned(),
+            json!(fixes.authentication_coverage_days),
+        );
+        obj.insert(
+            "auth_log_write_failures".to_owned(),
+            json!(fixes.authentication_write_failures),
+        );
     }
     report
 }

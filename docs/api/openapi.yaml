@@ -4132,6 +4132,65 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         default: { $ref: '#/components/responses/Error' }
 
+  /v2/operator/tenants/{tenant}/recover:
+    post:
+      tags: [admin]
+      operationId: operatorRecover
+      summary: The operator, from the host, asks to recover a tenant in which no admin authenticated for 30 days.
+      description: 'Authenticated as operatorSettle is, by the tenant''s operator token of this start alone, sent as OML-Operator-Token, and refused auth.invalid with details.reason operator_route_takes_no_key beside an Authorization header (ADR-0097 d19; answer 13). Admitted only when the server authentication table reaches back 30 days, a placeholder, and shows no admin key of the tenant authenticated in them, an admin person''s sign-in included (answers 21, 24). Refused operator.recover_refused with details.reason log_too_short (the table does not reach back 30 days: a fresh install or purged rows, never read as dormancy), admin_active, pending (a recovery already waits), dispute_open (an act against an admin is open), person_taken or email_taken. Journalled as operator.recovery_requested, with the address''s digest alone, and notice.written kind recovery to every admin person, then emailed to them through the mail relay (d20): mail is sent, unconfigured or failed. The server''s sweep completes it once 72 hours, a placeholder, pass with no admin sign-in: every admin key of the tenant revoked, cause recovery, the named admin person''s entry added, operator.recovery and a notice; any admin sign-in in the 72 hours cancels it, operator.recovery_cancelled (answer 22). The dormant admins keep their flags. Since v0.8.6.'
+      security: []
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: tenant, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: OML-Operator-Token, in: header, required: true, schema: { type: string }, description: 'The tenant''s operator token of this start; never logged.' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              person: carol
+              email: carol@example.com
+            schema:
+              type: object
+              required: [person, email]
+              additionalProperties: false
+              properties:
+                person: { type: string, description: 'The admin person the recovery adds: a name the tenant holds as no workspace, key or entry.' }
+                email: { type: string, format: email, description: 'The address the new admin person signs in with; no entry may hold it.' }
+      responses:
+        '202':
+          description: The recovery, requested; the persons notified, and what the relay did with the email.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [recovery, notified, mail, mail_failure]
+                properties:
+                  recovery:
+                    type: object
+                    additionalProperties: false
+                    required: [recovery_id, person, state, requested_at, completes_after, settled_at]
+                    properties:
+                      recovery_id: { type: string, format: uuid }
+                      person: { type: string }
+                      state: { type: string, enum: [requested, completed, cancelled] }
+                      requested_at: { type: string, format: date-time }
+                      completes_after: { type: [string, 'null'], format: date-time }
+                      settled_at: { type: [string, 'null'], format: date-time }
+                  notified: { type: array, items: { type: string } }
+                  mail: { type: string, enum: [sent, unconfigured, failed] }
+                  mail_failure: { type: [string, 'null'] }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        default: { $ref: '#/components/responses/Error' }
+
   /v2/admin/acts/{act}/decline:
     post:
       tags: [admin]
@@ -5189,6 +5248,7 @@ components:
         - workspace.held_remaining
         - workspace.admin_key_under_root
         - workspace.public_refused
+        - operator.recover_refused
         - workspace.transition_refused
         - review.author_in_lineage
         - review.person_required

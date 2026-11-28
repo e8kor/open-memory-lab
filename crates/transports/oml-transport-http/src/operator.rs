@@ -143,6 +143,39 @@ impl MailHealth {
     }
 }
 
+/// The body of the recover route: the admin person the recovery adds and
+/// the address of their entry (ADR-0097 d19).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecoverBody {
+    person: String,
+    email: String,
+}
+
+/// What one pass of the recovery sweep did over every tenant it was given
+/// (ADR-0097 d19, answer 22): the lead logs it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RecoverySweepReport {
+    pub completed: u64,
+    pub cancelled: u64,
+    pub purged: u64,
+    /// The tenants whose pass failed, each with its reason; the next pass
+    /// runs them again.
+    pub failed: Vec<String>,
+}
+
+/// A recovery as the route and the sweep answer it.
+fn recovery_json(recovery: &oml_app::types::RecoveryRecord) -> Value {
+    json!({
+        "recovery_id": recovery.recovery_id.to_string(),
+        "person": recovery.person.as_str(),
+        "state": recovery.state.as_str(),
+        "requested_at": recovery.requested_at.as_str(),
+        "completes_after": recovery.completes_after().map(|t| t.as_str().to_owned()),
+        "settled_at": recovery.settled_at.as_ref().map(|t| t.as_str().to_owned()),
+    })
+}
+
 /// The body of the settle route: `confirm` or `reverse`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -178,19 +211,8 @@ where
         body: Bytes,
     ) -> Response {
         let inner = async {
-            if headers.contains_key(header::AUTHORIZATION) {
-                return Err(refused("operator_route_takes_no_key"));
-            }
             // No token is no credential at all, as on every other route.
-            let token = headers
-                .get(OPERATOR_TOKEN_HEADER)
-                .ok_or_else(ApiError::auth_missing)?
-                .to_str()
-                .map_err(|_| refused("operator_token"))?;
-            let tenant = Uuid::parse_str(&tenant).map_err(|_| refused("operator_token"))?;
-            if !st.operator.admits(tenant, token.trim()) {
-                return Err(refused("operator_token"));
-            }
+            let tenant = st.operator_tenant(&headers, &tenant)?;
             st.require_writes_open()?;
             let act = Uuid::parse_str(&act).map_err(|_| ApiError::not_found())?;
             let sent: SettleBody = parse_json(&headers, &body)?;
@@ -217,6 +239,99 @@ where
             ))
         };
         finish(&rid, inner.await)
+    }
+
+    /// `POST /v2/operator/tenants/{tenant}/recover {person, email}`
+    /// (ADR-0097 d19; answers 21, 22, 24): the tenant's operator token, as
+    /// the settle route takes it, and no key. The request is admitted only
+    /// over 30 days the authentication table covers with no admin
+    /// authentication; it is journalled, every admin person is notified and
+    /// emailed, and the server's sweep completes it after 72 hours with no
+    /// admin sign-in.
+    pub(crate) async fn operator_recover_route(
+        State(st): State<Self>,
+        rid: Rid,
+        Path(tenant): Path<String>,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
+        let inner = async {
+            let tenant = st.operator_tenant(&headers, &tenant)?;
+            st.require_writes_open()?;
+            let sent: RecoverBody = parse_json(&headers, &body)?;
+            let person = oml_app::domain::name::Name::parse(sent.person.trim()).map_err(|e| {
+                ApiError::validation(format!("person: {e}"))
+                    .with_details(json!({ "field": "/person" }))
+            })?;
+            let email = oml_app::domain::web::Email::parse(sent.email.trim()).map_err(|_| {
+                ApiError::validation("email is not an email address")
+                    .with_details(json!({ "field": "/email" }))
+            })?;
+            let requested = retry_chain(|| {
+                st.app
+                    .operator_recover(tenant, person.clone(), email.clone())
+            })
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+            let (mail, failure) = st.send_mail(&requested.mail).await;
+            Ok(json_response(
+                StatusCode::ACCEPTED,
+                &json!({
+                    "recovery": recovery_json(&requested.recovery),
+                    "notified": requested.notified.iter().map(|p| p.as_str()).collect::<Vec<_>>(),
+                    "mail": mail,
+                    "mail_failure": failure,
+                }),
+            ))
+        };
+        finish(&rid, inner.await)
+    }
+
+    /// The tenant the operator route names, once its token is the tenant's
+    /// of this start: a request that sends a key is `auth.invalid`
+    /// `operator_route_takes_no_key`, no token `auth.missing`, and any other
+    /// token `auth.invalid` `operator_token` (answer 13).
+    fn operator_tenant(&self, headers: &HeaderMap, tenant: &str) -> Result<Uuid, ApiError> {
+        if headers.contains_key(header::AUTHORIZATION) {
+            return Err(refused("operator_route_takes_no_key"));
+        }
+        let token = headers
+            .get(OPERATOR_TOKEN_HEADER)
+            .ok_or_else(ApiError::auth_missing)?
+            .to_str()
+            .map_err(|_| refused("operator_token"))?;
+        let tenant = Uuid::parse_str(tenant).map_err(|_| refused("operator_token"))?;
+        if !self.operator.admits(tenant, token.trim()) {
+            return Err(refused("operator_token"));
+        }
+        Ok(tenant)
+    }
+
+    /// One pass of the server's recovery sweep over `tenants` (ADR-0097
+    /// d19, answers 22, 24): each tenant's authentication rows older than
+    /// 30 days purged, its requested recovery cancelled by an admin sign-in
+    /// or completed after 72 hours, and each completion's email handed to
+    /// the relay. A pass that meets another replica's commit runs again and
+    /// finds the recovery settled, so a request completes once.
+    pub async fn recovery_sweep(&self, tenants: &[Uuid]) -> RecoverySweepReport {
+        let mut report = RecoverySweepReport::default();
+        for &tenant in tenants {
+            match self.app.purge_authentications(tenant).await {
+                Ok(n) => report.purged += n,
+                Err(e) => report.failed.push(format!("tenant {tenant} purge: {e}")),
+            }
+            match retry_chain(|| self.app.recovery_sweep(tenant)).await {
+                Ok(sweep) => {
+                    report.cancelled += sweep.cancelled;
+                    for done in sweep.completed {
+                        report.completed += 1;
+                        let _ = self.send_mail(&done.mail).await;
+                    }
+                }
+                Err(e) => report.failed.push(format!("tenant {tenant} recovery: {e}")),
+            }
+        }
+        report
     }
 
     /// Hands `mail` to the relay, if one is configured (d20; answer 14):

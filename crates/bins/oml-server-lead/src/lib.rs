@@ -2029,6 +2029,65 @@ pub fn spawn_connection_sweep(store: PgStore) -> tokio::task::JoinHandle<()> {
     })
 }
 
+/// How often [`spawn_recovery_sweep`] runs: a minute, so a recovery
+/// completes at most a minute past its 72 hours and a cancellation lands
+/// within a minute of the admin sign-in that causes it (ADR-0097 d19,
+/// answer 22). Chosen, not measured.
+pub const RECOVERY_SWEEP_SECONDS: u64 = 60;
+
+/// The `event` field of the log line a sweep pass that completed, cancelled
+/// or purged something writes (observability.md).
+pub const EVENT_RECOVERY_SWEEP: &str = "recovery_sweep";
+/// The `event` field of the log line a pass that failed in a tenant writes.
+pub const EVENT_RECOVERY_SWEEP_FAILED: &str = "recovery_sweep_failed";
+
+/// Runs the recovery sweep at the lead's start and every
+/// [`RECOVERY_SWEEP_SECONDS`] after (ADR-0097 d19; answers 22, 24): over
+/// every tenant, the authentication rows older than 30 days purged, a
+/// requested recovery cancelled by an admin sign-in or completed after 72
+/// hours, and each completion's email sent. The state is the database's,
+/// so a restart resumes it, and each request completes once whichever
+/// replica's pass reaches it first. A failed pass never stops the lead or
+/// the next pass.
+pub fn spawn_recovery_sweep(state: LeadState, store: PgStore) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut ticks =
+            tokio::time::interval(std::time::Duration::from_secs(RECOVERY_SWEEP_SECONDS));
+        ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            ticks.tick().await;
+            let tenants = match enumerate_tenants(store.pool()).await {
+                Ok(tenants) => tenants,
+                Err(e) => {
+                    tracing::error!(
+                        event = EVENT_RECOVERY_SWEEP_FAILED,
+                        reason = %format!("tenant enumeration: {e}"),
+                        "RECOVERY SWEEP FAILED — the next pass retries"
+                    );
+                    continue;
+                }
+            };
+            let report = state.recovery_sweep(&tenants).await;
+            if report.completed + report.cancelled + report.purged > 0 {
+                tracing::info!(
+                    event = EVENT_RECOVERY_SWEEP,
+                    completed = report.completed,
+                    cancelled = report.cancelled,
+                    purged = report.purged,
+                    "recovery sweep (ADR-0097 d19)"
+                );
+            }
+            for reason in &report.failed {
+                tracing::error!(
+                    event = EVENT_RECOVERY_SWEEP_FAILED,
+                    %reason,
+                    "RECOVERY SWEEP FAILED in a tenant — the next pass retries; doctor reports a recovery past its 72 hours"
+                );
+            }
+        }
+    })
+}
+
 /// How often [`spawn_upload_sweep`] runs: 5 minutes (ADR-0004 d3, as
 /// amended 2026-11-17).
 pub const UPLOAD_SWEEP_SECONDS: u64 = 5 * 60;
@@ -2784,6 +2843,11 @@ pub async fn start_lead_hosted<F: DocumentFetcher + 'static>(
         Some(mailer) => state.with_mailer(mailer),
         None => state,
     };
+    // The recovery sweep, where the start writes operator tokens: a
+    // recovery is requested only with one (ADR-0097 d19; answers 22, 24).
+    if host.token_dir.is_some() {
+        let _sweep = spawn_recovery_sweep(state.clone(), store.clone());
+    }
     let router = state
         .with_web_client(web_client)
         .with_names_assigned(names.is_ok())

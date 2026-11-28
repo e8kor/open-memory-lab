@@ -8246,8 +8246,8 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     );
     assert_eq!(
         declared.len(),
-        124,
-        "the source check (ADR-0057 d5), the workspace mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the four web routes the lead keeps (ADR-0045 d25; its two JSON routes are oml-web's, ADR-0070 d7 (b), and GET and POST /web/admin are deleted, ADR-0070 \"The old URLs deleted\"), open sign-up's one the lead keeps, POST /web/sign-up (ADR-0068 d10; the onboarding and users pages are oml-web's, ADR-0070 d7 (b)), the web console's ten (ADR-0070 d5), the sign-in page oml-web sends to (ADR-0070 d4) , federation's three (ADR-0072 d5), usage metering's six (ADR-0071 d5, d6), a key's limits (ADR-0079 d5), a key's link, unlink and acceptance (ADR-0085 d16), the withdrawal (ADR-0083 d13), the skill read (ADR-0080 d11), the five upload routes (ADR-0004 d3), the workspace export and the import and its status (ADR-0084 d15), the admin investigation's open, list and close (ADR-0089 d10, d15), the five fix routes, the admin's fix and list and a person's list, confirm and revert (ADR-0089 d15), a pending sign-in email's acceptance and removal by its person (ADR-0045 d2, the operator's decision of 2026-11-19), the imports listing and the brief proposals (ADR-0096 d6, d7), and the admin acts' list, confirm and decline, a key's revocation and an admin key's self-link (ADR-0097 d2, d14, d22), and a workspace's public flag (ADR-0098 d9), and ADR-0097 d8's contest and settle and the contest-only sign-in's POST /web/contest, and a person's admin-read count and notices, listed and dismissed (ADR-0097 d16, d20), and an admin key's conversion into a maintenance key (ADR-0097 d18), and the operator's host settlement (ADR-0097 d19)"
+        125,
+        "the source check (ADR-0057 d5), the workspace mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the four web routes the lead keeps (ADR-0045 d25; its two JSON routes are oml-web's, ADR-0070 d7 (b), and GET and POST /web/admin are deleted, ADR-0070 \"The old URLs deleted\"), open sign-up's one the lead keeps, POST /web/sign-up (ADR-0068 d10; the onboarding and users pages are oml-web's, ADR-0070 d7 (b)), the web console's ten (ADR-0070 d5), the sign-in page oml-web sends to (ADR-0070 d4) , federation's three (ADR-0072 d5), usage metering's six (ADR-0071 d5, d6), a key's limits (ADR-0079 d5), a key's link, unlink and acceptance (ADR-0085 d16), the withdrawal (ADR-0083 d13), the skill read (ADR-0080 d11), the five upload routes (ADR-0004 d3), the workspace export and the import and its status (ADR-0084 d15), the admin investigation's open, list and close (ADR-0089 d10, d15), the five fix routes, the admin's fix and list and a person's list, confirm and revert (ADR-0089 d15), a pending sign-in email's acceptance and removal by its person (ADR-0045 d2, the operator's decision of 2026-11-19), the imports listing and the brief proposals (ADR-0096 d6, d7), and the admin acts' list, confirm and decline, a key's revocation and an admin key's self-link (ADR-0097 d2, d14, d22), and a workspace's public flag (ADR-0098 d9), and ADR-0097 d8's contest and settle and the contest-only sign-in's POST /web/contest, and a person's admin-read count and notices, listed and dismissed (ADR-0097 d16, d20), and an admin key's conversion into a maintenance key (ADR-0097 d18), and the operator's host settlement and recovery (ADR-0097 d19)"
     );
     assert_eq!(oauth.len(), 6, "the six OAuth operations");
 
@@ -13295,5 +13295,71 @@ async fn the_operator_route_admits_only_the_tenants_token_of_this_start() {
     );
     let (_, _, ready) = send(&router, "GET", "/readyz", Call::default()).await;
     assert_eq!(ready["operator_tokens"], "written");
+    drop_db(&rig.db_name).await;
+}
+
+/// `oml operator recover`'s route takes the tenant's operator token and no
+/// key, and on a store whose authentication table was installed today it
+/// refuses `operator.recover_refused` with `log_too_short`: a missing row
+/// is never read as dormancy (ADR-0097 d19; answers 21, 24).
+#[tokio::test]
+async fn the_recover_route_refuses_log_too_short_on_a_table_installed_today() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let (admin, tenant, _) = bootstrap(&rig.router).await;
+    let router = lead_state(
+        &rig.store,
+        rig.signing.clone(),
+        pg_ping(rig.store.pool().clone()),
+        true,
+        None,
+    )
+    .with_operator_tokens(oml_transport_http::operator::OperatorTokens::new([(
+        tenant,
+        "omlop_the-tenants-token".to_owned(),
+    )]))
+    .into_router();
+    let path = format!("/v2/operator/tenants/{tenant}/recover");
+    let body = json!({ "person": "carol", "email": "carol@example.com" });
+    let (status, _, refused) = send(
+        &router,
+        "POST",
+        &path,
+        Call::auth(&admin)
+            .header("oml-operator-token", "omlop_the-tenants-token")
+            .body(body.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{refused}");
+    assert_eq!(
+        refused["error"]["details"]["reason"],
+        "operator_route_takes_no_key"
+    );
+    let token = || Call::default().header("oml-operator-token", "omlop_the-tenants-token");
+    let (status, _, invalid) = send(
+        &router,
+        "POST",
+        &path,
+        token().body(json!({ "person": "carol", "email": "not an address" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{invalid}");
+    assert_envelope(&invalid, "request.validation");
+    let (status, _, short) = send(&router, "POST", &path, token().body(body)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{short}");
+    assert_envelope(&short, "operator.recover_refused");
+    assert_eq!(short["error"]["details"]["reason"], "log_too_short");
+    let journal = rig
+        .store
+        .events_range(tenant, 1, 10_000)
+        .await
+        .expect("journal");
+    assert!(
+        journal
+            .iter()
+            .all(|e| !e.envelope.event_type.starts_with("operator.recovery")),
+        "a refused recovery journals nothing"
+    );
     drop_db(&rig.db_name).await;
 }
