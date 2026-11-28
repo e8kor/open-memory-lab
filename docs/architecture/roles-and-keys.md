@@ -1,7 +1,7 @@
 ---
 status: Stable
 verified: 2026-11-14
-answers: "which verbs each of the six roles may perform; how a key is issued, scoped and denied; how the reviewer is kept from being the author; what a connector key, a connect code and a connection are, and why a connection is never more than its key"
+answers: "which verbs each of the seven roles may perform; how a key is issued, scoped and denied; how the reviewer is kept from being the author; what a connector key, a connect code and a connection are, and why a connection is never more than its key"
 ---
 
 # Roles and keys
@@ -10,7 +10,7 @@ An agent holds a key with one role. Grants give that key access to workspace sub
 
 The four rules, R1 to R4, are declared once, in [the constitution](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0001-the-constitution.md). This page holds the role matrix that R1's verb ceiling refers to and the independence check that enforces R2.
 
-## The six roles
+## The seven roles
 
 | Role | What it does |
 |---|---|
@@ -19,6 +19,7 @@ The four rules, R1 to R4, are declared once, in [the constitution](https://githu
 | `submitter` | Writes without recall: carries `submitter` grants only. Reads its own memories in every state and recalls nothing else. Never gives a verdict. |
 | `reviewer` | Proposes edits and connections and reviews other identities' writes, never on a lineage it proposed in: gives verdicts and ratifies connection proposals. Called `dreamer` before v0.8.3. |
 | `admin` | Governs a tenant: keys, workspaces, crews, grants and denials. Its verdicts on content are refused. |
+| `maintenance` | A service's key in place of an admin key: reads the counts `oml doctor` reads and runs `oml admin rescan --record-held`, and nothing else. It holds no grant and reads no claim text, key value, email or key list. An admin key becomes one with `oml keys convert-self --to maintenance`, keeping its value, and the first start of v0.8.6 converts each admin key `used_by: service` ([ADR-0097](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) d18). |
 | `operator` | Designed and not built: would run the provider level, create tenants and issue each tenant's first admin key, and never write, read or review content. No path issues an operator key. |
 
 Roles do not imply one another: a crew member who writes and recalls holds a contributor key, whose recall is a `reader` grant beside its `submitter` grant in the journal, never implied by the role. The grant roles are `reader`, `submitter` and `reviewer`; `contributor` is a key role only. A contributor key holding a submitter grant on a node that no reader grant of it reaches, such as a key issued before v0.8.4 as a write-only writer, is a contributor without recall: it works as before, `oml doctor` names it (`key_contributor_without_recall`) and the console marks it "no recall"; its holder replaces it with a submitter key ([ADR-0093](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0093-contributor-and-submitter-replace-writer.md) d3).
@@ -177,7 +178,7 @@ Demotion ([ADR-0010](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr
 
 ## The operator and the first admin key
 
-The operator tier is designed and not built. A single-use enrollment token starts a new server: `oml bootstrap claim` exchanges it for the first admin key of the server's tenant and stores the URL and key in an owner-only file (mode 0600). It requires `--person <name> --email <address>`, since every admin key belongs to a person (ADR-0097 d21): the claim also creates that person's user root, links the admin key to it, as an admin fix requires ([ADR-0089](../adr/ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md), the operator's decision of 2026-11-19), and records the address as that person's accepted admin sign-in, the one way the person gets a first sign-in ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), the operator's decision of 2026-11-20); without them a console admin links the key later. Where authority is weighed, an admin fix's person, a fix's settlement and a write's recorded author, a user key counts as the person its issuer counts as, so a key an admin issues in someone's root counts as the admin's person (ADR-0089, the decision of 2026-11-20). No route creates a further tenant.
+The operator tier is designed and not built. A single-use enrollment token starts a new server: `oml bootstrap claim` exchanges it for the first admin key of the server's tenant and stores the URL and key in an owner-only file (mode 0600). It requires `--person <name> --email <address>`, since every admin key belongs to a person (ADR-0097 d21): the claim also creates that person's user root, links the admin key to it, as an admin fix requires ([ADR-0089](../adr/ADR-0089-an-admin-fixes-a-production-workspace-at-once-by-a-marked-break-glass-act-that-a-person-confirms-or-reverts-afterwards.md), the operator's decision of 2026-11-19), and records the address as that person's accepted admin sign-in, the one way the person gets a first sign-in ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), the operator's decision of 2026-11-20). A claim without them is refused `request.validation`. Where authority is weighed, an admin fix's person, a fix's settlement and a write's recorded author, a user key counts as the person its issuer counts as, so a key an admin issues in someone's root counts as the admin's person (ADR-0089, the decision of 2026-11-20). No route creates a further tenant.
 
 ## User keys
 

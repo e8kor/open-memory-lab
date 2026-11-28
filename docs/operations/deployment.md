@@ -46,7 +46,7 @@ server, `oml-web` and the sign-in routes must share that origin.
 Docker with compose v2 and the `oml` CLI ([install](../start/install.md)) are required.
 
 ```sh
-oml quickstart --person <you> --email <your-address>
+oml quickstart --person <name> --email <address>
 ```
 
 The verb writes a compose file with the server, `oml-web`, a Caddy router and
