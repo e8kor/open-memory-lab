@@ -1122,6 +1122,44 @@ recover lane took.
        completion.
     9. **The tests** arrived with the code rather than committed red before it.
 
+## Amendment of 2026-11-28 (second): the review round's decisions (decided by the operator)
+
+Decided by the operator on 2026-11-28, answering the four independent reviews of PR #527. Each
+answer is recorded here before the code that takes it.
+
+27. **The first-start migration rows in v0.8.6 (decided by the operator, 2026-11-28).**
+    - **Built.** At the first start, before the unlinked sweep, the server's reserved key converts
+      every admin key `used_by: service` to `maintenance` (`key.converted {from: admin, to:
+      maintenance, cause: upgrade}`), so `signup.issuer`'s key and every other service key keep
+      their hash and keep working as counts-only keys. A conversion lifts a suspension whose cause
+      is `unlinked` in its own commit (`key.suspension_lifted {cause: unlinked}`), so a key the
+      first start suspended still converts itself with `POST /v2/keys/self/convert` and then reads
+      counts; a suspension against an admin (d8) is not lifted and still refuses the conversion.
+      A key whose link awaits the person's acceptance (`link_pending`) is not swept: it is neither
+      suspended as unlinked nor revoked after the 30 days, since its own pending link already keeps
+      it from authenticating.
+    - **Deferred to v0.8.7, with this note.** The migration table's rows "admin-issued keys,
+      capacity grants and connections in another person's root become `pending_confirmation`"
+      and "open investigations opened by a key d16 refuses are closed" are not built in v0.8.6.
+      Until then such keys, grants and connections keep serving as they did before the upgrade,
+      and such investigations stay open; the production counts (items 4 to 6 and 8) size them.
+28. **The private ancestors of a public node** are recorded in
+    [ADR-0098](ADR-0098-a-protected-or-frozen-workspace-can-be-marked-public-and-then-every-reading-key-in-the-tenant-reads-its-approved-items.md),
+    answer 4 of 2026-11-28 (decided by the operator, 2026-11-28).
+29. **`sole_admin` never returns (decided by the operator, 2026-11-28).** Kept as decided at T5:
+    no code sets `sole_admin` back to true. This is an **accepted limit** that narrows d10's
+    "sticky" sentence and d19's "the way out with one dormant admin": after a settled drop to one
+    admin person, or a departing person's own drop, the tenant stays out of `sole_admin`, and the
+    one remaining admin person's widening waits on a second admin person who counts (d11). A
+    recovered tenant whose one dormant admin is settled away therefore widens again only once a
+    new admin person, flagged by a confirmed act, has counted for seven days.
+30. **`sole_admin` acts in To do (decided by the operator, 2026-11-28).** A widening act taken at
+    once under `sole_admin` is left out of "Admin acts to confirm" and out of the To do count, for
+    every admin person. It stays in the admin acts list (`GET /v2/admin/acts`), where Decline is
+    still offered and still undoes it (amendment of 2026-11-27, answer (b)). This narrows d10's
+    "every marked act appears in their To do once their entry is seven days old" to the acts
+    list.
+
 ## Rejected alternatives
 
 | Alternative | Why not |
