@@ -203,3 +203,4 @@ branch that reserved later renumbers.
 | migration | 0074 | `bulk086/integrate` | #527 | admin read counts notices and host verbs | open |
 | migration | 0075 | `bulk086/integrate` |  | confirm reason, issuer person, maintenance role and operator host verbs (ADR-0097 d18, d19, d26; #508) | reserved |
 | migration | 0076 | `bulk086/integrate` |  | key authentications and operator recoveries (ADR-0097 d19; ADR-0042 d8 amendment) | reserved |
+| migration | 0077 | `fix086/a` |  | the admin backfill under each tenant's binding | reserved |
