@@ -105,14 +105,15 @@ def sync_detailed(
     reaches back 30 days, a placeholder, and shows no admin key of the tenant authenticated in them, an
     admin person's sign-in included (answers 21, 24). Refused operator.recover_refused with
     details.reason log_too_short (the table does not reach back 30 days: a fresh install or purged rows,
-    never read as dormancy), admin_active, pending (a recovery already waits), dispute_open (an act
-    against an admin is open), person_taken or email_taken. Journalled as operator.recovery_requested,
-    with the address's digest alone, and notice.written kind recovery to every admin person, then
-    emailed to them through the mail relay (d20): mail is sent, unconfigured or failed. The server's
-    sweep completes it once 72 hours, a placeholder, pass with no admin sign-in: every admin key of the
-    tenant revoked, cause recovery, the named admin person's entry added, operator.recovery and a
-    notice; any admin sign-in in the 72 hours cancels it, operator.recovery_cancelled (answer 22). The
-    dormant admins keep their flags. Since v0.8.6.
+    never read as dormancy), log_write_failed (this server process counted an authentication row it
+    could not write since it started; per replica), admin_active, pending (a recovery already waits),
+    dispute_open (an act against an admin is open), person_taken or email_taken. Journalled as
+    operator.recovery_requested, with the address's digest alone, and notice.written kind recovery to
+    every admin person, then emailed to them through the mail relay (d20): mail is sent, unconfigured or
+    failed. The server's sweep completes it once 72 hours, a placeholder, pass with no admin sign-in:
+    every admin key of the tenant revoked, cause recovery, the named admin person's entry added,
+    operator.recovery and a notice; any admin sign-in in the 72 hours cancels it,
+    operator.recovery_cancelled (answer 22). The dormant admins keep their flags. Since v0.8.6.
 
     Args:
         tenant (UUID):
@@ -164,14 +165,15 @@ def sync(
     reaches back 30 days, a placeholder, and shows no admin key of the tenant authenticated in them, an
     admin person's sign-in included (answers 21, 24). Refused operator.recover_refused with
     details.reason log_too_short (the table does not reach back 30 days: a fresh install or purged rows,
-    never read as dormancy), admin_active, pending (a recovery already waits), dispute_open (an act
-    against an admin is open), person_taken or email_taken. Journalled as operator.recovery_requested,
-    with the address's digest alone, and notice.written kind recovery to every admin person, then
-    emailed to them through the mail relay (d20): mail is sent, unconfigured or failed. The server's
-    sweep completes it once 72 hours, a placeholder, pass with no admin sign-in: every admin key of the
-    tenant revoked, cause recovery, the named admin person's entry added, operator.recovery and a
-    notice; any admin sign-in in the 72 hours cancels it, operator.recovery_cancelled (answer 22). The
-    dormant admins keep their flags. Since v0.8.6.
+    never read as dormancy), log_write_failed (this server process counted an authentication row it
+    could not write since it started; per replica), admin_active, pending (a recovery already waits),
+    dispute_open (an act against an admin is open), person_taken or email_taken. Journalled as
+    operator.recovery_requested, with the address's digest alone, and notice.written kind recovery to
+    every admin person, then emailed to them through the mail relay (d20): mail is sent, unconfigured or
+    failed. The server's sweep completes it once 72 hours, a placeholder, pass with no admin sign-in:
+    every admin key of the tenant revoked, cause recovery, the named admin person's entry added,
+    operator.recovery and a notice; any admin sign-in in the 72 hours cancels it,
+    operator.recovery_cancelled (answer 22). The dormant admins keep their flags. Since v0.8.6.
 
     Args:
         tenant (UUID):
@@ -218,14 +220,15 @@ async def asyncio_detailed(
     reaches back 30 days, a placeholder, and shows no admin key of the tenant authenticated in them, an
     admin person's sign-in included (answers 21, 24). Refused operator.recover_refused with
     details.reason log_too_short (the table does not reach back 30 days: a fresh install or purged rows,
-    never read as dormancy), admin_active, pending (a recovery already waits), dispute_open (an act
-    against an admin is open), person_taken or email_taken. Journalled as operator.recovery_requested,
-    with the address's digest alone, and notice.written kind recovery to every admin person, then
-    emailed to them through the mail relay (d20): mail is sent, unconfigured or failed. The server's
-    sweep completes it once 72 hours, a placeholder, pass with no admin sign-in: every admin key of the
-    tenant revoked, cause recovery, the named admin person's entry added, operator.recovery and a
-    notice; any admin sign-in in the 72 hours cancels it, operator.recovery_cancelled (answer 22). The
-    dormant admins keep their flags. Since v0.8.6.
+    never read as dormancy), log_write_failed (this server process counted an authentication row it
+    could not write since it started; per replica), admin_active, pending (a recovery already waits),
+    dispute_open (an act against an admin is open), person_taken or email_taken. Journalled as
+    operator.recovery_requested, with the address's digest alone, and notice.written kind recovery to
+    every admin person, then emailed to them through the mail relay (d20): mail is sent, unconfigured or
+    failed. The server's sweep completes it once 72 hours, a placeholder, pass with no admin sign-in:
+    every admin key of the tenant revoked, cause recovery, the named admin person's entry added,
+    operator.recovery and a notice; any admin sign-in in the 72 hours cancels it,
+    operator.recovery_cancelled (answer 22). The dormant admins keep their flags. Since v0.8.6.
 
     Args:
         tenant (UUID):
@@ -275,14 +278,15 @@ async def asyncio(
     reaches back 30 days, a placeholder, and shows no admin key of the tenant authenticated in them, an
     admin person's sign-in included (answers 21, 24). Refused operator.recover_refused with
     details.reason log_too_short (the table does not reach back 30 days: a fresh install or purged rows,
-    never read as dormancy), admin_active, pending (a recovery already waits), dispute_open (an act
-    against an admin is open), person_taken or email_taken. Journalled as operator.recovery_requested,
-    with the address's digest alone, and notice.written kind recovery to every admin person, then
-    emailed to them through the mail relay (d20): mail is sent, unconfigured or failed. The server's
-    sweep completes it once 72 hours, a placeholder, pass with no admin sign-in: every admin key of the
-    tenant revoked, cause recovery, the named admin person's entry added, operator.recovery and a
-    notice; any admin sign-in in the 72 hours cancels it, operator.recovery_cancelled (answer 22). The
-    dormant admins keep their flags. Since v0.8.6.
+    never read as dormancy), log_write_failed (this server process counted an authentication row it
+    could not write since it started; per replica), admin_active, pending (a recovery already waits),
+    dispute_open (an act against an admin is open), person_taken or email_taken. Journalled as
+    operator.recovery_requested, with the address's digest alone, and notice.written kind recovery to
+    every admin person, then emailed to them through the mail relay (d20): mail is sent, unconfigured or
+    failed. The server's sweep completes it once 72 hours, a placeholder, pass with no admin sign-in:
+    every admin key of the tenant revoked, cause recovery, the named admin person's entry added,
+    operator.recovery and a notice; any admin sign-in in the 72 hours cancels it,
+    operator.recovery_cancelled (answer 22). The dormant admins keep their flags. Since v0.8.6.
 
     Args:
         tenant (UUID):
