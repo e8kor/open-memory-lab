@@ -240,7 +240,7 @@ To give a key a new value and keep its grants instead, use `oml keys rotate <key
 
 ## A dispute between two admins is frozen, or a tenant's admins are dormant
 
-Use this when `oml doctor` raises `admin.dispute_open` (critical) or `operator.settlement_due`, or when no admin person of a tenant has signed in for 30 days. [ADR-0097](../adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) d19 gives the operator two host verbs for these cases. `oml operator settle` is built in v0.8.6. `oml operator recover` is designed, not built: its dormancy check reads the request log, and where the server reads that log from is an open question.
+Use this when `oml doctor` raises `admin.dispute_open` (critical) or `operator.settlement_due`, or when no admin person of a tenant has signed in for 30 days. [ADR-0097](../adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) d19 gives the operator two host verbs for these cases. Both are built in v0.8.6. Recovery's dormancy is read from the server's authentication table, one row per key and UTC day kept 30 days (answer 24 of 2026-11-28).
 
 ### Settle a freeze from the host
 
@@ -262,9 +262,27 @@ One commit journals the settled `admin.act` with no settler, `operator.settlemen
 
 When `/readyz` reports `operator_tokens: failed`, doctor raises `operator.token_unwritten`. Read the start log's `operator_tokens_unwritten` line, fix `operator.token_dir` or its permissions, and restart the server.
 
-### Recover a dormant tenant (not built)
+### Recover a dormant tenant
 
-`oml operator recover <tenant> --person <name> --email <address>` runs only when the request log shows no admin key of the tenant authenticated in the last 30 days. It fails closed with `log_too_short` when the log does not reach back 30 days. A 72-hour waiting period follows, which any admin person's sign-in cancels. A background sweep on the server then revokes every admin key of the tenant, creates the named admin person and journals `operator.recovery` (ADR-0097, answers 21 and 22 of 2026-11-27). The dormant admins keep their flags, so the new admin cannot widen alone until one of them returns, or, with one dormant admin, until the operator settles the new admin's un-flag of that admin. Until it is built, do not edit the database by hand: the journal's tamper evidence is the control against the host.
+Use this when no admin person of a tenant has signed in, and no admin key of it has authenticated, for 30 days, a placeholder, and the tenant needs an admin again. The dormant admins keep their flags, so the new admin cannot widen alone until one of them returns, or, with one dormant admin, until the operator settles the new admin's un-flag of that admin (above). With two or more dormant admins that un-flag opens no freeze, so the new admin's widening waits for one of them to return: an accepted limit (d19).
+
+1. Check the coverage. `oml doctor` reports `auth.log_coverage`: the whole days the server's authentication table reaches back, deployment wide. Under 30 it warns, and the verb refuses `log_too_short`. A fresh install or an upgrade to v0.8.6 covers nothing on its first day and reaches 30 days after 30 days of traffic. A day on which no key of any tenant authenticated leaves a gap at the table's oldest end, so a quiet deployment can read short; the verb then refuses rather than reading the gap as dormancy.
+2. Read the tenant's id. With no admin person to run `oml whoami`, it is the name of the tenant's token file in `operator.token_dir`, `<tenant id>.token`.
+3. On the server's host, as root, run:
+
+   ```sh
+   oml operator recover <tenant id> --person <name> --email <address> --token-dir <operator.token_dir> --url <server>
+   ```
+
+   `<name>` is the admin person the recovery adds, a name the tenant does not hold as a workspace, key or entry, and `<address>` the address they sign in with. `--token-dir` reads `OML_OPERATOR__TOKEN_DIR` when it is not given, as `oml operator settle` does.
+4. Read the answer. It names the recovery's id, when it completes, the persons notified and what the mail relay did. Every admin person gets a `recovery` notice in To do and an email, which is how a dormant admin learns of it: configure the relay first (below).
+5. Wait. Any admin person's sign-in, or any admin key's authentication, in the 72 hours, a placeholder, cancels the recovery: the server's sweep, once a minute, journals `operator.recovery_cancelled`. With none, the sweep completes it once the 72 hours pass: in one commit every admin key of the tenant is revoked, `cause: recovery`, the named person's entry is added as an admin person, and `operator.recovery` records the window and the revoked keys. The new admin person signs in to the console with that address, and the server issuer issues their session keys.
+
+The verb is refused `operator.recover_refused` with `details.reason` `log_too_short` (step 1), `admin_active` (an admin authenticated in the 30 days), `pending` (a recovery already waits), `dispute_open` (an act against an admin is open: settle it first), `person_taken` or `email_taken`. The route refuses a key and a wrong token as the settle route does.
+
+While a recovery waits, doctor raises `admin.recovery_pending` (critical). Past its 72 hours and not completed, it raises `admin.recovery_overdue` (critical): the sweep is failing for that tenant. Read the server log's `recovery_sweep_failed` lines. A name or address taken while the request waited is refused by name there, and the request stays; ask the tenant's other users which entry holds it. The sweep's state is the database's, so a restart resumes it, and each request completes once whichever replica's sweep reaches it first. When doctor raises `auth.log_write_failed`, the server could not write some authentication rows since it started. The key's next authentication writes the row again; until then recover may read that key as dormant, so read the start log before you run the verb.
+
+Do not edit the database by hand: the journal's tamper evidence is the control against the host.
 
 ### Notice email
 

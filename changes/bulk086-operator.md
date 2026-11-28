@@ -3,5 +3,3 @@
 **Settlement notices are emailed through one local relay.** `mail.host`, `mail.port` (25 by default) and `mail.from` name a local relay the server speaks plain SMTP to, which handles TLS and authentication, so the server holds no mail credential. A settlement's notice goes to every admin person and both parties; the act stands when the relay refuses it or cannot be reached. Doctor adds `notice.mail_unconfigured` and `notice.mail_delivery_failed` (d20, answer 14).
 
 **Doctor flags a server-issuer key outside the session-key shapes, and a maintenance key reads the wide keys as counts.** `key.issuer_unexpected_shape` (critical) counts keys the tenant's server issuer issued that are not `<user>-web`, `<user>-review`, `<user>-curate` or `<user>-admin`. `GET /v2/federation` adds `wide_key_count` and `wide_key_most_candidates`, which a maintenance key reads in place of the key list, and its doctor warns on them (d18).
-
-**Not in this release:** `oml operator recover` and its completion sweep (d19, answers 21 and 22 of 2026-11-27).

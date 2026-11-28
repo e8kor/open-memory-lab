@@ -1,7 +1,7 @@
 ---
 status: Stable
 verified: 2026-11-25
-answers: "how to upgrade an OML server: how migrations run, v0.8.6's migrations 0074 and 0075, the person a reviewer, ratifier or admin-read key needs, the deployer's admin keys converted to maintenance keys, the confirm and link reasons, the operator token directory and the mail relay, the upgrade steps in order, what rollback does and does not mean, the upgrade from a pre-0.3.1 install, the v0.5.4 fix, how to move from v0.3, v0.8.5's migrations 0067, 0068 and 0069, the workspaces quota, the oml_write modes and the Python SDK that upgrades with the server, key rotation and what a previous value runs in its grace, the last admin entry kept on every surface and the read-only counts before v0.8.6, the v0.8.4 role rename that clients take in the server's window, with no key issued or listed until both run v0.8.4, what v0.8.4's migrations 0063, 0064 and 0066 cost, the admin key links, links and sign-in emails that wait on their person, and the reset of a database that ran a draft of 0063 or 0064, the v0.8.3 rename that clients take before the server, what the v0.8.3 migrations cost and what waits during them, and the storage.url to set before v0.8.3's uploads"
+answers: "how to upgrade an OML server: how migrations run, v0.8.6's migrations 0074, 0075 and 0076, the person a reviewer, ratifier or admin-read key needs, the deployer's admin keys converted to maintenance keys, the confirm and link reasons, the operator token directory and the mail relay, the authentication table recovery reads and its 30 days, the upgrade steps in order, what rollback does and does not mean, the upgrade from a pre-0.3.1 install, the v0.5.4 fix, how to move from v0.3, v0.8.5's migrations 0067, 0068 and 0069, the workspaces quota, the oml_write modes and the Python SDK that upgrades with the server, key rotation and what a previous value runs in its grace, the last admin entry kept on every surface and the read-only counts before v0.8.6, the v0.8.4 role rename that clients take in the server's window, with no key issued or listed until both run v0.8.4, what v0.8.4's migrations 0063, 0064 and 0066 cost, the admin key links, links and sign-in emails that wait on their person, and the reset of a database that ran a draft of 0063 or 0064, the v0.8.3 rename that clients take before the server, what the v0.8.3 migrations cost and what waits during them, and the storage.url to set before v0.8.3's uploads"
 ---
 
 # Upgrade OML
@@ -153,7 +153,29 @@ and, when the relay is not on 25, `mail.port`. The relay is a local one that han
 authentication; the server holds no mail credential. Without it, `oml doctor` warns
 `notice.mail_unconfigured`, and a settlement's notice reaches admins in-product only.
 
-Not in this release: `oml operator recover` and its completion sweep (d19; answers 21 and 22).
+### Migration 0076, the authentication table and the operator's recovery
+
+Migration 0076 adds three tables ([ADR-0097](../adr/ADR-0097-every-admin-act-is-one-journalled-record-narrowing-takes-effect-at-once-widening-waits-on-a-second-admin-person-and-every-admin-key-belongs-to-a-person.md) d19; answer 24 of 2026-11-28):
+`key_authentications`, one row per tenant, key and UTC day a key authenticated, with a count;
+`key_authentications_installed`, one row holding the time the migration ran; and
+`operator_recoveries`, the recoveries `oml operator recover` requests. It reads and rewrites no
+existing row, so it takes its locks only for the catalog change.
+
+From the first start of v0.8.6 the server writes a key's row at its first authentication of each
+UTC day, an admin person's sign-in included, one upsert per key per day, and a sweep each minute
+deletes rows of a day more than 30 days back. This is the one log the server keeps
+([ADR-0042](../adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md) d8, as amended on 2026-11-28): ids and a count, never a principal, address or
+request id. The request log itself stays stderr JSON lines.
+
+The table covers nothing on the upgrade's first day, so `oml operator recover` refuses
+`log_too_short` for the first 30 days after the upgrade, and `oml doctor` warns
+`auth.log_coverage` until then. No step is needed: the coverage grows with traffic. Set
+`mail.host` and `mail.from` before a recovery is ever needed, since its email is how a dormant
+admin learns of it (d20).
+
+The recovery sweep runs in every server that writes operator tokens, which `oml-server` does at
+each start. Its state is the database's: a restart resumes a waiting recovery, and with several
+replicas each request completes once.
 
 ## Upgrading to v0.8.5
 

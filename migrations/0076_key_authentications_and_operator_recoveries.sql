@@ -36,6 +36,8 @@ CREATE TABLE key_authentications (
     PRIMARY KEY (tenant_id, key_id, day)
 );
 CREATE INDEX key_authentications_day ON key_authentications (tenant_id, day);
+-- The coverage read's deployment-wide min(day).
+CREATE INDEX key_authentications_oldest ON key_authentications (day);
 COMMENT ON TABLE key_authentications IS
     'One row per tenant, key and UTC day a key authenticated, kept 30 days: recovery reads dormancy from it (ADR-0097 d19, answer 24).';
 
