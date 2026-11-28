@@ -1065,7 +1065,8 @@ Decided by the operator on 2026-11-28, answering the question the v0.8.6 operato
 answer 21: the request log ([ADR-0042](ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md))
 is stderr JSON lines the server never stores, so nothing the server holds could show recover's
 30 days. Each answer is recorded here before the code that takes it. Answer 24 is the lane's
-recommendation; answer 25 accepts every reading that lane took.
+recommendation; answer 25 accepts every reading that lane took, and answer 26 every reading the
+recover lane took.
 
 24. **The request log d19's dormancy reads is a server authentication table (decided by the
     operator, 2026-11-28).** It refines answer 21: "the request log" there is this table.
@@ -1089,6 +1090,37 @@ recommendation; answer 25 accepts every reading that lane took.
     - A settlement's recipients are every admin person and both parties, and its email goes to
       their entries' addresses and to a removed target's earlier address.
     - The mail relay's failure count is in memory, so a restart clears it.
+26. **The recover lane's nine readings, all accepted (decided by the operator, 2026-11-28).**
+    1. **The count.** Each process writes a key's row once a UTC day, at the key's first
+       authentication that day, so a row's `count` is the writes that day, one per process that saw
+       the key, and not the authentications. Dormancy reads only whether a row exists.
+    2. **A row the server could not write.** The request it rode on goes on, the failure is counted
+       in memory and the key's next authentication writes the row again. While the process counts
+       any such failure since its start, `oml operator recover` is refused by name,
+       `operator.recover_refused` with `log_write_failed`, since a missing row would read as
+       dormancy. The count is the process's own, so the refusal is per replica: a replica that
+       counted no failure admits the request, and a restart clears the count.
+    3. **Coverage is deployment wide**, the oldest day any tenant's row holds. A day on which no key
+       of any tenant authenticated, at the table's oldest end, shortens the coverage, and recover
+       then refuses `log_too_short`. **A known limit, deferred to v0.8.7:** on a quiet deployment
+       this can keep recovery refused; the fix, such as gap tracking against the install marker,
+       is tracked as an issue for v0.8.7.
+    4. **Cancellation.** Any admin authentication of the tenant on the request's day or after, an
+       admin person's sign-in or an admin key's, cancels a requested recovery, as d19's dormancy
+       reads both.
+    5. **A live dispute.** Recover is refused `dispute_open` while an act against an admin is open
+       (Consequences: Q5(a) with Q14).
+    6. **The emails.** A recovery is emailed, and noticed in To do, at its request and at its
+       completion; a cancellation journals `operator.recovery_cancelled` and writes no notice or
+       email.
+    7. **A completion that cannot add its person.** When the person's name or the address is taken
+       while the request waits, the sweep refuses the completion by name (`person_taken`,
+       `email_taken`), the request stays requested, and doctor reports it `admin.recovery_overdue`
+       once its 72 hours pass.
+    8. **The events.** `operator.recovery_requested` at the request, `operator.recovery_cancelled`
+       at a cancellation, and `operator.recovery`, with the window and the revoked keys, at the
+       completion.
+    9. **The tests** arrived with the code rather than committed red before it.
 
 ## Rejected alternatives
 
