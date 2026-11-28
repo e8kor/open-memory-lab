@@ -94,6 +94,9 @@ impl Lead {
             .env("OML_POSTGRES__URL", serving)
             .env("OML_SERVER__LISTEN", format!("127.0.0.1:{port}"))
             .env("OML_KMS__KEYRING_PATH", scratch.join("keyring"))
+            // The operator tokens each start writes stay in the scratch
+            // directory, never the crate's (ADR-0097 d19).
+            .env("OML_OPERATOR__TOKEN_DIR", scratch.join("operator"))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
