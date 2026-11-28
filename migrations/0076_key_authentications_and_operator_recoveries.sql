@@ -58,6 +58,11 @@ CREATE TABLE key_authentications_installed (
 COMMENT ON TABLE key_authentications_installed IS
     'When key_authentications was installed: its coverage is bounded below by this time (ADR-0097, answer 24).';
 INSERT INTO key_authentications_installed DEFAULT VALUES;
+-- Fenced as every table is (the role split's check): the serving role
+-- reads the one row and writes none, since it holds no INSERT or UPDATE.
+ALTER TABLE key_authentications_installed ENABLE ROW LEVEL SECURITY;
+ALTER TABLE key_authentications_installed FORCE ROW LEVEL SECURITY;
+CREATE POLICY installed_read ON key_authentications_installed FOR SELECT USING (true);
 
 CREATE TABLE operator_recoveries (
     tenant_id uuid NOT NULL REFERENCES tenants (id),

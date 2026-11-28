@@ -999,7 +999,10 @@ Keys:
 
 - `key_authentications_installed_pkey` (primary key): `PRIMARY KEY (singleton)`
 
-Row-level security: not enabled.
+Row-level security: enabled and forced, so the owner is bound too.
+
+- Policy `installed_read`, SELECT for PUBLIC, permissive:
+    - using `true`
 
 Grants: serving: SELECT.
 
