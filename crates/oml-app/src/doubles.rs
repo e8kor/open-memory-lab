@@ -5659,11 +5659,13 @@ impl JournalStore for MemStore {
         &self,
         tenant_id: Uuid,
     ) -> Result<crate::types::AdminStanding, StoreError> {
+        // A tenant with no state reads as no tenant, never as `sole_admin`,
+        // which would let widening take effect at once (review finding
+        // store-7).
         let Some(tenant) = self.tenant_existing(tenant_id) else {
-            return Ok(crate::types::AdminStanding {
-                sole_admin: true,
-                persons: Vec::new(),
-            });
+            return Err(StoreError::Backend(format!(
+                "admin standing: tenant {tenant_id} has no row"
+            )));
         };
         let state = tenant.lock().expect("tenant lock");
         let mut persons: Vec<crate::types::AdminPerson> = state

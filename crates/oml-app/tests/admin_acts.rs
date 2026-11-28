@@ -3757,3 +3757,17 @@ async fn the_first_curation_designation_waits_on_a_second_admin_person() {
         .unwrap_or_default();
     assert_eq!(held.len(), 2, "both grants apply at the confirmation");
 }
+
+/// A tenant whose row cannot be read is no tenant, never one in
+/// `sole_admin`: the standing read fails closed rather than letting a
+/// widening act take effect at once (ADR-0097 d10; review finding store-7).
+#[tokio::test]
+async fn an_unreadable_tenant_never_reads_as_sole_admin() {
+    let r = rig().await;
+    let err = r
+        .store
+        .admin_standing(Uuid::from_u128(0xDEAD))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("no row"), "{err}");
+}

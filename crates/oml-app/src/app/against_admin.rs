@@ -508,6 +508,10 @@ where
         require_role(&admin, Role::Admin, "settle_admin_act")?;
         let admin = admin.key;
         let tenant_id = admin.tenant_id;
+        // The chain head is read before the act, so a contest committed in
+        // between fails this commit's chain and the retry reads the act
+        // again (review finding store-6; as recovery_sweep reads it).
+        let prev = self.head_event(tenant_id).await?;
         let mut act = self
             .journal
             .admin_act(tenant_id, act_id)
@@ -547,7 +551,6 @@ where
         act.confirmed_by_person = if confirm { settler } else { None };
         act.settled_by_key_id = Some(admin.key_id);
         let by = Sealer::of(&admin);
-        let prev = self.head_event(tenant_id).await?;
         let event = self.seal(
             prev.as_ref(),
             tenant_id,
@@ -587,6 +590,8 @@ where
         act_id: Uuid,
         confirm: bool,
     ) -> Result<OperatorSettlement, AppError> {
+        // The chain head is read before the act (review finding store-6).
+        let prev = self.head_event(tenant_id).await?;
         let mut act = self
             .journal
             .admin_act(tenant_id, act_id)
@@ -626,7 +631,6 @@ where
         act.confirmed_by_person = None;
         act.settled_by_key_id = None;
         let target = target_user(&act);
-        let prev = self.head_event(tenant_id).await?;
         let event = self.seal(
             prev.as_ref(),
             tenant_id,

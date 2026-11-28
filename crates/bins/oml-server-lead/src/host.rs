@@ -124,7 +124,12 @@ impl Mailer for SmtpRelay {
 impl SmtpRelay {
     /// One SMTP transaction: greeting, `EHLO`, `MAIL FROM`, a `RCPT TO` per
     /// address, `DATA`, the message, `QUIT`. Every refusal names the
-    /// command and the relay's code, never an address.
+    /// command and the relay's code, never an address. A refused `RCPT TO`
+    /// skips that one address and the message still goes to every address
+    /// the relay took, so one stale address, a removed target's earlier one
+    /// say, stops no admin person's email; the refusal is still answered as
+    /// a delivery failure, which doctor reports (ADR-0097 d20; review
+    /// finding store-11). With no address taken nothing is sent.
     async fn deliver(&self, mail: &OutboundMail) -> Result<(), String> {
         let stream = TcpStream::connect((self.host.as_str(), self.port))
             .await
@@ -143,9 +148,20 @@ impl SmtpRelay {
         expect(&mut read, "EHLO", &[250]).await?;
         command(&mut write, &format!("MAIL FROM:<{}>", self.from.as_str())).await?;
         expect(&mut read, "MAIL FROM", &[250]).await?;
+        let (mut taken, mut refused) = (0_usize, None);
         for to in &mail.to {
             command(&mut write, &format!("RCPT TO:<{}>", to.as_str())).await?;
-            expect(&mut read, "RCPT TO", &[250, 251]).await?;
+            match reply(&mut read, "RCPT TO").await? {
+                250 | 251 => taken += 1,
+                code => refused = Some((refused.map_or(0, |(n, _)| n) + 1, code)),
+            }
+        }
+        if taken == 0 {
+            let _ = command(&mut write, "QUIT").await;
+            let code = refused.map_or(0, |(_, code)| code);
+            return Err(format!(
+                "the relay refused RCPT TO with {code} for every recipient"
+            ));
         }
         command(&mut write, "DATA").await?;
         expect(&mut read, "DATA", &[354]).await?;
@@ -156,7 +172,13 @@ impl SmtpRelay {
         expect(&mut read, "the message", &[250]).await?;
         // The message is taken; a QUIT that goes unanswered changes nothing.
         let _ = command(&mut write, "QUIT").await;
-        Ok(())
+        match refused {
+            Some((n, code)) => Err(format!(
+                "the relay refused RCPT TO with {code} for {n} of {} recipients; the message went to the rest",
+                mail.to.len()
+            )),
+            None => Ok(()),
+        }
     }
 }
 
@@ -173,6 +195,19 @@ async fn expect(
     stage: &str,
     codes: &[u16],
 ) -> Result<(), String> {
+    let code = reply(read, stage).await?;
+    if codes.contains(&code) {
+        Ok(())
+    } else {
+        Err(format!("the relay refused {stage} with {code}"))
+    }
+}
+
+/// Reads one reply, multi-line or not, and answers its code.
+async fn reply(
+    read: &mut BufReader<tokio::net::tcp::OwnedReadHalf>,
+    stage: &str,
+) -> Result<u16, String> {
     for _ in 0..REPLY_LINES_MAX {
         let mut line = String::new();
         let n = (&mut *read)
@@ -192,11 +227,7 @@ async fn expect(
         if line.as_bytes().get(3) == Some(&b'-') {
             continue;
         }
-        return if codes.contains(&code) {
-            Ok(())
-        } else {
-            Err(format!("the relay refused {stage} with {code}"))
-        };
+        return Ok(code);
     }
     Err(format!(
         "the relay's reply to {stage} ran past {REPLY_LINES_MAX} lines"
@@ -368,17 +399,45 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_relay_that_refuses_a_recipient_is_named_without_the_address() {
+    async fn a_relay_that_refuses_every_recipient_is_named_without_the_address() {
         let (port, _relay) = fake_relay(vec![
             "220 relay ready\r\n",
             "250 relay\r\n",
             "250 sender ok\r\n",
             "550 no such user\r\n",
+            "550 no such user\r\n",
+            "221 bye\r\n",
         ])
         .await;
         let err = relay(port).deliver(&notice()).await.unwrap_err();
-        assert_eq!(err, "the relay refused RCPT TO with 550");
+        assert_eq!(err, "the relay refused RCPT TO with 550 for every recipient");
         assert!(!err.contains("example.com"));
+    }
+
+    /// One refused address stops no other recipient's email: the message
+    /// goes to the addresses the relay took, and the refusal is still
+    /// answered as a delivery failure (review finding store-11).
+    #[tokio::test]
+    async fn one_refused_recipient_still_lets_the_message_reach_the_others() {
+        let (port, relay_task) = fake_relay(vec![
+            "220 relay ready\r\n",
+            "250 relay\r\n",
+            "250 sender ok\r\n",
+            "550 no such user\r\n",
+            "250 rcpt ok\r\n",
+            "354 go ahead\r\n",
+            "250 queued\r\n",
+            "221 bye\r\n",
+        ])
+        .await;
+        let err = relay(port).deliver(&notice()).await.unwrap_err();
+        assert_eq!(
+            err,
+            "the relay refused RCPT TO with 550 for 1 of 2 recipients; the message went to the rest"
+        );
+        let seen = relay_task.await.expect("the relay");
+        assert!(seen.contains("DATA\r\n"), "the message is sent: {seen}");
+        assert!(seen.contains("line three\r\n.\r\n"));
     }
 
     #[tokio::test]

@@ -11319,7 +11319,14 @@ impl JournalStore for PgStore {
             })
             .collect::<Result<Vec<_>, StoreError>>()?;
         Ok(oml_app::types::AdminStanding {
-            sole_admin: sole_admin.unwrap_or(true),
+            // An unreadable tenants row is no tenant, never `sole_admin`,
+            // which would let widening take effect at once (review finding
+            // store-7).
+            sole_admin: sole_admin.ok_or_else(|| {
+                StoreError::Backend(format!(
+                    "admin standing: tenant {tenant_id} has no readable row"
+                ))
+            })?,
             persons,
         })
     }
