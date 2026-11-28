@@ -424,6 +424,11 @@ pub struct WorkspaceView {
     /// (ADR-0098 d9); not public from an API before v0.8.6.
     #[serde(default)]
     pub public: PublicFlag,
+    /// The node's children the calling key reads; the confirm screen of a
+    /// public set counts them, since none of them becomes public (ADR-0098
+    /// d5, d9).
+    #[serde(default)]
+    pub children: Vec<Value>,
 }
 
 /// A workspace's review policy (openapi.yaml `ReviewPolicy`): how many
