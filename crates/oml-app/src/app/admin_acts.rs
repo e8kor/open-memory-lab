@@ -181,25 +181,27 @@ pub(crate) struct ConfirmerView {
 }
 
 /// Whether `act` is one the admin person of `view` may confirm or review
-/// at `now` (ADR-0097 d2, d10, d11): never their own; a pending act at
-/// least seven days younger than their flag; a widening act a
-/// `sole_admin` tenant took at once, once their flag is seven days old;
-/// and an unsettled time box younger than their flag by seven days (d13).
-/// The one predicate the To do count and the acts list read, so the two
-/// agree.
+/// at `now` (ADR-0097 d2, d11): never their own; a pending act at least
+/// seven days younger than their flag; and an unsettled time box younger
+/// than their flag by seven days (d13). A widening act a `sole_admin`
+/// tenant took at once is not among them: it stays in the acts list, where
+/// a decline still undoes it, and is left out of "Admin acts to confirm"
+/// and the To do count (D30, decided by the operator, 2026-11-28; review
+/// finding surface-2). The one predicate the To do count and the acts
+/// list read, so the two agree.
 pub(crate) fn to_confirm(view: &ConfirmerView, act: &AdminActRecord, now: &EventTime) -> bool {
-    use oml_domain::admin_act::{AdminActClass, AdminActState, counts_for_act};
+    use oml_domain::admin_act::{AdminActState, counts_for_act};
     if act.actor_person.as_ref() == Some(&view.person) {
         return false;
     }
     match act.state_at(now) {
         AdminActState::PendingConfirmation => counts_for_act(view.since, act.at.unix_micros()),
-        // Neither a `sole_admin` act nor a time box counts for a person whose
-        // flag is younger than seven days (ADR-0097 d10, d11, d13).
+        // A time box counts for a person whose flag is seven days older
+        // than the box (ADR-0097 d11, d13); a `sole_admin` act never (D30).
         AdminActState::Effective => {
-            counts_for_act(view.since, now.unix_micros())
-                && ((act.sole_admin && act.class() == AdminActClass::Widening)
-                    || (act.timebox() && counts_for_act(view.since, act.at.unix_micros())))
+            act.timebox()
+                && counts_for_act(view.since, now.unix_micros())
+                && counts_for_act(view.since, act.at.unix_micros())
         }
         _ => false,
     }

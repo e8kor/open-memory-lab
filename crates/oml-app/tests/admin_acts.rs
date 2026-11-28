@@ -1299,9 +1299,20 @@ async fn admin_acts_to_confirm_counts_what_another_admin_person_may_confirm() {
                 .acts_to_confirm
         }
     };
-    // The two flags taken at once under `sole_admin` are already counted
-    // for each of them (d10); the pending issuance adds to bob's alone.
+    // The flags taken at once under `sole_admin` are not counted for
+    // anyone (D30, decided by the operator, 2026-11-28); they stay in the
+    // acts list, declinable. The pending issuance adds to bob's alone.
     let (bobs_before, alices_before) = (counts(&bob).await, counts(&alice).await);
+    assert_eq!((bobs_before, alices_before), (0, 0), "no sole_admin act counts");
+    let listed = r
+        .app
+        .admin_acts_listed(Bearer::Session(&bob), None)
+        .await
+        .expect("the acts list");
+    assert!(
+        listed.iter().any(|(a, flag)| a.sole_admin && !flag),
+        "a sole_admin act stays listed, not to confirm"
+    );
     r.app
         .issue_key_with_reason(Bearer::Session(&alice), &agent_req(), Some("an agent"))
         .await
