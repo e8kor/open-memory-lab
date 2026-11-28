@@ -1122,6 +1122,91 @@ recover lane took.
        completion.
     9. **The tests** arrived with the code rather than committed red before it.
 
+## Amendment of 2026-11-28 (second): the review round's decisions (decided by the operator)
+
+Decided by the operator on 2026-11-28, answering the four independent reviews of PR #527. Each
+answer is recorded here before the code that takes it.
+
+27. **The first-start migration rows in v0.8.6 (decided by the operator, 2026-11-28).**
+    - **Built.** At the first start, before the unlinked sweep, the server's reserved key converts
+      every admin key `used_by: service` to `maintenance` (`key.converted {from: admin, to:
+      maintenance, cause: upgrade}`), so `signup.issuer`'s key and every other service key keep
+      their hash and keep working as counts-only keys. A conversion lifts a suspension whose cause
+      is `unlinked` in its own commit (`key.suspension_lifted {cause: unlinked}`), so a key the
+      first start suspended still converts itself with `POST /v2/keys/self/convert` and then reads
+      counts; a suspension against an admin (d8) is not lifted and still refuses the conversion.
+      A key whose link awaits the person's acceptance (`link_pending`) is not swept: it is neither
+      suspended as unlinked nor revoked after the 30 days, since its own pending link already keeps
+      it from authenticating.
+    - **Deferred to v0.8.7, with this note.** The migration table's rows "admin-issued keys,
+      capacity grants and connections in another person's root become `pending_confirmation`"
+      and "open investigations opened by a key d16 refuses are closed" are not built in v0.8.6.
+      Until then such keys, grants and connections keep serving as they did before the upgrade,
+      and such investigations stay open; the production counts (items 4 to 6 and 8) size them.
+28. **The private ancestors of a public node** are recorded in
+    [ADR-0098](ADR-0098-a-protected-or-frozen-workspace-can-be-marked-public-and-then-every-reading-key-in-the-tenant-reads-its-approved-items.md),
+    answer 4 of 2026-11-28 (decided by the operator, 2026-11-28).
+29. **`sole_admin` never returns (decided by the operator, 2026-11-28).** Kept as decided at T5:
+    no code sets `sole_admin` back to true. This is an **accepted limit** that narrows d10's
+    "sticky" sentence and d19's "the way out with one dormant admin": after a settled drop to one
+    admin person, or a departing person's own drop, the tenant stays out of `sole_admin`, and the
+    one remaining admin person's widening waits on a second admin person who counts (d11). A
+    recovered tenant whose one dormant admin is settled away therefore widens again only once a
+    new admin person, flagged by a confirmed act, has counted for seven days.
+30. **`sole_admin` acts in To do (decided by the operator, 2026-11-28).** A widening act taken at
+    once under `sole_admin` is left out of "Admin acts to confirm" and out of the To do count, for
+    every admin person. It stays in the admin acts list (`GET /v2/admin/acts`), where Decline is
+    still offered and still undoes it (amendment of 2026-11-27, answer (b)). This narrows d10's
+    "every marked act appears in their To do once their entry is seven days old" to the acts
+    list.
+
+## Note of 2026-11-28: the review round's deferrals and readings (proposed, for the operator to confirm)
+
+The v0.8.6 fix lane A took these readings where the reviews of PR #527 found the build short of
+this record and building the whole rule did not fit the round. Each fails closed. None is decided
+until the operator confirms it.
+
+- **d5's in-progress reviewer confirmation is not built; such a grant is refused.** An admin's
+  grant, or an issuance's grant, on a node inside an in-progress subtree is refused
+  `request.validation` with `details.field: /grants` and `details.reason: in_progress_subtree`
+  wherever it would wait on a second admin person, instead of being confirmed by that admin
+  person alone. A `sole_admin` tenant takes it at once, marked, as every widening act there (d10). The subtree's own people still issue their keys as persons' own acts. The two-party
+  confirmation (a second admin person and a person holding reviewer there) is deferred to v0.8.7.
+- **d14's v0.8.6 rotation by another admin is not built; it stays refused.** An admin's rotation
+  of another admin person's key or of a person's key is still refused `not_admins_key` and
+  `in_persons_root`, as in v0.8.5. The pending rotation, whose confirmation journals `key.rotated`,
+  is deferred to v0.8.7.
+- **d8's containment by the target.** From the contest-only sign-in, below three admin persons,
+  the target revokes every live admin key of the act's initiator: its bearer keys, its
+  `<user>-admin` session keys, which ends its admin sessions, and the act's own key. Each
+  revocation is final, is sealed as the target with no key acting, and names the act. It is a form
+  on the contest-only page (`POST /web/contest` with `act=contain`), not a route of its own, and
+  it is never reached through an admin key. Ending the initiator's other sessions is not built.
+- **A limit change that raises one limit and lowers the other is two acts (d15).** It is refused
+  `request.validation`, as answer 19 refuses a federation policy change that does both. A
+  confirmation applies only the members the act sent, over the key's limits as they stand then,
+  and a decline sets back only those members where the key still holds the act's value.
+- **A quota change is `raise_limits` or `lower_limits` (d15).** It is classed by the person's
+  effective limit before and after, and `POST /v2/web/users/{user}/quota` takes an optional
+  `reason`.
+- **Declining an accepted `sole_admin` admin flag is an un-flag (d8, d10, d21).** The decline
+  journals `unflag_admin` against that person, which is contestable and suspends their admin
+  keys, or `unflag_own` for the decliner's own flag, which revokes theirs. It requires a reason.
+- **An admin entry does not move to another user with its flag (d5, d8).** That change is refused
+  on the `user` field and is sent as an un-flag, then a new admin entry.
+- **An unlinked admin key is suspended (d21, d22).** `POST /v2/keys/{key}/unlink` on a bearer
+  admin key suspends it as unlinked in the unlink's own commit, as the first start suspends an
+  unlinked key. It then reaches only `/v2/whoami`, its self-link and its conversion. An accepted
+  link lifts the suspension, and after 30 days the start revokes it. The unlink is not journalled
+  as an admin act.
+- **A contest restores the entry accepted (d8, answer 3).** The restored entry keeps its pinned
+  provider subjects. Its `admin_since` restarts at the restoration, so the restored admin person
+  counts as a second admin person again only after seven days. Keeping the original
+  `admin_since` is deferred.
+- **A recovery's completion holds while a sign-in row is unwritten (d19, answer 26).** The sweep
+  writes the process's unwritten authentication rows again first. While one is still unwritten it
+  refuses the completion `log_write_failed`, and the request stays.
+
 ## Rejected alternatives
 
 | Alternative | Why not |

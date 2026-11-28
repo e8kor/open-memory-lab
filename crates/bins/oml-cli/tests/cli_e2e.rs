@@ -2077,18 +2077,15 @@ async fn keys_limit_moves_a_keys_expiry_and_rate_and_doctor_names_an_expired_key
         "{refused} {log}"
     );
 
-    // Two seconds from now on the server's clock, and no rate.
+    // No rate, then two seconds from now on the server's clock: a change
+    // that raises one limit and lowers the other is two acts (ADR-0097 d15,
+    // note of 2026-11-28).
+    let (code, _, log) = lab.json(None, &["keys", "limit", "reviewer", "--no-rate-limit"]);
+    assert_eq!(code, 0, "{log}");
     let soon = oml_transport_http::time::system_event_time_plus(2);
     let (code, set, log) = lab.json(
         None,
-        &[
-            "keys",
-            "limit",
-            "reviewer",
-            "--expires",
-            soon.as_str(),
-            "--no-rate-limit",
-        ],
+        &["keys", "limit", "reviewer", "--expires", soon.as_str()],
     );
     assert_eq!(code, 0, "{log}");
     assert_eq!(set["expiry"], soon.as_str(), "{log}");

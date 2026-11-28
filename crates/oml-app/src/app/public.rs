@@ -381,7 +381,9 @@ where
         &self,
         bearer: impl Into<Bearer<'_>>,
     ) -> Result<PublicStats, AppError> {
-        let admin = self.admin_caller(bearer.into(), "rescan").await?.key;
+        // A maintenance key reads the rescan window's counts too (ADR-0097
+        // d18; review finding surface-1).
+        let admin = self.counts_caller(bearer, "rescan").await?.key;
         self.public_stats(admin.tenant_id).await
     }
 
@@ -397,8 +399,20 @@ where
         &self,
         bearer: impl Into<Bearer<'_>>,
     ) -> Result<Vec<(Uuid, u64)>, AppError> {
-        let admin = self.admin_caller(bearer.into(), "rescan").await?.key;
-        Ok(self.journal.flagged_creates(admin.tenant_id).await?)
+        // A maintenance key reads the count with no key named: one row,
+        // the nil id, holding the tenant's total (ADR-0097 d18, no key
+        // list; review finding surface-1).
+        let admin = self.counts_caller(bearer, "rescan").await?.key;
+        let rows = self.journal.flagged_creates(admin.tenant_id).await?;
+        if admin.role == Role::Maintenance {
+            let total: u64 = rows.iter().map(|(_, n)| n).sum();
+            return Ok(if total == 0 {
+                Vec::new()
+            } else {
+                vec![(Uuid::nil(), total)]
+            });
+        }
+        Ok(rows)
     }
 
     /// The public nodes `key` reads through the flag, apart from its grants,

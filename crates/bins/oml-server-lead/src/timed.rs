@@ -1711,6 +1711,13 @@ impl<J: WebStore> WebStore for Timed<J> {
         )
     }
 
+    fn live_admin_keys(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<KeyRecord>, StoreError>> + Send {
+        timed("live_admin_keys", self.inner.live_admin_keys(tenant_id))
+    }
+
     fn web_keys_issued_by(
         &self,
         tenant_id: Uuid,

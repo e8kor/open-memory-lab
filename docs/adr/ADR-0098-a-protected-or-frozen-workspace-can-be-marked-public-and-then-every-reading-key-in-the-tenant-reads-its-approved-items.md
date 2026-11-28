@@ -391,6 +391,20 @@ left; each is the lane's recommendation and is recorded here before the code tha
    workspace read, the tree read and the workspace list serve `public: {value, since, act_id,
    sole_admin}` on each node; the counted tree, a count per node, serves `public: true|false`.
 
+### The operator's answers of 2026-11-28 (decided by the operator)
+
+4. **The private ancestors of a public node (D28; decided by the operator, 2026-11-28).** A
+   public node's path, wherever it is served, shows each ancestor that the reading key cannot read
+   as the placeholder segment `…` (U+2026), never its name: recall hits' `workspace_path` and
+   `search.sources`, the workspace read's `path`, the tree read's `path`, the MCP reads that serve
+   them, and the console, which shows the path as served. `universe` is always named. An ancestor
+   the key reads, through a grant or because it is public itself, keeps its name. An admin or
+   `maintenance` key, which reads the tree's structure by its role, sees every name. The rule
+   applies to a public node's path only; a node a key reaches through its own grant is served as
+   before. This replaces the disclosure surface-10 found: the name of a private shared node is not
+   disclosed by a public node below it, as answer 1 of 2026-11-27 already keeps it from a bare-name
+   lookup.
+
 ## Rejected alternatives
 
 | Alternative | Why not |

@@ -9,7 +9,7 @@ mod admin_acts;
 mod against_admin;
 mod auth;
 pub mod busy;
-pub use against_admin::{Freeze, OPERATOR_PRINCIPAL, OPERATOR_SETTLE_AFTER_US};
+pub use against_admin::{Freeze, OPERATOR_PRINCIPAL, OPERATOR_SETTLE_AFTER_US, UpgradeSweep};
 mod emails;
 mod exports;
 mod federation;
@@ -323,6 +323,12 @@ pub struct App<J, S, C, I, Sc> {
     /// doctor's `auth.log_write_failed` (answer 24). The key's next
     /// authentication writes the row again.
     authentication_write_failures: AtomicU64,
+    /// The authentication rows this process could not write, by key, each
+    /// with its tenant and UTC day, retried by the recovery sweep's pass of
+    /// that tenant until written, so a sign-in whose row failed still
+    /// cancels a requested recovery on every replica once the store takes
+    /// writes again (ADR-0097 d19, answer 26; review finding store-5).
+    unwritten_authentications: std::sync::Mutex<BTreeMap<Uuid, (Uuid, String)>>,
     /// The learned sparse encoder the sparse pipelines read the query with
     /// and the encoder task writes kind 2 with; `None` where the deployment
     /// serves no sparse pipeline (ADR-0052 d14, d16).
@@ -715,6 +721,12 @@ pub(crate) enum Issuance<'a> {
     Plain(Option<&'a str>, Option<&'a Timebox>),
     /// A session key for the allowlist user named: no value.
     Session(&'a Name),
+    /// A session key an admin designates for the user named, with the
+    /// admin's reason: no value, and a widening admin act as a plain
+    /// issuance is, so its grants wait on a second admin person outside
+    /// `sole_admin` (ADR-0097 d5, d6; the first `<user>-curate`, review
+    /// finding core-2).
+    AdminSession(&'a Name, Option<&'a str>),
     /// A person's `<user>-web` issuing a key in its own root, sealed on the
     /// chain head read before that key's access ([`Head::BeforeAccess`]).
     PersonsOwn(&'a Option<SignedEnvelope>),
@@ -1016,6 +1028,41 @@ fn ancestry_of(
 /// A node's derived path from its ancestry, listed node to root: the names
 /// from `universe` down to the node, joined with `.` (ADR-0025 d14). Every
 /// path the app serves is this derivation.
+/// The segment a public node's path shows for an ancestor the reading key
+/// cannot read, in place of its name (ADR-0098, answer 4 of 2026-11-28).
+pub const PRIVATE_SEGMENT: &str = "\u{2026}";
+
+/// The path of the node `ancestry` names, node first, as `caller` is served
+/// it (ADR-0098, answer 4 of 2026-11-28, D28): for a public node, every
+/// ancestor the key cannot read is [`PRIVATE_SEGMENT`], never its name;
+/// `universe`, the node itself and every ancestor the key reads keep their
+/// names. An admin or `maintenance` key reads the tree's structure by its
+/// role and sees every name, and a node that is not public is served as
+/// before ([`derived_path`]).
+fn served_path(caller: &Caller, ancestry: &[WorkspaceRecord]) -> String {
+    let public = ancestry.first().is_some_and(|w| w.public);
+    if !public || matches!(caller.key.role, Role::Admin | Role::Maintenance) {
+        return derived_path(ancestry);
+    }
+    let ids: Vec<Uuid> = ancestry.iter().map(|w| w.workspace_id).collect();
+    ancestry
+        .iter()
+        .enumerate()
+        .rev()
+        .map(|(i, w)| {
+            if i == 0
+                || w.parent_id.is_none()
+                || caller.effective(&ids[i..]).contains(&Role::Reader)
+            {
+                w.name.as_str()
+            } else {
+                PRIVATE_SEGMENT
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
 fn derived_path(ancestry: &[WorkspaceRecord]) -> String {
     ancestry
         .iter()
@@ -2051,6 +2098,7 @@ where
             key_windows: std::sync::Mutex::default(),
             authenticated_days: std::sync::Mutex::default(),
             authentication_write_failures: AtomicU64::new(0),
+            unwritten_authentications: std::sync::Mutex::default(),
             sparse: None,
             formats: Arc::new(crate::ports::ProseFormats),
             signup: None,
@@ -2412,23 +2460,60 @@ where
             }
             days.insert(key.key_id, day);
         }
+        let today = oml_domain::usage::day_of(&now).to_owned();
         let written = self
             .journal
-            .record_authentication(
-                key.tenant_id,
-                key.key_id,
-                oml_domain::usage::day_of(&now),
-                1,
-            )
+            .record_authentication(key.tenant_id, key.key_id, &today, 1)
             .await;
-        if written.is_err() {
+        if written.is_ok() {
+            self.unwritten_authentications
+                .lock()
+                .expect("unpoisoned")
+                .remove(&key.key_id);
+        } else {
             self.authentication_write_failures
                 .fetch_add(1, Ordering::Relaxed);
+            self.unwritten_authentications
+                .lock()
+                .expect("unpoisoned")
+                .insert(key.key_id, (key.tenant_id, today));
             let mut days = self.authenticated_days.lock().expect("unpoisoned");
             if days.get(&key.key_id) == Some(&day) {
                 days.remove(&key.key_id);
             }
         }
+    }
+
+    /// Writes again the authentication rows of `tenant_id` this process
+    /// could not write, and answers how many are still unwritten (review
+    /// finding store-5): the recovery sweep's pass of the tenant runs it
+    /// first, so a failed sign-in row cancels a recovery once it lands.
+    pub(crate) async fn retry_authentications(&self, tenant_id: Uuid) -> usize {
+        let due: Vec<(Uuid, String)> = self
+            .unwritten_authentications
+            .lock()
+            .expect("unpoisoned")
+            .iter()
+            .filter(|(_, (t, _))| *t == tenant_id)
+            .map(|(k, (_, day))| (*k, day.clone()))
+            .collect();
+        let mut left = 0;
+        for (key_id, day) in due {
+            if self
+                .journal
+                .record_authentication(tenant_id, key_id, &day, 1)
+                .await
+                .is_ok()
+            {
+                self.unwritten_authentications
+                    .lock()
+                    .expect("unpoisoned")
+                    .remove(&key_id);
+            } else {
+                left += 1;
+            }
+        }
+        left
     }
 
     /// The authentication rows this process could not write since it
@@ -2805,7 +2890,7 @@ where
         // `universe` is the one node with no parent.
         let anonymous = ancestry.as_ref().is_some_and(|a| a.len() == 1)
             && memory.author_key_id != caller.key.key_id;
-        let workspace_path = ancestry.map(|ancestry| derived_path(&ancestry));
+        let workspace_path = ancestry.map(|ancestry| served_path(caller, &ancestry));
         let mut derives_from = Vec::with_capacity(memory.derives_from.len());
         if !anonymous {
             for ancestor in &memory.derives_from {
@@ -3591,6 +3676,10 @@ where
     ) -> Result<IssuedKey, AppError> {
         let tenant_id = issuer.tenant_id;
         let key_id = record.key_id;
+        // An admin's grant into an in-progress subtree waits on its reviewer
+        // person too, not built: refused by name (ADR-0097 d5; core-9).
+        let nodes: Vec<Uuid> = grants.iter().map(|g| g.node).collect();
+        self.refuse_in_progress_grants(tenant_id, &nodes).await?;
         // The confirm screen flags a principal spelled as a person's name:
         // a user root holds it (ADR-0097 d23).
         let principal_names_person = match Name::parse_reference(&req.principal) {
@@ -4530,7 +4619,7 @@ where
             let admitted = match how {
                 Issuance::PersonsOwn(_) => true,
                 Issuance::Plain(..) => issuer.role == Role::Admin,
-                Issuance::Session(_) => false,
+                Issuance::Session(_) | Issuance::AdminSession(..) => false,
             };
             if !admitted {
                 return Err(AppError::VerbCeiling {
@@ -4577,7 +4666,9 @@ where
         // The server issuer issues the four session-key shapes alone, which
         // its caller fixes, read as an admin's ceiling (ADR-0097 d18).
         let ceiling = match how {
-            Issuance::PersonsOwn(_) | Issuance::Session(_) => Role::Admin,
+            Issuance::PersonsOwn(_) | Issuance::Session(_) | Issuance::AdminSession(..) => {
+                Role::Admin
+            }
             Issuance::Plain(..) => issuer.role,
         };
         // A curator is a reviewer key used by an agent, whose submitter grants
@@ -4762,7 +4853,7 @@ where
         }
         // A session key has no value and so no hash: nothing can present it
         // (ADR-0045 d6).
-        if let Issuance::Session(session_user) = how {
+        if let Issuance::Session(session_user) | Issuance::AdminSession(session_user, _) = how {
             record.credential = Credential::Session;
             record.key_hash = None;
             record.session_user = Some(session_user.clone());
@@ -4772,27 +4863,35 @@ where
         let guardrail_scope = record.guardrail_scope;
         let prev = match how {
             Issuance::PersonsOwn(head) => head.clone(),
-            Issuance::Plain(..) | Issuance::Session(_) => self.head_event(tenant_id).await?,
+            Issuance::Plain(..) | Issuance::Session(_) | Issuance::AdminSession(..) => {
+                self.head_event(tenant_id).await?
+            }
         };
         // A key that could read, write, approve or ratify, by an admin key:
         // a widening act (ADR-0097 d5).
-        if let Issuance::Plain(reason, timebox) = how
+        let admin_act = match how {
+            Issuance::Plain(reason, timebox) => Some((reason, timebox)),
+            Issuance::AdminSession(_, reason) => Some((reason, None)),
+            _ => None,
+        };
+        if let Some((reason, timebox)) = admin_act
             && issuer.role == Role::Admin
         {
-            let issued = self
-                .issue_as_admin_act(
-                    &issuer,
-                    req,
-                    record,
-                    grants,
-                    &creations,
-                    oauth,
-                    prev.as_ref(),
-                    (reason, timebox),
-                    user_ref.as_ref(),
-                    admin_person.as_ref(),
-                )
-                .await?;
+            // Boxed: the admin act's future is large, and every issuance's
+            // future would otherwise carry it on the caller's stack.
+            let issued = Box::pin(self.issue_as_admin_act(
+                &issuer,
+                req,
+                record,
+                grants,
+                &creations,
+                oauth,
+                prev.as_ref(),
+                (reason, timebox),
+                user_ref.as_ref(),
+                admin_person.as_ref(),
+            ))
+            .await?;
             return Ok(IssuedKey {
                 value,
                 default_workspace,
@@ -5561,7 +5660,7 @@ where
             in_progress_root,
             stale_versions,
             approved_by_kind,
-            path: derived_path(&ancestry),
+            path: served_path(&caller, &ancestry),
             policy: review_policy(),
             federation,
             pending_transitions,
@@ -5697,7 +5796,18 @@ where
             .await?;
         let mut items = Vec::with_capacity(page.len());
         for (names, workspace) in page {
-            let path = names.iter().map(Name::as_str).collect::<Vec<_>>().join(".");
+            // A public node's private ancestors are placeholders to a key
+            // that cannot read them (ADR-0098, answer 4 of 2026-11-28).
+            let path = if workspace.public && !structure {
+                let ancestry = self
+                    .journal
+                    .workspace_ancestry(tenant_id, workspace.workspace_id)
+                    .await?
+                    .unwrap_or_default();
+                served_path(&caller, &ancestry)
+            } else {
+                names.iter().map(Name::as_str).collect::<Vec<_>>().join(".")
+            };
             let crew = match workspace.crew_id {
                 None => None,
                 Some(crew_id) => match crews.entry(crew_id) {
@@ -10318,7 +10428,7 @@ where
             .await?
             .unwrap_or_default();
         let ids: Vec<Uuid> = chain.iter().map(|w| w.workspace_id).collect();
-        let scope_path = derived_path(&chain);
+        let scope_path = served_path(&caller, &chain);
         let bound = match guardrail_scope {
             GuardrailScope::Workspace => ids.len().min(1),
             GuardrailScope::Ancestors => ids.len(),
@@ -10328,7 +10438,7 @@ where
             let depth = u32::try_from(ids.len() - 1 - i).unwrap_or(u32::MAX);
             let reads = caller.effective(&ids[i..]).contains(&Role::Reader);
             if reads || !caller.denied(&ids[i..]) {
-                nodes.insert(ids[i], (depth, reads, derived_path(&chain[i..])));
+                nodes.insert(ids[i], (depth, reads, served_path(&caller, &chain[i..])));
             }
         }
         let listed: Vec<Uuid> = nodes.keys().copied().collect();
@@ -10629,7 +10739,7 @@ where
             .await?
             .unwrap_or_default();
         let ids: Vec<Uuid> = chain.iter().map(|w| w.workspace_id).collect();
-        let scope_path = derived_path(&chain);
+        let scope_path = served_path(caller, &chain);
         let bound = match guardrail_scope {
             GuardrailScope::Workspace => ids.len().min(1),
             GuardrailScope::Ancestors => ids.len(),
@@ -10650,7 +10760,7 @@ where
                     distance,
                     true,
                     chain[i].name.as_str().to_owned(),
-                    derived_path(&chain[i..]),
+                    served_path(caller, &chain[i..]),
                 ),
             );
             if in_progress_root_in(&chain[i..]).is_some() {
@@ -10680,7 +10790,7 @@ where
                         u32::try_from(distance).unwrap_or(u32::MAX),
                         false,
                         ancestry[0].name.as_str().to_owned(),
-                        derived_path(&ancestry),
+                        served_path(caller, &ancestry),
                     ),
                 );
                 inside.push(node);
@@ -11918,7 +12028,7 @@ where
         let mut paths: BTreeMap<Uuid, (String, bool)> = BTreeMap::new();
         for i in 1..ids.len() {
             if caller.effective(&ids[i..]).contains(&Role::Reader) {
-                paths.insert(ids[i], (derived_path(&chain[i..]), false));
+                paths.insert(ids[i], (served_path(caller, &chain[i..]), false));
             }
         }
         let mut walked = BTreeMap::new();
@@ -11930,7 +12040,7 @@ where
                 continue;
             }
             if let Some(ancestry) = ancestry_of(&walked, node) {
-                paths.insert(node, (derived_path(&ancestry), true));
+                paths.insert(node, (served_path(caller, &ancestry), true));
             }
         }
         let nodes: Vec<Uuid> = paths.keys().copied().collect();

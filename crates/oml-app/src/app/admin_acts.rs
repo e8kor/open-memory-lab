@@ -128,6 +128,51 @@ fn grant_from_json(value: &Value) -> Result<Grant, AppError> {
     })
 }
 
+/// The limits a `raise_limits` act holds, member by member: `None` for a
+/// member the change did not send, `Some(None)` for one it cleared.
+struct SentLimits {
+    expiry: Option<Option<EventTime>>,
+    requests_per_minute: Option<Option<u32>>,
+}
+
+/// The members of `value`, a `change` or `before` object (review finding
+/// core-7).
+fn limits_of(value: Option<&Value>) -> Result<SentLimits, AppError> {
+    let bad = |e: String| AppError::StoredResponse(format!("admin act limits: {e}"));
+    let Some(value) = value else {
+        return Ok(SentLimits {
+            expiry: None,
+            requests_per_minute: None,
+        });
+    };
+    let expiry = match value.get("expiry") {
+        None => None,
+        Some(Value::Null) => Some(None),
+        Some(v) => Some(Some(
+            EventTime::parse(v.as_str().ok_or_else(|| bad(v.to_string()))?)
+                .map_err(|e| bad(e.to_string()))?,
+        )),
+    };
+    let requests_per_minute = match value.get("requests_per_minute") {
+        None => None,
+        Some(Value::Null) => Some(None),
+        Some(v) => Some(Some(
+            v.as_u64()
+                .and_then(|n| u32::try_from(n).ok())
+                .ok_or_else(|| bad(v.to_string()))?,
+        )),
+    };
+    Ok(SentLimits {
+        expiry,
+        requests_per_minute,
+    })
+}
+
+/// The change a `raise_limits` act's effect sent.
+fn limits_change(effect: &Value) -> Result<SentLimits, AppError> {
+    limits_of(effect.get("change"))
+}
+
 /// An admin person as a confirmation judges them (ADR-0097 d11).
 pub(crate) struct ConfirmerView {
     pub(crate) person: oml_domain::name::Name,
@@ -136,25 +181,27 @@ pub(crate) struct ConfirmerView {
 }
 
 /// Whether `act` is one the admin person of `view` may confirm or review
-/// at `now` (ADR-0097 d2, d10, d11): never their own; a pending act at
-/// least seven days younger than their flag; a widening act a
-/// `sole_admin` tenant took at once, once their flag is seven days old;
-/// and an unsettled time box younger than their flag by seven days (d13).
-/// The one predicate the To do count and the acts list read, so the two
-/// agree.
+/// at `now` (ADR-0097 d2, d11): never their own; a pending act at least
+/// seven days younger than their flag; and an unsettled time box younger
+/// than their flag by seven days (d13). A widening act a `sole_admin`
+/// tenant took at once is not among them: it stays in the acts list, where
+/// a decline still undoes it, and is left out of "Admin acts to confirm"
+/// and the To do count (D30, decided by the operator, 2026-11-28; review
+/// finding surface-2). The one predicate the To do count and the acts
+/// list read, so the two agree.
 pub(crate) fn to_confirm(view: &ConfirmerView, act: &AdminActRecord, now: &EventTime) -> bool {
-    use oml_domain::admin_act::{AdminActClass, AdminActState, counts_for_act};
+    use oml_domain::admin_act::{AdminActState, counts_for_act};
     if act.actor_person.as_ref() == Some(&view.person) {
         return false;
     }
     match act.state_at(now) {
         AdminActState::PendingConfirmation => counts_for_act(view.since, act.at.unix_micros()),
-        // Neither a `sole_admin` act nor a time box counts for a person whose
-        // flag is younger than seven days (ADR-0097 d10, d11, d13).
+        // A time box counts for a person whose flag is seven days older
+        // than the box (ADR-0097 d11, d13); a `sole_admin` act never (D30).
         AdminActState::Effective => {
-            counts_for_act(view.since, now.unix_micros())
-                && ((act.sole_admin && act.class() == AdminActClass::Widening)
-                    || (act.timebox() && counts_for_act(view.since, act.at.unix_micros())))
+            act.timebox()
+                && counts_for_act(view.since, now.unix_micros())
+                && counts_for_act(view.since, act.at.unix_micros())
         }
         _ => false,
     }
@@ -221,6 +268,9 @@ where
         prev: Option<&SignedEnvelope>,
         timebox: bool,
     ) -> Result<BegunAct, AppError> {
+        // An empty or whitespace reason is no reason, on every act, as the
+        // confirmation reads one (ADR-0097 d26; review finding surface-3).
+        let reason = reason.map(str::trim).filter(|r| !r.is_empty());
         let tenant_id = admin.tenant_id;
         // Widening, and an erase's shred, wait on a second admin person
         // outside `sole_admin` (d4, d5, d10); a time box takes effect at
@@ -379,6 +429,35 @@ where
             Some(effect) if before > 0 && effect.seq < receipt.seq => effect,
             _ => receipt,
         })
+    }
+
+    /// Refuses an admin's grant on a node inside an in-progress subtree
+    /// (ADR-0097 d5; review finding core-9): d5 has a person holding
+    /// reviewer in that subtree confirm it too, which is not built, so no
+    /// second admin person alone confirms it. A `sole_admin` tenant takes it
+    /// at once, marked, as every widening act there (d10). A grant whose
+    /// node lies outside every in-progress subtree passes.
+    pub(crate) async fn refuse_in_progress_grants(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+    ) -> Result<(), AppError> {
+        if self.journal.admin_standing(tenant_id).await?.sole_admin
+            && !self.act_against_admin_open(tenant_id).await?
+        {
+            return Ok(());
+        }
+        for &node in nodes {
+            if self
+                .journal
+                .workspace_ancestry(tenant_id, node)
+                .await?
+                .is_some_and(|a| a.iter().any(|w| w.in_progress))
+            {
+                return Err(AppError::AdminAct(AdminActRefusal::InProgressSubtree));
+            }
+        }
+        Ok(())
     }
 
     /// Whether an act against an admin is open in the tenant: then widening
@@ -561,9 +640,13 @@ where
             reason,
         };
         // A pending issuance's key never authenticated; it is revoked so
-        // its value ends with the act (d23).
+        // its value ends with the act (d23). An undo that takes a live,
+        // accepted admin flag off is an un-flag, classed as d8 classes one,
+        // and noticed as one (core-3).
+        let mut standing = None;
         if act.act == AdminActKind::IssueKey || undo {
-            self.undo_effect(&undo_ctx, &act, undo, &mut links).await?;
+            self.undo_effect(&undo_ctx, &act, undo, &mut links, &mut standing)
+                .await?;
         }
         if let Some(workspace_id) = unpublic {
             let prev = links.last().map(|(e, _)| e.clone()).expect("a link");
@@ -576,10 +659,13 @@ where
                 true,
             )?);
         }
-        let reqs = links
+        let mut reqs: Vec<_> = links
             .into_iter()
             .map(|(event, fold)| commit_request(event, fold, None))
             .collect();
+        if let Some(standing) = &standing {
+            self.with_notice(standing, &mut reqs).await?;
+        }
         self.commit_requests(reqs).await?;
         act.settled_at = Some(at);
         Ok(act)
@@ -588,13 +674,18 @@ where
     /// The narrowing effect that undoes `act`, sealed after the last of
     /// `links`, each event naming the decline's `act_id` (ADR-0097 d10, the
     /// operator's decision of 2026-11-27). With `took_effect` false only a
-    /// pending issuance's key is revoked: nothing else applied.
+    /// pending issuance's key is revoked: nothing else applied. A flag the
+    /// person accepted and holds is taken off as an un-flag is (d8, d21):
+    /// another admin person's un-flag, against an admin, suspends their
+    /// admin keys and is contestable; the decliner's own un-flag revokes
+    /// theirs; its act is left in `standing` for the decline's notice.
     async fn undo_effect(
         &self,
         undo: &Undo<'_>,
         act: &AdminActRecord,
         took_effect: bool,
         links: &mut Vec<(SignedEnvelope, MetadataFold)>,
+        standing: &mut Option<AdminActRecord>,
     ) -> Result<(), AppError> {
         let admin = undo.admin;
         let tenant_id = admin.tenant_id;
@@ -716,21 +807,52 @@ where
                     )?;
                 }
             }
+            AdminActKind::RaiseLimits if effect.get("quota").is_some() => {
+                // A quota raise taken at once: the override set back to the
+                // one the act found, while the person still holds the act's
+                // (review finding core-6).
+                let quota = &effect["quota"];
+                let root = uuid_at(quota, "user_root");
+                let name = quota.get("quota").and_then(Value::as_str);
+                let sent = quota.get("limit").and_then(Value::as_u64);
+                let back = quota.get("before").and_then(Value::as_u64);
+                if let (Some(root), Some(name)) = (root, name) {
+                    let held = self
+                        .journal
+                        .user_quota_overrides(tenant_id, root)
+                        .await?
+                        .into_iter()
+                        .find(|(q, _)| q.as_str() == name)
+                        .map(|(_, l)| l);
+                    if held == sent {
+                        let prev = links.last().map(|(e, _)| e.clone()).expect("a link");
+                        links.push(self.quota_link(admin, &prev, quota, back, undo.decline_id)?);
+                    }
+                }
+            }
             AdminActKind::RaiseLimits => {
                 let Some(key) = live else { return Ok(()) };
-                let before = effect.get("before").cloned().unwrap_or(Value::Null);
-                let expiry = before
-                    .get("expiry")
-                    .and_then(Value::as_str)
-                    .map(EventTime::parse)
-                    .transpose()
-                    .map_err(|e| AppError::StoredResponse(e.to_string()))?;
-                let requests_per_minute = before
-                    .get("requests_per_minute")
-                    .and_then(Value::as_u64)
-                    .map(u32::try_from)
-                    .transpose()
-                    .map_err(|e| AppError::StoredResponse(e.to_string()))?;
+                // Only the members the act changed, and only where the key
+                // still holds the act's value: a narrowing since stands
+                // (ADR-0097 d3; review finding core-7).
+                let change = limits_change(effect)?;
+                let before = limits_of(effect.get("before"))?;
+                let mut expiry = key.expiry.clone();
+                let mut requests_per_minute = key.requests_per_minute;
+                if let (Some(set), Some(back)) = (&change.expiry, &before.expiry)
+                    && &key.expiry == set
+                {
+                    expiry.clone_from(back);
+                }
+                if let (Some(set), Some(back)) =
+                    (change.requests_per_minute, before.requests_per_minute)
+                    && key.requests_per_minute == set
+                {
+                    requests_per_minute = back;
+                }
+                if expiry == key.expiry && requests_per_minute == key.requests_per_minute {
+                    return Ok(());
+                }
                 let payload = json!({
                     "key_id": key.key_id.to_string(),
                     "set_by_key_id": admin.key_id.to_string(),
@@ -810,10 +932,47 @@ where
                     user: entry.user.clone(),
                     admin: false,
                 };
+                let kind = self.standing_act(admin, Some(&entry), Some(&req)).await?;
                 if let Some((_, _, event_type, fold, payload)) =
                     self.entry_change(admin, &req, true).await?
                 {
-                    self.push_undo(undo, links, event_type, payload, |_| fold)?;
+                    let Some(kind) = kind else {
+                        self.push_undo(undo, links, event_type, payload, |_| fold)?;
+                        return Ok(());
+                    };
+                    let prev = links.last().map(|(e, _)| e.clone()).expect("a link");
+                    let unflag = self
+                        .begin_admin_act(
+                            admin,
+                            kind,
+                            json!({ "user": entry.user.as_str(), "admin": false,
+                                    "to_user": entry.user.as_str(),
+                                    "email_digest": req.email.digest().to_prefixed() }),
+                            undo.reason,
+                            json!({
+                                "before": { "email": req.email.as_str(), "user": entry.user.as_str(),
+                                            "admin": true, "disabled": entry.disabled_at.is_some() },
+                                "after": { "user": entry.user.as_str(), "admin": false },
+                            }),
+                            Some(&prev),
+                        )
+                        .await?;
+                    let act_id = unflag.act_id();
+                    links.push(unflag.link());
+                    let event = self.seal(
+                        Some(&unflag.event),
+                        tenant_id,
+                        event_type,
+                        &admin.principal,
+                        Some(admin.key_id),
+                        with_act_id(payload, act_id),
+                    )?;
+                    links.push((event.clone(), fold));
+                    links.extend(
+                        self.standing_links(admin, act_id, kind, &entry.user, &event)
+                            .await?,
+                    );
+                    *standing = Some(unflag.record);
                 }
             }
             _ => {}
@@ -1055,22 +1214,31 @@ where
                 }
                 self.confirmed_code(admin, act, key_id, code, links).await?;
             }
+            AdminActKind::RaiseLimits if effect.get("quota").is_some() => {
+                // A quota raise: the override the act recorded (review
+                // finding core-6).
+                let quota = &effect["quota"];
+                let limit = quota.get("limit").and_then(Value::as_u64);
+                let prev = last(links);
+                links.push(self.quota_link(admin, &prev, quota, limit, act.act_id)?);
+            }
             AdminActKind::RaiseLimits => {
                 let key_id = key_id.ok_or_else(|| {
                     AppError::StoredResponse(format!("admin act {} names no key", act.act_id))
                 })?;
-                let expiry = effect
-                    .get("expiry")
-                    .and_then(Value::as_str)
-                    .map(EventTime::parse)
-                    .transpose()
-                    .map_err(|e| AppError::StoredResponse(e.to_string()))?;
-                let requests_per_minute = effect
-                    .get("requests_per_minute")
-                    .and_then(Value::as_u64)
-                    .map(u32::try_from)
-                    .transpose()
-                    .map_err(|e| AppError::StoredResponse(e.to_string()))?;
+                // The members the change sent, over the key's limits as they
+                // stand at the confirmation, so a narrowing since stands
+                // (review finding core-7).
+                let key = self
+                    .journal
+                    .key(tenant_id, key_id)
+                    .await?
+                    .ok_or(AppError::NotFound)?;
+                let change = limits_change(effect)?;
+                let expiry = change.expiry.unwrap_or_else(|| key.expiry.clone());
+                let requests_per_minute = change
+                    .requests_per_minute
+                    .unwrap_or(key.requests_per_minute);
                 let prev = last(links);
                 let event = self.seal(
                     Some(&prev),

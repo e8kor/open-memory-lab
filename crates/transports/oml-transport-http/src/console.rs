@@ -182,6 +182,10 @@ struct QuotaBody {
     connections: Option<Option<u64>>,
     #[serde(default, deserialize_with = "present")]
     requests_per_minute: Option<Option<u64>>,
+    /// The admin's reason, which a raise that waits on a second admin
+    /// person requires (ADR-0097 d15, d26).
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 /// A member sent as `null` is `Some(None)`, the default again; one not
@@ -1387,27 +1391,34 @@ where
             ));
         }
         let st = st.clone();
+        let reason = req.reason;
         claim
             .run(async move {
                 for (i, (quota, limit)) in sent.into_iter().enumerate() {
-                    retry_chain(|| st.app.set_web_user_quota(&caller, &user, quota, limit))
-                        .await
-                        .map_err(|e| {
-                            let e = match e {
-                                AppError::WebField { message, .. } => ApiError::validation(message)
-                                    .with_details(
-                                        json!({ "field": format!("/{}", quota.as_str()) }),
-                                    ),
-                                e => map_app_error(e, ErrorContext::Write),
-                            };
-                            // A quota refused after an earlier one was set
-                            // leaves the earlier one standing.
-                            if i == 0 {
-                                ActFailure::first(e)
-                            } else {
-                                ActFailure::after(e)
-                            }
-                        })?;
+                    retry_chain(|| {
+                        st.app.set_web_user_quota_with_reason(
+                            &caller,
+                            &user,
+                            quota,
+                            limit,
+                            reason.as_deref(),
+                        )
+                    })
+                    .await
+                    .map_err(|e| {
+                        let e = match e {
+                            AppError::WebField { message, .. } => ApiError::validation(message)
+                                .with_details(json!({ "field": format!("/{}", quota.as_str()) })),
+                            e => map_app_error(e, ErrorContext::Write),
+                        };
+                        // A quota refused after an earlier one was set
+                        // leaves the earlier one standing.
+                        if i == 0 {
+                            ActFailure::first(e)
+                        } else {
+                            ActFailure::after(e)
+                        }
+                    })?;
                 }
                 let row = st
                     .app

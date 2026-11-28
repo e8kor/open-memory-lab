@@ -518,6 +518,13 @@ pub enum AdminActRefusal {
     /// The operator settles a freeze only once it has been open 24 hours,
     /// a placeholder (d19).
     FreezeTooRecent,
+    /// An admin's grant into an in-progress subtree, which d5 has a person
+    /// holding reviewer there confirm as well as a second admin person: the
+    /// reviewer's confirmation is not built in v0.8.6, so outside
+    /// `sole_admin` the grant is refused by name rather than confirmed by an
+    /// admin alone (review
+    /// finding core-9; the fix round's note of 2026-11-28).
+    InProgressSubtree,
 }
 
 impl AdminActRefusal {
@@ -538,6 +545,7 @@ impl AdminActRefusal {
             AdminActRefusal::FewerThanThree => "fewer_than_three",
             AdminActRefusal::NotFrozen => "not_frozen",
             AdminActRefusal::FreezeTooRecent => "freeze_too_recent",
+            AdminActRefusal::InProgressSubtree => "in_progress_subtree",
         }
     }
 
@@ -580,6 +588,9 @@ impl AdminActRefusal {
             AdminActRefusal::FreezeTooRecent => {
                 "the operator settles a freeze only once it has been open 24 hours"
             }
+            AdminActRefusal::InProgressSubtree => {
+                "an admin's grant into an in-progress subtree also waits on a person holding reviewer there, which this build does not take yet: grant outside the subtree, or let the subtree's own people issue the key"
+            }
         }
     }
 
@@ -588,6 +599,7 @@ impl AdminActRefusal {
     pub fn field(self) -> &'static str {
         match self {
             AdminActRefusal::KeyPending => "key",
+            AdminActRefusal::InProgressSubtree => "/grants",
             _ => "act",
         }
     }

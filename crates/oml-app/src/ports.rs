@@ -2474,6 +2474,16 @@ pub trait WebStore: JournalStore {
         tenant_id: Uuid,
     ) -> impl Future<Output = Result<Vec<KeyRecord>, StoreError>> + Send;
 
+    /// Every live key of the tenant whose role is `admin`, whatever its
+    /// credential, link, suspension or pending state, in name order: the
+    /// keys a completed recovery revokes and the first start's migration
+    /// reads (ADR-0097 d19, d27; D27 of 2026-11-28). Reserved keys hold no
+    /// admin role and are not among them.
+    fn live_admin_keys(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<KeyRecord>, StoreError>> + Send;
+
     /// Every key of the tenant `issuer` issued, revoked ones included, in
     /// name order: doctor reads the server issuer's issuances against the
     /// four session-key shapes (ADR-0097 d18).

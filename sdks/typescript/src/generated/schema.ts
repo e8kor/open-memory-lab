@@ -9076,6 +9076,8 @@ export interface operations {
                     keys?: number | null;
                     connections?: number | null;
                     requests_per_minute?: number | null;
+                    /** @description The admin's reason. A raise above the person's effective limit, or a cleared override whose default is higher, is a widening admin act (raise_limits) that waits on a second admin person outside sole_admin and requires a reason, else request.validation with details.field /reason; a lowering is narrowing (lower_limits) and applies at once (ADR-0097 d15, d26). */
+                    reason?: string | null;
                 };
             };
         };

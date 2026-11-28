@@ -21,7 +21,7 @@ use oml_domain::{MemoryKind, Role, WorkspaceStatus, event_types};
 
 use oml_domain::admin_act::AdminActKind;
 
-use super::{App, Caller, derived_path};
+use super::{App, Caller, derived_path, served_path};
 use crate::federation::{
     CountsScope, CutReport, DefaultSources, FederationActTaken, FederationPolicy,
     FederationPolicyChange, FederationRecord, FederationSettings, SearchedSource, SourceRefusal,
@@ -946,17 +946,17 @@ where
     ) -> Result<SearchedSource, AppError> {
         // The path the subtrees already gave, else the node's ancestry: a
         // scope's `universe` inside a user root (ADR-0044 d10).
+        // A public node searched is served with its private ancestors as
+        // placeholders (ADR-0098, answer 4 of 2026-11-28): its ancestry is
+        // read again whenever the node is public, whatever path the walk
+        // gave.
+        // Boxed: the read sits in every recall's future, which stays small.
+        let ancestry = Box::pin(self.journal.workspace_ancestry(caller.key.tenant_id, node))
+            .await?
+            .ok_or_else(|| StoreError::Backend(format!("searched node {node} has no ancestry")))?;
         let workspace_path = match path {
-            Some(path) => path.clone(),
-            None => derived_path(
-                &self
-                    .journal
-                    .workspace_ancestry(caller.key.tenant_id, node)
-                    .await?
-                    .ok_or_else(|| {
-                        StoreError::Backend(format!("searched node {node} has no ancestry"))
-                    })?,
-            ),
+            Some(path) if !ancestry.first().is_some_and(|w| w.public) => path.clone(),
+            _ => served_path(caller, &ancestry),
         };
         let counts = kept.of_node(&node);
         let matched_words = match via {

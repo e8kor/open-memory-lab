@@ -232,8 +232,16 @@ where
 
     /// `POST /web/contest` (ADR-0097 d8): the contest the contest-only
     /// sign-in opened, same origin only, under its sealed cookie of under
-    /// ten minutes.
-    pub(crate) async fn contest(State(st): State<Self>, rid: Rid, headers: HeaderMap) -> Response {
+    /// ten minutes. With the form field `act=contain`, sent from the page
+    /// the contest answers, the target instead revokes the initiator's
+    /// admin keys below three admin persons, each final (review finding
+    /// core-10); the cookie then ends.
+    pub(crate) async fn contest(
+        State(st): State<Self>,
+        rid: Rid,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
         let line = WebLine::default();
         let answer = async {
             if let Some(refused) = person_only(&headers) {
@@ -260,16 +268,46 @@ where
                 let error = app_error(AppError::WebSignIn(SignInRefusal::StateMismatch));
                 return Self::start_refused(&error, line);
             };
+            let contain = !body.is_empty()
+                && form_pairs(&body)
+                    .ok()
+                    .is_some_and(|pairs| pairs.iter().any(|(k, v)| k == "act" && v == "contain"));
+            if contain {
+                return match retry_chain(|| st.app.contain_initiator_as(tenant_id, &user, act_id))
+                    .await
+                {
+                    Ok(revoked) => {
+                        let mut response = html_response(
+                            StatusCode::OK,
+                            bare(
+                                "Contained",
+                                &format!(
+                                    r#"<h1>Contained</h1><p class="desc">The admin keys of the person who took the act are revoked, {} in all, and their admin sessions end. Nothing comes back.</p><p><a href="/web/sign-in">Sign in</a></p>"#,
+                                    revoked.len()
+                                ),
+                            ),
+                        );
+                        append_cookie(&mut response, &clear_cookie(CONTEST_COOKIE));
+                        Answer {
+                            response,
+                            error_code: None,
+                            line,
+                        }
+                    }
+                    Err(e) => Self::start_refused(&app_error(e), line),
+                };
+            }
             match retry_chain(|| st.app.contest_admin_act_as(tenant_id, &user, act_id)).await {
                 Ok(_) => {
-                    let mut response = html_response(
+                    // The cookie stays for its ten minutes, so the target may
+                    // still revoke the initiator's admin keys (d8).
+                    let response = html_response(
                         StatusCode::OK,
                         bare(
                             "Contested",
-                            r#"<h1>Contested</h1><p class="desc">The flag and the sign-in are back; the admin keys stay suspended until the act is settled.</p><p><a href="/web/sign-in">Sign in</a></p>"#,
+                            r#"<h1>Contested</h1><p class="desc">The flag and the sign-in are back; the admin keys stay suspended until the act is settled.</p><form method="post" action="/web/contest"><input type="hidden" name="act" value="contain"><p class="desc">If the act was taken with a stolen key or session, the admin keys of the person who took it can be revoked here, and their admin sessions end. A revocation is final.</p><button type="submit">Revoke the initiator's admin keys</button></form><p><a href="/web/sign-in">Sign in</a></p>"#,
                         ),
                     );
-                    append_cookie(&mut response, &clear_cookie(CONTEST_COOKIE));
                     Answer {
                         response,
                         error_code: None,

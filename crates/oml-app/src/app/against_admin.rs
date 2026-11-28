@@ -92,6 +92,16 @@ fn session_key_shape(key: &KeyRecord) -> bool {
         })
 }
 
+/// What the first start's upgrade sweep did (ADR-0097 d21, the production
+/// migration; D27 of 2026-11-28): keys suspended as unlinked, revoked past
+/// their window, and converted to `maintenance`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct UpgradeSweep {
+    pub suspended: u64,
+    pub revoked: u64,
+    pub converted: u64,
+}
+
 impl<J, S, C, I, Sc> App<J, S, C, I, Sc>
 where
     J: WebStore,
@@ -136,31 +146,66 @@ where
     }
 
     /// The upgrade window at a start (ADR-0097 d21, d22, the production
-    /// migration): in each of `tenants`, every live bearer admin key with no
-    /// accepted link is suspended, `key.suspended {cause: unlinked}`, signed
-    /// by the server with no key acting, and still reaches `/v2/whoami`
-    /// and `POST /v2/keys/self/link`; one suspended so for more than
-    /// [`UNLINKED_ADMIN_KEY_WINDOW_SECS`](crate::types::UNLINKED_ADMIN_KEY_WINDOW_SECS) is revoked, `key.revoked {cause:
-    /// upgrade}`. One chain per tenant; a tenant with nothing to do
-    /// journals nothing, so a later start journals nothing. Answers the
-    /// count of keys suspended and revoked.
+    /// migration; the operator's decision D27 of 2026-11-28), in each of
+    /// `tenants`, signed by the server with no key acting:
+    /// - every live bearer admin key `used_by: service` is converted to
+    ///   `maintenance` in place, `key.converted {cause: upgrade}`, an
+    ///   unlinked suspension lifted first, so a service keeps its hash and
+    ///   reads counts;
+    /// - every other live bearer admin key with no accepted link and no
+    ///   link pending is suspended, `key.suspended {cause: unlinked}`, and
+    ///   still reaches `/v2/whoami`, `POST /v2/keys/self/link` and `POST
+    ///   /v2/keys/self/convert`; one suspended so for more than
+    ///   [`UNLINKED_ADMIN_KEY_WINDOW_SECS`](crate::types::UNLINKED_ADMIN_KEY_WINDOW_SECS)
+    ///   is revoked, `key.revoked {cause: upgrade}`;
+    /// - a key whose link awaits its person's acceptance is not swept: the
+    ///   pending link already keeps it from authenticating (D27).
+    ///
+    /// One chain per tenant; a tenant with nothing to do journals nothing,
+    /// so a later start journals nothing. Answers the count of keys
+    /// suspended, revoked and converted.
     ///
     /// # Errors
     /// The store's.
     pub async fn suspend_unlinked_admin_keys(
         &self,
         tenants: &[Uuid],
-    ) -> Result<(u64, u64), AppError> {
+    ) -> Result<UpgradeSweep, AppError> {
         let now = self.clock.now();
-        let (mut suspended, mut revoked) = (0, 0);
+        let mut sweep = UpgradeSweep::default();
         for &tenant_id in tenants {
-            let keys = self.journal.web_unlinked_admin_keys(tenant_id).await?;
+            let keys = self.journal.live_admin_keys(tenant_id).await?;
             let mut links: Links = Vec::new();
             let mut last = self.head_event(tenant_id).await?;
             for key in keys {
+                if key.credential != Credential::Bearer {
+                    continue;
+                }
+                let unlinked_or_none = key
+                    .suspended
+                    .as_ref()
+                    .is_none_or(|s| s.cause == SuspensionCause::Unlinked);
+                if key.used_by == oml_domain::UsedBy::Service {
+                    if unlinked_or_none {
+                        sweep.converted += 1;
+                        let converted = self.conversion_links(
+                            &key,
+                            last.as_ref(),
+                            "oml-server",
+                            None,
+                            Some(AdminActCause::Upgrade),
+                        )?;
+                        last = converted.last().map(|(e, _)| e.clone());
+                        links.extend(converted);
+                    }
+                    continue;
+                }
+                if key.linked_user.is_some() || key.link_pending.is_some() {
+                    continue;
+                }
                 let (event_type, payload, fold) = match &key.suspended {
                     None => {
-                        suspended += 1;
+                        sweep.suspended += 1;
                         (
                             event_types::KEY_SUSPENDED,
                             json!({
@@ -183,7 +228,7 @@ where
                             && now.unix_micros() - s.at.unix_micros()
                                 >= crate::types::UNLINKED_ADMIN_KEY_WINDOW_SECS * 1_000_000 =>
                     {
-                        revoked += 1;
+                        sweep.revoked += 1;
                         (
                             event_types::KEY_REVOKED,
                             json!({
@@ -226,7 +271,7 @@ where
                 self.commit_links(links).await?;
             }
         }
-        Ok((suspended, revoked))
+        Ok(sweep)
     }
 
     /// The act an entry change by `admin` is, as d8 and d21 class it, for
@@ -246,6 +291,17 @@ where
         };
         let kind_against = match change {
             None => AdminActKind::RemoveAdmin,
+            // Moving a live admin flag to another user would make that user
+            // an admin person with no second admin's confirmation (d5) and
+            // lift the tenant out of the freeze count (d8): it is two acts,
+            // an un-flag and then a new admin entry (review finding
+            // core-12).
+            Some(req) if req.user != entry.user && req.admin => {
+                return Err(AppError::WebField {
+                    field: "user",
+                    message: "an admin entry moves to another user as two acts: take the admin flag off first, then add the new user's admin entry",
+                });
+            }
             Some(req) if req.user != entry.user => AdminActKind::ChangeAdmin,
             Some(req) if !req.admin => AdminActKind::UnflagAdmin,
             Some(_) => return Ok(None),
@@ -438,6 +494,94 @@ where
         Ok(act)
     }
 
+    /// The target's containment from the contest-only sign-in (ADR-0097
+    /// d8; review finding core-10): below three admin persons, the person
+    /// an open act is against revokes every live admin key of the act's
+    /// initiator, its bearer keys, its `<user>-admin` session keys, which
+    /// ends its admin sessions, and the act's own key, each final. Sealed as
+    /// the target with no key acting, each `key.revoked` naming the act,
+    /// in one commit. Reached only through the contest-only sign-in, never
+    /// through an admin key. Answers the keys revoked.
+    ///
+    /// # Errors
+    /// `not_contestable` for an act that is not open, `not_target` for
+    /// another person, `not_frozen` with three or more admin persons, an act
+    /// the tenant does not hold, and the store's.
+    pub async fn contain_initiator_as(
+        &self,
+        tenant_id: Uuid,
+        user: &Name,
+        act_id: Uuid,
+    ) -> Result<Vec<Uuid>, AppError> {
+        let prev = self.head_event(tenant_id).await?;
+        let act = self
+            .journal
+            .admin_act(tenant_id, act_id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        if !act.act.contestable()
+            || !matches!(
+                act.state,
+                AdminActState::Effective | AdminActState::Contested
+            )
+        {
+            return Err(AppError::AdminAct(AdminActRefusal::NotContestable));
+        }
+        if target_user(&act).as_ref() != Some(user) {
+            return Err(AppError::AdminAct(AdminActRefusal::NotTarget));
+        }
+        if self.dispute_admins(tenant_id).await? >= 3 {
+            return Err(AppError::AdminAct(AdminActRefusal::NotFrozen));
+        }
+        let mut keys: Vec<KeyRecord> = Vec::new();
+        if let Some(initiator) = &act.actor_person {
+            keys.extend(self.admin_keys_of(tenant_id, initiator).await?);
+            keys.extend(
+                self.journal
+                    .web_session_keys(tenant_id, initiator)
+                    .await?
+                    .into_iter()
+                    .filter(|k| k.role == Role::Admin),
+            );
+        }
+        if let Some(id) = act.actor_key_id
+            && let Some(key) = self.journal.key(tenant_id, id).await?
+            && key.role == Role::Admin
+        {
+            keys.push(key);
+        }
+        keys.retain(|k| k.revoked_at.is_none());
+        keys.sort_by_key(|k| k.key_id);
+        keys.dedup_by_key(|k| k.key_id);
+        let mut links: Links = Vec::with_capacity(keys.len());
+        let mut last = prev;
+        for key in &keys {
+            let event = self.seal(
+                last.as_ref(),
+                tenant_id,
+                event_types::KEY_REVOKED,
+                user.as_str(),
+                None,
+                with_act_id(
+                    json!({
+                        "key_id": key.key_id.to_string(),
+                        "revoked_by_key_id": Value::Null,
+                        "actor_person": user.as_str(),
+                        "reason": Value::Null,
+                        "cause": Value::Null,
+                    }),
+                    act_id,
+                ),
+            )?;
+            last = Some(event.clone());
+            links.push((event, MetadataFold::KeyRevoked { key_id: key.key_id }));
+        }
+        if !links.is_empty() {
+            self.commit_links(links).await?;
+        }
+        Ok(keys.into_iter().map(|k| k.key_id).collect())
+    }
+
     /// `POST /v2/admin/acts/{act}/settle` (ADR-0097 d8, d11): with three or
     /// more admin persons, a third admin person who counts settles an open
     /// contestable act. `confirm`: the target's suspended admin keys are
@@ -463,6 +607,10 @@ where
         require_role(&admin, Role::Admin, "settle_admin_act")?;
         let admin = admin.key;
         let tenant_id = admin.tenant_id;
+        // The chain head is read before the act, so a contest committed in
+        // between fails this commit's chain and the retry reads the act
+        // again (review finding store-6; as recovery_sweep reads it).
+        let prev = self.head_event(tenant_id).await?;
         let mut act = self
             .journal
             .admin_act(tenant_id, act_id)
@@ -502,7 +650,6 @@ where
         act.confirmed_by_person = if confirm { settler } else { None };
         act.settled_by_key_id = Some(admin.key_id);
         let by = Sealer::of(&admin);
-        let prev = self.head_event(tenant_id).await?;
         let event = self.seal(
             prev.as_ref(),
             tenant_id,
@@ -542,6 +689,8 @@ where
         act_id: Uuid,
         confirm: bool,
     ) -> Result<OperatorSettlement, AppError> {
+        // The chain head is read before the act (review finding store-6).
+        let prev = self.head_event(tenant_id).await?;
         let mut act = self
             .journal
             .admin_act(tenant_id, act_id)
@@ -581,7 +730,6 @@ where
         act.confirmed_by_person = None;
         act.settled_by_key_id = None;
         let target = target_user(&act);
-        let prev = self.head_event(tenant_id).await?;
         let event = self.seal(
             prev.as_ref(),
             tenant_id,
@@ -819,9 +967,48 @@ where
             user,
             admin: true,
         };
-        if let Some((_, _, event_type, fold, payload)) =
+        // The entry comes back as it stood before the act: accepted, with
+        // its pinned provider subjects, so the person signs in again. The
+        // allowlist's rule that an entry naming an existing person waits on
+        // that person is for new entries, not for a restored one (ADR-0097
+        // d8, answer 3; review finding core-8).
+        let subject = |field: &str| {
+            act.effect
+                .get("before")
+                .and_then(|b| b.get(field))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        };
+        if let Some((_, _, event_type, fold, mut payload)) =
             self.entry_change(admin, &req, true).await?
         {
+            let restore = |entry: &mut WebEntry| {
+                entry.pending = false;
+                if entry.google_subject.is_none() {
+                    entry.google_subject = subject("google_subject");
+                }
+                if entry.github_subject.is_none() {
+                    entry.github_subject = subject("github_subject");
+                }
+            };
+            let fold = match fold {
+                MetadataFold::WebEmailAllowed(mut entry) => {
+                    restore(&mut entry);
+                    MetadataFold::WebEmailAllowed(entry)
+                }
+                MetadataFold::WebEmailChanged {
+                    mut entry,
+                    keep_an_admin,
+                } => {
+                    restore(&mut entry);
+                    MetadataFold::WebEmailChanged {
+                        entry,
+                        keep_an_admin,
+                    }
+                }
+                other => other,
+            };
+            payload["pending"] = json!(false);
             self.push_link(by, act.act_id, links, event_type, payload, fold)?;
         }
         Ok(())

@@ -1213,3 +1213,70 @@ async fn a_user_key_resolves_a_public_shared_node_by_its_bare_name() {
         .await;
     assert_eq!(ids, vec![r.approved]);
 }
+
+/// A public node's path shows each ancestor the reading key cannot read as
+/// the placeholder `…`, never its name, on a recall hit, the source report,
+/// the workspace read and the tree read; `universe` is named, and an admin
+/// key's tree read names every node (ADR-0098, answer 4 of 2026-11-28,
+/// D28; review finding surface-10).
+#[tokio::test]
+async fn a_public_nodes_private_ancestors_are_placeholders_never_names() {
+    let r = rig().await;
+    let child = r
+        .approved(
+            "child",
+            "the child glossary note names a term",
+            "shared-child",
+            MemoryKind::Memory,
+        )
+        .await;
+    r.climb("shared-child", WorkspaceStatus::Protected).await;
+    r.alice_marks("shared-child").await;
+    let masked = "universe.\u{2026}.shared-child";
+    let reader = r.reader.value.as_str();
+    let result = r
+        .app
+        .recall(reader, &recall("child", Some("team")))
+        .await
+        .expect("recall");
+    let hit = result
+        .hits
+        .iter()
+        .find(|h| h.served.memory.memory_id == child)
+        .expect("the public child's hit");
+    assert_eq!(hit.served.workspace_path.as_deref(), Some(masked));
+    let sources = result.sources.expect("the public node is a source");
+    assert!(
+        sources.searched.iter().any(|s| s.workspace_path == masked),
+        "{:?}",
+        sources.searched
+    );
+    assert!(
+        !format!("{:?}", sources.searched).contains("universe.shared."),
+        "the private ancestor is never named"
+    );
+    let info = r
+        .app
+        .workspace_info(reader, Some(by_name("shared-child")))
+        .await
+        .expect("the workspace read");
+    assert_eq!(info.path, masked);
+    let tree = r
+        .app
+        .workspace_tree(reader, by_name("shared-child"), None, 50)
+        .await
+        .expect("the tree read");
+    assert_eq!(tree.items[0].path, masked);
+    let admin = r
+        .app
+        .workspace_tree(r.admin(), by_name("shared"), None, 50)
+        .await
+        .expect("the admin's tree");
+    assert!(
+        admin
+            .items
+            .iter()
+            .any(|n| n.path == "universe.shared.shared-child"),
+        "an admin key reads every name"
+    );
+}

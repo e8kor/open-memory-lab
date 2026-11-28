@@ -305,3 +305,25 @@ async fn the_server_issuer_issues_the_session_keys_in_place_of_the_admin_who_add
         .unwrap_err();
     assert!(matches!(err, AppError::KeyRevocation(_)), "{err:?}");
 }
+
+/// The rescan window's other reads, the fix counts, the public workspaces
+/// and the flagged creates, admit a maintenance key as the rescan does, so
+/// `GET /v2/admin/rescan` answers it whole; the flagged creates name no key
+/// to it (ADR-0097 d18; review finding surface-1).
+#[tokio::test]
+async fn a_maintenance_key_reads_every_count_the_rescan_window_serves() {
+    let r = rig().await;
+    let key = maintenance_key(&r).await;
+    let value = key.value.as_str();
+    r.app.admin_fix_stats(value).await.expect("the fix counts");
+    r.app
+        .admin_public_stats(value)
+        .await
+        .expect("the public workspaces");
+    let creates = r
+        .app
+        .admin_flagged_creates(value)
+        .await
+        .expect("the flagged creates");
+    assert!(creates.iter().all(|(id, _)| id.is_nil()), "no key is named");
+}

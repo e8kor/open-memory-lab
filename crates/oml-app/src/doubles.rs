@@ -950,6 +950,22 @@ impl MemStore {
         )
     }
 
+    /// Sets a held key's `used_by`, journalling nothing: a key a build
+    /// before ADR-0097 d21 issued `used_by: service` with the admin role,
+    /// which no issuance through the port now produces, so the first
+    /// start's migration can be tested against it (D27 of 2026-11-28).
+    pub fn seed_key_used_by(&self, tenant_id: Uuid, key_id: Uuid, used_by: oml_domain::UsedBy) {
+        if let Some(key) = self
+            .tenant(tenant_id)
+            .lock()
+            .expect("tenant lock")
+            .keys
+            .get_mut(&key_id)
+        {
+            key.used_by = used_by;
+        }
+    }
+
     /// Sets the tenant's export policy, as the deferred admin route will
     /// (ADR-0084 d10, reading I9).
     pub fn set_export_policy(&self, tenant_id: Uuid, policy: oml_domain::export::ExportPolicy) {
@@ -5593,7 +5609,13 @@ impl JournalStore for MemStore {
             .lock()
             .expect("installed lock")
             .clone()
-            .unwrap_or_else(|| EventTime::from_unix_micros(0).expect("the epoch"));
+            // Unset, the table was installed when the store was made, as a
+            // fresh database's 0076 is: at the fixed clock's start, never
+            // the epoch, so a test with no older install set meets
+            // `log_too_short` as Postgres would (review finding store-10).
+            .unwrap_or_else(|| {
+                EventTime::parse(FIXED_CLOCK_START).expect("the fixed clock's start")
+            });
         Ok(crate::types::AuthenticationCoverage {
             oldest_day,
             installed_at,
@@ -5637,11 +5659,13 @@ impl JournalStore for MemStore {
         &self,
         tenant_id: Uuid,
     ) -> Result<crate::types::AdminStanding, StoreError> {
+        // A tenant with no state reads as no tenant, never as `sole_admin`,
+        // which would let widening take effect at once (review finding
+        // store-7).
         let Some(tenant) = self.tenant_existing(tenant_id) else {
-            return Ok(crate::types::AdminStanding {
-                sole_admin: true,
-                persons: Vec::new(),
-            });
+            return Err(StoreError::Backend(format!(
+                "admin standing: tenant {tenant_id} has no row"
+            )));
         };
         let state = tenant.lock().expect("tenant lock");
         let mut persons: Vec<crate::types::AdminPerson> = state
@@ -6971,6 +6995,12 @@ impl WebStore for MemStore {
         }))
     }
 
+    async fn live_admin_keys(&self, tenant_id: Uuid) -> Result<Vec<KeyRecord>, StoreError> {
+        Ok(self.tenant_keys(tenant_id, |k| {
+            k.revoked_at.is_none() && k.role == Role::Admin
+        }))
+    }
+
     async fn web_keys_issued_by(
         &self,
         tenant_id: Uuid,
@@ -7871,12 +7901,16 @@ impl FixedClock {
     }
 }
 
+/// The time a [`FixedClock`] starts at, and the time a [`MemStore`]'s
+/// authentication table counts as installed unless a test sets another.
+pub const FIXED_CLOCK_START: &str = "2026-10-29T12:00:00.000000Z";
+
 impl Clock for FixedClock {
     fn now(&self) -> EventTime {
         let n = self.ticks.fetch_add(1, Ordering::SeqCst);
         // Past its first day the clock reads on into the next ones, so a
         // test can wait out a seven-day rule (ADR-0097 d11, d23).
-        let noon = EventTime::parse("2026-10-29T12:00:00.000000Z")
+        let noon = EventTime::parse(FIXED_CLOCK_START)
             .expect("the fixed clock's start")
             .unix_micros();
         EventTime::from_unix_micros(noon + i64::try_from(n).expect("a test's ticks"))

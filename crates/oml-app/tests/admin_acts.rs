@@ -12,6 +12,7 @@ use oml_app::domain::name::{Name, NamedKind, Reference};
 use oml_app::domain::web::Email;
 use oml_app::domain::{Role, SignedEnvelope, UsedBy, event_types};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
+use oml_app::ports::Clock as _;
 use oml_app::ports::JournalStore as _;
 use oml_app::ports::WebStore as _;
 use oml_app::types::{
@@ -1265,7 +1266,11 @@ async fn a_declined_sole_admin_act_is_revoked_at_once() {
     let flag = last_act(&r, "allow_admin").await;
     assert!(flag.sole_admin);
     r.app
-        .decline_admin_act(Bearer::Session(&alice), flag.act_id, None)
+        .decline_admin_act(
+            Bearer::Session(&alice),
+            flag.act_id,
+            Some("dana takes no admin flag"),
+        )
         .await
         .expect("declined");
     let entry = r
@@ -1294,9 +1299,24 @@ async fn admin_acts_to_confirm_counts_what_another_admin_person_may_confirm() {
                 .acts_to_confirm
         }
     };
-    // The two flags taken at once under `sole_admin` are already counted
-    // for each of them (d10); the pending issuance adds to bob's alone.
+    // The flags taken at once under `sole_admin` are not counted for
+    // anyone (D30, decided by the operator, 2026-11-28); they stay in the
+    // acts list, declinable. The pending issuance adds to bob's alone.
     let (bobs_before, alices_before) = (counts(&bob).await, counts(&alice).await);
+    assert_eq!(
+        (bobs_before, alices_before),
+        (0, 0),
+        "no sole_admin act counts"
+    );
+    let listed = r
+        .app
+        .admin_acts_listed(Bearer::Session(&bob), None)
+        .await
+        .expect("the acts list");
+    assert!(
+        listed.iter().any(|(a, flag)| a.sole_admin && !flag),
+        "a sole_admin act stays listed, not to confirm"
+    );
     r.app
         .issue_key_with_reason(Bearer::Session(&alice), &agent_req(), Some("an agent"))
         .await
@@ -1740,23 +1760,30 @@ async fn doctor_flags_a_server_issuer_key_outside_the_session_key_shapes() {
 
 /// The upgrade window: an admin key with no accepted link is suspended at
 /// the start, still reaches whoami and its self-link, and authenticates
-/// again once its person accepts the link (ADR-0097 d21, d22).
+/// again once its person accepts the link; or it converts itself to a
+/// maintenance key, which lifts the unlinked suspension in the
+/// conversion's commit, so it then reads counts (ADR-0097 d18, d21, d22;
+/// the production migration; D27 of 2026-11-28).
 #[tokio::test]
-async fn a_suspended_unlinked_admin_key_still_links_itself() {
+async fn a_suspended_unlinked_admin_key_still_links_itself_and_converts_itself() {
     let r = rig().await;
     r.admin_person("alice").await;
-    let (suspended, revoked) = r
+    let sweep = r
         .app
         .suspend_unlinked_admin_keys(&[r.boot.tenant_id])
         .await
         .expect("the upgrade window");
-    assert_eq!((suspended, revoked), (1, 0));
+    assert_eq!((sweep.suspended, sweep.revoked, sweep.converted), (1, 0, 0));
     let again = r
         .app
         .suspend_unlinked_admin_keys(&[r.boot.tenant_id])
         .await
         .expect("a second start");
-    assert_eq!(again, (0, 0), "a later start journals nothing");
+    assert_eq!(
+        (again.suspended, again.revoked, again.converted),
+        (0, 0, 0),
+        "a later start journals nothing"
+    );
     let err = r.app.admin_acts(r.admin(), None).await.unwrap_err();
     assert!(matches!(err, AppError::KeySuspended), "{err:?}");
     r.app.whoami(r.admin()).await.expect("whoami still answers");
@@ -1773,6 +1800,117 @@ async fn a_suspended_unlinked_admin_key_still_links_itself() {
         .admin_acts(r.admin(), None)
         .await
         .expect("linked, it authenticates again");
+
+    // The other way out: the suspended key converts itself.
+    let r = rig().await;
+    r.admin_person("alice").await;
+    r.app
+        .suspend_unlinked_admin_keys(&[r.boot.tenant_id])
+        .await
+        .expect("the upgrade window");
+    let err = r.app.rescan(r.admin(), 0, 10).await.unwrap_err();
+    assert!(matches!(err, AppError::KeySuspended), "{err:?}");
+    let converted = r
+        .app
+        .convert_self(r.admin(), Role::Maintenance)
+        .await
+        .expect("the suspended key converts itself");
+    assert_eq!(converted.role, Role::Maintenance);
+    assert!(converted.suspended.is_none());
+    let types: Vec<String> = r
+        .journal()
+        .await
+        .iter()
+        .rev()
+        .take(2)
+        .map(|e| e.envelope.event_type.clone())
+        .collect();
+    assert_eq!(
+        types,
+        [
+            event_types::KEY_CONVERTED,
+            event_types::KEY_SUSPENSION_LIFTED
+        ],
+        "the suspension is lifted in the conversion's commit, before it"
+    );
+    let held = r
+        .store
+        .key(r.boot.tenant_id, r.boot.admin_key.key_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert!(
+        held.suspended.is_none(),
+        "replayed, the key is not suspended"
+    );
+    r.app
+        .rescan(r.admin(), 0, 10)
+        .await
+        .expect("the maintenance key reads counts");
+}
+
+/// The first start converts a live admin key `used_by: service` to a
+/// maintenance key under the server, `key.converted {cause: upgrade}`, and
+/// leaves an admin key whose link awaits its person unswept (D27 of
+/// 2026-11-28; ADR-0097 d18, the production migration).
+#[tokio::test]
+async fn the_first_start_converts_service_admin_keys_and_sweeps_no_key_whose_link_is_pending() {
+    let r = rig().await;
+    r.admin_person("alice").await;
+    r.store
+        .seed_key_used_by(r.boot.tenant_id, r.boot.admin_key.key_id, UsedBy::Service);
+    let pending = r
+        .app
+        .issue_key(
+            r.admin(),
+            &IssueKeyRequest {
+                role: Role::Admin,
+                grants: Vec::new(),
+                used_by: Some(UsedBy::Person),
+                person: Some(name("alice")),
+                ..agent_req()
+            },
+        )
+        .await
+        .expect("an admin key whose link waits on alice");
+    let sweep = r
+        .app
+        .suspend_unlinked_admin_keys(&[r.boot.tenant_id])
+        .await
+        .expect("the upgrade window");
+    assert_eq!((sweep.suspended, sweep.revoked, sweep.converted), (0, 0, 1));
+    let converted = r.journal().await.pop().expect("an event").envelope;
+    assert_eq!(converted.event_type, event_types::KEY_CONVERTED);
+    assert_eq!(converted.payload["cause"], "upgrade");
+    assert_eq!(converted.api_key_id, None, "the server converts it");
+    let held = r
+        .store
+        .key(r.boot.tenant_id, r.boot.admin_key.key_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert_eq!(held.role, Role::Maintenance);
+    r.app
+        .rescan(r.admin(), 0, 10)
+        .await
+        .expect("the converted key reads counts");
+    let waiting = r
+        .store
+        .key(r.boot.tenant_id, pending.key_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert!(waiting.suspended.is_none(), "a pending link is not swept");
+    let again = r
+        .app
+        .suspend_unlinked_admin_keys(&[r.boot.tenant_id])
+        .await
+        .expect("a second start");
+    assert_eq!(
+        (again.suspended, again.revoked, again.converted),
+        (0, 0, 0),
+        "a later start journals nothing"
+    );
 }
 
 /// A workspace an issuance creates, `name` under `parent` (ADR-0097 d30).
@@ -3591,4 +3729,719 @@ async fn a_declined_sole_admin_federation_acceptance_is_undone() {
         vec![crew],
         "the decline set the field back"
     );
+}
+
+/// The first curation designation is widening like every later one:
+/// `<user>-curate` and its submitter grant on `universe` and reader grant
+/// wait in one `issue_key` act until a second admin person confirms them,
+/// and the key authenticates nothing meanwhile (ADR-0097 d5, d6, d23;
+/// review finding core-2).
+#[tokio::test]
+async fn the_first_curation_designation_waits_on_a_second_admin_person() {
+    let r = two_admins().await;
+    let bob = r.admin_session("bob").await;
+    let granted = r
+        .app
+        .grant_curation_capacity_with_reason(&bob, &name("alice"), by_name("crew"), Some("curator"))
+        .await
+        .expect("a pending designation");
+    assert!(granted.grants_added.is_empty(), "nothing is served yet");
+    let held = r
+        .store
+        .key_access(r.boot.tenant_id, granted.key.key_id)
+        .await
+        .expect("read")
+        .map(|a| a.grants)
+        .unwrap_or_default();
+    assert!(
+        held.is_empty(),
+        "the curate key holds no grant while it waits"
+    );
+    assert!(granted.key.pending_act.is_some(), "the key waits");
+    let act = r
+        .store
+        .admin_acts(r.boot.tenant_id, Some(AdminActState::PendingConfirmation))
+        .await
+        .expect("acts")
+        .into_iter()
+        .find(|a| a.act.as_str() == "issue_key")
+        .expect("the pending issuance");
+    assert_eq!(act.effect["grants"].as_array().map(Vec::len), Some(2));
+    let alice = r.admin_session("alice").await;
+    r.app
+        .confirm_admin_act(Bearer::Session(&alice), act.act_id, Some("confirmed"))
+        .await
+        .expect("a second admin person confirms");
+    let held = r
+        .store
+        .key_access(r.boot.tenant_id, granted.key.key_id)
+        .await
+        .expect("read")
+        .map(|a| a.grants)
+        .unwrap_or_default();
+    assert_eq!(held.len(), 2, "both grants apply at the confirmation");
+}
+
+/// A tenant whose row cannot be read is no tenant, never one in
+/// `sole_admin`: the standing read fails closed rather than letting a
+/// widening act take effect at once (ADR-0097 d10; review finding store-7).
+#[tokio::test]
+async fn an_unreadable_tenant_never_reads_as_sole_admin() {
+    let r = rig().await;
+    let err = r
+        .store
+        .admin_standing(Uuid::from_u128(0xDEAD))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("no row"), "{err}");
+}
+
+/// Declining a `sole_admin` flag that its person accepted and holds is an
+/// un-flag of another admin person, classed as d8 classes one: it journals
+/// `unflag_admin`, against an admin, contestable, with a reason required,
+/// and the flag comes off (ADR-0097 d8, d10, d21; review finding core-3).
+#[tokio::test]
+async fn declining_an_accepted_sole_admin_flag_is_an_unflag_against_that_admin() {
+    let r = rig().await;
+    r.admin_person("alice").await;
+    let alice = r.admin_session("alice").await;
+    r.admin_person("bob").await;
+    let flag = r
+        .store
+        .admin_acts(r.boot.tenant_id, None)
+        .await
+        .expect("acts")
+        .into_iter()
+        .rev()
+        .find(|a| a.act.as_str() == "allow_admin")
+        .expect("bob's flag");
+    assert!(
+        flag.sole_admin,
+        "the second person's flag took effect at once"
+    );
+    let err = r
+        .app
+        .decline_admin_act(Bearer::Session(&alice), flag.act_id, None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::AdminActReasonRequired), "{err:?}");
+    r.app
+        .decline_admin_act(
+            Bearer::Session(&alice),
+            flag.act_id,
+            Some("bob is no admin"),
+        )
+        .await
+        .expect("declined");
+    let unflag = last_act(&r, "unflag_admin").await;
+    assert_eq!(unflag.state, AdminActState::Effective);
+    assert!(unflag.act.contestable(), "an act against an admin");
+    let entry = r
+        .store
+        .web_entry_by_email(&Email::parse("bob@example.com").expect("an email").digest())
+        .await
+        .expect("read")
+        .expect("bob's entry");
+    assert!(!entry.admin, "the flag is off");
+}
+
+/// An unlinked admin key authenticates as no one: the unlink suspends it as
+/// unlinked in its own commit, so it reaches nothing but whoami, its
+/// self-link and its conversion, and an accepted link lifts the suspension
+/// (ADR-0097 d21, d22; review finding core-4).
+#[tokio::test]
+async fn an_unlinked_admin_key_is_suspended_until_a_link_is_accepted() {
+    let r = rig().await;
+    r.admin_person("alice").await;
+    let key = r.linked_admin_key("alice").await;
+    let alice = r.admin_session("alice").await;
+    r.app
+        .unlink_key_from_person(Bearer::Session(&alice), key.key_id.into())
+        .await
+        .expect("unlinked");
+    let err = r
+        .app
+        .admin_acts(key.value.as_str(), None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::KeySuspended), "{err:?}");
+    r.app
+        .whoami(key.value.as_str())
+        .await
+        .expect("whoami still answers");
+    r.app
+        .link_self(key.value.as_str(), &name("alice"), Some("my key again"))
+        .await
+        .expect("it links itself");
+    let web = r.person_session("alice", Capacity::Web).await;
+    r.app
+        .accept_key_link(Bearer::Session(&web), key.key_id.into())
+        .await
+        .expect("alice accepts");
+    r.app
+        .admin_acts(key.value.as_str(), None)
+        .await
+        .expect("linked again, it authenticates");
+}
+
+/// A pending raise applies at its confirmation only the member it sent,
+/// over the key's limits as they stand then, so an earlier expiry set
+/// since stands; a change that raises one limit and lowers the other is
+/// refused as two acts (ADR-0097 d3, d15; review finding core-7).
+#[tokio::test]
+async fn a_confirmed_raise_applies_only_its_own_member_and_a_later_narrowing_stands() {
+    let r = rig().await;
+    let issued = r
+        .app
+        .issue_key(
+            r.admin(),
+            &IssueKeyRequest {
+                requests_per_minute: Some(60),
+                ..agent_req()
+            },
+        )
+        .await
+        .expect("a key at 60 a minute");
+    r.admin_person("alice").await;
+    r.admin_person("bob").await;
+    r.clock.advance(8 * DAY);
+    let alice = r.admin_session("alice").await;
+    let bob = r.admin_session("bob").await;
+    let (_, raise) = r
+        .app
+        .set_key_limits_with_reason(
+            Bearer::Session(&alice),
+            issued.key_id.into(),
+            oml_app::types::KeyLimitsChange {
+                expiry: None,
+                requests_per_minute: Some(Some(120)),
+            },
+            Some("a busier agent"),
+        )
+        .await
+        .expect("a pending raise");
+    assert_eq!(raise.state, AdminActState::PendingConfirmation);
+    let tomorrow = oml_app::domain::EventTime::from_unix_micros(
+        r.clock.now().unix_micros() + 86_400 * 1_000_000,
+    )
+    .expect("a time");
+    r.app
+        .set_key_limits_with_reason(
+            Bearer::Session(&bob),
+            issued.key_id.into(),
+            oml_app::types::KeyLimitsChange {
+                expiry: Some(Some(tomorrow.clone())),
+                requests_per_minute: None,
+            },
+            Some("the value leaked"),
+        )
+        .await
+        .expect("an earlier expiry at once");
+    r.app
+        .confirm_admin_act(Bearer::Session(&bob), raise.act_id, Some("confirmed"))
+        .await
+        .expect("confirmed");
+    let held = r
+        .store
+        .key(r.boot.tenant_id, issued.key_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert_eq!(held.requests_per_minute, Some(120), "the raise applies");
+    assert_eq!(held.expiry, Some(tomorrow.clone()), "the narrowing stands");
+    let err = r
+        .app
+        .set_key_limits_with_reason(
+            Bearer::Session(&alice),
+            issued.key_id.into(),
+            oml_app::types::KeyLimitsChange {
+                expiry: Some(Some(
+                    oml_app::domain::EventTime::from_unix_micros(
+                        r.clock.now().unix_micros() + 3_600 * 1_000_000,
+                    )
+                    .expect("a time"),
+                )),
+                requests_per_minute: Some(Some(600)),
+            },
+            Some("both at once"),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::AdminField { field: "/", .. }),
+        "{err:?}"
+    );
+}
+
+/// A pending key takes no limit change: the change is refused
+/// `key_pending` and journals nothing (ADR-0097 d23; review finding
+/// core-13).
+#[tokio::test]
+async fn a_pending_key_takes_no_limit_change() {
+    let r = two_admins().await;
+    let pending = pending_key(&r).await;
+    let before = r.journal().await.len();
+    let err = r
+        .app
+        .set_key_limits_with_reason(
+            r.admin(),
+            pending.key_id.into(),
+            oml_app::types::KeyLimitsChange {
+                expiry: None,
+                requests_per_minute: Some(Some(10)),
+            },
+            Some("lower"),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::AdminAct(AdminActRefusal::KeyPending)),
+        "{err:?}"
+    );
+    assert_eq!(r.journal().await.len(), before, "nothing is journalled");
+}
+
+/// Raising a person's quota waits on a second admin person outside
+/// `sole_admin` and changes nothing until confirmed; lowering one takes
+/// effect at once (ADR-0097 d15; review finding core-6).
+#[tokio::test]
+async fn raising_a_quota_waits_on_a_second_admin_person_and_lowering_it_takes_effect_at_once() {
+    use oml_app::domain::signup::Quota;
+    let r = two_admins().await;
+    let alice = r.admin_session("alice").await;
+    let bob = r.admin_session("bob").await;
+    let overrides = || async {
+        let root = r
+            .store
+            .resolve_name(r.boot.tenant_id, NamedKind::Workspace, &name("bob"))
+            .await
+            .expect("read")
+            .expect("bob's root");
+        r.store
+            .user_quota_overrides(r.boot.tenant_id, root)
+            .await
+            .expect("read")
+    };
+    let err = r
+        .app
+        .set_web_user_quota_with_reason(&alice, &name("bob"), Quota::Keys, Some(1_000), None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::AdminActReasonRequired), "{err:?}");
+    let applied = r
+        .app
+        .set_web_user_quota_with_reason(
+            &alice,
+            &name("bob"),
+            Quota::Keys,
+            Some(1_000),
+            Some("more agents"),
+        )
+        .await
+        .expect("a pending raise");
+    assert!(!applied, "a raise waits");
+    assert!(overrides().await.is_empty(), "nothing changed yet");
+    let act = last_act(&r, "raise_limits").await;
+    assert_eq!(act.state, AdminActState::PendingConfirmation);
+    r.app
+        .confirm_admin_act(Bearer::Session(&bob), act.act_id, Some("confirmed"))
+        .await
+        .expect("confirmed");
+    assert_eq!(overrides().await, vec![(Quota::Keys, 1_000)]);
+    let applied = r
+        .app
+        .set_web_user_quota_with_reason(&alice, &name("bob"), Quota::Keys, Some(2), None)
+        .await
+        .expect("a lowering at once");
+    assert!(applied, "a lowering applies at once");
+    assert_eq!(overrides().await, vec![(Quota::Keys, 2)]);
+}
+
+/// A contest of a removal restores the entry as it stood, accepted, so the
+/// removed admin person signs in again, rather than an entry that waits on
+/// a person who cannot open a session to accept it (ADR-0097 d8, answer 3
+/// of the second amendment of 2026-11-27; review finding core-8).
+#[tokio::test]
+async fn a_contested_removal_restores_an_entry_its_person_signs_in_with() {
+    let (r, _) = three_admins().await;
+    let alice = r.admin_session("alice").await;
+    let email = entry_of("carol", true).email;
+    r.app
+        .remove_web_email_with_reason(Bearer::Session(&alice), &email, true, Some("a dispute"))
+        .await
+        .expect("alice removes carol's entry");
+    let act = last_act(&r, "remove_admin").await;
+    r.app
+        .contest_admin_act_as(r.boot.tenant_id, &name("carol"), act.act_id)
+        .await
+        .expect("carol contests from the contest-only sign-in");
+    let entry = r
+        .store
+        .web_entry_by_email(&email.digest())
+        .await
+        .expect("read")
+        .expect("carol's entry is back");
+    assert!(entry.admin, "with its flag");
+    assert!(!entry.pending, "accepted, not waiting on carol");
+    r.person_session("carol", Capacity::Web).await;
+}
+
+/// An empty or whitespace reason is no reason: a widening act that waits
+/// is refused `/reason required` for it, as a confirmation is (ADR-0097
+/// d26; review finding surface-3).
+#[tokio::test]
+async fn an_empty_or_whitespace_reason_is_refused_where_a_reason_is_required() {
+    let r = two_admins().await;
+    for blank in ["", "   "] {
+        let err = r
+            .app
+            .issue_key_with_reason(r.admin(), &agent_req(), Some(blank))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, AppError::AdminActReasonRequired),
+            "{blank:?}: {err:?}"
+        );
+    }
+}
+
+/// A key whose grant on a node carries `create` lists `create_workspace`
+/// among its verbs there, as `oml_write {create_workspace}` admits it
+/// (ADR-0097 d31; ADR-0095 d8; review finding surface-11).
+#[tokio::test]
+async fn a_flagged_grant_lists_create_workspace_where_it_survives() {
+    let r = rig().await;
+    let key = r
+        .app
+        .issue_key(r.admin(), &flagged_req(Covers::Node))
+        .await
+        .expect("a flagged key");
+    let info = r
+        .app
+        .workspace_info(key.value.as_str(), Some(by_name("crew")))
+        .await
+        .expect("the workspace read");
+    assert!(
+        info.my_effective_verbs.contains(&"create_workspace"),
+        "{:?}",
+        info.my_effective_verbs
+    );
+}
+
+/// Moving an admin entry to another user while keeping its flag is
+/// refused: it would make a new admin person at once, so it is sent as an
+/// un-flag and then a new admin entry (ADR-0097 d5, d8; review finding
+/// core-12).
+#[tokio::test]
+async fn an_admin_entry_moved_to_another_user_with_its_flag_is_refused() {
+    let r = two_admins().await;
+    let alice = r.admin_session("alice").await;
+    let before = r.journal().await.len();
+    let err = r
+        .app
+        .allow_web_email_with_reason(
+            Bearer::Session(&alice),
+            &WebEmailRequest {
+                email: Email::parse("bob@example.com").expect("an email"),
+                user: name("bob2"),
+                admin: true,
+            },
+            true,
+            Some("a new name"),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::WebField { field: "user", .. }),
+        "{err:?}"
+    );
+    assert_eq!(r.journal().await.len(), before, "nothing is journalled");
+}
+
+/// Below three admin persons the target of an open act, from the
+/// contest-only sign-in, revokes the initiator's admin keys, its
+/// `<user>-admin` session key among them, each final; nobody else may
+/// (ADR-0097 d8; review finding core-10).
+#[tokio::test]
+async fn the_target_revokes_the_initiator_only_from_the_contest_only_sign_in() {
+    let r = two_admins().await;
+    let alice = r.admin_session("alice").await;
+    r.app
+        .allow_web_email_with_reason(
+            Bearer::Session(&alice),
+            &entry_of("bob", false),
+            true,
+            Some("a stolen session"),
+        )
+        .await
+        .expect("alice un-flags bob: a freeze");
+    let act = last_act(&r, "unflag_admin").await;
+    let err = r
+        .app
+        .contain_initiator_as(r.boot.tenant_id, &name("alice"), act.act_id)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::AdminAct(AdminActRefusal::NotTarget)),
+        "{err:?}"
+    );
+    r.app
+        .contest_admin_act_as(r.boot.tenant_id, &name("bob"), act.act_id)
+        .await
+        .expect("bob contests");
+    let revoked = r
+        .app
+        .contain_initiator_as(r.boot.tenant_id, &name("bob"), act.act_id)
+        .await
+        .expect("bob contains alice");
+    assert!(
+        revoked.contains(&alice.key().key_id),
+        "alice's admin session key"
+    );
+    let held = r
+        .store
+        .key(r.boot.tenant_id, alice.key().key_id)
+        .await
+        .expect("read")
+        .expect("held");
+    assert!(
+        held.revoked_at.is_some(),
+        "the initiator's admin key is revoked"
+    );
+}
+
+/// An admin's grant into an in-progress subtree that would wait on a second
+/// admin person is refused by name: d5 has a person holding reviewer there
+/// confirm it as well, and that confirmation is not built, so no second
+/// admin alone applies it (ADR-0097 d5; review finding core-9).
+#[tokio::test]
+async fn an_admin_grant_into_an_in_progress_subtree_is_refused_by_name() {
+    let r = rig().await;
+    r.app
+        .create_workspace(r.admin(), &name("lab"), Some(by_name("universe")), None)
+        .await
+        .expect("lab");
+    let on_lab = |role| GrantRequest {
+        node: by_name("lab"),
+        role,
+        deny: Vec::new(),
+        covers: Covers::Subtree,
+        create: false,
+    };
+    let reviewer = r
+        .app
+        .issue_key(
+            r.admin(),
+            &IssueKeyRequest {
+                role: Role::Reviewer,
+                used_by: Some(UsedBy::Person),
+                grants: vec![on_lab(Role::Reviewer), on_lab(Role::Reader)],
+                ..agent_req()
+            },
+        )
+        .await
+        .expect("a reviewer a person holds");
+    r.app
+        .set_workspace_mode(
+            reviewer.value.as_str(),
+            by_name("lab"),
+            oml_app::domain::in_progress::WorkspaceMode::InProgress,
+        )
+        .await
+        .expect("lab in progress");
+    // Two admin persons: the grant would wait on a second one.
+    r.admin_person("alice").await;
+    r.admin_person("bob").await;
+    r.clock.advance(8 * DAY);
+    let err = r
+        .app
+        .issue_key_with_reason(
+            r.admin(),
+            &IssueKeyRequest {
+                grants: vec![on_lab(Role::Reader), on_lab(Role::Submitter)],
+                ..agent_req()
+            },
+            Some("an agent in the lab"),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::AdminAct(AdminActRefusal::InProgressSubtree)),
+        "{err:?}"
+    );
+}
+
+/// A key whose issuance waits on a second admin person authenticates on no
+/// path, takes no connect code meanwhile, and authenticates once confirmed
+/// (ADR-0097 d23; review finding core-15).
+#[tokio::test]
+async fn a_pending_key_authenticates_on_no_path_until_confirmed() {
+    let r = two_admins().await;
+    let pending = pending_key(&r).await;
+    let value = pending.value.as_str();
+    let err = r.app.whoami(value).await.unwrap_err();
+    assert!(matches!(err, AppError::KeyPendingConfirmation), "{err:?}");
+    let err = r
+        .app
+        .workspace_info(value, Some(by_name("crew")))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::KeyPendingConfirmation), "{err:?}");
+    let act = pending.pending_act.expect("the act");
+    let bob = r.admin_session("bob").await;
+    r.app
+        .confirm_admin_act(Bearer::Session(&bob), act, Some("confirmed"))
+        .await
+        .expect("confirmed");
+    r.app
+        .whoami(value)
+        .await
+        .expect("confirmed, it authenticates");
+}
+
+/// A pending issuance's grants live in the act alone: the key's access
+/// holds none of them until the confirmation (ADR-0097 d23; review finding
+/// core-15).
+#[tokio::test]
+async fn pending_grants_are_served_by_no_recall_review_or_count_query() {
+    let r = two_admins().await;
+    let pending = pending_key(&r).await;
+    let held = r
+        .store
+        .key_access(r.boot.tenant_id, pending.key_id)
+        .await
+        .expect("read")
+        .map(|a| a.grants)
+        .unwrap_or_default();
+    assert!(held.is_empty(), "no grant row is folded for a pending key");
+    let act = r
+        .store
+        .admin_act(r.boot.tenant_id, pending.pending_act.expect("the act"))
+        .await
+        .expect("read")
+        .expect("the act");
+    assert_eq!(act.effect["grants"].as_array().map(Vec::len), Some(2));
+}
+
+/// An admin's issuance of a key in another person's root is widening: it
+/// waits on a second admin person, and the act names the root's person
+/// (ADR-0097 d5, d6; review finding core-15).
+#[tokio::test]
+async fn an_admin_key_in_another_persons_root_waits_on_a_second_admin_person() {
+    let r = two_admins().await;
+    let issued = r
+        .app
+        .issue_key_with_reason(
+            r.admin(),
+            &IssueKeyRequest {
+                grants: vec![
+                    GrantRequest {
+                        node: by_name("bob"),
+                        role: Role::Reader,
+                        deny: Vec::new(),
+                        covers: Covers::Subtree,
+                        create: false,
+                    },
+                    GrantRequest {
+                        node: by_name("bob"),
+                        role: Role::Submitter,
+                        deny: Vec::new(),
+                        covers: Covers::Subtree,
+                        create: false,
+                    },
+                ],
+                user: Some(name("bob")),
+                ..agent_req()
+            },
+            Some("an agent in bob's root"),
+        )
+        .await
+        .expect("a pending issuance");
+    let act = issued.pending_act.expect("it waits");
+    let act = r
+        .store
+        .admin_act(r.boot.tenant_id, act)
+        .await
+        .expect("read")
+        .expect("the act");
+    assert_eq!(act.state, AdminActState::PendingConfirmation);
+    assert_eq!(act.target["root_person"], "bob");
+}
+
+/// A link of an admin key to a person waits on that person's acceptance,
+/// and the key authenticates nothing meanwhile (ADR-0097 d7, d21; review
+/// finding core-15).
+#[tokio::test]
+async fn a_link_and_an_address_for_an_existing_person_wait_on_that_person() {
+    let r = rig().await;
+    r.admin_person("alice").await;
+    let issued = r
+        .app
+        .issue_key(
+            r.admin(),
+            &IssueKeyRequest {
+                role: Role::Admin,
+                grants: Vec::new(),
+                used_by: Some(UsedBy::Person),
+                person: Some(name("alice")),
+                ..agent_req()
+            },
+        )
+        .await
+        .expect("an admin key for alice");
+    let err = r
+        .app
+        .admin_acts(issued.value.as_str(), None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::KeyLinkPending), "{err:?}");
+    let (entry, _) = r
+        .app
+        .allow_web_email(
+            r.admin(),
+            &WebEmailRequest {
+                email: Email::parse("alice.second@example.com").expect("an email"),
+                user: name("alice"),
+                admin: false,
+            },
+        )
+        .await
+        .expect("a second address for alice");
+    assert!(
+        entry.pending,
+        "an address for an existing person waits on her"
+    );
+    let web = r.person_session("alice", Capacity::Web).await;
+    r.app
+        .accept_key_link(Bearer::Session(&web), issued.key_id.into())
+        .await
+        .expect("alice accepts");
+    r.app
+        .admin_acts(issued.value.as_str(), None)
+        .await
+        .expect("accepted, it authenticates");
+}
+
+/// Revoking an admin person's bearer admin key breaks no sign-in: the
+/// person's console sessions come from the server issuer, so a new admin
+/// session still opens (ADR-0097 d14, d18; review finding core-15).
+#[tokio::test]
+async fn revoking_an_admin_key_breaks_no_sign_in() {
+    let r = rig().await;
+    r.admin_person("alice").await;
+    let key = r.linked_admin_key("alice").await;
+    let alice = r.admin_session("alice").await;
+    r.app
+        .revoke_key(
+            Bearer::Session(&alice),
+            key.key_id.into(),
+            Some("rotating out"),
+        )
+        .await
+        .expect("revoked");
+    let again = r.admin_session("alice").await;
+    r.app
+        .admin_acts(Bearer::Session(&again), None)
+        .await
+        .expect("the admin session still works");
 }

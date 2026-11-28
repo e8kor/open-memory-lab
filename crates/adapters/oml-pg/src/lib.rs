@@ -5195,10 +5195,11 @@ async fn apply_fold(
             // (ADR-0045 d2's note of 2026-11-19).
             sqlx::query(
                 "INSERT INTO web_emails (tenant_id, email_hash, email, user_name, admin, \
-                 created_at, added_by, terms_version, pending_since, admin_since) \
+                 created_at, added_by, terms_version, pending_since, admin_since, \
+                 google_subject, github_subject) \
                  VALUES ($1, $2, $3, $4, $5, ($6)::timestamptz, $7, $8, \
                          CASE WHEN $9 THEN ($6)::timestamptz END, \
-                         CASE WHEN $5 AND NOT $9 THEN ($6)::timestamptz END)",
+                         CASE WHEN $5 AND NOT $9 THEN ($6)::timestamptz END, $10, $11)",
             )
             .bind(tenant_id)
             .bind(entry.email.digest().0.to_vec())
@@ -5209,6 +5210,10 @@ async fn apply_fold(
             .bind(entry.added_by)
             .bind(entry.terms_version.as_deref())
             .bind(entry.pending)
+            // A contest restores a removed entry with its pinned subjects
+            // (ADR-0097 d8, answer 3); a new entry holds none.
+            .bind(entry.google_subject.as_deref())
+            .bind(entry.github_subject.as_deref())
             .execute(&mut **tx)
             .await
             .map_err(|e| match &e {
@@ -11319,7 +11324,14 @@ impl JournalStore for PgStore {
             })
             .collect::<Result<Vec<_>, StoreError>>()?;
         Ok(oml_app::types::AdminStanding {
-            sole_admin: sole_admin.unwrap_or(true),
+            // An unreadable tenants row is no tenant, never `sole_admin`,
+            // which would let widening take effect at once (review finding
+            // store-7).
+            sole_admin: sole_admin.ok_or_else(|| {
+                StoreError::Backend(format!(
+                    "admin standing: tenant {tenant_id} has no readable row"
+                ))
+            })?,
             persons,
         })
     }
@@ -13850,6 +13862,11 @@ impl WebStore for PgStore {
             |q| q,
         )
         .await
+    }
+
+    async fn live_admin_keys(&self, tenant_id: Uuid) -> Result<Vec<KeyRecord>, StoreError> {
+        self.keys_where(tenant_id, "revoked_at IS NULL AND role = 'admin'", |q| q)
+            .await
     }
 
     async fn web_keys_issued_by(

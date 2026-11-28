@@ -885,6 +885,11 @@ where
                 grants_added: added,
             });
         }
+        // The first designation issues `<user>-curate` with its two grants
+        // as one widening admin act, as a plain issuance is: outside
+        // `sole_admin` the key and its grants wait on a second admin person,
+        // as a later designation does (ADR-0097 d5, d6; review finding
+        // core-2).
         let name = key_name(user, Capacity::Curate.suffix())?;
         let req = IssueKeyRequest {
             profile: None,
@@ -915,15 +920,20 @@ where
             create_workspaces: Vec::new(),
         };
         let issued = self
-            .issue_key_by(&admin.key, &req, Issuance::Session(user))
+            .issue_key_by(&admin.key, &req, Issuance::AdminSession(user, reason))
             .await?;
         let key = self
-            .session_key_of(tenant_id, user, Capacity::Curate)
+            .journal
+            .key(tenant_id, issued.key_id)
             .await?
             .ok_or(AppError::WebKeyMissing { capacity: "curate" })?;
         Ok(CapacityGranted {
             key,
-            grants_added: issued.access.grants,
+            grants_added: if issued.pending_act.is_some() {
+                Vec::new()
+            } else {
+                issued.access.grants
+            },
         })
     }
 
@@ -988,6 +998,10 @@ where
         if resolved.is_empty() {
             return Ok(Vec::new());
         }
+        // An admin's grant into an in-progress subtree waits on its
+        // reviewer person too, not built: refused by name (d5; core-9).
+        let nodes: Vec<Uuid> = resolved.iter().map(|g| g.node).collect();
+        self.refuse_in_progress_grants(tenant_id, &nodes).await?;
         // A pending key takes no added grant (ADR-0097 d23).
         if key.pending_act.is_some() {
             return Err(AppError::AdminAct(
