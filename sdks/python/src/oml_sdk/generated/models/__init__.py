@@ -257,6 +257,13 @@ from .notice_detail import NoticeDetail
 from .notice_kind import NoticeKind
 from .o_auth_error import OAuthError
 from .o_auth_error_error import OAuthErrorError
+from .operator_recover_body import OperatorRecoverBody
+from .operator_recover_response_202 import OperatorRecoverResponse202
+from .operator_recover_response_202_mail import OperatorRecoverResponse202Mail
+from .operator_recover_response_202_recovery import OperatorRecoverResponse202Recovery
+from .operator_recover_response_202_recovery_state import (
+    OperatorRecoverResponse202RecoveryState,
+)
 from .operator_settle_body import OperatorSettleBody
 from .operator_settle_body_outcome import OperatorSettleBodyOutcome
 from .operator_settle_response_200 import OperatorSettleResponse200
@@ -747,6 +754,11 @@ __all__ = (
     "NoticeKind",
     "OAuthError",
     "OAuthErrorError",
+    "OperatorRecoverBody",
+    "OperatorRecoverResponse202",
+    "OperatorRecoverResponse202Mail",
+    "OperatorRecoverResponse202Recovery",
+    "OperatorRecoverResponse202RecoveryState",
     "OperatorSettleBody",
     "OperatorSettleBodyOutcome",
     "OperatorSettleResponse200",

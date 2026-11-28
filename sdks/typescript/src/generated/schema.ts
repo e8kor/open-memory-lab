@@ -1906,6 +1906,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/operator/tenants/{tenant}/recover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The operator, from the host, asks to recover a tenant in which no admin authenticated for 30 days.
+         * @description Authenticated as operatorSettle is, by the tenant's operator token of this start alone, sent as OML-Operator-Token, and refused auth.invalid with details.reason operator_route_takes_no_key beside an Authorization header (ADR-0097 d19; answer 13). Admitted only when the server authentication table reaches back 30 days, a placeholder, and shows no admin key of the tenant authenticated in them, an admin person's sign-in included (answers 21, 24). Refused operator.recover_refused with details.reason log_too_short (the table does not reach back 30 days: a fresh install or purged rows, never read as dormancy), admin_active, pending (a recovery already waits), dispute_open (an act against an admin is open), person_taken or email_taken. Journalled as operator.recovery_requested, with the address's digest alone, and notice.written kind recovery to every admin person, then emailed to them through the mail relay (d20): mail is sent, unconfigured or failed. The server's sweep completes it once 72 hours, a placeholder, pass with no admin sign-in: every admin key of the tenant revoked, cause recovery, the named admin person's entry added, operator.recovery and a notice; any admin sign-in in the 72 hours cancels it, operator.recovery_cancelled (answer 22). The dormant admins keep their flags. Since v0.8.6.
+         */
+        post: operations["operatorRecover"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/admin/acts/{act}/decline": {
         parameters: {
             query?: never;
@@ -2461,7 +2481,7 @@ export interface components {
          * @description The closed error vocabulary; identical to docs/api/errors.md by construction. The oauth codes other than oauth.connect_refused and oauth.attach_refused travel inside RFC error bodies on the OAuth endpoints, at the start of error_description, or on the authorization page; oauth.connect_refused answers on /v2 in this envelope, and oauth.attach_refused, an /mcp tool result, is answered by no served tool since oml_attach left the catalog (ADR-0031, ADR-0039 d2, d9).
          * @enum {string}
          */
-        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "admin.investigation_required" | "admin.read_requires_person" | "admin.fix_requires_person" | "admin.fix_target_not_promoted" | "admin.fix_held_by_scan" | "admin.fix_superseded" | "admin.fix_not_revertible" | "admin.fix_settled" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workspace_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.format_invalid" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.version_conflict" | "submission.claim_key_conflict" | "submission.similar_exists" | "submission.universe_refused" | "submission.user_root_refused" | "workspace.frozen" | "workspace.in_progress_refused" | "workspace.held_remaining" | "workspace.admin_key_under_root" | "workspace.public_refused" | "workspace.transition_refused" | "review.author_in_lineage" | "review.person_required" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "upload.expired" | "upload.too_large" | "upload.part_size" | "upload.part_number" | "upload.incomplete" | "upload.session_limit" | "upload.tenant_limit" | "upload.storage_failed" | "bundle.format_unknown" | "bundle.layout" | "bundle.path_unsafe" | "bundle.too_large" | "bundle.line_too_long" | "bundle.depth" | "bundle.duplicate" | "bundle.unreferenced_body" | "bundle.malformed" | "bundle.digest_mismatch" | "bundle.signature_invalid" | "bundle.signature_unexpected" | "bundle.unencrypted" | "bundle.decrypt_failed" | "bundle.io" | "import.target_not_in_progress" | "import.over_quota" | "import.bundle_older" | "import.since_mismatch" | "import.source_key_changed" | "import.busy" | "export.disabled" | "export.not_readable" | "export.busy" | "export.too_large" | "memory.not_held" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "proposal.pending" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
+        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "admin.investigation_required" | "admin.read_requires_person" | "admin.fix_requires_person" | "admin.fix_target_not_promoted" | "admin.fix_held_by_scan" | "admin.fix_superseded" | "admin.fix_not_revertible" | "admin.fix_settled" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workspace_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.format_invalid" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.version_conflict" | "submission.claim_key_conflict" | "submission.similar_exists" | "submission.universe_refused" | "submission.user_root_refused" | "workspace.frozen" | "workspace.in_progress_refused" | "workspace.held_remaining" | "workspace.admin_key_under_root" | "workspace.public_refused" | "operator.recover_refused" | "workspace.transition_refused" | "review.author_in_lineage" | "review.person_required" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "upload.expired" | "upload.too_large" | "upload.part_size" | "upload.part_number" | "upload.incomplete" | "upload.session_limit" | "upload.tenant_limit" | "upload.storage_failed" | "bundle.format_unknown" | "bundle.layout" | "bundle.path_unsafe" | "bundle.too_large" | "bundle.line_too_long" | "bundle.depth" | "bundle.duplicate" | "bundle.unreferenced_body" | "bundle.malformed" | "bundle.digest_mismatch" | "bundle.signature_invalid" | "bundle.signature_unexpected" | "bundle.unencrypted" | "bundle.decrypt_failed" | "bundle.io" | "import.target_not_in_progress" | "import.over_quota" | "import.bundle_older" | "import.since_mismatch" | "import.source_key_changed" | "import.busy" | "export.disabled" | "export.not_readable" | "export.busy" | "export.too_large" | "memory.not_held" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "proposal.pending" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
         ExportRequest: {
             /**
              * @description history is the default in a user root; release is refused until releases are built.
@@ -10557,6 +10577,79 @@ export interface operations {
                 content: {
                     "application/json": {
                         act: components["schemas"]["AdminAct"];
+                        notified: string[];
+                        /** @enum {string} */
+                        mail: "sent" | "unconfigured" | "failed";
+                        mail_failure: string | null;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            default: components["responses"]["Error"];
+        };
+    };
+    operatorRecover: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description The tenant's operator token of this start; never logged. */
+                "OML-Operator-Token": string;
+            };
+            path: {
+                tenant: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "person": "carol",
+                 *       "email": "carol@example.com"
+                 *     }
+                 */
+                "application/json": {
+                    /** @description The admin person the recovery adds: a name the tenant holds as no workspace, key or entry. */
+                    person: string;
+                    /**
+                     * Format: email
+                     * @description The address the new admin person signs in with; no entry may hold it.
+                     */
+                    email: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The recovery, requested; the persons notified, and what the relay did with the email. */
+            202: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        recovery: {
+                            /** Format: uuid */
+                            recovery_id: string;
+                            person: string;
+                            /** @enum {string} */
+                            state: "requested" | "completed" | "cancelled";
+                            /** Format: date-time */
+                            requested_at: string;
+                            /** Format: date-time */
+                            completes_after: string | null;
+                            /** Format: date-time */
+                            settled_at: string | null;
+                        };
                         notified: string[];
                         /** @enum {string} */
                         mail: "sent" | "unconfigured" | "failed";
