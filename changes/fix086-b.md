@@ -9,3 +9,5 @@ The administration To do lists each cleared public flag under "Done: public clea
 The personal To do gains a **Notices** group. It lists each notice the person has not dismissed, with a Dismiss form, and the To do badge counts the notices (ADR-0097 d20, d24). The Rust SDK gains `notices` and `dismiss_notice` and reads `TodoCounts.notices`.
 
 The admin key builder issues an admin key. With the admin role it names the key's admin person and sends `used_by: person` and no grants or limits, as `oml keys issue --role admin --person` does (ADR-0097 d21, d29).
+
+The release marker for the maintenance key reads `KEY_ROLES`, a constant of the domain crate that a test holds to `Role`. A release tag whose role source declares no such constant is refused by name, and a unit test reads the real source (ADR-0097 d18, Production migration).

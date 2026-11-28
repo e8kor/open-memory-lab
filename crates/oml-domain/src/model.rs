@@ -29,6 +29,21 @@ pub enum Role {
     Maintenance,
 }
 
+/// Every key role's spelling, in the order [`Role`] declares them: the set
+/// `scripts/release_markers.py` reads at each release tag, as it reads the
+/// scanner's `RULESET`, to require the deployer's maintenance-key marker in
+/// the first release whose set holds `maintenance` (ADR-0097 d18,
+/// Production migration). A test holds it to [`Role::as_str`].
+pub const KEY_ROLES: &[&str] = &[
+    "reader",
+    "contributor",
+    "submitter",
+    "reviewer",
+    "admin",
+    "operator",
+    "maintenance",
+];
+
 impl Role {
     #[must_use]
     pub fn as_str(self) -> &'static str {

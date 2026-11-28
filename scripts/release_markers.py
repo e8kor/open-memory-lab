@@ -14,10 +14,13 @@ it writes, then checks them; `check` names the line to add when one is missing. 
 previous stable tag carries no marker. Standard library only; it reads the tags with git, so the
 checkout needs its full history.
 
-The first release whose key roles include `maintenance` (`ROLE_SOURCE`) carries
+The first release whose key roles include `maintenance` (`pub const KEY_ROLES` in `ROLE_SOURCE`,
+read as `RULESET` is) carries
 `<!-- oml-deployer: post-step maintenance-key -->`: the deployer then converts each admin key its
 files hold into a maintenance key with `oml keys convert-self`, so no service keeps an admin key
-(ADR-0097 d18; docs/operations/upgrades.md).
+(ADR-0097 d18; docs/operations/upgrades.md). A tag whose own role source exists and declares
+no `KEY_ROLES` is refused, as one whose scanner declares no rule set is; an earlier tag without the
+constant reads as having no `maintenance` role.
 """
 from __future__ import annotations
 
@@ -32,7 +35,7 @@ SCANNER_SOURCE = "crates/oml-scan/src/lib.rs"
 ADMIN_RESCAN_MARKER = "<!-- oml-deployer: post-step admin-rescan-record-held -->"
 ROLE_SOURCE = "crates/oml-domain/src/model.rs"
 MAINTENANCE_MARKER = "<!-- oml-deployer: post-step maintenance-key -->"
-MAINTENANCE_ROLE = 'Role::Maintenance => "maintenance"'
+KEY_ROLES = re.compile(r'^pub const KEY_ROLES: &\[&str\] = &\[([^\]]*)\];', re.M)
 RULESET = re.compile(r'^pub const RULESET: &str = "([^"]+)";', re.M)
 TAG = re.compile(r"^v(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?$")
 STABLE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
@@ -77,11 +80,22 @@ def ruleset_at(root: Path, rev: str) -> str | None:
     return ruleset_of(git(root, "show", f"{rev}:{SCANNER_SOURCE}"))
 
 
+def roles_of(source: str) -> list[str] | None:
+    """The key roles a domain source's `KEY_ROLES` names, or None when it declares none."""
+    found = KEY_ROLES.search(source)
+    return re.findall(r'"([^"]+)"', found.group(1)) if found else None
+
+
+def roles_at(root: Path, rev: str) -> list[str] | None:
+    """The key roles at `rev`; None when the file or the constant is not there."""
+    if not git(root, "ls-tree", "--name-only", rev, "--", ROLE_SOURCE).strip():
+        return None
+    return roles_of(git(root, "show", f"{rev}:{ROLE_SOURCE}"))
+
+
 def maintenance_at(root: Path, rev: str) -> bool:
     """Whether the key roles at `rev` include `maintenance` (ADR-0097 d18)."""
-    if not git(root, "ls-tree", "--name-only", rev, "--", ROLE_SOURCE).strip():
-        return False
-    return MAINTENANCE_ROLE in git(root, "show", f"{rev}:{ROLE_SOURCE}")
+    return "maintenance" in (roles_at(root, rev) or [])
 
 
 def required(root: Path, tag: str) -> list[tuple[str, str]]:
@@ -92,6 +106,9 @@ def required(root: Path, tag: str) -> list[tuple[str, str]]:
     now = ruleset_at(root, tag)
     if now is None:
         raise RuntimeError(f"{SCANNER_SOURCE} at {tag} declares no `pub const RULESET`")
+    has_roles = git(root, "ls-tree", "--name-only", tag, "--", ROLE_SOURCE).strip()
+    if has_roles and roles_at(root, tag) is None:
+        raise RuntimeError(f"{ROLE_SOURCE} at {tag} declares no `pub const KEY_ROLES`")
     tags = [t for t in git(root, "tag", "--list", "v*").split() if core(t, STABLE) is not None]
     before = previous_tag(tag, tags)
     if before is None:
