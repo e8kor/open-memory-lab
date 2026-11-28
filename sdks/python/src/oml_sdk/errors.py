@@ -132,6 +132,10 @@ class AdminError(ApiError):
     """`admin`: admin investigations and fixes (ADR-0089)."""
 
 
+class OperatorError(ApiError):
+    """`operator`: a host verb the server refuses (ADR-0097 d19)."""
+
+
 class LimitError(ApiError):
     """`limit`: rate and quota."""
 
@@ -173,6 +177,7 @@ FAMILIES: dict[str, type[ApiError]] = {
     "memory": MemoryStateError,
     "lifecycle": LifecycleError,
     "admin": AdminError,
+    "operator": OperatorError,
     "limit": LimitError,
     "bundle": BundleError,
     "import": WorkspaceImportError,
