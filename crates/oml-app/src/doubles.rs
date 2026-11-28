@@ -489,6 +489,9 @@ pub struct MemStore {
     /// When the authentication table was installed, deployment wide: the
     /// epoch until a test sets it (ADR-0097, answer 24).
     authentications_installed_at: Arc<Mutex<Option<EventTime>>>,
+    /// Every authentication row write fails as a lost connection would,
+    /// until disarmed (ADR-0097, answer 26 reading 2).
+    fail_authentication_writes: Arc<AtomicBool>,
     tenants: Arc<Mutex<BTreeMap<Uuid, Arc<Mutex<TenantState>>>>>,
     /// Whether every tenant reads `sole_admin` whatever its admin entries:
     /// see [`MemStore::keeping_sole_admin`].
@@ -1028,6 +1031,13 @@ impl MemStore {
         let tenant = self.tenant(entry.tenant_id);
         let mut state = tenant.lock().expect("tenant lock");
         state.web_entries.insert(entry.email.digest().0, entry);
+    }
+
+    /// Arms or disarms the failure of every authentication row write: an
+    /// outage of the table's write path (ADR-0097, answer 26 reading 2).
+    pub fn fail_authentication_writes(&self, fail: bool) {
+        self.fail_authentication_writes
+            .store(fail, Ordering::SeqCst);
     }
 
     /// Sets when the authentication table was installed, as a migration's
@@ -5522,6 +5532,11 @@ impl JournalStore for MemStore {
         day: &str,
         count: u64,
     ) -> Result<(), StoreError> {
+        if self.fail_authentication_writes.load(Ordering::SeqCst) {
+            return Err(StoreError::Backend(
+                "the authentication row could not be written".to_owned(),
+            ));
+        }
         let tenant = self.tenant(tenant_id);
         let mut state = tenant.lock().expect("tenant lock");
         *state

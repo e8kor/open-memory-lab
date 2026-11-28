@@ -531,3 +531,29 @@ async fn recovery_is_refused_while_an_act_against_an_admin_is_open() {
     r.clock.advance(31 * DAY);
     assert_eq!(refusal(r.recover().await), RecoverRefusal::DisputeOpen);
 }
+
+/// While this process counts an authentication row it could not write
+/// since it started, recover is refused `log_write_failed`, since the
+/// missing row would read as dormancy; the count is the process's own, so
+/// the refusal is per replica (ADR-0097, answer 26 reading 2).
+#[tokio::test]
+async fn recovery_is_refused_while_this_process_counts_an_authentication_row_it_could_not_write() {
+    let (r, bobs) = rig().await;
+    r.clock.advance(31 * DAY);
+    r.store.fail_authentication_writes(true);
+    r.app
+        .whoami(bobs.value.as_str())
+        .await
+        .expect("bob's key still authenticates");
+    r.store.fail_authentication_writes(false);
+    assert_eq!(r.app.authentication_write_failures(), 1);
+    assert_eq!(refusal(r.recover().await), RecoverRefusal::LogWriteFailed);
+    let stats = r.app.fix_stats(r.tenant()).await.expect("stats");
+    assert_eq!(stats.authentication_write_failures, 1);
+    // Another replica, which counted no failure, admits the request.
+    let replica = app_over(&r.store, &r.clock);
+    replica
+        .operator_recover(r.tenant(), name("carol"), email("carol"))
+        .await
+        .expect("a replica with no failure counted admits it");
+}

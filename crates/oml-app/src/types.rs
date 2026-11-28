@@ -4586,6 +4586,11 @@ pub enum RecoverRefusal {
     /// install, purged rows or no row held. A missing row is never read as
     /// dormancy (answers 21, 24).
     LogTooShort,
+    /// This process counted an authentication row it could not write since
+    /// it started, so a missing row could read as dormancy; the count is
+    /// the process's own, so the refusal is per replica (answer 26, reading
+    /// 2).
+    LogWriteFailed,
     /// An admin key of the tenant authenticated, or an admin person signed
     /// in, within the 30 days.
     AdminActive,
@@ -4606,6 +4611,7 @@ impl RecoverRefusal {
     pub fn reason(self) -> &'static str {
         match self {
             RecoverRefusal::LogTooShort => "log_too_short",
+            RecoverRefusal::LogWriteFailed => "log_write_failed",
             RecoverRefusal::AdminActive => "admin_active",
             RecoverRefusal::Pending => "pending",
             RecoverRefusal::DisputeOpen => "dispute_open",
@@ -4620,6 +4626,9 @@ impl RecoverRefusal {
         match self {
             RecoverRefusal::LogTooShort => {
                 "the server's authentication table does not reach back 30 days, so dormancy cannot be read; a missing row is never dormancy"
+            }
+            RecoverRefusal::LogWriteFailed => {
+                "this server process could not write some authentication rows since it started, so a missing row could read as dormancy; fix the write path and restart the server"
             }
             RecoverRefusal::AdminActive => {
                 "an admin key of the tenant authenticated, or an admin person signed in, within the last 30 days"
