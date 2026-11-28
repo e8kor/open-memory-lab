@@ -11271,6 +11271,136 @@ pub async fn an_admin_act_moves_once_and_its_confirmation_lets_the_pending_key_i
     assert_eq!(store.chain_head(t).await.expect("head"), head);
 }
 
+/// The server authentication table holds one row per tenant, key and day,
+/// counted; recovery's dormancy reads the admin keys among them from a day
+/// on; coverage is the oldest day held, bounded below by the install; the
+/// purge deletes the days before its cutoff. A recovery's row is requested
+/// once per tenant and settled once (ADR-0097 d19; answers 22, 24).
+pub async fn the_authentication_table_counts_a_key_a_day_and_a_recovery_settles_once<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    use oml_app::types::{RecoveryRecord, RecoveryState};
+    let mut rig = ChainRig::new(504);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let admin = key_record(t, Uuid::from_u128(0x5001), Role::Admin, None);
+    let agent = key_record(t, Uuid::from_u128(0x5002), Role::Contributor, None);
+    rig.issue_key(store, admin.clone()).await;
+    rig.issue_key(store, agent.clone()).await;
+    for _ in 0..2 {
+        store
+            .record_authentication(t, admin.key_id, "2026-01-01", 1)
+            .await
+            .expect("a row");
+    }
+    store
+        .record_authentication(t, agent.key_id, "2026-01-05", 1)
+        .await
+        .expect("a row");
+    let since = |day: &'static str| store.admin_keys_authenticated_since(t, day);
+    assert_eq!(since("2026-01-01").await.expect("read"), 1, "one admin key");
+    assert_eq!(
+        since("2026-01-02").await.expect("read"),
+        0,
+        "an agent key is no admin authentication"
+    );
+    let coverage = store.authentication_coverage().await.expect("coverage");
+    assert_eq!(coverage.oldest_day.as_deref(), Some("2026-01-01"));
+    assert_eq!(
+        store
+            .purge_authentications(t, "2026-01-02")
+            .await
+            .expect("purge"),
+        1
+    );
+    assert_eq!(since("2026-01-01").await.expect("read"), 0, "purged");
+    let mut other = ChainRig::new(505);
+    other.seed_chain(store, 0).await;
+    assert_eq!(
+        store
+            .admin_keys_authenticated_since(other.tenant_id, "2000-01-01")
+            .await
+            .expect("read"),
+        0,
+        "read tenant-bound"
+    );
+
+    let recovery = RecoveryRecord {
+        recovery_id: Uuid::from_u128(0x5010),
+        person: Name::parse("carol").expect("a name"),
+        email: oml_app::domain::web::Email::parse("carol@example.com").expect("an email"),
+        state: RecoveryState::Requested,
+        requested_at: ChainRig::at(1),
+        settled_at: None,
+    };
+    rig.commit(
+        store,
+        event_types::OPERATOR_RECOVERY_REQUESTED,
+        json!({ "recovery_id": recovery.recovery_id.to_string() }),
+        MetadataFold::RecoveryRequested(recovery.clone()),
+        None,
+    )
+    .await
+    .expect("requested");
+    let held = store
+        .operator_recoveries(t, Some(RecoveryState::Requested))
+        .await
+        .expect("read");
+    assert_eq!(held.len(), 1);
+    assert_eq!(held[0].email, recovery.email, "the address is kept");
+    let head = store.chain_head(t).await.expect("head");
+    let second = RecoveryRecord {
+        recovery_id: Uuid::from_u128(0x5011),
+        ..recovery.clone()
+    };
+    assert!(
+        rig.commit(
+            store,
+            event_types::OPERATOR_RECOVERY_REQUESTED,
+            json!({ "recovery_id": second.recovery_id.to_string() }),
+            MetadataFold::RecoveryRequested(second),
+            None,
+        )
+        .await
+        .is_err(),
+        "one requested recovery per tenant"
+    );
+    assert_eq!(store.chain_head(t).await.expect("head"), head);
+    let settle = MetadataFold::RecoverySettled {
+        recovery_id: recovery.recovery_id,
+        state: RecoveryState::Completed,
+    };
+    rig.commit(
+        store,
+        event_types::OPERATOR_RECOVERY,
+        json!({ "recovery_id": recovery.recovery_id.to_string() }),
+        settle.clone(),
+        None,
+    )
+    .await
+    .expect("completed");
+    let head = store.chain_head(t).await.expect("head");
+    assert!(
+        rig.commit(
+            store,
+            event_types::OPERATOR_RECOVERY,
+            json!({ "recovery_id": recovery.recovery_id.to_string() }),
+            settle,
+            None,
+        )
+        .await
+        .is_err(),
+        "a recovery completes once"
+    );
+    assert_eq!(store.chain_head(t).await.expect("head"), head);
+    let done = store.operator_recoveries(t, None).await.expect("read");
+    assert_eq!(done.len(), 1);
+    assert_eq!(done[0].state, RecoveryState::Completed);
+    assert!(done[0].settled_at.is_some());
+}
+
 pub async fn run_journal_store_suite<S, F, Fut>(new_store: F)
 where
     S: JournalStore,
@@ -11309,6 +11439,10 @@ where
         a_public_set_folds_the_flag_and_every_access_read_names_the_public_nodes(
             &new_store().await,
         ),
+    )
+    .await;
+    Box::pin(
+        the_authentication_table_counts_a_key_a_day_and_a_recovery_settles_once(&new_store().await),
     )
     .await;
     Box::pin(no_version_is_a_release_member_until_releases_exist(

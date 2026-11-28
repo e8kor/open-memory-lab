@@ -606,6 +606,20 @@ pub enum MetadataFold {
         notice_id: Uuid,
         recipient: oml_domain::name::Name,
     },
+    /// `operator.recovery_requested`: the recovery's row, `requested`
+    /// (ADR-0097 d19). A tenant holds one requested recovery at a time; a
+    /// second is refused with [`StoreError::Backend`], which the use case's
+    /// own check rules out.
+    RecoveryRequested(crate::types::RecoveryRecord),
+    /// `operator.recovery` (`completed`) or `operator.recovery_cancelled`
+    /// (`cancelled`): the requested recovery's row moves to `state`. A row
+    /// that is not `requested` is refused with [`StoreError::Backend`], so
+    /// a second completion of one request, from another replica or a
+    /// restart, commits nothing (answer 22).
+    RecoverySettled {
+        recovery_id: Uuid,
+        state: crate::types::RecoveryState,
+    },
     /// `persons` are the persons whose own roots the page read: each one's
     /// count of admin reads for the month of the event moves by one
     /// (ADR-0097 d16).
@@ -1827,6 +1841,51 @@ pub trait JournalStore: Retriever + Send + Sync {
         &self,
         tenant_id: Uuid,
     ) -> impl Future<Output = Result<crate::types::AdminStanding, StoreError>> + Send;
+
+    /// Adds `count` to the tenant's authentication row of `key_id` on `day`
+    /// (`YYYY-MM-DD`, UTC), creating it (ADR-0097 d19, answer 24; ADR-0042
+    /// d8 as amended): the server authentication table recovery's dormancy
+    /// reads. The caller writes a key's row at most once a day.
+    fn record_authentication(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+        day: &str,
+        count: u64,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+
+    /// How many admin keys of the tenant have an authentication row on
+    /// `since_day` or later, revoked keys included (ADR-0097 d19, answer
+    /// 24): recovery's dormancy, read tenant-bound.
+    fn admin_keys_authenticated_since(
+        &self,
+        tenant_id: Uuid,
+        since_day: &str,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send;
+
+    /// What the authentication table covers, deployment wide (answer 24):
+    /// the oldest retained row's day, bounded below by the time the table
+    /// was installed, and when that was. `None` for the oldest day while
+    /// no row is held.
+    fn authentication_coverage(
+        &self,
+    ) -> impl Future<Output = Result<crate::types::AuthenticationCoverage, StoreError>> + Send;
+
+    /// Deletes the tenant's authentication rows of a day before
+    /// `before_day` and answers how many (answer 24's purge sweep).
+    fn purge_authentications(
+        &self,
+        tenant_id: Uuid,
+        before_day: &str,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send;
+
+    /// The tenant's operator recoveries, oldest first, in `state` when one
+    /// is given (ADR-0097 d19, answers 21, 22).
+    fn operator_recoveries(
+        &self,
+        tenant_id: Uuid,
+        state: Option<crate::types::RecoveryState>,
+    ) -> impl Future<Output = Result<Vec<crate::types::RecoveryRecord>, StoreError>> + Send;
 
     /// One admin fix of the tenant (ADR-0089 d15).
     fn fix(

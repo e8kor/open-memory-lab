@@ -4458,6 +4458,203 @@ pub struct OperatorSettlement {
     pub mail: OutboundMail,
 }
 
+/// How far back recovery's dormancy reads: 30 days, a placeholder
+/// (ADR-0097 d19).
+pub const RECOVERY_DORMANCY_DAYS: i64 = 30;
+
+/// How long a requested recovery waits before the sweep completes it: 72
+/// hours, a placeholder (ADR-0097 d19, answer 22).
+pub const RECOVERY_WAIT_US: i64 = 72 * 3_600 * 1_000_000;
+
+/// How long the authentication table keeps a day: 30 days (ADR-0097,
+/// answer 24).
+pub const AUTHENTICATION_RETENTION_DAYS: i64 = 30;
+
+/// One day in microseconds.
+pub(crate) const DAY_US: i64 = 86_400 * 1_000_000;
+
+/// What the server authentication table covers (ADR-0097, answer 24):
+/// the oldest retained row's day, deployment wide, and when the table was
+/// installed. Coverage starts at the later of that day's start and the
+/// install; with no row held it covers nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthenticationCoverage {
+    /// The oldest day any tenant's row holds, `YYYY-MM-DD`; `None` with no
+    /// row held.
+    pub oldest_day: Option<String>,
+    /// When the table was installed: the migration's time.
+    pub installed_at: EventTime,
+}
+
+impl AuthenticationCoverage {
+    /// When the coverage starts: the oldest retained row's day, bounded
+    /// below by the install; `None` with no row held, which covers nothing.
+    #[must_use]
+    pub fn since(&self) -> Option<EventTime> {
+        let day = self.oldest_day.as_deref()?;
+        let start = EventTime::parse(&format!("{day}T00:00:00.000000Z")).ok()?;
+        Some(if start.unix_micros() >= self.installed_at.unix_micros() {
+            start
+        } else {
+            self.installed_at.clone()
+        })
+    }
+
+    /// The whole days covered at `now`, 0 with no row held.
+    #[must_use]
+    pub fn days(&self, now: &EventTime) -> i64 {
+        self.since().map_or(0, |since| {
+            now.unix_micros().saturating_sub(since.unix_micros()) / DAY_US
+        })
+    }
+
+    /// Whether the table reaches back `days` whole days from `now`: never
+    /// with no row held, so a missing row is never read as dormancy.
+    #[must_use]
+    pub fn covers(&self, now: &EventTime, days: i64) -> bool {
+        self.since().is_some_and(|since| {
+            now.unix_micros().saturating_sub(since.unix_micros()) >= days.saturating_mul(DAY_US)
+        })
+    }
+}
+
+/// Where an operator recovery stands (ADR-0097 d19, answer 22).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecoveryState {
+    /// Requested: the 72 hours run, and any admin sign-in cancels it.
+    Requested,
+    /// The sweep completed it: the admin keys revoked, the new admin added.
+    Completed,
+    /// An admin signed in within the 72 hours.
+    Cancelled,
+}
+
+impl RecoveryState {
+    /// The spelling of the column and of the events' `state`.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RecoveryState::Requested => "requested",
+            RecoveryState::Completed => "completed",
+            RecoveryState::Cancelled => "cancelled",
+        }
+    }
+
+    /// The state a spelling names.
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "requested" => RecoveryState::Requested,
+            "completed" => RecoveryState::Completed,
+            "cancelled" => RecoveryState::Cancelled,
+            _ => return None,
+        })
+    }
+}
+
+/// One operator recovery of a dormant tenant (ADR-0097 d19): the admin
+/// person it names, the address their entry gets, and its state. The
+/// address is kept beside the request, as an allowlist entry keeps its
+/// own, and the journal carries its digest alone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecoveryRecord {
+    pub recovery_id: Uuid,
+    pub person: Name,
+    pub email: oml_domain::web::Email,
+    pub state: RecoveryState,
+    pub requested_at: EventTime,
+    pub settled_at: Option<EventTime>,
+}
+
+impl RecoveryRecord {
+    /// When the sweep may complete it: 72 hours after the request.
+    #[must_use]
+    pub fn completes_after(&self) -> Option<EventTime> {
+        EventTime::from_unix_micros(
+            self.requested_at
+                .unix_micros()
+                .saturating_add(RECOVERY_WAIT_US),
+        )
+    }
+}
+
+/// Why `oml operator recover` is refused, `operator.recover_refused` with
+/// `details.reason` (ADR-0097 d19; answers 21, 24).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecoverRefusal {
+    /// The authentication table does not reach back 30 days: a fresh
+    /// install, purged rows or no row held. A missing row is never read as
+    /// dormancy (answers 21, 24).
+    LogTooShort,
+    /// An admin key of the tenant authenticated, or an admin person signed
+    /// in, within the 30 days.
+    AdminActive,
+    /// A recovery of the tenant already waits its 72 hours.
+    Pending,
+    /// An act against an admin is open: recovery's dormancy gate never
+    /// opens during a live dispute (Consequences, Q5(a) with Q14).
+    DisputeOpen,
+    /// The person's name is taken in the tenant.
+    PersonTaken,
+    /// An allowlist entry holds the address.
+    EmailTaken,
+}
+
+impl RecoverRefusal {
+    /// `details.reason`.
+    #[must_use]
+    pub fn reason(self) -> &'static str {
+        match self {
+            RecoverRefusal::LogTooShort => "log_too_short",
+            RecoverRefusal::AdminActive => "admin_active",
+            RecoverRefusal::Pending => "pending",
+            RecoverRefusal::DisputeOpen => "dispute_open",
+            RecoverRefusal::PersonTaken => "person_taken",
+            RecoverRefusal::EmailTaken => "email_taken",
+        }
+    }
+
+    /// The message.
+    #[must_use]
+    pub fn message(self) -> &'static str {
+        match self {
+            RecoverRefusal::LogTooShort => {
+                "the server's authentication table does not reach back 30 days, so dormancy cannot be read; a missing row is never dormancy"
+            }
+            RecoverRefusal::AdminActive => {
+                "an admin key of the tenant authenticated, or an admin person signed in, within the last 30 days"
+            }
+            RecoverRefusal::Pending => "a recovery of the tenant already waits its 72 hours",
+            RecoverRefusal::DisputeOpen => {
+                "an act against an admin is open; the operator settles it with oml operator settle"
+            }
+            RecoverRefusal::PersonTaken => "the person's name is taken in the tenant",
+            RecoverRefusal::EmailTaken => "an allowlist entry holds the address",
+        }
+    }
+}
+
+/// What a recovery's request or completion did (ADR-0097 d19, d20): the
+/// recovery, the persons its notice went to, and the email the
+/// composition sends to the relay after the commit.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OperatorRecovery {
+    pub recovery: RecoveryRecord,
+    pub notified: Vec<Name>,
+    /// The admin keys the completion revoked; empty for a request.
+    pub revoked_keys: Vec<Uuid>,
+    pub mail: OutboundMail,
+}
+
+/// What one pass of the recovery sweep did in one tenant (ADR-0097 d19,
+/// answer 22): the recoveries it completed, with their emails, and how many
+/// an admin sign-in cancelled.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RecoverySweep {
+    pub completed: Vec<OperatorRecovery>,
+    pub cancelled: u64,
+}
+
 /// One notice to one person (ADR-0097 d20): what it tells about, the admin
 /// act it names, when it was written, and whether the person dismissed it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4542,6 +4739,10 @@ pub enum AppError {
     /// d11, d23).
     #[error("{}", .0.message())]
     AdminAct(AdminActRefusal),
+    /// `oml operator recover` refused (ADR-0097 d19; answers 21, 24):
+    /// `operator.recover_refused` with `details.reason`.
+    #[error("{}", .0.message())]
+    RecoverRefused(RecoverRefusal),
     /// A key whose widening act waits on a second admin person
     /// authenticates nothing (ADR-0097 d23): `auth.invalid` with
     /// `details.reason: pending_confirmation`.

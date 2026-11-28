@@ -462,6 +462,11 @@ struct TenantState {
     admin_read_counts: BTreeMap<(Name, String), u64>,
     /// Notices by recipient, in the order written (ADR-0097 d20).
     notices: Vec<crate::types::NoticeRecord>,
+    /// The authentication rows, by key and UTC day, with their counts
+    /// (ADR-0097, answer 24).
+    authentications: BTreeMap<(Uuid, String), u64>,
+    /// The operator recoveries, in the order requested (ADR-0097 d19).
+    recoveries: Vec<crate::types::RecoveryRecord>,
     /// The admin fixes, by id (ADR-0089 d3; 0064).
     fixes: BTreeMap<Uuid, crate::types::FixRecord>,
     /// The admin acts, by id (ADR-0097 d2; 0070).
@@ -481,6 +486,9 @@ struct TenantState {
 /// test can read through the port what the use-case it drives committed.
 #[derive(Debug, Default, Clone)]
 pub struct MemStore {
+    /// When the authentication table was installed, deployment wide: the
+    /// epoch until a test sets it (ADR-0097, answer 24).
+    authentications_installed_at: Arc<Mutex<Option<EventTime>>>,
     tenants: Arc<Mutex<BTreeMap<Uuid, Arc<Mutex<TenantState>>>>>,
     /// Whether every tenant reads `sole_admin` whatever its admin entries:
     /// see [`MemStore::keeping_sole_admin`].
@@ -998,6 +1006,37 @@ impl MemStore {
         if let Some(key) = state.keys.get_mut(&key_id) {
             key.user = user;
         }
+    }
+
+    /// The tenant's authentication rows, by key and day, with their counts
+    /// (ADR-0097, answer 24): a test's read of what no port lists.
+    #[must_use]
+    pub fn authentication_rows(&self, tenant_id: Uuid) -> Vec<(Uuid, String, u64)> {
+        let tenant = self.tenant(tenant_id);
+        let state = tenant.lock().expect("tenant lock");
+        state
+            .authentications
+            .iter()
+            .map(|((key, day), n)| (*key, day.clone(), *n))
+            .collect()
+    }
+
+    /// Puts `entry` on its tenant's allowlist, as no verb of the store's
+    /// does without a journalled act: a fixture for a name taken while a
+    /// recovery waits (ADR-0097 d19).
+    pub fn insert_web_entry(&self, entry: WebEntry) {
+        let tenant = self.tenant(entry.tenant_id);
+        let mut state = tenant.lock().expect("tenant lock");
+        state.web_entries.insert(entry.email.digest().0, entry);
+    }
+
+    /// Sets when the authentication table was installed, as a migration's
+    /// time is: coverage is bounded below by it (ADR-0097, answer 24).
+    pub fn set_authentications_installed_at(&self, at: EventTime) {
+        *self
+            .authentications_installed_at
+            .lock()
+            .expect("installed lock") = Some(at);
     }
 
     /// Points a key row's `issued_by` at `issuer`, as no verb does: a
@@ -1719,6 +1758,36 @@ fn apply_fold(
                 }
             }
         }
+        MetadataFold::RecoveryRequested(recovery) => {
+            if state
+                .recoveries
+                .iter()
+                .any(|r| r.state == crate::types::RecoveryState::Requested)
+            {
+                return Err(StoreError::Backend(
+                    "the tenant already holds a requested recovery".to_owned(),
+                ));
+            }
+            let mut recovery = recovery;
+            recovery.requested_at = at.clone();
+            state.recoveries.push(recovery);
+        }
+        MetadataFold::RecoverySettled {
+            recovery_id,
+            state: to,
+        } => match state.recoveries.iter_mut().find(|r| {
+            r.recovery_id == recovery_id && r.state == crate::types::RecoveryState::Requested
+        }) {
+            Some(r) => {
+                r.state = to;
+                r.settled_at = Some(at.clone());
+            }
+            None => {
+                return Err(StoreError::Backend(format!(
+                    "recovery {recovery_id} is not a requested recovery"
+                )));
+            }
+        },
         MetadataFold::AdminAct(act) => {
             use oml_domain::admin_act::AdminActState as St;
             match state.admin_acts.get_mut(&act.act_id) {
@@ -5444,6 +5513,109 @@ impl JournalStore for MemStore {
             .collect();
         all.sort_by(|a, b| (a.at.as_str(), a.act_id).cmp(&(b.at.as_str(), b.act_id)));
         Ok(all)
+    }
+
+    async fn record_authentication(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+        day: &str,
+        count: u64,
+    ) -> Result<(), StoreError> {
+        let tenant = self.tenant(tenant_id);
+        let mut state = tenant.lock().expect("tenant lock");
+        *state
+            .authentications
+            .entry((key_id, day.to_owned()))
+            .or_default() += count;
+        Ok(())
+    }
+
+    async fn admin_keys_authenticated_since(
+        &self,
+        tenant_id: Uuid,
+        since_day: &str,
+    ) -> Result<u64, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(0);
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let keys: std::collections::BTreeSet<Uuid> = state
+            .authentications
+            .keys()
+            .filter(|(key, day)| {
+                day.as_str() >= since_day
+                    && state.keys.get(key).is_some_and(|k| k.role == Role::Admin)
+            })
+            .map(|(key, _)| *key)
+            .collect();
+        Ok(keys.len() as u64)
+    }
+
+    async fn authentication_coverage(
+        &self,
+    ) -> Result<crate::types::AuthenticationCoverage, StoreError> {
+        let tenants: Vec<Arc<Mutex<TenantState>>> = self
+            .tenants
+            .lock()
+            .expect("tenants lock")
+            .values()
+            .cloned()
+            .collect();
+        let oldest_day = tenants
+            .iter()
+            .filter_map(|t| {
+                t.lock()
+                    .expect("tenant lock")
+                    .authentications
+                    .keys()
+                    .map(|(_, day)| day.clone())
+                    .min()
+            })
+            .min();
+        let installed_at = self
+            .authentications_installed_at
+            .lock()
+            .expect("installed lock")
+            .clone()
+            .unwrap_or_else(|| EventTime::from_unix_micros(0).expect("the epoch"));
+        Ok(crate::types::AuthenticationCoverage {
+            oldest_day,
+            installed_at,
+        })
+    }
+
+    async fn purge_authentications(
+        &self,
+        tenant_id: Uuid,
+        before_day: &str,
+    ) -> Result<u64, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(0);
+        };
+        let mut state = tenant.lock().expect("tenant lock");
+        let before = state.authentications.len();
+        state
+            .authentications
+            .retain(|(_, day), _| day.as_str() >= before_day);
+        Ok((before - state.authentications.len()) as u64)
+    }
+
+    async fn operator_recoveries(
+        &self,
+        tenant_id: Uuid,
+        filter: Option<crate::types::RecoveryState>,
+    ) -> Result<Vec<crate::types::RecoveryRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(state
+            .recoveries
+            .iter()
+            .filter(|r| filter.is_none_or(|f| r.state == f))
+            .cloned()
+            .collect())
     }
 
     async fn admin_standing(

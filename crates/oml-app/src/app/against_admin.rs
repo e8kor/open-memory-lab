@@ -11,6 +11,8 @@
 //! freezes both parties' widening and the initiator's acts against an admin
 //! until the operator settles it from the host (d19, another lane's).
 
+mod recovery;
+
 use serde_json::{Value, json};
 use uuid::Uuid;
 

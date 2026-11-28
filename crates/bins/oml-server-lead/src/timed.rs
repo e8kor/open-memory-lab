@@ -953,6 +953,64 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         timed("admin_standing", self.inner.admin_standing(tenant_id))
     }
 
+    fn record_authentication(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+        day: &str,
+        count: u64,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send {
+        timed(
+            "record_authentication",
+            self.inner
+                .record_authentication(tenant_id, key_id, day, count),
+        )
+    }
+
+    fn admin_keys_authenticated_since(
+        &self,
+        tenant_id: Uuid,
+        since_day: &str,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send {
+        timed(
+            "admin_keys_authenticated_since",
+            self.inner
+                .admin_keys_authenticated_since(tenant_id, since_day),
+        )
+    }
+
+    fn authentication_coverage(
+        &self,
+    ) -> impl Future<Output = Result<oml_app::types::AuthenticationCoverage, StoreError>> + Send
+    {
+        timed(
+            "authentication_coverage",
+            self.inner.authentication_coverage(),
+        )
+    }
+
+    fn purge_authentications(
+        &self,
+        tenant_id: Uuid,
+        before_day: &str,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send {
+        timed(
+            "purge_authentications",
+            self.inner.purge_authentications(tenant_id, before_day),
+        )
+    }
+
+    fn operator_recoveries(
+        &self,
+        tenant_id: Uuid,
+        state: Option<oml_app::types::RecoveryState>,
+    ) -> impl Future<Output = Result<Vec<oml_app::types::RecoveryRecord>, StoreError>> + Send {
+        timed(
+            "operator_recoveries",
+            self.inner.operator_recoveries(tenant_id, state),
+        )
+    }
+
     fn member_of_no_release(
         &self,
         tenant_id: Uuid,

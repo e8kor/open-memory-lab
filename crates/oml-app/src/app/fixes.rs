@@ -1877,6 +1877,18 @@ pub struct FixStats {
     /// session-key shapes (`key.issuer_unexpected_shape`, critical,
     /// ADR-0097 d18).
     pub issuer_unexpected_shape: u64,
+    /// Recoveries requested and waiting their 72 hours
+    /// (`admin.recovery_pending`, critical, ADR-0097 d19).
+    pub recoveries_pending: u64,
+    /// Requested recoveries past their 72 hours and not completed
+    /// (`admin.recovery_overdue`, answer 22).
+    pub recoveries_overdue: u64,
+    /// The whole days the server authentication table covers, deployment
+    /// wide (`auth.log_coverage`, answer 24): recover refuses under 30.
+    pub authentication_coverage_days: i64,
+    /// Authentication rows this process could not write since it started
+    /// (`auth.log_write_failed`, answer 24).
+    pub authentication_write_failures: u64,
 }
 
 impl<J, S, C, I, Sc> App<J, S, C, I, Sc>
@@ -1992,6 +2004,10 @@ where
         stats.disputes_open = u64::from(self.freeze(tenant_id).await?.is_some());
         stats.settlements_due = self.settlements_due(tenant_id).await?;
         stats.issuer_unexpected_shape = self.issuer_unexpected_shapes(tenant_id).await?;
+        (stats.recoveries_pending, stats.recoveries_overdue) =
+            self.recovery_counts(tenant_id).await?;
+        stats.authentication_coverage_days = self.authentication_coverage_days().await?;
+        stats.authentication_write_failures = self.authentication_write_failures();
         if all.is_empty() {
             return Ok(stats);
         }

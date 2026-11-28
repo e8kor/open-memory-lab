@@ -205,6 +205,17 @@ pub mod event_types {
     /// The operator settled a frozen dispute from the host: the contested
     /// act confirmed or reversed, and nothing else (ADR-0097 d19).
     pub const OPERATOR_SETTLEMENT: &str = "operator.settlement";
+    /// The operator asked to recover a dormant tenant from the host: the
+    /// recovery's id, the admin person it names, the address's digest and
+    /// the 30 days it read (ADR-0097 d19, answers 21, 22, 24).
+    pub const OPERATOR_RECOVERY_REQUESTED: &str = "operator.recovery_requested";
+    /// The server's sweep completed a recovery 72 hours after its request
+    /// with no admin sign-in: the window and the admin keys it revoked
+    /// (ADR-0097 d19, answer 22). One per request.
+    pub const OPERATOR_RECOVERY: &str = "operator.recovery";
+    /// An admin sign-in within the 72 hours cancelled a recovery (ADR-0097
+    /// d19, answer 22).
+    pub const OPERATOR_RECOVERY_CANCELLED: &str = "operator.recovery_cancelled";
     /// A person confirmed an admin's fix (ADR-0089 d8).
     pub const ADMIN_FIX_CONFIRMED: &str = "admin.fix_confirmed";
     /// A person reverted an admin's fix (ADR-0089 d8).

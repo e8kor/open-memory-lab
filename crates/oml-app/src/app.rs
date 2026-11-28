@@ -314,6 +314,15 @@ pub struct App<J, S, C, I, Sc> {
     /// the keys that carry one: counted in this process alone, forgotten at
     /// a restart (ADR-0079 d4, d6).
     key_windows: std::sync::Mutex<BTreeMap<Uuid, (i64, u64)>>,
+    /// Each key's UTC day number this process last wrote its
+    /// authentication row for: a key's row is written at most once a day,
+    /// that day's later authentications coalesced here (ADR-0097, answer
+    /// 24). Forgotten at a restart, which writes the day's row once more.
+    authenticated_days: std::sync::Mutex<BTreeMap<Uuid, i64>>,
+    /// Authentication rows this process could not write since it started:
+    /// doctor's `auth.log_write_failed` (answer 24). The key's next
+    /// authentication writes the row again.
+    authentication_write_failures: AtomicU64,
     /// The learned sparse encoder the sparse pipelines read the query with
     /// and the encoder task writes kind 2 with; `None` where the deployment
     /// serves no sparse pipeline (ADR-0052 d14, d16).
@@ -2040,6 +2049,8 @@ where
             recall_meter: None,
             feedback_counts: std::sync::Mutex::default(),
             key_windows: std::sync::Mutex::default(),
+            authenticated_days: std::sync::Mutex::default(),
+            authentication_write_failures: AtomicU64::new(0),
             sparse: None,
             formats: Arc::new(crate::ports::ProseFormats),
             signup: None,
@@ -2377,7 +2388,54 @@ where
         }
         let key = key?.ok_or(AppError::Unauthorized)?;
         self.check_key(&key, unlinked)?;
+        self.note_authenticated(&key).await;
         Ok((key, previous_value))
+    }
+
+    /// Writes `key`'s row of the server authentication table for today,
+    /// the first time this process sees the key authenticate today
+    /// (ADR-0097 d19, answer 24; ADR-0042 d8 as amended): one upsert per
+    /// key per day, the day's later authentications coalesced in memory. A
+    /// write that fails is counted for doctor (`auth.log_write_failed`) and
+    /// left unmarked, so the key's next authentication writes it again; the
+    /// request it rode on goes on. A provider-level key has no tenant's row.
+    pub(crate) async fn note_authenticated(&self, key: &KeyRecord) {
+        if key.tenant_id == PROVIDER_TENANT {
+            return;
+        }
+        let now = self.clock.now();
+        let day = now.unix_micros().div_euclid(crate::types::DAY_US);
+        {
+            let mut days = self.authenticated_days.lock().expect("unpoisoned");
+            if days.get(&key.key_id) == Some(&day) {
+                return;
+            }
+            days.insert(key.key_id, day);
+        }
+        let written = self
+            .journal
+            .record_authentication(
+                key.tenant_id,
+                key.key_id,
+                oml_domain::usage::day_of(&now),
+                1,
+            )
+            .await;
+        if written.is_err() {
+            self.authentication_write_failures
+                .fetch_add(1, Ordering::Relaxed);
+            let mut days = self.authenticated_days.lock().expect("unpoisoned");
+            if days.get(&key.key_id) == Some(&day) {
+                days.remove(&key.key_id);
+            }
+        }
+    }
+
+    /// The authentication rows this process could not write since it
+    /// started (doctor's `auth.log_write_failed`, answer 24).
+    #[must_use]
+    pub fn authentication_write_failures(&self) -> u64 {
+        self.authentication_write_failures.load(Ordering::Relaxed)
     }
 
     /// `key`'s access as stored, `None` for a provider-level key.
@@ -14459,6 +14517,7 @@ where
         // The token is the key's own credential, so its holder is told the
         // key expired (ADR-0079 d2).
         self.require_unexpired(&key)?;
+        self.note_authenticated(&key).await;
         self.caller_of(key).await
     }
 

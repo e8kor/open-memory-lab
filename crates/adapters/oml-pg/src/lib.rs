@@ -4756,6 +4756,47 @@ async fn apply_fold(
                 )));
             }
         }
+        MetadataFold::RecoveryRequested(recovery) => {
+            // One requested recovery per tenant: the partial unique index
+            // refuses a second (ADR-0097 d19; 0076).
+            sqlx::query(
+                "INSERT INTO operator_recoveries (tenant_id, id, person, email, state, \
+                        requested_at, requested_seq) \
+                 VALUES ($1, $2, $3, $4, 'requested', ($5)::timestamptz, $6)",
+            )
+            .bind(tenant_id)
+            .bind(recovery.recovery_id)
+            .bind(recovery.person.as_str())
+            .bind(recovery.email.as_str())
+            .bind(at.as_str())
+            .bind(seq)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+        }
+        MetadataFold::RecoverySettled { recovery_id, state } => {
+            // Once: a row already completed or cancelled refuses the commit,
+            // so a second completion from another replica or after a
+            // restart journals nothing (answer 22).
+            let moved = sqlx::query(
+                "UPDATE operator_recoveries SET state = $3, settled_at = ($4)::timestamptz, \
+                        settled_seq = $5 \
+                  WHERE tenant_id = $1 AND id = $2 AND state = 'requested'",
+            )
+            .bind(tenant_id)
+            .bind(recovery_id)
+            .bind(state.as_str())
+            .bind(at.as_str())
+            .bind(seq)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if moved.rows_affected() != 1 {
+                return Err(StoreError::Backend(format!(
+                    "recovery {recovery_id} is not a requested recovery"
+                )));
+            }
+        }
         MetadataFold::AdminAct(act) => {
             fold_admin_act(tx, tenant_id, &act, seq, at).await?;
         }
@@ -6913,6 +6954,8 @@ async fn meter_plan(
         | MetadataFold::AdminMemoryRead { .. }
         | MetadataFold::NoticeWritten { .. }
         | MetadataFold::NoticeDismissed { .. }
+        | MetadataFold::RecoveryRequested(_)
+        | MetadataFold::RecoverySettled { .. }
         | MetadataFold::InvestigationOpened { .. }
         | MetadataFold::InvestigationClosed { .. }
         | MetadataFold::AdminFixRecorded(_)
@@ -11279,6 +11322,152 @@ impl JournalStore for PgStore {
             sole_admin: sole_admin.unwrap_or(true),
             persons,
         })
+    }
+
+    async fn record_authentication(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+        day: &str,
+        count: u64,
+    ) -> Result<(), StoreError> {
+        // One upsert per key per day, under the tenant's row security
+        // (ADR-0097, answer 24; 0076).
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        sqlx::query(
+            "INSERT INTO key_authentications (tenant_id, key_id, day, count) \
+             VALUES ($1, $2, ($3)::date, $4) \
+             ON CONFLICT (tenant_id, key_id, day) \
+             DO UPDATE SET count = key_authentications.count + EXCLUDED.count",
+        )
+        .bind(tenant_id)
+        .bind(key_id)
+        .bind(day)
+        .bind(i64::try_from(count).unwrap_or(i64::MAX))
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(())
+    }
+
+    async fn admin_keys_authenticated_since(
+        &self,
+        tenant_id: Uuid,
+        since_day: &str,
+    ) -> Result<u64, StoreError> {
+        // Read tenant-bound; the role is the key's, through its id
+        // (answers 21, 24).
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(DISTINCT a.key_id) FROM key_authentications a \
+               JOIN api_keys k ON k.tenant_id = a.tenant_id AND k.id = a.key_id \
+              WHERE a.tenant_id = $1 AND a.day >= ($2)::date AND k.role = 'admin'",
+        )
+        .bind(tenant_id)
+        .bind(since_day)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(u64::try_from(n).unwrap_or(0))
+    }
+
+    async fn authentication_coverage(
+        &self,
+    ) -> Result<oml_app::types::AuthenticationCoverage, StoreError> {
+        // Deployment wide, under the 0003 startup-enumeration setting that
+        // 0076's coverage_read policy admits (answer 24).
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        sqlx::query("SELECT set_config('oml.startup_check', 'on', true)")
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        let oldest: Option<String> =
+            sqlx::query_scalar("SELECT to_char(min(day), 'YYYY-MM-DD') FROM key_authentications")
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(backend)?;
+        let installed: String = sqlx::query_scalar(
+            "SELECT to_char(installed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+               FROM key_authentications_installed",
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(oml_app::types::AuthenticationCoverage {
+            oldest_day: oldest,
+            installed_at: EventTime::parse(&installed).map_err(backend)?,
+        })
+    }
+
+    async fn purge_authentications(
+        &self,
+        tenant_id: Uuid,
+        before_day: &str,
+    ) -> Result<u64, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let purged = sqlx::query(
+            "DELETE FROM key_authentications WHERE tenant_id = $1 AND day < ($2)::date",
+        )
+        .bind(tenant_id)
+        .bind(before_day)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?
+        .rows_affected();
+        tx.commit().await.map_err(backend)?;
+        Ok(purged)
+    }
+
+    async fn operator_recoveries(
+        &self,
+        tenant_id: Uuid,
+        state: Option<oml_app::types::RecoveryState>,
+    ) -> Result<Vec<oml_app::types::RecoveryRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sqlx::query(
+            "SELECT id, person::text AS person, email, state, \
+                    to_char(requested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+                    AS requested_s, \
+                    to_char(settled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+                    AS settled_s \
+               FROM operator_recoveries \
+              WHERE tenant_id = $1 AND ($2::text IS NULL OR state = $2) \
+              ORDER BY requested_seq",
+        )
+        .bind(tenant_id)
+        .bind(state.map(oml_app::types::RecoveryState::as_str))
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter()
+            .map(|row| {
+                let person: String = row.try_get("person").map_err(backend)?;
+                let email: String = row.try_get("email").map_err(backend)?;
+                let state: String = row.try_get("state").map_err(backend)?;
+                let requested: String = row.try_get("requested_s").map_err(backend)?;
+                let settled: Option<String> = row.try_get("settled_s").map_err(backend)?;
+                Ok(oml_app::types::RecoveryRecord {
+                    recovery_id: row.try_get("id").map_err(backend)?,
+                    person: Name::parse_reference(&person).map_err(backend)?,
+                    email: oml_app::domain::web::Email::parse(&email).map_err(backend)?,
+                    state: oml_app::types::RecoveryState::parse(&state)
+                        .ok_or_else(|| StoreError::Backend(format!("recovery state {state:?}")))?,
+                    requested_at: EventTime::parse(&requested).map_err(backend)?,
+                    settled_at: settled
+                        .map(|s| EventTime::parse(&s))
+                        .transpose()
+                        .map_err(backend)?,
+                })
+            })
+            .collect()
     }
 
     /// No release table exists until R3 (ADR-0085), so no version is a

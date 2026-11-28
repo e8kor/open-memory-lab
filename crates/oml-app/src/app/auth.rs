@@ -346,6 +346,20 @@ where
                 credentials,
             )
             .await?;
+        // An admin person's sign-in is an admin authentication of the day,
+        // written against their `<user>-admin` session key, whichever
+        // capacity the session goes on to use: recovery's dormancy reads it,
+        // and it cancels a requested recovery (ADR-0097 d19, answers 22, 24).
+        if entry.admin
+            && let Ok(name) = key_name(&entry.user, Capacity::Admin.suffix())
+            && let Some(id) = self
+                .journal
+                .resolve_name(entry.tenant_id, NamedKind::Key, &name)
+                .await?
+            && let Some(key) = self.journal.key(entry.tenant_id, id).await?
+        {
+            self.note_authenticated(&key).await;
+        }
         Ok(OpenedSession { token, record })
     }
 
@@ -544,8 +558,9 @@ where
             }
             None => None,
         };
-        self.session_key_caller(session, capacity, rows)
-            .map(|(caller, _)| caller)
+        let (caller, _) = self.session_key_caller(session, capacity, rows)?;
+        self.note_authenticated(&caller.key).await;
+        Ok(caller)
     }
 
     /// The caller `rows` make for `capacity` of `session`, with the access
@@ -660,6 +675,7 @@ where
             // session keys at the API as it binds their agent keys
             // (ADR-0068 d5).
             Ok((caller, access)) => {
+                self.note_authenticated(&caller.key).await;
                 self.admit_request(&caller.key).await?;
                 if first_resolution {
                     *caller.gate_read.lock().expect("unpoisoned") = access;
@@ -786,7 +802,11 @@ where
     }
 
     /// A drawn name no workspace, key or entry of the tenant holds.
-    async fn user_name_free(&self, tenant_id: Uuid, user: &Name) -> Result<bool, AppError> {
+    pub(crate) async fn user_name_free(
+        &self,
+        tenant_id: Uuid,
+        user: &Name,
+    ) -> Result<bool, AppError> {
         if self
             .journal
             .resolve_name(tenant_id, NamedKind::Workspace, user)
