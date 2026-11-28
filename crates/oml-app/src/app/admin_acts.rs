@@ -773,6 +773,29 @@ where
                     )?;
                 }
             }
+            AdminActKind::RaiseLimits if effect.get("quota").is_some() => {
+                // A quota raise taken at once: the override set back to the
+                // one the act found, while the person still holds the act's
+                // (review finding core-6).
+                let quota = &effect["quota"];
+                let root = uuid_at(quota, "user_root");
+                let name = quota.get("quota").and_then(Value::as_str);
+                let sent = quota.get("limit").and_then(Value::as_u64);
+                let back = quota.get("before").and_then(Value::as_u64);
+                if let (Some(root), Some(name)) = (root, name) {
+                    let held = self
+                        .journal
+                        .user_quota_overrides(tenant_id, root)
+                        .await?
+                        .into_iter()
+                        .find(|(q, _)| q.as_str() == name)
+                        .map(|(_, l)| l);
+                    if held == sent {
+                        let prev = links.last().map(|(e, _)| e.clone()).expect("a link");
+                        links.push(self.quota_link(admin, &prev, quota, back, undo.decline_id)?);
+                    }
+                }
+            }
             AdminActKind::RaiseLimits => {
                 let Some(key) = live else { return Ok(()) };
                 // Only the members the act changed, and only where the key
@@ -1156,6 +1179,14 @@ where
                     ));
                 }
                 self.confirmed_code(admin, act, key_id, code, links).await?;
+            }
+            AdminActKind::RaiseLimits if effect.get("quota").is_some() => {
+                // A quota raise: the override the act recorded (review
+                // finding core-6).
+                let quota = &effect["quota"];
+                let limit = quota.get("limit").and_then(Value::as_u64);
+                let prev = last(links);
+                links.push(self.quota_link(admin, &prev, quota, limit, act.act_id)?);
             }
             AdminActKind::RaiseLimits => {
                 let key_id = key_id.ok_or_else(|| {

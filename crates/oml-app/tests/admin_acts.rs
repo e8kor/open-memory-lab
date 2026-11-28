@@ -3974,3 +3974,59 @@ async fn a_pending_key_takes_no_limit_change() {
     );
     assert_eq!(r.journal().await.len(), before, "nothing is journalled");
 }
+
+/// Raising a person's quota waits on a second admin person outside
+/// `sole_admin` and changes nothing until confirmed; lowering one takes
+/// effect at once (ADR-0097 d15; review finding core-6).
+#[tokio::test]
+async fn raising_a_quota_waits_on_a_second_admin_person_and_lowering_it_takes_effect_at_once() {
+    use oml_app::domain::signup::Quota;
+    let r = two_admins().await;
+    let alice = r.admin_session("alice").await;
+    let bob = r.admin_session("bob").await;
+    let overrides = || async {
+        let root = r
+            .store
+            .resolve_name(r.boot.tenant_id, NamedKind::Workspace, &name("bob"))
+            .await
+            .expect("read")
+            .expect("bob's root");
+        r.store
+            .user_quota_overrides(r.boot.tenant_id, root)
+            .await
+            .expect("read")
+    };
+    let err = r
+        .app
+        .set_web_user_quota_with_reason(&alice, &name("bob"), Quota::Keys, Some(1_000), None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::AdminActReasonRequired), "{err:?}");
+    let applied = r
+        .app
+        .set_web_user_quota_with_reason(
+            &alice,
+            &name("bob"),
+            Quota::Keys,
+            Some(1_000),
+            Some("more agents"),
+        )
+        .await
+        .expect("a pending raise");
+    assert!(!applied, "a raise waits");
+    assert!(overrides().await.is_empty(), "nothing changed yet");
+    let act = last_act(&r, "raise_limits").await;
+    assert_eq!(act.state, AdminActState::PendingConfirmation);
+    r.app
+        .confirm_admin_act(Bearer::Session(&bob), act.act_id, Some("confirmed"))
+        .await
+        .expect("confirmed");
+    assert_eq!(overrides().await, vec![(Quota::Keys, 1_000)]);
+    let applied = r
+        .app
+        .set_web_user_quota_with_reason(&alice, &name("bob"), Quota::Keys, Some(2), None)
+        .await
+        .expect("a lowering at once");
+    assert!(applied, "a lowering applies at once");
+    assert_eq!(overrides().await, vec![(Quota::Keys, 2)]);
+}

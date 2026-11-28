@@ -13,7 +13,7 @@ use uuid::Uuid;
 use oml_domain::admin_act::AdminActKind;
 use oml_domain::name::{Name, NamedKind, Reference, UNIVERSE};
 use oml_domain::signup::{QUOTA_LIMIT_MAX, Quota, Quotas};
-use oml_domain::{Role, UsedBy, event_types};
+use oml_domain::{Role, SignedEnvelope, UsedBy, event_types};
 
 use super::{App, Caller, Head, require_role};
 use crate::ports::{
@@ -322,6 +322,29 @@ where
         quota: Quota,
         limit: Option<u64>,
     ) -> Result<(), AppError> {
+        self.set_web_user_quota_with_reason(admin, user, quota, limit, None)
+            .await
+            .map(|_| ())
+    }
+
+    /// [`Self::set_web_user_quota`] as an admin act with its reason
+    /// (ADR-0097 d15; review finding core-6): a limit above the person's
+    /// effective one, or a cleared override whose default is higher, is a
+    /// raise, widening, which waits on a second admin person outside
+    /// `sole_admin` and then changes nothing yet; anything else is a
+    /// lowering, narrowing, at once. Answers whether the limit applies now.
+    ///
+    /// # Errors
+    /// As [`Self::set_web_user_quota`], and a raise that waits sent no
+    /// reason.
+    pub async fn set_web_user_quota_with_reason(
+        &self,
+        admin: &Caller,
+        user: &Name,
+        quota: Quota,
+        limit: Option<u64>,
+        reason: Option<&str>,
+    ) -> Result<bool, AppError> {
         require_role(admin, Role::Admin, "web_users")?;
         if limit.is_some_and(|l| l > quota.max_limit()) {
             return Err(AppError::WebField {
@@ -338,34 +361,131 @@ where
             .signup_root(tenant_id, user)
             .await?
             .ok_or(AppError::NotFound)?;
+        // The effective limit now against the one the change leaves: the
+        // override, or with none the default (ADR-0097 d15).
+        let (now, _) = self.quotas_of(tenant_id, root).await?;
+        let overrides = self.journal.user_quota_overrides(tenant_id, root).await?;
+        let found = overrides
+            .iter()
+            .find(|(q, _)| *q == quota)
+            .map(|(_, l)| *l);
+        let after = limit.unwrap_or_else(|| self.default_quotas().get(quota));
+        let kind = if after > now.get(quota) {
+            oml_domain::admin_act::AdminActKind::RaiseLimits
+        } else {
+            oml_domain::admin_act::AdminActKind::LowerLimits
+        };
         let prev = self.head_event(tenant_id).await?;
+        let act = self
+            .begin_admin_act(
+                &admin.key,
+                kind,
+                json!({
+                    "user": user.as_str(),
+                    "quota": quota.as_str(),
+                    "limit": limit,
+                }),
+                reason,
+                // What a confirmation applies and what a decline of a raise
+                // taken at once under `sole_admin` sets back.
+                json!({
+                    "quota": {
+                        "user": user.as_str(),
+                        "user_root": root.to_string(),
+                        "quota": quota.as_str(),
+                        "limit": limit,
+                        "before": found,
+                    },
+                }),
+                prev.as_ref(),
+            )
+            .await?;
+        if act.pending() {
+            self.commit_with_act(Some(act), Vec::new()).await?;
+            return Ok(false);
+        }
         let event = self.seal(
-            prev.as_ref(),
+            Some(&act.event),
             tenant_id,
             event_types::WEB_QUOTA_SET,
             &admin.key.principal,
             Some(admin.key.key_id),
-            json!({
-                "user": user.as_str(),
-                "user_root": root.to_string(),
-                "quota": quota.as_str(),
-                "limit": limit,
-            }),
+            super::admin_acts::with_act_id(
+                json!({
+                    "user": user.as_str(),
+                    "user_root": root.to_string(),
+                    "quota": quota.as_str(),
+                    "limit": limit,
+                }),
+                act.act_id(),
+            ),
         )?;
-        self.commit(
-            event,
-            MetadataFold::QuotaSet {
-                user_root: root,
-                quota,
-                limit,
-            },
-            None,
+        self.commit_with_act(
+            Some(act),
+            vec![(
+                event,
+                MetadataFold::QuotaSet {
+                    user_root: root,
+                    quota,
+                    limit,
+                },
+            )],
         )
         .await?;
         if quota == Quota::RequestsPerMinute {
             self.forget_windows();
         }
-        Ok(())
+        Ok(true)
+    }
+
+    /// The `web.quota_set` a quota act's effect holds, its limit `limit`,
+    /// sealed by `admin` on `prev` naming `act_id` (ADR-0097 d15).
+    pub(crate) fn quota_link(
+        &self,
+        admin: &KeyRecord,
+        prev: &SignedEnvelope,
+        quota: &Value,
+        limit: Option<u64>,
+        act_id: Uuid,
+    ) -> Result<(SignedEnvelope, MetadataFold), AppError> {
+        let bad = || AppError::StoredResponse(format!("admin act {act_id} quota {quota}"));
+        let root = quota
+            .get("user_root")
+            .and_then(Value::as_str)
+            .and_then(|s| Uuid::parse_str(s).ok())
+            .ok_or_else(bad)?;
+        let name = quota.get("quota").and_then(Value::as_str).ok_or_else(bad)?;
+        let which = Quota::ALL
+            .into_iter()
+            .find(|q| q.as_str() == name)
+            .ok_or_else(bad)?;
+        let event = self.seal(
+            Some(prev),
+            admin.tenant_id,
+            event_types::WEB_QUOTA_SET,
+            &admin.principal,
+            Some(admin.key_id),
+            super::admin_acts::with_act_id(
+                json!({
+                    "user": quota.get("user").cloned().unwrap_or(Value::Null),
+                    "user_root": root.to_string(),
+                    "quota": name,
+                    "limit": limit,
+                }),
+                act_id,
+            ),
+        )?;
+        if which == Quota::RequestsPerMinute {
+            self.forget_windows();
+        }
+        Ok((
+            event,
+            MetadataFold::QuotaSet {
+                user_root: root,
+                quota: which,
+                limit,
+            },
+        ))
     }
 
     /// `POST /v2/web/users/{user}/disable` (ADR-0070 d5 #9; ADR-0068 d8): for a
